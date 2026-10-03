@@ -11,6 +11,7 @@
  * `not-draft` after, which is exactly what that read produces.
  */
 import {
+  BOARD_DRAFT_PULL_REQUEST_BUILD,
   BOARD_SEED_STAGE_IDS,
   type BoardCard,
   type OrchestrationCommand,
@@ -114,13 +115,28 @@ it.effect("is retry-safe: a re-run arrival readies nothing twice and writes one 
   ),
 );
 
-it.effect("leaves the pull request alone when the setting is off", () =>
+it.effect("leaves the pull request alone on arrival when the setting is off", () =>
   withGovernor(setup({ drafts: false, markReadyOutcomes: ["readied"] }), (h) =>
     Effect.gen(function* () {
       yield* h.pumpDomain(cardMoved(cardAt(MERGE), REVIEW, MERGE, 1));
-      yield* h.reactor.mergePullRequest(cardAt(MERGE).id);
       assert.deepStrictEqual(yield* h.markReadyCalls, []);
       assert.deepStrictEqual(notesOf(yield* h.commands, "card-pull-request-ready"), []);
+    }),
+  ),
+);
+
+it.effect("a merge still readies a recorded draft after the setting is turned off", () =>
+  withGovernor(setup({ drafts: false, markReadyOutcomes: ["readied"] }), (h) =>
+    Effect.gen(function* () {
+      // The board opened this draft while the setting was on; it has since
+      // been turned off. The forge will not merge a draft, so the merge must
+      // ready it first rather than strand the card.
+      yield* h.reactor.mergePullRequest(cardAt(MERGE).id);
+      assert.deepStrictEqual(yield* h.markReadyCalls, [{ number: 412 }]);
+      assert.deepStrictEqual(notesOf(yield* h.commands, "card-pull-request-ready"), [
+        "PR #412 marked ready; CI started.",
+      ]);
+      assert.strictEqual((yield* h.mergeAttempts).length, 1);
     }),
   ),
 );
@@ -167,4 +183,26 @@ it.effect("a failed ready is noted, and the next merge attempt tries it again fi
         assert.strictEqual((yield* h.mergeAttempts).length, 1);
       }),
   ),
+);
+
+const spawnedPrompts = (commands: ReadonlyArray<OrchestrationCommand>) =>
+  commands.flatMap((command) =>
+    command.type === "thread.turn.start" ? [command.message.text] : [],
+  );
+
+it.effect("tells the build step to open any pull request as a draft, only when on", () =>
+  Effect.gen(function* () {
+    for (const drafts of [true, false]) {
+      yield* withGovernor(
+        { ...setup({ drafts }), board: { cards: [cardAt(BUILDING)], nextCardNumberByProject: {} } },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.pumpDomain(cardMoved(cardAt(BUILDING), REVIEW, BUILDING, 1));
+            const prompts = spawnedPrompts(yield* h.commands);
+            assert.strictEqual(prompts.length, 1);
+            assert.strictEqual(prompts[0]!.includes(BOARD_DRAFT_PULL_REQUEST_BUILD), drafts);
+          }),
+      );
+    }
+  }),
 );

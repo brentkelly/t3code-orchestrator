@@ -1476,7 +1476,9 @@ const make = Effect.gen(function* () {
     card: BoardCard,
     state: BoardCardStepState,
   ) {
+    const role = boardSeedStageRole(card.stage);
     return composeStepPrompt({
+      ...(role === "build" ? { draftPullRequests: yield* draftPullRequestsOn } : {}),
       card: { ...card, baseBranch: yield* resolvePromptBaseBranch(card) },
       stageLabel: state.stageLabel,
       step: {
@@ -1485,8 +1487,16 @@ const make = Effect.gen(function* () {
         prompt: state.prompt,
         humanInLoop: state.humanInLoop,
       },
-      role: boardSeedStageRole(card.stage),
+      role,
     });
+  });
+
+  /** Whether the Code review stage's open-as-draft setting is on (T3O-12). */
+  const draftPullRequestsOn = Effect.gen(function* () {
+    const reviewStage = boardStageWithRole(yield* readBoard, "review");
+    if (reviewStage === null) return false;
+    const review = resolveBoardStageExecution(yield* boardSettings, reviewStage.stageId);
+    return isBoardReviewStageExecution(review) && review.draftPullRequests;
   });
 
   /** The base branch the envelope states, or null when it cannot be resolved —
@@ -4743,25 +4753,26 @@ const make = Effect.gen(function* () {
    * Mark a card's draft pull request ready for review (T3O-12) — the moment
    * the repository's full CI starts.
    *
-   * Only when the review stage's `draftPullRequests` is on, and only when the
-   * forge says, live, that the pull request is an open draft: a pull request a
-   * human already readied, or one opened before the setting was on, is left
-   * alone. That live read is also what makes this retry-safe — running it
-   * twice readies once and writes one activity row.
+   * Only when the forge says, live, that the pull request is an open draft: a
+   * pull request a human already readied is left alone. That live read is also
+   * what makes this retry-safe — running it twice readies once and writes one
+   * activity row.
+   *
+   * On arrival (`forMerge: false`) it also needs the review stage's
+   * `draftPullRequests` on, so a draft opened before the setting was on is left
+   * alone. A merge attempt (`forMerge: true`) skips that gate: a merge was
+   * asked for and the forge refuses to merge a draft, so turning the setting
+   * off while board-opened drafts are in flight must not strand them.
    *
    * A failure never throws: it writes a note naming the forge's reason, and the
    * next merge attempt (`mergeCardPullRequest`) calls this again before it
    * merges.
    */
   const markCardPullRequestReady = Effect.fn("board-supervisor-markCardPullRequestReady")(
-    function* (card: BoardCard) {
+    function* (card: BoardCard, options: { readonly forMerge: boolean }) {
       const pullRequest = card.pullRequest;
       if (pullRequest === null || pullRequest.state !== "open") return;
-      const settings = yield* boardSettings;
-      const reviewStage = boardStageWithRole(yield* readBoard, "review");
-      if (reviewStage === null) return;
-      const review = resolveBoardStageExecution(settings, reviewStage.stageId);
-      if (!isBoardReviewStageExecution(review) || !review.draftPullRequests) return;
+      if (!options.forMerge && !(yield* draftPullRequestsOn)) return;
       const result = yield* pullRequests
         .markReady({ projectId: card.projectId, number: pullRequest.number })
         .pipe(Effect.catch((error) => Effect.succeed({ failure: error.detail } as const)));
@@ -4907,6 +4918,13 @@ const make = Effect.gen(function* () {
       }
     }
 
+    // A draft that arrival did not ready gets readied here (T3O-12): a
+    // transient forge failure costs one merge attempt rather than a card that
+    // can never merge, and a draft left over from before the setting was
+    // turned off still merges. Keyed on the RECORDED link so an ordinary merge
+    // spends no extra forge read; the helper re-reads live before it acts.
+    if (pullRequest.isDraft === true) yield* markCardPullRequestReady(fresh, { forMerge: true });
+
     // The pull request has to merge into the branch this card is actually
     // based on (T3O-5, D10). A retarget rebases the branch and moves the
     // recorded base, but a pull request that was already open keeps whatever
@@ -4923,12 +4941,6 @@ const make = Effect.gen(function* () {
     // for. Compared against the RECORDED base (the cut point), not the
     // effective one: that is the branch the diff was actually built on, and
     // the stale gate above has already reconciled the two.
-    // A draft that arrival could not ready gets another try here (T3O-12), so
-    // a transient forge failure costs one merge attempt rather than a card
-    // that can never merge. Keyed on the RECORDED link so an ordinary merge
-    // spends no extra forge read; the helper re-reads live before it acts.
-    if (pullRequest.isDraft === true) yield* markCardPullRequestReady(fresh);
-
     const recordedBase = fresh.worktree?.baseRefName ?? null;
     if (recordedBase !== null && pullRequest.baseRef !== recordedBase) {
       return {
@@ -7144,7 +7156,7 @@ const make = Effect.gen(function* () {
       event.payload.fromStage !== event.payload.toStage
     ) {
       checksFixSpent.delete(String(card.id));
-      yield* markCardPullRequestReady((yield* readCard(card.id)) ?? card);
+      yield* markCardPullRequestReady((yield* readCard(card.id)) ?? card, { forMerge: false });
     }
 
     yield* beginStageRun({ card: kickoffCard, onDemand: false });

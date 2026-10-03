@@ -100,6 +100,10 @@ export interface ComposeStepPromptInput {
   readonly step: ComposeStepPromptStep;
   /** The stage's effective role: keys the deliverable postamble segment. */
   readonly role: BoardStageRole | null;
+  /** The Code review stage's open-as-draft setting (T3O-12). Only a
+      `build`-role step reads it: a build agent, or a skill it calls, may open
+      the pull request before the review loop does. */
+  readonly draftPullRequests?: boolean;
 }
 
 /** How the agent is told to name its step on the completion call (t3o-19, D3).
@@ -216,8 +220,14 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
     role: input.role,
     step: input.step,
   });
+  // The build draft line (T3O-12) rides on the body, so an empty-body
+  // re-entry (D7) stays the clean conversational thread it is.
   const body = input.step.prompt;
-  const bodyBlock = body.trim().length > 0 ? `${body}\n\n` : "";
+  const draftLine =
+    input.role === "build" && input.draftPullRequests === true
+      ? `\n\n${BOARD_DRAFT_PULL_REQUEST_BUILD}`
+      : "";
+  const bodyBlock = body.trim().length > 0 ? `${body}${draftLine}\n\n` : "";
   return `${preamble}\n\n${bodyBlock}${postamble}`;
 }
 
@@ -264,13 +274,20 @@ export function boardReviewPhaseProtocol(input: {
   }
 }
 
-/**
- * The review phase's open-as-draft instruction (T3O-12). Written per forge,
- * because the agent — not the board — opens the pull request, and it outranks
- * any skill's own default (such as /pullrequest opening a ready one).
- */
-export const BOARD_DRAFT_PULL_REQUEST_OPEN =
-  "Open this card's pull request as a DRAFT, whatever any skill or workflow you use would do by default: `gh pr create --draft` on GitHub, `glab mr create --draft` on GitLab, and on Forgejo or Gitea a title that starts with `WIP: `. If the pull request already exists, leave its draft state alone. If the forge refuses a draft (some plans do not offer them), open a normal pull request instead and say so in your summary. Never mark the pull request ready for review yourself — the board does that once the review converges.";
+/** How to open a draft on each forge, and what to do around it (T3O-12).
+    Written per forge, because the agent — not the board — opens the pull
+    request. */
+const BOARD_DRAFT_PULL_REQUEST_HOW =
+  "`gh pr create --draft` on GitHub, `glab mr create --draft` on GitLab, and on Forgejo or Gitea a title that starts with `WIP: `. If the pull request already exists, leave its draft state alone. If the forge refuses a draft (some plans do not offer them), open a normal pull request instead and say so in your summary. Never mark the pull request ready for review yourself — the board does that once the review converges.";
+
+/** The review phase's open-as-draft instruction (T3O-12). It outranks any
+    skill's own default (such as /pullrequest opening a ready one). */
+export const BOARD_DRAFT_PULL_REQUEST_OPEN = `Open this card's pull request as a DRAFT, whatever any skill or workflow you use would do by default: ${BOARD_DRAFT_PULL_REQUEST_HOW}`;
+
+/** The build stage's draft line (T3O-12). Conditional, because a build step
+    need not open a pull request at all — the review phase opens one if it
+    did not. */
+export const BOARD_DRAFT_PULL_REQUEST_BUILD = `If you open this card's pull request, yourself or through a skill such as /pullrequest, open it as a DRAFT, whatever that skill would do by default: ${BOARD_DRAFT_PULL_REQUEST_HOW}`;
 
 /** The line every later loop step carries while drafts are on (T3O-12): the
     fix commits the loop pushes must not start the repository's full CI. */
