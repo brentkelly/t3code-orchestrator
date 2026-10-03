@@ -71,6 +71,7 @@ import {
   isBoardCardPullRequestTerminal,
   isBoardBuildStageExecution,
   isBoardMergeStageExecution,
+  isBoardReviewStageExecution,
   isBoardCardScheduleDue,
   // T3o: tells the board's own nudge from a human's message (T3O-17, D2).
   isBoardMintedCommandId,
@@ -2064,6 +2065,22 @@ const make = Effect.gen(function* () {
     // could only watch. Its review-stage entry, which only happens after the
     // last child finished, kicks off normally.
     if (boardCardUnfinishedChildren(board, card.id).length > 0) return;
+    const settings = yield* boardSettings;
+    const exec = resolveBoardStageExecution(settings, card.stage);
+    const mergeRole = effectiveBoardStageRole(stage) === "merge";
+    // An on-demand request for a stage that runs nothing (Backlog, Done, any
+    // stage with no auto-execute and no prompt) must not spawn a promptless
+    // thread. The merge role runs its conflict step with auto-execute forced
+    // off, and the review loop's prompts live on its phases, so both count as
+    // runnable here. Restart is still offered on a stalled step of an empty
+    // stage (t3o-30 D3), so this guard waits until after that step is
+    // superseded — returning first would accept the click and leave the stall.
+    const emptyOnDemand =
+      onDemand &&
+      !exec.autoExecute &&
+      !mergeRole &&
+      !isBoardReviewStageExecution(exec) &&
+      exec.prompt.trim() === "";
     // One step at a time (D4): the AUTOMATIC kickoff does not start a run while
     // one is live, and never tramples a thread already on the stage.
     //
@@ -2120,14 +2137,14 @@ const make = Effect.gen(function* () {
           createdAt: yield* nowIso,
         });
       }
+      if (emptyOnDemand) return;
     } else {
       // Never trample a thread already running this stage (D7).
       if (hasLiveStageThread(card, card.stage)) return;
       if (existing !== null && !isBoardTerminalStepStatus(existing.status)) return;
     }
-    const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, card.stage);
-    // Auto-kickoff fires only for an auto-executing stage; on-demand always runs.
+    // Auto-kickoff fires only for an auto-executing stage; on-demand runs any
+    // stage that has work (gated above).
     if (!onDemand && !exec.autoExecute) return;
     const completions = boardCardStepCompletions(board, card.id);
     // First entry vs re-entry (D7): a recorded completion for this stage's step
@@ -2150,7 +2167,6 @@ const make = Effect.gen(function* () {
     //
     // Every other stage keeps the ordinary rule: re-entry means the card came
     // back, and coming back must not silently redo the stage's work.
-    const mergeRole = effectiveBoardStageRole(stage) === "merge";
     const armedConflictFix = mergeRole && mergeAwaitingConflictFix.has(String(card.id));
     // An ARMED card's merge stage is not a conversation (t3o-28 D3, widened by
     // T3O-38 D1), so the "not armed means talk to a human" arm above does not
