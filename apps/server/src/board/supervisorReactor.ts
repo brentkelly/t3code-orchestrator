@@ -2069,20 +2069,18 @@ const make = Effect.gen(function* () {
     const exec = resolveBoardStageExecution(settings, card.stage);
     const mergeRole = effectiveBoardStageRole(stage) === "merge";
     // An on-demand request for a stage that runs nothing (Backlog, Done, any
-    // stage with no auto-execute and no prompt) is dropped BEFORE the resting
-    // step is superseded: there is no stage work to restart, only a promptless
-    // thread to spawn. The merge role runs its conflict step with auto-execute
-    // forced off, and the review loop's prompts live on its phases, so both
-    // count as runnable here.
-    if (
+    // stage with no auto-execute and no prompt) must not spawn a promptless
+    // thread. The merge role runs its conflict step with auto-execute forced
+    // off, and the review loop's prompts live on its phases, so both count as
+    // runnable here. Restart is still offered on a stalled step of an empty
+    // stage (t3o-30 D3), so this guard waits until after that step is
+    // superseded — returning first would accept the click and leave the stall.
+    const emptyOnDemand =
       onDemand &&
       !exec.autoExecute &&
       !mergeRole &&
       !isBoardReviewStageExecution(exec) &&
-      exec.prompt.trim() === ""
-    ) {
-      return;
-    }
+      exec.prompt.trim() === "";
     // One step at a time (D4): the AUTOMATIC kickoff does not start a run while
     // one is live, and never tramples a thread already on the stage.
     //
@@ -2139,6 +2137,7 @@ const make = Effect.gen(function* () {
           createdAt: yield* nowIso,
         });
       }
+      if (emptyOnDemand) return;
     } else {
       // Never trample a thread already running this stage (D7).
       if (hasLiveStageThread(card, card.stage)) return;
