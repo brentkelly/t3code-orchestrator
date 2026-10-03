@@ -131,6 +131,16 @@ describe("boardStagePrimaryAction", () => {
     });
   });
 
+  it("names a CI fix as the reason Merge is disabled (T3O-12)", () => {
+    expect(
+      boardStagePrimaryAction(stages, BOARD_SEED_STAGE_IDS.merge, {
+        pullRequestState: "open",
+        conflictFixLive: true,
+        conflictFixReason: "Fixing CI…",
+      }),
+    ).toMatchObject({ kind: "merge", disabled: true, disabledReason: "Fixing CI…" });
+  });
+
   it("leaves Merge live for a hand-opened merge-stage thread (T3O-9)", () => {
     // The case the old `stepRunning` inference got wrong. A human can restart
     // the merge stage's thread by hand and get a clean conversation — a running

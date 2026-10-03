@@ -374,10 +374,16 @@ export function applyBoardShellStreamEvent(
       // `stepConflictFix` (T3O-9) comes off the same slice and rests at false on
       // a card-carrying delta, so preserve it too — otherwise a label edit on a
       // card whose merge is held by conflicts clears the pill that says so.
-      const withConflictFix =
+      const withConflictFixOnly =
         existing === undefined || existing.stepConflictFix === withStepAwaiting.stepConflictFix
           ? withStepAwaiting
           : { ...withStepAwaiting, stepConflictFix: existing.stepConflictFix };
+      // `stepChecksFix` (T3O-12) likewise: a card-carrying delta omits it, so
+      // the last known value stands until the next `card-stalled`.
+      const withConflictFix =
+        existing?.stepChecksFix === true && withConflictFixOnly.stepChecksFix === undefined
+          ? { ...withConflictFixOnly, stepChecksFix: true }
+          : withConflictFixOnly;
       const withBodyDerived = preserveAbsentShellFields(withConflictFix, existing);
       const card = withDerivedThreadFields(
         withBodyDerived,
@@ -450,6 +456,7 @@ export function applyBoardShellStreamEvent(
           card.held === event.held &&
           card.stepAwaiting === event.stepAwaiting &&
           card.stepConflictFix === event.stepConflictFix &&
+          card.stepChecksFix === event.stepChecksFix &&
           card.stalledReason === nextStalledReason &&
           card.retryAt === nextRetryAt &&
           card.limitedByInstanceId === nextLimitedBy
@@ -462,6 +469,8 @@ export function applyBoardShellStreamEvent(
         // and this delta is the only thing that ever clears the chip.
         const stripped = { ...card };
         for (const field of STALL_SHELL_FIELDS) delete stripped[field];
+        // Key-optional and authoritative here too (T3O-12): absent means false.
+        delete stripped.stepChecksFix;
         return {
           ...stripped,
           stalled: event.stalled,
@@ -470,6 +479,7 @@ export function applyBoardShellStreamEvent(
           held: event.held,
           stepAwaiting: event.stepAwaiting,
           stepConflictFix: event.stepConflictFix,
+          ...(event.stepChecksFix === true ? { stepChecksFix: true } : {}),
           ...(nextStalledReason === undefined ? {} : { stalledReason: nextStalledReason }),
           ...(nextRetryAt === undefined ? {} : { retryAt: nextRetryAt }),
           ...(nextLimitedBy === undefined ? {} : { limitedByInstanceId: nextLimitedBy }),

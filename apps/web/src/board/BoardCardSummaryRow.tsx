@@ -488,10 +488,14 @@ export function BoardCardMetaRow({ meta }: { readonly meta: BoardCardMeta }) {
       {meta.prNumber === undefined ? null : (
         <MetaCount
           icon={GitPullRequestIcon}
-          tint="text-info-foreground"
-          title={`Pull request #${meta.prNumber}`}
+          // A draft is neutral (T3O-12): not running, not done, not blocked —
+          // the board marks it ready when the card reaches Ready for merge.
+          tint={meta.prDraft ? "text-muted-foreground" : "text-info-foreground"}
+          title={
+            meta.prDraft ? `Draft pull request #${meta.prNumber}` : `Pull request #${meta.prNumber}`
+          }
         >
-          {`#${meta.prNumber}`}
+          {meta.prDraft ? `#${meta.prNumber} · Draft` : `#${meta.prNumber}`}
         </MetaCount>
       )}
       <span className="flex-1" />

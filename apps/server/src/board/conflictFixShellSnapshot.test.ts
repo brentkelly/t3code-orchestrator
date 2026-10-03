@@ -15,6 +15,7 @@
  * hands its clients.
  */
 import {
+  BOARD_CHECKS_FIX_STEP_LABEL,
   BOARD_CONFLICT_STEP_LABEL,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
@@ -249,6 +250,34 @@ describe("stepConflictFix on the shell SNAPSHOT (T3O-9)", () => {
         const card = yield* shellCard;
         assert.strictEqual(card?.stalled, true);
         assert.strictEqual(card?.stepConflictFix, false);
+      }),
+    );
+  });
+});
+
+describe("stepChecksFix on the shell SNAPSHOT (T3O-12)", () => {
+  it.layer(makeTestLayer("t3o-checks-snap-1-"))("a CI fix an agent is running", (it) => {
+    it.effect("comes back from SQL as a CI fix, not a conflict fix", () =>
+      Effect.gen(function* () {
+        yield* seedSelectedStep(BOARD_CHECKS_FIX_STEP_LABEL);
+        yield* admit;
+
+        const card = yield* shellCard;
+        assert.strictEqual(card?.stepChecksFix, true);
+        assert.strictEqual(card?.stepConflictFix, false);
+        assert.strictEqual(card?.stepRunning, true);
+      }),
+    );
+  });
+
+  it.layer(makeTestLayer("t3o-checks-snap-2-"))("a conflict fix", (it) => {
+    it.effect("carries no CI-fix key at all", () =>
+      Effect.gen(function* () {
+        yield* seedSelectedStep(BOARD_CONFLICT_STEP_LABEL);
+        yield* admit;
+
+        const card = yield* shellCard;
+        assert.isFalse(card !== undefined && "stepChecksFix" in card);
       }),
     );
   });

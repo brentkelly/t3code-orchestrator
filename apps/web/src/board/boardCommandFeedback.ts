@@ -50,6 +50,8 @@ export function describeBoardMergeOutcome(result: BoardMergeCardPullRequestResul
       return null;
     case "conflict":
       return "The branch conflicts with its base. Resolving the conflicts, then merging.";
+    case "checks-fix":
+      return "The pull request's checks failed. Fixing them, then merging once CI passes.";
     case "refused":
       return result.detail && result.detail.length > 0
         ? result.detail

@@ -138,6 +138,9 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
     // card face.
     case "card-review-round-requested":
       return <RotateCcwIcon className={className} />;
+    // CI starting is work about to run, not a verdict, so it stays neutral.
+    case "card-pull-request-ready":
+      return <GitPullRequestIcon className={className} />;
     // T3O-52: a kept worktree is a cleanup that is blocked — amber; a removal
     // is disk given back, which claims nothing and stays neutral.
     case "card-worktree-kept":
@@ -339,6 +342,12 @@ function activitySentence(
     case "card-review-round-requested":
       return payload.detail === undefined ? (
         <>asked for another review round</>
+      ) : (
+        <>{payload.detail}</>
+      );
+    case "card-pull-request-ready":
+      return payload.detail === undefined ? (
+        <>marked the pull request ready; CI started</>
       ) : (
         <>{payload.detail}</>
       );

@@ -715,28 +715,25 @@ it.effect("stops at a merge the forge REFUSES, and says so on the card", () =>
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
       pullRequest: openPr,
-      mergeFailure: "Required status check 'test' is failing.",
-      // The probe says a required check FAILED, so more CI will not happen
-      // without a new commit and there is nothing to wait for.
-      mergeState: probeState({ passed: 2, failed: 1 }),
+      mergeFailure: "At least 1 approving review is required.",
+      // Blocked with every check green: a missing approval, which no amount
+      // of waiting clears. (Failing CI starts a fix instead — T3O-12.)
+      mergeState: probeState({ passed: 3, blockedReason: "other" }),
     },
     (h) =>
       Effect.gen(function* () {
         yield* h.pumpDomain(childReachedMerge("card-one", 1));
-        // A failed check needs a human: the card holds at merge with the
+        // A policy block needs a human: the card holds at merge with the
         // ladder STOPPED, and the reason is on the activity rail rather than
         // in a server log nobody is reading.
         assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
         const holds = autoMergeHolds(yield* h.commands);
         assert.strictEqual(holds.length, 1);
-        assert.strictEqual(holds[0]?.classification, "checks-failed");
+        assert.strictEqual(holds[0]?.classification, "approval-required");
         assert.strictEqual(holds[0]?.retryAt, null);
         const notes = mergeRefusedNotes(yield* h.commands);
         assert.strictEqual(notes.length, 1);
-        assert.include(
-          String((notes[0] as { readonly detail: string }).detail),
-          "Its checks are failing",
-        );
+        assert.include(String((notes[0] as { readonly detail: string }).detail), "review approval");
       }),
   ),
 );
@@ -1268,8 +1265,8 @@ it.effect("a restart the forge refuses on POLICY spawns no agent and says why", 
         },
         settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
         pullRequest: openPr,
-        mergeFailure: "Required status check 'test' is failing.",
-        mergeState: probeState({ passed: 2, failed: 1 }),
+        mergeFailure: "At least 1 approving review is required.",
+        mergeState: probeState({ passed: 3, blockedReason: "other" }),
       },
       (h) =>
         Effect.gen(function* () {

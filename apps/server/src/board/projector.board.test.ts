@@ -5,6 +5,7 @@
  * counter bump is monotonic.
  */
 import {
+  BOARD_CHECKS_FIX_STEP_LABEL,
   BOARD_CONFLICT_STEP_LABEL,
   BOARD_SEED_LABEL_IDS,
   BOARD_SEED_STAGE_IDS,
@@ -1007,6 +1008,60 @@ describe("board projector", () => {
         }).stepConflictFix,
         false,
       );
+    }),
+  );
+
+  it.effect("a CI fix raises its own flag on select, never the conflict one (T3O-12)", () =>
+    Effect.sync(() => {
+      const ciState = {
+        cardId,
+        stepId: String(BOARD_SEED_STAGE_IDS.merge),
+        stepLabel: BOARD_CHECKS_FIX_STEP_LABEL,
+        stageLabel: "Ready for merge",
+        attempt: 1,
+        stallCount: 0,
+        stageEntryRecoveries: 0,
+        humanTurnAt: null,
+        lastNudgeAt: null,
+        baseTipAtRoundStart: null,
+        lastError: null,
+        awaitingReason: "question" as const,
+        stalledReason: "gave-up" as const,
+        retryAt: null,
+        prompt: "fix the CI",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+        mode: "build" as const,
+        runtimeMode: "full-access" as const,
+        humanInLoop: false,
+        maxAttempts: 3,
+        timeoutMs: 1000,
+        threadId: null,
+        status: "pending" as const,
+        slotHeld: false,
+        forceStart: false,
+        startedAt: null,
+        updatedAt: NOW,
+      };
+      const delta = (event: BoardEvent) =>
+        Option.getOrThrow(boardShellStreamEvent(event)) as {
+          readonly stepConflictFix: boolean;
+          readonly stepChecksFix?: boolean;
+        };
+      const selected = delta({
+        ...eventBase,
+        type: "board.card-step-selected",
+        payload: { cardId, state: ciState },
+      });
+      assert.strictEqual(selected.stepChecksFix, true);
+      assert.strictEqual(selected.stepConflictFix, false);
+      // Settled: the key is gone, which this delta's authority reads as false.
+      const settled = delta({
+        ...eventBase,
+        type: "board.card-step-settled",
+        payload: { cardId, state: { ...ciState, status: "succeeded" } },
+      });
+      assert.isFalse("stepChecksFix" in settled);
     }),
   );
 

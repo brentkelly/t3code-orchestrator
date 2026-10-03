@@ -41,7 +41,9 @@ import {
   type BoardModelSelection,
   type BoardCardStageModelOverride,
   type BoardReviewFinding,
-  type BoardStageExecutionReview,
+  BoardStageExecutionReview,
+  BOARD_DRAFT_PULL_REQUEST_KEEP,
+  BOARD_DRAFT_PULL_REQUEST_OPEN,
   type BoardStepCompletion,
 } from "@t3tools/contracts";
 
@@ -827,6 +829,45 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
       },
     });
     expect(result.kind === "run" && result.stepId).toBe("review@1");
+  });
+});
+
+const decodeReviewExecution = Schema.decodeUnknownSync(BoardStageExecutionReview);
+
+describe("draft pull requests (T3O-12)", () => {
+  const promptOf = (result: BoardStagePlan): string => (result.kind === "run" ? result.prompt : "");
+  const drafts = reviewExec({ draftPullRequests: true });
+
+  it("tells the reviewer to open the pull request as a draft only when the setting is on", () => {
+    expect(promptOf(plan([], drafts))).toContain(BOARD_DRAFT_PULL_REQUEST_OPEN);
+    expect(promptOf(plan([]))).not.toContain("DRAFT");
+  });
+
+  it("keeps the draft a draft through triage, adjudication and the sync step", () => {
+    const blocking = [completion("review@1", reviewPayload([finding("critical")]))];
+    const triage = plan(blocking, drafts);
+    expect(triage.kind === "run" && triage.stepId).toBe("triage@1");
+    expect(promptOf(triage)).toContain(BOARD_DRAFT_PULL_REQUEST_KEEP);
+    expect(promptOf(triage)).not.toContain(BOARD_DRAFT_PULL_REQUEST_OPEN);
+
+    const adjudicate = plan(
+      [...blocking, completion("triage@1", { fixedSha: "sha-fix", dispositions: [] })],
+      drafts,
+    );
+    expect(adjudicate.kind === "run" && adjudicate.stepId).toBe("adjudicate@1");
+    expect(promptOf(adjudicate)).toContain(BOARD_DRAFT_PULL_REQUEST_KEEP);
+
+    const sync = plan([completion("review@1", reviewPayload([]))], drafts, null, null, true);
+    expect(sync.kind === "run" && sync.stepId).toBe("sync@1");
+    expect(promptOf(sync)).toContain(BOARD_DRAFT_PULL_REQUEST_KEEP);
+    expect(
+      promptOf(plan([completion("review@1", reviewPayload([]))], undefined, null, null, true)),
+    ).not.toContain(BOARD_DRAFT_PULL_REQUEST_KEEP);
+  });
+
+  it("decodes a stored review stage without the field to drafts off", () => {
+    const decoded = decodeReviewExecution({ kind: "review" });
+    expect(decoded.draftPullRequests).toBe(false);
   });
 });
 

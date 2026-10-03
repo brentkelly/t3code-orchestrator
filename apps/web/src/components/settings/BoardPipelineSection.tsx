@@ -29,6 +29,7 @@ import {
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_PLANNING_PROMPT,
   DEFAULT_BOARD_REVIEW_PHASES,
+  boardDraftPullRequestLine,
   boardReviewPhasePreamble,
   boardReviewPhaseProtocol,
   reviewStepId,
@@ -1459,6 +1460,13 @@ function ReviewStageBody(props: {
             ariaLabel="Auto advance to the next stage"
             onChange={(checked) => set({ autoAdvance: checked })}
           />
+          <ToggleRow
+            label="Open pull requests as drafts (where available)"
+            hint="Saves CI runs: full CI runs once the code review converges, not on every fix commit. Auto-merge waits for the repository's required checks."
+            checked={exec.draftPullRequests}
+            ariaLabel="Open pull requests as drafts"
+            onChange={(checked) => set({ draftPullRequests: checked })}
+          />
           {BOARD_REVIEW_PHASE_IDS.map((phaseId, index) => {
             const phase = exec.phases[phaseId];
             return (
@@ -1489,6 +1497,12 @@ function ReviewStageBody(props: {
                     boardReviewPhasePreamble({ phase: phaseId, round: 1, rounds: exec.rounds }),
                   ].join("\n\n")}
                   postamble={[
+                    // The draft line (T3O-12) is the envelope's, not the
+                    // user's, so it rides the preview rather than the prompt.
+                    ...(boardDraftPullRequestLine({
+                      draftPullRequests: exec.draftPullRequests,
+                      phase: phaseId,
+                    }) ?? []),
                     boardReviewPhaseProtocol({ phase: phaseId, round: 1 }),
                     boardStepPostamble({
                       // The review stage's role is fixed — `resolveBoardStageExecution`

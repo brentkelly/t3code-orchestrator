@@ -45,7 +45,10 @@ auto-merge is looked at rather than given up on:
   20 and 40. Eight attempts over about an hour and a half. The card wears an amber **Merge held**
   pill with how long it has been waiting, and the Merge button shows a countdown to the next try.
 - **A required check failed.** There is nothing to wait for: more CI will not happen without a new
-  commit. The board stops on the first refusal, and the card reads **Merge needs you**.
+  commit, so an agent reads the failing checks, fixes the cause and pushes. The card wears a
+  **Fixing CI** pill while it works, and the merge waits for the re-run checks. If they fail again,
+  the board stops and the card reads **Merge needs you**; clicking Merge allows one more fix. This
+  happens whether or not the card is armed.
 - **Everything is green and the forge still says no** — a missing approval, a branch protection
   rule. That is a decision the board does not have, so it stops and says so.
 - **Conflicts** take the path they always have: an agent resolves them, and the merge finishes
@@ -56,6 +59,29 @@ attempt it was, and how the checks stood.
 
 The Merge button stays live the whole time. A held card is not a busy card — nothing is running, the
 forge just said no — so clicking is always available, and clicking restarts the clock.
+
+## Opening pull requests as drafts
+
+**Settings → Board → Code review → Open pull requests as drafts.** Off by default.
+
+When it is on, whichever agent opens a card's pull request (the build agent or the review agent)
+opens it as a draft, and it stays a draft
+through every review round, so the fix commits the loop pushes do not each start your repository's
+full CI. When the card reaches Ready for merge, the board marks the pull request ready for review:
+that is when full CI runs, once. The card's activity says "marked ready; CI started", and a draft
+pull request carries a small **Draft** tag until then.
+
+- Auto-merge waits for your repository's _required_ checks. A repository with no required checks
+  merges as soon as the forge allows it. Right after a draft is marked ready, the merge always waits
+  a few minutes first, whether it is automatic or you clicked Merge, so the checks it just started
+  have time to appear.
+- If your forge or plan does not offer draft pull requests, the agent opens a normal one instead.
+  Forgejo and Gitea use a `WIP:` title prefix as the draft marker, and the board removes it.
+- A pull request that is already ready — one you marked ready yourself, or one opened before the
+  setting was on — is left alone.
+- Merging a card whose pull request is still a draft marks it ready first, even if you have since
+  turned the setting off, because a draft cannot be merged. The merge then waits for the CI that
+  starts.
 
 ## Turning it off
 

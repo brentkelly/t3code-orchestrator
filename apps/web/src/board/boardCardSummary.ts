@@ -213,6 +213,8 @@ export interface BoardCardMeta {
   readonly planCount: number;
   /** The linked pull request, absent until PR detection lands (t3o-11). */
   readonly prNumber: number | undefined;
+  /** Whether that pull request is an open draft (T3O-12) — the Draft tag. */
+  readonly prDraft: boolean;
   /** Whether the brief carries a picture — the one right-aligned indicator. */
   readonly briefHasImage: boolean;
   /** Nothing to show, so the row adds no height to the card. */
@@ -231,6 +233,7 @@ export function boardCardMeta(card: BoardCardShell, threadCount: number): BoardC
     threadCount,
     planCount,
     prNumber,
+    prDraft: prNumber !== undefined && card.prDraft === true,
     briefHasImage,
     empty:
       card.dependencyCount === 0 &&

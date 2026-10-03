@@ -690,6 +690,12 @@ export const BoardCardPullRequest = Schema.Struct({
       else's repository and is not the board's to delete. */
   headBranch: TrimmedNonEmptyString,
   baseRef: TrimmedNonEmptyString,
+  /** Whether the forge reports the pull request as a draft (T3O-12). Drives the
+      card's Draft tag; the mark-ready decision re-reads the forge rather than
+      trusting this. Key-optional and present only when true, so a link
+      recorded before it existed decodes unchanged and a ready link costs no
+      bytes. */
+  isDraft: Schema.optionalKey(Schema.Boolean),
   /** When this state was first observed — NOT when it was last checked.
       Refreshes that find no change record no event at all (the decider's
       no-op guard deliberately excludes this field, or every card open would
@@ -719,7 +725,8 @@ export function boardCardPullRequestsEqual(
     left.state === right.state &&
     left.url === right.url &&
     left.headBranch === right.headBranch &&
-    left.baseRef === right.baseRef
+    left.baseRef === right.baseRef &&
+    (left.isDraft === true) === (right.isDraft === true)
   );
 }
 
@@ -755,6 +762,12 @@ export function boardCardDisplayPullRequest(
     closed is the one most likely to get a NEW one. Treating it as terminal
     pinned the card to the dead PR forever with no way back, since every
     refresh trigger checks this first. */
+/** Whether a pull request link is an open draft (T3O-12) — the Draft tag's
+    one reading, shared by the shell's JS producer and its tests. */
+export function boardCardPullRequestIsOpenDraft(pullRequest: BoardCardPullRequest | null): boolean {
+  return pullRequest !== null && pullRequest.state === "open" && pullRequest.isDraft === true;
+}
+
 export function isBoardCardPullRequestTerminal(pullRequest: BoardCardPullRequest | null): boolean {
   return pullRequest !== null && pullRequest.state === "merged";
 }
@@ -1921,6 +1934,9 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
       back to Code review is a move that otherwise explains nothing, and
       `card-moved` says where but never why. */
   "card-review-round-requested",
+  /** The board marked a draft pull request ready for review (T3O-12), which
+      is what starts the repository's full CI — and the row that says so. */
+  "card-pull-request-ready",
   /** A finished card's worktree was kept because removing it would lose work
       (T3O-52, D5). Written only when the REASON changes, so a refusal repeated
       on every card open stays one row. */
@@ -2217,6 +2233,20 @@ export function boardRunLabel(
 export const BOARD_CONFLICT_STEP_LABEL = "Conflicts";
 
 /**
+ * The step label a merge-stage CI fix wears (T3O-12) — the failing-checks twin
+ * of `BOARD_CONFLICT_STEP_LABEL`, reserved on exactly the same terms: only the
+ * supervisor reactor stamps it, and it is the whole identity of a CI fix.
+ */
+export const BOARD_CHECKS_FIX_STEP_LABEL = "Fixing CI";
+
+/** Which merge fix the reactor armed a merge-stage run as, if any. */
+export type BoardMergeFixKind = "conflict" | "checks";
+
+function boardMergeFixLabel(kind: BoardMergeFixKind): string {
+  return kind === "conflict" ? BOARD_CONFLICT_STEP_LABEL : BOARD_CHECKS_FIX_STEP_LABEL;
+}
+
+/**
  * The label a `select-step` stamps on the step it starts: the reserved conflict
  * label when the reactor armed this run as a merge conflict fix, and otherwise
  * the executor's own — with the reserved label taken off it, since only the
@@ -2227,11 +2257,14 @@ export const BOARD_CONFLICT_STEP_LABEL = "Conflicts";
  * does not own.
  */
 export function boardSelectedStepLabel(
-  armedConflictFix: boolean,
+  armedFix: BoardMergeFixKind | null,
   planStepLabel: string | null,
 ): string | null {
-  if (armedConflictFix) return BOARD_CONFLICT_STEP_LABEL;
-  return planStepLabel === BOARD_CONFLICT_STEP_LABEL ? null : planStepLabel;
+  if (armedFix !== null) return boardMergeFixLabel(armedFix);
+  return planStepLabel === BOARD_CONFLICT_STEP_LABEL ||
+    planStepLabel === BOARD_CHECKS_FIX_STEP_LABEL
+    ? null
+    : planStepLabel;
 }
 
 /**
@@ -2251,7 +2284,22 @@ export function boardSelectedStepLabel(
 export function isBoardConflictFixLive(
   state: Pick<BoardCardStepState, "stepLabel" | "status">,
 ): boolean {
-  if (state.stepLabel !== BOARD_CONFLICT_STEP_LABEL) return false;
+  return isBoardMergeFixLive(state, "conflict");
+}
+
+/** Whether a step row is a CI fix that is still live (T3O-12) — the same
+    liveness rule as `isBoardConflictFixLive`, keyed on the CI-fix label. */
+export function isBoardChecksFixLive(
+  state: Pick<BoardCardStepState, "stepLabel" | "status">,
+): boolean {
+  return isBoardMergeFixLive(state, "checks");
+}
+
+function isBoardMergeFixLive(
+  state: Pick<BoardCardStepState, "stepLabel" | "status">,
+  kind: BoardMergeFixKind,
+): boolean {
+  if (state.stepLabel !== boardMergeFixLabel(kind)) return false;
   return (
     !isBoardTerminalStepStatus(state.status) &&
     state.status !== "stalled" &&
@@ -4327,6 +4375,10 @@ export const BoardCardNoteKind = Schema.Literals([
       (T3O-39, D10) — the only record of WHY the card walked back to Code
       review, and of which round it bought. */
   "card-review-round-requested",
+  /** A draft pull request marked ready for review (T3O-12) — or, on arrival
+      at the merge stage, an attempt to that failed and is left to the next
+      merge attempt, which no merge refusal has happened yet to explain. */
+  "card-pull-request-ready",
 ]);
 export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
 
@@ -5641,6 +5693,11 @@ export const BoardCardShell = Schema.Struct({
       authoritative, card-carrying deltas rest it at false, and the client
       preserves the last known value (`applyBoardShellStreamEvent`). */
   stepConflictFix: Schema.Boolean,
+  /** Whether the card's live step is a merge-stage CI fix (T3O-12) — the
+      failing-checks twin of `stepConflictFix`, derived through
+      `isBoardChecksFixLive` on exactly the same terms. Key-optional (present
+      only when true) to keep the shell inside its byte budget. */
+  stepChecksFix: Schema.optionalKey(Schema.Boolean),
   /** Why the step stalled (T3O-22, D10) — the four readings of one status. Its
       absence IS the legacy `gave-up` reading, which is why this is KEY-optional
       rather than nullable: the shell is under a fixed per-card byte budget
@@ -5780,6 +5837,10 @@ export const BoardCardShell = Schema.Struct({
       card, which the detail pane already subscribes to, so the column view
       pays no bytes for a link it does not render. */
   prNumber: Schema.optionalKey(NonNegativeInt),
+  /** Whether the card's CURRENT pull request is an open draft (T3O-12), absent
+      otherwise. On the aggregate like `prNumber`, so both producers carry it;
+      `cardMetaShellFields.test.ts` pins the pair. Draws the neutral Draft tag. */
+  prDraft: Schema.optionalKey(Schema.Boolean),
   // Review summary — counts, never bodies; absent until the post-MVP
   // review pipeline lands, then populated only in the review stage.
   roundCurrent: Schema.optionalKey(NonNegativeInt),
@@ -6000,6 +6061,9 @@ export function makeBoardCardShell(input: {
       snapshot and the `card-stalled` delta; rests false on card deltas, which
       the client preserves through exactly like `stalled`. */
   readonly stepConflictFix?: boolean | undefined;
+  /** Whether the card's live step is a CI fix (T3O-12). Same rules as
+      `stepConflictFix`. */
+  readonly stepChecksFix?: boolean | undefined;
   /** Why the step stalled and when it next tries (T3O-22, D10). Real on the
       snapshot and the `card-stalled` delta; ABSENT on card deltas, where the
       client preserves the last known pair. Absent on the snapshot means the
@@ -6046,6 +6110,9 @@ export function makeBoardCardShell(input: {
   readonly autoMergeHeldSince?: IsoDateTime | null | undefined;
   readonly autoMergeGaveUp?: boolean | null | undefined;
   readonly autoMergeArmed?: boolean | null | undefined;
+  /** Whether the current pull request is an open draft (T3O-12). On the card
+      aggregate, so both producers carry it. */
+  readonly prDraft?: boolean | null | undefined;
   /** The worktree pair (T3O-52, D5). On the card aggregate like the auto-merge
       trio, so both producers carry it; `cardMetaShellFields.test.ts` pins it. */
   readonly worktreeReady?: boolean | null | undefined;
@@ -6085,6 +6152,7 @@ export function makeBoardCardShell(input: {
     stepRunning: input.stepRunning ?? false, // durable "being worked" flag: real on the snapshot, rests false on card deltas
     stepAwaiting: input.stepAwaiting ?? null, // t3o-34 (D4): real on the snapshot, rests null on card deltas
     stepConflictFix: input.stepConflictFix ?? false, // T3O-9: real on the snapshot, rests false on card deltas
+    ...(input.stepChecksFix === true ? { stepChecksFix: true } : {}), // T3O-12: same, key omitted when false
     // T3O-22 (D10): omitted when there is nothing to say, which keeps a board
     // that has never hit a limit byte-identical to a pre-T3O-22 payload.
     ...(input.stalledReason == null ? {} : { stalledReason: input.stalledReason }),
@@ -6124,6 +6192,7 @@ export function makeBoardCardShell(input: {
     ...(input.autoMergeHeldSince == null ? {} : { autoMergeHeldSince: input.autoMergeHeldSince }),
     ...(input.autoMergeGaveUp === true ? { autoMergeGaveUp: true } : {}),
     ...(input.autoMergeArmed === true ? { autoMergeArmed: true } : {}),
+    ...(input.prDraft === true ? { prDraft: true } : {}),
     // The worktree pair (T3O-52, D5): omitted when there is nothing on disk,
     // so a card without a worktree costs what it did before.
     ...(input.worktreeReady === true ? { worktreeReady: true } : {}),
@@ -6211,6 +6280,7 @@ export function boardCardShellFromCard(
     // compute is exactly the reconnect-flicker `cardMetaShellFields.test.ts`
     // exists to catch.
     autoMergeArmed: card.parentCardId !== null || card.autoMerge,
+    prDraft: boardCardPullRequestIsOpenDraft(card.pullRequest),
     worktreeReady: card.worktree?.status === "ready",
     worktreeKeptReason: card.worktree?.reclaimBlockedReason ?? null,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
@@ -6322,6 +6392,10 @@ export const BoardCardStalledShellEvent = Schema.Struct({
       copy: admission does not change WHICH step is running, and selection
       always precedes it, so the flag is never late. */
   stepConflictFix: Schema.Boolean,
+  /** And whether the step is a live CI fix (T3O-12), on the same terms.
+      Key-optional, present only when true: this delta is authoritative for
+      it, so absence means false. */
+  stepChecksFix: Schema.optionalKey(Schema.Boolean),
   /** And why the step stalled, plus when it next tries (T3O-22, D10) — key-
       optional exactly as on the shell, and cleared by their absence here. They
       ride this delta rather than one of their own for the reason `held` does:
@@ -7031,6 +7105,9 @@ export const BoardMergeCardPullRequestResult = Schema.Union([
   /** A conflict-resolution step has been started; the Merge button is disabled
       until it finishes, and a successful one completes this merge. */
   Schema.Struct({ outcome: Schema.Literal("conflict"), detail: Schema.String }),
+  /** The pull request's checks failed, and a CI-fix step has been started
+      (T3O-12). Like `conflict`, Merge is disabled until it finishes. */
+  Schema.Struct({ outcome: Schema.Literal("checks-fix"), detail: Schema.String }),
   /** The forge said no for a reason only a human can clear — a failing check,
       a missing approval. `detail` is the forge's own wording. */
   Schema.Struct({ outcome: Schema.Literal("refused"), detail: Schema.String }),
@@ -8450,6 +8527,13 @@ export const BoardStageExecutionReview = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY)),
   ),
   rounds: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_ROUNDS))),
+  /** Open the card's pull request as a draft, and keep it one for the whole
+      loop (T3O-12). The board marks it ready when the card reaches the
+      merge-role stage, so the repository's full CI runs once, after review,
+      rather than on every fix commit the loop pushes. Off by default; global
+      rather than per project, because a forge or plan without drafts simply
+      gets a normal pull request. */
+  draftPullRequests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   phases: Schema.Struct({
     review: BoardReviewPhaseExecution.pipe(
       Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_REVIEW_PHASES.review)),
@@ -8490,6 +8574,16 @@ export type BoardMergeStrategy = PullRequestMergeMethod;
  */
 export const DEFAULT_BOARD_MERGE_CONFLICT_PROMPT =
   "This card's pull request cannot merge because its branch conflicts with the base branch. Merge the base branch into this card's branch and resolve every conflict. Resolve them on the merits: read enough of both sides to understand what each change was for, and keep the intent of both — never resolve a conflict by simply discarding one side to make the merge go through. Run the project's checks and tests afterwards and fix what they catch, because a conflict resolved wrongly usually compiles and still breaks behaviour. Then commit and push normally. Do NOT rebase, and do NOT force-push under any circumstances: this branch has an open pull request, and rewriting its history strands the review comments already anchored to it and can destroy work someone else pushed. If the conflicts need a decision you cannot make from the code alone, stop and say so rather than guessing.";
+
+/**
+ * The CI-fix step's prompt (T3O-12): the merge was refused because the pull
+ * request's checks failed. Compiled in rather than a setting, like the sync
+ * step's: it is board machinery, started only after a refusal the forge
+ * itself classified, and the merge stage's one editable prompt already belongs
+ * to the conflict fix.
+ */
+export const DEFAULT_BOARD_CHECKS_FIX_PROMPT =
+  "This card's pull request cannot merge because its CI checks are failing. Find out why: read the failing checks and their logs (`gh pr checks` and `gh run view --log-failed` on GitHub, or the equivalent for this repository's forge). Fix the cause in this card's branch, then run the project's own checks and tests and fix what they catch. Merge the base branch in only if the failure actually needs it. Then commit and push normally. Do NOT rebase, do NOT force-push, and do NOT convert the pull request back to a draft: a push to a ready pull request re-runs CI, which is exactly what has to happen next. If the failure is flaky, an infrastructure problem, or unrelated to this branch's changes, do not guess at a fix — stop and say so.";
 
 /**
  * The `{ kind: "merge" }` member — the merge-role stage's config. Like the

@@ -57,4 +57,17 @@ describe("boardConflictFix (T3O-9)", () => {
       expect(boardConflictFix({ live: true, queued })?.tooltip).toContain("nothing is needed");
     }
   });
+
+  it("tells a CI fix apart from a conflict fix, in the pill and on the Merge button (T3O-12)", () => {
+    const info = boardConflictFix({ live: false, checks: true });
+    expect(info?.label).toBe("Fixing CI");
+    expect(info?.headline).toBe("Fixing the failing checks");
+    expect(info?.mergeDisabledReason).toBe("Fixing CI…");
+    expect(info?.tooltip).toContain("nothing is needed");
+    expect(boardConflictFix({ live: false, checks: true, queued: true })?.headline).toBe(
+      "Waiting for an agent to fix the failing checks",
+    );
+    expect(boardConflictFix({ live: true })?.mergeDisabledReason).toBe("Resolving conflicts…");
+    expect(boardConflictFix({ live: false, checks: false })).toBeNull();
+  });
 });

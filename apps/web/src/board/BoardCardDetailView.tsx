@@ -30,6 +30,7 @@ import {
   BOARD_AUTO_MERGE_MAX_ATTEMPTS,
   boardCardArchiveNeedsConfirmation,
   boardCardDisplayPullRequest,
+  boardCardPullRequestIsOpenDraft,
   boardCardHasLiveBranch,
   boardStageIndex,
   boardNextStageId,
@@ -1276,6 +1277,7 @@ function ActionsSection({
     pullRequestState: pullRequest?.state ?? null,
     pullRequestNumber: pullRequest?.number ?? null,
     conflictFixLive: props.conflictFix !== null,
+    conflictFixReason: props.conflictFix?.mergeDisabledReason ?? null,
     stepHeld: props.stepHeld === true,
     hasBranch: card.worktree !== null,
     blocked: card.blocked,
@@ -1646,6 +1648,13 @@ function ActionsSection({
             <GitPullRequestIcon className="size-3.5" />
             <span>View PR</span>
             <span className="text-muted-foreground">{`#${displayed.number}`}</span>
+            {/* Neutral (T3O-12): a draft is waiting for the review loop, not on
+                anyone. The board marks it ready at Ready for merge. */}
+            {boardCardPullRequestIsOpenDraft(displayed) ? (
+              <span className="rounded border border-input px-1 text-[10.5px] text-muted-foreground">
+                Draft
+              </span>
+            ) : null}
           </button>
         </BoardHint>
       ) : null}

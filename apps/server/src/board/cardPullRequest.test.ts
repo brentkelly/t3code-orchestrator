@@ -19,7 +19,9 @@ import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
 import {
+  BOARD_CHECKS_FIX_STEP_LABEL,
   BOARD_CONFLICT_STEP_LABEL,
+  DEFAULT_BOARD_CHECKS_FIX_PROMPT,
   BOARD_SEED_STAGE_IDS,
   EMPTY_BOARD_STATE,
   ProviderInstanceId,
@@ -600,7 +602,8 @@ describe("merging a card's pull request", () => {
         settings: settings(),
         pullRequest: openPr,
         mergeFailure: "the host refused",
-        mergeState: refusal({ failed: 1 }),
+        // A policy block — failing CI starts a fix of its own (T3O-12).
+        mergeState: refusal({ blockedReason: "other" }),
       },
       (h) =>
         Effect.gen(function* () {
@@ -608,7 +611,7 @@ describe("merging a card's pull request", () => {
           assert.equal(result.outcome, "refused");
           // The user reads WHY, derived from the same structured state the
           // board branched on rather than from the refusal's prose.
-          assert.include(result.outcome === "refused" ? result.detail : "", "checks are failing");
+          assert.include(result.outcome === "refused" ? result.detail : "", "review approval");
           // A block only a human can clear: the card stays where it is, and
           // nothing tries again on its own.
           assert.deepStrictEqual(movesTo(yield* h.commands), []);
@@ -653,6 +656,169 @@ describe("merging a card's pull request", () => {
           assert.deepStrictEqual(movesTo(yield* h.commands), []);
         }),
     ),
+  );
+
+  it.effect(
+    "starts ONE CI-fix step when the checks fail, stamped and prompted as one (T3O-12)",
+    () =>
+      withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+          settings: settings(),
+          pullRequest: openPr,
+          mergeFailure: "the host refused",
+          mergeState: refusal({ failed: 1 }),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+            assert.equal(result.outcome, "checks-fix");
+            yield* h.pumpDomain(stageThreadRequested(cardInMerge(), 1));
+            const selected = (yield* h.commands).filter(
+              (command) => command.type === "board.card.select-step",
+            ) as ReadonlyArray<{
+              readonly prompt: string;
+              readonly humanInLoop: boolean;
+              readonly stepLabel: string | null;
+            }>;
+            assert.equal(selected.length, 1, "a step should have been selected");
+            assert.strictEqual(selected[0]!.stepLabel, BOARD_CHECKS_FIX_STEP_LABEL);
+            assert.include(selected[0]!.prompt, DEFAULT_BOARD_CHECKS_FIX_PROMPT);
+            assert.notInclude(selected[0]!.prompt, "conflicts with the base branch");
+            assert.strictEqual(selected[0]!.humanInLoop, false);
+            assert.deepStrictEqual(movesTo(yield* h.commands), []);
+          }),
+      ),
+  );
+
+  it.effect("re-attempts the merge when the CI fix succeeds, and merges", () =>
+    Effect.gen(function* () {
+      const card = cardInMerge();
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: openPr,
+          // Refused for the failing check, then accepted after the fix.
+          mergeOutcomes: ["the host refused", null],
+          mergeState: refusal({ failed: 1 }),
+          initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            assert.equal((yield* h.reactor.mergePullRequest(card.id)).outcome, "checks-fix");
+            yield* Ref.update(h.model, (model) => ({
+              ...model,
+              board: {
+                ...(model.board ?? EMPTY_BOARD_STATE),
+                stepStates: [runningMergeStep(card.id)],
+              },
+            }));
+            yield* h.pumpDomain(mergeStepCompleted(card.id, 2));
+            assert.equal((yield* h.mergeAttempts).length, 2);
+            assert.deepStrictEqual(movesTo(yield* h.commands), [String(BOARD_SEED_STAGE_IDS.done)]);
+          }),
+      );
+    }),
+  );
+
+  it.effect("stops after ONE CI fix when the checks fail again, until a human clicks Merge", () =>
+    Effect.gen(function* () {
+      const card = cardInMerge();
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [card] },
+          settings: settings(),
+          pullRequest: openPr,
+          mergeFailure: "the host refused",
+          mergeState: refusal({ failed: 1 }),
+          initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const startedFixes = Effect.map(
+              h.commands,
+              (commands) =>
+                commands.filter((command) => command.type === "board.card.start-stage-thread")
+                  .length,
+            );
+            assert.equal((yield* h.reactor.mergePullRequest(card.id)).outcome, "checks-fix");
+            yield* Ref.update(h.model, (model) => ({
+              ...model,
+              board: {
+                ...(model.board ?? EMPTY_BOARD_STATE),
+                stepStates: [runningMergeStep(card.id)],
+              },
+            }));
+            yield* h.pumpDomain(mergeStepCompleted(card.id, 2));
+            // The re-attempt failed the same way: no second automatic fix, and
+            // the ladder stops the card saying why — armed or not.
+            assert.equal(yield* startedFixes, 1);
+            const notes = (yield* h.commands).flatMap((command) =>
+              command.type === "board.card.record-note" && command.kind === "card-merge-refused"
+                ? [command.detail ?? ""]
+                : [],
+            );
+            assert.equal(notes.length, 1);
+            assert.include(notes[0], "Held the merge. Its checks are failing.");
+
+            // A human's click is a new decision, and buys one more fix.
+            yield* Ref.update(h.model, (model) => ({
+              ...model,
+              board: { ...(model.board ?? EMPTY_BOARD_STATE), stepStates: [] },
+            }));
+            assert.equal((yield* h.reactor.mergePullRequest(card.id)).outcome, "checks-fix");
+            assert.equal(yield* startedFixes, 2);
+          }),
+      );
+    }),
+  );
+
+  it.effect("never starts a CI fix for checks the token could not read", () =>
+    withGovernor(
+      {
+        board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+        settings: settings(),
+        pullRequest: openPr,
+        mergeFailure: "the host refused",
+        mergeState: { ...refusal({ failed: 1 }), checksUnread: true },
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+          assert.equal(result.outcome, "refused");
+        }),
+    ),
+  );
+
+  it.effect(
+    "never starts a CI fix when the forge pins the refusal on a draft or a branch behind its base",
+    () =>
+      Effect.forEach(
+        ["draft", "behind"] as const,
+        (blockedReason) =>
+          withGovernor(
+            {
+              board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
+              settings: settings(),
+              pullRequest: openPr,
+              mergeFailure: "the host refused",
+              // A pushed fix clears neither blocker, so the one CI fix must not
+              // be spent on it.
+              mergeState: refusal({ blockedReason, failed: 1 }),
+            },
+            (h) =>
+              Effect.gen(function* () {
+                const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+                assert.equal(result.outcome, "refused", blockedReason);
+                const started = (yield* h.commands).filter(
+                  (command) => command.type === "board.card.start-stage-thread",
+                );
+                assert.equal(started.length, 0, blockedReason);
+              }),
+          ),
+        { discard: true },
+      ),
   );
 
   it.effect("does not claim a conflict fix that never started", () =>

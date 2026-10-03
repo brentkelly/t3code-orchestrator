@@ -215,6 +215,7 @@ export function reviewLoopDecision(input: {
         // itself rather than claiming "round 6 of up to 5".
         rounds: Math.max(rounds, round),
         prompt: phaseConfig.prompt,
+        draftPullRequests: review.draftPullRequests,
       }),
       model: resolvePhaseModel({
         phase,
@@ -252,6 +253,7 @@ export function reviewLoopDecision(input: {
       round,
       baseRefName: input.baseRefName,
       retargetedTo: input.baseRetargetedTo,
+      draftPullRequests: review.draftPullRequests,
     }),
     model: config.model,
     runtimeMode: config.runtimeMode,

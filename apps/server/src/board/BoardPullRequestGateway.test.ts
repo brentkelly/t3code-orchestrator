@@ -28,6 +28,7 @@ import type {
   PullRequestDetail,
   PullRequestInvalidateInput,
   PullRequestRef,
+  PullRequestUpdateInput,
 } from "@t3tools/contracts";
 import { PullRequestOperationError, PullRequestUnavailableError } from "@t3tools/contracts";
 
@@ -168,6 +169,10 @@ function makeGateway(
           invalidate: (input: PullRequestInvalidateInput) =>
             Effect.sync(() => {
               calls.push(`invalidate:${input.reference?.repository}:${input.reference?.number}`);
+            }),
+          update: (input: PullRequestUpdateInput) =>
+            Effect.sync(() => {
+              calls.push(`update:${input.repository}:${input.number}:title=${input.title}`);
             }),
           detail: (input: PullRequestRef) =>
             Effect.sync(() => {
@@ -359,5 +364,105 @@ describe("BoardPullRequestGateway.mergeState", () => {
       assert.strictEqual(state.headSha, "abc123");
       assert.deepStrictEqual(state.checks.failing, ["ci/build"]);
     }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("BoardPullRequestGateway.markReady (T3O-12)", () => {
+  const capabilities = (actions: ReadonlyArray<string>) =>
+    ({ actions }) as unknown as PullRequestDetail["capabilities"];
+
+  it.effect("readies a GitHub draft through the host's ready action, after a live read", () => {
+    const { calls, layer } = makeGateway({
+      detail: detail({ isDraft: true, capabilities: capabilities(["merge", "ready"]) }),
+    });
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      const result = yield* gateway.markReady({ projectId: PROJECT, number: 110 });
+
+      assert.strictEqual(result, "readied");
+      assert.deepStrictEqual(calls, [
+        "invalidate:brentkelly/t3code-orchestrator:110",
+        "detail:brentkelly/t3code-orchestrator:110:allowStale=false",
+        "runAction:brentkelly/t3code-orchestrator:110:ready:undefined",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "leaves a pull request that is not a draft alone, which is what makes it idempotent",
+    () => {
+      const { calls, layer } = makeGateway({
+        detail: detail({ isDraft: false, capabilities: capabilities(["ready"]) }),
+      });
+      return Effect.gen(function* () {
+        const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+        const result = yield* gateway.markReady({ projectId: PROJECT, number: 110 });
+
+        assert.strictEqual(result, "not-draft");
+        assert.isFalse(calls.some((call) => call.startsWith("runAction")));
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("does not touch a closed draft", () => {
+    const { calls, layer } = makeGateway({
+      detail: detail({ isDraft: true, state: "closed", capabilities: capabilities(["ready"]) }),
+    });
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      assert.strictEqual(
+        yield* gateway.markReady({ projectId: PROJECT, number: 110 }),
+        "not-draft",
+      );
+      assert.isFalse(calls.some((call) => call.startsWith("runAction")));
+    }).pipe(Effect.provide(layer));
+  });
+
+  for (const [title, expected] of [
+    ["WIP: Add drafts", "Add drafts"],
+    ["[WIP] Add drafts", "Add drafts"],
+    ["wip:Add drafts", "Add drafts"],
+  ] as const) {
+    it.effect(`readies a Forgejo draft by taking the marker off "${title}"`, () => {
+      const { calls, layer } = makeGateway({
+        detail: detail({
+          provider: "forgejo",
+          isDraft: true,
+          title,
+          capabilities: capabilities(["merge", "close", "reopen", "update-branch"]),
+        }),
+      });
+      return Effect.gen(function* () {
+        const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+        const result = yield* gateway.markReady({ projectId: PROJECT, number: 110 });
+
+        assert.strictEqual(result, "readied");
+        assert.include(calls, `update:brentkelly/t3code-orchestrator:110:title=${expected}`);
+        assert.isFalse(calls.some((call) => call.startsWith("runAction")));
+      }).pipe(Effect.provide(layer));
+    });
+  }
+
+  it.effect("refuses, as blocked, a draft this host has no way to ready", () => {
+    const { layer } = makeGateway({
+      detail: detail({ isDraft: true, title: "Add drafts", capabilities: capabilities(["merge"]) }),
+    });
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      const error = yield* Effect.flip(gateway.markReady({ projectId: PROJECT, number: 110 }));
+      assert.strictEqual(error.refusal, "blocked");
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("boardTitleWithoutWipPrefix (T3O-12)", () => {
+  it("strips a leading WIP marker and the space after it, and nothing else", () => {
+    assert.strictEqual(BoardPullRequestGateway.boardTitleWithoutWipPrefix("WIP: Fix"), "Fix");
+    assert.strictEqual(BoardPullRequestGateway.boardTitleWithoutWipPrefix("[WIP]  Fix"), "Fix");
+    assert.strictEqual(
+      BoardPullRequestGateway.boardTitleWithoutWipPrefix("Fix the WIP: thing"),
+      "Fix the WIP: thing",
+    );
+    assert.strictEqual(BoardPullRequestGateway.boardTitleWithoutWipPrefix("WIP:"), null);
   });
 });

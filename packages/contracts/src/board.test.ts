@@ -54,10 +54,15 @@ import {
   deriveBoardCardChildRunning,
   isBoardCardWorking,
   isBoardConflictFixLive,
+  isBoardChecksFixLive,
+  BoardCardPullRequest,
+  boardCardPullRequestIsOpenDraft,
+  boardCardPullRequestsEqual,
   boardSelectedStepLabel,
   reviewStepLabel,
   BOARD_REVIEW_PHASE_IDS,
   BOARD_CONFLICT_STEP_LABEL,
+  BOARD_CHECKS_FIX_STEP_LABEL,
   BOARD_STEP_STATUSES,
   boardCardPendingSplit,
   boardCardShellPendingSplit,
@@ -2009,14 +2014,14 @@ describe("a live merge conflict fix (isBoardConflictFixLive, T3O-9)", () => {
 
 describe("stamping a selected step's label (boardSelectedStepLabel, T3O-9)", () => {
   it("stamps the reserved label on the armed fix, and reads back as live", () => {
-    const stamped = boardSelectedStepLabel(true, null);
+    const stamped = boardSelectedStepLabel("conflict", null);
     expect(stamped).toBe(BOARD_CONFLICT_STEP_LABEL);
     expect(isBoardConflictFixLive({ stepLabel: stamped, status: "running" })).toBe(true);
   });
 
   it("passes an ordinary executor label through untouched", () => {
-    expect(boardSelectedStepLabel(false, reviewStepLabel("triage", 2))).toBe("Triage · round 2");
-    expect(boardSelectedStepLabel(false, null)).toBe(null);
+    expect(boardSelectedStepLabel(null, reviewStepLabel("triage", 2))).toBe("Triage · round 2");
+    expect(boardSelectedStepLabel(null, null)).toBe(null);
   });
 
   it("takes the reserved label off a plan the reactor did not arm", () => {
@@ -2025,9 +2030,25 @@ describe("stamping a selected step's label (boardSelectedStepLabel, T3O-9)", () 
     // what role the step's stage plays — so an executor naming its step
     // `Conflicts` would otherwise light the pill and disable Merge on a card
     // whose merge is not held.
-    const stamped = boardSelectedStepLabel(false, BOARD_CONFLICT_STEP_LABEL);
+    const stamped = boardSelectedStepLabel(null, BOARD_CONFLICT_STEP_LABEL);
     expect(stamped).toBe(null);
     expect(isBoardConflictFixLive({ stepLabel: stamped, status: "running" })).toBe(false);
+  });
+
+  it("stamps the CI-fix label on an armed CI fix, which is live as a CI fix only (T3O-12)", () => {
+    const stamped = boardSelectedStepLabel("checks", null);
+    expect(stamped).toBe(BOARD_CHECKS_FIX_STEP_LABEL);
+    expect(isBoardChecksFixLive({ stepLabel: stamped, status: "running" })).toBe(true);
+    expect(isBoardChecksFixLive({ stepLabel: stamped, status: "queued" })).toBe(true);
+    expect(isBoardChecksFixLive({ stepLabel: stamped, status: "stalled" })).toBe(false);
+    expect(isBoardConflictFixLive({ stepLabel: stamped, status: "running" })).toBe(false);
+    expect(isBoardChecksFixLive({ stepLabel: BOARD_CONFLICT_STEP_LABEL, status: "running" })).toBe(
+      false,
+    );
+  });
+
+  it("takes the CI-fix label off a plan the reactor did not arm (T3O-12)", () => {
+    expect(boardSelectedStepLabel(null, BOARD_CHECKS_FIX_STEP_LABEL)).toBe(null);
   });
 
   it("is not a label today's review loop can mint", () => {
@@ -2035,8 +2056,40 @@ describe("stamping a selected step's label (boardSelectedStepLabel, T3O-9)", () 
     for (const phase of [...BOARD_REVIEW_PHASE_IDS, "sync"] as const) {
       for (let round = 1; round <= 5; round += 1) {
         expect(reviewStepLabel(phase, round)).not.toBe(BOARD_CONFLICT_STEP_LABEL);
+        expect(reviewStepLabel(phase, round)).not.toBe(BOARD_CHECKS_FIX_STEP_LABEL);
       }
     }
+  });
+});
+
+const decodePullRequestLink = Schema.decodeUnknownSync(BoardCardPullRequest);
+
+describe("a pull request link's draft flag (T3O-12)", () => {
+  const link = {
+    number: 412,
+    url: "https://example.test/pull/412",
+    state: "open",
+    headBranch: "board/t3o-12",
+    baseRef: "t3o",
+    checkedAt: "2026-10-03T00:00:00.000Z",
+  } as const;
+
+  it("decodes a link recorded before the flag existed as not a draft", () => {
+    const decoded = decodePullRequestLink(link);
+    expect(boardCardPullRequestIsOpenDraft(decoded)).toBe(false);
+  });
+
+  it("treats a draft flip as a change worth recording, and ready-vs-absent as none", () => {
+    expect(boardCardPullRequestsEqual(link, { ...link, isDraft: true })).toBe(false);
+    expect(boardCardPullRequestsEqual(link, { ...link, isDraft: false })).toBe(true);
+  });
+
+  it("tags only an OPEN draft", () => {
+    expect(boardCardPullRequestIsOpenDraft({ ...link, isDraft: true })).toBe(true);
+    expect(boardCardPullRequestIsOpenDraft({ ...link, state: "closed", isDraft: true })).toBe(
+      false,
+    );
+    expect(boardCardPullRequestIsOpenDraft(null)).toBe(false);
   });
 });
 
