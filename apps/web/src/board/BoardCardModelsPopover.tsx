@@ -2,13 +2,14 @@
  * The card's per-stage model overrides (t3o-29), opened from the card modal's
  * kebab menu.
  *
- * Two rows — Build and Review — each the same `ModelRow` the pipeline settings
- * and the review pane's per-round drawer use, so model, reasoning and access
- * level all arrive together and look identical everywhere the board sets a
- * model.
+ * One row per role-holding stage — Planning, Build and Review — each the same
+ * `ModelRow` the pipeline settings and the review pane's per-round drawer use,
+ * so model, reasoning and access level all arrive together and look identical
+ * everywhere the board sets a model.
  *
- * The rows are role-resolved but the map is keyed by STAGE ID (D1): two rows is
- * a judgement about what belongs in a popover, not a claim about the schema.
+ * The rows are role-resolved but the map is keyed by STAGE ID (D1): which rows
+ * appear is a judgement about what belongs in a popover, not a claim about the
+ * schema — which is why adding Planning (#119) was a UI change alone.
  *
  * It renders no trigger of its own. The kebab item and the header pill are both
  * doors into it, and a popover cannot have two triggers, so the caller owns

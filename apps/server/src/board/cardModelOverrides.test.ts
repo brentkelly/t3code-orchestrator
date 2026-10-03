@@ -37,6 +37,7 @@ import {
 } from "./supervisorHarness.testkit.ts";
 
 const building = String(BOARD_SEED_STAGE_IDS.building);
+const planning = String(BOARD_SEED_STAGE_IDS.planning);
 const reviewStage = String(BOARD_SEED_STAGE_IDS.review);
 
 /** The on-demand kickoff signal, the cheapest way to drive one real spawn
@@ -81,13 +82,16 @@ interface SelectedStep {
 const spawnedStep = (
   cards: ReadonlyArray<BoardCard>,
   subject: BoardCard,
+  // Planning only runs when the workspace configures a step for it; the Build
+  // suites leave it unset, as they always have.
+  settings = settingsWith({ building: [codexStep], globalMaxConcurrent: 4 }),
 ): Effect.Effect<SelectedStep> =>
   Effect.gen(function* () {
     let step: SelectedStep | null = null;
     yield* withGovernor(
       {
         board: { nextCardNumberByProject: {}, cards: [...cards] },
-        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 4 }),
+        settings,
       },
       (h) =>
         Effect.gen(function* () {
@@ -283,6 +287,52 @@ describe("per-card model overrides reach the spawn (t3o-29)", () => {
       // no prompt injected, human-in-the-loop forced (D7).
       assert.strictEqual(step.humanInLoop, true);
       assert.strictEqual(step.prompt, "");
+    }),
+  );
+});
+
+/** A card sitting in Planning, and a workspace that runs Planning on codex. */
+const planningCard = (input: {
+  readonly id: string;
+  readonly modelOverrides?: BoardCard["modelOverrides"];
+  readonly parentCardId?: string;
+}): BoardCard => ({
+  ...buildCard(input),
+  stage: BOARD_SEED_STAGE_IDS.planning,
+});
+const planningSettings = settingsWith({
+  building: [codexStep],
+  planning: codexStep,
+  globalMaxConcurrent: 4,
+});
+
+// The popover's Planning row (#119). The storage and the reactor were
+// always stage-id keyed, so these pin that a Planning override written by the
+// new row actually reaches the plan-mode spawn — no server change behind it.
+describe("per-card model overrides reach the Planning spawn (#119)", () => {
+  it.effect("a card's own Planning override is what the step runs on", () =>
+    Effect.gen(function* () {
+      const card = planningCard({ id: "card-1", modelOverrides: { [planning]: opus } });
+      const step = yield* spawnedStep([card], card, planningSettings);
+      assert.strictEqual(step.model, opus.model);
+      assert.strictEqual(step.providerInstanceId, String(opus.instanceId));
+    }),
+  );
+
+  it.effect("a Build override does not leak into Planning", () =>
+    Effect.gen(function* () {
+      const card = planningCard({ id: "card-1", modelOverrides: { [building]: opus } });
+      const step = yield* spawnedStep([card], card, planningSettings);
+      assert.strictEqual(step.providerInstanceId, String(codexStep.providerInstanceId));
+    }),
+  );
+
+  it.effect("a sub-board child with no Planning override runs its PARENT's", () =>
+    Effect.gen(function* () {
+      const parent = planningCard({ id: "parent-1", modelOverrides: { [planning]: opus } });
+      const child = planningCard({ id: "child-1", parentCardId: "parent-1" });
+      const step = yield* spawnedStep([parent, child], child, planningSettings);
+      assert.strictEqual(step.model, opus.model);
     }),
   );
 });
