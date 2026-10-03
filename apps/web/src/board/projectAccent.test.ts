@@ -50,18 +50,18 @@ describe("project accent palette", () => {
     expect(Object.keys(PROJECT_ICON_ACCENTS).toSorted()).toEqual([...ICON_COLORS].toSorted());
   });
 
-  it("fills the pill with the accent at half saturation", () => {
+  it("fills the dot and pill with the accent at half saturation", () => {
     for (const [name, accent] of ALL_ACCENTS) {
-      expect(accent.pillHex, `${name} pill fill`).toBe(halfSaturation(accent.hex));
-      expect(accent.dot).toBe(`bg-[${accent.hex}]`);
+      expect(accent.mutedHex, `${name} pill fill`).toBe(halfSaturation(accent.hex));
+      expect(accent.dot, `${name} dot fill`).toBe(`bg-[${accent.mutedHex}]`);
     }
   });
 
   it("computes every pill foreground from its own fill", () => {
     for (const [name, accent] of ALL_ACCENTS) {
-      const expected = boardLabelForeground(accent.pillHex);
+      const expected = boardLabelForeground(accent.mutedHex);
       expect(accent.pill, `${name} pill foreground`).toBe(
-        `bg-[${accent.pillHex}] text-${expected === "#ffffff" ? "white" : `[${expected}]`}`,
+        `bg-[${accent.mutedHex}] text-${expected === "#ffffff" ? "white" : `[${expected}]`}`,
       );
     }
   });
