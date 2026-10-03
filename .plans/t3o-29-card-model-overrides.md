@@ -167,7 +167,7 @@ Per the prototype (`.plans/prototype/t3o.dc.html`), which is the UI reference fo
   row for free — under a label and note: **Planning** _Shapes the work into a plan_ (added in
   #119), **Build** _Runs the plan in the worktree_, **Review** _Adversarial review rounds_.
 - The card header shows a small pill **only when an override is set**, summarising it
-  (`Build sonnet-4.7`, or `Custom models` when several are), with every stages' resolved values in
+  (`Build sonnet-4.7`, or `Custom models` when several are), with each stage's resolved values in
   its tooltip. It opens the same popover.
 
 A popover rather than a `MenuSub`: `ModelRow` opens a Popover for the model list and a menu for
