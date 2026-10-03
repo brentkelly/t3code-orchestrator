@@ -6785,6 +6785,7 @@ const make = Effect.gen(function* () {
     // Per-card in-memory bookkeeping outlives the card unless it is reaped
     // here — each entry is a leak the process never gets back.
     settledAtDone.delete(String(card.id));
+    autoMergeDeferredUntilUnblocked.delete(String(card.id));
     disarmPendingMerge(card.id);
     // Release the slot the card's step held. NOT a `board.card.settle-step`
     // dispatch: that command requires the card to exist, and it does not any
