@@ -13,12 +13,16 @@
 import {
   BOARD_DRAFT_PULL_REQUEST_BUILD,
   BOARD_SEED_STAGE_IDS,
+  BoardCardId,
   type BoardCard,
+  type BoardState,
   type OrchestrationCommand,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
 import type { BoardMergeState } from "./boardMergeState.ts";
 import {
@@ -33,6 +37,10 @@ import {
 const BUILDING = String(BOARD_SEED_STAGE_IDS.building);
 const REVIEW = String(BOARD_SEED_STAGE_IDS.review);
 const MERGE = String(BOARD_SEED_STAGE_IDS.merge);
+const DONE = String(BOARD_SEED_STAGE_IDS.done);
+
+/** Past the ladder's first rung (3 minutes ± 60s jitter), short of the second. */
+const RUNG_ONE = Duration.minutes(4);
 
 const draftPr: VcsStatusChangeRequest = {
   number: 412,
@@ -45,11 +53,12 @@ const draftPr: VcsStatusChangeRequest = {
 };
 
 /** The card as it arrives at the merge stage, its draft link already recorded. */
-const cardAt = (stage: string): BoardCard =>
+const cardAt = (stage: string, input: { readonly autoMerge?: boolean } = {}): BoardCard =>
   makeBoardCard({
     id: "card-one",
     stage,
     orderKey: "m",
+    ...(input.autoMerge === undefined ? {} : { autoMerge: input.autoMerge }),
     worktree: readyWorktree("card-one"),
     pullRequest: {
       number: draftPr.number,
@@ -64,13 +73,17 @@ const cardAt = (stage: string): BoardCard =>
 
 const setup = (input: {
   readonly drafts: boolean;
+  readonly autoMerge?: boolean;
   readonly markReadyOutcomes?: ReadonlyArray<
     "readied" | "not-draft" | { readonly failWith: string }
   >;
   readonly mergeFailure?: string;
   readonly mergeState?: BoardMergeState;
 }) => ({
-  board: { cards: [cardAt(MERGE)], nextCardNumberByProject: {} },
+  board: {
+    cards: [cardAt(MERGE, input.autoMerge === undefined ? {} : { autoMerge: input.autoMerge })],
+    nextCardNumberByProject: {},
+  },
   settings: settingsWith({
     building: [codexStep],
     globalMaxConcurrent: 3,
@@ -88,6 +101,9 @@ const notesOf = (commands: ReadonlyArray<OrchestrationCommand>, kind: string) =>
       ? [command.detail ?? ""]
       : [],
   );
+
+const cardOf = (board: BoardState) =>
+  board.cards.find((card) => card.id === BoardCardId.make("card-one"));
 
 it.effect("marks the draft ready once on arrival at Ready for merge, and says so", () =>
   withGovernor(setup({ drafts: true, markReadyOutcomes: ["readied", "not-draft"] }), (h) =>
@@ -136,7 +152,8 @@ it.effect("a merge still readies a recorded draft after the setting is turned of
       assert.deepStrictEqual(notesOf(yield* h.commands, "card-pull-request-ready"), [
         "PR #412 marked ready; CI started.",
       ]);
-      assert.strictEqual((yield* h.mergeAttempts).length, 1);
+      // Readying started CI; the merge waits for it (see below).
+      assert.strictEqual((yield* h.mergeAttempts).length, 0);
     }),
   ),
 );
@@ -184,7 +201,7 @@ it.effect("a failed ready is noted, and the next merge attempt tries it again fi
         assert.deepStrictEqual(notesOf(yield* h.commands, "card-pull-request-ready").slice(1), [
           "PR #412 marked ready; CI started.",
         ]);
-        assert.strictEqual((yield* h.mergeAttempts).length, 1);
+        assert.strictEqual((yield* h.mergeAttempts).length, 0);
       }),
   ),
 );
@@ -197,6 +214,75 @@ it.effect("a failed ready on the merge path is recorded as a merge refusal", () 
         yield* h.reactor.mergePullRequest(cardAt(MERGE).id);
         const refused = notesOf(yield* h.commands, "card-merge-refused");
         assert.isTrue(refused.some((detail) => detail.includes("gh: rate limited")));
+      }),
+  ),
+);
+
+// Readying a draft starts the CI the merge should wait for, but its checks
+// have not registered yet. A repository that skips its jobs on drafts reports
+// them as skipped, which reads as green, so merging in the same breath would
+// land the pull request without CI.
+it.effect("an armed card readied on arrival waits a rung for its CI, then merges", () =>
+  withGovernor(
+    setup({ drafts: true, autoMerge: true, markReadyOutcomes: ["readied", "not-draft"] }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAt(MERGE, { autoMerge: true }), REVIEW, MERGE, 1));
+        assert.strictEqual((yield* h.mergeAttempts).length, 0);
+        const hold = cardOf(yield* h.board)?.autoMergeHold ?? null;
+        assert.strictEqual(hold?.classification, "soft");
+        assert.notStrictEqual(hold?.retryAt, null);
+        assert.deepStrictEqual(notesOf(yield* h.commands, "card-merge-refused"), []);
+
+        yield* TestClock.adjust(RUNG_ONE);
+        yield* h.reactor.drain;
+        assert.strictEqual((yield* h.mergeAttempts).length, 1);
+        assert.strictEqual(String(cardOf(yield* h.board)?.stage), DONE);
+      }),
+  ),
+);
+
+it.effect("a Merge click that readies a draft waits for its CI, even on an unarmed card", () =>
+  withGovernor(setup({ drafts: true, markReadyOutcomes: ["readied", "not-draft"] }), (h) =>
+    Effect.gen(function* () {
+      const result = yield* h.reactor.mergePullRequest(cardAt(MERGE).id);
+      assert.strictEqual(result.outcome, "refused");
+      assert.strictEqual((yield* h.mergeAttempts).length, 0);
+      assert.strictEqual(cardOf(yield* h.board)?.autoMergeHold?.classification, "soft");
+
+      yield* TestClock.adjust(RUNG_ONE);
+      yield* h.reactor.drain;
+      assert.strictEqual((yield* h.mergeAttempts).length, 1);
+      assert.strictEqual(String(cardOf(yield* h.board)?.stage), DONE);
+    }),
+  ),
+);
+
+it.effect("a ready that keeps failing writes one merge-refused row, not one per rung", () =>
+  withGovernor(
+    setup({
+      drafts: true,
+      autoMerge: true,
+      markReadyOutcomes: [{ failWith: "gh: rate limited" }],
+      mergeFailure: "Pull request is still a draft.",
+      mergeState: {
+        mergeable: "blocked",
+        blockedReason: "draft",
+        checks: { total: 1, passed: 0, pending: 1, failed: 0, failing: [], running: ["ci"] },
+        headSha: "sha-one",
+        checksUnread: false,
+      },
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAt(MERGE, { autoMerge: true }), REVIEW, MERGE, 1));
+        assert.strictEqual(notesOf(yield* h.commands, "card-merge-refused").length, 1);
+        assert.notStrictEqual(cardOf(yield* h.board)?.autoMergeHold?.retryAt ?? null, null);
+
+        yield* TestClock.adjust(RUNG_ONE);
+        yield* h.reactor.drain;
+        assert.strictEqual((yield* h.mergeAttempts).length, 2);
+        assert.strictEqual(notesOf(yield* h.commands, "card-merge-refused").length, 1);
       }),
   ),
 );

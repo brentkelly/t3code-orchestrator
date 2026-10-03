@@ -72,13 +72,15 @@ that is when full CI runs, once. The card's activity says "marked ready; CI star
 pull request carries a small **Draft** tag until then.
 
 - Auto-merge waits for your repository's _required_ checks. A repository with no required checks
-  merges as soon as the forge allows it.
+  merges as soon as the forge allows it. Right after a draft is marked ready, the merge always waits
+  a few minutes first, so the checks it just started have time to appear.
 - If your forge or plan does not offer draft pull requests, the agent opens a normal one instead.
   Forgejo and Gitea use a `WIP:` title prefix as the draft marker, and the board removes it.
 - A pull request that is already ready — one you marked ready yourself, or one opened before the
   setting was on — is left alone.
 - Merging a card whose pull request is still a draft marks it ready first, even if you have since
-  turned the setting off, because a draft cannot be merged.
+  turned the setting off, because a draft cannot be merged. The merge then waits for the CI that
+  starts.
 
 ## Turning it off
 

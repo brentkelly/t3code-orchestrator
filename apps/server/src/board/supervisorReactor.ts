@@ -2788,7 +2788,12 @@ const make = Effect.gen(function* () {
       mergeAwaitingChecks.delete(String(cardId));
       const outcome = yield* mergeCardPullRequest(cardId);
       const card = yield* readCard(cardId);
-      if (card !== null && (card.autoMergeHold !== null || (yield* cardAutoMergeArmed(card)))) {
+      if (
+        card !== null &&
+        (card.autoMergeHold !== null ||
+          mergeAwaitingChecks.has(String(cardId)) ||
+          (yield* cardAutoMergeArmed(card)))
+      ) {
         yield* recordAutoMergeOutcome(cardId, outcome, { resetLadder: true });
       }
       return outcome;
@@ -4783,21 +4788,29 @@ const make = Effect.gen(function* () {
    *
    * A failure never throws: it writes a note naming the forge's reason, and the
    * next merge attempt (`mergeCardPullRequest`) calls this again before it
-   * merges.
+   * merges. A retry ladder already waiting on this card writes no further
+   * note: the first one said it, and the ladder writes its own row if it stops.
+   *
+   * Returns whether it readied the pull request just now, in which case the
+   * caller must not merge yet: the CI that readying started has not
+   * registered its checks, and a repository that skips its jobs on drafts
+   * would read as green.
    */
   const markCardPullRequestReady = Effect.fn("board-supervisor-markCardPullRequestReady")(
     function* (card: BoardCard, options: { readonly forMerge: boolean }) {
       const pullRequest = card.pullRequest;
-      if (pullRequest === null || pullRequest.state !== "open") return;
-      if (!options.forMerge && !(yield* draftPullRequestsOn)) return;
+      if (pullRequest === null || pullRequest.state !== "open") return false;
+      if (!options.forMerge && !(yield* draftPullRequestsOn)) return false;
       const result = yield* pullRequests
         .markReady({ projectId: card.projectId, number: pullRequest.number })
         .pipe(Effect.catch((error) => Effect.succeed({ failure: error.detail } as const)));
-      if (result === "not-draft") return;
+      if (result === "not-draft") return false;
       if (result === "readied") {
         // Bypass the lookup cache: it would otherwise keep the Draft tag up
         // for as long as the cached answer lives.
         yield* refreshCardPullRequestLink(card, { force: true });
+      } else if (card.autoMergeHold?.retryAt != null) {
+        return false;
       }
       yield* dispatch({
         type: "board.card.record-note",
@@ -4815,8 +4828,19 @@ const make = Effect.gen(function* () {
             : `Could not mark PR #${pullRequest.number} ready for review: ${result.failure} The next merge attempt tries again.`,
         createdAt: yield* nowIso,
       });
+      return result === "readied";
     },
   );
+
+  /** The merge outcome for a pull request readied a moment ago (T3O-12): a
+      soft refusal, so the merge waits a rung for the CI it just started. */
+  const justReadiedRefusal = (
+    number: number,
+  ): Extract<BoardMergeAttemptResult, { readonly outcome: "refused" }> => ({
+    outcome: "refused",
+    detail: `PR #${number} was a draft, so it was marked ready for review just now and its CI has only started. Merging once those checks pass.`,
+    mergeState: null,
+  });
 
   /**
    * Ask the forge WHY it just refused a merge, once (T3O-47).
@@ -4945,7 +4969,15 @@ const make = Effect.gen(function* () {
     // can never merge, and a draft left over from before the setting was
     // turned off still merges. Keyed on the RECORDED link so an ordinary merge
     // spends no extra forge read; the helper re-reads live before it acts.
-    if (pullRequest.isDraft === true) yield* markCardPullRequestReady(fresh, { forMerge: true });
+    // Readying it starts CI, so this attempt stops there and the merge waits
+    // on the retry ladder — an unarmed card too, since a human asked for it.
+    if (
+      pullRequest.isDraft === true &&
+      (yield* markCardPullRequestReady(fresh, { forMerge: true }))
+    ) {
+      mergeAwaitingChecks.add(String(fresh.id));
+      return justReadiedRefusal(pullRequest.number);
+    }
 
     // The pull request has to merge into the branch this card is actually
     // based on (T3O-5, D10). A retarget rebases the branch and moves the
@@ -5886,11 +5918,12 @@ const make = Effect.gen(function* () {
           // And a CI fix's re-attempt always went to the ladder above (its
           // push re-ran CI, so it lands on PENDING checks by design): the hold
           // pill tells that wait, and the ladder writes the row if it stops.
+          // So does a re-attempt that readied a draft and now waits on its CI.
           if (
             outcome.outcome !== "merged" &&
             outcome.outcome !== "conflict" &&
             outcome.outcome !== "checks-fix" &&
-            finishedFix !== "checks"
+            !mergeAwaitingChecks.has(String(card.id))
           ) {
             yield* dispatch({
               type: "board.card.record-note",
@@ -7183,13 +7216,16 @@ const make = Effect.gen(function* () {
     // kickoff and the auto-merge below, so the merge never meets a draft. A
     // fresh arrival also buys the card a fresh automatic CI fix, and ends any
     // wait a previous visit's CI fix left behind.
+    let readiedOnArrival = false;
     if (
       boardStageWithRole(board, "merge")?.stageId === event.payload.toStage &&
       event.payload.fromStage !== event.payload.toStage
     ) {
       checksFixSpent.delete(String(card.id));
       mergeAwaitingChecks.delete(String(card.id));
-      yield* markCardPullRequestReady((yield* readCard(card.id)) ?? card, { forMerge: false });
+      readiedOnArrival = yield* markCardPullRequestReady((yield* readCard(card.id)) ?? card, {
+        forMerge: false,
+      });
     }
 
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
@@ -7231,7 +7267,16 @@ const make = Effect.gen(function* () {
       toIndex === fromIndex + 1 &&
       (yield* cardAutoMergeArmed(card))
     ) {
-      yield* autoMergeCard(card);
+      // A pull request readied a moment ago has CI that has not registered
+      // its checks yet (T3O-12): start the card on the ladder's first rung
+      // rather than merging into checks that only look green.
+      if (readiedOnArrival && card.pullRequest !== null) {
+        yield* recordAutoMergeOutcome(card.id, justReadiedRefusal(card.pullRequest.number), {
+          resetLadder: false,
+        });
+      } else {
+        yield* autoMergeCard(card);
+      }
     }
     // A card that LEFT the merge stage carries no hold with it (T3O-38, D10):
     // a hold explains a merge that is no longer imminent, and a card sitting
