@@ -258,6 +258,40 @@ it.effect("a Merge click that readies a draft waits for its CI, even on an unarm
   ),
 );
 
+// An unarmed card readied on arrival records no hold, so without a memory of
+// the ready a click seconds later would merge into checks that only look green.
+it.effect("a Merge click soon after arrival readied the draft still waits for its CI", () =>
+  withGovernor(setup({ drafts: true, markReadyOutcomes: ["readied", "not-draft"] }), (h) =>
+    Effect.gen(function* () {
+      yield* h.pumpDomain(cardMoved(cardAt(MERGE), REVIEW, MERGE, 1));
+      assert.strictEqual(cardOf(yield* h.board)?.autoMergeHold ?? null, null);
+
+      yield* TestClock.adjust(Duration.seconds(20));
+      const result = yield* h.reactor.mergePullRequest(cardAt(MERGE).id);
+      assert.strictEqual(result.outcome, "refused");
+      assert.strictEqual((yield* h.mergeAttempts).length, 0);
+      assert.strictEqual(cardOf(yield* h.board)?.autoMergeHold?.classification, "soft");
+
+      yield* TestClock.adjust(RUNG_ONE);
+      yield* h.reactor.drain;
+      assert.strictEqual((yield* h.mergeAttempts).length, 1);
+      assert.strictEqual(String(cardOf(yield* h.board)?.stage), DONE);
+    }),
+  ),
+);
+
+it.effect("a Merge click once the ready's first rung has passed merges straight away", () =>
+  withGovernor(setup({ drafts: true, markReadyOutcomes: ["readied", "not-draft"] }), (h) =>
+    Effect.gen(function* () {
+      yield* h.pumpDomain(cardMoved(cardAt(MERGE), REVIEW, MERGE, 1));
+      yield* TestClock.adjust(RUNG_ONE);
+      const result = yield* h.reactor.mergePullRequest(cardAt(MERGE).id);
+      assert.strictEqual(result.outcome, "merged");
+      assert.strictEqual((yield* h.mergeAttempts).length, 1);
+    }),
+  ),
+);
+
 it.effect("a ready that keeps failing writes one merge-refused row, not one per rung", () =>
   withGovernor(
     setup({

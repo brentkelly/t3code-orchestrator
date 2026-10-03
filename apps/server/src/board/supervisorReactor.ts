@@ -50,6 +50,7 @@ import {
   boardCardAutoMergeArmed,
   type BoardCardAutoMergeHold,
   BOARD_USAGE_LIMIT_MAX_HORIZON_MS,
+  BOARD_AUTO_MERGE_RETRY_DELAYS_MS,
   boardProviderLimit,
   boardProviderLimitHolds,
   boardRetryDelayMs,
@@ -2786,7 +2787,24 @@ const make = Effect.gen(function* () {
       // fresh decision: an unarmed card's wait on its last fix's checks ends.
       checksFixSpent.delete(String(cardId));
       mergeAwaitingChecks.delete(String(cardId));
-      const outcome = yield* mergeCardPullRequest(cardId);
+      // A pull request readied within the ladder's first rung has CI that may
+      // not have registered its checks yet, so the click waits on the ladder
+      // just as the arrival and merge-path readies do.
+      const readiedAtMs = readiedAt.get(String(cardId));
+      const recentlyReadied =
+        readiedAtMs !== undefined &&
+        (yield* detectorNowMs) - readiedAtMs < BOARD_AUTO_MERGE_RETRY_DELAYS_MS[0];
+      if (!recentlyReadied) readiedAt.delete(String(cardId));
+      const recentPullRequest = recentlyReadied
+        ? ((yield* readCard(cardId))?.pullRequest ?? null)
+        : null;
+      let outcome: BoardMergeAttemptResult;
+      if (recentPullRequest !== null && recentPullRequest.state === "open") {
+        mergeAwaitingChecks.add(String(cardId));
+        outcome = justReadiedRefusal(recentPullRequest.number);
+      } else {
+        outcome = yield* mergeCardPullRequest(cardId);
+      }
       const card = yield* readCard(cardId);
       if (
         card !== null &&
@@ -4763,6 +4781,11 @@ const make = Effect.gen(function* () {
    */
   const mergeAwaitingChecks = new Set<string>();
 
+  /** When the board last readied each card's draft (T3O-12), so a Merge click
+      inside the ladder's first rung waits for the CI that readying started.
+      In-memory: after a restart the window has long passed anyway. */
+  const readiedAt = new Map<string, number>();
+
   /** Drop a card's pending merge. Called from every path that ends a conflict
       fix WITHOUT the success that would complete the merge — settlement,
       recovery escalation and spawn failure — because each of those hands the
@@ -4809,6 +4832,7 @@ const make = Effect.gen(function* () {
         // Bypass the lookup cache: it would otherwise keep the Draft tag up
         // for as long as the cached answer lives.
         yield* refreshCardPullRequestLink(card, { force: true });
+        readiedAt.set(String(card.id), yield* detectorNowMs);
       } else if (card.autoMergeHold?.retryAt != null) {
         return false;
       }
