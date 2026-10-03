@@ -64,7 +64,8 @@ forge just said no — so clicking is always available, and clicking restarts th
 
 **Settings → Board → Code review → Open pull requests as drafts.** Off by default.
 
-When it is on, the review agent opens each card's pull request as a draft, and it stays a draft
+When it is on, whichever agent opens a card's pull request (the build agent or the review agent)
+opens it as a draft, and it stays a draft
 through every review round, so the fix commits the loop pushes do not each start your repository's
 full CI. When the card reaches Ready for merge, the board marks the pull request ready for review:
 that is when full CI runs, once. The card's activity says "marked ready; CI started", and a draft
@@ -76,6 +77,8 @@ pull request carries a small **Draft** tag until then.
   Forgejo and Gitea use a `WIP:` title prefix as the draft marker, and the board removes it.
 - A pull request that is already ready — one you marked ready yourself, or one opened before the
   setting was on — is left alone.
+- Merging a card whose pull request is still a draft marks it ready first, even if you have since
+  turned the setting off, because a draft cannot be merged.
 
 ## Turning it off
 
