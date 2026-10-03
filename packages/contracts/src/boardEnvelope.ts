@@ -265,17 +265,52 @@ export function boardReviewPhaseProtocol(input: {
 }
 
 /**
+ * The review phase's open-as-draft instruction (T3O-12). Written per forge,
+ * because the agent — not the board — opens the pull request, and it outranks
+ * any skill's own default (such as /pullrequest opening a ready one).
+ */
+export const BOARD_DRAFT_PULL_REQUEST_OPEN =
+  "Open this card's pull request as a DRAFT, whatever any skill or workflow you use would do by default: `gh pr create --draft` on GitHub, `glab mr create --draft` on GitLab, and on Forgejo or Gitea a title that starts with `WIP: `. If the pull request already exists, leave its draft state alone. If the forge refuses a draft (some plans do not offer them), open a normal pull request instead and say so in your summary. Never mark the pull request ready for review yourself — the board does that once the review converges.";
+
+/** The line every later loop step carries while drafts are on (T3O-12): the
+    fix commits the loop pushes must not start the repository's full CI. */
+export const BOARD_DRAFT_PULL_REQUEST_KEEP =
+  "The pull request is a draft; leave it as a draft — the board marks it ready.";
+
+/** The draft text a review-loop step carries, or null when drafts are off.
+    Only the review phase opens a pull request, so only it gets the open-as-
+    draft instruction; every other step just leaves the draft alone. */
+export function boardDraftPullRequestLine(input: {
+  readonly draftPullRequests: boolean;
+  readonly phase: BoardReviewPhaseId | "sync";
+}): string | null {
+  if (!input.draftPullRequests) return null;
+  return input.phase === "review" ? BOARD_DRAFT_PULL_REQUEST_OPEN : BOARD_DRAFT_PULL_REQUEST_KEEP;
+}
+
+/**
  * Compose a review phase's agent prompt (D6/D7): the phase preamble, the
  * user's per-phase intent prompt, then the protocol. The executor owns the
- * loop protocol and wraps the user's per-phase prompt with it.
+ * loop protocol and wraps the user's per-phase prompt with it. The draft line
+ * (T3O-12) sits after the user's prompt so it overrides whatever PR workflow
+ * that prompt names.
  */
 export function composeBoardReviewPhasePrompt(input: {
   readonly phase: BoardReviewPhaseId;
   readonly round: number;
   readonly rounds: number;
   readonly prompt: string;
+  readonly draftPullRequests?: boolean;
 }): string {
-  return [boardReviewPhasePreamble(input), input.prompt.trim(), boardReviewPhaseProtocol(input)]
+  return [
+    boardReviewPhasePreamble(input),
+    input.prompt.trim(),
+    boardDraftPullRequestLine({
+      draftPullRequests: input.draftPullRequests === true,
+      phase: input.phase,
+    }) ?? "",
+    boardReviewPhaseProtocol(input),
+  ]
     .filter((part) => part.trim().length > 0)
     .join("\n\n");
 }
@@ -301,6 +336,8 @@ export function composeBoardSyncPhasePrompt(input: {
       either way; only the opening sentence differs, because "a sibling card
       merged into it" is simply false for a retarget. */
   readonly retargetedTo?: string | null;
+  /** Drafts are on (T3O-12): the rebase's force-push must leave the draft be. */
+  readonly draftPullRequests?: boolean;
 }): string {
   const retargeted =
     input.retargetedTo != null && input.retargetedTo !== input.baseRefName
@@ -320,6 +357,10 @@ export function composeBoardSyncPhasePrompt(input: {
     header,
     opening === null ? DEFAULT_BOARD_SYNC_PHASE_PROMPT : `${opening} ${boardSyncPhaseMechanics()}`,
     retargeted === null ? null : boardSyncPhasePullRequestRetarget(retargeted),
+    boardDraftPullRequestLine({
+      draftPullRequests: input.draftPullRequests === true,
+      phase: "sync",
+    }),
     "To finish this step, complete with a succeeded outcome and a JSON payload { rebasedSha } naming the commit the rebased branch now points at. One review round then runs on the rebased diff before the card can merge — never skip the rebase or complete succeeded without having pushed it.",
   ]
     .filter((part): part is string => part !== null)

@@ -119,6 +119,19 @@ function failureDetail(error: unknown): string {
   return "The forge did not say why.";
 }
 
+/**
+ * A draft title with its `WIP:` / `[WIP]` marker taken off (T3O-12) — how
+ * Forgejo and Gitea mark a pull request ready, since neither has a ready
+ * action. Null when nothing would be left of the title, which no host takes.
+ * A title without the marker comes back unchanged.
+ */
+export function boardTitleWithoutWipPrefix(title: string): string | null {
+  const stripped = title.replace(/^\s*(?:\[WIP\]|WIP:)\s*/i, "");
+  if (stripped === title) return title;
+  const trimmed = stripped.trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
+
 /** A pull request as the board addresses it. `repository` is resolved here
     rather than carried on the card: it is the project's own remote, which the
     read model already records, and a card that predates the field would
@@ -175,6 +188,19 @@ export class BoardPullRequestGateway extends Context.Service<
     readonly mergeState: (
       input: BoardPullRequestRef,
     ) => Effect.Effect<BoardMergeState, BoardPullRequestGatewayError>;
+    /**
+     * Mark a draft pull request ready for review (T3O-12).
+     *
+     * Reads the forge LIVE first and acts only on an open draft, which is what
+     * makes it idempotent and retry-safe: a pull request a human already
+     * readied, one that was never a draft, or one this call readied a moment
+     * ago comes back `not-draft` with no write. A host with a `ready` action
+     * gets that; a host without one (Forgejo, Gitea) marks drafts with a
+     * `WIP:` / `[WIP]` title prefix, so the prefix is taken off the title.
+     */
+    readonly markReady: (
+      input: BoardPullRequestRef,
+    ) => Effect.Effect<"readied" | "not-draft", BoardPullRequestGatewayError>;
   }
 >()("t3/board/BoardPullRequestGateway") {}
 
@@ -230,7 +256,53 @@ export const layer: Layer.Layer<
         }),
       );
 
+    const markReady = (input: BoardPullRequestRef) =>
+      repositoryOf("markReady", input.projectId, "blocked").pipe(
+        Effect.flatMap((repository) => {
+          const reference = {
+            projectId: input.projectId,
+            repository,
+            number: input.number,
+            allowStale: false,
+          } as const;
+          return pullRequests.invalidate({ reference }).pipe(
+            Effect.andThen(pullRequests.detail(reference)),
+            Effect.flatMap((detail): Effect.Effect<"readied" | "not-draft", unknown> => {
+              if (detail.state !== "open" || !detail.isDraft) return Effect.succeed("not-draft");
+              if (detail.capabilities.actions.includes("ready")) {
+                return pullRequests
+                  .runAction({ ...reference, action: "ready" })
+                  .pipe(Effect.as("readied" as const));
+              }
+              const title = boardTitleWithoutWipPrefix(detail.title);
+              if (title === null || title === detail.title) {
+                return Effect.fail(
+                  new BoardPullRequestGatewayError({
+                    operation: "markReady",
+                    detail: "This host cannot mark a draft pull request ready for review.",
+                    refusal: "blocked",
+                  }),
+                );
+              }
+              return pullRequests
+                .update({ ...reference, title })
+                .pipe(Effect.as("readied" as const));
+            }),
+          );
+        }),
+        Effect.catch((error) =>
+          Effect.fail(
+            new BoardPullRequestGatewayError({
+              operation: "markReady",
+              detail: failureDetail(error),
+              refusal: refusalOf(error),
+            }),
+          ),
+        ),
+      );
+
     return BoardPullRequestGateway.of({
+      markReady,
       find: (input) =>
         // T3o (T3O-48): a forced lookup bumps this checkout's PR-lookup epoch,
         // which is part of the cache key — so it bypasses the lookup TTL and
