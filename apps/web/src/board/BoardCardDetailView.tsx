@@ -171,6 +171,7 @@ import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
 import { BoardHint } from "./BoardHint";
+import { resolveBoardStepRecovery, type BoardStepRecovery } from "./boardStepRecovery";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply inside this pure view. */
@@ -404,8 +405,8 @@ export interface BoardCardDetailViewProps {
       one says recovery gave up, the other says the human chose to stop — and a
       card can only ever be in one of them. */
   readonly stepPaused: { readonly stageLabel: string } | null;
-  /** Resume a paused step, sending it back to the build queue. Absent when the
-      card cannot be resumed from here. */
+  /** Resume a parked step — paused, or stalled (T3O-13's Continue) — sending it
+      back to the build queue. Absent when the card cannot be resumed from here. */
   readonly onResumeStep?: (() => void) | undefined;
   readonly resumeStepPending?: boolean | undefined;
   /** Dispatch `board.card.start-stage-thread` for the card's current stage. */
@@ -1250,6 +1251,95 @@ function BoardStageSecondaryMenu({
   );
 }
 
+/**
+ * Continue / Restart / Move on for a stalled step (T3O-13): one split button,
+ * Continue on its face because picking up where the step stopped is what a
+ * stall almost always wants, the other two behind the caret.
+ */
+function BoardStepRecoveryButton({
+  recovery,
+  pending,
+  onContinue,
+  onRestart,
+  onMoveStage,
+}: {
+  readonly recovery: BoardStepRecovery;
+  readonly pending: boolean;
+  /** Absent when the card cannot be resumed from here; Restart still can. */
+  readonly onContinue: (() => void) | undefined;
+  readonly onRestart: () => void;
+  readonly onMoveStage: (toStage: BoardStageId) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const next = recovery.next;
+  const item =
+    "flex w-full items-center gap-2 rounded px-1.5 py-1.5 text-left text-[12.5px] font-medium text-foreground";
+  return (
+    <div className="flex items-stretch">
+      <BoardHint label="Pick up the stopped step where it left off">
+        <button
+          className={cn(
+            "inline-flex h-[34px] min-w-0 flex-1 items-center justify-center gap-[7px] rounded-lg rounded-r-none border border-primary bg-primary px-3 text-[13px] font-medium text-primary-foreground shadow-xs",
+            onContinue === undefined || pending
+              ? "cursor-not-allowed opacity-50"
+              : "hover:bg-primary/90",
+          )}
+          disabled={onContinue === undefined || pending}
+          onClick={() => onContinue?.()}
+          type="button"
+        >
+          <PlayIcon className="size-3.5" />
+          {recovery.continueLabel}
+        </button>
+      </BoardHint>
+      <Popover onOpenChange={setOpen} open={open}>
+        <PopoverTrigger
+          aria-label="Other ways to recover"
+          className="-ml-px inline-flex h-[34px] w-7 shrink-0 items-center justify-center rounded-lg rounded-l-none border border-primary bg-primary text-primary-foreground shadow-xs hover:bg-primary/90"
+        >
+          <ChevronDownIcon className="size-3.5" />
+        </PopoverTrigger>
+        <PopoverPopup align="end" className="w-[262px] p-1.5">
+          <div className="flex flex-col gap-0.5">
+            <button
+              className={cn(item, "hover:bg-accent")}
+              onClick={() => {
+                setOpen(false);
+                onRestart();
+              }}
+              type="button"
+            >
+              <RotateCcwIcon className="size-3.5 shrink-0 text-muted-foreground" />
+              {recovery.restartLabel}
+            </button>
+            {next === null ? null : (
+              <BoardHint label={next.disabledReason ?? undefined}>
+                <button
+                  className={cn(
+                    item,
+                    next.disabledReason === null
+                      ? "hover:bg-accent"
+                      : "cursor-not-allowed opacity-50",
+                  )}
+                  disabled={next.disabledReason !== null}
+                  onClick={() => {
+                    setOpen(false);
+                    onMoveStage(next.toStage);
+                  }}
+                  type="button"
+                >
+                  <ArrowRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  {next.label}
+                </button>
+              </BoardHint>
+            )}
+          </div>
+        </PopoverPopup>
+      </Popover>
+    </div>
+  );
+}
+
 /** Stage action, blocked reason and archive — the things you *do* to a card,
     kept together at the top of the rail. */
 function ActionsSection({
@@ -1387,6 +1477,16 @@ function ActionsSection({
                   : "Move this card to Code review and run the first review round",
           onRequest: props.onRequestReviewRound,
         };
+  // The ways out of a stalled step (T3O-13). While one stands it REPLACES
+  // "Another review round", which a stalled card can never use: the button is
+  // disabled whenever a step is live, and a stalled step is live.
+  const recovery = resolveBoardStepRecovery({
+    stages: props.stages,
+    stage: card.stage,
+    stalled: props.stepFailure !== null,
+    archived,
+    blocked: card.blocked,
+  });
   // A merge from this card is mid-flight: the button holds its spot but shows a
   // spinner and refuses further clicks until the round trip settles.
   const merging = forward?.kind === "merge" && props.merging;
@@ -1429,6 +1529,7 @@ function ActionsSection({
     humanInLoop === null &&
     displayed === null &&
     reviewRound === null &&
+    recovery === null &&
     stopRound === null &&
     // T3o (T3O-48): a card with nothing but the missing-PR notice still needs
     // the section, or the one thing it has to say has nowhere to render.
@@ -1613,7 +1714,15 @@ function ActionsSection({
           order: Merge → Another review round → View PR, all three full width.
           Styled off its shipped sibling below rather than the prototype's
           inline CSS, which differs only by a rounding. */}
-      {reviewRound === null ? null : (
+      {recovery !== null ? (
+        <BoardStepRecoveryButton
+          onContinue={props.onResumeStep}
+          onMoveStage={props.onMoveStage}
+          onRestart={props.onRestartStage}
+          pending={props.resumeStepPending === true}
+          recovery={recovery}
+        />
+      ) : reviewRound === null ? null : (
         <BoardHint label={reviewRound.hint}>
           <button
             className={cn(
@@ -2494,6 +2603,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   )
                 }
                 offStage={!onReviewStage}
+                stalled={onReviewStage && props.stepFailure !== null}
                 maxRounds={props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS}
                 onAdvance={(() => {
                   // "Advance anyway" is an ordinary stage move, gated exactly
@@ -2576,7 +2686,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 stageLabel={props.stepFailure.stageLabel}
                 error={props.stepFailure.error}
                 waiting={props.stepFailure.waiting}
-                onRestart={props.stageRestart?.disabledReason == null ? props.onRestartStage : null}
               />
             ) : null}
             {props.worktreeKept == null ? null : (
@@ -2639,9 +2748,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   stageLabel={props.stepFailure.stageLabel}
                   error={props.stepFailure.error}
                   waiting={props.stepFailure.waiting}
-                  onRestart={
-                    props.stageRestart?.disabledReason == null ? props.onRestartStage : null
-                  }
                 />
               ) : null}
               {props.worktreeKept == null ? null : (

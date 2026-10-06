@@ -52,6 +52,21 @@ Steering buys the agent one turn, not immunity. If it goes quiet for its whole t
 have spoken to it, the board nudges it exactly as it would have before, and an agent that keeps
 stalling still ends up asking you for help. A supervisor that never speaks up is not a supervisor.
 
+## When a card's agent stopped on its own
+
+Sometimes a card's step stops without anyone pressing Stop: the agent's thread died, or the board
+could not start it at all (a full disk, a provider that would not launch). The card says it
+**stopped**, and its action column offers one button with three choices:
+
+- **Continue** picks the step up where it stopped. If its thread is still there the agent is told
+  to carry on; if there is no thread, a new one starts on the same step. In Code review this is
+  the phase the loop is owed, so the loop carries on from there.
+- **Restart**, under the arrow, drops the stopped step and starts it again in a fresh thread.
+- **Move to** the next stage, also under the arrow, leaves the step behind and moves the card on.
+
+Talking to an earlier thread of the card does not restart a stopped step. That thread's work is
+already recorded, so pick one of the three instead.
+
 ## Related
 
 - [Scheduling when a card runs](board-scheduled-starts.md) — setting a time on a working card also
