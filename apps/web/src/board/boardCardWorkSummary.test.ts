@@ -269,6 +269,17 @@ describe("deriveBoardCardWorkSummary", () => {
     expect(summary.verdict.tone).toBe("attention");
   });
 
+  it("labels a stalled first review step Review stopped in amber", () => {
+    const summary = deriveBoardCardWorkSummary({
+      detail: detail({ stage: BOARD_SEED_STAGE_IDS.review }),
+      reviewStalled: true,
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(summary.review.empty).toBe(true);
+    expect(summary.verdict.label).toBe("Review stopped");
+    expect(summary.verdict.tone).toBe("warning");
+  });
+
   it("labels a stalled review step Review stopped in amber", () => {
     const summary = deriveBoardCardWorkSummary({
       detail: detail(

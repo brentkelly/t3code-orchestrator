@@ -186,8 +186,6 @@ function deriveVerdict(input: {
     }
   } else if (input.loopStatus === "converged") {
     candidates.push({ label: "Review settled", tone: "success" });
-  } else if (input.role === "review" && input.review.empty) {
-    candidates.push({ label: "Review not started", tone: "muted" });
   }
 
   if (input.prState === "merged") {
@@ -327,12 +325,17 @@ export function deriveBoardCardWorkSummary(input: {
   const { card } = input.detail;
   const role = stageRoleOf(input.stages, card.stage);
   const maxRounds = input.maxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS;
-  const { recap: review, status: loopStatus } = deriveReview(
+  const { recap: review, status: recordedStatus } = deriveReview(
     input.detail.stepCompletions,
     maxRounds,
     card.reviewOverrides?.stopAfterRound ?? null,
     card.reviewOverrides?.runThroughRound ?? null,
   );
+  // The Review pane's walk treats an empty ledger as round 1 running. Summary
+  // only does that ON the review role — feeding it off-stage would label a
+  // Building card that merely has a PR "Review paused". Recap stays empty
+  // until a completion exists.
+  const loopStatus = role === "review" && recordedStatus === null ? "running" : recordedStatus;
   const pullRequest = derivePullRequest(card);
   const build = deriveBuild({
     stages: input.stages,

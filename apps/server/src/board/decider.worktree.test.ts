@@ -745,6 +745,59 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
     }),
   );
 
+  it.effect("a title-only pull-request update is recorded as updated, not state-changed", () =>
+    Effect.gen(function* () {
+      const open = { ...mergedPr(284), state: "open" as const, title: null };
+      const card = makeCard({
+        id: "card-1",
+        stage: "merge",
+        pullRequest: open,
+        worktree: readyWorktree,
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-title"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: { ...open, title: "Summary tab" },
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.strictEqual(event.type, "board.card-pull-request-recorded");
+      if (event.type !== "board.card-pull-request-recorded") return;
+      assert.strictEqual(event.payload.transition, "updated");
+      assert.strictEqual(event.payload.card.pullRequest?.title, "Summary tab");
+      assert.strictEqual(event.payload.card.pullRequest?.state, "open");
+    }),
+  );
+
+  it.effect("a merged pull request can gain a title without a state-changed transition", () =>
+    Effect.gen(function* () {
+      const card = makeCard({
+        id: "card-1",
+        stage: "done",
+        pullRequest: mergedPr(284),
+        worktree: readyWorktree,
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-merged-title"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: { ...mergedPr(284), title: "Summary tab" },
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.strictEqual(event.type, "board.card-pull-request-recorded");
+      if (event.type !== "board.card-pull-request-recorded") return;
+      assert.strictEqual(event.payload.transition, "updated");
+      assert.strictEqual(event.payload.card.pullRequest?.state, "merged");
+      assert.strictEqual(event.payload.card.pullRequest?.title, "Summary tab");
+    }),
+  );
+
   it.effect("reclaiming a removed worktree clears the path and marks it reclaimed", () =>
     Effect.gen(function* () {
       const card = makeCard({

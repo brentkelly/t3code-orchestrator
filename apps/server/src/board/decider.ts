@@ -3164,7 +3164,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           ? "unlinked"
           : previous === null || previous.number !== next.number
             ? "linked"
-            : "state-changed";
+            : previous.state === next.state
+              ? "updated"
+              : "state-changed";
       const nextCard: BoardCard = {
         ...card,
         pullRequest: next,
