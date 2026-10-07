@@ -4044,7 +4044,11 @@ const make = Effect.gen(function* () {
       // announcing the merge a second time (`updated`, not `state-changed`).
       // Look that backfill up by NUMBER: Done may already have deleted the
       // board branch, and a branch lookup then answers "none" and would unlink
-      // the merge. A null or a different number keeps the recorded link.
+      // the merge. A null, a different number, or a same-number answer that
+      // is not still merged keeps the recorded link — lastGoodSummary can
+      // still say "open" after the merge landed, and writing that would let
+      // the next branch lookup unlink it. Skip the held summary so a live
+      // merged result can still fill the title.
       if (
         isBoardCardPullRequestTerminal(recorded) &&
         recorded !== null &&
@@ -4057,7 +4061,7 @@ const make = Effect.gen(function* () {
           .get({
             projectId: card.projectId,
             number: recorded.number,
-            ...(options?.force === true ? { force: true } : {}),
+            force: true,
           })
           .pipe(
             Effect.catch((error) =>
@@ -4086,7 +4090,8 @@ const make = Effect.gen(function* () {
           !isBoardCardPullRequestTerminal(currentLink) ||
           currentLink === null ||
           found === null ||
-          found.number !== currentLink.number
+          found.number !== currentLink.number ||
+          found.state !== "merged"
         ) {
           return boardRefreshOutcomeOf(currentLink);
         }

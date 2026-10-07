@@ -607,7 +607,7 @@ describe("card ↔ pull request link", () => {
             yield* h.reactor.refreshPullRequest(merged.id);
             assert.equal(recordedPullRequests(yield* h.commands).length, 0);
             assert.equal((yield* h.pullRequestLookups).length, 0);
-            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: false }]);
+            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: true }]);
             const card = (yield* h.board).cards[0]!;
             assert.equal(card.pullRequest?.number, 284);
             assert.equal(card.pullRequest?.state, "merged");
@@ -648,6 +648,116 @@ describe("card ↔ pull request link", () => {
     }),
   );
 
+  it.effect("keeps a merged pull request when a title backfill finds the same number closed", () =>
+    Effect.gen(function* () {
+      const merged = {
+        ...cardInMerge(),
+        pullRequest: {
+          number: 284,
+          url: openPr.url,
+          state: "merged" as const,
+          title: null,
+          headBranch: "board/card-1",
+          baseRef: "main",
+          checkedAt: "2026-01-01T00:00:00.000Z",
+        },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [merged] },
+          settings: settings(),
+          pullRequestByNumber: { ...openPr, state: "closed" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(merged.id);
+            assert.equal(recordedPullRequests(yield* h.commands).length, 0);
+            const card = (yield* h.board).cards[0]!;
+            assert.equal(card.pullRequest?.number, 284);
+            assert.equal(card.pullRequest?.state, "merged");
+          }),
+      );
+    }),
+  );
+
+  it.effect(
+    "keeps a merged pull request when a title backfill finds the same number still open",
+    () =>
+      Effect.gen(function* () {
+        const merged = {
+          ...cardInMerge(),
+          pullRequest: {
+            number: 284,
+            url: openPr.url,
+            state: "merged" as const,
+            title: null,
+            headBranch: "board/card-1",
+            baseRef: "main",
+            checkedAt: "2026-01-01T00:00:00.000Z",
+          },
+        };
+        yield* withGovernor(
+          {
+            board: { nextCardNumberByProject: {}, cards: [merged] },
+            settings: settings(),
+            // lastGoodSummary can still say "open" after the merge landed.
+            // Writing that over the recorded merge would let the next branch
+            // lookup unlink it.
+            pullRequestByNumber: openPr,
+          },
+          (h) =>
+            Effect.gen(function* () {
+              yield* h.reactor.refreshPullRequest(merged.id);
+              assert.equal(recordedPullRequests(yield* h.commands).length, 0);
+              assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: true }]);
+              const card = (yield* h.board).cards[0]!;
+              assert.equal(card.pullRequest?.number, 284);
+              assert.equal(card.pullRequest?.state, "merged");
+              assert.equal(card.pullRequest?.title, null);
+            }),
+        );
+      }),
+  );
+
+  it.effect("does not unlink a merged pull request after a stale open title backfill", () =>
+    Effect.gen(function* () {
+      const merged = {
+        ...cardInMerge(),
+        pullRequest: {
+          number: 284,
+          url: openPr.url,
+          state: "merged" as const,
+          title: null,
+          headBranch: "board/card-1",
+          baseRef: "main",
+          checkedAt: "2026-01-01T00:00:00.000Z",
+        },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [merged] },
+          settings: settings(),
+          pullRequest: null,
+          pullRequestByNumber: openPr,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(merged.id);
+            yield* h.reactor.refreshPullRequest(merged.id);
+            assert.equal(recordedPullRequests(yield* h.commands).length, 0);
+            assert.equal((yield* h.pullRequestLookups).length, 0);
+            assert.deepEqual(yield* h.pullRequestGets, [
+              { number: 284, forced: true },
+              { number: 284, forced: true },
+            ]);
+            const card = (yield* h.board).cards[0]!;
+            assert.equal(card.pullRequest?.number, 284);
+            assert.equal(card.pullRequest?.state, "merged");
+          }),
+      );
+    }),
+  );
+
   it.effect("fills a missing merged title by number when the branch lookup would find none", () =>
     Effect.gen(function* () {
       const merged = {
@@ -674,7 +784,7 @@ describe("card ↔ pull request link", () => {
             yield* h.reactor.refreshPullRequest(merged.id);
             assert.equal(recordedPullRequests(yield* h.commands).length, 1);
             assert.equal((yield* h.pullRequestLookups).length, 0);
-            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: false }]);
+            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: true }]);
             const card = (yield* h.board).cards[0]!;
             assert.equal(card.pullRequest?.title, openPr.title);
             assert.equal(card.pullRequest?.state, "merged");
@@ -709,7 +819,7 @@ describe("card ↔ pull request link", () => {
             yield* h.reactor.refreshPullRequest(merged.id);
             assert.equal(recordedPullRequests(yield* h.commands).length, 1);
             assert.equal((yield* h.pullRequestLookups).length, 0);
-            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: false }]);
+            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: true }]);
             assert.equal((yield* h.board).cards[0]!.pullRequest?.title, openPr.title);
             assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "merged");
           }),
