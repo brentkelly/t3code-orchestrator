@@ -2374,12 +2374,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     props.threadLinks.some(
       (link) => link.threadId === activeThreadId && link.threadState === "working",
     );
+  const reviewStalled = onReviewStage && boardReviewPaneStopped(props.stepFailure);
   const workSummary = hasSummary
     ? deriveBoardCardWorkSummary({
         detail: props.detail,
         stages: props.stages,
         planRows,
         reviewLive,
+        reviewStalled,
         ...(props.reviewMaxRounds === undefined ? {} : { maxRounds: props.reviewMaxRounds }),
       })
     : null;
@@ -2674,7 +2676,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 // working thread (`onReviewStage`).
                 live={reviewLive}
                 offStage={!onReviewStage}
-                stalled={onReviewStage && boardReviewPaneStopped(props.stepFailure)}
+                stalled={reviewStalled}
                 maxRounds={props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS}
                 onAdvance={(() => {
                   // "Advance anyway" is an ordinary stage move, gated exactly

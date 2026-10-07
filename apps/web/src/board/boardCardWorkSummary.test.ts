@@ -269,6 +269,35 @@ describe("deriveBoardCardWorkSummary", () => {
     expect(summary.verdict.tone).toBe("attention");
   });
 
+  it("labels a stalled review step Review stopped in amber", () => {
+    const summary = deriveBoardCardWorkSummary({
+      detail: detail(
+        { stage: BOARD_SEED_STAGE_IDS.review },
+        {
+          stepCompletions: [
+            completion("review@1", {
+              reviewedSha: "sha1",
+              findings: [
+                {
+                  id: "f1",
+                  severity: "critical",
+                  file: "a.ts",
+                  line: 1,
+                  title: "Null deref",
+                  detail: "",
+                },
+              ],
+            }),
+          ],
+        },
+      ),
+      reviewStalled: true,
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(summary.verdict.label).toBe("Review stopped");
+    expect(summary.verdict.tone).toBe("warning");
+  });
+
   it("labels a held loop Stopped in amber, matching the Review pane", () => {
     const findings = [
       {
@@ -337,6 +366,21 @@ describe("deriveBoardCardWorkSummary", () => {
     });
     expect(summary.verdict.label).toBe("Pull request closed");
     expect(summary.verdict.tone).toBe("warning");
+  });
+
+  it("labels No pull request at merge when only a retired round remains", () => {
+    const summary = deriveBoardCardWorkSummary({
+      detail: detail({
+        stage: BOARD_SEED_STAGE_IDS.merge,
+        pullRequest: null,
+        pullRequestHistory: [{ ...openPr, state: "merged" }],
+      }),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(summary.verdict.label).toBe("No pull request");
+    expect(summary.verdict.tone).toBe("warning");
+    expect(summary.pullRequest.empty).toBe(false);
+    expect(summary.pullRequest.number).toBe(110);
   });
 
   it("keeps the previous round's outstanding titles when the next review has not landed", () => {

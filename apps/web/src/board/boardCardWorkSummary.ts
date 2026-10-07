@@ -155,6 +155,7 @@ function deriveVerdict(input: {
   readonly review: BoardCardWorkSummaryReview;
   readonly loopStatus: ReturnType<typeof deriveBoardReviewLoop>["status"] | null;
   readonly reviewLive: boolean;
+  readonly reviewStalled: boolean;
   readonly prState: BoardCardPullRequestState | null;
   readonly prMissingAtMerge: boolean;
 }): BoardCardWorkSummaryVerdict {
@@ -171,7 +172,11 @@ function deriveVerdict(input: {
     candidates.push({ label: boardReviewHeldLabel("stopped"), tone: "warning" });
   } else if (input.loopStatus === "running") {
     if (input.role === "review") {
-      if (input.reviewLive) {
+      // Same order as the Review pane's statusPill: a stalled step is amber
+      // stopped, not violet waiting — nothing will run it until someone acts.
+      if (input.reviewStalled) {
+        candidates.push({ label: "Review stopped", tone: "warning" });
+      } else if (input.reviewLive) {
         candidates.push({ label: "Review running", tone: "info" });
       } else {
         candidates.push({ label: "Waiting to run", tone: "attention" });
@@ -316,6 +321,8 @@ export function deriveBoardCardWorkSummary(input: {
   readonly maxRounds?: number;
   /** The Review pane's live-thread signal: blue only while that thread works. */
   readonly reviewLive?: boolean;
+  /** The Review pane's stalled-step signal: amber when the owed phase is stopped. */
+  readonly reviewStalled?: boolean;
 }): BoardCardWorkSummary {
   const { card } = input.detail;
   const role = stageRoleOf(input.stages, card.stage);
@@ -332,6 +339,9 @@ export function deriveBoardCardWorkSummary(input: {
     completions: input.detail.stepCompletions,
     planRows: input.planRows ?? null,
   });
+  // Verdict reads the CURRENT round's pull request. Identity still uses the
+  // display helper so a retired round stays reachable after leaving Done.
+  const currentPr = card.pullRequest;
   const verdict = deriveVerdict({
     role,
     blocked: card.blocked,
@@ -339,8 +349,9 @@ export function deriveBoardCardWorkSummary(input: {
     review,
     loopStatus,
     reviewLive: input.reviewLive === true,
-    prState: pullRequest.state,
-    prMissingAtMerge: role === "merge" && pullRequest.empty,
+    reviewStalled: input.reviewStalled === true,
+    prState: currentPr?.state ?? null,
+    prMissingAtMerge: role === "merge" && currentPr === null,
   });
   return { verdict, review, build, pullRequest };
 }
