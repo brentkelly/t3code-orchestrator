@@ -227,6 +227,7 @@ describe("deriveBoardCardWorkSummary", () => {
           ],
         },
       ),
+      reviewLive: true,
       stages: BOARD_SEED_STAGES,
     });
     expect(summary.verdict.label).toBe("Review running");
@@ -238,6 +239,138 @@ describe("deriveBoardCardWorkSummary", () => {
       "Null deref",
       "Naming",
     ]);
+  });
+
+  it("uses waiting-to-run violet when the review phase is due but no thread is live", () => {
+    const summary = deriveBoardCardWorkSummary({
+      detail: detail(
+        { stage: BOARD_SEED_STAGE_IDS.review },
+        {
+          stepCompletions: [
+            completion("review@1", {
+              reviewedSha: "sha1",
+              findings: [
+                {
+                  id: "f1",
+                  severity: "critical",
+                  file: "a.ts",
+                  line: 1,
+                  title: "Null deref",
+                  detail: "",
+                },
+              ],
+            }),
+          ],
+        },
+      ),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(summary.verdict.label).toBe("Waiting to run");
+    expect(summary.verdict.tone).toBe("attention");
+  });
+
+  it("labels a held loop Stopped in amber, matching the Review pane", () => {
+    const findings = [
+      {
+        id: "f1",
+        severity: "critical" as const,
+        file: "a.ts",
+        line: 1,
+        title: "Still broken",
+        detail: "",
+      },
+    ];
+    const summary = deriveBoardCardWorkSummary({
+      detail: detail(
+        {
+          stage: BOARD_SEED_STAGE_IDS.review,
+          reviewOverrides: {
+            rounds: null,
+            stopAfterRound: 1,
+            roundModels: {},
+            runThroughRound: null,
+          },
+        },
+        {
+          stepCompletions: [
+            completion("review@1", { reviewedSha: "sha1", findings }),
+            completion("triage@1", {
+              fixedSha: "sha2",
+              dispositions: [{ findingId: "f1", action: "fixed", note: "" }],
+            }),
+            completion("adjudicate@1", {
+              verdicts: [{ findingId: "f1", verdict: "fix-incomplete", note: "" }],
+            }),
+          ],
+        },
+      ),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(summary.verdict.label).toBe("Stopped");
+    expect(summary.verdict.tone).toBe("warning");
+  });
+
+  it("prefers Merged over Review settled on a done card", () => {
+    const summary = deriveBoardCardWorkSummary({
+      detail: detail(
+        {
+          stage: BOARD_SEED_STAGE_IDS.done,
+          pullRequest: { ...openPr, state: "merged" },
+        },
+        {
+          stepCompletions: [completion("review@1", { reviewedSha: "sha", findings: [] })],
+        },
+      ),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(summary.verdict.label).toBe("Merged");
+    expect(summary.verdict.tone).toBe("success");
+  });
+
+  it("labels a closed pull request at merge amber", () => {
+    const summary = deriveBoardCardWorkSummary({
+      detail: detail({
+        stage: BOARD_SEED_STAGE_IDS.merge,
+        pullRequest: { ...openPr, state: "closed" },
+      }),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(summary.verdict.label).toBe("Pull request closed");
+    expect(summary.verdict.tone).toBe("warning");
+  });
+
+  it("keeps the previous round's outstanding titles when the next review has not landed", () => {
+    const findings = [
+      {
+        id: "f1",
+        severity: "critical" as const,
+        file: "a.ts",
+        line: 1,
+        title: "Null deref",
+        detail: "",
+      },
+    ];
+    const summary = deriveBoardCardWorkSummary({
+      detail: detail(
+        { stage: BOARD_SEED_STAGE_IDS.review },
+        {
+          stepCompletions: [
+            completion("review@1", { reviewedSha: "sha1", findings }),
+            completion("triage@1", {
+              fixedSha: "sha2",
+              dispositions: [{ findingId: "f1", action: "fixed", note: "" }],
+            }),
+            completion("adjudicate@1", {
+              verdicts: [{ findingId: "f1", verdict: "fix-incomplete", note: "" }],
+            }),
+          ],
+        },
+      ),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(summary.review.currentRound).toBe(2);
+    expect(summary.review.counts.open + summary.review.counts.disputed).toBeGreaterThan(0);
+    expect(summary.review.outstanding.map((finding) => finding.title)).toEqual(["Null deref"]);
   });
 
   it("does not list outstanding findings once a round closed clean", () => {

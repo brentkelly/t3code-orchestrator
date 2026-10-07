@@ -7,6 +7,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   DEFAULT_BOARD_REVIEW_ROUNDS,
   boardCardDisplayPullRequest,
+  boardReviewHeldLabel,
   boardStageById,
   boardStageWithRole,
   effectiveBoardStageRole,
@@ -137,7 +138,9 @@ function pickVerdict(
   let rank = -1;
   for (const candidate of candidates) {
     const next = TONE_RANK[candidate.tone];
-    if (next > rank) {
+    // Equal rank keeps the later candidate so a terminal stage or pull-request
+    // label (Merged, Done) outranks an earlier loop label at the same tone.
+    if (next >= rank) {
       winner = candidate;
       rank = next;
     }
@@ -151,6 +154,7 @@ function deriveVerdict(input: {
   readonly mergeHeld: boolean;
   readonly review: BoardCardWorkSummaryReview;
   readonly loopStatus: ReturnType<typeof deriveBoardReviewLoop>["status"] | null;
+  readonly reviewLive: boolean;
   readonly prState: BoardCardPullRequestState | null;
   readonly prMissingAtMerge: boolean;
 }): BoardCardWorkSummaryVerdict {
@@ -160,14 +164,18 @@ function deriveVerdict(input: {
   if (input.prMissingAtMerge) candidates.push({ label: "No pull request", tone: "warning" });
 
   if (input.loopStatus === "unreadable") {
-    candidates.push({ label: "Review unreadable", tone: "warning" });
+    candidates.push({ label: boardReviewHeldLabel("unreadable"), tone: "warning" });
   } else if (input.loopStatus === "round-cap") {
-    candidates.push({ label: "No convergence", tone: "warning" });
+    candidates.push({ label: boardReviewHeldLabel("round-cap"), tone: "warning" });
   } else if (input.loopStatus === "stopped") {
-    candidates.push({ label: "Held for you", tone: "attention" });
+    candidates.push({ label: boardReviewHeldLabel("stopped"), tone: "warning" });
   } else if (input.loopStatus === "running") {
     if (input.role === "review") {
-      candidates.push({ label: "Review running", tone: "info" });
+      if (input.reviewLive) {
+        candidates.push({ label: "Review running", tone: "info" });
+      } else {
+        candidates.push({ label: "Waiting to run", tone: "attention" });
+      }
     } else {
       candidates.push({ label: "Review paused", tone: "muted" });
     }
@@ -181,6 +189,8 @@ function deriveVerdict(input: {
     candidates.push({ label: "Merged", tone: "success" });
   } else if (input.role === "done") {
     candidates.push({ label: "Done", tone: "success" });
+  } else if (input.role === "merge" && input.prState === "closed") {
+    candidates.push({ label: "Pull request closed", tone: "warning" });
   } else if (input.role === "merge" && input.prState === "open") {
     candidates.push({ label: "Ready for merge", tone: "attention" });
   }
@@ -203,10 +213,18 @@ function deriveReview(
   const loop = deriveBoardReviewLoop(completions, maxRounds, stopAfterRound, runThroughRound);
   const current =
     loop.rounds.find((round) => round.round === loop.currentRound) ?? loop.rounds.at(-1) ?? null;
+  // The walk points currentRound at the next review as soon as that phase is
+  // due, before any payload exists. Outstanding titles then have to come from
+  // the last round that actually raised findings, or the list goes empty while
+  // the previous round's open and disputed items are still in the totals.
+  const outstandingSource =
+    current !== null && current.findings.length > 0
+      ? current
+      : (loop.rounds.findLast((round) => round.findings.length > 0) ?? current);
   const outstanding =
-    current === null
+    outstandingSource === null
       ? []
-      : current.findings
+      : outstandingSource.findings
           .filter((entry) => entry.resolution === "open" || entry.resolution === "disputed")
           .map((entry) => ({ id: entry.finding.id, title: entry.finding.title }));
   const severities = loop.rounds.reduce(
@@ -296,6 +314,8 @@ export function deriveBoardCardWorkSummary(input: {
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly planRows?: BoardPlanRows | null;
   readonly maxRounds?: number;
+  /** The Review pane's live-thread signal: blue only while that thread works. */
+  readonly reviewLive?: boolean;
 }): BoardCardWorkSummary {
   const { card } = input.detail;
   const role = stageRoleOf(input.stages, card.stage);
@@ -318,6 +338,7 @@ export function deriveBoardCardWorkSummary(input: {
     mergeHeld: card.autoMergeHold !== null,
     review,
     loopStatus,
+    reviewLive: input.reviewLive === true,
     prState: pullRequest.state,
     prMissingAtMerge: role === "merge" && pullRequest.empty,
   });

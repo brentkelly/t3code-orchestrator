@@ -40,7 +40,6 @@ describe("BoardCardSummaryPane", () => {
         onOpenPullRequest={noop}
         onSelectReview={noop}
         summary={empty}
-        threadLocked={false}
       />,
     );
     expect(html).toContain(">Summary</h3>");
@@ -50,19 +49,6 @@ describe("BoardCardSummaryPane", () => {
     expect(html).toContain("No build summary");
     expect(html).toContain("No PR");
     expect(html).toContain("Back to thread");
-  });
-
-  it("omits Back to thread when the thread is locked", () => {
-    const html = renderToStaticMarkup(
-      <BoardCardSummaryPane
-        onBackToThread={noop}
-        onOpenPullRequest={noop}
-        onSelectReview={noop}
-        summary={empty}
-        threadLocked
-      />,
-    );
-    expect(html).not.toContain("Back to thread");
   });
 
   it("shows review counts, outstanding titles, build summary, and PR identity", () => {
@@ -93,7 +79,6 @@ describe("BoardCardSummaryPane", () => {
             state: "open",
           },
         }}
-        threadLocked={false}
       />,
     );
     expect(html).toContain("Review running");
@@ -139,7 +124,6 @@ describe("BoardCardSummaryPane", () => {
             },
           },
         }}
-        threadLocked={false}
       />,
     );
     expect(html).toContain("1 of 2 plans done");
@@ -167,7 +151,6 @@ describe("BoardCardSummaryPane", () => {
             state: "merged",
           },
         }}
-        threadLocked={false}
       />,
     );
     expect(html).toContain("#110");

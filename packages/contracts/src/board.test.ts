@@ -78,8 +78,6 @@ import {
   liveBoardCardDependents,
   makeBoardCardShell,
   unmetBoardCardDependencies,
-  BoardCardPullRequest,
-  boardCardPullRequestsEqual,
   type BoardCard,
   type BoardPlan,
   type BoardState,
