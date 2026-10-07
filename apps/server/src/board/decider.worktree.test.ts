@@ -798,6 +798,32 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
     }),
   );
 
+  it.effect("a merged pull request is not replaced by a stale same-number open snapshot", () =>
+    Effect.gen(function* () {
+      // The refresh path re-reads the card after the lookup, then dispatches.
+      // Another refresh can commit `merged` in that gap; the command still
+      // holds the open snapshot it looked up. The reactor's guard cannot see
+      // a write that lands after its read, so the refusal lives here.
+      const card = makeCard({
+        id: "card-1",
+        stage: "done",
+        pullRequest: { ...mergedPr(284), title: "Summary tab" },
+        worktree: readyWorktree,
+      });
+      const failure = yield* decideFail(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-stale-open"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: { ...mergedPr(284), state: "open", title: "Summary tab" },
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.match(String(failure), /already records a merged pull request/);
+    }),
+  );
+
   it.effect("reclaiming a removed worktree clears the path and marks it reclaimed", () =>
     Effect.gen(function* () {
       const card = makeCard({
