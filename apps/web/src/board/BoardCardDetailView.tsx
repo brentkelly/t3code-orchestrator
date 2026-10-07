@@ -172,6 +172,7 @@ import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
 import { BoardHint } from "./BoardHint";
 import {
+  boardForwardShownBesideRecovery,
   boardReviewPaneStopped,
   resolveBoardStepRecovery,
   type BoardStepRecovery,
@@ -1647,7 +1648,8 @@ function ActionsSection({
             Approve split
           </button>
         </BoardHint>
-      ) : forward !== null ? (
+      ) : forward !== null &&
+        boardForwardShownBesideRecovery(forward, recovery, secondary.length > 0) ? (
         // With a secondary action the forward button becomes the left half of a
         // split button: square inner corners, the caret overlapping its border
         // by a pixel so the pair reads as one control.

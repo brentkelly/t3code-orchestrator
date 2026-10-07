@@ -83,3 +83,17 @@ export function boardReviewPhaseShownStatus(
 export function boardReviewPaneStopped(stepFailure: { readonly waiting: boolean } | null): boolean {
   return stepFailure !== null && !stepFailure.waiting;
 }
+
+/** Whether the stage's ordinary forward move still renders beside the recovery
+    button. Not when the recovery caret already offers the same move — two
+    "Move to …" controls stacked on top of each other. A forward button that
+    carries a secondary caret (Submit for merge — no review) stays, or that
+    action would be lost. Merge is never a duplicate. */
+export function boardForwardShownBesideRecovery(
+  forward: { readonly kind: "move"; readonly toStage: BoardStageId } | { readonly kind: "merge" },
+  recovery: BoardStepRecovery | null,
+  hasSecondary: boolean,
+): boolean {
+  if (recovery === null || hasSecondary || forward.kind !== "move") return true;
+  return recovery.next?.toStage !== forward.toStage;
+}

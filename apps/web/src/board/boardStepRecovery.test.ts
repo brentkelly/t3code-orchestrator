@@ -6,6 +6,7 @@ import { BOARD_SEED_STAGE_IDS, BOARD_SEED_STAGES } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardForwardShownBesideRecovery,
   boardReviewPaneStopped,
   boardReviewPhaseShownStatus,
   resolveBoardStepRecovery,
@@ -123,5 +124,34 @@ describe("boardReviewPaneStopped", () => {
 
   it("shows nothing stopped when no step has stalled", () => {
     expect(boardReviewPaneStopped(null)).toBe(false);
+  });
+});
+
+describe("boardForwardShownBesideRecovery", () => {
+  const recovery = resolveBoardStepRecovery({
+    stages,
+    stage: BOARD_SEED_STAGE_IDS.review,
+    stalled: true,
+    archived: false,
+    blocked: false,
+  });
+  const toMerge = { kind: "move", toStage: BOARD_SEED_STAGE_IDS.merge } as const;
+
+  // The recovery caret already offers "Move to Ready for merge"; a second copy
+  // stacked above it is noise.
+  it("hides a forward move the recovery caret already offers", () => {
+    expect(boardForwardShownBesideRecovery(toMerge, recovery, false)).toBe(false);
+  });
+
+  it("keeps the forward move when nothing has stalled", () => {
+    expect(boardForwardShownBesideRecovery(toMerge, null, false)).toBe(true);
+  });
+
+  it("keeps a forward move that carries a secondary action", () => {
+    expect(boardForwardShownBesideRecovery(toMerge, recovery, true)).toBe(true);
+  });
+
+  it("keeps Merge, which the recovery button never offers", () => {
+    expect(boardForwardShownBesideRecovery({ kind: "merge" }, recovery, false)).toBe(true);
   });
 });

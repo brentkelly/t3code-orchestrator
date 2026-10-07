@@ -64,6 +64,9 @@ could not start it at all (a full disk, a provider that would not launch). The c
 - **Restart**, under the arrow, drops the stopped step and starts it again in a fresh thread.
 - **Move to** the next stage, also under the arrow, leaves the step behind and moves the card on.
 
+The same button is there when a card is **waiting to resume** after hitting a usage limit or
+while it backs off before a retry. The board will start it again by itself, but **Continue** starts it now.
+
 Talking to an earlier thread of the card does not restart a stopped step. That thread's work is
 already recorded, so pick one of the three instead.
 
