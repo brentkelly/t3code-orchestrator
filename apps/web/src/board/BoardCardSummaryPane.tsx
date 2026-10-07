@@ -7,6 +7,7 @@
 import { ChevronLeftIcon, GitPullRequestIcon } from "lucide-react";
 
 import { cn } from "../lib/utils";
+import { BoardHint } from "./BoardHint";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
 import type { BoardCardWorkSummary, BoardCardWorkSummaryTone } from "./boardCardWorkSummary";
 
@@ -39,14 +40,12 @@ function EmptyCopy({ children }: { readonly children: string }) {
 
 export function BoardCardSummaryPane({
   summary,
-  threadLocked,
   onBackToThread,
   onOpenPullRequest,
   onSelectReview,
   onOpenChild,
 }: {
   readonly summary: BoardCardWorkSummary;
-  readonly threadLocked: boolean;
   readonly onBackToThread: () => void;
   readonly onOpenPullRequest: (url: string) => void;
   readonly onSelectReview: () => void;
@@ -58,16 +57,14 @@ export function BoardCardSummaryPane({
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-3.5 pr-3">
         <SectionHeading>Summary</SectionHeading>
         <span className="flex-1" />
-        {threadLocked ? null : (
-          <button
-            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-[7px] border border-input bg-popover pl-1.5 pr-2.5 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
-            onClick={onBackToThread}
-            type="button"
-          >
-            <ChevronLeftIcon className="size-3" />
-            Back to thread
-          </button>
-        )}
+        <button
+          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-[7px] border border-input bg-popover pl-1.5 pr-2.5 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
+          onClick={onBackToThread}
+          type="button"
+        >
+          <ChevronLeftIcon className="size-3" />
+          Back to thread
+        </button>
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-5 pt-3.5">
         <Block label="Verdict">
@@ -89,14 +86,21 @@ export function BoardCardSummaryPane({
               <p className="text-[12.5px] text-foreground">
                 Round {review.currentRound} of {review.maxRounds}
               </p>
-              <p className="text-[11.5px] text-muted-foreground">
-                {review.severities.critical} / {review.severities.improvement} /{" "}
-                {review.severities.nitpick}
-                {" · "}
-                {review.counts.raised} raised · {review.counts.fixed} fixed ·{" "}
-                {review.counts.rejected} rejected
-                {review.counts.open > 0 ? ` · ${review.counts.open} open` : ""}
-                {review.counts.disputed > 0 ? ` · ${review.counts.disputed} disputed` : ""}
+              <p className="flex flex-wrap items-center gap-x-1.5 text-[11.5px] text-muted-foreground">
+                <BoardHint
+                  label={`${review.severities.critical} critical · ${review.severities.improvement} improvement · ${review.severities.nitpick} nitpick`}
+                >
+                  <span className="inline-flex h-[18px] shrink-0 items-center rounded-[5px] bg-foreground/6 px-1.5 font-mono text-[10.5px] font-medium tracking-[.02em] text-muted-foreground">
+                    {review.severities.critical} / {review.severities.improvement} /{" "}
+                    {review.severities.nitpick}
+                  </span>
+                </BoardHint>
+                <span>
+                  {review.counts.raised} raised · {review.counts.fixed} fixed ·{" "}
+                  {review.counts.rejected} rejected
+                  {review.counts.open > 0 ? ` · ${review.counts.open} open` : ""}
+                  {review.counts.disputed > 0 ? ` · ${review.counts.disputed} disputed` : ""}
+                </span>
               </p>
               {review.outstanding.length === 0 ? null : (
                 <ul className="flex flex-col gap-1">

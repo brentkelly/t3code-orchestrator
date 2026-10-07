@@ -2363,19 +2363,26 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     stepCompletions: props.detail.stepCompletions,
     card,
   });
-  const workSummary = hasSummary
-    ? deriveBoardCardWorkSummary({
-        detail: props.detail,
-        stages: props.stages,
-        planRows,
-        ...(props.reviewMaxRounds === undefined ? {} : { maxRounds: props.reviewMaxRounds }),
-      })
-    : null;
   // The card-level running/queued signals describe the review loop only while
   // the card sits ON the review stage — anywhere else the live step is some
   // other stage's, and feeding it in would spin the review pill during a
   // build and freeze round models that are still free.
   const onReviewStage = reviewStageId !== null && card.stage === reviewStageId;
+  const activeThreadId = activeBoardCardThreadId(card.threadLinks);
+  const reviewLive =
+    onReviewStage &&
+    props.threadLinks.some(
+      (link) => link.threadId === activeThreadId && link.threadState === "working",
+    );
+  const workSummary = hasSummary
+    ? deriveBoardCardWorkSummary({
+        detail: props.detail,
+        stages: props.stages,
+        planRows,
+        reviewLive,
+        ...(props.reviewMaxRounds === undefined ? {} : { maxRounds: props.reviewMaxRounds }),
+      })
+    : null;
   const activePane: BoardCardPane =
     (pane === "plan" && !hasPlan) ||
     (pane === "review" && !hasReview) ||
@@ -2386,7 +2393,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // stage makes current", so the pane follows the card until the user picks a
   // thread, and a since-unlinked selection falls back to that same default.
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
-  const activeThreadId = activeBoardCardThreadId(card.threadLinks);
   const selectedThread =
     props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
     initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
@@ -2666,12 +2672,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 // state drives the spinner — a side conversation on another
                 // linked thread must not, and neither may another stage's
                 // working thread (`onReviewStage`).
-                live={
-                  onReviewStage &&
-                  props.threadLinks.some(
-                    (link) => link.threadId === activeThreadId && link.threadState === "working",
-                  )
-                }
+                live={reviewLive}
                 offStage={!onReviewStage}
                 stalled={onReviewStage && boardReviewPaneStopped(props.stepFailure)}
                 maxRounds={props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS}
