@@ -4038,9 +4038,17 @@ const make = Effect.gen(function* () {
       if (worktree === null) return { outcome: "no-branch" } as const;
       // T3o (T3O-48): a merged pull request is the one state that can never
       // change again, so the lookup is skipped — but the card HAS a link, and
-      // saying so is the whole point of answering.
-      if (isBoardCardPullRequestTerminal(card.pullRequest)) {
-        return boardRefreshOutcomeOf(card.pullRequest);
+      // saying so is the whole point of answering. A title that is still null
+      // is the one exception: records written before the field existed decode
+      // as null, and this is the one backfill that can fill it without
+      // announcing the merge a second time (`updated`, not `state-changed`).
+      const recorded = card.pullRequest;
+      if (
+        isBoardCardPullRequestTerminal(recorded) &&
+        recorded !== null &&
+        recorded.title !== null
+      ) {
+        return boardRefreshOutcomeOf(recorded);
       }
 
       const model = yield* snapshotQuery.getCommandReadModel();

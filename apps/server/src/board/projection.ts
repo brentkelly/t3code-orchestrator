@@ -2832,13 +2832,15 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
 
       case "board.card-pull-request-recorded": {
         yield* upsertCard(event.payload.card);
-        // Only TRANSITIONS earn a rail row. The reactor already suppresses a
-        // no-change lookup, so anything reaching here moved: the link
-        // appearing, or its state changing. A link DISAPPEARING (null) is not
+        // Only TRANSITIONS earn a rail row. `linked` and `state-changed` did
+        // something the card can tell a human about. `updated` is the same PR
+        // in the same state (a title backfill, a rename) — the card is written
+        // above, the rail stays quiet. A link DISAPPEARING (null) is not
         // railed — it means the branch's PR was deleted on the forge, which is
         // not something the card did.
         const pullRequest = event.payload.pullRequest;
         if (pullRequest === null) return;
+        if (event.payload.transition === "updated") return;
         const kind =
           event.payload.transition === "linked"
             ? ("card-pull-request-linked" as const)

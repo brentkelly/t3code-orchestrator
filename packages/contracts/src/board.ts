@@ -680,7 +680,8 @@ export const BoardCardPullRequest = Schema.Struct({
   state: BoardCardPullRequestState,
   /** The forge title. Null on records written before this field existed —
       decode defaults so old events and the JSON `pull_request` column still
-      load, and the next existing refresh fills it. Not a shell field. */
+      load, and the next existing refresh fills it — including one backfill on
+      a merged link whose title is still null. Not a shell field. */
   title: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -5251,6 +5252,9 @@ export const BoardCardPullRequestTransition = Schema.Literals([
   "linked",
   /** Same PR, different state — most importantly `open` → `merged`. */
   "state-changed",
+  /** Same PR, same state — title, URL, branches or draft moved. The card is
+      written; the activity rail is not, because state did not move. */
+  "updated",
   /** A lookup ran and found no PR where one was linked before. */
   "unlinked",
 ]);

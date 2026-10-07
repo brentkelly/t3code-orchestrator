@@ -333,6 +333,108 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
     }),
   );
 
+  it.effect("a title-only pull-request update writes the title without an is-open row", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const titleCardId = BoardCardId.make("card-pr-title-only");
+      yield* engine.dispatch(createProject);
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-pr-title-card"),
+        cardId: titleCardId,
+        projectId,
+        title: "Card with a title-only PR update",
+        orderKey: "n",
+        createdAt,
+      });
+      const record = (suffix: string, title: string | null) =>
+        engine.dispatch({
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make(`cmd-pr-title-${suffix}`),
+          cardId: titleCardId,
+          pullRequest: {
+            number: 110,
+            url: "https://github.com/acme/repo/pull/110",
+            state: "open",
+            title,
+            headBranch: "board/t3o-5",
+            baseRef: "t3o",
+            checkedAt: createdAt,
+          },
+          createdAt,
+        });
+      yield* record("linked", null);
+      yield* record("titled", "Summary tab");
+      const board = boardSnapshotQueryMethodsOf(snapshotQuery);
+      assert.isNotNull(board);
+      const activity = yield* board!.boardCardActivity(titleCardId);
+      const prRows = activity.filter(
+        (entry) =>
+          entry.kind === "card-pull-request-linked" ||
+          entry.kind === "card-pull-request-state-changed" ||
+          entry.kind === "card-pull-request-merged",
+      );
+      assert.strictEqual(prRows.length, 1);
+      assert.strictEqual(prRows[0]?.kind, "card-pull-request-linked");
+      const card = (yield* snapshotQuery.getCommandReadModel()).board?.cards.find(
+        (entry) => entry.id === titleCardId,
+      );
+      assert.strictEqual(card?.pullRequest?.title, "Summary tab");
+    }),
+  );
+
+  it.effect("a merged pull request can gain a title without a second merged row", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const mergedTitleCardId = BoardCardId.make("card-pr-merged-title");
+      yield* engine.dispatch(createProject);
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-pr-merged-title-card"),
+        cardId: mergedTitleCardId,
+        projectId,
+        title: "Card with a merged title backfill",
+        orderKey: "o",
+        createdAt,
+      });
+      const record = (suffix: string, state: "open" | "merged", title: string | null) =>
+        engine.dispatch({
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make(`cmd-pr-merged-title-${suffix}`),
+          cardId: mergedTitleCardId,
+          pullRequest: {
+            number: 110,
+            url: "https://github.com/acme/repo/pull/110",
+            state,
+            title,
+            headBranch: "board/t3o-5",
+            baseRef: "t3o",
+            checkedAt: createdAt,
+          },
+          createdAt,
+        });
+      yield* record("linked", "open", null);
+      yield* record("merged", "merged", null);
+      yield* record("titled", "merged", "Summary tab");
+      const board = boardSnapshotQueryMethodsOf(snapshotQuery);
+      assert.isNotNull(board);
+      const activity = yield* board!.boardCardActivity(mergedTitleCardId);
+      const mergedRows = activity.filter((entry) => entry.kind === "card-pull-request-merged");
+      const stateRows = activity.filter(
+        (entry) => entry.kind === "card-pull-request-state-changed",
+      );
+      assert.strictEqual(mergedRows.length, 1);
+      assert.strictEqual(stateRows.length, 0);
+      const card = (yield* snapshotQuery.getCommandReadModel()).board?.cards.find(
+        (entry) => entry.id === mergedTitleCardId,
+      );
+      assert.strictEqual(card?.pullRequest?.title, "Summary tab");
+      assert.strictEqual(card?.pullRequest?.state, "merged");
+    }),
+  );
+
   it.effect(
     "carries the Draft tag on the SNAPSHOT and the delta alike, and drops it (T3O-12)",
     () =>

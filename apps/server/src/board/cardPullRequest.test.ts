@@ -578,6 +578,37 @@ describe("card ↔ pull request link", () => {
       );
     }),
   );
+
+  it.effect("fills a missing title on a merged pull request", () =>
+    Effect.gen(function* () {
+      const merged = {
+        ...cardInMerge(),
+        pullRequest: {
+          number: 284,
+          url: openPr.url,
+          state: "merged" as const,
+          title: null,
+          headBranch: "board/card-1",
+          baseRef: "main",
+          checkedAt: "2026-01-01T00:00:00.000Z",
+        },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [merged] },
+          settings: settings(),
+          pullRequest: { ...openPr, state: "merged" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(merged.id);
+            assert.equal(recordedPullRequests(yield* h.commands).length, 1);
+            assert.equal((yield* h.board).cards[0]!.pullRequest?.title, openPr.title);
+            assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "merged");
+          }),
+      );
+    }),
+  );
 });
 
 describe("merging a card's pull request", () => {
