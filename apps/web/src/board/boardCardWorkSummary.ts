@@ -138,9 +138,10 @@ function pickVerdict(
   let rank = -1;
   for (const candidate of candidates) {
     const next = TONE_RANK[candidate.tone];
-    // Equal rank keeps the later candidate so a terminal stage or pull-request
-    // label (Merged, Done) outranks an earlier loop label at the same tone.
-    if (next >= rank) {
+    // Equal-rank success keeps the later candidate so Merged and Done replace
+    // Review settled. Equal-rank warning keeps the earlier one so Blocked,
+    // Merge held, and No pull request are not replaced by a later loop chip.
+    if (next > rank || (next === rank && candidate.tone === "success")) {
       winner = candidate;
       rank = next;
     }

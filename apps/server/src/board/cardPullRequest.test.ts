@@ -7,8 +7,8 @@
  * is only true if the command is accepted, decided into an event, and
  * projected back onto the card the reactor next reads.
  *
- * The forge itself is stubbed through `BoardPullRequestGateway` — the three-method
- * seam the board sees — so a test can say "the lookup fails" or "the merge is
+ * The forge itself is stubbed through `BoardPullRequestGateway` — the board's
+ * seam onto the forge — so a test can say "the lookup fails" or "the merge is
  * refused for conflicts" without a real repository or a real `gh`. Since T3O-47
  * WHY a merge was refused comes from the host's structured merge state rather
  * than from the refusal's prose, so a refusal fixture is a `mergeState` and the
@@ -579,6 +579,111 @@ describe("card ↔ pull request link", () => {
     }),
   );
 
+  it.effect("keeps a merged pull request when a title backfill lookup finds none", () =>
+    Effect.gen(function* () {
+      const merged = {
+        ...cardInMerge(),
+        pullRequest: {
+          number: 284,
+          url: openPr.url,
+          state: "merged" as const,
+          title: null,
+          headBranch: "board/card-1",
+          baseRef: "main",
+          checkedAt: "2026-01-01T00:00:00.000Z",
+        },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [merged] },
+          settings: settings(),
+          // Branch is gone (Done reclaimed the worktree, cleanup deleted
+          // board/<key>), so a branch lookup answers "there is none". That is
+          // not permission to unlink a merge that already landed.
+          pullRequest: null,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(merged.id);
+            assert.equal(recordedPullRequests(yield* h.commands).length, 0);
+            assert.equal((yield* h.pullRequestLookups).length, 0);
+            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: false }]);
+            const card = (yield* h.board).cards[0]!;
+            assert.equal(card.pullRequest?.number, 284);
+            assert.equal(card.pullRequest?.state, "merged");
+          }),
+      );
+    }),
+  );
+
+  it.effect("keeps a merged pull request when a title backfill finds a different number", () =>
+    Effect.gen(function* () {
+      const merged = {
+        ...cardInMerge(),
+        pullRequest: {
+          number: 284,
+          url: openPr.url,
+          state: "merged" as const,
+          title: null,
+          headBranch: "board/card-1",
+          baseRef: "main",
+          checkedAt: "2026-01-01T00:00:00.000Z",
+        },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [merged] },
+          settings: settings(),
+          pullRequestByNumber: { ...openPr, number: 999, state: "merged" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(merged.id);
+            assert.equal(recordedPullRequests(yield* h.commands).length, 0);
+            const card = (yield* h.board).cards[0]!;
+            assert.equal(card.pullRequest?.number, 284);
+            assert.equal(card.pullRequest?.state, "merged");
+          }),
+      );
+    }),
+  );
+
+  it.effect("fills a missing merged title by number when the branch lookup would find none", () =>
+    Effect.gen(function* () {
+      const merged = {
+        ...cardInMerge(),
+        pullRequest: {
+          number: 284,
+          url: openPr.url,
+          state: "merged" as const,
+          title: null,
+          headBranch: "board/card-1",
+          baseRef: "main",
+          checkedAt: "2026-01-01T00:00:00.000Z",
+        },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [merged] },
+          settings: settings(),
+          pullRequest: null,
+          pullRequestByNumber: { ...openPr, state: "merged" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(merged.id);
+            assert.equal(recordedPullRequests(yield* h.commands).length, 1);
+            assert.equal((yield* h.pullRequestLookups).length, 0);
+            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: false }]);
+            const card = (yield* h.board).cards[0]!;
+            assert.equal(card.pullRequest?.title, openPr.title);
+            assert.equal(card.pullRequest?.state, "merged");
+            assert.equal(card.pullRequest?.number, 284);
+          }),
+      );
+    }),
+  );
+
   it.effect("fills a missing title on a merged pull request", () =>
     Effect.gen(function* () {
       const merged = {
@@ -603,6 +708,8 @@ describe("card ↔ pull request link", () => {
           Effect.gen(function* () {
             yield* h.reactor.refreshPullRequest(merged.id);
             assert.equal(recordedPullRequests(yield* h.commands).length, 1);
+            assert.equal((yield* h.pullRequestLookups).length, 0);
+            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: false }]);
             assert.equal((yield* h.board).cards[0]!.pullRequest?.title, openPr.title);
             assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "merged");
           }),
