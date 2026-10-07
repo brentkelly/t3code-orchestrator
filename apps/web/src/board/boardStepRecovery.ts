@@ -76,3 +76,10 @@ export function boardReviewPhaseShownStatus(
   if (context.offStage) return "pending";
   return context.stalled ? "stopped" : "running";
 }
+
+/** Whether the Review pane shows the owed phase as stopped. A waiting stall
+    (usage limit, retry backoff) is one the board resumes by itself, and its
+    banner says so; calling it stopped beside that banner contradicts it. */
+export function boardReviewPaneStopped(stepFailure: { readonly waiting: boolean } | null): boolean {
+  return stepFailure !== null && !stepFailure.waiting;
+}

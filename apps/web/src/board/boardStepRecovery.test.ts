@@ -5,7 +5,11 @@
 import { BOARD_SEED_STAGE_IDS, BOARD_SEED_STAGES } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boardReviewPhaseShownStatus, resolveBoardStepRecovery } from "./boardStepRecovery";
+import {
+  boardReviewPaneStopped,
+  boardReviewPhaseShownStatus,
+  resolveBoardStepRecovery,
+} from "./boardStepRecovery";
 
 const stages = BOARD_SEED_STAGES;
 
@@ -103,5 +107,21 @@ describe("boardReviewPhaseShownStatus", () => {
     expect(boardReviewPhaseShownStatus("skipped", { offStage: true, stalled: true })).toBe(
       "skipped",
     );
+  });
+});
+
+describe("boardReviewPaneStopped", () => {
+  it("shows a given-up stall as stopped", () => {
+    expect(boardReviewPaneStopped({ waiting: false })).toBe(true);
+  });
+
+  // A usage-limit or retry stall resumes by itself, and the banner beside the
+  // pane says so; the pane must not claim nothing will run it.
+  it("does not show a waiting stall as stopped", () => {
+    expect(boardReviewPaneStopped({ waiting: true })).toBe(false);
+  });
+
+  it("shows nothing stopped when no step has stalled", () => {
+    expect(boardReviewPaneStopped(null)).toBe(false);
   });
 });

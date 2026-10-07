@@ -171,7 +171,11 @@ import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
 import { BoardHint } from "./BoardHint";
-import { resolveBoardStepRecovery, type BoardStepRecovery } from "./boardStepRecovery";
+import {
+  boardReviewPaneStopped,
+  resolveBoardStepRecovery,
+  type BoardStepRecovery,
+} from "./boardStepRecovery";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply inside this pure view. */
@@ -1485,7 +1489,7 @@ function ActionsSection({
     stage: card.stage,
     stalled: props.stepFailure !== null,
     archived,
-    blocked: card.blocked,
+    blocked,
   });
   // A merge from this card is mid-flight: the button holds its spot but shows a
   // spinner and refuses further clicks until the round trip settles.
@@ -2603,7 +2607,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   )
                 }
                 offStage={!onReviewStage}
-                stalled={onReviewStage && props.stepFailure !== null}
+                stalled={onReviewStage && boardReviewPaneStopped(props.stepFailure)}
                 maxRounds={props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS}
                 onAdvance={(() => {
                   // "Advance anyway" is an ordinary stage move, gated exactly
