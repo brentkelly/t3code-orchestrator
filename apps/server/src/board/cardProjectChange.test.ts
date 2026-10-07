@@ -277,6 +277,7 @@ it.layer(NodeServices.layer)("board.card.set-project", (it) => {
                     number: 12,
                     url: "https://example.test/pr/12",
                     state: "merged",
+                    title: null,
                     headBranch: "board/p1-4",
                     baseRef: "main",
                     checkedAt: NOW,

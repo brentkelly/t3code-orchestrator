@@ -678,6 +678,12 @@ export const BoardCardPullRequest = Schema.Struct({
   number: PositiveInt,
   url: TrimmedNonEmptyString,
   state: BoardCardPullRequestState,
+  /** The forge title. Null on records written before this field existed —
+      decode defaults so old events and the JSON `pull_request` column still
+      load, and the next existing refresh fills it. Not a shell field. */
+  title: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** The PR's head branch as the forge reports it, which is NOT always the
       card's local branch name — a cross-repository (fork) PR carries the
       fork's branch.
@@ -724,6 +730,7 @@ export function boardCardPullRequestsEqual(
     left.number === right.number &&
     left.state === right.state &&
     left.url === right.url &&
+    left.title === right.title &&
     left.headBranch === right.headBranch &&
     left.baseRef === right.baseRef &&
     (left.isDraft === true) === (right.isDraft === true)
