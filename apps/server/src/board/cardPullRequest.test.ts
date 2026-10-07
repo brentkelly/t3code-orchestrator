@@ -719,6 +719,135 @@ describe("card ↔ pull request link", () => {
       }),
   );
 
+  it.effect(
+    "keeps a merged pull request when a stale same-number branch lookup finds it still open",
+    () =>
+      Effect.gen(function* () {
+        // The lookup started while the link was still open. A second refresh
+        // records merged (and Done may delete board/<key>) before this find
+        // answers with the held open summary. Writing that over the merge
+        // would let the next branch lookup — which then finds none — unlink it.
+        const linked = {
+          ...cardInMerge(),
+          pullRequest: {
+            number: 284,
+            url: openPr.url,
+            state: "open" as const,
+            title: openPr.title,
+            headBranch: "board/card-1",
+            baseRef: "main",
+            checkedAt: "2026-01-01T00:00:00.000Z",
+          },
+        };
+        let duringLookup: Effect.Effect<void> = Effect.void;
+        let findAnswer: VcsStatusChangeRequest | null = openPr;
+        yield* withGovernor(
+          {
+            board: { nextCardNumberByProject: {}, cards: [linked] },
+            settings: settings(),
+            pullRequestOf: () => findAnswer,
+            onPullRequestLookup: Effect.suspend(() => duringLookup),
+          },
+          (h) =>
+            Effect.gen(function* () {
+              duringLookup = Ref.update(h.model, (model) => ({
+                ...model,
+                board: {
+                  ...model.board!,
+                  cards: model.board!.cards.map((card) => ({
+                    ...card,
+                    pullRequest: {
+                      number: 284,
+                      url: openPr.url,
+                      state: "merged" as const,
+                      title: openPr.title,
+                      headBranch: "board/card-1",
+                      baseRef: "main",
+                      checkedAt: "2026-01-01T00:00:00.000Z",
+                    },
+                  })),
+                },
+              })).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    duringLookup = Effect.void;
+                  }),
+                ),
+              );
+              yield* h.reactor.refreshPullRequest(linked.id);
+              assert.equal(recordedPullRequests(yield* h.commands).length, 0);
+              assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "merged");
+              findAnswer = null;
+              yield* h.reactor.refreshPullRequest(linked.id);
+              assert.equal(recordedPullRequests(yield* h.commands).length, 0);
+              const card = (yield* h.board).cards[0]!;
+              assert.equal(card.pullRequest?.number, 284);
+              assert.equal(card.pullRequest?.state, "merged");
+            }),
+        );
+      }),
+  );
+
+  it.effect(
+    "keeps a merged pull request when a stale same-number branch lookup finds it closed",
+    () =>
+      Effect.gen(function* () {
+        const linked = {
+          ...cardInMerge(),
+          pullRequest: {
+            number: 284,
+            url: openPr.url,
+            state: "open" as const,
+            title: openPr.title,
+            headBranch: "board/card-1",
+            baseRef: "main",
+            checkedAt: "2026-01-01T00:00:00.000Z",
+          },
+        };
+        let duringLookup: Effect.Effect<void> = Effect.void;
+        yield* withGovernor(
+          {
+            board: { nextCardNumberByProject: {}, cards: [linked] },
+            settings: settings(),
+            pullRequest: { ...openPr, state: "closed" },
+            onPullRequestLookup: Effect.suspend(() => duringLookup),
+          },
+          (h) =>
+            Effect.gen(function* () {
+              duringLookup = Ref.update(h.model, (model) => ({
+                ...model,
+                board: {
+                  ...model.board!,
+                  cards: model.board!.cards.map((card) => ({
+                    ...card,
+                    pullRequest: {
+                      number: 284,
+                      url: openPr.url,
+                      state: "merged" as const,
+                      title: openPr.title,
+                      headBranch: "board/card-1",
+                      baseRef: "main",
+                      checkedAt: "2026-01-01T00:00:00.000Z",
+                    },
+                  })),
+                },
+              })).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    duringLookup = Effect.void;
+                  }),
+                ),
+              );
+              yield* h.reactor.refreshPullRequest(linked.id);
+              assert.equal(recordedPullRequests(yield* h.commands).length, 0);
+              const card = (yield* h.board).cards[0]!;
+              assert.equal(card.pullRequest?.number, 284);
+              assert.equal(card.pullRequest?.state, "merged");
+            }),
+        );
+      }),
+  );
+
   it.effect("does not unlink a merged pull request after a stale open title backfill", () =>
     Effect.gen(function* () {
       const merged = {

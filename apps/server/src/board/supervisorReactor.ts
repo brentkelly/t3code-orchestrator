@@ -4179,12 +4179,16 @@ const make = Effect.gen(function* () {
       // against a state that has already been superseded.
       const current = (yield* readCard(card.id)) ?? card;
 
-      // A merged link is never unlinked from a branch lookup. Done may already
-      // have deleted `board/<key>`, so `find` answers null for a fork head or
-      // a missing remote; that is "could not see it", not "there is none".
+      // A merged link is never unlinked or demoted from a branch lookup.
+      // Done may already have deleted `board/<key>`, so `find` answers null
+      // for a fork head or a missing remote; that is "could not see it", not
+      // "there is none". A same-number open or closed answer is the lookup
+      // that started while the link was still open — lastGoodSummary can
+      // still say that after another refresh recorded the merge — and writing
+      // it would let the next null find unlink the badge.
       if (
         isBoardCardPullRequestTerminal(current.pullRequest) &&
-        (next === null || next.number !== current.pullRequest.number)
+        (next === null || next.number !== current.pullRequest.number || next.state !== "merged")
       ) {
         return boardRefreshOutcomeOf(current.pullRequest);
       }
