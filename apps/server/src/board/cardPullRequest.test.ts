@@ -15,7 +15,9 @@
  * failure text beside it only has to be a failure.
  */
 import { assert, it, describe } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 
 import {
@@ -846,6 +848,56 @@ describe("card ↔ pull request link", () => {
             }),
         );
       }),
+  );
+
+  it.effect("keeps a merged pull request when an overlapping open dispatch lands last", () =>
+    Effect.gen(function* () {
+      // Two refreshes both pass the reactor's post-lookup re-read while the
+      // link is still open. The merged command is applied first; the open
+      // snapshot is still sitting in the other command. The decider must
+      // refuse that demotion, or the next null find unlinks the badge.
+      const linked = cardInMerge();
+      const openArrived = yield* Deferred.make<void>();
+      const openHeld = yield* Deferred.make<void>();
+      let firstFind = true;
+      let later: VcsStatusChangeRequest | null = { ...openPr, state: "merged" };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [linked] },
+          settings: settings(),
+          pullRequestOf: () => {
+            if (firstFind) {
+              firstFind = false;
+              return openPr;
+            }
+            return later;
+          },
+          onDispatch: (command) =>
+            command.type === "board.card.record-pull-request" &&
+            command.pullRequest?.state === "open"
+              ? Deferred.succeed(openArrived, undefined).pipe(
+                  Effect.andThen(Deferred.await(openHeld)),
+                )
+              : Effect.void,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const first = yield* h.reactor.refreshPullRequest(linked.id).pipe(Effect.forkChild);
+            yield* Deferred.await(openArrived);
+            yield* h.reactor.refreshPullRequest(linked.id);
+            yield* Deferred.succeed(openHeld, undefined);
+            yield* Fiber.join(first);
+            const afterOverlap = (yield* h.board).cards[0]!;
+            assert.equal(afterOverlap.pullRequest?.number, 284);
+            assert.equal(afterOverlap.pullRequest?.state, "merged");
+            later = null;
+            yield* h.reactor.refreshPullRequest(linked.id);
+            const card = (yield* h.board).cards[0]!;
+            assert.equal(card.pullRequest?.number, 284);
+            assert.equal(card.pullRequest?.state, "merged");
+          }),
+      );
+    }),
   );
 
   it.effect("does not unlink a merged pull request after a stale open title backfill", () =>

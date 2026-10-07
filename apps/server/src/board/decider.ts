@@ -44,6 +44,7 @@ import {
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterSubBoardFloor,
   boardCardPullRequestsEqual,
+  isBoardCardPullRequestTerminal,
   boardCardDeletableThreadIds,
   boardCardStepCompletions,
   boardStepPayloadDefect,
@@ -3157,6 +3158,23 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         return yield* invariant(
           command,
           `Card '${command.cardId}' already records this pull request state; nothing to record.`,
+        );
+      }
+      // A merged link is never unlinked or demoted by a later lookup. The
+      // reactor re-reads the card after the forge round trip, then dispatches;
+      // another refresh can commit `merged` in that gap while this command
+      // still holds the open or closed snapshot it looked up. Writing that
+      // would let the next branch lookup — which finds none once Done has
+      // deleted `board/<key>` — unlink the badge. Same-number still-merged
+      // is the title backfill.
+      if (
+        previous !== null &&
+        isBoardCardPullRequestTerminal(previous) &&
+        (next === null || next.number !== previous.number || next.state !== "merged")
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' already records a merged pull request; a lookup that is not the same number still merged cannot replace it.`,
         );
       }
       const transition: BoardCardPullRequestTransition =

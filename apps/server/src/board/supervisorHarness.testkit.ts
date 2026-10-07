@@ -596,6 +596,12 @@ export function withGovernor(
         interleaving deterministically, rather than racing two fibers, holds the
         lookup here and mutates `model` while it waits. */
     readonly onPullRequestLookup?: Effect.Effect<void>;
+    /** Run at the start of every engine dispatch. The refresh path re-reads
+        the card after the lookup and then dispatches; two overlapping refreshes
+        can both pass that read, so a test that needs their commands applied in
+        a specific order holds the earlier dispatch here until the later one
+        has landed. */
+    readonly onDispatch?: (command: OrchestrationCommand) => Effect.Effect<void>;
     /** What a merge attempt answers: `undefined` succeeds, a string is the
         forge's refusal detail (a conflict when it reads like one). */
     readonly mergeFailure?: string;
@@ -817,7 +823,8 @@ export function withGovernor(
 
     const engineStub = {
       dispatch: (command: OrchestrationCommand) =>
-        Ref.update(commands, (current) => [...current, command])
+        (input.onDispatch?.(command) ?? Effect.void)
+          .pipe(Effect.andThen(Ref.update(commands, (current) => [...current, command])))
           .pipe(
             Effect.andThen(
               Effect.gen(function* () {
