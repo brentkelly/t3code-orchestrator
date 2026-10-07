@@ -3979,6 +3979,7 @@ const make = Effect.gen(function* () {
               number: found.number,
               url: found.url,
               state: found.state,
+              title: found.title,
               headBranch: found.headRef,
               baseRef: found.baseRef,
               ...(found.isDraft === true ? { isDraft: true } : {}),

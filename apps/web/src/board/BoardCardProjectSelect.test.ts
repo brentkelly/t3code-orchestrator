@@ -47,6 +47,7 @@ const mergedPr: BoardCardPullRequest = {
   number: 12,
   url: "https://example.test/pr/12",
   state: "merged",
+  title: null,
   headBranch: "board/al-2",
   baseRef: "main",
   checkedAt: NOW,

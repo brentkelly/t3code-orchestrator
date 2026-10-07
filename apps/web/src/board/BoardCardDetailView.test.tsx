@@ -816,6 +816,7 @@ describe("BoardCardDetailPanel", () => {
       number: 42,
       url: "https://example.test/pr/42",
       state: "open" as const,
+      title: null,
       headBranch: "board/t3-7",
       baseRef: "main",
       checkedAt: NOW,
@@ -1112,12 +1113,55 @@ describe("BoardCardDetailPanel", () => {
     expect(paneFor(BOARD_SEED_STAGE_IDS.ready, false)).toBe("Thread");
     expect(paneFor(BOARD_SEED_STAGE_IDS.building, false)).toBe("Thread");
     expect(paneFor(BOARD_SEED_STAGE_IDS.review, false)).toBe("Review");
-    expect(paneFor(BOARD_SEED_STAGE_IDS.merge, true)).toBe("Review");
-    expect(paneFor(BOARD_SEED_STAGE_IDS.done, true)).toBe("Review");
-    // A card dragged past the loop without ever running it still opens on the
-    // review pane — no longer a fallback to the thread: the pane reads "Not
-    // started yet" and says plainly that nothing was reviewed.
-    expect(paneFor(BOARD_SEED_STAGE_IDS.done, false)).toBe("Review");
+    expect(paneFor(BOARD_SEED_STAGE_IDS.merge, true)).toBe("Summary");
+    expect(paneFor(BOARD_SEED_STAGE_IDS.done, true)).toBe("Summary");
+    // Skip-review Done still opens on Summary — the recap is how the work
+    // went, including "No review summary".
+    expect(paneFor(BOARD_SEED_STAGE_IDS.done, false)).toBe("Summary");
+  });
+
+  it("shows the Summary pill from Code review on, and keeps it after a real loop", () => {
+    const atReview = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.review })}
+        projectName="P"
+      />,
+    );
+    expect(atReview).toContain(">Summary</button>");
+    expect(atReview.indexOf(">Review</button>")).toBeLessThan(
+      atReview.indexOf(">Summary</button>"),
+    );
+
+    const atBuilding = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
+        projectName="P"
+      />,
+    );
+    expect(atBuilding).not.toContain(">Summary</button>");
+
+    const draggedBack = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building }, null, {
+          stepCompletions: [
+            {
+              cardId,
+              stepId: "review@1",
+              outcome: "succeeded",
+              summary: "reviewed",
+              payload: JSON.stringify({ reviewedSha: "sha1", findings: [] }),
+              threadId: null,
+              completedAt: NOW,
+            },
+          ],
+        })}
+        projectName="P"
+      />,
+    );
+    expect(draggedBack).toContain(">Summary</button>");
   });
 });
 
@@ -1200,11 +1244,13 @@ describe("BoardCardDetailPanel queued banner (t3o-33)", () => {
 });
 
 describe("initialBoardCardPane", () => {
-  it("keeps every stage on the thread when the board has no review role", () => {
+  it("keeps Building on the thread when the board has no review-role stage", () => {
     const stages = BOARD_SEED_STAGES.filter(
       (stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.review,
     ).map((stage) => ({ ...stage, role: null }));
-    expect(initialBoardCardPane(stages, BOARD_SEED_STAGE_IDS.done)).toBe("thread");
+    expect(initialBoardCardPane(stages, BOARD_SEED_STAGE_IDS.building)).toBe("thread");
+    // Done still has its seed role, so the recap is the default there.
+    expect(initialBoardCardPane(stages, BOARD_SEED_STAGE_IDS.done)).toBe("summary");
   });
 
   it("opens a pre-Planning card on its brief — the other panes wait to be picked", () => {
@@ -1224,8 +1270,11 @@ describe("initialBoardCardPane", () => {
     }
 
     // At review the parent's own thread wakes up — the final review runs on
-    // the integration branch — so the ordinary rules resume.
+    // the integration branch — so the ordinary rules resume on Review, not
+    // Summary. Merge and Done open on the recap.
     expect(initialBoardCardPane(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.review, 3)).toBe("review");
+    expect(initialBoardCardPane(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.merge)).toBe("summary");
+    expect(initialBoardCardPane(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.done)).toBe("summary");
 
     // A card with no live children is untouched at every stage: a plain card,
     // and a parent whose split has been fully archived away.
@@ -1233,6 +1282,22 @@ describe("initialBoardCardPane", () => {
       "thread",
     );
     expect(initialBoardCardPane(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.building)).toBe("thread");
+  });
+
+  it("opens a role-less column at or after Code review on Review", () => {
+    const qaId = BoardStageId.make("stage-qa");
+    const stages = [
+      ...BOARD_SEED_STAGES,
+      {
+        stageId: qaId,
+        label: "QA",
+        role: null,
+        orderKey: "s",
+        createdAt: NOW,
+        updatedAt: NOW,
+      },
+    ];
+    expect(initialBoardCardPane(stages, qaId)).toBe("review");
   });
 });
 
@@ -1463,6 +1528,7 @@ describe("BoardCardDetailPanel done marks", () => {
             number: 110,
             url: "https://github.com/brentkelly/t3code-orchestrator/pull/110",
             state: "open",
+            title: null,
             headBranch: "board/t3-7",
             baseRef: "t3o",
             checkedAt: NOW,

@@ -2045,6 +2045,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             number: 284,
             url: "https://github.com/acme/repo/pull/284",
             state: "open",
+            title: null,
             headBranch: "t3o/card-ready",
             baseRef: "main",
             checkedAt: NOW,

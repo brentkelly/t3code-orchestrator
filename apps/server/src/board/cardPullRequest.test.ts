@@ -182,6 +182,7 @@ describe("card ↔ pull request link", () => {
           assert.equal(card.pullRequest?.number, 284);
           assert.equal(card.pullRequest?.state, "open");
           assert.equal(card.pullRequest?.url, openPr.url);
+          assert.equal(card.pullRequest?.title, openPr.title);
         }),
     ),
   );
@@ -345,6 +346,38 @@ describe("card ↔ pull request link", () => {
     );
   });
 
+  it.effect("records a title-only change from a later lookup", () =>
+    Effect.gen(function* () {
+      const untitled = {
+        ...cardInMerge(),
+        pullRequest: {
+          number: openPr.number,
+          url: openPr.url,
+          state: openPr.state,
+          title: null,
+          headBranch: openPr.headRef,
+          baseRef: openPr.baseRef,
+          checkedAt: "2026-01-01T00:00:00.000Z",
+        },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [untitled] },
+          settings: settings(),
+          pullRequest: openPr,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(untitled.id);
+            assert.equal(recordedPullRequests(yield* h.commands).length, 1);
+            assert.equal((yield* h.board).cards[0]!.pullRequest?.title, openPr.title);
+            yield* h.reactor.refreshPullRequest(untitled.id);
+            assert.equal(recordedPullRequests(yield* h.commands).length, 1);
+          }),
+      );
+    }),
+  );
+
   it.effect("records nothing when a second lookup finds the same pull request", () =>
     withGovernor(
       {
@@ -399,6 +432,7 @@ describe("card ↔ pull request link", () => {
                     number: openPr.number,
                     url: openPr.url,
                     state: openPr.state,
+                    title: openPr.title,
                     headBranch: openPr.headRef,
                     baseRef: openPr.baseRef,
                     checkedAt: "2026-01-01T00:00:00.000Z",
@@ -432,6 +466,7 @@ describe("card ↔ pull request link", () => {
           number: 284,
           url: openPr.url,
           state: "open" as const,
+          title: openPr.title,
           headBranch: "board/card-1",
           baseRef: "main",
           checkedAt: "2026-01-01T00:00:00.000Z",
@@ -519,6 +554,7 @@ describe("card ↔ pull request link", () => {
           number: 284,
           url: openPr.url,
           state: "merged" as const,
+          title: openPr.title,
           headBranch: "board/card-1",
           baseRef: "main",
           checkedAt: "2026-01-01T00:00:00.000Z",
@@ -835,6 +871,7 @@ describe("merging a card's pull request", () => {
           number: openPr.number,
           url: openPr.url,
           state: "open" as const,
+          title: openPr.title,
           headBranch: openPr.headRef,
           baseRef: openPr.baseRef,
           checkedAt: "2026-01-01T00:00:00.000Z",
@@ -1217,6 +1254,7 @@ describe("merging a card's pull request", () => {
           number: 284,
           url: openPr.url,
           state: "merged" as const,
+          title: openPr.title,
           headBranch: "board/card-1",
           baseRef: "main",
           checkedAt: "2026-01-01T00:00:00.000Z",

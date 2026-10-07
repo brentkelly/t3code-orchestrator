@@ -396,6 +396,7 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
       number,
       url: `https://github.com/acme/repo/pull/${number}`,
       state: "merged",
+      title: null,
       headBranch: "board/card-1",
       baseRef: "main",
       checkedAt: NOW,

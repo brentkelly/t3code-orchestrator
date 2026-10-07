@@ -230,6 +230,7 @@ const cardPr = {
   number: 7,
   url: "https://github.com/acme/repo/pull/7",
   state: "open",
+  title: null,
   headBranch: "board/card-child",
   baseRef: "main",
   checkedAt: NOW,
