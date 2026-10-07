@@ -189,7 +189,9 @@ export class BoardPullRequestGateway extends Context.Service<
      * Used when the card already holds a link — a merged title backfill — so
      * the answer must not depend on a board branch Done may already have
      * deleted. A FAILURE is an error, not a null, for the same reason as
-     * `find`: "could not look" must not blank a recorded link.
+     * `find`: "could not look" must not blank a recorded link. Callers that
+     * must not write a held open/closed summary over a recorded merge pass
+     * `force` so this skips `lastGoodSummary`.
      */
     readonly get: (
       input: BoardPullRequestRef & { readonly force?: boolean },
