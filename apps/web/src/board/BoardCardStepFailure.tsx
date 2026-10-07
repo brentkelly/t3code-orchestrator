@@ -8,10 +8,11 @@
  * lived inside a thread the card would not point at, and the only exit was to
  * archive the card.
  *
- * So this states the reason in the provider's own words and offers the one
- * action that clears it. Restart is the SAME command the `+` menu's restart item
- * dispatches (`board.card.start-stage-thread`), which supersedes the stalled
- * step server-side — there is no second recovery path to keep in step with it.
+ * So this states the reason in the provider's own words. The ways out —
+ * Continue, Restart, or move on — live in the card's actions as one split
+ * button (T3O-13). The banner used to carry its own Restart, hidden whenever
+ * ANY linked thread was busy, which stranded a card whose stalled step had no
+ * thread at all while a human was talking to an earlier phase's.
  *
  * T3O-22 splits its tone by whether anything is coming. A stall the board will
  * end by itself — a quota park waiting for its provider's window, a backoff rung
@@ -20,10 +21,9 @@
  * counting down to its own resume was the loudest thing on screen saying the
  * opposite of the card's own chip.
  */
-import { RotateCcwIcon, TriangleAlertIcon } from "lucide-react";
+import { TriangleAlertIcon } from "lucide-react";
 
 import { cn } from "../lib/utils";
-import { Button } from "../components/ui/button";
 import { boardStageLabelMidSentence } from "./boardCardThreadMenu";
 
 export function BoardCardStepFailure(props: {
@@ -37,10 +37,6 @@ export function BoardCardStepFailure(props: {
       so the board and the open modal cannot disagree about whether anything is
       coming. */
   readonly waiting: boolean;
-  /** Absent when the card cannot be restarted from here (no environment, or a
-      run somehow still in flight), which leaves the banner purely informational
-      rather than offering a button that would do nothing. */
-  readonly onRestart: (() => void) | null;
   /** Spacing from the layout that owns it — the rail insets it, the stacked
       column lets its own gap do the work. */
   readonly className?: string;
@@ -90,14 +86,6 @@ export function BoardCardStepFailure(props: {
           </span>
         </div>
       </div>
-      {props.onRestart === null ? null : (
-        <div className="flex justify-end">
-          <Button size="xs" variant="outline" onClick={props.onRestart}>
-            <RotateCcwIcon aria-hidden="true" className="size-3.5" />
-            Restart {boardStageLabelMidSentence(props.stageLabel)}
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

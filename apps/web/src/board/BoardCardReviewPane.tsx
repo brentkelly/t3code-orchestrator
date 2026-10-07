@@ -40,6 +40,7 @@ import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
 import { BoardHint } from "./BoardHint";
+import { boardReviewPhaseShownStatus } from "./boardStepRecovery";
 import {
   deriveBoardReviewLoop,
   type BoardReviewLoop,
@@ -130,17 +131,9 @@ function FindingRow({ entry }: { readonly entry: BoardReviewLoopFinding }) {
   );
 }
 
-/**
- * What a phase LOOKS like, which is not always what the walk says (T3O-3).
- * Off the review stage the due phase is not running — no thread is reading
- * anything — so it renders exactly as the phases behind it: not started.
- */
-function displayedPhaseStatus(
-  status: BoardReviewPhaseStatus,
-  offStage: boolean,
-): BoardReviewPhaseStatus {
-  return offStage && status === "running" ? "pending" : status;
-}
+/** A phase as the pane shows it: the walk's status, or `stopped` when its
+    step stalled (T3O-13). */
+type ShownPhaseStatus = BoardReviewPhaseStatus | "stopped";
 
 /** The step marker: a numbered dot at rest, a spinner while the phase runs. */
 function PhaseMarker({
@@ -148,7 +141,7 @@ function PhaseMarker({
   status,
 }: {
   readonly index: number;
-  readonly status: BoardReviewPhaseStatus;
+  readonly status: ShownPhaseStatus;
 }) {
   if (status === "running") {
     return (
@@ -179,8 +172,11 @@ function PhaseMarker({
 function phaseNote(
   round: BoardReviewLoopRound,
   phase: BoardReviewPhaseId,
-  status: BoardReviewPhaseStatus,
+  status: ShownPhaseStatus,
 ): string {
+  // Its step stalled before it finished — or before it ever had a thread, as a
+  // failed spawn leaves it — so nothing is working on it (T3O-13).
+  if (status === "stopped") return "Stopped. Nothing is running this phase.";
   const { counts, severities, findings } = round;
   const blocking = severities.critical + severities.improvement;
   if (phase === "review") {
@@ -266,6 +262,7 @@ function roundSummary(round: BoardReviewLoopRound): string {
 function Round({
   round,
   offStage,
+  stalled,
   open,
   onToggle,
   onOpenThread,
@@ -273,6 +270,8 @@ function Round({
   readonly round: BoardReviewLoopRound;
   /** The card is not on the review stage, so no phase of this round is live. */
   readonly offStage: boolean;
+  /** The card's live step stalled, so the phase the walk calls running is not. */
+  readonly stalled: boolean;
   readonly open: boolean;
   readonly onToggle: () => void;
   readonly onOpenThread: ((threadId: ThreadId) => void) | undefined;
@@ -330,7 +329,7 @@ function Round({
           {BOARD_REVIEW_PHASE_IDS.map((phaseId, index) => {
             const phase = round.phases.find((p) => p.phase === phaseId);
             if (phase === undefined) return null;
-            const status = displayedPhaseStatus(phase.status, offStage);
+            const status = boardReviewPhaseShownStatus(phase.status, { offStage, stalled });
             return (
               <div key={phaseId} className="border-t border-border">
                 <div className="flex items-start gap-2.5 px-3 py-2.5">
@@ -377,6 +376,7 @@ function statusPill(
   live: boolean,
   offStage: boolean,
   started: boolean,
+  stalled: boolean,
 ): { label: string; spinning: boolean; className: string } {
   switch (loop.status) {
     case "running": {
@@ -393,6 +393,16 @@ function statusPill(
         };
       }
       const phase = loop.next === null ? "Review" : PHASE_NAMES[loop.next.phase];
+      // A stalled step is not "waiting to run": nothing will run it until
+      // someone acts (T3O-13). Amber, as the card's own "Needs a human" chip
+      // is — a stop with no question to answer is not violet
+      // (docs/t3o/status-colours.md).
+      if (stalled)
+        return {
+          label: `${phase} · stopped`,
+          spinning: false,
+          className: "bg-amber-500/14 text-amber-700 dark:text-amber-300",
+        };
       return live
         ? {
             label: `${phase} · running now`,
@@ -435,7 +445,12 @@ function statusPill(
   }
 }
 
-function footerNote(loop: BoardReviewLoop, offStage: boolean, started: boolean): string {
+function footerNote(
+  loop: BoardReviewLoop,
+  offStage: boolean,
+  started: boolean,
+  stalled: boolean,
+): string {
   switch (loop.status) {
     case "running":
       // Off the review stage the loop is not running, so the footer says what
@@ -444,6 +459,8 @@ function footerNote(loop: BoardReviewLoop, offStage: boolean, started: boolean):
         return started
           ? `Round ${loop.currentRound} of ${loop.maxRounds} · the loop is paused while the card sits off the review stage.`
           : `Round 1 of ${loop.maxRounds} · the loop starts when the card reaches the review stage, and stops early once a round closes clean.`;
+      if (stalled)
+        return `Round ${loop.currentRound} of ${loop.maxRounds} · the loop stopped. Continue it, restart the phase, or move the card on from the card's actions.`;
       return `Round ${loop.currentRound} of ${loop.maxRounds} · the loop stops early once a round closes clean.`;
     case "converged":
       return "A round closed with nothing blocking, so the loop is settled.";
@@ -670,6 +687,7 @@ export function BoardCardReviewPane({
   maxRounds,
   live,
   offStage,
+  stalled,
   overrides,
   roundsStarted,
   stepActive,
@@ -695,6 +713,9 @@ export function BoardCardReviewPane({
       a record — either way a non-terminal loop's pill must not claim to be
       running or waiting. */
   readonly offStage?: boolean | undefined;
+  /** The card's live step has stalled (T3O-13): the walk's next phase is owed
+      but nothing is running it, so it must not read as running or waiting. */
+  readonly stalled?: boolean | undefined;
   /** The card's own review-loop settings (t3o-22, D2), or null. */
   readonly overrides?: BoardCardReviewOverrides | null | undefined;
   /** The highest round the loop has STARTED, resolved by the caller — which is
@@ -751,7 +772,7 @@ export function BoardCardReviewPane({
   // pill needs it too (an empty loop still derives a synthetic round 1, so
   // `loop.rounds` cannot say whether anything actually started).
   const ledgerFloor = roundsStarted ?? boardReviewRoundsStarted({ completions, liveStepId: null });
-  const pill = statusPill(loop, live, offStage === true, ledgerFloor > 0);
+  const pill = statusPill(loop, live, offStage === true, ledgerFloor > 0, stalled === true);
   // A loop that ended without a clean pass. The distinction the whole spec
   // turns on: these carry a converged loop's round counts and the opposite
   // meaning, so the pane must never let them read as a pass.
@@ -919,6 +940,7 @@ export function BoardCardReviewPane({
           <Round
             key={round.round}
             offStage={offStage === true}
+            stalled={stalled === true}
             onOpenThread={onOpenThread}
             onToggle={() => setOpenRound(shownRound === round.round ? "collapsed" : round.round)}
             open={shownRound === round.round}
@@ -927,7 +949,7 @@ export function BoardCardReviewPane({
         ))}
         <div className="flex shrink-0 items-center gap-3 rounded-xl border border-dashed border-input bg-foreground/3 px-3.5 py-3">
           <span className="min-w-0 text-[11.5px]/[1.5] text-pretty text-muted-foreground">
-            {footerNote(loop, offStage === true, ledgerFloor > 0)}
+            {footerNote(loop, offStage === true, ledgerFloor > 0, stalled === true)}
           </span>
         </div>
       </div>

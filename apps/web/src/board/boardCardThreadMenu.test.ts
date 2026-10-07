@@ -98,6 +98,20 @@ describe("resolveBoardThreadStageRestart", () => {
       }),
     ).toEqual({ label: "Ready for merge", disabledReason: null });
   });
+
+  // T3O-13. The thread state is summed over every linked thread, so a human
+  // talking to an earlier phase's thread reads as "in flight" while the stalled
+  // step has nothing running. The restart must stay enabled.
+  it("keeps a stalled step's restart enabled while another linked thread is busy", () => {
+    expect(
+      resolveBoardThreadStageRestart({
+        autoExecute: true,
+        stageLabel: "Code review",
+        runInFlight: true,
+        stalled: true,
+      }),
+    ).toEqual({ label: "Code review", disabledReason: null });
+  });
 });
 
 describe("runBlankThreadCreation", () => {

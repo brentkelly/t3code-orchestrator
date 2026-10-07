@@ -50,7 +50,7 @@ export function boardStageLabelMidSentence(label: string): string {
  * The `+` menu's restart affordance (t3o-14 D1/D4): `null` when there is nothing
  * to restart (the item is absent, not disabled); otherwise the stage label plus
  * a disabled reason that is non-null exactly while a supervised run is in
- * flight.
+ * flight and the step has not stalled.
  *
  * Offered on a stage that auto-executes, and — t3o-30, D3 — on ANY stage whose
  * step has stalled. A stage that runs nothing on entry still spawns steps
@@ -70,7 +70,11 @@ export function resolveBoardThreadStageRestart(input: {
   if (!input.autoExecute && !input.stalled) return null;
   return {
     label: input.stageLabel,
-    disabledReason: input.runInFlight ? BOARD_STAGE_RESTART_IN_FLIGHT_REASON : null,
+    // A stalled step has nothing running it, whatever the summed thread state
+    // says (T3O-13): a human chatting with another linked thread must not grey
+    // out the restart the stall needs.
+    disabledReason:
+      input.runInFlight && !input.stalled ? BOARD_STAGE_RESTART_IN_FLIGHT_REASON : null,
   };
 }
 
