@@ -350,6 +350,58 @@ describe("deriveBoardCardWorkSummary", () => {
     expect(summary.verdict.tone).toBe("warning");
   });
 
+  it("keeps Blocked when a stalled review is also warning", () => {
+    const summary = deriveBoardCardWorkSummary({
+      detail: detail({ stage: BOARD_SEED_STAGE_IDS.review, blocked: true }),
+      reviewStalled: true,
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(summary.verdict.label).toBe("Blocked");
+    expect(summary.verdict.tone).toBe("warning");
+  });
+
+  it("keeps No pull request at merge when a held loop is also warning", () => {
+    const findings = [
+      {
+        id: "f1",
+        severity: "critical" as const,
+        file: "a.ts",
+        line: 1,
+        title: "Still broken",
+        detail: "",
+      },
+    ];
+    const summary = deriveBoardCardWorkSummary({
+      detail: detail(
+        {
+          stage: BOARD_SEED_STAGE_IDS.merge,
+          pullRequest: null,
+          reviewOverrides: {
+            rounds: null,
+            stopAfterRound: 1,
+            roundModels: {},
+            runThroughRound: null,
+          },
+        },
+        {
+          stepCompletions: [
+            completion("review@1", { reviewedSha: "sha1", findings }),
+            completion("triage@1", {
+              fixedSha: "sha2",
+              dispositions: [{ findingId: "f1", action: "fixed", note: "" }],
+            }),
+            completion("adjudicate@1", {
+              verdicts: [{ findingId: "f1", verdict: "fix-incomplete", note: "" }],
+            }),
+          ],
+        },
+      ),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(summary.verdict.label).toBe("No pull request");
+    expect(summary.verdict.tone).toBe("warning");
+  });
+
   it("prefers Merged over Review settled on a done card", () => {
     const summary = deriveBoardCardWorkSummary({
       detail: detail(
