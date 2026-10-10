@@ -2996,6 +2996,12 @@ export const BOARD_CARD_ATTENTION_REASONS = [
   /** A live thread asked the human a question (t3o-18, D13), or the step parked
       on one it asked in prose (t3o-34, D4). */
   "input",
+  /** A live thread is blocked on a permission prompt (T3O-16). As answerable
+      as `input` and the same violet, but ranked BELOW it because the card
+      cannot tell the two apart once both are pending: `threadState` says some
+      thread waits, `awaitingInput` says some thread asked, and a permission
+      prompt is only provable when nothing asked. */
+  "permission",
   /** A human-in-the-loop step ended a turn without completing and without
       asking anything (t3o-34, D4) — nobody is working and there is nothing to
       answer, so the card needs a human to look at it.
@@ -3134,6 +3140,7 @@ const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> 
   held: "warning",
   stopped: "warning",
   input: "attention",
+  permission: "attention",
 };
 
 /**
@@ -3379,6 +3386,15 @@ export function boardCardAttention(input: {
       detail: "A thread on this card is waiting on your answer",
     };
   }
+  // Not vetoed by the dot: the dot itself goes dark for a waiting thread.
+  if (isBoardCardAwaitingPermission(card)) {
+    return {
+      reason: "permission",
+      tone: ATTENTION_TONES.permission,
+      label: "Needs permission",
+      detail: "A thread on this card is waiting for you to approve or deny a request",
+    };
+  }
   // Gated on `settling` as well, so the two chips that say the same words wait
   // out the same beat. `question` above is not: it is a real pending question,
   // answerable the moment it is asked.
@@ -3473,6 +3489,14 @@ export function boardCardChildAttentionLabel(attention: BoardCardChildAttention)
  * board's own CLAIM, and a restart that orphans a step leaves the claim
  * standing over threads that are provably dead — twelve hours of pulsing blue
  * over three corpses is what this veto exists to stop.
+ *
+ * `threadState === "waiting"` vetoes them too (T3O-16): a thread blocked on a
+ * permission prompt or a question is mid-turn with its step running, but
+ * nothing moves until the human answers — the card wears the violet chip
+ * instead, and a blue dot beside it would say the opposite. Because "waiting"
+ * outranks "working" when a card's threads fold into one state, this also
+ * darkens the dot when an older thread holds a question while a newer one is
+ * mid-turn: the card is blocked on the human either way.
  */
 export function isBoardCardWorking(
   card: Pick<BoardCardShell, "threadState" | "stepRunning">,
@@ -3481,8 +3505,24 @@ export function isBoardCardWorking(
   // and every thread it could be running on is DEAD, so the dot goes dark. Only
   // `failed` does this — `stopped` is an idle thread between turns, which is
   // exactly the loop-stage gap `stepRunning` exists to cover.
-  if (card.threadState === "failed") return false;
+  if (card.threadState === "failed" || card.threadState === "waiting") return false;
   return card.threadState === "working" || card.stepRunning;
+}
+
+/**
+ * Whether a thread is blocked on a permission prompt (T3O-16). A pending
+ * approval is the only way a thread waits without asking
+ * (`deriveBoardCardThreadState`), so this needs no field of its own. Takes a
+ * card shell or a single thread's derived state alike; on a card it only
+ * proves the prompt when no thread also asked, which is why `input` outranks
+ * `permission`. A dead session's lingering approval never reaches here as
+ * `waiting` (`deriveBoardCardThreadState` ranks `error` above it), which is the
+ * client half of the server's dead-session guard.
+ */
+export function isBoardCardAwaitingPermission(
+  card: Pick<BoardCardShell, "threadState" | "awaitingInput">,
+): boolean {
+  return card.threadState === "waiting" && !card.awaitingInput;
 }
 
 /**
@@ -5940,7 +5980,13 @@ export function deriveBoardCardThreadState(
   );
   if (live.length === 0) return { threadState: "none", awaitingInput: false };
   const awaitingInput = live.some((thread) => thread.hasPendingUserInput);
-  if (awaitingInput || live.some((thread) => thread.hasPendingApprovals)) {
+  // A pending approval is only resolved by the provider, so a session that dies
+  // mid-prompt keeps it forever. Nobody can approve into a dead session, so
+  // `error` outranks it, as the server's `isAwaitingPermission` does (T3O-16).
+  const awaitingPermission = live.some(
+    (thread) => thread.hasPendingApprovals && thread.session?.status !== "error",
+  );
+  if (awaitingInput || awaitingPermission) {
     return { threadState: "waiting", awaitingInput };
   }
   const working = live.some((thread) => {

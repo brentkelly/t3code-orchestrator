@@ -30,9 +30,11 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   `border-[color-mix(in_srgb,var(--info)_25%,transparent)] border-t-info-foreground` — rather than
   the neutral grey they used to wear. Running pills are `bg-info/12 text-info-foreground`, not the
   neutral `bg-accent`.
-- **Every "waiting on you" state is violet.** Input-needed chips, the awaiting card's border, tint
-  and ring, waiting nodes in the dependency chart, a review phase waiting to run, the composer
-  drawer that holds an agent's question, the sidebar's Input row, mobile's Awaiting Input pill.
+- **Every "waiting on you" state is violet.** Input-needed and Needs-permission chips (a thread
+  blocked on a permission prompt is waiting on you exactly as much as one that asked), the awaiting
+  card's border, tint and ring, waiting nodes in the dependency chart, a review phase waiting to
+  run, the composer drawer that holds an agent's question, the sidebar's Input row, mobile's
+  Awaiting Input pill.
   These were blue before, which read as "still working" — the opposite of what they mean.
 - **Blocked is amber, never blue.** It matches the card modal's blocked callout, which already used
   it.
@@ -49,10 +51,10 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   dependency gate on the right — with nothing stopping both from filling. A card whose auto-merge
   ladder ran out wore `Needs a human` beside `Merge needs you`: the same claim twice, in the same
   amber, and together wider than the 268px column, so the second chip hung off the card's right edge.
-  `boardCardNotice` ranks them into one slot, most specific first — a pending question (answerable in
-  one click, the same carve-out it gets everywhere else), then `Conflicts`, then the auto-merge hold,
-  then `No PR`, then the rest of the attention chip, then the dependency gate. `No PR` (T3O-48) is a
-  card parked at the merge-role stage with no pull request — amber, making exactly the claim
+  `boardCardNotice` ranks them into one slot, most specific first — a pending question or permission
+  prompt (answerable in one click, the same carve-out it gets everywhere else), then `Conflicts`,
+  then the auto-merge hold, then `No PR`, then the rest of the attention chip, then the dependency
+  gate. `No PR` (T3O-48) is a card parked at the merge-role stage with no pull request — amber, making exactly the claim
   `Needs a human` makes and naming the cause, which is why it sits above it and below the two pills
   that describe a card which does have a pull request. It waits out the same
   `BOARD_ATTENTION_SETTLE_MS` grace the other two ambers do, because a card arriving at Ready for
@@ -102,8 +104,9 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   evidence wins and the chip goes, the same ranking that darkens the dot when a step claims to be
   running on threads that are provably dead. This covers "Needs a human" in both its spellings: the
   stopped step's, and the settled step's that only a human moves on. A live thread's own pending
-  question is exempt: it is answerable in one click, and hiding it behind the dot would strand the
-  answer.
+  question or permission prompt is exempt: it is answerable in one click, and hiding it behind the
+  dot would strand the answer. It goes the other way instead — a thread blocked on the human darkens
+  the dot, because its step is still running but nothing moves until they answer.
 - **…and it waits five seconds before it says it.** The dot going dark is not the end of the story:
   the turn ends, the step row parks and the supervisor decides whether to resume, over several round
   trips that do not land together. Through that beat the card is neither working nor genuinely

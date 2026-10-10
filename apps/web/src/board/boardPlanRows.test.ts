@@ -191,12 +191,13 @@ describe("deriveBoardPlanRows", () => {
 
   it("reads live per-child state off the shell, not the child ref", () => {
     const { rows } = deriveBoardPlanRows({
-      plans: [plan("a", 0), plan("b", 1), plan("c", 2), plan("d", 3)],
+      plans: [plan("a", 0), plan("b", 1), plan("c", 2), plan("d", 3), plan("e", 4)],
       children: [
         child("a", "c1", BOARD_SEED_STAGE_IDS.ready),
         child("b", "c2", BOARD_SEED_STAGE_IDS.ready),
         child("c", "c3", BOARD_SEED_STAGE_IDS.ready),
         child("d", "c4", BOARD_SEED_STAGE_IDS.ready),
+        child("e", "c5", BOARD_SEED_STAGE_IDS.ready),
       ],
       cards: [
         // The child ref says Ready; the shell says Building. The shell is
@@ -205,6 +206,13 @@ describe("deriveBoardPlanRows", () => {
         shell("c2", BOARD_SEED_STAGE_IDS.building, { awaitingInput: true }),
         shell("c3", BOARD_SEED_STAGE_IDS.building, { queued: true }),
         shell("c4", BOARD_SEED_STAGE_IDS.building, { stalled: true }),
+        // T3O-16: blocked mid-turn on a permission prompt — not working, and
+        // the row says so rather than spinning.
+        shell("c5", BOARD_SEED_STAGE_IDS.building, {
+          stepRunning: true,
+          threadState: "waiting",
+          awaitingInput: false,
+        }),
       ],
       stages: BOARD_SEED_STAGES,
     });
@@ -214,12 +222,15 @@ describe("deriveBoardPlanRows", () => {
       prNumber: 303,
       working: true,
       awaitingInput: false,
+      awaitingPermission: false,
       queued: false,
       stalled: false,
     });
     expect(rows[1]!.live?.awaitingInput).toBe(true);
+    expect(rows[1]!.live?.awaitingPermission).toBe(false);
     expect(rows[2]!.live?.queued).toBe(true);
     expect(rows[3]!.live?.stalled).toBe(true);
+    expect(rows[4]!.live).toMatchObject({ working: false, awaitingPermission: true });
   });
 
   it("lights the working dot for a running step between a loop's threads", () => {
@@ -305,6 +316,33 @@ describe("boardPlanGraphLayout", () => {
     expect(layout).not.toBeNull();
     expect(layout!.nodes).toHaveLength(2);
     expect(layout!.edges).toHaveLength(2);
+  });
+
+  it("tints a node for a child that asked a question or wants permission", () => {
+    // T3O-16: the graph and the row list beside it read the same violet.
+    const { rows } = deriveBoardPlanRows({
+      plans: [plan("a", 0), plan("b", 1), plan("c", 2)],
+      children: [
+        child("a", "c1", BOARD_SEED_STAGE_IDS.building),
+        child("b", "c2", BOARD_SEED_STAGE_IDS.building),
+        child("c", "c3", BOARD_SEED_STAGE_IDS.building),
+      ],
+      cards: [
+        shell("c1", BOARD_SEED_STAGE_IDS.building, { threadState: "waiting", awaitingInput: true }),
+        shell("c2", BOARD_SEED_STAGE_IDS.building, {
+          stepRunning: true,
+          threadState: "waiting",
+          awaitingInput: false,
+        }),
+        shell("c3", BOARD_SEED_STAGE_IDS.building, { threadState: "working" }),
+      ],
+      stages: BOARD_SEED_STAGES,
+    });
+    const needsHuman = (n: number) =>
+      boardPlanGraphLayout(rows)!.nodes.find((node) => node.n === n)!.needsHuman;
+    expect(needsHuman(1)).toBe(true);
+    expect(needsHuman(2)).toBe(true);
+    expect(needsHuman(3)).toBe(false);
   });
 
   it("returns null when there is nothing to draw", () => {

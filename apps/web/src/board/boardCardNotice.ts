@@ -96,7 +96,11 @@ export function boardCardNotice(input: {
   readonly worktreeKeptReason?: string | null | undefined;
 }): BoardCardNotice | null {
   const attention = input.attention;
-  if (attention !== null && attention.reason === "input") return { kind: "attention", attention };
+  // A permission prompt is as answerable as a question (T3O-16), so it takes
+  // the same carve-out.
+  if (attention !== null && (attention.reason === "input" || attention.reason === "permission")) {
+    return { kind: "attention", attention };
+  }
   // A conflict fix RUNS and a hold WAITS; the server never records both, and a
   // running agent is the more specific claim if they somehow collide.
   if (input.conflictFix !== null) return { kind: "conflicts", fix: input.conflictFix };

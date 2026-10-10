@@ -93,6 +93,20 @@ describe("boardCardNotice", () => {
     ).toEqual({ kind: "attention", attention: question });
   });
 
+  it("gives a pending permission prompt the same slot (T3O-16)", () => {
+    // As answerable as a question — and a merge-stage agent blocked on one is
+    // exactly the card whose merge pill would otherwise bury it.
+    const prompt = attention({
+      reason: "permission",
+      tone: "attention",
+      label: "Needs permission",
+      tooltip: "A thread on this card is waiting for you to approve or deny a request",
+    });
+    expect(
+      notice({ attention: prompt, autoMergeHold: mergeGaveUp, conflictFix: conflicts }),
+    ).toEqual({ kind: "attention", attention: prompt });
+  });
+
   it("gives a running conflict fix the slot over a hold", () => {
     // The server never records both; a running agent is the more specific
     // claim if they somehow collide.
