@@ -61,6 +61,9 @@ export interface BoardPlanRowLive {
       threads have all died goes dark here exactly as it does there. */
   readonly working: boolean;
   readonly awaitingInput: boolean;
+  /** A thread is blocked on a permission prompt (T3O-16) — the card face's
+      `permission` reason, read the same way. */
+  readonly awaitingPermission: boolean;
   readonly queued: boolean;
   readonly stalled: boolean;
 }
@@ -188,6 +191,7 @@ export function deriveBoardPlanRows(input: {
               prNumber: shell.prNumber,
               working: isBoardCardWorking(shell),
               awaitingInput: shell.awaitingInput,
+              awaitingPermission: shell.threadState === "waiting" && !shell.awaitingInput,
               queued: shell.queued,
               stalled: shell.stalled,
             },
@@ -210,13 +214,11 @@ export function deriveBoardPlanRows(input: {
           dependency !== undefined && dependency.state === "live" && !dependency.done,
       )
       .toSorted((left, right) => left.n - right.n)
-      .map(
-        (dependency): BoardPlanRowBlocker => ({
-          n: dependency.n,
-          key: dependency.key,
-          stageLabel: (dependency.stageLabel ?? "").toLowerCase(),
-        }),
-      );
+      .map((dependency): BoardPlanRowBlocker => ({
+        n: dependency.n,
+        key: dependency.key,
+        stageLabel: (dependency.stageLabel ?? "").toLowerCase(),
+      }));
     const tone = toneOf({ ...row, blocked: blockers.length > 0 });
     const { started: _started, ...rest } = row;
     return { ...rest, blockers, tone };

@@ -139,7 +139,9 @@ function PlanRow({
       <button
         className={cn(
           "flex w-full items-center gap-[11px] rounded-[10px] border bg-card px-3 py-2.5 text-left shadow-xs",
-          row.live?.awaitingInput === true ? "border-attention/50" : "border-border",
+          row.live?.awaitingInput === true || row.live?.awaitingPermission === true
+            ? "border-attention/50"
+            : "border-border",
           row.state !== "live" && "opacity-70",
           openable ? "hover:border-foreground/20" : "cursor-default",
         )}
@@ -186,6 +188,11 @@ function PlanRow({
           <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-attention-foreground">
             <CircleAlertIcon className="size-3" />
             Input needed
+          </span>
+        ) : row.live?.awaitingPermission === true ? (
+          <span className="inline-flex shrink-0 items-center gap-1 text-[10.5px] font-medium text-attention-foreground">
+            <CircleAlertIcon className="size-3" />
+            Needs permission
           </span>
         ) : row.live?.queued === true ? (
           <span className="shrink-0 text-[10.5px] font-medium text-muted-foreground">Queued</span>

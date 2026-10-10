@@ -144,6 +144,8 @@ const ATTENTION_ICON: Record<BoardCardAttentionReason, ReactNode> = {
   // this card and only a human moves it on", one settled and one not.
   stopped: <PauseIcon className="size-3" />,
   input: <span className="size-2 shrink-0 rounded-full bg-attention" />,
+  // A permission prompt is the same "a thread needs you" fact (T3O-16).
+  permission: <span className="size-2 shrink-0 rounded-full bg-attention" />,
 };
 
 /** The chip's own colours, which are text-weight rather than surface-weight —

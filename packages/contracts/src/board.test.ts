@@ -1283,6 +1283,10 @@ describe("cards that need a human (boardCardAttention)", () => {
     stepRunning: false,
     stepAwaiting: null,
     queued: false,
+    // The base fixture's `waiting` with `awaitingInput: false` is a pending
+    // permission request (T3O-16) — rest on no thread so only the cases that
+    // ask for one get one.
+    threadState: "none",
     archivedAt: null,
     planCount: 0,
     // The base fixture is a split parent (it populates every field); zero the
@@ -1543,6 +1547,65 @@ describe("cards that need a human (boardCardAttention)", () => {
     ).toBe("input");
   });
 
+  // T3O-16: a thread blocked on a permission prompt is waiting on the human
+  // exactly as much as one that asked a question, and the card said "Building"
+  // with a blue dot — and its sub-board parent said nothing at all.
+  describe("a thread waiting for permission", () => {
+    // `waiting` without `awaitingInput` is a pending approval and nothing else
+    // (`deriveBoardCardThreadState`).
+    const permission = { threadState: "waiting", awaitingInput: false } as const;
+
+    it("flags the card violet while its step is still running", () => {
+      const flag = attention({ ...permission, stepRunning: true });
+      expect(flag?.reason).toBe("permission");
+      expect(flag?.tone).toBe("attention");
+      expect(flag?.label).toBe("Needs permission");
+    });
+
+    it("derives from the thread shells the card already rides", () => {
+      // The real shape: the provider's turn is still RUNNING, blocked on the
+      // prompt — which is why the card used to read as working.
+      const { threadState, awaitingInput } = deriveBoardCardThreadState({
+        hasPendingApprovals: true,
+        hasPendingUserInput: false,
+        session: { status: "running" },
+      });
+      expect(attention({ threadState, awaitingInput })?.reason).toBe("permission");
+    });
+
+    it("ranks just below a question and below the step's own verdicts", () => {
+      // A question hides a prompt beside it: the card only knows SOME thread
+      // waits and SOME thread asked, so a prompt is provable only alone.
+      expect(attention({ threadState: "waiting", awaitingInput: true })?.reason).toBe("input");
+      expect(attention({ ...permission, stalled: true })?.reason).toBe("stalled");
+      expect(attention({ ...permission, stepAwaiting: "paused" })?.reason).toBe("paused");
+      expect(attention({ ...permission, held: true })?.reason).toBe("held");
+      expect(attention({ ...permission, stepAwaiting: "stopped" })?.reason).toBe("permission");
+    });
+
+    it("waits out no settle grace — it is answerable the moment it is asked", () => {
+      const idleSince = "2026-10-10T00:00:00.000Z";
+      expect(
+        attention(permission, { threadIdleSince: idleSince, now: Date.parse(idleSince) })?.reason,
+      ).toBe("permission");
+    });
+
+    it("rolls up to a sub-board parent", () => {
+      const parent = card({ cardId: BoardCardId.make("card-parent"), planTotal: 1, planDone: 0 });
+      const child = {
+        ...card({ ...permission, stepRunning: true }),
+        cardId: BoardCardId.make("c1"),
+        parentCardId: parent.cardId,
+      };
+      const rolled = deriveBoardCardChildAttention({
+        cards: [parent, child],
+        stages: BOARD_SEED_STAGES,
+      }).get(parent.cardId);
+      expect(rolled?.reason).toBe("permission");
+      expect(rolled?.tone).toBe("attention");
+    });
+  });
+
   // T3O-29: the second half of the same complaint — a card that stopped a beat
   // ago is not yet a card that needs a human. The turn ends, the step row parks
   // and the supervisor decides whether to resume, over several round trips that
@@ -1716,6 +1779,19 @@ describe("children actively working (deriveBoardCardChildRunning)", () => {
     expect(isBoardCardWorking(card({ stepRunning: true, threadState: "stopped" }))).toBe(true);
     expect(isBoardCardWorking(card({ queued: true }))).toBe(false);
     expect(isBoardCardWorking(card({ stalled: true, threadState: "stopped" }))).toBe(false);
+  });
+
+  it("T3O-16: a thread waiting on a human vetoes the running step's dot", () => {
+    // A permission prompt (or a question) blocks the agent mid-turn: the step
+    // is still admitted and running, but nothing is working until the human
+    // answers — the card wears the violet chip instead of the blue dot.
+    expect(isBoardCardWorking(card({ threadState: "waiting", stepRunning: true }))).toBe(false);
+    const parent = card({ cardId: parentId, planTotal: 1, planDone: 0 });
+    expect(
+      deriveBoardCardChildRunning({
+        cards: [parent, child("c1", { threadState: "waiting", stepRunning: true })],
+      }).size,
+    ).toBe(0);
   });
 
   it("AC 13: a dead thread vetoes the board's claim that a step is running", () => {
