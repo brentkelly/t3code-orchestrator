@@ -1,15 +1,67 @@
 # Installing and deploying T3o
 
-T3o is a fork of T3 Code and is published nowhere. There is no `npx`, no installer and no package
-registry — you clone this repository, build it, and point a service at the build. This page is the long
-form of the fork section in [`README.md`](../../README.md).
+T3o comes two ways:
+
+- **The desktop app**, downloaded from this repository's
+  [Releases page](https://github.com/brentkelly/t3code-orchestrator/releases/latest). It bundles the T3o
+  server, board included. This is the way in for most people.
+- **A server built from this checkout**, run as a systemd service. This is how a headless machine runs T3o,
+  and what the rest of this page after [The desktop app](#the-desktop-app) covers.
+
+`npx t3@latest`, upstream's installers and upstream's package-manager recipes all give you upstream T3 Code,
+without the board. This page is the long form of the fork section in [`README.md`](../../README.md).
+
+## The desktop app
+
+Which file to download is in the README's [Download](../../README.md#download) table: a `.dmg` for macOS, an
+`.exe` for Windows, and a `.deb`, `.rpm` or `.AppImage` for Linux. Each is built for x64 and ARM.
+
+### Opening an unsigned build
+
+T3o is not code-signed yet, so the first launch needs one extra step:
+
+- **macOS** says the app "cannot be opened because the developer cannot be verified" or that it is
+  damaged. Drag T3o into Applications, then right-click it and choose **Open**, or open it once and allow
+  it under **System Settings → Privacy & Security → Open Anyway**. From a terminal,
+  `xattr -dr com.apple.quarantine /Applications/T3o.app` does the same.
+- **Windows** SmartScreen says it "protected your PC". Choose **More info → Run anyway**.
+- **Linux** needs nothing for the deb or rpm. Mark an AppImage executable first:
+  `chmod +x T3o-*.AppImage`.
+
+### Where your data lives
+
+The desktop app keeps its data in **`~/.t3o`**, apart from upstream T3 Code and from `t3o.service`, which
+both use `~/.t3`. T3o and T3 Code can be installed and running at the same time. Setting `T3CODE_HOME`
+still overrides the location. Uninstalling the app leaves `~/.t3o` in place; delete it yourself to remove
+your data.
+
+To reach boards and threads you already have in `~/.t3`, either:
+
+- add your running `t3o.service` as a connection (**Settings → Connections**), which leaves the data where it
+  is and served by the service; or
+- stop the service and start the desktop app with `T3CODE_HOME=~/.t3`, so the app serves that data itself.
+  Never run both against the same directory at once.
+
+On Windows, the optional WSL backend runs inside the WSL distro and keeps its data in `~/.t3` there.
+
+The desktop app has no T3 Connect sign-in. Reach it remotely over your LAN, Tailscale or SSH.
+
+### Updates
+
+The app checks this repository's releases and shows when an update is out. On Windows and with the
+AppImage it downloads and installs the update itself. On macOS and with a deb or rpm, the update button
+opens the release page instead: download the new file and install it the way you installed the first one
+(`sudo apt install ./T3o-*.deb`, `sudo dnf install ./T3o-*.rpm`, or drag the new app into Applications).
+There is no nightly track.
+
+## The server from source
 
 Upstream's own background-service instructions ([docs/user/background-service.md](../user/background-service.md))
-do not apply. `t3 service install` runs `npm install t3@<version>` from the public registry
-(`apps/server/src/cloud/pinnedRuntime.ts`), so it would serve **upstream's** server against this fork's
-data directory: no board, no warning, and a database written by a build that has never heard of it.
+do not apply. `t3 service install` downloads the release archive for the running version
+(`apps/server/src/cloud/pinnedRuntime.ts`), and a build from this checkout carries no published release
+behind its version.
 
-## Prerequisites
+### Prerequisites
 
 | Need                         | Why                                                                                    |
 | ---------------------------- | -------------------------------------------------------------------------------------- |
@@ -21,7 +73,7 @@ data directory: no board, no warning, and a database written by a build that has
 | systemd + `sudo`             | Only for the service. You can run the build by hand without either.                    |
 | A provider CLI               | Claude, Codex, Cursor, Grok or OpenCode, authenticated as the user running the server. |
 
-## Install
+### Install
 
 ```bash
 corepack enable pnpm     # or: npm install -g pnpm@11.10.0
@@ -50,7 +102,7 @@ t3o-service: /path/to/t3o/node_modules/.bin/vp failed to start: ENOENT
 The global `vp` from `curl -fsSL https://vite.plus | bash` is optional. The repo pins its own copy through
 the `vite-plus` devDependency, and the service install invokes it by path.
 
-## Build
+### Build
 
 ```bash
 pnpm run build                      # every app and package
@@ -61,7 +113,7 @@ The second is exactly what `install-t3o-service` runs for you, so a deploy does 
 step. `t3` is the package name of `apps/server`; its build emits `apps/server/dist/bin.mjs` with the web
 client bundled underneath at `dist/client/`.
 
-## Deploy as a systemd service
+### Deploy as a systemd service
 
 ```bash
 pnpm run install-t3o-service
@@ -78,7 +130,7 @@ there is no `node_modules` to resolve them from. The app directory therefore als
 `package.json` listing exactly those roots at the versions the worktree resolved, plus an `npm install`
 that re-runs only when one of them moves.
 
-### Flags
+#### Flags
 
 | Flag              | Default      | Meaning                                                         |
 | ----------------- | ------------ | --------------------------------------------------------------- |
@@ -101,7 +153,7 @@ Other subcommands, via `node scripts/t3o-service.mjs <command>`:
 - `status` — `systemctl status`, plus a note about anything `--takeover` displaced.
 - `unit` — print the unit file to stdout without writing it. Useful for reviewing the resolved PATH.
 
-### What the unit contains
+#### What the unit contains
 
 - `User=` you, `WorkingDirectory=` your home.
 - `T3CODE_HOME=<home>` and `NODE_OPTIONS=--enable-source-maps`, so stack traces point at source lines
@@ -114,7 +166,7 @@ Other subcommands, via `node scripts/t3o-service.mjs <command>`:
 - `Restart=on-failure` and `OOMScoreAdjust=-500`, so a test run that exhausts memory does not get the
   server picked as the kernel's victim.
 
-### Taking over from another server
+#### Taking over from another server
 
 Only one server can own a data directory, so if something already holds the port the install stops short
 and tells you what it found rather than starting a second writer:
@@ -132,7 +184,7 @@ by the PID it printed, never by pattern.
 Note that the holder is often the very instance you are reading this through, and the switch drops that
 session.
 
-### First connection
+#### First connection
 
 The pairing URL, token included, is printed once at startup:
 
@@ -153,7 +205,7 @@ The default bind is `127.0.0.1`. To reach it from another machine, put a reverse
 rather than moving the bind to `0.0.0.0` — the server is designed to sit behind one, and `--host` exists
 mainly for the proxy-less local case.
 
-## Redeploy after a pull
+### Redeploy after a pull
 
 ```bash
 git pull
@@ -168,7 +220,7 @@ moment.
 Nothing else is needed. Migrations — upstream's and the board's — run at startup, and if the upgrade
 changed a native dependency the app directory's npm install re-runs on its own.
 
-## Running without systemd
+### Running without systemd
 
 After a `sync` (or a full install), the app directory is self-contained:
 
@@ -179,7 +231,7 @@ T3CODE_HOME="$HOME/.t3" node ~/.t3/app/dist/bin.mjs serve --host 127.0.0.1 --por
 That is exactly the unit's `ExecStart`. For development, use `pnpm run dev` instead — in a worktree it
 defaults to that worktree's gitignored `.t3`, so it cannot land on your real data by accident.
 
-## Uninstall
+### Uninstall
 
 ```bash
 pnpm run uninstall-t3o-service
@@ -188,7 +240,7 @@ pnpm run uninstall-t3o-service
 Removes the unit, and restores whatever `--takeover` displaced unless you pass `-- --no-restore`. The
 synced build at `~/.t3/app` is left behind for you to `rm -rf`, and your data at `~/.t3` is never touched.
 
-## Troubleshooting
+### Troubleshooting
 
 **`npm ERR! code EUNSUPPORTEDPROTOCOL` / `Unsupported URL Type "catalog:"`**
 You ran `npm install`. `catalog:` is a pnpm feature; use `pnpm install`.
