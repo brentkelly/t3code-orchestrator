@@ -165,28 +165,33 @@ function deriveVerdict(input: {
   if (input.mergeHeld) candidates.push({ label: "Merge held", tone: "warning" });
   if (input.prMissingAtMerge) candidates.push({ label: "No pull request", tone: "warning" });
 
-  if (input.loopStatus === "unreadable") {
-    candidates.push({ label: boardReviewHeldLabel("unreadable"), tone: "warning" });
-  } else if (input.loopStatus === "round-cap") {
-    candidates.push({ label: boardReviewHeldLabel("round-cap"), tone: "warning" });
-  } else if (input.loopStatus === "stopped") {
-    candidates.push({ label: boardReviewHeldLabel("stopped"), tone: "warning" });
-  } else if (input.loopStatus === "running") {
-    if (input.role === "review") {
-      // Same order as the Review pane's statusPill: a stalled step is amber
-      // stopped, not violet waiting — nothing will run it until someone acts.
-      if (input.reviewStalled) {
-        candidates.push({ label: "Review stopped", tone: "warning" });
-      } else if (input.reviewLive) {
-        candidates.push({ label: "Review running", tone: "info" });
+  // At Done the loop is history: a held loop is not something to act on, so it
+  // must not paint a landed card amber (docs/t3o/status-colours.md). Merged /
+  // Done win; Blocked, pushed above, still outranks them.
+  if (input.role !== "done") {
+    if (input.loopStatus === "unreadable") {
+      candidates.push({ label: boardReviewHeldLabel("unreadable"), tone: "warning" });
+    } else if (input.loopStatus === "round-cap") {
+      candidates.push({ label: boardReviewHeldLabel("round-cap"), tone: "warning" });
+    } else if (input.loopStatus === "stopped") {
+      candidates.push({ label: boardReviewHeldLabel("stopped"), tone: "warning" });
+    } else if (input.loopStatus === "running") {
+      if (input.role === "review") {
+        // Same order as the Review pane's statusPill: a stalled step is amber
+        // stopped, not violet waiting — nothing will run it until someone acts.
+        if (input.reviewStalled) {
+          candidates.push({ label: "Review stopped", tone: "warning" });
+        } else if (input.reviewLive) {
+          candidates.push({ label: "Review running", tone: "info" });
+        } else {
+          candidates.push({ label: "Waiting to run", tone: "attention" });
+        }
       } else {
-        candidates.push({ label: "Waiting to run", tone: "attention" });
+        candidates.push({ label: "Review paused", tone: "muted" });
       }
-    } else {
-      candidates.push({ label: "Review paused", tone: "muted" });
+    } else if (input.loopStatus === "converged") {
+      candidates.push({ label: "Review settled", tone: "success" });
     }
-  } else if (input.loopStatus === "converged") {
-    candidates.push({ label: "Review settled", tone: "success" });
   }
 
   if (input.prState === "merged") {

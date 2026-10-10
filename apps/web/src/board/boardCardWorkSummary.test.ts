@@ -419,6 +419,79 @@ describe("deriveBoardCardWorkSummary", () => {
     expect(summary.verdict.tone).toBe("success");
   });
 
+  describe("a done card whose review loop was held", () => {
+    // A held loop is amber at review and merge, where someone still has to
+    // act. At Done the work has landed, so the held loop is history and
+    // amber (blocked/held) would be a false signal — but Blocked still is not.
+    const heldLoop = [
+      completion("review@1", {
+        reviewedSha: "sha1",
+        findings: [
+          {
+            id: "f1",
+            severity: "critical" as const,
+            file: "a.ts",
+            line: 1,
+            title: "Still broken",
+            detail: "",
+          },
+        ],
+      }),
+      completion("triage@1", {
+        fixedSha: "sha2",
+        dispositions: [{ findingId: "f1", action: "fixed", note: "" }],
+      }),
+      completion("adjudicate@1", {
+        verdicts: [{ findingId: "f1", verdict: "fix-incomplete", note: "" }],
+      }),
+    ];
+    const stopAfterOne = {
+      rounds: null,
+      stopAfterRound: 1,
+      roundModels: {},
+      runThroughRound: null,
+    };
+
+    it("shows Merged over No convergence", () => {
+      const summary = deriveBoardCardWorkSummary({
+        detail: detail(
+          { stage: BOARD_SEED_STAGE_IDS.done, pullRequest: { ...openPr, state: "merged" } },
+          { stepCompletions: heldLoop },
+        ),
+        stages: BOARD_SEED_STAGES,
+        maxRounds: 1,
+      });
+      expect(summary.verdict).toEqual({ label: "Merged", tone: "success" });
+    });
+
+    it("shows Done over Stopped when no pull request was merged", () => {
+      const summary = deriveBoardCardWorkSummary({
+        detail: detail(
+          { stage: BOARD_SEED_STAGE_IDS.done, reviewOverrides: stopAfterOne },
+          { stepCompletions: heldLoop },
+        ),
+        stages: BOARD_SEED_STAGES,
+      });
+      expect(summary.verdict).toEqual({ label: "Done", tone: "success" });
+    });
+
+    it("still shows Blocked", () => {
+      const summary = deriveBoardCardWorkSummary({
+        detail: detail(
+          {
+            stage: BOARD_SEED_STAGE_IDS.done,
+            blocked: true,
+            pullRequest: { ...openPr, state: "merged" },
+          },
+          { stepCompletions: heldLoop },
+        ),
+        stages: BOARD_SEED_STAGES,
+        maxRounds: 1,
+      });
+      expect(summary.verdict).toEqual({ label: "Blocked", tone: "warning" });
+    });
+  });
+
   it("labels a closed pull request at merge amber", () => {
     const summary = deriveBoardCardWorkSummary({
       detail: detail({
