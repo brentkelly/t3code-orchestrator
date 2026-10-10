@@ -13,6 +13,7 @@ import {
   BLANK_THREAD_WARN,
   BOARD_STAGE_RESTART_IN_FLIGHT_REASON,
   boardStageLabelMidSentence,
+  boardStageRestartBlockedReason,
   isBoardCardRunInFlight,
   resolveBoardThreadStageRestart,
   runBlankThreadCreation,
@@ -97,6 +98,33 @@ describe("resolveBoardThreadStageRestart", () => {
         stalled: true,
       }),
     ).toEqual({ label: "Ready for merge", disabledReason: null });
+  });
+
+  it("disables restart with a named-dep reason when start-stage-thread would refuse (#142)", () => {
+    expect(
+      resolveBoardThreadStageRestart({
+        autoExecute: true,
+        stageLabel: "Building",
+        runInFlight: false,
+        stalled: true,
+        blockedReason: boardStageRestartBlockedReason(["CARD-7"]),
+      }),
+    ).toEqual({
+      label: "Building",
+      disabledReason: "Blocked until CARD-7 is done.",
+    });
+  });
+
+  it("keeps the in-flight reason ahead of the blocked reason", () => {
+    expect(
+      resolveBoardThreadStageRestart({
+        autoExecute: true,
+        stageLabel: "Building",
+        runInFlight: true,
+        stalled: false,
+        blockedReason: boardStageRestartBlockedReason(["CARD-7"]),
+      }),
+    ).toEqual({ label: "Building", disabledReason: BOARD_STAGE_RESTART_IN_FLIGHT_REASON });
   });
 
   // T3O-13. The thread state is summed over every linked thread, so a human

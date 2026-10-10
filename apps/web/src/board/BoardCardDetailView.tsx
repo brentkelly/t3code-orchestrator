@@ -1267,6 +1267,7 @@ function BoardStepRecoveryButton({
   pending,
   onContinue,
   onRestart,
+  restartDisabledReason,
   onMoveStage,
 }: {
   readonly recovery: BoardStepRecovery;
@@ -1274,6 +1275,8 @@ function BoardStepRecoveryButton({
   /** Absent when the card cannot be resumed from here; Restart still can. */
   readonly onContinue: (() => void) | undefined;
   readonly onRestart: () => void;
+  /** Why Restart is refused (a blocked card, #142), or null when it may run. */
+  readonly restartDisabledReason: string | null;
   readonly onMoveStage: (toStage: BoardStageId) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -1307,17 +1310,25 @@ function BoardStepRecoveryButton({
         </PopoverTrigger>
         <PopoverPopup align="end" className="w-[262px] p-1.5">
           <div className="flex flex-col gap-0.5">
-            <button
-              className={cn(item, "hover:bg-accent")}
-              onClick={() => {
-                setOpen(false);
-                onRestart();
-              }}
-              type="button"
-            >
-              <RotateCcwIcon className="size-3.5 shrink-0 text-muted-foreground" />
-              {recovery.restartLabel}
-            </button>
+            <BoardHint label={restartDisabledReason ?? undefined}>
+              <button
+                className={cn(
+                  item,
+                  restartDisabledReason === null
+                    ? "hover:bg-accent"
+                    : "cursor-not-allowed opacity-50",
+                )}
+                disabled={restartDisabledReason !== null}
+                onClick={() => {
+                  setOpen(false);
+                  onRestart();
+                }}
+                type="button"
+              >
+                <RotateCcwIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                {recovery.restartLabel}
+              </button>
+            </BoardHint>
             {next === null ? null : (
               <BoardHint label={next.disabledReason ?? undefined}>
                 <button
@@ -1727,6 +1738,7 @@ function ActionsSection({
           onContinue={props.onResumeStep}
           onMoveStage={props.onMoveStage}
           onRestart={props.onRestartStage}
+          restartDisabledReason={props.stageRestart?.disabledReason ?? null}
           pending={props.resumeStepPending === true}
           recovery={recovery}
         />
