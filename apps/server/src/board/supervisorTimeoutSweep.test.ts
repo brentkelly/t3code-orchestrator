@@ -19,6 +19,7 @@ import {
   ThreadId,
   type BoardCardStepState,
   type BoardState,
+  type OrchestrationEvent,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -117,6 +118,27 @@ const todoAdvancedAt = (at: string) =>
 const threadSignalAt = (at: string) => new Map([[String(threadId), at]]);
 
 const attemptOf = (board: BoardState): number => boardCardStepState(board, cardId)?.attempt ?? -1;
+
+/** A human answering the step thread's permission prompt (T3O-16), as the
+    `thread.approval.respond` command's event reaches the reactor. */
+const approvalAnswered = (id: ThreadId, sequence: number): OrchestrationEvent =>
+  ({
+    type: "thread.approval-response-requested",
+    sequence,
+    payload: { threadId: id, requestId: "approval-1", decision: "accept", createdAt: FRESH },
+  }) as unknown as OrchestrationEvent;
+
+/** Hold or release a permission prompt on the step thread's live shell. */
+const holdPermission = (
+  shells: Ref.Ref<ReadonlyMap<string, OrchestrationThreadShell>>,
+  held: boolean,
+) =>
+  Ref.set(
+    shells,
+    new Map([
+      [String(threadId), { ...aliveThreadShell(String(threadId)), hasPendingApprovals: held }],
+    ]),
+  );
 
 it.effect("recovers an overdue step with no life sign since the window opened", () =>
   withGovernor(
@@ -300,6 +322,63 @@ it.effect("T3O-16: a permission prompt approved late in the window does not nudg
         const after = yield* board;
         assert.strictEqual(attemptOf(after), 1);
         assert.isNull(boardCardStepState(after, cardId)?.lastNudgeAt ?? null);
+      }),
+  ),
+);
+
+// Approval itself is the life sign (T3O-16). A prompt raised and answered
+// while the todo list still read fresh is never seen by the sweep, so only the
+// answer can stamp it. Past the output-signal ceiling, todo advanced at the
+// epoch, approved at +40s, swept at +70s against a 60s timeout: without the
+// answer's stamp the step reads overdue and the resumed agent is nudged.
+it.effect("T3O-16: a prompt answered before the step looked overdue does not nudge", () =>
+  withGovernor(
+    {
+      board: boardWithStep(runningStep({ startedAt: OVERDUE, updatedAt: OVERDUE })),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: new Map([
+        [String(threadId), { ...aliveThreadShell(String(threadId)), hasPendingApprovals: true }],
+      ]),
+      threadTodos: todoAdvancedAt(FRESH),
+    },
+    ({ reactor, board, shells, pumpDomain }) =>
+      Effect.gen(function* () {
+        yield* reactor.sweep; // held, but the fresh todo keeps the sweep away
+        yield* TestClock.adjust("40 seconds");
+        yield* Ref.set(shells, aliveShells());
+        yield* pumpDomain(approvalAnswered(threadId, 2));
+        yield* TestClock.adjust("30 seconds");
+        yield* reactor.sweep;
+        const after = yield* board;
+        assert.strictEqual(attemptOf(after), 1);
+        assert.isNull(boardCardStepState(after, cardId)?.lastNudgeAt ?? null);
+      }),
+  ),
+);
+
+// A stamp belongs to the step that earned it (T3O-16). Stamped while held, the
+// step leaves running and a sweep passes; when a step runs on the thread again
+// the old stamp must not shield it.
+it.effect("T3O-16: a permission stamp is dropped once its step leaves running", () =>
+  withGovernor(
+    {
+      board: boardWithStep(runningStep()),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+    },
+    ({ reactor, board, model, shells }) =>
+      Effect.gen(function* () {
+        const setStep = (step: BoardCardStepState) =>
+          Ref.update(model, (m) => ({ ...m, board: boardWithStep(step) }));
+        yield* holdPermission(shells, true);
+        yield* reactor.sweep; // stamped at the epoch
+        yield* holdPermission(shells, false);
+        yield* setStep(runningStep({ status: "completed" }));
+        yield* reactor.sweep; // the step is gone: its stamp goes with it
+        yield* setStep(runningStep());
+        yield* TestClock.adjust("30 seconds");
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 2);
       }),
   ),
 );

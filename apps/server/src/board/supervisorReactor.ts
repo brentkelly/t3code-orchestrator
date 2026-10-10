@@ -7813,6 +7813,27 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  // When each step thread was last seen held on a permission prompt, or had
+  // one answered (T3O-16). The sweep skips a held prompt below, but the skip
+  // alone leaves the clock where the prompt found it: after an overnight prompt
+  // every honoured life sign is stale (output past its ceiling, no todo, no
+  // commit), so the first sweep after approval would nudge the freshly resumed
+  // agent. Reading the stamp as a life sign gives it a full window instead.
+  // Two writers: the human's answer (`thread.approval-response-requested`),
+  // which stamps the moment of approval even for a prompt raised and answered
+  // before the step ever looked overdue; and the sweep, which stamps a held
+  // prompt it finds on an overdue step and from then on re-reads that thread
+  // every sweep, re-stamping while the prompt holds. In-memory: a restart
+  // mid-prompt re-stamps on the next overdue sweep. An entry is dropped once
+  // released and a window old, and with the step once it leaves running.
+  const permissionHeldAt = new Map<string, string>();
+  const threadAwaitingPermission = (threadId: ThreadId) =>
+    snapshotQuery
+      .getThreadShellById(threadId)
+      .pipe(Effect.map((shell) => Option.isSome(shell) && isAwaitingPermission(shell.value)));
+  const stampPermissionAnswered = (threadId: ThreadId) =>
+    nowIso.pipe(Effect.map((now) => void permissionHeldAt.set(String(threadId), now)));
+
   const processDomainEvent = (event: OrchestrationEvent) => {
     switch (event.type) {
       case "board.card-moved":
@@ -7881,6 +7902,10 @@ const make = Effect.gen(function* () {
         // interrupts land here too and are filtered inside, off the sets that
         // already track them.
         return pauseStepForHumanStop(event.payload.threadId);
+      case "thread.approval-response-requested":
+        // A human answered a permission prompt (T3O-16): a life sign for the
+        // timeout sweep, so the resumed agent is not nudged seconds into work.
+        return stampPermissionAnswered(event.payload.threadId);
       case "thread.activity-appended":
         // The other non-board event the supervisor listens to (t3o-30, D2): a
         // step's turn failing to start at all. Everything else about a thread
@@ -7904,22 +7929,6 @@ const make = Effect.gen(function* () {
   // steps funnel into the same recovery ladder — nudge, then escalate — so a
   // hung step is eventually landed `stalled` and its slot released. Human-in-
   // the-loop runs are exempt (a human is the pacing, per the contracts doc).
-  // When the sweep last saw each step thread held on a permission prompt
-  // (T3O-16). The prompt itself is skipped below, but the skip alone leaves the
-  // clock where the prompt found it: after an overnight prompt every honoured
-  // life sign is stale (output past its ceiling, no todo, no commit), so the
-  // first sweep after approval would nudge the freshly resumed agent. Reading
-  // the last sighting as a life sign gives it a full window instead. The first
-  // sighting waits for the step to look overdue (so the common case reads no
-  // shell); from then on every sweep re-reads that thread and re-stamps while
-  // the prompt holds, so the stamp trails approval by one sweep interval, not
-  // one timeout window. In-memory: a restart mid-prompt re-stamps on the next
-  // overdue sweep, and an entry is dropped once released and a window old.
-  const permissionHeldAt = new Map<string, string>();
-  const threadAwaitingPermission = (threadId: ThreadId) =>
-    snapshotQuery
-      .getThreadShellById(threadId)
-      .pipe(Effect.map((shell) => Option.isSome(shell) && isAwaitingPermission(shell.value)));
   const sweepTimeouts = Effect.gen(function* () {
     const board = yield* readBoard;
     const now = yield* nowIso;
@@ -8014,6 +8023,16 @@ const make = Effect.gen(function* () {
         continue;
       }
       yield* recoverStep({ card, state });
+    }
+    // A stamp is only ever read for a running step's thread; drop the rest so
+    // the map stays bounded and a finished step's stamp cannot shield the next.
+    const runningThreadIds = new Set(
+      (board.stepStates ?? [])
+        .filter((state) => state.status === "running" && state.threadId !== null)
+        .map((state) => String(state.threadId)),
+    );
+    for (const id of permissionHeldAt.keys()) {
+      if (!runningThreadIds.has(id)) permissionHeldAt.delete(id);
     }
   }).pipe(
     Effect.catchCause((cause) =>
@@ -8146,6 +8165,9 @@ const make = Effect.gen(function* () {
           // A human stopping a board-run step (T3O-23). One event per Stop
           // press, machine-wide — negligible beside what already crosses here.
           event.type !== "thread.turn-interrupt-requested" &&
+          // A human answering a permission prompt (T3O-16): a life sign for the
+          // timeout sweep. One per answered prompt, negligible volume.
+          event.type !== "thread.approval-response-requested" &&
           event.type !== "board.card-moved" &&
           // T3O-33: a card changed project. Human-only and rare, and the whole
           // point is that the agent working the card in the OLD repository is
