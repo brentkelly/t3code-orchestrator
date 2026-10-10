@@ -24,6 +24,7 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   aliveThreadShell,
@@ -267,6 +268,34 @@ it.effect("T3O-16: the sweep after a long permission prompt is approved does not
       Effect.gen(function* () {
         yield* reactor.sweep;
         yield* Ref.set(shells, aliveShells()); // the human approved
+        yield* reactor.sweep;
+        const after = yield* board;
+        assert.strictEqual(attemptOf(after), 1);
+        assert.isNull(boardCardStepState(after, cardId)?.lastNudgeAt ?? null);
+      }),
+  ),
+);
+
+// The stamp must trail approval by a sweep, not a window (T3O-16). Stamped at
+// the epoch, still held at +50s, approved, then swept at +70s: against a 60s
+// timeout a stamp that only advanced once per window (still the epoch) reads
+// the step overdue and nudges the agent seconds into real work.
+it.effect("T3O-16: a permission prompt approved late in the window does not nudge", () =>
+  withGovernor(
+    {
+      board: boardWithStep(runningStep({ startedAt: OVERDUE, updatedAt: OVERDUE })),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: new Map([
+        [String(threadId), { ...aliveThreadShell(String(threadId)), hasPendingApprovals: true }],
+      ]),
+    },
+    ({ reactor, board, shells }) =>
+      Effect.gen(function* () {
+        yield* reactor.sweep; // first sighting, at the epoch
+        yield* TestClock.adjust("50 seconds");
+        yield* reactor.sweep; // still held, late in the window
+        yield* Ref.set(shells, aliveShells()); // the human approved
+        yield* TestClock.adjust("20 seconds");
         yield* reactor.sweep;
         const after = yield* board;
         assert.strictEqual(attemptOf(after), 1);

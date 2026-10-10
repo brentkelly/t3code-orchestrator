@@ -7909,10 +7909,17 @@ const make = Effect.gen(function* () {
   // clock where the prompt found it: after an overnight prompt every honoured
   // life sign is stale (output past its ceiling, no todo, no commit), so the
   // first sweep after approval would nudge the freshly resumed agent. Reading
-  // the last sighting as a life sign gives it a full window instead. In-memory:
-  // a restart mid-prompt re-stamps on the next sweep, and one entry per thread
-  // that ever met a prompt stays small.
+  // the last sighting as a life sign gives it a full window instead. The first
+  // sighting waits for the step to look overdue (so the common case reads no
+  // shell); from then on every sweep re-reads that thread and re-stamps while
+  // the prompt holds, so the stamp trails approval by one sweep interval, not
+  // one timeout window. In-memory: a restart mid-prompt re-stamps on the next
+  // overdue sweep, and an entry is dropped once released and a window old.
   const permissionHeldAt = new Map<string, string>();
+  const threadAwaitingPermission = (threadId: ThreadId) =>
+    snapshotQuery
+      .getThreadShellById(threadId)
+      .pipe(Effect.map((shell) => Option.isSome(shell) && isAwaitingPermission(shell.value)));
   const sweepTimeouts = Effect.gen(function* () {
     const board = yield* readBoard;
     const now = yield* nowIso;
@@ -7946,6 +7953,15 @@ const make = Effect.gen(function* () {
       // `outputSignalShieldsStep` the sweep falls back to exactly the life
       // signs it had before T3O-12. The other two have no ceiling: a todo list
       // that advances and a commit that lands are evidence of work.
+      const heldAt =
+        state.threadId === null ? undefined : permissionHeldAt.get(String(state.threadId));
+      if (state.threadId !== null && heldAt !== undefined) {
+        if (yield* threadAwaitingPermission(state.threadId)) {
+          permissionHeldAt.set(String(state.threadId), now);
+        } else if (nowMs - Date.parse(heldAt) > state.timeoutMs) {
+          permissionHeldAt.delete(String(state.threadId));
+        }
+      }
       const todo = yield* threadTodoState(state.threadId);
       const lastSignalAt = outputSignalShieldsStep({
         nowMs,
@@ -7993,14 +8009,9 @@ const make = Effect.gen(function* () {
       // replace the card's violet "Needs permission" with an amber stall.
       // Exempt for the same reason a human-in-the-loop run is: a human is the
       // pacing. Read last, so only an already-overdue step pays for it.
-      if (state.threadId !== null) {
-        const shell = yield* snapshotQuery
-          .getThreadShellById(state.threadId)
-          .pipe(Effect.map(Option.getOrUndefined));
-        if (shell !== undefined && isAwaitingPermission(shell)) {
-          permissionHeldAt.set(String(state.threadId), now);
-          continue;
-        }
+      if (state.threadId !== null && (yield* threadAwaitingPermission(state.threadId))) {
+        permissionHeldAt.set(String(state.threadId), now);
+        continue;
       }
       yield* recoverStep({ card, state });
     }
