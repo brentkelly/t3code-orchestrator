@@ -2,8 +2,8 @@
 //
 // Two columns, additive and guarded exactly like 034's `awaiting_reason`:
 //
-//   stalled_reason — one of `usage-limit` | `quota-exhausted` | `waiting-retry`
-//     | `gave-up`. NULL reads as `gave-up`, which is what every stalled row
+//   stalled_reason — one of BOARD_STEP_STALLED_REASONS (contracts board.ts;
+//     plain TEXT, so later reasons need no migration). NULL reads as `gave-up`, which is what every stalled row
 //     written before this spec actually was: recovery giving up. It MUST match
 //     the decoding default on BoardCardStepState.stalledReason (contracts
 //     board.ts), so a from-empty replay of a log written before this spec

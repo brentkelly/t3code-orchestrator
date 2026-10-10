@@ -1351,11 +1351,20 @@ describe("cards that need a human (boardCardAttention)", () => {
       "quota-exhausted",
       "waiting-retry",
       "gave-up",
+      "no-worktree",
     ] as const) {
       const chip = attention({ stalled: true, stalledReason });
       expect(chip?.reason).toBe("stalled");
       expect(chip?.tone).toBe("warning");
     }
+  });
+
+  it("says a card whose branch could not be prepared cannot start (T3O-15)", () => {
+    // Without its own words this read "Stalled — recovery gave up", which is
+    // false: no agent ever ran, so there was nothing to recover.
+    const chip = attention({ stalled: true, stalledReason: "no-worktree" });
+    expect(chip?.label).toBe("Can't start — needs a human");
+    expect(chip?.detail).toContain("Continue");
   });
 
   it("keeps saying Paused while the card's thread is still winding down", () => {
@@ -1680,6 +1689,7 @@ describe("a stall the board will end by itself (boardStallIsWaiting, T3O-22)", (
     // a failure.
     expect(boardStallIsWaiting("gave-up")).toBe(false);
     expect(boardStallIsWaiting("quota-exhausted")).toBe(false);
+    expect(boardStallIsWaiting("no-worktree")).toBe(false);
     // A card that is not stalled at all carries no reason.
     expect(boardStallIsWaiting(null)).toBe(false);
     expect(boardStallIsWaiting(undefined)).toBe(false);

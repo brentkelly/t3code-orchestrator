@@ -66,13 +66,14 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   they assert that nothing is needed from the human, which is the opposite claim.
 - **A card waiting on a provider is amber, and so is the header pill (T3O-22).** A usage limit is
   the same fact as blocked, one level up: nobody is working, the board cannot make it work, and it
-  is waiting on something outside itself. All four readings of `stalled` — waiting to resume on a
-  usage limit, out of credits, waiting for a retry rung, and recovery having given up — are amber
-  and are the same chip; only the words differ, because the colour is answering "is work happening"
-  and the answer is no in every one of them. Green would be a lie in all four, and blue in all four.
+  is waiting on something outside itself. All five readings of `stalled` — waiting to resume on a
+  usage limit, out of credits, waiting for a retry rung, recovery having given up, and a branch the
+  board could not prepare (T3O-15) — are amber and are the same chip; only the words differ, because
+  the colour is answering "is work happening" and the answer is no in every one of them. Green would
+  be a lie in all five, and blue in all five.
   The card modal's stalled banner splits where the chip does not: the two readings the board will
   end by itself (a usage-limit park, a retry rung) are amber and read "waiting to resume", while the
-  two that stay put until a human acts keep the red failure treatment they have had since t3o-30 —
+  three that stay put until a human acts keep the red failure treatment they have had since t3o-30 —
   the banner asserts "this needs you", which is exactly the half of `stalled` it is still true of.
   `boardStallIsWaiting` is that split, so the banner cannot drift from the chip beside it.
   The provider-usage pill in the board header takes the same amber for the same reason. It carries
