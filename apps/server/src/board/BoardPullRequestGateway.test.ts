@@ -246,7 +246,7 @@ describe("BoardPullRequestGateway.find", () => {
 });
 
 describe("BoardPullRequestGateway.get", () => {
-  it.effect("reads the project's pull request by number, not the branch", () => {
+  it.effect("reads by number, past the held summary but without invalidating the cache", () => {
     const { calls, layer } = makeGateway({
       detail: detail({ number: 284, title: "Summary tab", state: "merged" }),
     });
@@ -257,7 +257,9 @@ describe("BoardPullRequestGateway.get", () => {
       assert.equal(found?.title, "Summary tab");
       assert.equal(found?.state, "merged");
       assert.equal(found?.headRef, "board/t3o-47");
-      assert.deepStrictEqual(calls, ["summary:brentkelly/t3code-orchestrator:284:allowStale=true"]);
+      assert.deepStrictEqual(calls, [
+        "summary:brentkelly/t3code-orchestrator:284:allowStale=false",
+      ]);
     }).pipe(Effect.provide(layer));
   });
 

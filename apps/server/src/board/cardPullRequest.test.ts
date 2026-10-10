@@ -581,7 +581,7 @@ describe("card ↔ pull request link", () => {
     }),
   );
 
-  it.effect("keeps a merged pull request when a title backfill lookup finds none", () =>
+  it.effect("keeps a merged pull request when a title backfill lookup fails", () =>
     Effect.gen(function* () {
       const merged = {
         ...cardInMerge(),
@@ -609,7 +609,7 @@ describe("card ↔ pull request link", () => {
             yield* h.reactor.refreshPullRequest(merged.id);
             assert.equal(recordedPullRequests(yield* h.commands).length, 0);
             assert.equal((yield* h.pullRequestLookups).length, 0);
-            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: true }]);
+            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: false }]);
             const card = (yield* h.board).cards[0]!;
             assert.equal(card.pullRequest?.number, 284);
             assert.equal(card.pullRequest?.state, "merged");
@@ -711,7 +711,7 @@ describe("card ↔ pull request link", () => {
             Effect.gen(function* () {
               yield* h.reactor.refreshPullRequest(merged.id);
               assert.equal(recordedPullRequests(yield* h.commands).length, 0);
-              assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: true }]);
+              assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: false }]);
               const card = (yield* h.board).cards[0]!;
               assert.equal(card.pullRequest?.number, 284);
               assert.equal(card.pullRequest?.state, "merged");
@@ -928,8 +928,8 @@ describe("card ↔ pull request link", () => {
             assert.equal(recordedPullRequests(yield* h.commands).length, 0);
             assert.equal((yield* h.pullRequestLookups).length, 0);
             assert.deepEqual(yield* h.pullRequestGets, [
-              { number: 284, forced: true },
-              { number: 284, forced: true },
+              { number: 284, forced: false },
+              { number: 284, forced: false },
             ]);
             const card = (yield* h.board).cards[0]!;
             assert.equal(card.pullRequest?.number, 284);
@@ -965,7 +965,7 @@ describe("card ↔ pull request link", () => {
             yield* h.reactor.refreshPullRequest(merged.id);
             assert.equal(recordedPullRequests(yield* h.commands).length, 1);
             assert.equal((yield* h.pullRequestLookups).length, 0);
-            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: true }]);
+            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: false }]);
             const card = (yield* h.board).cards[0]!;
             assert.equal(card.pullRequest?.title, openPr.title);
             assert.equal(card.pullRequest?.state, "merged");
@@ -1000,8 +1000,44 @@ describe("card ↔ pull request link", () => {
             yield* h.reactor.refreshPullRequest(merged.id);
             assert.equal(recordedPullRequests(yield* h.commands).length, 1);
             assert.equal((yield* h.pullRequestLookups).length, 0);
-            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: true }]);
+            assert.deepEqual(yield* h.pullRequestGets, [{ number: 284, forced: false }]);
             assert.equal((yield* h.board).cards[0]!.pullRequest?.title, openPr.title);
+            assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "merged");
+          }),
+      );
+    }),
+  );
+
+  it.effect("forces a merged title backfill only for a human's re-check", () =>
+    Effect.gen(function* () {
+      const merged = {
+        ...cardInMerge(),
+        pullRequest: {
+          number: 284,
+          url: openPr.url,
+          state: "merged" as const,
+          title: null,
+          headBranch: "board/card-1",
+          baseRef: "main",
+          checkedAt: "2026-01-01T00:00:00.000Z",
+        },
+      };
+      yield* withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [merged] },
+          settings: settings(),
+          // A forge that keeps failing leaves the title null, so every trigger
+          // asks again. Automatic triggers must stay on the cached read.
+          pullRequestByNumber: { failWith: "rate limited" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.refreshPullRequest(merged.id);
+            yield* h.reactor.refreshPullRequest(merged.id, { force: true });
+            assert.deepEqual(yield* h.pullRequestGets, [
+              { number: 284, forced: false },
+              { number: 284, forced: true },
+            ]);
             assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "merged");
           }),
       );

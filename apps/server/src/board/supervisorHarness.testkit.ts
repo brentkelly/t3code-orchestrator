@@ -1163,15 +1163,17 @@ export function withGovernor(
               input.pullRequestByNumber !== undefined
                 ? input.pullRequestByNumber
                 : (input.pullRequestOf?.() ?? input.pullRequest);
-            if (configured !== undefined && configured !== null && "failWith" in configured) {
+            // The forge answers an unknown number with an error, never null.
+            if (configured === undefined || configured === null || "failWith" in configured) {
               return Effect.fail(
                 new BoardPullRequestGatewayError({
                   operation: "get",
-                  detail: configured.failWith,
+                  detail:
+                    configured != null ? configured.failWith : "No pull request with that number.",
                 }),
               );
             }
-            return Effect.succeed(configured ?? null);
+            return Effect.succeed(configured);
           }),
         ),
       merge: (request) =>

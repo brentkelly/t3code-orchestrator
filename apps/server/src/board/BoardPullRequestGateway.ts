@@ -189,13 +189,16 @@ export class BoardPullRequestGateway extends Context.Service<
      * Used when the card already holds a link — a merged title backfill — so
      * the answer must not depend on a board branch Done may already have
      * deleted. A FAILURE is an error, not a null, for the same reason as
-     * `find`: "could not look" must not blank a recorded link. Callers that
-     * must not write a held open/closed summary over a recorded merge pass
-     * `force` so this skips `lastGoodSummary`.
+     * `find`: "could not look" must not blank a recorded link, and a number
+     * the forge does not know is a failure too, so there is no null answer.
+     *
+     * Never answered from `lastGoodSummary`, which can still say "open" after
+     * the merge landed; an unforced read still uses the PR read cache. `force`
+     * (a human's "Check again") invalidates this pull request first.
      */
     readonly get: (
       input: BoardPullRequestRef & { readonly force?: boolean },
-    ) => Effect.Effect<VcsStatusChangeRequest | null, BoardPullRequestGatewayError>;
+    ) => Effect.Effect<VcsStatusChangeRequest, BoardPullRequestGatewayError>;
     /**
      * Merge it, with the strategy the merge stage is configured for.
      *
@@ -353,7 +356,7 @@ export const layer: Layer.Layer<
               projectId: input.projectId,
               repository,
               number: input.number,
-              allowStale: input.force !== true,
+              allowStale: false,
             } as const;
             const load =
               input.force === true

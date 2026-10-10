@@ -4009,13 +4009,14 @@ const make = Effect.gen(function* () {
    * Three cheap refusals come first, and between them they keep the lookup set
    * bounded by "cards actually in flight":
    *
-   *  1. No ready worktree — no branch, so nothing to look up.
-   *  2. A MERGED pull request — the one state that can never change again, so a
+   *  1. A MERGED pull request — the one state that can never change again, so a
    *     card stops costing branch lookups the moment its PR lands. A merged
-   *     link whose title is still null is the exception: it costs one forced
-   *     lookup by number on each refresh trigger until a title arrives. `closed`
-   *     deliberately does NOT stop them: it can be reopened, and a branch
-   *     whose PR was closed is the one most likely to get a new one.
+   *     link whose title is still null is the exception: it costs one cached
+   *     lookup by number on each refresh trigger until a title arrives (forced
+   *     only by a human's "Check again"). `closed` deliberately does NOT stop
+   *     them: it can be reopened, and a branch whose PR was closed is the one
+   *     most likely to get a new one.
+   *  2. No ready worktree — no branch, so nothing to look up.
    *  3. A lookup FAILURE records nothing, leaving the last known link in
    *     place. This mirrors `rememberLastKnownPr` in `GitManager` and exists
    *     for the same reason: a rate limit or a network blip must not blank a
@@ -4046,24 +4047,21 @@ const make = Effect.gen(function* () {
       // announcing the merge a second time (`updated`, not `state-changed`).
       // Look that backfill up by NUMBER: Done may already have deleted the
       // board branch, and a branch lookup then answers "none" and would unlink
-      // the merge. A null, a different number, or a same-number answer that
+      // the merge. A failure, a different number, or a same-number answer that
       // is not still merged keeps the recorded link — lastGoodSummary can
       // still say "open" after the merge landed, and writing that would let
       // the next branch lookup unlink it. Skip the held summary so a live
       // merged result can still fill the title.
-      if (
-        isBoardCardPullRequestTerminal(recorded) &&
-        recorded !== null &&
-        recorded.title !== null
-      ) {
-        return boardRefreshOutcomeOf(recorded);
-      }
       if (isBoardCardPullRequestTerminal(recorded) && recorded !== null) {
+        if (recorded.title !== null) return boardRefreshOutcomeOf(recorded);
+        // Only a human's "Check again" forces past the PR read cache; every
+        // automatic trigger takes the cached read, so a burst of triggers (or
+        // a forge that keeps failing) costs one forge call per cache window.
         const found = yield* pullRequests
           .get({
             projectId: card.projectId,
             number: recorded.number,
-            force: true,
+            force: options?.force === true,
           })
           .pipe(
             Effect.catch((error) =>
@@ -4083,7 +4081,7 @@ const make = Effect.gen(function* () {
               ),
             ),
           );
-        if (found !== null && "failure" in found) {
+        if ("failure" in found) {
           return { outcome: "lookup-failed", detail: found.failure } as const;
         }
         const current = (yield* readCard(card.id)) ?? card;
@@ -4091,7 +4089,6 @@ const make = Effect.gen(function* () {
         if (
           !isBoardCardPullRequestTerminal(currentLink) ||
           currentLink === null ||
-          found === null ||
           found.number !== currentLink.number ||
           found.state !== "merged"
         ) {
