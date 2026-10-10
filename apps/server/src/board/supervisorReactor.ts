@@ -264,10 +264,14 @@ type BoardCardReclaimAttempt =
 
 /** What provisioning a card's worktree came to (T3O-15): a path, a failure
     only a human can fix, or one the next scheduling pass may get past. */
+// Consecutive git failures provisioning one card's branch before the build
+// step parks for a human instead of retrying again (T3O-15).
+const TRANSIENT_PROVISION_FAILURE_LIMIT = 3;
+
 type WorktreeOutcome =
   | { readonly kind: "ready"; readonly path: string }
   | { readonly kind: "stuck"; readonly reason: string }
-  | { readonly kind: "transient" };
+  | { readonly kind: "transient"; readonly reason?: string };
 
 export interface SupervisorReactorShape {
   /** Reconcile persisted step state, then subscribe to board and thread
@@ -1040,8 +1044,8 @@ const make = Effect.gen(function* () {
   // repo falls back to the current branch, with a detached HEAD (`rev-parse`
   // answers the literal string 'HEAD') treated as a resolution failure rather
   // than a branch. Shared by worktree provisioning and integration-branch
-  // creation; `defaultBranch === ""` is the failure signal, `detachedHead`
-  // disambiguates the message.
+  // creation; `defaultBranch === ""` is the failure signal, `detachedHead` and
+  // `unbornBranch` (a repository with no commits) disambiguate the message.
   const resolveDefaultBranch = Effect.fn("board-supervisor-resolveDefaultBranch")(function* (
     cwd: string,
   ) {
@@ -1228,13 +1232,13 @@ const make = Effect.gen(function* () {
         card,
         `The parent card ${parentFailure.key} has no integration branch yet. ${parentFailure.reason}`,
       );
-      return { kind: "transient" } as WorktreeOutcome;
+      return { kind: "transient", reason: parentFailure.reason } as WorktreeOutcome;
     }
     if (baseRefName === null || defaultBranch === "") {
-      // Say WHICH of the three ways base-ref resolution failed — "could not
-      // resolve the base branch" is true but unactionable, and the three have
-      // different fixes (commit the parent's work, check out a branch, run
-      // `git init` + a first commit).
+      // Say WHICH of the four ways base-ref resolution failed — "could not
+      // resolve the base branch" is true but unactionable, and the four have
+      // different fixes (commit the parent's work, check out a branch, make a
+      // first commit in an empty repository, run `git init`).
       return yield* stuck(
         baseRefName !== null
           ? noDefaultBranchReason(cwd, resolved, "the card's branch")
@@ -1295,7 +1299,7 @@ const make = Effect.gen(function* () {
     );
     if (Option.isNone(provisioned)) {
       yield* failWorktree(card, "git worktree add failed; retry the build.");
-      return { kind: "transient" } as WorktreeOutcome;
+      return { kind: "transient", reason: "git worktree add failed." } as WorktreeOutcome;
     }
     yield* dispatch({
       type: "board.card.record-worktree",
@@ -1314,10 +1318,27 @@ const make = Effect.gen(function* () {
   // into another identical activity row. Parked, it is amber on the board with
   // the reason as its error, and Continue (a requeue) retries provisioning.
   // Spends no recovery budget: the agent never ran, so nothing failed it.
+  // A git failure is retried on the next pass, but only so many times in a
+  // row: one that keeps failing (a stale ref lock, a full or read-only disk)
+  // is not a hiccup, and left pending it would recreate exactly the idle,
+  // thread-less card this exists to prevent. The count lives in memory and is
+  // dropped on success or park, so Continue starts a fresh run of retries.
+  const transientProvisionFailures = new Map<string, number>();
   const provisionBuildStep = Effect.fn("board-supervisor-provisionBuildStep")(function* (
     card: BoardCard,
   ) {
-    const outcome = yield* ensureWorktree(card);
+    let outcome = yield* ensureWorktree(card);
+    if (outcome.kind === "transient" && outcome.reason !== undefined) {
+      const failures = (transientProvisionFailures.get(card.id) ?? 0) + 1;
+      transientProvisionFailures.set(card.id, failures);
+      if (failures >= TRANSIENT_PROVISION_FAILURE_LIMIT) {
+        outcome = {
+          kind: "stuck",
+          reason: `Preparing the card's branch failed ${failures} times in a row: ${outcome.reason} Check the repository, then press Continue.`,
+        };
+      }
+    }
+    if (outcome.kind !== "transient") transientProvisionFailures.delete(card.id);
     if (outcome.kind === "ready") return outcome.path;
     if (outcome.kind === "stuck") {
       const state = boardCardStepState(yield* readBoard, card.id);
@@ -1326,6 +1347,11 @@ const make = Effect.gen(function* () {
         state.mode === "build" &&
         (state.status === "pending" || state.status === "queued")
       ) {
+        yield* Effect.logWarning("board supervisor: build step cannot start", {
+          cardId: card.id,
+          stepId: state.stepId,
+          reason: outcome.reason,
+        });
         yield* dispatch({
           type: "board.card.recover-step",
           commandId: yield* commandId("recover-step"),

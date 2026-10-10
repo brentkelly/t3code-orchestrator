@@ -196,6 +196,39 @@ it.effect("a failed git worktree add leaves the step pending for the next pass t
   ),
 );
 
+it.effect("a git failure that keeps recurring parks the step after three passes", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [card("card-1"), card("other-1"), card("other-2"), card("other-3")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+      gitFailure: "worktree-add",
+    },
+    ({ pumpDomain, board, decided }) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("card-1");
+        yield* pumpDomain(movedToBuilding(card("card-1"), 1));
+        // Each card entering Building runs another scheduling pass.
+        yield* pumpDomain(movedToBuilding(card("other-1"), 2));
+        assert.strictEqual(boardCardStepState(yield* board, id)?.status, "pending");
+        yield* pumpDomain(movedToBuilding(card("other-2"), 3));
+
+        const state = boardCardStepState(yield* board, id);
+        assert.strictEqual(state?.status, "stalled");
+        assert.strictEqual(state?.stalledReason, "no-worktree");
+        assert.include(state?.lastError ?? "", "failed 3 times in a row");
+        assert.strictEqual(state?.stageEntryRecoveries, 0);
+        const failures = worktreeFailures(yield* decided, "card-1").length;
+
+        // Parked: a later pass no longer re-runs git for it.
+        yield* pumpDomain(movedToBuilding(card("other-3"), 4));
+        assert.strictEqual(worktreeFailures(yield* decided, "card-1").length, failures);
+      }),
+  ),
+);
+
 it.effect("a split child whose parent's git branch failed retries rather than parking", () =>
   withGovernor(
     {
