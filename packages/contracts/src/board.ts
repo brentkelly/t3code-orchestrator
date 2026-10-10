@@ -3502,7 +3502,9 @@ export function isBoardCardWorking(
  * (`deriveBoardCardThreadState`), so this needs no field of its own. Takes a
  * card shell or a single thread's derived state alike; on a card it only
  * proves the prompt when no thread also asked, which is why `input` outranks
- * `permission`.
+ * `permission`. A dead session's lingering approval never reaches here as
+ * `waiting` (`deriveBoardCardThreadState` ranks `error` above it), which is the
+ * client half of the server's dead-session guard.
  */
 export function isBoardCardAwaitingPermission(
   card: Pick<BoardCardShell, "threadState" | "awaitingInput">,
@@ -5965,7 +5967,13 @@ export function deriveBoardCardThreadState(
   );
   if (live.length === 0) return { threadState: "none", awaitingInput: false };
   const awaitingInput = live.some((thread) => thread.hasPendingUserInput);
-  if (awaitingInput || live.some((thread) => thread.hasPendingApprovals)) {
+  // A pending approval is only resolved by the provider, so a session that dies
+  // mid-prompt keeps it forever. Nobody can approve into a dead session, so
+  // `error` outranks it, as the server's `isAwaitingPermission` does (T3O-16).
+  const awaitingPermission = live.some(
+    (thread) => thread.hasPendingApprovals && thread.session?.status !== "error",
+  );
+  if (awaitingInput || awaitingPermission) {
     return { threadState: "waiting", awaitingInput };
   }
   const working = live.some((thread) => {

@@ -476,6 +476,15 @@ describe("board card shell derivation", () => {
         session: null,
       }),
     ).toEqual({ threadState: "waiting", awaitingInput: false });
+    // A session that died mid-prompt keeps its approval row, but nobody can
+    // approve into it: the card reads failed, not Needs permission (T3O-16).
+    expect(
+      deriveBoardCardThreadState({
+        hasPendingUserInput: false,
+        hasPendingApprovals: true,
+        session: { status: "error" },
+      }),
+    ).toEqual({ threadState: "failed", awaitingInput: false });
     expect(
       deriveBoardCardThreadState({
         hasPendingUserInput: false,
