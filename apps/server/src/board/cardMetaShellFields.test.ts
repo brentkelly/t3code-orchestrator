@@ -298,6 +298,20 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       assert.strictEqual(linked?.prNumber, 284);
       assert.strictEqual(linked?.hasPr, true);
 
+      // Clearing is a real value, not "no data": the badge must be able to go.
+      // It goes from an OPEN link — a merged one is never unlinked (the
+      // decider refuses it), so the merged badge is asserted after this.
+      yield* engine.dispatch({
+        type: "board.card.record-pull-request",
+        commandId: CommandId.make("cmd-record-pr-cleared"),
+        cardId,
+        pullRequest: null,
+        createdAt,
+      });
+      const cleared = yield* shellCard;
+      assert.strictEqual(cleared?.hasPr, false);
+      assert.strictEqual("prNumber" in (cleared ?? {}), false);
+
       // A merged PR is still a PR: the badge keeps the number after the work
       // lands, which is what makes a Done card traceable to its change.
       yield* engine.dispatch({
@@ -318,18 +332,6 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       const merged = yield* shellCard;
       assert.strictEqual(merged?.prNumber, 284);
       assert.strictEqual(merged?.hasPr, true);
-
-      // Clearing is a real value, not "no data": the badge must be able to go.
-      yield* engine.dispatch({
-        type: "board.card.record-pull-request",
-        commandId: CommandId.make("cmd-record-pr-cleared"),
-        cardId,
-        pullRequest: null,
-        createdAt,
-      });
-      const cleared = yield* shellCard;
-      assert.strictEqual(cleared?.hasPr, false);
-      assert.strictEqual("prNumber" in (cleared ?? {}), false);
     }),
   );
 
@@ -467,6 +469,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
               number: 412,
               url: "https://github.com/acme/repo/pull/412",
               state: "open",
+              title: null,
               headBranch: "board/card-draft",
               baseRef: "main",
               ...(isDraft ? { isDraft: true } : {}),

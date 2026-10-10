@@ -4011,7 +4011,9 @@ const make = Effect.gen(function* () {
    *
    *  1. No ready worktree — no branch, so nothing to look up.
    *  2. A MERGED pull request — the one state that can never change again, so a
-   *     card stops costing lookups the moment its PR lands. `closed`
+   *     card stops costing branch lookups the moment its PR lands. A merged
+   *     link whose title is still null is the exception: it costs one forced
+   *     lookup by number on each refresh trigger until a title arrives. `closed`
    *     deliberately does NOT stop them: it can be reopened, and a branch
    *     whose PR was closed is the one most likely to get a new one.
    *  3. A lookup FAILURE records nothing, leaving the last known link in
@@ -4188,6 +4190,7 @@ const make = Effect.gen(function* () {
       // it would let the next null find unlink the badge.
       if (
         isBoardCardPullRequestTerminal(current.pullRequest) &&
+        current.pullRequest !== null &&
         (next === null || next.number !== current.pullRequest.number || next.state !== "merged")
       ) {
         return boardRefreshOutcomeOf(current.pullRequest);

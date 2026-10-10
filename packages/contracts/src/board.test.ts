@@ -2109,6 +2109,7 @@ describe("a pull request link's draft flag (T3O-12)", () => {
     number: 412,
     url: "https://example.test/pull/412",
     state: "open",
+    title: null,
     headBranch: "board/t3o-12",
     baseRef: "t3o",
     checkedAt: "2026-10-03T00:00:00.000Z",

@@ -45,6 +45,7 @@ const cachedPr = (state: BoardCardPullRequest["state"]): BoardCardPullRequest =>
   number: 284 as BoardCardPullRequest["number"],
   url: "https://github.com/acme/repo/pull/284",
   state,
+  title: null,
   headBranch: "board/card-1",
   baseRef: "main",
   checkedAt: "2026-01-01T00:00:00.000Z" as BoardCardPullRequest["checkedAt"],
