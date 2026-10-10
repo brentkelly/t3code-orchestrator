@@ -473,7 +473,7 @@ describe("board card shell derivation", () => {
       deriveBoardCardThreadState({
         hasPendingUserInput: false,
         hasPendingApprovals: true,
-        session: null,
+        session: { status: "running" },
       }),
     ).toEqual({ threadState: "waiting", awaitingInput: false });
     // A session that died mid-prompt keeps its approval row, but nobody can
@@ -500,6 +500,33 @@ describe("board card shell derivation", () => {
         backgroundLiveness: "working",
       }).threadState,
     ).toBe("working");
+  });
+
+  it("ignores an approval whose turn is no longer in flight", () => {
+    // The shape that pinned a card on Needs permission: an earlier stage's
+    // thread kept the approvals its interrupted turns left behind, while the
+    // card's current thread was working.
+    const working = {
+      hasPendingUserInput: false,
+      hasPendingApprovals: false,
+      session: { status: "running" },
+    };
+    for (const status of ["stopped", "ready", "interrupted", "idle"]) {
+      const orphaned = {
+        hasPendingUserInput: false,
+        hasPendingApprovals: true,
+        session: { status },
+      };
+      expect(deriveBoardCardThreadState(orphaned).threadState).toBe("stopped");
+      expect(deriveBoardCardThreadState([orphaned, working]).threadState).toBe("working");
+    }
+    expect(
+      deriveBoardCardThreadState({
+        hasPendingUserInput: false,
+        hasPendingApprovals: true,
+        session: null,
+      }).threadState,
+    ).toBe("stopped");
   });
 
   it("makeBoardCardShell hardcodes the not-yet-sourced fields to their documented rest values", () => {

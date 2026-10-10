@@ -3523,9 +3523,8 @@ export function isBoardCardWorking(
  * (`deriveBoardCardThreadState`), so this needs no field of its own. Takes a
  * card shell or a single thread's derived state alike; on a card it only
  * proves the prompt when no thread also asked, which is why `input` outranks
- * `permission`. A dead session's lingering approval never reaches here as
- * `waiting` (`deriveBoardCardThreadState` ranks `error` above it), which is the
- * client half of the server's dead-session guard.
+ * `permission`. An approval left behind by a turn that is no longer in flight
+ * never reaches here as `waiting` (`isThreadAwaitingPermission`).
  */
 export function isBoardCardAwaitingPermission(
   card: Pick<BoardCardShell, "threadState" | "awaitingInput">,
@@ -5954,6 +5953,23 @@ export interface BoardThreadStateSource {
 }
 
 /**
+ * Whether a thread is held on a permission prompt someone can still answer
+ * (T3O-16). Only the provider resolves a pending approval, so one raised by a
+ * turn that then died, was interrupted or whose session stopped stays pending
+ * forever; it would pin the card violet behind threads that have moved on. A
+ * live prompt always sits in an in-flight turn (the runtime's `waiting` state
+ * projects as `running`), so any other session status means nobody can answer
+ * it. Shared by the card shell and the supervisor's timeout sweep so the two
+ * cannot disagree.
+ */
+export function isThreadAwaitingPermission(
+  thread: Pick<BoardThreadStateSource, "hasPendingApprovals" | "session">,
+): boolean {
+  const status = thread.session?.status;
+  return thread.hasPendingApprovals && (status === "running" || status === "starting");
+}
+
+/**
  * Thread-derived card fields, shared by the server (snapshot enrichment)
  * and the client (live re-derivation as thread shells change). "Waiting"
  * outranks "working": a blocked agent needs the human, which is the signal
@@ -5991,12 +6007,7 @@ export function deriveBoardCardThreadState(
   );
   if (live.length === 0) return { threadState: "none", awaitingInput: false };
   const awaitingInput = live.some((thread) => thread.hasPendingUserInput);
-  // A pending approval is only resolved by the provider, so a session that dies
-  // mid-prompt keeps it forever. Nobody can approve into a dead session, so
-  // `error` outranks it, as the server's `isAwaitingPermission` does (T3O-16).
-  const awaitingPermission = live.some(
-    (thread) => thread.hasPendingApprovals && thread.session?.status !== "error",
-  );
+  const awaitingPermission = live.some(isThreadAwaitingPermission);
   if (awaitingInput || awaitingPermission) {
     return { threadState: "waiting", awaitingInput };
   }

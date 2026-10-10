@@ -80,6 +80,7 @@ import {
   isBoardMintedCommandId,
   isBoardParkedStepStatus,
   isBoardTerminalStepStatus,
+  isThreadAwaitingPermission,
   MessageId,
   effectiveBoardRuntimeMode,
   resolveBoardCardForThread,
@@ -420,12 +421,6 @@ function threadIsAlive(shell: OrchestrationThreadShell): boolean {
   return (
     shell.hasPendingUserInput || (shell.session !== null && shell.session.activeTurnId !== null)
   );
-}
-
-/** A live thread held on a tool-permission prompt (T3O-16). A dead session
-    cannot be approved in, so `error` outranks the pending approval here too. */
-function isAwaitingPermission(shell: OrchestrationThreadShell): boolean {
-  return shell.hasPendingApprovals && shell.session?.status !== "error";
 }
 
 /**
@@ -8052,7 +8047,7 @@ const make = Effect.gen(function* () {
   const threadAwaitingPermission = (threadId: ThreadId) =>
     snapshotQuery
       .getThreadShellById(threadId)
-      .pipe(Effect.map((shell) => Option.isSome(shell) && isAwaitingPermission(shell.value)));
+      .pipe(Effect.map((shell) => Option.isSome(shell) && isThreadAwaitingPermission(shell.value)));
   const stampPermissionAnswered = (threadId: ThreadId) =>
     nowIso.pipe(Effect.map((now) => void permissionHeldAt.set(String(threadId), now)));
 

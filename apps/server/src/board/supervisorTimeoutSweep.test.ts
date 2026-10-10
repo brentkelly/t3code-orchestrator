@@ -409,6 +409,37 @@ it.effect("T3O-16: a dead session's lingering permission prompt does not exempt 
   ),
 );
 
+// An approval left behind by an interrupted turn cannot be answered once the
+// session has stopped, so it no longer exempts the step either.
+it.effect("T3O-16: a stopped session's orphaned permission prompt does not exempt it", () =>
+  withGovernor(
+    {
+      board: boardWithStep(runningStep()),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+    },
+    ({ reactor, board, shells }) =>
+      Effect.gen(function* () {
+        const alive = aliveThreadShell(String(threadId));
+        yield* Ref.set(
+          shells,
+          new Map([
+            [
+              String(threadId),
+              {
+                ...alive,
+                hasPendingApprovals: true,
+                session: { ...alive.session!, status: "stopped", activeTurnId: null },
+              },
+            ],
+          ]),
+        );
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 2);
+      }),
+  ),
+);
+
 // ── The heartbeat is measured on the card's OWN branch (t3o-10, D4) ────
 //
 // A base sync fast-forwards commits reachable from the base into the card's
