@@ -1560,6 +1560,7 @@ export type BoardCardStepAwaitingReason = typeof BoardCardStepAwaitingReason.Typ
  * | `quota-exhausted` | `Out of credits — needs a human`     |
  * | `waiting-retry`   | `Stalled — waiting to retry 2:32pm`  |
  * | `gave-up`         | `Stalled — needs a human`            |
+ * | `no-worktree`     | `Can't start — needs a human`        |
  *
  * All amber: none of them is working, so none may be blue, and green is
  * reserved (`docs/t3o/status-colours.md`).
@@ -1574,6 +1575,12 @@ export const BOARD_STEP_STALLED_REASONS = [
   "quota-exhausted",
   "waiting-retry",
   "gave-up",
+  // A build step whose branch or worktree could not be prepared (T3O-15): the
+  // project has no commits, a split parent has no integration branch, a pinned
+  // base is missing. Nothing the board retries can fix it, so it parks here with
+  // the reason as the step's `lastError` instead of sitting `pending` with no
+  // thread and nothing on the card.
+  "no-worktree",
 ] as const;
 export const BoardCardStepStalledReason = Schema.Literals(BOARD_STEP_STALLED_REASONS);
 export type BoardCardStepStalledReason = typeof BoardCardStepStalledReason.Type;
@@ -3065,8 +3072,8 @@ export function boardShortClock(iso: string | null | undefined): string | null {
 /**
  * The chip words for a `stalled` step, by why it stopped (T3O-22, D10).
  *
- * Four readings of one status. Three of them are the board WAITING and say when;
- * the fourth is the board having given up and says so. Splitting the words while
+ * Five readings of one status. Two of them are the board WAITING and say when;
+ * the rest need a human and say so. Splitting the words while
  * keeping the status is what lets a quota park read honestly — "resuming 2:50am"
  * — without inventing a fifth step status that every guard in the reactor and
  * the decider would have to learn.
@@ -3103,6 +3110,12 @@ function boardStalledWords(
       return {
         label: "Stalled — needs a human",
         detail: "Stalled — recovery gave up; needs a human to retry or take over",
+      };
+    case "no-worktree":
+      return {
+        label: "Can't start — needs a human",
+        detail:
+          "The board could not prepare this card's branch. Fix the cause shown on the card, then press Continue.",
       };
   }
 }

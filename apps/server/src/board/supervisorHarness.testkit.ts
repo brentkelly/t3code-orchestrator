@@ -489,6 +489,9 @@ export type Harness = {
       `rev-parse refs/heads/<ref>` answers from now on. Every unset ref answers
       the stub's historic "main", so existing fixtures never read stale. */
   readonly setBaseTip: (ref: string, tip: string) => void;
+  /** End the `unbornBranch` fixture: the human made a first commit, so the
+      repository now answers like any other (T3O-15). */
+  readonly makeFirstCommit: () => void;
   /** Replace the board settings the reactor reads from now on — what flipping
       a switch in the Settings pane does. */
   readonly setBoardSettings: (settings: BoardSettings) => void;
@@ -554,6 +557,10 @@ export function withGovernor(
         what the reactor's base-branch probes really see when a project's
         workspace root is not a git checkout. */
     readonly notAGitRepo?: boolean;
+    /** A repository with no commits yet (T3O-15): HEAD is a symbolic ref to
+        this branch, which does not exist, so `symbolic-ref HEAD` answers it and
+        every other probe fails as git really does. `makeFirstCommit` ends it. */
+    readonly unbornBranch?: string;
     /** Reject every `thread.create`, so a test can drive the spawn-failure path
         (a thread the engine refuses to create) without a provider double. */
     readonly rejectThreadCreate?: boolean;
@@ -916,6 +923,7 @@ export function withGovernor(
     // Movable branch tips for the rev-parse stub (t3o-24) — a plain map, so a
     // test can slide a base tip between pumps without an Effect.
     const baseTips = new Map<string, string>();
+    let unbornBranch = input.unbornBranch;
     // Every git argv the reactor ran, and the branches it created through this
     // stub — the two things a base-materialisation assertion needs and the card
     // does not record.
@@ -959,6 +967,14 @@ export function withGovernor(
             stderr: "fatal: not a git repository (or any of the parent directories): .git",
             exitCode: 128,
           });
+        }
+        if (unbornBranch !== undefined) {
+          const args = request.args ?? [];
+          return Effect.succeed(
+            args[0] === "symbolic-ref" && args.at(-1) === "HEAD"
+              ? { stdout: unbornBranch, stderr: "", exitCode: 0 }
+              : { stdout: "", stderr: "fatal: no commits yet", exitCode: 128 },
+          );
         }
         // A `rev-parse refs/heads/<ref>` answers the movable tip fixture
         // (t3o-24): `setBaseTip` moves it mid-test, and an unset ref answers
@@ -1243,6 +1259,9 @@ export function withGovernor(
           removedWorktrees: Ref.get(removedWorktrees),
           settledThreads: Ref.get(settled),
           setBaseTip: (ref, tip) => void baseTips.set(ref, tip),
+          makeFirstCommit: () => {
+            unbornBranch = undefined;
+          },
           setBoardSettings: (settings) => void (boardSettings = settings),
           setWorktreeUndurable: (undurable) => void (worktreeUndurable = undurable),
           gitInvocations: Effect.sync(() => [...gitInvocationLog]),

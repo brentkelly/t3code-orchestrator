@@ -262,6 +262,13 @@ type BoardCardReclaimAttempt =
   | { readonly outcome: "busy" }
   | { readonly outcome: "failed" };
 
+/** What provisioning a card's worktree came to (T3O-15): a path, a failure
+    only a human can fix, or one the next scheduling pass may get past. */
+type WorktreeOutcome =
+  | { readonly kind: "ready"; readonly path: string }
+  | { readonly kind: "stuck"; readonly reason: string }
+  | { readonly kind: "transient" };
+
 export interface SupervisorReactorShape {
   /** Reconcile persisted step state, then subscribe to board and thread
       events. Must run in a scope so worker fibers finalize on shutdown. */
@@ -1070,8 +1077,28 @@ const make = Effect.gen(function* () {
         : currentBranch === "HEAD"
           ? ""
           : currentBranch;
-    return { defaultBranch, detachedHead: currentBranch === "HEAD" };
+    // A repository with no commits yet (T3O-15): HEAD names a branch that does
+    // not exist, so `rev-parse` answers nothing while `symbolic-ref` still does.
+    // Only read on failure — it shapes the message, not the resolution.
+    const unbornBranch =
+      defaultBranch === "" && currentBranch === ""
+        ? yield* gitRef(["symbolic-ref", "--quiet", "--short", "HEAD"])
+        : "";
+    return { defaultBranch, detachedHead: currentBranch === "HEAD", unbornBranch };
   });
+
+  // Why `resolveDefaultBranch` found nothing, in words that name the fix.
+  // Shared by card and integration-branch provisioning so both say the same.
+  const noDefaultBranchReason = (
+    cwd: string,
+    resolved: { readonly detachedHead: boolean; readonly unbornBranch: string },
+    what: string,
+  ) =>
+    resolved.detachedHead
+      ? `The project checkout at ${cwd} is on a detached HEAD, so there is no branch to cut ${what} from.`
+      : resolved.unbornBranch !== ""
+        ? `${cwd} has no commits yet, so there is no branch to cut ${what} from. Make a first commit on '${resolved.unbornBranch}'.`
+        : `${cwd} is not a git repository, or has no commits yet, so there is no branch to cut ${what} from.`;
 
   /**
    * Make sure `base` names a LOCAL branch in `cwd` (T3O-5, D7), creating it
@@ -1126,10 +1153,17 @@ const make = Effect.gen(function* () {
     return (yield* gitRef(["rev-parse", "--verify", "--quiet", `refs/heads/${base}`])) !== "";
   });
 
+  // Answers the worktree path, or why there is none. `stuck` failures are
+  // deterministic — retrying on the next scheduling pass changes nothing until a
+  // human fixes the repo — so the caller parks the step (`provisionBuildStep`);
+  // a transient one (git itself failing, a provision already in flight) leaves
+  // the step pending for the next pass to retry, as it always did.
   const ensureWorktree = Effect.fn("board-supervisor-ensureWorktree")(function* (card: BoardCard) {
     if (card.worktree !== null && card.worktree.status === "ready" && card.worktree.path !== null) {
-      return card.worktree.path;
+      return { kind: "ready", path: card.worktree.path } as WorktreeOutcome;
     }
+    const stuck = (reason: string) =>
+      failWorktree(card, reason).pipe(Effect.as<WorktreeOutcome>({ kind: "stuck", reason }));
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
     // Every pre-flight failure below reports through `fail-worktree` rather
@@ -1138,13 +1172,13 @@ const make = Effect.gen(function* () {
     // "could not prepare the worktree: …" row) instead of leaving the card
     // parked in its stage with nothing running and no explanation.
     if (cwd === null) {
-      yield* failWorktree(card, "The card's project has no workspace folder on this server.");
-      return null;
+      return yield* stuck("The card's project has no workspace folder on this server.");
     }
     const branch = boardCardWorktreeBranchName(card);
     // A sub-board plan card branches off its parent's integration branch
     // (D12); a top-level card off the project default.
-    const { defaultBranch, detachedHead } = yield* resolveDefaultBranch(cwd);
+    const resolved = yield* resolveDefaultBranch(cwd);
+    const { defaultBranch } = resolved;
     // A child of a LIVE split retries the integration-branch creation HERE,
     // BEFORE resolving its base (t3o-23, D5): approval fires the creation
     // once, but the reactor may have been down or git transiently broken at
@@ -1158,6 +1192,11 @@ const make = Effect.gen(function* () {
     // its merged baseRef below is the right base for a straggler child.
     // Each child build attempt is the organic retry; `ensureIntegrationBranch`
     // is idempotent, so a raced pair of children converges on the one branch.
+    // Why the parent's integration branch could not be cut, when this pass
+    // tried and failed — the child's own "no base" reason quotes it, because
+    // the fix (a first commit, a checked-out branch) is in the PARENT's repo
+    // state and the child is the card the human is looking at (T3O-15).
+    let parentFailure: { readonly key: string; readonly reason: string } | null = null;
     if (card.parentCardId !== null) {
       const board = yield* readBoard;
       const parent = board.cards.find((candidate) => candidate.id === card.parentCardId);
@@ -1173,7 +1212,8 @@ const make = Effect.gen(function* () {
         parent.stage === buildStage.stageId &&
         !branchLive
       ) {
-        yield* ensureIntegrationBranch(parent);
+        const reason = yield* ensureIntegrationBranch(parent);
+        if (reason !== null) parentFailure = { key: parent.key, reason };
       }
     }
     const baseRefName = resolveBoardCardBaseRef({
@@ -1186,15 +1226,13 @@ const make = Effect.gen(function* () {
       // resolve the base branch" is true but unactionable, and the three have
       // different fixes (commit the parent's work, check out a branch, run
       // `git init` + a first commit).
-      yield* failWorktree(
-        card,
-        baseRefName === null
-          ? "The parent card has no branch yet, so there is no base to cut this card's branch from."
-          : detachedHead
-            ? `The project checkout at ${cwd} is on a detached HEAD, so there is no branch to cut the card's branch from.`
-            : `${cwd} is not a git repository, or has no commits yet, so there is no branch to cut the card's branch from.`,
+      return yield* stuck(
+        baseRefName !== null
+          ? noDefaultBranchReason(cwd, resolved, "the card's branch")
+          : parentFailure !== null
+            ? `The parent card ${parentFailure.key} has no integration branch, so there is no base to cut this card's branch from. ${parentFailure.reason}`
+            : "The parent card has no branch yet, so there is no base to cut this card's branch from.",
       );
-      return null;
     }
     // The base must exist LOCALLY (T3O-5, D7): `worktree.baseRefName` is read
     // back as `refs/heads/<base>` by `measureBaseTip`, fetched as
@@ -1206,11 +1244,9 @@ const make = Effect.gen(function* () {
       // Never fall back to the default. A card pinned to `release/2.4` that
       // silently builds off `main` is worse than a card that does not build,
       // and this path is card-visible and retryable.
-      yield* failWorktree(
-        card,
+      return yield* stuck(
         `The card's base branch '${baseRefName}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the card's branch from.`,
       );
-      return null;
     }
     // Observe the provision dispatch: a rejected command (e.g. the worktree is
     // not in a provisionable state) must abort BEFORE the git effect, or the
@@ -1233,7 +1269,7 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.as(false)),
         ),
       );
-    if (!provisionAccepted) return null;
+    if (!provisionAccepted) return { kind: "transient" } as WorktreeOutcome;
     const provisioned = yield* provisionBoardCardWorktree({
       projectCwd: cwd,
       branch,
@@ -1250,7 +1286,7 @@ const make = Effect.gen(function* () {
     );
     if (Option.isNone(provisioned)) {
       yield* failWorktree(card, "git worktree add failed; retry the build.");
-      return null;
+      return { kind: "transient" } as WorktreeOutcome;
     }
     yield* dispatch({
       type: "board.card.record-worktree",
@@ -1259,7 +1295,44 @@ const make = Effect.gen(function* () {
       path: provisioned.value.path,
       createdAt: yield* nowIso,
     });
-    return provisioned.value.path;
+    return { kind: "ready", path: provisioned.value.path } as WorktreeOutcome;
+  });
+
+  // Provision a build step's worktree, parking the step `stalled` with reason
+  // `no-worktree` when the failure is one only a human can fix (T3O-15). Left
+  // `pending`, such a step had no thread, no chip and no queue position — the
+  // card sat in Building looking idle, and every scheduling pass re-failed it
+  // into another identical activity row. Parked, it is amber on the board with
+  // the reason as its error, and Continue (a requeue) retries provisioning.
+  // Spends no recovery budget: the agent never ran, so nothing failed it.
+  const provisionBuildStep = Effect.fn("board-supervisor-provisionBuildStep")(function* (
+    card: BoardCard,
+  ) {
+    const outcome = yield* ensureWorktree(card);
+    if (outcome.kind === "ready") return outcome.path;
+    if (outcome.kind === "stuck") {
+      const state = boardCardStepState(yield* readBoard, card.id);
+      if (
+        state !== null &&
+        state.mode === "build" &&
+        (state.status === "pending" || state.status === "queued")
+      ) {
+        yield* dispatch({
+          type: "board.card.recover-step",
+          commandId: yield* commandId("recover-step"),
+          cardId: card.id,
+          stepId: state.stepId,
+          threadId: state.threadId,
+          escalateToHuman: true,
+          progressed: false,
+          lastError: outcome.reason,
+          stalledReason: "no-worktree",
+          chargeBudget: false,
+          createdAt: yield* nowIso,
+        });
+      }
+    }
+    return null;
   });
 
   // Create a fresh thread for a step and link it to the card, returning the new
@@ -1887,7 +1960,7 @@ const make = Effect.gen(function* () {
         worktreePath === null &&
         (card.worktree === null || card.worktree.status !== "provisioning")
       ) {
-        worktreePath = yield* ensureWorktree(card);
+        worktreePath = yield* provisionBuildStep(card);
       }
       if (worktreePath === null) continue;
       const key = `${String(card.id)}::${state.stepId}`;
@@ -2949,7 +3022,7 @@ const make = Effect.gen(function* () {
           baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
           createdAt: yield* nowIso,
         });
-        if (exec.mode === "build") yield* ensureWorktree(card);
+        if (exec.mode === "build") yield* provisionBuildStep(card);
         return;
       }
       case "complete": {
@@ -3086,7 +3159,7 @@ const make = Effect.gen(function* () {
       baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
       createdAt: yield* nowIso,
     });
-    if (exec.mode === "build") yield* ensureWorktree(card);
+    if (exec.mode === "build") yield* provisionBuildStep(card);
     yield* schedule();
   });
 
@@ -6878,6 +6951,10 @@ const make = Effect.gen(function* () {
   // `failed` and `reclaimed` proceed: a failed attempt retries, and a
   // reclaimed slice is a SECOND-ROUND split (a merged parent dragged back and
   // re-approved) whose old branch was deleted at Done and needs a fresh one.
+  //
+  // Answers why the branch could not be cut, or null when it exists (or there
+  // was nothing to do): a child that triggered the attempt quotes the reason on
+  // its own card (T3O-15).
   const ensureIntegrationBranch = Effect.fn("board-supervisor-ensureIntegrationBranch")(function* (
     card: BoardCard,
   ) {
@@ -6886,13 +6963,14 @@ const make = Effect.gen(function* () {
       card.worktree.status !== "failed" &&
       card.worktree.status !== "reclaimed"
     ) {
-      return;
+      return null;
     }
+    const fail = (reason: string) =>
+      failWorktree(card, reason).pipe(Effect.as<string | null>(reason));
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
     if (cwd === null) {
-      yield* failWorktree(card, "The card's project has no workspace folder on this server.");
-      return;
+      return yield* fail("The card's project has no workspace folder on this server.");
     }
     const branch = boardCardWorktreeBranchName(card);
     const gitRef = (args: ReadonlyArray<string>) =>
@@ -6908,13 +6986,10 @@ const make = Effect.gen(function* () {
           Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
           Effect.catchCause(() => Effect.succeed("")),
         );
-    const { defaultBranch } = yield* resolveDefaultBranch(cwd);
+    const resolved = yield* resolveDefaultBranch(cwd);
+    const { defaultBranch } = resolved;
     if (defaultBranch === "") {
-      yield* failWorktree(
-        card,
-        `Could not resolve a default branch in ${cwd} to cut the integration branch from.`,
-      );
-      return;
+      return yield* fail(noDefaultBranchReason(cwd, resolved, "the integration branch"));
     }
     // The integration branch is cut from the PARENT's base (T3O-5, D8), not
     // unconditionally from the project default. This is a latent bug the
@@ -6929,11 +7004,9 @@ const make = Effect.gen(function* () {
         defaultBranch,
       }) ?? defaultBranch;
     if (!(yield* ensureLocalBaseBranch(cwd, integrationBase))) {
-      yield* failWorktree(
-        card,
+      return yield* fail(
         `The card's base branch '${integrationBase}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the integration branch from.`,
       );
-      return;
     }
     // Idempotent on retry: an existing branch is the desired state, not an
     // error (an earlier attempt may have created it and died before the
@@ -6968,11 +7041,9 @@ const make = Effect.gen(function* () {
           `refs/heads/${branch}`,
         ]);
         if (nowExists === "") {
-          yield* failWorktree(
-            card,
+          return yield* fail(
             `Could not create the integration branch '${branch}' from '${integrationBase}'.`,
           );
-          return;
         }
       }
     }
@@ -7007,6 +7078,7 @@ const make = Effect.gen(function* () {
       baseRefName: integrationBase,
       createdAt: yield* nowIso,
     });
+    return null;
   });
 
   const handlePlansApproved = Effect.fn("board-supervisor-handlePlansApproved")(function* (
