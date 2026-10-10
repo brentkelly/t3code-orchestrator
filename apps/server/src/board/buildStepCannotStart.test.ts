@@ -21,6 +21,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import {
+  cardMoved,
   codexStep,
   makeBoardCard,
   movedToBuilding,
@@ -225,6 +226,34 @@ it.effect("a git failure that keeps recurring parks the step after three passes"
         // Parked: a later pass no longer re-runs git for it.
         yield* pumpDomain(movedToBuilding(card("other-3"), 4));
         assert.strictEqual(worktreeFailures(yield* decided, "card-1").length, failures);
+      }),
+  ),
+);
+
+it.effect("a card moved out of Building and back starts a fresh run of git retries", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [card("card-1"), card("other-1"), card("other-2")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+      gitFailure: "worktree-add",
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("card-1");
+        // Two failures, one short of parking.
+        yield* pumpDomain(movedToBuilding(card("card-1"), 1));
+        yield* pumpDomain(movedToBuilding(card("other-1"), 2));
+        assert.strictEqual(boardCardStepState(yield* board, id)?.status, "pending");
+
+        // Out and back: this visit's first failure is its first, not its third.
+        yield* pumpDomain(cardMoved(card("card-1", { stage: "ready" }), "building", "ready", 3));
+        yield* pumpDomain(movedToBuilding(card("card-1"), 4));
+        assert.strictEqual(boardCardStepState(yield* board, id)?.status, "pending");
+        yield* pumpDomain(movedToBuilding(card("other-2"), 5));
+        assert.strictEqual(boardCardStepState(yield* board, id)?.status, "pending");
       }),
   ),
 );

@@ -262,12 +262,12 @@ type BoardCardReclaimAttempt =
   | { readonly outcome: "busy" }
   | { readonly outcome: "failed" };
 
-/** What provisioning a card's worktree came to (T3O-15): a path, a failure
-    only a human can fix, or one the next scheduling pass may get past. */
 // Consecutive git failures provisioning one card's branch before the build
 // step parks for a human instead of retrying again (T3O-15).
 const TRANSIENT_PROVISION_FAILURE_LIMIT = 3;
 
+/** What provisioning a card's worktree came to (T3O-15): a path, a failure
+    only a human can fix, or one the next scheduling pass may get past. */
 type WorktreeOutcome =
   | { readonly kind: "ready"; readonly path: string }
   | { readonly kind: "stuck"; readonly reason: string }
@@ -6831,6 +6831,7 @@ const make = Effect.gen(function* () {
     // archived card is done being settled, and an entry that outlives its card
     // is a leak the process never gets back.
     settledAtDone.delete(String(event.payload.cardId));
+    transientProvisionFailures.delete(event.payload.cardId);
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
     if (card === undefined) return;
     const state = boardCardStepState(board, event.payload.cardId);
@@ -6893,6 +6894,7 @@ const make = Effect.gen(function* () {
     // Per-card in-memory bookkeeping outlives the card unless it is reaped
     // here — each entry is a leak the process never gets back.
     settledAtDone.delete(String(card.id));
+    transientProvisionFailures.delete(card.id);
     disarmPendingMerge(card.id);
     // Release the slot the card's step held. NOT a `board.card.settle-step`
     // dispatch: that command requires the card to exist, and it does not any
@@ -7247,6 +7249,9 @@ const make = Effect.gen(function* () {
     // payload, not a board re-read: the card carries its post-move stage here,
     // which is the one authority every other move path already trusts.
     const card = event.payload.card;
+    // A card leaving or re-entering a stage starts a fresh run of provisioning
+    // retries: a count from an earlier visit would park it early (T3O-15).
+    transientProvisionFailures.delete(card.id);
     const board = yield* readBoard;
     // ── The review→merge crossing gate (t3o-24, D2) ────────────────────────
     // A card ARRIVING at the merge-role stage on a forward move —
