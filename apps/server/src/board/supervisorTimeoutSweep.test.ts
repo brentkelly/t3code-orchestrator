@@ -373,7 +373,7 @@ it.effect("T3O-16: a permission stamp is dropped once its step leaves running", 
         yield* holdPermission(shells, true);
         yield* reactor.sweep; // stamped at the epoch
         yield* holdPermission(shells, false);
-        yield* setStep(runningStep({ status: "completed" }));
+        yield* setStep(runningStep({ status: "succeeded" }));
         yield* reactor.sweep; // the step is gone: its stamp goes with it
         yield* setStep(runningStep());
         yield* TestClock.adjust("30 seconds");
