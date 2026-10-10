@@ -278,14 +278,18 @@ function deriveBuild(input: {
       : {
           done: input.planRows.liveDone,
           total: input.planRows.liveTotal,
-          rows: input.planRows.rows
-            .filter((row) => row.state === "live" && row.key !== null)
-            .map((row) => ({
-              cardId: row.live?.cardId ?? null,
-              key: row.key as string,
-              stageLabel: row.stageLabel ?? "—",
-              done: row.done,
-            })),
+          rows: input.planRows.rows.flatMap((row) =>
+            row.state === "live" && row.key !== null
+              ? [
+                  {
+                    cardId: row.live?.cardId ?? null,
+                    key: row.key,
+                    stageLabel: row.stageLabel ?? "—",
+                    done: row.done,
+                  },
+                ]
+              : [],
+          ),
         };
   const empty = summary === null && (children === null || children.total === 0);
   return { empty, summary, children };

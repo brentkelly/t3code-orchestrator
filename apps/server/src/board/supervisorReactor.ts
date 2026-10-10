@@ -4055,8 +4055,9 @@ const make = Effect.gen(function* () {
       if (isBoardCardPullRequestTerminal(recorded) && recorded !== null) {
         if (recorded.title !== null) return boardRefreshOutcomeOf(recorded);
         // Only a human's "Check again" forces past the PR read cache; every
-        // automatic trigger takes the cached read, so a burst of triggers (or
-        // a forge that keeps failing) costs one forge call per cache window.
+        // automatic trigger takes the cached read, so a burst of triggers
+        // costs one forge call per cache window. Failures are not cached, so
+        // a forge that keeps failing is asked again on the next trigger.
         const found = yield* pullRequests
           .get({
             projectId: card.projectId,
