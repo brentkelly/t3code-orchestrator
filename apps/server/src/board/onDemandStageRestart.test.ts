@@ -312,3 +312,66 @@ it.effect("restarts a card whose stage has no run row at all", () =>
     assert.strictEqual(outcome.state?.status, "running");
   }),
 );
+
+it.effect("drops a request for a stage that runs nothing — no promptless thread", () =>
+  Effect.gen(function* () {
+    // Backlog ships with auto-execute off and no prompt: there is no stage work
+    // to restart, so the request must not spawn an empty thread for it.
+    const outcome = yield* restartOutcome({
+      card: {
+        ...makeBoardCard({
+          id: "card-1",
+          stage: String(BOARD_SEED_STAGE_IDS.backlog),
+          orderKey: "m",
+        }),
+        threadLinks: [],
+      } as BoardCard,
+      stepStates: [],
+    });
+
+    assert.isNull(outcome.state);
+    assert.notInclude(
+      outcome.commands.map((command) => command.type),
+      "board.card.select-step",
+    );
+  }),
+);
+
+it.effect("abandons a stalled step on a stage that runs nothing, without spawning a thread", () =>
+  Effect.gen(function* () {
+    // Restart is offered on any stalled step (t3o-30 D3), including stages that
+    // do not auto-execute and have no prompt. The click must clear the stall
+    // rather than succeed and leave it in place.
+    const backlog = String(BOARD_SEED_STAGE_IDS.backlog);
+    const outcome = yield* restartOutcome({
+      card: {
+        ...makeBoardCard({
+          id: "card-1",
+          stage: backlog,
+          orderKey: "m",
+        }),
+        threadLinks: [link(oldThread, backlog)],
+      } as BoardCard,
+      stepStates: [
+        {
+          ...planningStep({ status: "stalled" }),
+          stepId: backlog,
+          stageLabel: "Backlog",
+          prompt: "",
+        },
+      ],
+    });
+
+    assert.strictEqual(outcome.state?.status, "abandoned");
+    assert.notInclude(
+      outcome.commands.map((command) => command.type),
+      "board.card.select-step",
+    );
+    assert.isDefined(
+      outcome.commands.find(
+        (command) => command.type === "board.card.settle-step" && command.outcome === "abandoned",
+      ),
+      "the stalled step is settled abandoned",
+    );
+  }),
+);
