@@ -2375,22 +2375,39 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       (link) => link.threadId === activeThreadId && link.threadState === "working",
     );
   const reviewStalled = onReviewStage && boardReviewPaneStopped(props.stepFailure);
-  const workSummary = hasSummary
-    ? deriveBoardCardWorkSummary({
-        detail: props.detail,
-        stages: props.stages,
-        planRows,
-        reviewLive,
-        reviewStalled,
-        ...(props.reviewMaxRounds === undefined ? {} : { maxRounds: props.reviewMaxRounds }),
-      })
-    : null;
   const activePane: BoardCardPane =
     (pane === "plan" && !hasPlan) ||
     (pane === "review" && !hasReview) ||
     (pane === "summary" && !hasSummary)
       ? "thread"
       : pane;
+  // Derived only while the Summary pane is showing: the panel re-renders on
+  // every thread-link or detail push, and the walk over step completions is
+  // wasted on any other pane.
+  const summaryShown = activePane === "summary";
+  const reviewMaxRounds = props.reviewMaxRounds;
+  const workSummary = useMemo(
+    () =>
+      summaryShown
+        ? deriveBoardCardWorkSummary({
+            detail: props.detail,
+            stages: props.stages,
+            planRows,
+            reviewLive,
+            reviewStalled,
+            ...(reviewMaxRounds === undefined ? {} : { maxRounds: reviewMaxRounds }),
+          })
+        : null,
+    [
+      summaryShown,
+      props.detail,
+      props.stages,
+      planRows,
+      reviewLive,
+      reviewStalled,
+      reviewMaxRounds,
+    ],
+  );
   // Which tab the thread pane is on. Absent means "whichever thread the card's
   // stage makes current", so the pane follows the card until the user picks a
   // thread, and a since-unlinked selection falls back to that same default.
