@@ -249,7 +249,9 @@ it.effect("a card moved out of Building and back starts a fresh run of git retri
         assert.strictEqual(boardCardStepState(yield* board, id)?.status, "pending");
 
         // Out and back: this visit's first failure is its first, not its third.
-        yield* pumpDomain(cardMoved(card("card-1", { stage: "ready" }), "building", "ready", 3));
+        yield* pumpDomain(
+          cardMoved(card("card-1", { stage: BOARD_SEED_STAGE_IDS.ready }), "building", "ready", 3),
+        );
         yield* pumpDomain(movedToBuilding(card("card-1"), 4));
         assert.strictEqual(boardCardStepState(yield* board, id)?.status, "pending");
         yield* pumpDomain(movedToBuilding(card("other-2"), 5));
