@@ -27,6 +27,7 @@
 import {
   DEFAULT_BOARD_REVIEW_ROUNDS,
   activeBoardCardThreadId,
+  isBoardCardAwaitingPermission,
   BOARD_AUTO_MERGE_MAX_ATTEMPTS,
   boardCardArchiveNeedsConfirmation,
   boardCardDisplayPullRequest,
@@ -1071,13 +1072,19 @@ function ThreadsSection(props: BoardCardDetailViewProps) {
                   >
                     {link.title ?? "Deleted thread"}
                   </span>
-                  {link.awaitingInput ? (
+                  {/* A permission prompt (T3O-16) needs the human as much as a
+                      question does. */}
+                  {link.awaitingInput || isBoardCardAwaitingPermission(link) ? (
                     <CircleAlertIcon className="size-3 shrink-0 text-attention-foreground" />
                   ) : null}
                 </div>
                 <span className="text-[10.5px] text-muted-foreground">
                   {link.role}
-                  {link.tombstoned ? " · deleted" : ` · ${THREAD_STATE_LABEL[link.threadState]}`}
+                  {link.tombstoned
+                    ? " · deleted"
+                    : isBoardCardAwaitingPermission(link)
+                      ? " · Waiting for permission"
+                      : ` · ${THREAD_STATE_LABEL[link.threadState]}`}
                   {link.threadId === activeThreadId && !link.tombstoned ? " · active" : ""}
                 </span>
               </div>

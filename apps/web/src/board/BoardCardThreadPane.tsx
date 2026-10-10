@@ -16,7 +16,12 @@
  * thread joins a card.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { BoardCardThreadShell, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  isBoardCardAwaitingPermission,
+  type BoardCardThreadShell,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import {
   ChevronRightIcon,
@@ -211,6 +216,16 @@ export function BoardCardThreadPane({
                       <BoardHint label="Awaiting your input">
                         <span
                           aria-label="Awaiting your input"
+                          role="img"
+                          className="size-2 shrink-0 rounded-full bg-attention"
+                        />
+                      </BoardHint>
+                    ) : isBoardCardAwaitingPermission(link) ? (
+                      // Blocked on a permission prompt (T3O-16): as answerable
+                      // as a question, so the same violet, not the idle glyph.
+                      <BoardHint label="Waiting for permission">
+                        <span
+                          aria-label="Waiting for permission"
                           role="img"
                           className="size-2 shrink-0 rounded-full bg-attention"
                         />

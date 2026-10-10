@@ -22,6 +22,7 @@
  */
 import {
   effectiveBoardStageRole,
+  isBoardCardAwaitingPermission,
   isBoardCardWorking,
   type BoardCardChildRef,
   type BoardCardShell,
@@ -191,7 +192,7 @@ export function deriveBoardPlanRows(input: {
               prNumber: shell.prNumber,
               working: isBoardCardWorking(shell),
               awaitingInput: shell.awaitingInput,
-              awaitingPermission: shell.threadState === "waiting" && !shell.awaitingInput,
+              awaitingPermission: isBoardCardAwaitingPermission(shell),
               queued: shell.queued,
               stalled: shell.stalled,
             },
@@ -265,7 +266,9 @@ export interface BoardPlanGraphNode {
   readonly tone: BoardPlanRowTone;
   /** Null when the plan has no card to open — deleted, or never materialised. */
   readonly cardId: string | null;
-  readonly awaitingInput: boolean;
+  /** A thread on the child asked a question or wants permission — the same
+      violet the row list gives either. */
+  readonly needsHuman: boolean;
   readonly x: number;
   readonly y: number;
   readonly width: number;
@@ -381,7 +384,7 @@ export function boardPlanGraphLayout(
         stageLabel: row.stageLabel,
         tone: row.tone,
         cardId: row.live?.cardId ?? null,
-        awaitingInput: row.live?.awaitingInput ?? false,
+        needsHuman: row.live?.awaitingInput === true || row.live?.awaitingPermission === true,
         x: at.x,
         y: at.y,
         width: NODE_WIDTH,

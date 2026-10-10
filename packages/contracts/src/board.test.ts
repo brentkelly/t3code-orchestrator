@@ -52,6 +52,7 @@ import {
   boardCardChildRunningLabel,
   deriveBoardCardChildAttention,
   deriveBoardCardChildRunning,
+  isBoardCardAwaitingPermission,
   isBoardCardWorking,
   isBoardConflictFixLive,
   isBoardChecksFixLive,
@@ -1792,6 +1793,14 @@ describe("children actively working (deriveBoardCardChildRunning)", () => {
         cards: [parent, child("c1", { threadState: "waiting", stepRunning: true })],
       }).size,
     ).toBe(0);
+  });
+
+  it("T3O-16: only a wait with no question pending proves a permission prompt", () => {
+    expect(isBoardCardAwaitingPermission(card({ threadState: "waiting" }))).toBe(true);
+    expect(
+      isBoardCardAwaitingPermission(card({ threadState: "waiting", awaitingInput: true })),
+    ).toBe(false);
+    expect(isBoardCardAwaitingPermission(card({ threadState: "working" }))).toBe(false);
   });
 
   it("AC 13: a dead thread vetoes the board's claim that a step is running", () => {

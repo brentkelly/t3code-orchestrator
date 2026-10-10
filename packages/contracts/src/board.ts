@@ -3373,10 +3373,8 @@ export function boardCardAttention(input: {
       detail: "A thread on this card is waiting on your answer",
     };
   }
-  // A pending approval is the only other way a thread waits
-  // (`deriveBoardCardThreadState`), so this needs no shell field of its own.
   // Not vetoed by the dot: the dot itself goes dark for a waiting thread.
-  if (card.threadState === "waiting") {
+  if (isBoardCardAwaitingPermission(card)) {
     return {
       reason: "permission",
       tone: ATTENTION_TONES.permission,
@@ -3493,6 +3491,20 @@ export function isBoardCardWorking(
   // exactly the loop-stage gap `stepRunning` exists to cover.
   if (card.threadState === "failed" || card.threadState === "waiting") return false;
   return card.threadState === "working" || card.stepRunning;
+}
+
+/**
+ * Whether a thread is blocked on a permission prompt (T3O-16). A pending
+ * approval is the only way a thread waits without asking
+ * (`deriveBoardCardThreadState`), so this needs no field of its own. Takes a
+ * card shell or a single thread's derived state alike; on a card it only
+ * proves the prompt when no thread also asked, which is why `input` outranks
+ * `permission`.
+ */
+export function isBoardCardAwaitingPermission(
+  card: Pick<BoardCardShell, "threadState" | "awaitingInput">,
+): boolean {
+  return card.threadState === "waiting" && !card.awaitingInput;
 }
 
 /**
