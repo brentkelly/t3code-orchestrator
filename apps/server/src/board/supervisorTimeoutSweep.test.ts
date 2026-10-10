@@ -23,10 +23,12 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 
 import {
   aliveThreadShell,
   codexStep,
+  failedThreadShell,
   makeBoardCard,
   readyWorktree,
   settingsWith,
@@ -245,6 +247,56 @@ it.effect("T3O-16: a thread waiting on a permission prompt is never swept", () =
         const after = yield* board;
         assert.strictEqual(attemptOf(after), 1); // not nudged
         assert.isNull(boardCardStepState(after, cardId)?.lastNudgeAt ?? null);
+      }),
+  ),
+);
+
+// Approval is a life sign (T3O-16). A prompt that outlives the output-signal
+// ceiling leaves every other life sign stale, so without this the first sweep
+// after the human approves would nudge the agent seconds into real work.
+it.effect("T3O-16: the sweep after a long permission prompt is approved does not nudge", () =>
+  withGovernor(
+    {
+      board: boardWithStep(runningStep({ startedAt: OVERDUE, updatedAt: OVERDUE })),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: new Map([
+        [String(threadId), { ...aliveThreadShell(String(threadId)), hasPendingApprovals: true }],
+      ]),
+    },
+    ({ reactor, board, shells }) =>
+      Effect.gen(function* () {
+        yield* reactor.sweep;
+        yield* Ref.set(shells, aliveShells()); // the human approved
+        yield* reactor.sweep;
+        const after = yield* board;
+        assert.strictEqual(attemptOf(after), 1);
+        assert.isNull(boardCardStepState(after, cardId)?.lastNudgeAt ?? null);
+      }),
+  ),
+);
+
+// A session that died mid-prompt cannot be approved in, so the pending
+// approval no longer exempts it and the step is swept as usual.
+it.effect("T3O-16: a dead session's lingering permission prompt does not exempt it", () =>
+  withGovernor(
+    {
+      board: boardWithStep(runningStep()),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: aliveShells(),
+    },
+    ({ reactor, board, shells }) =>
+      Effect.gen(function* () {
+        yield* Ref.set(
+          shells,
+          new Map([
+            [
+              String(threadId),
+              { ...failedThreadShell(String(threadId)), hasPendingApprovals: true },
+            ],
+          ]),
+        );
+        yield* reactor.sweep;
+        assert.strictEqual(attemptOf(yield* board), 2);
       }),
   ),
 );

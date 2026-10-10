@@ -7904,6 +7904,15 @@ const make = Effect.gen(function* () {
   // steps funnel into the same recovery ladder — nudge, then escalate — so a
   // hung step is eventually landed `stalled` and its slot released. Human-in-
   // the-loop runs are exempt (a human is the pacing, per the contracts doc).
+  // When the sweep last saw each step thread held on a permission prompt
+  // (T3O-16). The prompt itself is skipped below, but the skip alone leaves the
+  // clock where the prompt found it: after an overnight prompt every honoured
+  // life sign is stale (output past its ceiling, no todo, no commit), so the
+  // first sweep after approval would nudge the freshly resumed agent. Reading
+  // the last sighting as a life sign gives it a full window instead. In-memory:
+  // a restart mid-prompt re-stamps on the next sweep, and one entry per thread
+  // that ever met a prompt stays small.
+  const permissionHeldAt = new Map<string, string>();
   const sweepTimeouts = Effect.gen(function* () {
     const board = yield* readBoard;
     const nowMs = Date.parse(yield* nowIso);
@@ -7945,7 +7954,12 @@ const make = Effect.gen(function* () {
         ? yield* threadLastSignalAt(state.threadId)
         : null;
       const referenceMs = Math.max(
-        ...[state.lastNudgeAt ?? state.startedAt, todo?.advancedAt ?? null, lastSignalAt]
+        ...[
+          state.lastNudgeAt ?? state.startedAt,
+          todo?.advancedAt ?? null,
+          lastSignalAt,
+          state.threadId === null ? null : (permissionHeldAt.get(String(state.threadId)) ?? null),
+        ]
           .filter((value): value is string => value != null)
           .map((value) => Date.parse(value))
           .filter((value) => Number.isFinite(value)),
@@ -7982,7 +7996,10 @@ const make = Effect.gen(function* () {
         const shell = yield* snapshotQuery
           .getThreadShellById(state.threadId)
           .pipe(Effect.map(Option.getOrUndefined));
-        if (shell !== undefined && isAwaitingPermission(shell)) continue;
+        if (shell !== undefined && isAwaitingPermission(shell)) {
+          permissionHeldAt.set(String(state.threadId), new Date(nowMs).toISOString());
+          continue;
+        }
       }
       yield* recoverStep({ card, state });
     }
