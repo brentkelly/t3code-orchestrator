@@ -7915,7 +7915,8 @@ const make = Effect.gen(function* () {
   const permissionHeldAt = new Map<string, string>();
   const sweepTimeouts = Effect.gen(function* () {
     const board = yield* readBoard;
-    const nowMs = Date.parse(yield* nowIso);
+    const now = yield* nowIso;
+    const nowMs = Date.parse(now);
     for (const state of board.stepStates ?? []) {
       if (state.status !== "running" || state.humanInLoop) continue;
       if (state.timeoutMs <= 0) continue;
@@ -7997,7 +7998,7 @@ const make = Effect.gen(function* () {
           .getThreadShellById(state.threadId)
           .pipe(Effect.map(Option.getOrUndefined));
         if (shell !== undefined && isAwaitingPermission(shell)) {
-          permissionHeldAt.set(String(state.threadId), new Date(nowMs).toISOString());
+          permissionHeldAt.set(String(state.threadId), now);
           continue;
         }
       }
