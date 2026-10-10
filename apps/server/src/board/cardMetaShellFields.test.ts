@@ -286,6 +286,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
           number: 284,
           url: "https://github.com/acme/repo/pull/284",
           state: "open",
+          title: null,
           headBranch: "board/card-1",
           baseRef: "main",
           checkedAt: createdAt,
@@ -297,27 +298,9 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       assert.strictEqual(linked?.prNumber, 284);
       assert.strictEqual(linked?.hasPr, true);
 
-      // A merged PR is still a PR: the badge keeps the number after the work
-      // lands, which is what makes a Done card traceable to its change.
-      yield* engine.dispatch({
-        type: "board.card.record-pull-request",
-        commandId: CommandId.make("cmd-record-pr-merged"),
-        cardId,
-        pullRequest: {
-          number: 284,
-          url: "https://github.com/acme/repo/pull/284",
-          state: "merged",
-          headBranch: "board/card-1",
-          baseRef: "main",
-          checkedAt: createdAt,
-        },
-        createdAt,
-      });
-      const merged = yield* shellCard;
-      assert.strictEqual(merged?.prNumber, 284);
-      assert.strictEqual(merged?.hasPr, true);
-
       // Clearing is a real value, not "no data": the badge must be able to go.
+      // It goes from an OPEN link — a merged one is never unlinked (the
+      // decider refuses it), so the merged badge is asserted after this.
       yield* engine.dispatch({
         type: "board.card.record-pull-request",
         commandId: CommandId.make("cmd-record-pr-cleared"),
@@ -328,6 +311,129 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       const cleared = yield* shellCard;
       assert.strictEqual(cleared?.hasPr, false);
       assert.strictEqual("prNumber" in (cleared ?? {}), false);
+
+      // A merged PR is still a PR: the badge keeps the number after the work
+      // lands, which is what makes a Done card traceable to its change.
+      yield* engine.dispatch({
+        type: "board.card.record-pull-request",
+        commandId: CommandId.make("cmd-record-pr-merged"),
+        cardId,
+        pullRequest: {
+          number: 284,
+          url: "https://github.com/acme/repo/pull/284",
+          state: "merged",
+          title: null,
+          headBranch: "board/card-1",
+          baseRef: "main",
+          checkedAt: createdAt,
+        },
+        createdAt,
+      });
+      const merged = yield* shellCard;
+      assert.strictEqual(merged?.prNumber, 284);
+      assert.strictEqual(merged?.hasPr, true);
+    }),
+  );
+
+  it.effect("a title-only pull-request update writes the title without an is-open row", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const titleCardId = BoardCardId.make("card-pr-title-only");
+      yield* engine.dispatch(createProject);
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-pr-title-card"),
+        cardId: titleCardId,
+        projectId,
+        title: "Card with a title-only PR update",
+        orderKey: "n",
+        createdAt,
+      });
+      const record = (suffix: string, title: string | null) =>
+        engine.dispatch({
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make(`cmd-pr-title-${suffix}`),
+          cardId: titleCardId,
+          pullRequest: {
+            number: 110,
+            url: "https://github.com/acme/repo/pull/110",
+            state: "open",
+            title,
+            headBranch: "board/t3o-5",
+            baseRef: "t3o",
+            checkedAt: createdAt,
+          },
+          createdAt,
+        });
+      yield* record("linked", null);
+      yield* record("titled", "Summary tab");
+      const board = boardSnapshotQueryMethodsOf(snapshotQuery);
+      assert.isNotNull(board);
+      const activity = yield* board!.boardCardActivity(titleCardId);
+      const prRows = activity.filter(
+        (entry) =>
+          entry.kind === "card-pull-request-linked" ||
+          entry.kind === "card-pull-request-state-changed" ||
+          entry.kind === "card-pull-request-merged",
+      );
+      assert.strictEqual(prRows.length, 1);
+      assert.strictEqual(prRows[0]?.kind, "card-pull-request-linked");
+      const card = (yield* snapshotQuery.getCommandReadModel()).board?.cards.find(
+        (entry) => entry.id === titleCardId,
+      );
+      assert.strictEqual(card?.pullRequest?.title, "Summary tab");
+    }),
+  );
+
+  it.effect("a merged pull request can gain a title without a second merged row", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const mergedTitleCardId = BoardCardId.make("card-pr-merged-title");
+      yield* engine.dispatch(createProject);
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-pr-merged-title-card"),
+        cardId: mergedTitleCardId,
+        projectId,
+        title: "Card with a merged title backfill",
+        orderKey: "o",
+        createdAt,
+      });
+      const record = (suffix: string, state: "open" | "merged", title: string | null) =>
+        engine.dispatch({
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make(`cmd-pr-merged-title-${suffix}`),
+          cardId: mergedTitleCardId,
+          pullRequest: {
+            number: 110,
+            url: "https://github.com/acme/repo/pull/110",
+            state,
+            title,
+            headBranch: "board/t3o-5",
+            baseRef: "t3o",
+            checkedAt: createdAt,
+          },
+          createdAt,
+        });
+      yield* record("linked", "open", null);
+      yield* record("merged", "merged", null);
+      yield* record("titled", "merged", "Summary tab");
+      const board = boardSnapshotQueryMethodsOf(snapshotQuery);
+      assert.isNotNull(board);
+      const activity = yield* board!.boardCardActivity(mergedTitleCardId);
+      const mergedRows = activity.filter((entry) => entry.kind === "card-pull-request-merged");
+      const stateRows = activity.filter(
+        (entry) => entry.kind === "card-pull-request-state-changed",
+      );
+      assert.strictEqual(mergedRows.length, 1);
+      assert.strictEqual(stateRows.length, 0);
+      const card = (yield* snapshotQuery.getCommandReadModel()).board?.cards.find(
+        (entry) => entry.id === mergedTitleCardId,
+      );
+      assert.strictEqual(card?.pullRequest?.title, "Summary tab");
+      assert.strictEqual(card?.pullRequest?.state, "merged");
     }),
   );
 
@@ -363,6 +469,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
               number: 412,
               url: "https://github.com/acme/repo/pull/412",
               state: "open",
+              title: null,
               headBranch: "board/card-draft",
               baseRef: "main",
               ...(isDraft ? { isDraft: true } : {}),
@@ -433,6 +540,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
           number: 284,
           url: "https://github.com/acme/repo/pull/284",
           state: "merged",
+          title: null,
           headBranch: "board/card-second-round",
           baseRef: "main",
           checkedAt: createdAt,
@@ -504,6 +612,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
           number: 512,
           url: "https://github.com/acme/repo/pull/512",
           state: "closed",
+          title: null,
           headBranch: "board/card-archived-pr",
           baseRef: "main",
           checkedAt: createdAt,

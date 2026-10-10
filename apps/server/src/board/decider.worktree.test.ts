@@ -396,6 +396,7 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
       number,
       url: `https://github.com/acme/repo/pull/${number}`,
       state: "merged",
+      title: null,
       headBranch: "board/card-1",
       baseRef: "main",
       checkedAt: NOW,
@@ -741,6 +742,85 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
         event.payload.card.pullRequestHistory.map((entry) => entry.number),
         [284],
       );
+    }),
+  );
+
+  it.effect("a title-only pull-request update is recorded as updated, not state-changed", () =>
+    Effect.gen(function* () {
+      const open = { ...mergedPr(284), state: "open" as const, title: null };
+      const card = makeCard({
+        id: "card-1",
+        stage: "merge",
+        pullRequest: open,
+        worktree: readyWorktree,
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-title"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: { ...open, title: "Summary tab" },
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.strictEqual(event.type, "board.card-pull-request-recorded");
+      if (event.type !== "board.card-pull-request-recorded") return;
+      assert.strictEqual(event.payload.transition, "updated");
+      assert.strictEqual(event.payload.card.pullRequest?.title, "Summary tab");
+      assert.strictEqual(event.payload.card.pullRequest?.state, "open");
+    }),
+  );
+
+  it.effect("a merged pull request can gain a title without a state-changed transition", () =>
+    Effect.gen(function* () {
+      const card = makeCard({
+        id: "card-1",
+        stage: "done",
+        pullRequest: mergedPr(284),
+        worktree: readyWorktree,
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-merged-title"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: { ...mergedPr(284), title: "Summary tab" },
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.strictEqual(event.type, "board.card-pull-request-recorded");
+      if (event.type !== "board.card-pull-request-recorded") return;
+      assert.strictEqual(event.payload.transition, "updated");
+      assert.strictEqual(event.payload.card.pullRequest?.state, "merged");
+      assert.strictEqual(event.payload.card.pullRequest?.title, "Summary tab");
+    }),
+  );
+
+  it.effect("a merged pull request is not replaced by a stale same-number open snapshot", () =>
+    Effect.gen(function* () {
+      // The refresh path re-reads the card after the lookup, then dispatches.
+      // Another refresh can commit `merged` in that gap; the command still
+      // holds the open snapshot it looked up. The reactor's guard cannot see
+      // a write that lands after its read, so the refusal lives here.
+      const card = makeCard({
+        id: "card-1",
+        stage: "done",
+        pullRequest: { ...mergedPr(284), title: "Summary tab" },
+        worktree: readyWorktree,
+      });
+      const failure = yield* decideFail(
+        {
+          type: "board.card.record-pull-request",
+          commandId: CommandId.make("cmd-record-pr-stale-open"),
+          cardId: BoardCardId.make("card-1"),
+          pullRequest: { ...mergedPr(284), state: "open", title: "Summary tab" },
+          createdAt: NOW,
+        },
+        makeReadModel(boardWith([card])),
+      );
+      assert.match(String(failure), /already records a merged pull request/);
     }),
   );
 

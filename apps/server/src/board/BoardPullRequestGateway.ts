@@ -1,15 +1,14 @@
 /**
  * The board's narrow window onto the forge: resolve a branch's pull request,
- * merge one, and ask why a merge was refused.
+ * read one by number, merge one, and ask why a merge was refused.
  *
  * Deliberately NOT a direct `GitManager` / `PullRequestService` dependency.
- * The board needs three operations out of two services that between them
- * expose stacked git actions, commit-message generation, listings, diffs,
+ * The board needs a handful of operations out of two services that between
+ * them expose stacked git actions, commit-message generation, listings, diffs,
  * reviews, labels and more; taking either whole would couple the supervisor
  * reactor's type graph to all of it, and would let any future board code reach
- * for forge operations the board has no business performing. Three methods,
- * one seam, and the reactor is testable against a stub instead of a real git
- * checkout.
+ * for forge operations the board has no business performing. One seam, and
+ * the reactor is testable against a stub instead of a real git checkout.
  *
  * Since T3O-47 the merge and the refusal probe run on upstream's
  * `apps/server/src/pullRequest/` module rather than on a hand-rolled path
@@ -29,7 +28,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
-import type { ProjectId, PullRequestMergeMethod, VcsStatusChangeRequest } from "@t3tools/contracts";
+import type {
+  ProjectId,
+  PullRequestMergeMethod,
+  PullRequestSummary,
+  VcsStatusChangeRequest,
+} from "@t3tools/contracts";
 
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -141,6 +145,19 @@ export interface BoardPullRequestRef {
   readonly number: number;
 }
 
+function vcsStatusOf(summary: PullRequestSummary): VcsStatusChangeRequest {
+  return {
+    number: summary.number,
+    title: summary.title,
+    url: summary.url,
+    baseRef: summary.baseBranch,
+    headRef: summary.headBranch,
+    state: summary.state,
+    ...(summary.isDraft === true ? { isDraft: true } : {}),
+    ...(summary.updatedAt !== undefined ? { updatedAt: summary.updatedAt } : {}),
+  };
+}
+
 export class BoardPullRequestGateway extends Context.Service<
   BoardPullRequestGateway,
   {
@@ -166,6 +183,22 @@ export class BoardPullRequestGateway extends Context.Service<
        * a button that does nothing. */
       readonly force?: boolean;
     }) => Effect.Effect<VcsStatusChangeRequest | null, BoardPullRequestGatewayError>;
+    /**
+     * The pull request with this number on the project's own remote.
+     *
+     * Used when the card already holds a link — a merged title backfill — so
+     * the answer must not depend on a board branch Done may already have
+     * deleted. A FAILURE is an error, not a null, for the same reason as
+     * `find`: "could not look" must not blank a recorded link, and a number
+     * the forge does not know is a failure too, so there is no null answer.
+     *
+     * Never answered from `lastGoodSummary`, which can still say "open" after
+     * the merge landed; an unforced read still uses the PR read cache. `force`
+     * (a human's "Check again") invalidates this pull request first.
+     */
+    readonly get: (
+      input: BoardPullRequestRef & { readonly force?: boolean },
+    ) => Effect.Effect<VcsStatusChangeRequest, BoardPullRequestGatewayError>;
     /**
      * Merge it, with the strategy the merge stage is configured for.
      *
@@ -315,6 +348,25 @@ export const layer: Layer.Layer<
         (input.force === true ? gitManager.invalidateStatus(input.cwd) : Effect.void).pipe(
           Effect.andThen(gitManager.branchPullRequest({ cwd: input.cwd, branch: input.branch })),
           Effect.catch(fail("find")),
+        ),
+      get: (input) =>
+        repositoryOf("get", input.projectId).pipe(
+          Effect.flatMap((repository) => {
+            const reference = {
+              projectId: input.projectId,
+              repository,
+              number: input.number,
+              allowStale: false,
+            } as const;
+            const load =
+              input.force === true
+                ? pullRequests
+                    .invalidate({ reference })
+                    .pipe(Effect.andThen(pullRequests.summary(reference)))
+                : pullRequests.summary(reference);
+            return load.pipe(Effect.map(vcsStatusOf));
+          }),
+          Effect.catch(fail("get")),
         ),
       merge: (input) =>
         repositoryOf("merge", input.projectId, "blocked").pipe(

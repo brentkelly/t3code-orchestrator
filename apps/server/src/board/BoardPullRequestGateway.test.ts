@@ -181,6 +181,26 @@ function makeGateway(
               );
               return options.detail ?? detail();
             }),
+          summary: (input: PullRequestRef) =>
+            Effect.sync(() => {
+              calls.push(
+                `summary:${input.repository}:${input.number}:allowStale=${input.allowStale}`,
+              );
+              const current = options.detail ?? detail();
+              return {
+                provider: current.provider,
+                projectId: current.projectId,
+                repository: current.repository,
+                number: current.number,
+                title: current.title,
+                url: current.url,
+                state: current.state,
+                ...(current.isDraft === true ? { isDraft: true } : {}),
+                headBranch: current.headBranch,
+                baseBranch: current.baseBranch,
+                updatedAt: current.updatedAt,
+              };
+            }),
         }),
       ),
     ),
@@ -220,6 +240,37 @@ describe("BoardPullRequestGateway.find", () => {
       assert.deepStrictEqual(calls, [
         "branchPullRequest:/repo:board/t3o-47",
         "branchPullRequest:/repo:board/t3o-47",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("BoardPullRequestGateway.get", () => {
+  it.effect("reads by number, past the held summary but without invalidating the cache", () => {
+    const { calls, layer } = makeGateway({
+      detail: detail({ number: 284, title: "Summary tab", state: "merged" }),
+    });
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      const found = yield* gateway.get({ projectId: PROJECT, number: 284 });
+      assert.equal(found?.number, 284);
+      assert.equal(found?.title, "Summary tab");
+      assert.equal(found?.state, "merged");
+      assert.equal(found?.headRef, "board/t3o-47");
+      assert.deepStrictEqual(calls, [
+        "summary:brentkelly/t3code-orchestrator:284:allowStale=false",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("invalidates this pull request before a forced number lookup", () => {
+    const { calls, layer } = makeGateway();
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      yield* gateway.get({ projectId: PROJECT, number: 110, force: true });
+      assert.deepStrictEqual(calls, [
+        "invalidate:brentkelly/t3code-orchestrator:110",
+        "summary:brentkelly/t3code-orchestrator:110:allowStale=false",
       ]);
     }).pipe(Effect.provide(layer));
   });

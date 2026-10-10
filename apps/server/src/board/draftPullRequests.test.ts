@@ -64,6 +64,7 @@ const cardAt = (stage: string, input: { readonly autoMerge?: boolean } = {}): Bo
       number: draftPr.number,
       url: draftPr.url,
       state: "open",
+      title: null,
       headBranch: draftPr.headRef,
       baseRef: draftPr.baseRef,
       isDraft: true,
