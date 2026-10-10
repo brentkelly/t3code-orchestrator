@@ -478,6 +478,10 @@ export type Harness = {
   /** T3o (T3O-48): every pull request lookup, with whether it was FORCED — so a
       test can tell a human's "Check again" from the automatic cached refresh. */
   readonly pullRequestLookups: Effect.Effect<ReadonlyArray<{ readonly forced: boolean }>>;
+  /** Every number lookup (`get`), with the number asked for. */
+  readonly pullRequestGets: Effect.Effect<
+    ReadonlyArray<{ readonly number: number; readonly forced: boolean }>
+  >;
   /** Every worktree path the reactor removed, in order. */
   readonly removedWorktrees: Effect.Effect<ReadonlyArray<string>>;
   /** Every thread that actually SETTLED, as opposed to every settle the reactor
@@ -582,12 +586,22 @@ export function withGovernor(
       | { readonly failWith: string }
       | null
       | undefined;
+    /** What a number lookup answers. `undefined` reuses `pullRequest` /
+        `pullRequestOf` so fixtures that only care about the forge's one
+        answer stay as they are. `null` is "this number is gone". */
+    readonly pullRequestByNumber?: VcsStatusChangeRequest | { readonly failWith: string } | null;
     /** Run before every branch pull-request lookup answers. The lookup is the
         reactor's one forge round trip on the refresh path, so it is the window
         another trigger can record a link in — a test that wants to drive that
         interleaving deterministically, rather than racing two fibers, holds the
         lookup here and mutates `model` while it waits. */
     readonly onPullRequestLookup?: Effect.Effect<void>;
+    /** Run at the start of every engine dispatch. The refresh path re-reads
+        the card after the lookup and then dispatches; two overlapping refreshes
+        can both pass that read, so a test that needs their commands applied in
+        a specific order holds the earlier dispatch here until the later one
+        has landed. */
+    readonly onDispatch?: (command: OrchestrationCommand) => Effect.Effect<void>;
     /** What a merge attempt answers: `undefined` succeeds, a string is the
         forge's refusal detail (a conflict when it reads like one). */
     readonly mergeFailure?: string;
@@ -809,7 +823,8 @@ export function withGovernor(
 
     const engineStub = {
       dispatch: (command: OrchestrationCommand) =>
-        Ref.update(commands, (current) => [...current, command])
+        (input.onDispatch?.(command) ?? Effect.void)
+          .pipe(Effect.andThen(Ref.update(commands, (current) => [...current, command])))
           .pipe(
             Effect.andThen(
               Effect.gen(function* () {
@@ -1097,6 +1112,9 @@ export function withGovernor(
     const mergeStateProbes = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
     // T3o (T3O-48): see `pullRequestLookups`.
     const pullRequestLookups = yield* Ref.make<ReadonlyArray<{ readonly forced: boolean }>>([]);
+    const pullRequestGets = yield* Ref.make<
+      ReadonlyArray<{ readonly number: number; readonly forced: boolean }>
+    >([]);
     const markReadyCalls = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
     const pullRequestStub = BoardPullRequestGateway.of({
       markReady: (request) =>
@@ -1135,6 +1153,27 @@ export function withGovernor(
               return Effect.succeed(configured ?? null);
             }),
           ),
+      get: (request) =>
+        Ref.update(pullRequestGets, (gets) => [
+          ...gets,
+          { number: request.number, forced: request.force === true },
+        ]).pipe(
+          Effect.andThen(() => {
+            const configured =
+              input.pullRequestByNumber !== undefined
+                ? input.pullRequestByNumber
+                : (input.pullRequestOf?.() ?? input.pullRequest);
+            if (configured !== undefined && configured !== null && "failWith" in configured) {
+              return Effect.fail(
+                new BoardPullRequestGatewayError({
+                  operation: "get",
+                  detail: configured.failWith,
+                }),
+              );
+            }
+            return Effect.succeed(configured ?? null);
+          }),
+        ),
       merge: (request) =>
         Ref.updateAndGet(mergeAttempts, (attempts) => [
           ...attempts,
@@ -1266,6 +1305,7 @@ export function withGovernor(
           mergeStateProbes: Ref.get(mergeStateProbes),
           markReadyCalls: Ref.get(markReadyCalls),
           pullRequestLookups: Ref.get(pullRequestLookups),
+          pullRequestGets: Ref.get(pullRequestGets),
           removedWorktrees: Ref.get(removedWorktrees),
           settledThreads: Ref.get(settled),
           setBaseTip: (ref, tip) => void baseTips.set(ref, tip),

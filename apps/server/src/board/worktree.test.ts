@@ -155,6 +155,7 @@ it.effect("falls back to the merged base only when the parent has no live branch
         number: 284 as never,
         url: "https://github.com/acme/repo/pull/284",
         state: "merged" as const,
+        title: null,
         headBranch: "feat/parent",
         baseRef: "main",
         checkedAt: "2026-01-01T00:00:00.000Z" as never,

@@ -4035,13 +4035,88 @@ const make = Effect.gen(function* () {
       // merged, so it must still be refreshable: falling back to the project
       // root keeps "the worktree was tidied away" from silently freezing the
       // card's link at whatever it last said.
-      if (worktree === null) return { outcome: "no-branch" } as const;
+      const recorded = card.pullRequest;
       // T3o (T3O-48): a merged pull request is the one state that can never
       // change again, so the lookup is skipped — but the card HAS a link, and
-      // saying so is the whole point of answering.
-      if (isBoardCardPullRequestTerminal(card.pullRequest)) {
-        return boardRefreshOutcomeOf(card.pullRequest);
+      // saying so is the whole point of answering. A title that is still null
+      // is the one exception: records written before the field existed decode
+      // as null, and this is the one backfill that can fill it without
+      // announcing the merge a second time (`updated`, not `state-changed`).
+      // Look that backfill up by NUMBER: Done may already have deleted the
+      // board branch, and a branch lookup then answers "none" and would unlink
+      // the merge. A null, a different number, or a same-number answer that
+      // is not still merged keeps the recorded link — lastGoodSummary can
+      // still say "open" after the merge landed, and writing that would let
+      // the next branch lookup unlink it. Skip the held summary so a live
+      // merged result can still fill the title.
+      if (
+        isBoardCardPullRequestTerminal(recorded) &&
+        recorded !== null &&
+        recorded.title !== null
+      ) {
+        return boardRefreshOutcomeOf(recorded);
       }
+      if (isBoardCardPullRequestTerminal(recorded) && recorded !== null) {
+        const found = yield* pullRequests
+          .get({
+            projectId: card.projectId,
+            number: recorded.number,
+            force: true,
+          })
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logDebug("board supervisor: pull request lookup failed; keeping last known", {
+                cardId: card.id,
+                number: recorded.number,
+                detail: error.detail,
+              }).pipe(Effect.as({ failure: error.detail } as const)),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logDebug("board supervisor: pull request lookup died; keeping last known", {
+                cardId: card.id,
+                number: recorded.number,
+                cause: Cause.pretty(cause),
+              }).pipe(
+                Effect.as({ failure: "The pull request lookup failed unexpectedly." } as const),
+              ),
+            ),
+          );
+        if (found !== null && "failure" in found) {
+          return { outcome: "lookup-failed", detail: found.failure } as const;
+        }
+        const current = (yield* readCard(card.id)) ?? card;
+        const currentLink = current.pullRequest;
+        if (
+          !isBoardCardPullRequestTerminal(currentLink) ||
+          currentLink === null ||
+          found === null ||
+          found.number !== currentLink.number ||
+          found.state !== "merged"
+        ) {
+          return boardRefreshOutcomeOf(currentLink);
+        }
+        const next = {
+          number: found.number,
+          url: found.url,
+          state: found.state,
+          title: found.title,
+          headBranch: found.headRef,
+          baseRef: found.baseRef,
+          ...(found.isDraft === true ? { isDraft: true } : {}),
+          checkedAt: yield* nowIso,
+        } satisfies BoardCardPullRequest;
+        if (boardCardPullRequestsEqual(currentLink, next)) return boardRefreshOutcomeOf(next);
+        yield* dispatchOptional({
+          type: "board.card.record-pull-request",
+          commandId: yield* commandId("record-pr"),
+          cardId: card.id,
+          pullRequest: next,
+          createdAt: yield* nowIso,
+        });
+        return boardRefreshOutcomeOf(next);
+      }
+
+      if (worktree === null) return { outcome: "no-branch" } as const;
 
       const model = yield* snapshotQuery.getCommandReadModel();
       const cwd = worktree.path ?? projectCwd(model, card);
@@ -4087,6 +4162,7 @@ const make = Effect.gen(function* () {
               number: found.number,
               url: found.url,
               state: found.state,
+              title: found.title,
               headBranch: found.headRef,
               baseRef: found.baseRef,
               ...(found.isDraft === true ? { isDraft: true } : {}),
@@ -4102,6 +4178,20 @@ const make = Effect.gen(function* () {
       // they have to run against the freshest read available or they compare
       // against a state that has already been superseded.
       const current = (yield* readCard(card.id)) ?? card;
+
+      // A merged link is never unlinked or demoted from a branch lookup.
+      // Done may already have deleted `board/<key>`, so `find` answers null
+      // for a fork head or a missing remote; that is "could not see it", not
+      // "there is none". A same-number open or closed answer is the lookup
+      // that started while the link was still open — lastGoodSummary can
+      // still say that after another refresh recorded the merge — and writing
+      // it would let the next null find unlink the badge.
+      if (
+        isBoardCardPullRequestTerminal(current.pullRequest) &&
+        (next === null || next.number !== current.pullRequest.number || next.state !== "merged")
+      ) {
+        return boardRefreshOutcomeOf(current.pullRequest);
+      }
 
       // A pull request at or below the floor belongs to a round this card has
       // already finished (see `BoardCard.pullRequestFloor`). The decider refuses

@@ -589,6 +589,7 @@ describe("board card shell derivation", () => {
         number: 284,
         url: "https://github.com/acme/repo/pull/284",
         state: "merged",
+        title: null,
         headBranch: "t3o/T3O-9",
         baseRef: "main",
         checkedAt: "2026-01-01T00:00:00.000Z",
@@ -601,6 +602,35 @@ describe("board card shell derivation", () => {
     const none = makeBoardCardShell({ ...base, prNumber: null });
     expect(none.hasPr).toBe(false);
     expect("prNumber" in none).toBe(false);
+  });
+
+  it("decodes a stored pull request that has no title", () => {
+    const decodePr = Schema.decodeUnknownSync(BoardCardPullRequest);
+    const decoded = decodePr({
+      number: 284,
+      url: "https://github.com/acme/repo/pull/284",
+      state: "open",
+      headBranch: "board/t3o-5",
+      baseRef: "t3o",
+      checkedAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(decoded.title).toBeNull();
+  });
+
+  it("treats a title-only pull request change as a real change, ignoring checkedAt", () => {
+    const base = {
+      number: 284,
+      url: "https://github.com/acme/repo/pull/284",
+      state: "open" as const,
+      title: null,
+      headBranch: "board/t3o-5",
+      baseRef: "t3o",
+      checkedAt: "2026-01-01T00:00:00.000Z",
+    };
+    expect(
+      boardCardPullRequestsEqual(base, { ...base, checkedAt: "2026-01-02T00:00:00.000Z" }),
+    ).toBe(true);
+    expect(boardCardPullRequestsEqual(base, { ...base, title: "Summary tab" })).toBe(false);
   });
 
   it("boardCardShellFromCard carries the brief-derived flag only when it is given one", () => {

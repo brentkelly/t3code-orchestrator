@@ -85,6 +85,7 @@ import {
   FileTextIcon,
   ArrowUpIcon,
   LayersIcon,
+  ListChecksIcon,
   LoaderCircleIcon,
   LockIcon,
   MessageSquareIcon,
@@ -160,6 +161,7 @@ import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
 import { deriveBoardPlanRows } from "./boardPlanRows";
+import { boardCardHasSummaryPane, deriveBoardCardWorkSummary } from "./boardCardWorkSummary";
 import { boardStageLabel } from "./boardStages";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 import {
@@ -222,6 +224,14 @@ const BoardPlansPanel = lazy(() =>
  */
 const BoardCardReviewPane = lazy(() =>
   import("./BoardCardReviewPane").then((module) => ({ default: module.BoardCardReviewPane })),
+);
+
+/**
+ * The Summary pane (T3O-5): a derived recap of how the work went. Lazy like
+ * Review — a card that never reaches review (and has no PR) never pays for it.
+ */
+const BoardCardSummaryPane = lazy(() =>
+  import("./BoardCardSummaryPane").then((module) => ({ default: module.BoardCardSummaryPane })),
 );
 
 /**
@@ -2021,7 +2031,7 @@ function BoardBaseBranchRow({ props }: { readonly props: BoardCardDetailViewProp
   );
 }
 
-export type BoardCardPane = "thread" | "review" | "plan" | "brief";
+export type BoardCardPane = "thread" | "review" | "summary" | "plan" | "brief";
 
 /** Whether the card has reached the review-role stage — from there on the loop
     is what the card is about, so the modal opens on the Review pane. */
@@ -2041,22 +2051,28 @@ function isStageAtOrAfterReview(
  * The pane a card opens on: the latest surface its stage has produced.
  * Backlog and Sprint open on the brief (nothing has run yet, though every
  * pane is one pill away), Planning and Ready on the conversation, Build on
- * its build thread, and Code review / Ready for merge / Done on the review
- * pane.
+ * its build thread, Code review on the review loop, and Ready for merge /
+ * Done on the Summary recap.
  *
  * A split parent short of review opens on its plans instead (t3o-28, D4):
  * its build IS the sub-board, so the plan list with its child chips is where
  * the work is. Its planning thread stays one pill away — the server freezes
  * the plans once children exist, so talking to it cannot rewrite the split.
  * At the review stage the parent's own thread wakes up and the ordinary rules
- * resume.
+ * resume on Review. Merge and Done open on Summary.
+ *
+ * A role-less column at or after Code review still opens on Review — that is
+ * what `isStageAtOrAfterReview` means for the thread-id helper in this file.
  */
 export function initialBoardCardPane(
   stages: ReadonlyArray<BoardStageDefinition>,
   stage: BoardStageId,
   liveChildCount = 0,
 ): BoardCardPane {
-  if (isStageAtOrAfterReview(stages, stage)) return "review";
+  const def = boardStageById(stageStateOf(stages), stage);
+  const role = def === null ? null : effectiveBoardStageRole(def);
+  if (role === "merge" || role === "done") return "summary";
+  if (role === "review" || isStageAtOrAfterReview(stages, stage)) return "review";
   if (!boardCardHasThreadPane(stages, stage)) return "brief";
   return liveChildCount > 0 ? "plan" : "thread";
 }
@@ -2108,12 +2124,14 @@ export function initialBoardCardThreadId(
 function PaneTabs({
   pane,
   hasReview,
+  hasSummary,
   hasPlan,
   planCount,
   onSelect,
 }: {
   readonly pane: BoardCardPane;
   readonly hasReview: boolean;
+  readonly hasSummary: boolean;
   readonly hasPlan: boolean;
   /** Non-null once the card has materialised children (t3o-29): the plan pill
       then labels the Plans panel by how many rows it holds — "4 plans", not
@@ -2139,6 +2157,14 @@ function PaneTabs({
           <button className={tab("review")} onClick={() => onSelect("review")} type="button">
             <RefreshCcwIcon className="size-3" />
             Review
+          </button>
+        </BoardHint>
+      ) : null}
+      {hasSummary ? (
+        <BoardHint label="How this card's work went">
+          <button className={tab("summary")} onClick={() => onSelect("summary")} type="button">
+            <ListChecksIcon className="size-3" />
+            Summary
           </button>
         </BoardHint>
       ) : null}
@@ -2331,18 +2357,44 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const reviewStageId = boardStageWithRole(stageStateOf(props.stages), "review")?.stageId ?? null;
   const reviewStarted = hasBoardReviewSteps(props.detail.stepCompletions);
   const hasReview = reviewStageId !== null || reviewStarted;
+  const hasSummary = boardCardHasSummaryPane({
+    stages: props.stages,
+    stage: card.stage,
+    stepCompletions: props.detail.stepCompletions,
+    card,
+  });
   // The card-level running/queued signals describe the review loop only while
   // the card sits ON the review stage — anywhere else the live step is some
   // other stage's, and feeding it in would spin the review pill during a
   // build and freeze round models that are still free.
   const onReviewStage = reviewStageId !== null && card.stage === reviewStageId;
+  const activeThreadId = activeBoardCardThreadId(card.threadLinks);
+  const reviewLive =
+    onReviewStage &&
+    props.threadLinks.some(
+      (link) => link.threadId === activeThreadId && link.threadState === "working",
+    );
+  const reviewStalled = onReviewStage && boardReviewPaneStopped(props.stepFailure);
+  const workSummary = hasSummary
+    ? deriveBoardCardWorkSummary({
+        detail: props.detail,
+        stages: props.stages,
+        planRows,
+        reviewLive,
+        reviewStalled,
+        ...(props.reviewMaxRounds === undefined ? {} : { maxRounds: props.reviewMaxRounds }),
+      })
+    : null;
   const activePane: BoardCardPane =
-    (pane === "plan" && !hasPlan) || (pane === "review" && !hasReview) ? "thread" : pane;
+    (pane === "plan" && !hasPlan) ||
+    (pane === "review" && !hasReview) ||
+    (pane === "summary" && !hasSummary)
+      ? "thread"
+      : pane;
   // Which tab the thread pane is on. Absent means "whichever thread the card's
   // stage makes current", so the pane follows the card until the user picks a
   // thread, and a since-unlinked selection falls back to that same default.
   const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
-  const activeThreadId = activeBoardCardThreadId(card.threadLinks);
   const selectedThread =
     props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
     initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
@@ -2448,6 +2500,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         <PaneTabs
           hasPlan={hasPlan}
           hasReview={hasReview}
+          hasSummary={hasSummary}
           onSelect={setPane}
           pane={activePane}
           planCount={planRows === null ? null : planRows.rows.length}
@@ -2602,6 +2655,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 />
               </div>
             </section>
+          ) : activePane === "summary" && workSummary !== null ? (
+            <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
+              <BoardCardSummaryPane
+                onBackToThread={() => setPane("thread")}
+                onOpenChild={props.onOpenChildInSubBoard}
+                onOpenPullRequest={props.onOpenPullRequest}
+                onSelectReview={() => setPane("review")}
+                summary={workSummary}
+              />
+            </Suspense>
           ) : activePane === "review" ? (
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardReviewPane
@@ -2611,14 +2674,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 // state drives the spinner — a side conversation on another
                 // linked thread must not, and neither may another stage's
                 // working thread (`onReviewStage`).
-                live={
-                  onReviewStage &&
-                  props.threadLinks.some(
-                    (link) => link.threadId === activeThreadId && link.threadState === "working",
-                  )
-                }
+                live={reviewLive}
                 offStage={!onReviewStage}
-                stalled={onReviewStage && boardReviewPaneStopped(props.stepFailure)}
+                stalled={reviewStalled}
                 maxRounds={props.reviewMaxRounds ?? DEFAULT_BOARD_REVIEW_ROUNDS}
                 onAdvance={(() => {
                   // "Advance anyway" is an ordinary stage move, gated exactly
