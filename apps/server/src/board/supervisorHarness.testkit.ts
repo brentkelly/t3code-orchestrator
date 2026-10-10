@@ -561,6 +561,11 @@ export function withGovernor(
         this branch, which does not exist, so `symbolic-ref HEAD` answers it and
         every other probe fails as git really does. `makeFirstCommit` ends it. */
     readonly unbornBranch?: string;
+    /** Make git itself fail on an otherwise healthy repository (T3O-15):
+        `worktree-add` fails `createWorktree`, `branch-create` makes every
+        `git branch <name> <start>` exit non-zero. The transient failures the
+        reactor must retry on its next pass rather than park. */
+    readonly gitFailure?: "worktree-add" | "branch-create";
     /** Reject every `thread.create`, so a test can drive the spawn-failure path
         (a thread the engine refuses to create) without a provider double. */
     readonly rejectThreadCreate?: boolean;
@@ -953,12 +958,14 @@ export function withGovernor(
       // a synthetic path.
       listLocalBranchNames: () => Effect.succeed([] as string[]),
       createWorktree: (request: { readonly branch?: string; readonly refName?: string }) =>
-        Effect.succeed({
-          worktree: {
-            path: `/tmp/worktrees/${request.branch ?? request.refName ?? "wt"}`,
-            refName: request.branch ?? request.refName ?? "board/wt",
-          },
-        }),
+        input.gitFailure === "worktree-add"
+          ? Effect.die(new Error("fatal: could not create work tree dir"))
+          : Effect.succeed({
+              worktree: {
+                path: `/tmp/worktrees/${request.branch ?? request.refName ?? "wt"}`,
+                refName: request.branch ?? request.refName ?? "board/wt",
+              },
+            }),
       execute: (request: { readonly args?: ReadonlyArray<string> }) => {
         gitInvocationLog.push(request.args ?? []);
         if (input.notAGitRepo === true) {
@@ -1052,6 +1059,9 @@ export function withGovernor(
           });
         }
         if (request.args?.[0] === "branch" && request.args[1] !== undefined) {
+          if (input.gitFailure === "branch-create") {
+            return Effect.succeed({ stdout: "", stderr: "fatal: cannot lock ref", exitCode: 128 });
+          }
           createdBranches.add(request.args[1]);
           return Effect.succeed({ stdout: "", stderr: "", exitCode: 0 });
         }

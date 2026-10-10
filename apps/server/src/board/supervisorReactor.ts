@@ -1035,12 +1035,6 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // Provision the card's branch + worktree (t3o-09 effects), reporting the
-  // outcome through the worktree lifecycle commands. Returns the worktree path
-  // on success, or null on failure — every failure arm reports through
-  // `failWorktree` first, so the card carries a visible, retryable reason (a
-  // `failed` worktree once one exists, an activity row when provisioning never
-  // got that far) rather than being a silent wedge.
   // The project checkout's DEFAULT branch — not whatever it happens to have
   // checked out. origin/HEAD names it when a remote exists; a purely local
   // repo falls back to the current branch, with a detached HEAD (`rev-parse`
@@ -1153,6 +1147,8 @@ const make = Effect.gen(function* () {
     return (yield* gitRef(["rev-parse", "--verify", "--quiet", `refs/heads/${base}`])) !== "";
   });
 
+  // Provision the card's branch + worktree (t3o-09 effects), reporting every
+  // failure arm through `failWorktree` so the card carries a visible reason.
   // Answers the worktree path, or why there is none. `stuck` failures are
   // deterministic — retrying on the next scheduling pass changes nothing until a
   // human fixes the repo — so the caller parks the step (`provisionBuildStep`);
@@ -1196,7 +1192,11 @@ const make = Effect.gen(function* () {
     // tried and failed — the child's own "no base" reason quotes it, because
     // the fix (a first commit, a checked-out branch) is in the PARENT's repo
     // state and the child is the card the human is looking at (T3O-15).
-    let parentFailure: { readonly key: string; readonly reason: string } | null = null;
+    let parentFailure: {
+      readonly key: string;
+      readonly reason: string;
+      readonly transient: boolean;
+    } | null = null;
     if (card.parentCardId !== null) {
       const board = yield* readBoard;
       const parent = board.cards.find((candidate) => candidate.id === card.parentCardId);
@@ -1212,8 +1212,8 @@ const make = Effect.gen(function* () {
         parent.stage === buildStage.stageId &&
         !branchLive
       ) {
-        const reason = yield* ensureIntegrationBranch(parent);
-        if (reason !== null) parentFailure = { key: parent.key, reason };
+        const failure = yield* ensureIntegrationBranch(parent);
+        if (failure !== null) parentFailure = { key: parent.key, ...failure };
       }
     }
     const baseRefName = resolveBoardCardBaseRef({
@@ -1221,6 +1221,15 @@ const make = Effect.gen(function* () {
       cards: (yield* readBoard).cards,
       defaultBranch,
     });
+    if (baseRefName === null && defaultBranch !== "" && parentFailure?.transient === true) {
+      // git itself failed cutting the parent's branch: the next build attempt
+      // is the retry, exactly as for this card's own `git worktree add`.
+      yield* failWorktree(
+        card,
+        `The parent card ${parentFailure.key} has no integration branch yet. ${parentFailure.reason}`,
+      );
+      return { kind: "transient" } as WorktreeOutcome;
+    }
     if (baseRefName === null || defaultBranch === "") {
       // Say WHICH of the three ways base-ref resolution failed — "could not
       // resolve the base branch" is true but unactionable, and the three have
@@ -6954,7 +6963,8 @@ const make = Effect.gen(function* () {
   //
   // Answers why the branch could not be cut, or null when it exists (or there
   // was nothing to do): a child that triggered the attempt quotes the reason on
-  // its own card (T3O-15).
+  // its own card (T3O-15). `transient` marks git itself failing on a repo that
+  // is otherwise fine — the child retries on its next pass rather than parking.
   const ensureIntegrationBranch = Effect.fn("board-supervisor-ensureIntegrationBranch")(function* (
     card: BoardCard,
   ) {
@@ -6965,8 +6975,9 @@ const make = Effect.gen(function* () {
     ) {
       return null;
     }
-    const fail = (reason: string) =>
-      failWorktree(card, reason).pipe(Effect.as<string | null>(reason));
+    type Failure = { readonly reason: string; readonly transient: boolean } | null;
+    const fail = (reason: string, transient = false) =>
+      failWorktree(card, reason).pipe(Effect.as<Failure>({ reason, transient }));
     const model = yield* snapshotQuery.getCommandReadModel();
     const cwd = projectCwd(model, card);
     if (cwd === null) {
@@ -7043,6 +7054,7 @@ const make = Effect.gen(function* () {
         if (nowExists === "") {
           return yield* fail(
             `Could not create the integration branch '${branch}' from '${integrationBase}'.`,
+            true,
           );
         }
       }

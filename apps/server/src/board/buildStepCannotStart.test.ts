@@ -173,3 +173,91 @@ it.effect("Continue before the repository is fixed parks it again, spending noth
       }),
   ),
 );
+
+// The stuck arms above all reach a human; these are the other side of the line.
+// git ITSELF failing on a healthy repository is a hiccup the next scheduling
+// pass may get past, so the step stays pending and nothing is parked.
+
+it.effect("a failed git worktree add leaves the step pending for the next pass to retry", () =>
+  withGovernor(
+    {
+      board: { cards: [card("card-1")], nextCardNumberByProject: {} },
+      settings,
+      gitFailure: "worktree-add",
+    },
+    ({ pumpDomain, board, decided }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(card("card-1"), 1));
+
+        const state = boardCardStepState(yield* board, BoardCardId.make("card-1"));
+        assert.strictEqual(state?.status, "pending");
+        assert.strictEqual(worktreeFailures(yield* decided, "card-1").length, 1);
+      }),
+  ),
+);
+
+it.effect("a split child whose parent's git branch failed retries rather than parking", () =>
+  withGovernor(
+    {
+      board: { cards: [parent, child], nextCardNumberByProject: {} },
+      settings,
+      missingBranches: ["board/pla-1"],
+      gitFailure: "branch-create",
+    },
+    ({ pumpDomain, board, decided }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(child, 1));
+
+        const state = boardCardStepState(yield* board, childId);
+        assert.strictEqual(state?.status, "pending");
+        // Still visible on the child, naming the parent and git's failure.
+        const failures = worktreeFailures(yield* decided, "pla-10");
+        assert.strictEqual(failures.length, 1);
+        const error =
+          failures[0]?.type === "board.card-worktree-failed" ? failures[0].payload.error : "";
+        assert.include(error, "PLA-1");
+        assert.include(error, "Could not create the integration branch 'board/pla-1'");
+      }),
+  ),
+);
+
+it.effect("a project folder that is not a git repository parks the step", () =>
+  withGovernor(
+    {
+      board: { cards: [card("card-1")], nextCardNumberByProject: {} },
+      settings,
+      notAGitRepo: true,
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(card("card-1"), 1));
+
+        const state = boardCardStepState(yield* board, BoardCardId.make("card-1"));
+        assert.strictEqual(state?.status, "stalled");
+        assert.strictEqual(state?.stalledReason, "no-worktree");
+        assert.include(state?.lastError ?? "", "is not a git repository");
+      }),
+  ),
+);
+
+it.effect("a pinned base that exists nowhere parks the step", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [card("card-1", { baseBranch: "release/2.4" })],
+        nextCardNumberByProject: {},
+      },
+      settings,
+      missingBranches: ["release/2.4"],
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(card("card-1", { baseBranch: "release/2.4" }), 1));
+
+        const state = boardCardStepState(yield* board, BoardCardId.make("card-1"));
+        assert.strictEqual(state?.status, "stalled");
+        assert.strictEqual(state?.stalledReason, "no-worktree");
+        assert.include(state?.lastError ?? "", "'release/2.4' does not exist");
+      }),
+  ),
+);
