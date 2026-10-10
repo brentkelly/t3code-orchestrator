@@ -411,6 +411,12 @@ function threadIsAlive(shell: OrchestrationThreadShell): boolean {
   );
 }
 
+/** A live thread held on a tool-permission prompt (T3O-16). A dead session
+    cannot be approved in, so `error` outranks the pending approval here too. */
+function isAwaitingPermission(shell: OrchestrationThreadShell): boolean {
+  return shell.hasPendingApprovals && shell.session?.status !== "error";
+}
+
 /**
  * The model/access override in force for a card's CURRENT stage (t3o-29),
  * resolved through the parent for a sub-board child, or null when the
@@ -7966,6 +7972,18 @@ const make = Effect.gen(function* () {
       // is bounded by `lastNudgeAt ?? startedAt`, so a request that never starts
       // stops suppressing at the next nudge, and the step is swept then.
       if (yield* supersededByPendingTurn(state)) continue;
+      // A thread blocked on a permission prompt is waiting on a human, not hung
+      // (T3O-16): it emits nothing, so every life sign above reads it as dead.
+      // Nudging it would land a board message mid-prompt and, rung by rung,
+      // replace the card's violet "Needs permission" with an amber stall.
+      // Exempt for the same reason a human-in-the-loop run is: a human is the
+      // pacing. Read last, so only an already-overdue step pays for it.
+      if (state.threadId !== null) {
+        const shell = yield* snapshotQuery
+          .getThreadShellById(state.threadId)
+          .pipe(Effect.map(Option.getOrUndefined));
+        if (shell !== undefined && isAwaitingPermission(shell)) continue;
+      }
       yield* recoverStep({ card, state });
     }
   }).pipe(

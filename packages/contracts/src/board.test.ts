@@ -1787,6 +1787,12 @@ describe("children actively working (deriveBoardCardChildRunning)", () => {
     // is still admitted and running, but nothing is working until the human
     // answers — the card wears the violet chip instead of the blue dot.
     expect(isBoardCardWorking(card({ threadState: "waiting", stepRunning: true }))).toBe(false);
+    // A pending question vetoes it too — including one held by an older
+    // thread while a newer one is mid-turn, since "waiting" outranks
+    // "working" when a card's threads are folded into one state.
+    expect(
+      isBoardCardWorking(card({ threadState: "waiting", awaitingInput: true, stepRunning: true })),
+    ).toBe(false);
     const parent = card({ cardId: parentId, planTotal: 1, planDone: 0 });
     expect(
       deriveBoardCardChildRunning({

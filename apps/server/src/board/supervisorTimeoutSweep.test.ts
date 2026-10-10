@@ -228,6 +228,27 @@ it.effect("a human-in-the-loop run is exempt from the timeout sweep", () =>
   ),
 );
 
+// A thread blocked on a permission prompt emits nothing, so every life sign
+// reads dead — but the agent is waiting on a human, not hung (T3O-16).
+it.effect("T3O-16: a thread waiting on a permission prompt is never swept", () =>
+  withGovernor(
+    {
+      board: boardWithStep(runningStep()),
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      initialShells: new Map([
+        [String(threadId), { ...aliveThreadShell(String(threadId)), hasPendingApprovals: true }],
+      ]),
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        yield* reactor.sweep;
+        const after = yield* board;
+        assert.strictEqual(attemptOf(after), 1); // not nudged
+        assert.isNull(boardCardStepState(after, cardId)?.lastNudgeAt ?? null);
+      }),
+  ),
+);
+
 // ── The heartbeat is measured on the card's OWN branch (t3o-10, D4) ────
 //
 // A base sync fast-forwards commits reachable from the base into the card's

@@ -3480,7 +3480,10 @@ export function boardCardChildAttentionLabel(attention: BoardCardChildAttention)
  * `threadState === "waiting"` vetoes them too (T3O-16): a thread blocked on a
  * permission prompt or a question is mid-turn with its step running, but
  * nothing moves until the human answers — the card wears the violet chip
- * instead, and a blue dot beside it would say the opposite.
+ * instead, and a blue dot beside it would say the opposite. Because "waiting"
+ * outranks "working" when a card's threads fold into one state, this also
+ * darkens the dot when an older thread holds a question while a newer one is
+ * mid-turn: the card is blocked on the human either way.
  */
 export function isBoardCardWorking(
   card: Pick<BoardCardShell, "threadState" | "stepRunning">,
