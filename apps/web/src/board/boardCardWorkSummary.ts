@@ -153,7 +153,6 @@ function deriveVerdict(input: {
   readonly role: ReturnType<typeof effectiveBoardStageRole>;
   readonly blocked: boolean;
   readonly mergeHeld: boolean;
-  readonly review: BoardCardWorkSummaryReview;
   readonly loopStatus: ReturnType<typeof deriveBoardReviewLoop>["status"] | null;
   readonly reviewLive: boolean;
   readonly reviewStalled: boolean;
@@ -355,7 +354,6 @@ export function deriveBoardCardWorkSummary(input: {
     role,
     blocked: card.blocked,
     mergeHeld: card.autoMergeHold !== null,
-    review,
     loopStatus,
     reviewLive: input.reviewLive === true,
     reviewStalled: input.reviewStalled === true,

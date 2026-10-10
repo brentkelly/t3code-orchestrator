@@ -52,6 +52,7 @@ export function BoardCardSummaryPane({
   readonly onOpenChild?: ((childCardId: string) => void) | undefined;
 }) {
   const { verdict, review, build, pullRequest } = summary;
+  const pullRequestUrl = pullRequest.url;
   return (
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-3.5 pr-3">
@@ -134,7 +135,12 @@ export function BoardCardSummaryPane({
                   </p>
                   <ul className="flex flex-col gap-1">
                     {build.children.rows.map((row) => {
-                      const openable = row.cardId !== null && onOpenChild !== undefined;
+                      const childId = row.cardId;
+                      const openChild =
+                        childId !== null && onOpenChild !== undefined
+                          ? () => onOpenChild(childId)
+                          : undefined;
+                      const openable = openChild !== undefined;
                       return (
                         <li key={row.key}>
                           <button
@@ -145,9 +151,7 @@ export function BoardCardSummaryPane({
                                 : "cursor-default text-foreground",
                             )}
                             disabled={!openable}
-                            onClick={
-                              openable ? () => onOpenChild?.(row.cardId as string) : undefined
-                            }
+                            onClick={openChild}
                             type="button"
                           >
                             <span className="font-medium">{row.key}</span>
@@ -169,12 +173,12 @@ export function BoardCardSummaryPane({
         </Block>
 
         <Block label="PR identity">
-          {pullRequest.empty || pullRequest.number === null || pullRequest.url === null ? (
+          {pullRequest.empty || pullRequest.number === null || pullRequestUrl === null ? (
             <EmptyCopy>No PR</EmptyCopy>
           ) : (
             <button
               className="flex w-full flex-col gap-1 rounded-md px-1.5 py-1 text-left hover:bg-accent"
-              onClick={() => onOpenPullRequest(pullRequest.url as string)}
+              onClick={() => onOpenPullRequest(pullRequestUrl)}
               type="button"
             >
               <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-foreground">
