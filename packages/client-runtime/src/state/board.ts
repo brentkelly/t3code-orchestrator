@@ -81,6 +81,7 @@ import {
   mergeBoardCardPullRequest,
   moveBoardCard,
   refreshBoardCardPullRequest,
+  linkBoardCardPullRequest,
   renameBoardStage,
   reorderBoardCard,
   requeueBoardCardStep,
@@ -1090,6 +1091,13 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:refresh-card-pull-request",
       execute: (input: { readonly cardId: BoardCardId; readonly force?: boolean }) =>
         refreshBoardCardPullRequest(input),
+    }),
+    /** Link a pull request to the card by hand (T3O-18). Resolves to the
+        outcome the card shows — linked, or the server's refusal. */
+    linkCardPullRequest: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:link-card-pull-request",
+      execute: (input: { readonly cardId: BoardCardId; readonly target: string }) =>
+        linkBoardCardPullRequest(input),
     }),
     /** Merge the card's pull request and advance it. Resolves to the outcome
         the button reports — merged, refused, conflict-being-resolved. */

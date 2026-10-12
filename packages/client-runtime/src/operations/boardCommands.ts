@@ -108,6 +108,14 @@ export const refreshBoardCardPullRequest = (input: {
   readonly force?: boolean;
 }) => request(BOARD_WS_METHODS.refreshCardPullRequest, input);
 
+/** "Link one" on a card with no pull request (T3O-18). The target goes as
+    typed — a URL, `#312` — and the server parses it, checks it with the forge,
+    and answers `linked` or the refusal to show. */
+export const linkBoardCardPullRequest = (input: {
+  readonly cardId: BoardCardId;
+  readonly target: string;
+}) => request(BOARD_WS_METHODS.linkCardPullRequest, input);
+
 export const mergeBoardCardPullRequest = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.mergeCardPullRequest, input);
 

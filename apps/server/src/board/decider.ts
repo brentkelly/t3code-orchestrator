@@ -3167,6 +3167,21 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${command.cardId}' already records this pull request state; nothing to record.`,
         );
       }
+      // An explicitly linked pull request (T3O-18) is the card's by decision,
+      // so a branch lookup may neither replace nor clear it. Only a refresh of
+      // the same pull request — by number, carrying the marker — records over
+      // it. This closes the race between a branch refresh already in flight
+      // and a link landing while it was out.
+      if (
+        previous !== null &&
+        previous.linked === true &&
+        (next === null || next.number !== previous.number || next.linked !== true)
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has pull request #${previous.number} linked explicitly; only a refresh of that pull request can record over it.`,
+        );
+      }
       // A merged link is never unlinked or demoted by a later lookup. The
       // reactor re-reads the card after the forge round trip, then dispatches;
       // another refresh can commit `merged` in that gap while this command
@@ -3182,6 +3197,87 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         return yield* invariant(
           command,
           `Card '${command.cardId}' already records a merged pull request; a lookup that is not the same number still merged cannot replace it.`,
+        );
+      }
+      const transition: BoardCardPullRequestTransition =
+        next === null
+          ? "unlinked"
+          : previous === null || previous.number !== next.number
+            ? "linked"
+            : previous.state === next.state
+              ? "updated"
+              : "state-changed";
+      const nextCard: BoardCard = {
+        ...card,
+        pullRequest: next,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-pull-request-recorded",
+        payload: {
+          cardId: command.cardId,
+          pullRequest: next,
+          transition,
+          card: nextCard,
+        },
+      };
+    }
+
+    case "board.card.set-linked-pull-request": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      const previous = card.pullRequest;
+      // Stamped here rather than trusted from the caller, so a link is marked
+      // however it arrived.
+      const next =
+        command.pullRequest === null ? null : { ...command.pullRequest, linked: true as const };
+      // The floor applies to a link as it does to a branch lookup, with the
+      // same exemptions: an open pull request or the card's current one. A
+      // finished round's merged pull request, linked again, would otherwise
+      // make the reactor settle the card and delete the branch that now holds
+      // the next round's unmerged work.
+      if (
+        next !== null &&
+        next.state !== "open" &&
+        previous?.number !== next.number &&
+        card.pullRequestFloor !== null &&
+        next.number <= card.pullRequestFloor
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' pull request #${next.number} is ${next.state} and at or below its floor of #${card.pullRequestFloor}; it belongs to a completed round of work.`,
+        );
+      }
+      if (next === null && previous?.linked !== true) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' has no explicitly linked pull request to clear.`,
+        );
+      }
+      // A merged pull request the card records is never replaced or cleared,
+      // as `record-pull-request` holds. Dropping it would keep its number out
+      // of `pullRequestHistory`, so the next round's floor would not cover it
+      // and a later branch lookup could adopt it merged again.
+      if (
+        previous !== null &&
+        isBoardCardPullRequestTerminal(previous) &&
+        (next === null || next.number !== previous.number)
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' already records merged pull request #${previous.number}; a link cannot replace or clear it.`,
+        );
+      }
+      // One slot per card, so linking the same pull request again is a no-op
+      // rather than a duplicate.
+      if (boardCardPullRequestsEqual(previous, next)) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' already has pull request #${previous?.number} linked; nothing to record.`,
         );
       }
       const transition: BoardCardPullRequestTransition =

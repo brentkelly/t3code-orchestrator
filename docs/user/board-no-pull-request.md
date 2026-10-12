@@ -40,6 +40,21 @@ The chip and the notice wait a few seconds after a card stops moving before appe
 that has only just arrived at Ready for merge does not flash a warning while its first lookup is
 still in flight.
 
+## Link one by hand
+
+When the pull request exists but the card cannot find it on its own branch — it was opened from
+another branch, or it is one layer of a stack — link it yourself. From **Code review** onward, a
+card with no pull request shows **No PR linked · Link one**. Paste the pull request's URL or type
+its number (`#312`) and press **Link**. T3 Code checks it with the forge first, and only accepts a
+pull request on the card's own repository.
+
+A linked pull request is tracked like any other: its status stays current, **Merge** acts on it,
+and a card in Done settles once it merges. The card keeps it even if a different pull request
+later appears on the card's branch.
+
+Agents can do the same for any card, not only their own, by passing the pull request when they
+create or update the card. To remove a link, ask an agent to clear it.
+
 ## If it is already merged
 
 A card whose pull request was merged still links it. **View PR** is on the card at every stage,

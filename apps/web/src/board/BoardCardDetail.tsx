@@ -208,6 +208,10 @@ export function BoardCardDetail({
   const mergeCardPullRequest = useAtomCommand(boardEnvironment.mergeCardPullRequest, {
     reportFailure: false,
   });
+  // T3o (T3O-18): "Link one". A refusal renders inline under the input.
+  const linkCardPullRequest = useAtomCommand(boardEnvironment.linkCardPullRequest, {
+    reportFailure: false,
+  });
   // Same reason as the two above: every refusal is a normal answer with its own
   // wording ("this card has no branch to push"), not a command failure.
   const submitCardForMerge = useAtomCommand(boardEnvironment.submitCardForMerge, {
@@ -1152,6 +1156,23 @@ export function BoardCardDetail({
           setFeedback(describeBoardRefreshOutcome(result.value, branch));
         });
       }}
+      onLinkPullRequest={(target) =>
+        linkCardPullRequest({ environmentId, input: { cardId: card.id, target } }).then(
+          (result) => {
+            if (result._tag === "Failure") {
+              return isAtomCommandInterrupted(result) ? null : describeBoardCommandFailure(result);
+            }
+            switch (result.value.outcome) {
+              case "refused":
+                return result.value.detail;
+              case "unknown-card":
+                return "This card no longer exists.";
+              default:
+                return null;
+            }
+          },
+        )
+      }
       onMergePullRequest={() => {
         setFeedback(null);
         setMerging(true);

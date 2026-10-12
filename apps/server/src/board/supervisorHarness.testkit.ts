@@ -28,6 +28,7 @@ import {
   isBoardCommand,
   isBoardEvent,
   ProjectId,
+  type RepositoryIdentity,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
@@ -590,6 +591,11 @@ export function withGovernor(
         `pullRequestOf` so fixtures that only care about the forge's one
         answer stay as they are. `null` is "this number is gone". */
     readonly pullRequestByNumber?: VcsStatusChangeRequest | { readonly failWith: string } | null;
+    /** The repository every project's shell reports (T3O-18) — what a linked
+        pull request is checked against. Defaults to `github.com/acme/repo`,
+        the repository the pull-request fixtures live on; `null` is a project
+        with no recognised remote. */
+    readonly projectRepository?: RepositoryIdentity | null;
     /** Run before every branch pull-request lookup answers. The lookup is the
         reactor's one forge round trip on the refresh path, so it is the window
         another trigger can record a link in — a test that wants to drive that
@@ -864,6 +870,26 @@ export function withGovernor(
               return shell === undefined ? thread : { ...thread, session: shell.session ?? null };
             }),
           })),
+        ),
+      getProjectShellById: (id: ProjectId) =>
+        Effect.succeed(
+          Option.some({
+            id,
+            repositoryIdentity:
+              input.projectRepository === undefined
+                ? {
+                    canonicalKey: "github.com/acme/repo",
+                    locator: {
+                      source: "git-remote",
+                      remoteName: "origin",
+                      remoteUrl: "git@github.com:acme/repo.git",
+                    },
+                    provider: "github",
+                    owner: "acme",
+                    name: "repo",
+                  }
+                : input.projectRepository,
+          }),
         ),
       getThreadShellById: (threadId: ThreadId) =>
         Ref.get(shells).pipe(
