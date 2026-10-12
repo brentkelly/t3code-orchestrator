@@ -4278,6 +4278,34 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       }),
     );
 
+    it.effect("refuses to replace or clear a merged pull request the card records", () =>
+      Effect.gen(function* () {
+        // Dropping merged #90 would keep it out of the history the floor is
+        // computed from, so a later branch lookup could adopt it again.
+        for (const previous of [
+          pr(90, { state: "merged" }),
+          pr(90, { state: "merged", linked: true }),
+        ]) {
+          const error = yield* decideFail(
+            setLinked(pr(75)),
+            boardWith(card({ pullRequest: previous })),
+          );
+          assert.include(String(error), "already records merged pull request #90");
+        }
+        const error = yield* decideFail(
+          setLinked(null),
+          boardWith(card({ pullRequest: pr(90, { state: "merged", linked: true }) })),
+        );
+        assert.include(String(error), "already records merged pull request #90");
+        // Linking that same merged pull request explicitly still lands.
+        const event = yield* decide(
+          setLinked(pr(90, { state: "merged" })),
+          boardWith(card({ pullRequest: pr(90, { state: "merged" }) })),
+        );
+        assert.strictEqual(event.type, "board.card-pull-request-recorded");
+      }),
+    );
+
     it.effect("refuses linking the pull request the card already has linked — no duplicate", () =>
       Effect.gen(function* () {
         const error = yield* decideFail(

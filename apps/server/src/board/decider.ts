@@ -3258,6 +3258,20 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${command.cardId}' has no explicitly linked pull request to clear.`,
         );
       }
+      // A merged pull request the card records is never replaced or cleared,
+      // as `record-pull-request` holds. Dropping it would keep its number out
+      // of `pullRequestHistory`, so the next round's floor would not cover it
+      // and a later branch lookup could adopt it merged again.
+      if (
+        previous !== null &&
+        isBoardCardPullRequestTerminal(previous) &&
+        (next === null || next.number !== previous.number)
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' already records merged pull request #${previous.number}; a link cannot replace or clear it.`,
+        );
+      }
       // One slot per card, so linking the same pull request again is a no-op
       // rather than a duplicate.
       if (boardCardPullRequestsEqual(previous, next)) {
