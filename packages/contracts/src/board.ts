@@ -4440,9 +4440,10 @@ export type BoardCardRecordPullRequestCommand = typeof BoardCardRecordPullReques
  * does: an open pull request or the card's current one always links, a
  * merged or closed one at or below the floor is refused, and a merged pull
  * request the card already records is never replaced or cleared. From then
- * on `record-pull-request` cannot replace or clear the link. `null` clears an explicit link; the card falls back to its branch
- * on the next refresh. Lands as `board.card-pull-request-recorded`, so every
- * reader of the card's pull request sees it like any other.
+ * on `record-pull-request` cannot replace or clear the link.
+ * `null` clears an explicit link; the card falls back to its branch on the
+ * next refresh. Lands as `board.card-pull-request-recorded`, so every reader
+ * of the card's pull request sees it like any other.
  */
 export const BoardCardSetLinkedPullRequestCommand = Schema.Struct({
   type: Schema.Literal("board.card.set-linked-pull-request"),

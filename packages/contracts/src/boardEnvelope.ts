@@ -26,7 +26,7 @@
  * Everything here is pure string composition: no SQL, no git, no thread
  * handles — unit-testable without a server, and safe to import from the web.
  */
-import type { BoardReviewPhaseId, BoardStageRole } from "./board.ts";
+import type { BoardCardPullRequest, BoardReviewPhaseId, BoardStageRole } from "./board.ts";
 import { BOARD_REVIEW_PHASE_LABELS, DEFAULT_BOARD_SYNC_PHASE_PROMPT } from "./board.ts";
 
 /**
@@ -92,6 +92,11 @@ export interface ComposeStepPromptInput {
         workspace, an unresolvable default), in which case the envelope says
         nothing rather than interpolating placeholder English as a branch name. */
     readonly baseBranch?: string | null;
+    /** The card's pull request. Only an explicitly LINKED one (T3O-18) is
+        stated: its head may be another branch than the card's own worktree,
+        and the review prompt otherwise tells the agent to open a pull request
+        on the card's branch. */
+    readonly pullRequest?: Pick<BoardCardPullRequest, "number" | "headBranch" | "linked"> | null;
   };
   /** The stage's human label, frozen onto the run row at stage entry (t3o-19,
       D5). Null on a legacy row that predates the freeze, where the stage id is
@@ -139,6 +144,7 @@ export function boardStepPreamble(
     `You are working card ${card.key}, titled "${card.title}".`,
     step.stepLabel === null ? `Stage: ${stage}.` : `Stage: ${stage}. Step: ${step.stepLabel}.`,
     ...boardBaseBranchLines({ baseBranch: card.baseBranch ?? null, role: input.role ?? null }),
+    ...boardLinkedPullRequestLines(card.pullRequest ?? null),
     `Call board_get_card_context for the brief, plan, dependencies and prior progress.`,
   ].join("\n");
 }
@@ -168,6 +174,22 @@ function boardBaseBranchLines(input: {
       : "";
   return [
     `This card's base branch is \`${input.baseBranch}\` — its work branches off and merges back into that.${caveat}`,
+  ];
+}
+
+/**
+ * The linked pull request line (T3O-18). A card linked to a pull request it
+ * did not open (a review card per stack layer) is still given its own
+ * `board/<key>` worktree, which may not be that pull request's branch, and the
+ * shipped review prompt says to open a pull request if the card's branch has
+ * none. This names the pull request the work is actually about.
+ */
+function boardLinkedPullRequestLines(
+  pullRequest: Pick<BoardCardPullRequest, "number" | "headBranch" | "linked"> | null,
+): ReadonlyArray<string> {
+  if (pullRequest?.linked !== true) return [];
+  return [
+    `This card is linked to pull request #${pullRequest.number}, whose head branch is \`${pullRequest.headBranch}\`. That pull request is this card's work: read, review and push fixes to \`${pullRequest.headBranch}\` (your worktree may be on a different branch), and never open a new pull request for this card.`,
   ];
 }
 

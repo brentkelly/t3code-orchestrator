@@ -21,6 +21,7 @@ import {
 import {
   codexStep,
   makeBoardCard,
+  movedToBuilding,
   readyWorktree,
   settingsWith,
   withGovernor,
@@ -436,4 +437,34 @@ describe("merging a card with a linked pull request", () => {
       ),
     );
   }
+});
+
+describe("the run prompt names a linked pull request", () => {
+  const turnText = (commands: ReadonlyArray<OrchestrationCommand>) => {
+    const turn = commands.find((command) => command.type === "thread.turn.start");
+    return turn?.type === "thread.turn.start" ? turn.message.text : "";
+  };
+
+  // The card's worktree is board/<key>, not the linked head, and the shipped
+  // review prompt says to open a pull request if the card's branch has none.
+  it.effect("a step on a linked card is pointed at the pull request's head branch", () => {
+    const card: BoardCard = {
+      ...makeBoardCard({
+        id: "card-1",
+        stage: String(BOARD_SEED_STAGE_IDS.building),
+        orderKey: "m",
+      }),
+      pullRequest: linkedRecord(),
+    };
+    return withGovernor(
+      { board: { nextCardNumberByProject: {}, cards: [card] }, settings: settings() },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(card, 1));
+          const text = turnText(yield* h.commands);
+          assert.include(text, "linked to pull request #75");
+          assert.include(text, "`stack/layer-2`");
+        }),
+    );
+  });
 });
