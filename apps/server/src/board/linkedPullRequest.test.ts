@@ -321,6 +321,37 @@ describe("settling a card with a linked pull request", () => {
     ),
   );
 
+  it.effect(
+    "the boot sweep refreshes a Done card with no worktree and a linked PR cached open",
+    () =>
+      withGovernor(
+        {
+          board: {
+            nextCardNumberByProject: {},
+            cards: [
+              {
+                ...reviewCard({ stage: String(BOARD_SEED_STAGE_IDS.done) }),
+                pullRequest: linkedRecord(),
+              },
+            ],
+          },
+          // Reclaim off too: the linked refresh must not hang off worktree cleanup.
+          settings: settingsWith({
+            building: [codexStep],
+            globalMaxConcurrent: 4,
+            reclaimWorktreeOnDone: false,
+          }),
+          pullRequestByNumber: { ...layerPr, state: "merged" },
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.drainWorktreeSweep;
+            assert.deepEqual(yield* h.pullRequestGets, [{ number: 75, forced: false }]);
+            assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "merged");
+          }),
+      ),
+  );
+
   it.effect("linking an already-merged pull request to a card in Done settles it", () =>
     withGovernor(
       {

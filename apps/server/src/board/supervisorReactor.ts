@@ -4940,6 +4940,21 @@ const make = Effect.gen(function* () {
     const model = yield* snapshotQuery.getCommandReadModel();
     const fetchedBases = new Set<string>();
     for (const card of board.cards) {
+      // T3o (T3O-18): a linked pull request settles its card whether or not
+      // the card holds a worktree — it may never have had one — so its boot
+      // refresh is not gated on the worktree or the reclaim setting.
+      const cardStage = boardStageById(board, card.stage);
+      if (
+        options.refreshOpenPullRequests &&
+        card.archivedAt === null &&
+        card.pullRequest?.linked === true &&
+        card.pullRequest.state === "open" &&
+        cardStage !== null &&
+        effectiveBoardStageRole(cardStage) === "done"
+      ) {
+        yield* refreshCardPullRequest(card);
+        continue;
+      }
       if (card.worktree === null || card.worktree.status !== "ready") continue;
       if (card.archivedAt !== null) {
         yield* reclaimCardWorktree(card, fetchedBases);
