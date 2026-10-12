@@ -5463,6 +5463,25 @@ const make = Effect.gen(function* () {
           ? LOCAL_CONFLICT_MERGE_STATE
           : probe.state;
       const detail = boardMergeRefusalReason(state, probe.failure);
+      // T3O-18: both automatic fixes run in the card's OWN worktree. A linked
+      // pull request on another branch (a stack layer, a card with no
+      // worktree) would have that agent fix the wrong branch, so the refusal
+      // goes to a human instead, naming the branch to fix.
+      if (
+        pullRequest.linked === true &&
+        pullRequest.headBranch !== fresh.worktree?.branch &&
+        (state?.blockedReason === "conflict" ||
+          (state !== null &&
+            state.blockedReason === null &&
+            !state.checksUnread &&
+            state.checks.failed > 0))
+      ) {
+        return {
+          outcome: "refused" as const,
+          detail: `${detail} The pull request is on ${pullRequest.headBranch}, not this card's branch; fix it there.`,
+          mergeState: state,
+        };
+      }
       if (state?.blockedReason === "conflict" && !viaConflictFix) {
         // Ask for the stage's own thread: the merge stage resolves to the
         // conflict-resolution prompt in build mode, so this is the conflict

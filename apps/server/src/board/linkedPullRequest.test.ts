@@ -25,6 +25,7 @@ import {
   settingsWith,
   withGovernor,
 } from "./supervisorHarness.testkit.ts";
+import type { BoardMergeState } from "./boardMergeState.ts";
 
 /** Stack layer 2 — a pull request on a branch that is not the card's own. */
 const layerPr: VcsStatusChangeRequest = {
@@ -376,4 +377,63 @@ describe("settling a card with a linked pull request", () => {
         }),
     ),
   );
+});
+
+describe("merging a card with a linked pull request", () => {
+  const refusedFor = (input: { blockedReason: BoardMergeState["blockedReason"]; failed: number }) =>
+    ({
+      mergeable: input.blockedReason === null ? "mergeable" : "blocked",
+      blockedReason: input.blockedReason,
+      checks: {
+        total: input.failed + 1,
+        passed: 1,
+        pending: 0,
+        failed: input.failed,
+        failing: input.failed > 0 ? ["ci"] : [],
+        running: [],
+      },
+      headSha: "sha-one",
+      checksUnread: false,
+    }) satisfies BoardMergeState;
+
+  for (const [label, mergeState] of [
+    ["conflicts", refusedFor({ blockedReason: "conflict", failed: 0 })],
+    ["fails its checks", refusedFor({ blockedReason: null, failed: 1 })],
+  ] as const) {
+    it.effect(`starts no fix agent when a linked PR on another branch ${label}`, () =>
+      withGovernor(
+        {
+          board: {
+            nextCardNumberByProject: {},
+            cards: [
+              {
+                ...reviewCard({ stage: String(BOARD_SEED_STAGE_IDS.merge) }),
+                pullRequest: linkedRecord(),
+              },
+            ],
+          },
+          settings: settings(),
+          pullRequestByNumber: layerPr,
+          mergeFailure: "the host refused",
+          mergeState,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const result = yield* h.reactor.mergePullRequest(reviewCard().id);
+            assert.equal(result.outcome, "refused");
+            assert.include(
+              result.outcome === "refused" ? result.detail : "",
+              "The pull request is on stack/layer-2, not this card's branch",
+            );
+            // The fix agent would work the card's own worktree, not stack/layer-2.
+            assert.deepEqual(
+              (yield* h.commands).filter(
+                (command) => command.type === "board.card.start-stage-thread",
+              ),
+              [],
+            );
+          }),
+      ),
+    );
+  }
 });
