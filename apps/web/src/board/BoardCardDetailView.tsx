@@ -1557,10 +1557,12 @@ function ActionsSection({
   // T3o (T3O-18): a card from Code review onward with no pull request to show
   // can be given one by hand — the PR an agent opened elsewhere, or a review
   // card made for a PR. Keyed on the stage ROLE so a renamed or added column
-  // behaves the same.
+  // behaves the same. Gated on the LIVE slot, not `displayed`: a card on its
+  // next round still shows last round's retired pull request, and can still
+  // be given this round's.
   const linkPullRequest =
     !archived &&
-    displayed === null &&
+    pullRequest === null &&
     props.onLinkPullRequest !== undefined &&
     (stageRole === "review" || stageRole === "merge" || stageRole === "done")
       ? props.onLinkPullRequest
