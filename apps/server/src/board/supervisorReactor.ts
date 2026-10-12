@@ -96,6 +96,9 @@ import {
   type BoardCardId,
   type BoardCheckCardWorktreeResult,
   type BoardCardPullRequest,
+  type BoardCardPullRequestTarget,
+  type BoardLinkCardPullRequestResult,
+  type ProjectId,
   // T3o: the refresh answers rather than staying silent (T3O-48).
   type BoardRefreshCardPullRequestResult,
   type BoardCardStepAwaitingReason,
@@ -136,6 +139,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts";
 import { boardSnapshotQueryMethodsOf } from "./projection.ts";
 import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
+import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
 import { pullMergedBaseBranch } from "./baseBranchSync.ts";
 import {
   removeBoardCardAttachmentsDir,
@@ -343,6 +347,23 @@ export interface SupervisorReactorShape {
     cardId: BoardCardId,
     options?: { readonly force?: boolean },
   ) => Effect.Effect<BoardRefreshCardPullRequestResult>;
+  /** Check a pull request can be linked to a card in this project (T3O-18):
+      on the project's repository, and known to the forge. Records nothing. */
+  readonly resolvePullRequestLink: (
+    projectId: ProjectId,
+    target: BoardCardPullRequestTarget,
+  ) => Effect.Effect<
+    | { readonly outcome: "resolved"; readonly pullRequest: BoardCardPullRequest }
+    | { readonly outcome: "refused"; readonly detail: string }
+  >;
+  /** Link a pull request to a card explicitly, or clear the link with `null`
+      (T3O-18). `resolved` is a `resolvePullRequestLink` answer the caller
+      already holds. */
+  readonly linkPullRequest: (
+    cardId: BoardCardId,
+    target: BoardCardPullRequestTarget | null,
+    options?: { readonly resolved?: BoardCardPullRequest },
+  ) => Effect.Effect<BoardLinkCardPullRequestResult>;
   /** Merge a card's pull request and advance it (the Merge button). */
   readonly mergePullRequest: (cardId: BoardCardId) => Effect.Effect<BoardMergeAttemptResult>;
   /** Open the card's pull request from Building and route it past Code review
@@ -4068,8 +4089,16 @@ const make = Effect.gen(function* () {
       // still say "open" after the merge landed, and writing that would let
       // the next branch lookup unlink it. Skip the held summary so a live
       // merged result can still fill the title.
-      if (isBoardCardPullRequestTerminal(recorded) && recorded !== null) {
-        if (recorded.title !== null) return boardRefreshOutcomeOf(recorded);
+      //
+      // T3o (T3O-18): an explicitly linked pull request takes the same
+      // by-number path for every state, never the branch lookup — the card
+      // may have no worktree at all, or the link may name a PR on another
+      // branch (a stack layer), and either way the branch would answer wrong.
+      const linked = recorded?.linked === true;
+      if (recorded !== null && (linked || isBoardCardPullRequestTerminal(recorded))) {
+        if (isBoardCardPullRequestTerminal(recorded) && recorded.title !== null) {
+          return boardRefreshOutcomeOf(recorded);
+        }
         // Only a human's "Check again" forces past the PR read cache; every
         // automatic trigger takes the cached read, so a burst of triggers
         // costs one forge call per cache window. Failures are not cached, so
@@ -4103,11 +4132,16 @@ const make = Effect.gen(function* () {
         }
         const current = (yield* readCard(card.id)) ?? card;
         const currentLink = current.pullRequest;
+        // The answer applies only to the link it was asked about, still held
+        // the same way; and a merged link only ever takes a still-merged
+        // answer (the backfill), for the reason given above.
         if (
-          !isBoardCardPullRequestTerminal(currentLink) ||
           currentLink === null ||
           found.number !== currentLink.number ||
-          found.state !== "merged"
+          (currentLink.linked === true) !== linked ||
+          (isBoardCardPullRequestTerminal(currentLink)
+            ? found.state !== "merged"
+            : !linked)
         ) {
           return boardRefreshOutcomeOf(currentLink);
         }
@@ -4119,6 +4153,7 @@ const make = Effect.gen(function* () {
           headBranch: found.headRef,
           baseRef: found.baseRef,
           ...(found.isDraft === true ? { isDraft: true } : {}),
+          ...(linked ? { linked: true } : {}),
           checkedAt: yield* nowIso,
         } satisfies BoardCardPullRequest;
         if (boardCardPullRequestsEqual(currentLink, next)) return boardRefreshOutcomeOf(next);
@@ -4303,6 +4338,100 @@ const make = Effect.gen(function* () {
       yield* settleCardAtDone(settling);
     }
     return outcome;
+  });
+
+  /**
+   * Resolve a pull request to link to a card in `projectId` (T3O-18): parse
+   * and repository-check the target, then ask the forge — forced, because a
+   * person or agent naming a pull request is asking about it now. Refuses a
+   * pull request that is not on the project's repository or that the forge
+   * does not know, in words fit to show them. Records nothing, so a caller
+   * creating a card can check its pull request before the card exists.
+   */
+  const resolvePullRequestLink = Effect.fn("board-supervisor-resolvePullRequestLink")(function* (
+    projectId: ProjectId,
+    target: BoardCardPullRequestTarget,
+  ) {
+    const project = yield* snapshotQuery
+      .getProjectShellById(projectId)
+      .pipe(Effect.map(Option.getOrUndefined), Effect.orElseSucceed(() => undefined));
+    const resolved = resolveCardPullRequestTarget(target, project?.repositoryIdentity);
+    if ("refused" in resolved) {
+      return { outcome: "refused", detail: resolved.refused } as const;
+    }
+    const found = yield* pullRequests
+      .get({ projectId, number: resolved.number, force: true })
+      .pipe(
+        Effect.map((summary) => ({ summary }) as const),
+        Effect.catch((error) =>
+          Effect.succeed({
+            failure: `Could not find pull request #${resolved.number}: ${error.detail}`,
+          } as const),
+        ),
+        Effect.catchCause(() =>
+          Effect.succeed({
+            failure: `Could not find pull request #${resolved.number}: the lookup failed unexpectedly.`,
+          } as const),
+        ),
+      );
+    if ("failure" in found) return { outcome: "refused", detail: found.failure } as const;
+    const summary = found.summary;
+    const pullRequest = {
+      number: summary.number,
+      url: summary.url,
+      state: summary.state,
+      title: summary.title,
+      headBranch: summary.headRef,
+      baseRef: summary.baseRef,
+      ...(summary.isDraft === true ? { isDraft: true } : {}),
+      linked: true,
+      checkedAt: yield* nowIso,
+    } satisfies BoardCardPullRequest;
+    return { outcome: "resolved", pullRequest } as const;
+  });
+
+  /**
+   * Link a pull request to a card explicitly, or clear such a link (T3O-18).
+   * The one path behind `board_create_card` / `board_update_card` and the
+   * card detail's "Link one". `resolved` skips the lookup for a caller that
+   * has just made it. After a link lands the card is settled like after any
+   * refresh, so a card already in Done with a merged pull request settles.
+   */
+  const linkPullRequest = Effect.fn("board-supervisor-linkPullRequest")(function* (
+    cardId: BoardCardId,
+    target: BoardCardPullRequestTarget | null,
+    options?: { readonly resolved?: BoardCardPullRequest },
+  ) {
+    const card = yield* readCard(cardId);
+    if (card === null) return { outcome: "unknown-card" } as const;
+    if (target === null && card.pullRequest?.linked !== true) return { outcome: "none" } as const;
+    let pullRequest: BoardCardPullRequest | null = null;
+    if (target !== null) {
+      if (options?.resolved !== undefined) {
+        pullRequest = options.resolved;
+      } else {
+        const resolution = yield* resolvePullRequestLink(card.projectId, target);
+        if (resolution.outcome === "refused") return resolution;
+        pullRequest = resolution.pullRequest;
+      }
+      // Relinking what the card already holds is success, not a refusal.
+      if (boardCardPullRequestsEqual(card.pullRequest, pullRequest)) {
+        return { outcome: "linked", number: pullRequest.number } as const;
+      }
+    }
+    const refusal = yield* dispatchRefusal({
+      type: "board.card.set-linked-pull-request",
+      commandId: yield* commandId("link-pr"),
+      cardId,
+      pullRequest,
+      createdAt: yield* nowIso,
+    });
+    if (refusal !== null) return { outcome: "refused", detail: refusal } as const;
+    const fresh = yield* readCard(cardId);
+    if (fresh !== null) yield* settleCardAtDone(fresh);
+    return pullRequest === null
+      ? ({ outcome: "unlinked" } as const)
+      : ({ outcome: "linked", number: pullRequest.number } as const);
   });
 
   /** The card as the read model currently has it, or null if it is gone. */
@@ -8492,6 +8621,8 @@ const make = Effect.gen(function* () {
     // response, and a read-model hiccup must surface as "the merge did not
     // happen, here is why" rather than as an unhandled failure on a button
     // click.
+    resolvePullRequestLink,
+    linkPullRequest,
     refreshPullRequest: (cardId, options) =>
       Effect.flatMap(readCard(cardId), (card) =>
         card === null

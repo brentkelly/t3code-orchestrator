@@ -703,6 +703,13 @@ export const BoardCardPullRequest = Schema.Struct({
       recorded before it existed decodes unchanged and a ready link costs no
       bytes. */
   isDraft: Schema.optionalKey(Schema.Boolean),
+  /** Set when a person or agent linked this pull request to the card
+      explicitly (T3O-18) rather than the board finding it on the card's
+      branch. A linked pull request is refreshed by NUMBER, never by branch,
+      and a branch lookup cannot replace or clear it — the card may have no
+      worktree at all, or the PR may live on another branch (a stack layer).
+      Key-optional and present only when true, like `isDraft`. */
+  linked: Schema.optionalKey(Schema.Literal(true)),
   /** When this state was first observed — NOT when it was last checked.
       Refreshes that find no change record no event at all (the decider's
       no-op guard deliberately excludes this field, or every card open would
@@ -734,7 +741,8 @@ export function boardCardPullRequestsEqual(
     left.title === right.title &&
     left.headBranch === right.headBranch &&
     left.baseRef === right.baseRef &&
-    (left.isDraft === true) === (right.isDraft === true)
+    (left.isDraft === true) === (right.isDraft === true) &&
+    (left.linked === true) === (right.linked === true)
   );
 }
 
@@ -4419,6 +4427,28 @@ export const BoardCardRecordPullRequestCommand = Schema.Struct({
 });
 export type BoardCardRecordPullRequestCommand = typeof BoardCardRecordPullRequestCommand.Type;
 
+/**
+ * Link a pull request to the card explicitly, or clear such a link (T3O-18).
+ *
+ * The board otherwise finds a card's pull request on the card's own branch,
+ * which leaves a card made FOR an existing pull request — a review card per
+ * stack layer, a card with no worktree — with no way to track it. A link set
+ * here is stamped `linked`, skips the round floor (it is deliberate, not a
+ * stale lookup), and from then on `record-pull-request` cannot replace or
+ * clear it. `null` clears an explicit link; the card falls back to its branch
+ * on the next refresh. Lands as `board.card-pull-request-recorded`, so every
+ * reader of the card's pull request sees it like any other.
+ */
+export const BoardCardSetLinkedPullRequestCommand = Schema.Struct({
+  type: Schema.Literal("board.card.set-linked-pull-request"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  pullRequest: Schema.NullOr(BoardCardPullRequest),
+  createdAt: IsoDateTime,
+});
+export type BoardCardSetLinkedPullRequestCommand =
+  typeof BoardCardSetLinkedPullRequestCommand.Type;
+
 /** The activity kinds that are pure REPORTING — the board telling the user
     what it did to their repository, with no card field behind it. */
 export const BoardCardNoteKind = Schema.Literals([
@@ -6725,6 +6755,8 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardFailWorktreeCommand,
   BoardCardReclaimWorktreeCommand,
   BoardCardRecordPullRequestCommand,
+  // T3O-18: a pull request linked to the card by hand or by an agent.
+  BoardCardSetLinkedPullRequestCommand,
   BoardCardRecordNoteCommand,
   // T3O-38: the auto-merge hold and its retry ladder.
   BoardCardRecordAutoMergeHoldCommand,
@@ -7115,6 +7147,11 @@ export const BOARD_WS_METHODS = {
       offered when the provider named no time and the board is polling blind.
       A human-set time is never overwritten by a later loose match. */
   setProviderLimitResumeAt: "board.setProviderLimitResumeAt",
+  /** Link a pull request the agent didn't record to the card (T3O-18) — the
+      card detail's "No PR linked · Link one". An RPC because the caller is a
+      human waiting on an answer: the forge has to confirm the pull request
+      exists, and a refusal (not found, another repository) is read inline. */
+  linkCardPullRequest: "board.linkCardPullRequest",
 } as const;
 
 /**
@@ -7176,6 +7213,39 @@ export const BoardRefreshCardPullRequestResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
 ]);
 export type BoardRefreshCardPullRequestResult = typeof BoardRefreshCardPullRequestResult.Type;
+
+/**
+ * A pull request named the way an agent or a person has it to hand (T3O-18):
+ * its URL, or its repository and number, or — from the card detail's input —
+ * a bare number on the card's own repository. Only the card's project
+ * repository can be linked; the board addresses no other.
+ */
+export const BoardCardPullRequestTarget = Schema.Struct({
+  url: Schema.optional(TrimmedNonEmptyString),
+  repository: Schema.optional(TrimmedNonEmptyString),
+  number: Schema.optional(PositiveInt),
+  host: Schema.optional(TrimmedNonEmptyString),
+});
+export type BoardCardPullRequestTarget = typeof BoardCardPullRequestTarget.Type;
+
+export const BoardLinkCardPullRequestInput = Schema.Struct({
+  cardId: BoardCardId,
+  /** As typed: a URL, `#312`, `312` or `owner/repo#312`. The server parses. */
+  target: TrimmedNonEmptyString,
+});
+export type BoardLinkCardPullRequestInput = typeof BoardLinkCardPullRequestInput.Type;
+
+/** What a link (or unlink) did (T3O-18). A refusal is a normal answer the
+    card shows inline — the forge's own words where it gave any. */
+export const BoardLinkCardPullRequestResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("linked"), number: PositiveInt }),
+  /** An unlink found no explicit link to clear. */
+  Schema.Struct({ outcome: Schema.Literal("none") }),
+  Schema.Struct({ outcome: Schema.Literal("unlinked") }),
+  Schema.Struct({ outcome: Schema.Literal("refused"), detail: TrimmedNonEmptyString }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+]);
+export type BoardLinkCardPullRequestResult = typeof BoardLinkCardPullRequestResult.Type;
 
 /**
  * What a Merge click did. Every arm is a normal outcome the card reports, not
@@ -7583,6 +7653,11 @@ export const BOARD_RPCS = [
     success: Schema.Void,
     error: Schema.Union([BoardCardAttachmentError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.linkCardPullRequest, {
+    payload: BoardLinkCardPullRequestInput,
+    success: BoardLinkCardPullRequestResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WS_METHODS.probeProviderLimit, {
     payload: BoardProviderLimitActionInput,
     success: Schema.Void,
@@ -7619,6 +7694,8 @@ export const BOARD_RPC_SCOPES = {
   // are the same mutation tier as every other board write.
   [BOARD_WS_METHODS.attachCardFile]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.detachCardFile]: AuthOrchestrationOperateScope,
+  // A board write like any other: it changes the card's pull request.
+  [BOARD_WS_METHODS.linkCardPullRequest]: AuthOrchestrationOperateScope,
   // Both start work: one sends a turn at a provider, the other decides when
   // the board will. The same mutation tier as every other board write.
   [BOARD_WS_METHODS.probeProviderLimit]: AuthOrchestrationOperateScope,
