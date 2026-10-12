@@ -70,6 +70,9 @@ import { primaryServerProvidersAtom } from "../state/server";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { BoardArchivedCardsSheet, refreshBoardArchivedCards } from "./BoardArchivedCardsSheet";
 import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
+import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
+import { boardMoveLeavesPlanningUnwritten } from "./boardStageActions";
+import { boardStageLabel } from "./boardStages";
 import { countBoardColumnCards, filterBoardColumnsByQuery } from "./boardCardFilter";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { BoardCardDetail } from "./BoardCardDetail";
@@ -704,7 +707,8 @@ function EnvironmentBoard({
   // Prices and dispatches a settled order for one column: the optimistic
   // placement lands first, then the move/reorder commands, with rejection
   // rollback and the Building queue toast. Shared by drop and (future) keyboard.
-  const dispatchDrop = useCallback(
+  // Reached through `dispatchDrop`, which may hold the drop for a confirm.
+  const performDrop = useCallback(
     (targetStage: BoardStageId, orderedIds: ReadonlyArray<string>, source: FoundCard) => {
       const cardId = source.card.cardId as string;
       const isMove = targetStage !== source.stage;
@@ -820,6 +824,31 @@ function EnvironmentBoard({
       });
     },
     [columns, environmentId, everyCard, liveColumns, moveCard, orderedStages, reorderCard],
+  );
+
+  // T3o (T3O-19): a drag out of Planning with no plan written waits for the
+  // human to confirm it, exactly as the detail pane's move does.
+  const [unplannedDrop, setUnplannedDrop] = useState<{
+    readonly targetStage: BoardStageId;
+    readonly orderedIds: ReadonlyArray<string>;
+    readonly source: FoundCard;
+  } | null>(null);
+  const dispatchDrop = useCallback(
+    (targetStage: BoardStageId, orderedIds: ReadonlyArray<string>, source: FoundCard) => {
+      if (
+        boardMoveLeavesPlanningUnwritten({
+          stages: orderedStages,
+          card: { stage: source.stage, parentCardId: source.card.parentCardId ?? null },
+          toStage: targetStage,
+          planCount: source.card.planCount ?? 0,
+        })
+      ) {
+        setUnplannedDrop({ targetStage, orderedIds, source });
+        return;
+      }
+      performDrop(targetStage, orderedIds, source);
+    },
+    [orderedStages, performDrop],
   );
 
   // Turns a target stage + raw insertion index into the settled card order.
@@ -1445,6 +1474,23 @@ function EnvironmentBoard({
         }}
         open={archiveOpen}
         scopeProjectId={scopeProjectId}
+      />
+      <BoardPlanningExitConfirmDialog
+        open={unplannedDrop !== null}
+        onOpenChange={(open) => {
+          if (!open) setUnplannedDrop(null);
+        }}
+        cardKey={unplannedDrop?.source.card.key ?? ""}
+        fromStageLabel={
+          unplannedDrop === null ? "" : boardStageLabel(orderedStages, unplannedDrop.source.stage)
+        }
+        toStageLabel={
+          unplannedDrop === null ? "" : boardStageLabel(orderedStages, unplannedDrop.targetStage)
+        }
+        onConfirm={() => {
+          if (unplannedDrop === null) return;
+          performDrop(unplannedDrop.targetStage, unplannedDrop.orderedIds, unplannedDrop.source);
+        }}
       />
       <BoardCardCreateDialog
         defaultProjectId={

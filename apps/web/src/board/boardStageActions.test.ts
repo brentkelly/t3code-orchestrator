@@ -9,6 +9,7 @@ import { BOARD_SEED_STAGE_IDS, BOARD_SEED_STAGES } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardMoveLeavesPlanningUnwritten,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
   isBoardStageManuallySelectable,
@@ -351,5 +352,40 @@ describe("boardStageSecondaryActions (t3o-07, D8)", () => {
         detail: "Opens the PR as normal, straight to Ready for merge.",
       },
     ]);
+  });
+});
+
+describe("boardMoveLeavesPlanningUnwritten", () => {
+  const ids = BOARD_SEED_STAGE_IDS;
+  const asks = (
+    from: (typeof ids)[keyof typeof ids],
+    to: (typeof ids)[keyof typeof ids],
+    planCount = 0,
+    parentCardId: string | null = null,
+  ) =>
+    boardMoveLeavesPlanningUnwritten({
+      stages,
+      card: { stage: from, parentCardId },
+      toStage: to,
+      planCount,
+    });
+
+  it("asks before a forward move out of Planning with no plan, however far", () => {
+    expect(asks(ids.planning, ids.ready)).toBe(true);
+    expect(asks(ids.planning, ids.building)).toBe(true);
+  });
+
+  it("does not ask once a plan is written", () => {
+    expect(asks(ids.planning, ids.ready, 1)).toBe(false);
+  });
+
+  it("does not ask for a backward move or a move from another stage", () => {
+    expect(asks(ids.planning, ids.sprint)).toBe(false);
+    expect(asks(ids.sprint, ids.ready)).toBe(false);
+    expect(asks(ids.ready, ids.building)).toBe(false);
+  });
+
+  it("does not ask for a sub-board child, which its parent planned", () => {
+    expect(asks(ids.planning, ids.ready, 0, "card-parent")).toBe(false);
   });
 });

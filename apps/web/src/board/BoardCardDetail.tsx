@@ -38,6 +38,7 @@ import {
   resolveBoardStageExecution,
   type BoardCardShell,
   type BoardCardThreadShell,
+  type BoardStageId,
   type BoardState,
   type EnvironmentId,
   boardReviewRoundsStarted,
@@ -95,6 +96,8 @@ import {
   type BoardDetailDependency,
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
+import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
+import { boardMoveLeavesPlanningUnwritten } from "./boardStageActions";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
 import { boardCardProjectOptions } from "./BoardCardProjectSelect";
@@ -568,6 +571,9 @@ export function BoardCardDetail({
   // T3O-23: the Resume button's in-flight guard, so a second press cannot queue
   // the same step twice.
   const [resumePending, setResumePending] = useState(false);
+  // T3O-19: a forward move out of Planning with no plan written, held until the
+  // human confirms it.
+  const [unplannedMove, setUnplannedMove] = useState<BoardStageId | null>(null);
 
   // ── Base branch (T3O-5, D3/D13) ────────────────────────────────────────
   // The container resolves the card's base because it is the only layer that
@@ -934,7 +940,26 @@ export function BoardCardDetail({
     buildStage !== null &&
     (!isBoardStageAtOrAfterBuild(stageState, card.stage) || card.stage === buildStage.stageId);
 
-  return (
+  const moveStage = (toStage: BoardStageId) => {
+    const targetColumn = (snapshot?.cards ?? []).filter((shell) => shell.stage === toStage);
+    // Every column but Done takes the card at the bottom. Done takes it at
+    // the top, and the server places it there (T3O-15) — this sends no key
+    // at all rather than a second implementation of the same rule.
+    const toDone = toStage === boardStageWithRole(stageState, "done")?.stageId;
+    runCommand(
+      moveCard({
+        environmentId,
+        input: {
+          cardId: card.id,
+          toStage,
+          ...(toDone ? {} : { orderKey: boardColumnAppendOrderKey(targetColumn) }),
+          ...(areBoardStagesAdjacent(stageState, card.stage, toStage) ? {} : { override: true }),
+        },
+      }),
+    );
+  };
+
+  const view = (
     <BoardCardDetailView
       nav={nav}
       adoptableThreads={adoptableThreads}
@@ -1186,24 +1211,18 @@ export function BoardCardDetail({
         });
       }}
       onMoveStage={(toStage) => {
-        const targetColumn = (snapshot?.cards ?? []).filter((shell) => shell.stage === toStage);
-        // Every column but Done takes the card at the bottom. Done takes it at
-        // the top, and the server places it there (T3O-15) — this sends no key
-        // at all rather than a second implementation of the same rule.
-        const toDone = toStage === boardStageWithRole(stageState, "done")?.stageId;
-        runCommand(
-          moveCard({
-            environmentId,
-            input: {
-              cardId: card.id,
-              toStage,
-              ...(toDone ? {} : { orderKey: boardColumnAppendOrderKey(targetColumn) }),
-              ...(areBoardStagesAdjacent(stageState, card.stage, toStage)
-                ? {}
-                : { override: true }),
-            },
-          }),
-        );
+        if (
+          boardMoveLeavesPlanningUnwritten({
+            stages,
+            card,
+            toStage,
+            planCount: detail.plans.length,
+          })
+        ) {
+          setUnplannedMove(toStage);
+          return;
+        }
+        moveStage(toStage);
       }}
       onRecolourLabel={(labelId, colour) =>
         runCommand(updateLabel({ environmentId, input: { labelId, colour } }))
@@ -1312,5 +1331,23 @@ export function BoardCardDetail({
       onOpenOwnSubBoard={onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card.id)}
       childShells={childShells}
     />
+  );
+
+  return (
+    <>
+      <BoardPlanningExitConfirmDialog
+        open={unplannedMove !== null}
+        onOpenChange={(open) => {
+          if (!open) setUnplannedMove(null);
+        }}
+        cardKey={card.key}
+        fromStageLabel={boardStageLabel(stages, card.stage)}
+        toStageLabel={unplannedMove === null ? "" : boardStageLabel(stages, unplannedMove)}
+        onConfirm={() => {
+          if (unplannedMove !== null) moveStage(unplannedMove);
+        }}
+      />
+      {view}
+    </>
   );
 }
