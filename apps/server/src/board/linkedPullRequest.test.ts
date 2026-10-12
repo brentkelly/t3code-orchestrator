@@ -67,6 +67,10 @@ const branchCleanupNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
       command.type === "board.card.record-note" && command.kind === "card-branch-deleted",
   );
 
+/** git invocations that delete a branch, local or remote. */
+const branchDeletions = (invocations: ReadonlyArray<ReadonlyArray<string>>) =>
+  invocations.filter((args) => args.includes("--delete") || args.includes("-D"));
+
 describe("linking a pull request to a card", () => {
   it.effect("links a pull request to a card with no worktree, checked with the forge", () =>
     withGovernor(
@@ -278,7 +282,41 @@ describe("settling a card with a linked pull request", () => {
           yield* h.reactor.refreshPullRequest(reviewCard().id);
           assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "merged");
           assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
-          assert.equal(branchCleanupNotes(yield* h.commands).length, 1);
+          // The merged PR is on stack/layer-2, so the card's own branch is kept.
+          assert.deepEqual(branchDeletions(yield* h.gitInvocations), []);
+          const notes = branchCleanupNotes(yield* h.commands);
+          assert.equal(notes.length, 1);
+          assert.include(
+            notes[0]?.type === "board.card.record-note" ? notes[0].detail : "",
+            "Kept branch board/card-1",
+          );
+        }),
+    ),
+  );
+
+  it.effect("a linked pull request on the card's own branch deletes it once merged", () =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [
+            {
+              ...reviewCard({
+                stage: String(BOARD_SEED_STAGE_IDS.done),
+                worktree: readyWorktree("card-1"),
+              }),
+              pullRequest: linkedRecord({ headBranch: "board/card-1" }),
+            },
+          ],
+        },
+        settings: settings(),
+        pullRequestByNumber: { ...layerPr, headRef: "board/card-1", state: "merged" },
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.refreshPullRequest(reviewCard().id);
+          assert.equal((yield* h.board).cards[0]!.pullRequest?.state, "merged");
+          assert.isNotEmpty(branchDeletions(yield* h.gitInvocations));
         }),
     ),
   );

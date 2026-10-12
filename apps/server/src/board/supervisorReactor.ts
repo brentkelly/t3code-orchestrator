@@ -4469,6 +4469,21 @@ const make = Effect.gen(function* () {
     const cwd = projectCwd(model, card);
     if (cwd === null) return;
 
+    // T3O-18: a linked pull request can live on another branch (a stack
+    // layer). Its merge says nothing about the card's own branch, which may
+    // hold pushed commits that exist nowhere else.
+    if (card.pullRequest.headBranch !== worktree.branch) {
+      yield* dispatch({
+        type: "board.card.record-note",
+        commandId: yield* commandId("branch-cleanup"),
+        cardId: card.id,
+        kind: "card-branch-deleted",
+        detail: `Kept branch ${worktree.branch} — the merged pull request #${card.pullRequest.number} is on ${card.pullRequest.headBranch}, not this branch`,
+        createdAt: yield* nowIso,
+      });
+      return;
+    }
+
     const result = yield* deleteCardBranch({ git, cwd, branch: worktree.branch }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: branch cleanup failed", {
