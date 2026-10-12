@@ -4246,15 +4246,35 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       }),
     );
 
-    it.effect("replaces a branch-found pull request and ignores the round floor", () =>
+    it.effect("replaces a branch-found pull request, and an open one below the floor", () =>
       Effect.gen(function* () {
         const event = yield* decide(
-          setLinked(pr(75, { state: "merged" })),
+          setLinked(pr(75)),
           boardWith(card({ pullRequest: pr(90), pullRequestFloor: 80 })),
         );
         assert.strictEqual(event.type, "board.card-pull-request-recorded");
         if (event.type !== "board.card-pull-request-recorded") return;
         assert.strictEqual(event.payload.card.pullRequest?.number, 75);
+      }),
+    );
+
+    it.effect("refuses a finished pull request at or below the round floor", () =>
+      Effect.gen(function* () {
+        // Round one's merged #75 linked again after round two began would
+        // settle the card and delete the branch holding round two's work.
+        for (const state of ["merged", "closed"] as const) {
+          const error = yield* decideFail(
+            setLinked(pr(75, { state })),
+            boardWith(card({ pullRequest: null, pullRequestFloor: 80 })),
+          );
+          assert.include(String(error), "at or below its floor of #80");
+        }
+        // Above the floor it is a different round's pull request and links.
+        const event = yield* decide(
+          setLinked(pr(85, { state: "merged" })),
+          boardWith(card({ pullRequest: null, pullRequestFloor: 80 })),
+        );
+        assert.strictEqual(event.type, "board.card-pull-request-recorded");
       }),
     );
 

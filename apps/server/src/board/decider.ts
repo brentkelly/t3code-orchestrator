@@ -3232,11 +3232,26 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       const card = yield* requireActiveBoardCard({ board, command });
       const previous = card.pullRequest;
       // Stamped here rather than trusted from the caller, so a link is marked
-      // however it arrived. No floor check: the floor stops a branch lookup
-      // ADOPTING a finished round's pull request, and an explicit link is a
-      // decision, not a lookup.
+      // however it arrived.
       const next =
         command.pullRequest === null ? null : { ...command.pullRequest, linked: true as const };
+      // The floor applies to a link as it does to a branch lookup, with the
+      // same exemptions: an open pull request or the card's current one. A
+      // finished round's merged pull request, linked again, would otherwise
+      // make the reactor settle the card and delete the branch that now holds
+      // the next round's unmerged work.
+      if (
+        next !== null &&
+        next.state !== "open" &&
+        previous?.number !== next.number &&
+        card.pullRequestFloor !== null &&
+        next.number <= card.pullRequestFloor
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' pull request #${next.number} is ${next.state} and at or below its floor of #${card.pullRequestFloor}; it belongs to a completed round of work.`,
+        );
+      }
       if (next === null && previous?.linked !== true) {
         return yield* invariant(
           command,
