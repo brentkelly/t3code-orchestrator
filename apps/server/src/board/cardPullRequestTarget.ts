@@ -43,6 +43,21 @@ function projectRepositoryPath(identity: RepositoryIdentity | null | undefined):
 }
 
 /**
+ * A repository as an agent might write it — `owner/repo`, `owner/repo.git`,
+ * `github.com/owner/repo` or its URL — lower case, without scheme, `.git` or
+ * trailing slash. A host-qualified form keeps its host; the comparison below
+ * matches it by suffix.
+ */
+function repositoryPath(repository: string): string {
+  return repository
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//u, "")
+    .replace(/\/+$/u, "")
+    .replace(/\.git$/u, "");
+}
+
+/**
  * The pull request number to link, or why it cannot be linked.
  *
  * The repository is compared by its path below the host, not by host: a
@@ -69,7 +84,7 @@ export function resolveCardPullRequestTarget(
       .join("/");
     number = parsed.number;
   } else {
-    repository = target.repository?.trim().toLowerCase();
+    repository = target.repository === undefined ? undefined : repositoryPath(target.repository);
     number = target.number;
   }
   if (number === undefined) {
@@ -79,7 +94,7 @@ export function resolveCardPullRequestTarget(
   if (own === null) {
     return { refused: "This card's project has no recognised source-control remote to link from." };
   }
-  if (repository !== undefined && repository.toLowerCase() !== own) {
+  if (repository !== undefined && repository !== own && !repository.endsWith(`/${own}`)) {
     return {
       refused: `Pull request ${repository}#${number} is not in this card's repository (${own}); only a pull request on the card's own repository can be linked.`,
     };

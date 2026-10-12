@@ -57,6 +57,22 @@ describe("resolveCardPullRequestTarget", () => {
     expect(resolveCardPullRequestTarget({ number: 76 }, identity)).toEqual({ number: 76 });
   });
 
+  it("reads the repository however it is written: host-qualified, .git or URL", () => {
+    for (const repository of [
+      "github.com/Zeald/core.z5",
+      "zeald/core.z5.git",
+      "https://github.com/zeald/core.z5/",
+    ]) {
+      expect(resolveCardPullRequestTarget({ repository, number: 75 }, identity)).toEqual({
+        number: 75,
+      });
+    }
+    expect(
+      "refused" in
+        resolveCardPullRequestTarget({ repository: "github.com/zeald/core", number: 75 }, identity),
+    ).toBe(true);
+  });
+
   it("refuses a pull request on another repository, naming both", () => {
     const result = resolveCardPullRequestTarget(
       { url: "https://github.com/someone/else/pull/9" },
