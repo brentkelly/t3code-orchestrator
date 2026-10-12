@@ -4477,7 +4477,7 @@ const make = Effect.gen(function* () {
         type: "board.card.record-note",
         commandId: yield* commandId("branch-cleanup"),
         cardId: card.id,
-        kind: "card-branch-deleted",
+        kind: "card-branch-kept",
         detail: `Kept branch ${worktree.branch} — the merged pull request #${card.pullRequest.number} is on ${card.pullRequest.headBranch}, not this branch`,
         createdAt: yield* nowIso,
       });

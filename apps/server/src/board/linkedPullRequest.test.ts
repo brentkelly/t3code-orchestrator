@@ -61,11 +61,11 @@ const linkedRecord = (overrides: Partial<BoardCardPullRequest> = {}): BoardCardP
 const linkCommands = (commands: ReadonlyArray<OrchestrationCommand>) =>
   commands.filter((command) => command.type === "board.card.set-linked-pull-request");
 
-const branchCleanupNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
-  commands.filter(
-    (command) =>
-      command.type === "board.card.record-note" && command.kind === "card-branch-deleted",
-  );
+const branchCleanupNotes = (
+  commands: ReadonlyArray<OrchestrationCommand>,
+  kind: "card-branch-deleted" | "card-branch-kept" = "card-branch-deleted",
+) =>
+  commands.filter((command) => command.type === "board.card.record-note" && command.kind === kind);
 
 /** git invocations that delete a branch, local or remote. */
 const branchDeletions = (invocations: ReadonlyArray<ReadonlyArray<string>>) =>
@@ -284,7 +284,8 @@ describe("settling a card with a linked pull request", () => {
           assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
           // The merged PR is on stack/layer-2, so the card's own branch is kept.
           assert.deepEqual(branchDeletions(yield* h.gitInvocations), []);
-          const notes = branchCleanupNotes(yield* h.commands);
+          assert.deepEqual(branchCleanupNotes(yield* h.commands), []);
+          const notes = branchCleanupNotes(yield* h.commands, "card-branch-kept");
           assert.equal(notes.length, 1);
           assert.include(
             notes[0]?.type === "board.card.record-note" ? notes[0].detail : "",

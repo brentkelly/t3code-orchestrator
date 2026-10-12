@@ -1941,6 +1941,9 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
   "card-pull-request-state-changed",
   "card-pull-request-merged",
   "card-branch-deleted",
+  /** Branch cleanup at Done left the card's branch alone because the merged
+      pull request lives on another branch (T3O-18). */
+  "card-branch-kept",
   /** A Merge click that ended without a merge and without a conflict fix left
       running — the one outcome that would otherwise be invisible. */
   "card-merge-refused",
@@ -4433,9 +4436,11 @@ export type BoardCardRecordPullRequestCommand = typeof BoardCardRecordPullReques
  * The board otherwise finds a card's pull request on the card's own branch,
  * which leaves a card made FOR an existing pull request — a review card per
  * stack layer, a card with no worktree — with no way to track it. A link set
- * here is stamped `linked`, skips the round floor (it is deliberate, not a
- * stale lookup), and from then on `record-pull-request` cannot replace or
- * clear it. `null` clears an explicit link; the card falls back to its branch
+ * here is stamped `linked` and follows the round floor as a branch lookup
+ * does: an open pull request or the card's current one always links, a
+ * merged or closed one at or below the floor is refused, and a merged pull
+ * request the card already records is never replaced or cleared. From then
+ * on `record-pull-request` cannot replace or clear the link. `null` clears an explicit link; the card falls back to its branch
  * on the next refresh. Lands as `board.card-pull-request-recorded`, so every
  * reader of the card's pull request sees it like any other.
  */
@@ -4452,6 +4457,7 @@ export type BoardCardSetLinkedPullRequestCommand = typeof BoardCardSetLinkedPull
     what it did to their repository, with no card field behind it. */
 export const BoardCardNoteKind = Schema.Literals([
   "card-branch-deleted",
+  "card-branch-kept",
   "card-merge-refused",
   "card-branch-push-skipped",
   /** A review→merge crossing (or a Merge click) was intercepted because the
