@@ -2098,6 +2098,22 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           },
           createdAt: NOW,
         },
+        // An explicit link (T3O-18): one card field, never a move.
+        "board.card.set-linked-pull-request": {
+          type: "board.card.set-linked-pull-request",
+          commandId: CommandId.make("cmd-link-pr"),
+          cardId: BoardCardId.make("card-ready"),
+          pullRequest: {
+            number: 75,
+            url: "https://github.com/acme/repo/pull/75",
+            state: "open",
+            title: null,
+            headBranch: "stack/layer-2",
+            baseRef: "main",
+            checkedAt: NOW,
+          },
+          createdAt: NOW,
+        },
         "board.card.fail-worktree": {
           type: "board.card.fail-worktree",
           commandId: CommandId.make("cmd-fail"),
@@ -4178,6 +4194,123 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         assert.strictEqual(event.type, "board.card-auto-merge-hold-recorded");
         if (event.type !== "board.card-auto-merge-hold-recorded") return;
         assert.strictEqual(event.payload.card.autoMergeHold?.attempt, 3);
+      }),
+    );
+  });
+
+  describe("explicitly linked pull requests (T3O-18)", () => {
+    const pr = (
+      number: number,
+      overrides: Partial<NonNullable<BoardCard["pullRequest"]>> = {},
+    ): NonNullable<BoardCard["pullRequest"]> => ({
+      number,
+      url: `https://github.com/acme/repo/pull/${number}`,
+      state: "open",
+      title: `PR ${number}`,
+      headBranch: `stack/layer-${number}`,
+      baseRef: "main",
+      checkedAt: NOW,
+      ...overrides,
+    });
+
+    const boardWith = (card: BoardCard) => makeReadModel({ board: seededBoard([card]) });
+    const card = (overrides: Partial<BoardCard> = {}) =>
+      makeCard({ id: "card-1", stage: "review", ...overrides });
+
+    const setLinked = (pullRequest: BoardCard["pullRequest"]) =>
+      ({
+        type: "board.card.set-linked-pull-request",
+        commandId: CommandId.make("cmd-link"),
+        cardId: BoardCardId.make("card-1"),
+        pullRequest,
+        createdAt: NOW,
+      }) satisfies BoardCommand;
+
+    const record = (pullRequest: BoardCard["pullRequest"]) =>
+      ({
+        type: "board.card.record-pull-request",
+        commandId: CommandId.make("cmd-record"),
+        cardId: BoardCardId.make("card-1"),
+        pullRequest,
+        createdAt: NOW,
+      }) satisfies BoardCommand;
+
+    it.effect("stamps the link as explicit and records it on the card", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(setLinked(pr(75)), boardWith(card()));
+        assert.strictEqual(event.type, "board.card-pull-request-recorded");
+        if (event.type !== "board.card-pull-request-recorded") return;
+        assert.strictEqual(event.payload.transition, "linked");
+        assert.strictEqual(event.payload.card.pullRequest?.number, 75);
+        assert.strictEqual(event.payload.card.pullRequest?.linked, true);
+      }),
+    );
+
+    it.effect("replaces a branch-found pull request and ignores the round floor", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          setLinked(pr(75, { state: "merged" })),
+          boardWith(card({ pullRequest: pr(90), pullRequestFloor: 80 })),
+        );
+        assert.strictEqual(event.type, "board.card-pull-request-recorded");
+        if (event.type !== "board.card-pull-request-recorded") return;
+        assert.strictEqual(event.payload.card.pullRequest?.number, 75);
+      }),
+    );
+
+    it.effect("refuses linking the pull request the card already has linked — no duplicate", () =>
+      Effect.gen(function* () {
+        const error = yield* decideFail(
+          setLinked(pr(75)),
+          boardWith(card({ pullRequest: pr(75, { linked: true }) })),
+        );
+        assert.include(String(error), "already has pull request #75 linked");
+      }),
+    );
+
+    it.effect("clears an explicit link, and refuses to clear one that is not there", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          setLinked(null),
+          boardWith(card({ pullRequest: pr(75, { linked: true }) })),
+        );
+        assert.strictEqual(event.type, "board.card-pull-request-recorded");
+        if (event.type !== "board.card-pull-request-recorded") return;
+        assert.strictEqual(event.payload.transition, "unlinked");
+        assert.isNull(event.payload.card.pullRequest);
+
+        const error = yield* decideFail(setLinked(null), boardWith(card({ pullRequest: pr(90) })));
+        assert.include(String(error), "no explicitly linked pull request");
+      }),
+    );
+
+    it.effect("a branch lookup can neither replace nor clear a linked pull request", () =>
+      Effect.gen(function* () {
+        const linked = boardWith(card({ pullRequest: pr(75, { linked: true }) }));
+        assert.include(
+          String(yield* decideFail(record(pr(90)), linked)),
+          "linked explicitly",
+        );
+        assert.include(String(yield* decideFail(record(null), linked)), "linked explicitly");
+        // The same number without the marker is a branch lookup too.
+        assert.include(
+          String(yield* decideFail(record(pr(75, { state: "merged" })), linked)),
+          "linked explicitly",
+        );
+      }),
+    );
+
+    it.effect("a by-number refresh of the linked pull request records its new state", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          record(pr(75, { state: "merged", linked: true })),
+          boardWith(card({ pullRequest: pr(75, { linked: true }) })),
+        );
+        assert.strictEqual(event.type, "board.card-pull-request-recorded");
+        if (event.type !== "board.card-pull-request-recorded") return;
+        assert.strictEqual(event.payload.transition, "state-changed");
+        assert.strictEqual(event.payload.card.pullRequest?.state, "merged");
+        assert.strictEqual(event.payload.card.pullRequest?.linked, true);
       }),
     );
   });

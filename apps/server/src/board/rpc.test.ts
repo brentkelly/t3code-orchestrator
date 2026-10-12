@@ -105,6 +105,7 @@ const supervisorCalls: {
   setResumeAt: Array<string>;
   removeWorktree: Array<string>;
   checkWorktree: Array<string>;
+  link: Array<string>;
 } = {
   refresh: [],
   merge: [],
@@ -114,6 +115,7 @@ const supervisorCalls: {
   setResumeAt: [],
   removeWorktree: [],
   checkWorktree: [],
+  link: [],
 };
 
 const supervisorStub: SupervisorReactorShape = {
@@ -146,6 +148,20 @@ const supervisorStub: SupervisorReactorShape = {
     Effect.sync(() => {
       supervisorCalls.checkWorktree.push(String(cardId));
       return { outcome: "kept", reason: "Uncommitted changes" } as const;
+    }),
+  resolvePullRequestLink: () =>
+    Effect.succeed({ outcome: "refused", detail: "Not used by the RPC." } as const),
+  // T3o (T3O-18): number 404 stands in for a pull request the forge does not
+  // know, so a test can see the refusal travel back unchanged.
+  linkPullRequest: (cardId, target) =>
+    Effect.sync(() => {
+      supervisorCalls.link.push(`${String(cardId)}:${JSON.stringify(target)}`);
+      return target?.number === 404
+        ? ({ outcome: "refused", detail: "Could not find pull request #404: Not Found" } as const)
+        : ({
+            outcome: "linked",
+            number: target?.number ?? Number(target?.url?.split("/").at(-1)),
+          } as const);
     }),
   refreshPullRequest: (cardId, options) =>
     Effect.sync(() => {
@@ -350,6 +366,71 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-check-worktree-test-"))(
         const outcome = yield* handlers["board.checkCardWorktree"]({ cardId });
         assert.deepStrictEqual(outcome, { outcome: "kept", reason: "Uncommitted changes" });
         assert.deepStrictEqual(supervisorCalls.checkWorktree, [String(cardId)]);
+      }),
+    );
+  },
+);
+
+// T3O-18: "Link one" writes the card's pull request, so it needs the operate
+// scope; the server parses what was typed, and a refusal reaches the card as
+// the supervisor worded it.
+it.layer(makeBoardRpcTestLayer("t3o-board-rpc-link-pr-test-"))(
+  "board.linkCardPullRequest",
+  (it) => {
+    it.effect("rejects a session with only the read scope", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        supervisorCalls.link.length = 0;
+        const handlers = yield* makeHandlers([AuthOrchestrationReadScope]);
+        const failure = yield* Effect.flip(
+          handlers["board.linkCardPullRequest"]({ cardId, target: "#75" }),
+        );
+        assert.strictEqual(failure._tag, "EnvironmentAuthorizationError");
+        assert.deepStrictEqual(supervisorCalls.link, []);
+      }),
+    );
+
+    it.effect("parses what was typed and links it", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        supervisorCalls.link.length = 0;
+        const handlers = yield* makeHandlers([AuthOrchestrationOperateScope]);
+        const outcome = yield* handlers["board.linkCardPullRequest"]({
+          cardId,
+          target: "https://github.com/acme/repo/pull/75",
+        });
+        assert.deepStrictEqual(outcome, { outcome: "linked", number: 75 });
+        yield* handlers["board.linkCardPullRequest"]({ cardId, target: "#76" });
+        assert.deepStrictEqual(supervisorCalls.link, [
+          `${String(cardId)}:{"url":"https://github.com/acme/repo/pull/75"}`,
+          `${String(cardId)}:{"number":76}`,
+        ]);
+      }),
+    );
+
+    it.effect("passes the supervisor's refusal through in its own words", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        const handlers = yield* makeHandlers([AuthOrchestrationOperateScope]);
+        const outcome = yield* handlers["board.linkCardPullRequest"]({ cardId, target: "404" });
+        assert.deepStrictEqual(outcome, {
+          outcome: "refused",
+          detail: "Could not find pull request #404: Not Found",
+        });
+      }),
+    );
+
+    it.effect("refuses text that names no pull request without asking the forge", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        supervisorCalls.link.length = 0;
+        const handlers = yield* makeHandlers([AuthOrchestrationOperateScope]);
+        const outcome = yield* handlers["board.linkCardPullRequest"]({
+          cardId,
+          target: "the auth fix",
+        });
+        assert.strictEqual(outcome.outcome, "refused");
+        assert.deepStrictEqual(supervisorCalls.link, []);
       }),
     );
   },

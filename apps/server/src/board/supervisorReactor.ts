@@ -8621,8 +8621,36 @@ const make = Effect.gen(function* () {
     // response, and a read-model hiccup must surface as "the merge did not
     // happen, here is why" rather than as an unhandled failure on a button
     // click.
-    resolvePullRequestLink,
-    linkPullRequest,
+    // T3o (T3O-18): TOTAL for the same reason — an agent's tool call and the
+    // card's "Link one" both owe their caller an answer.
+    resolvePullRequestLink: (projectId, target) =>
+      resolvePullRequestLink(projectId, target).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: pull request link lookup failed", {
+            projectId,
+            cause: Cause.pretty(cause),
+          }).pipe(
+            Effect.as({
+              outcome: "refused",
+              detail: "The pull request could not be looked up. See the server log for details.",
+            } as const),
+          ),
+        ),
+      ),
+    linkPullRequest: (cardId, target, options) =>
+      linkPullRequest(cardId, target, options).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: pull request link failed", {
+            cardId,
+            cause: Cause.pretty(cause),
+          }).pipe(
+            Effect.as({
+              outcome: "refused",
+              detail: "The pull request could not be linked. See the server log for details.",
+            } as const),
+          ),
+        ),
+      ),
     refreshPullRequest: (cardId, options) =>
       Effect.flatMap(readCard(cardId), (card) =>
         card === null

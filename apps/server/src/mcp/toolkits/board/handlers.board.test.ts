@@ -14,6 +14,8 @@ import {
   BoardCardId,
   boardPlanId,
   BoardStageId,
+  type BoardCardPullRequest,
+  type BoardCardPullRequestTarget,
   CommandId,
   EnvironmentId,
   ProjectId,
@@ -43,8 +45,86 @@ import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 import { boardSnapshotQueryMethodsOf } from "../../../board/projection.ts";
+import {
+  SupervisorReactor,
+  type SupervisorReactorShape,
+} from "../../../board/supervisorReactor.ts";
 import { boardHandlers } from "./handlers.ts";
 import { BoardToolkit } from "./tools.ts";
+
+/** The forge as these tests see it (T3O-18): #75 and #76 exist, nothing else. */
+const forgePullRequests = new Map<number, BoardCardPullRequest>(
+  [75, 76].map((number) => [
+    number,
+    {
+      number,
+      url: `https://github.com/acme/repo/pull/${number}`,
+      state: "open",
+      title: `Stack layer ${number}`,
+      headBranch: `stack/layer-${number}`,
+      baseRef: "main",
+      linked: true,
+      checkedAt: "2026-01-01T00:00:00.000Z",
+    },
+  ]),
+);
+
+/**
+ * The supervisor's two link methods (T3O-18) over the fake forge above, with
+ * the link landing through the REAL engine, decider and projector — so a test
+ * sees the card actually hold the pull request. The supervisor's own lookup,
+ * refresh-by-number and settle are covered against the live reactor in
+ * `board/linkedPullRequest.test.ts`; nothing else here calls the supervisor.
+ */
+const SupervisorLinkStub = Layer.effect(
+  SupervisorReactor,
+  Effect.gen(function* () {
+    const engine = yield* OrchestrationEngineService;
+    let commands = 0;
+    const resolve = (target: BoardCardPullRequestTarget) => {
+      const number = target.number ?? Number(target.url?.split("/").at(-1));
+      const pullRequest = forgePullRequests.get(number);
+      return pullRequest === undefined
+        ? ({ outcome: "refused", detail: `Could not find pull request #${number}.` } as const)
+        : ({ outcome: "resolved", pullRequest } as const);
+    };
+    return {
+      resolvePullRequestLink: (_projectId, target) => Effect.succeed(resolve(target)),
+      linkPullRequest: (cardId, target, options) =>
+        Effect.gen(function* () {
+          const resolution =
+            target === null || options?.resolved !== undefined
+              ? null
+              : resolve(target);
+          if (resolution?.outcome === "refused") return resolution;
+          const pullRequest =
+            target === null ? null : (options?.resolved ?? resolution!.pullRequest!);
+          commands += 1;
+          return yield* engine
+            .dispatch({
+              type: "board.card.set-linked-pull-request",
+              commandId: CommandId.make(`cmd-link-pr-${commands}`),
+              cardId,
+              pullRequest,
+              createdAt: t0,
+            })
+            .pipe(
+              Effect.as(
+                pullRequest === null
+                  ? ({ outcome: "unlinked" } as const)
+                  : ({ outcome: "linked", number: pullRequest.number } as const),
+              ),
+              Effect.catch((error) =>
+                Effect.succeed({ outcome: "refused", detail: error.message } as const),
+              ),
+            );
+        }),
+    } as Pick<
+      SupervisorReactorShape,
+      "resolvePullRequestLink" | "linkPullRequest"
+    > as SupervisorReactorShape;
+  }),
+);
 
 const makeLayer = (prefix: string) =>
   Layer.mergeAll(
@@ -65,6 +145,8 @@ const makeLayer = (prefix: string) =>
     Layer.provide(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
     Layer.provideMerge(NodeServices.layer),
+    // On top, so the stub links through the same engine the handlers write to.
+    (base) => SupervisorLinkStub.pipe(Layer.provideMerge(base)),
   );
 
 const t0 = "2026-01-01T00:00:00.000Z";
@@ -2183,3 +2265,125 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
     }),
   );
 });
+
+// T3O-18: an agent links a pull request to ANY card — one it just made for
+// the pull request, or one somebody else's thread works — not only its own.
+it.layer(makeLayer("t3o-board-mcp-link-pr-test-"))(
+  "board mcp toolkit — linking pull requests to cards",
+  (it) => {
+    const otherCard = BoardCardId.make("card-other");
+    const seedOther = Effect.gen(function* () {
+      yield* seed();
+      const engine = yield* OrchestrationEngineService;
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: CommandId.make("cmd-card-other"),
+        cardId: otherCard,
+        projectId,
+        title: "Review stack layer 2",
+        orderKey: "n",
+        createdAt: t0,
+      });
+    });
+
+    it.effect("links a pull request to another card from this thread, and reads it back", () =>
+      Effect.gen(function* () {
+        yield* seedOther;
+        yield* boardHandlers
+          .board_update_card({ cardId: otherCard, pullRequest: { repository: "acme/repo", number: 75 } })
+          .pipe(withScope(linkedThread));
+        const other = yield* boardHandlers
+          .board_get_card({ card: otherCard })
+          .pipe(withScope(linkedThread));
+        assert.deepStrictEqual(other.pullRequest, {
+          number: 75,
+          url: "https://github.com/acme/repo/pull/75",
+          state: "open",
+          title: "Stack layer 75",
+          isDraft: false,
+          linked: true,
+        });
+        // The caller's own card is untouched — the bug was the PR landing here.
+        const own = yield* boardHandlers.board_get_card({ card: cardId }).pipe(withScope(linkedThread));
+        assert.isNull(own.pullRequest);
+      }),
+    );
+
+    it.effect("updates other fields and links in one call; null clears the link", () =>
+      Effect.gen(function* () {
+        yield* seedOther;
+        yield* boardHandlers
+          .board_update_card({
+            cardId: otherCard,
+            title: "Review stack layer 3",
+            pullRequest: { url: "https://github.com/acme/repo/pull/76" },
+          })
+          .pipe(withScope(linkedThread));
+        const linked = yield* boardHandlers
+          .board_get_card({ card: otherCard })
+          .pipe(withScope(linkedThread));
+        assert.strictEqual(linked.title, "Review stack layer 3");
+        assert.strictEqual(linked.pullRequest?.number, 76);
+
+        yield* boardHandlers
+          .board_update_card({ cardId: otherCard, pullRequest: null })
+          .pipe(withScope(linkedThread));
+        const cleared = yield* boardHandlers
+          .board_get_card({ card: otherCard })
+          .pipe(withScope(linkedThread));
+        assert.isNull(cleared.pullRequest);
+      }),
+    );
+
+    it.effect("rejects a pull request the forge cannot find, changing nothing", () =>
+      Effect.gen(function* () {
+        yield* seedOther;
+        const failure = yield* Effect.flip(
+          boardHandlers
+            .board_update_card({ cardId: otherCard, title: "Renamed", pullRequest: { number: 9 } })
+            .pipe(withScope(linkedThread)),
+        );
+        assert.strictEqual(failure.code, "invalid-input");
+        assert.include(failure.message, "#9");
+        const after = yield* boardHandlers
+          .board_get_card({ card: otherCard })
+          .pipe(withScope(linkedThread));
+        assert.notStrictEqual(after.title, "Renamed");
+      }),
+    );
+
+    it.effect("board_create_card({ pullRequest }) makes a card that already shows its pull request", () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const created = yield* boardHandlers
+          .board_create_card({
+            projectId,
+            title: "Review stack layer 2",
+            stage: BoardStageId.make("sprint"),
+            pullRequest: { url: "https://github.com/acme/repo/pull/75" },
+          })
+          .pipe(withScope(linkedThread));
+        const card = yield* boardHandlers
+          .board_get_card({ card: created.key })
+          .pipe(withScope(linkedThread));
+        assert.strictEqual(card.pullRequest?.number, 75);
+        assert.isTrue(card.pullRequest?.linked);
+      }),
+    );
+
+    it.effect("board_create_card rejects a missing pull request before creating any card", () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const before = yield* boardHandlers.board_list_cards({}).pipe(withScope(linkedThread));
+        const failure = yield* Effect.flip(
+          boardHandlers
+            .board_create_card({ projectId, title: "Ghost PR", pullRequest: { number: 404 } })
+            .pipe(withScope(linkedThread)),
+        );
+        assert.strictEqual(failure.code, "invalid-input");
+        const after = yield* boardHandlers.board_list_cards({}).pipe(withScope(linkedThread));
+        assert.strictEqual(after.cards.length, before.cards.length);
+      }),
+    );
+  },
+);
