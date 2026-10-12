@@ -1094,7 +1094,24 @@ export const boardHandlers = {
         };
         yield* dispatch(deps, command);
       }
-      if (pullRequest !== undefined) yield* linkCardPullRequest(target, pullRequest);
+      if (pullRequest !== undefined) {
+        // When the field changes have already landed, a failure here must say
+        // so: a retried whole call would apply them twice (briefAppend).
+        yield* linkCardPullRequest(target, pullRequest).pipe(
+          Effect.mapError((error) =>
+            updatesFields
+              ? new BoardToolError({
+                  code: error.code,
+                  message: `The other changes to card ${target.key} were saved, but ${
+                    pullRequest === null
+                      ? "clearing its pull request"
+                      : `linking pull request #${pullRequest.number}`
+                  } failed: ${error.message} Retry with pullRequest alone; do not repeat the other changes.`,
+                })
+              : error,
+          ),
+        );
+      }
       return { cardId };
     }),
 

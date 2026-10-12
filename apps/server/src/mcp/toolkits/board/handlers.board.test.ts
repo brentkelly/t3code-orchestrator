@@ -52,9 +52,10 @@ import {
 import { boardHandlers } from "./handlers.ts";
 import { BoardToolkit } from "./tools.ts";
 
-/** The forge as these tests see it (T3O-18): #75 and #76 exist, nothing else. */
+/** The forge as these tests see it (T3O-18): #75, #76 and #77 exist, nothing
+    else. #77 resolves but its link is then refused (`refusedLink`). */
 const forgePullRequests = new Map<number, BoardCardPullRequest>(
-  [75, 76].map((number) => [
+  [75, 76, 77].map((number) => [
     number,
     {
       number,
@@ -76,6 +77,8 @@ const forgePullRequests = new Map<number, BoardCardPullRequest>(
  * refresh-by-number and settle are covered against the live reactor in
  * `board/linkedPullRequest.test.ts`; nothing else here calls the supervisor.
  */
+const refusedLink = 77;
+
 const SupervisorLinkStub = Layer.effect(
   SupervisorReactor,
   Effect.gen(function* () {
@@ -97,6 +100,9 @@ const SupervisorLinkStub = Layer.effect(
           if (resolution?.outcome === "refused") return resolution;
           const pullRequest =
             target === null ? null : (options?.resolved ?? resolution!.pullRequest!);
+          if (pullRequest?.number === refusedLink) {
+            return { outcome: "refused", detail: "The forge stopped answering." } as const;
+          }
           commands += 1;
           return yield* engine
             .dispatch({
@@ -2335,6 +2341,24 @@ it.layer(makeLayer("t3o-board-mcp-link-pr-test-"))(
           .board_get_card({ card: otherCard })
           .pipe(withScope(linkedThread));
         assert.isNull(cleared.pullRequest);
+      }),
+    );
+
+    it.effect("a link refused after the field changes landed says to retry the link alone", () =>
+      Effect.gen(function* () {
+        yield* seedOther;
+        const failure = yield* Effect.flip(
+          boardHandlers
+            .board_update_card({
+              cardId: otherCard,
+              briefAppend: "Reviewed layer 3.",
+              pullRequest: { number: refusedLink },
+            })
+            .pipe(withScope(linkedThread)),
+        );
+        assert.strictEqual(failure.code, "rejected");
+        assert.include(failure.message, "were saved");
+        assert.include(failure.message, "Retry with pullRequest alone");
       }),
     );
 
