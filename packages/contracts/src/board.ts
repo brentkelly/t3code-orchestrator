@@ -7223,7 +7223,6 @@ export const BoardCardPullRequestTarget = Schema.Struct({
   url: Schema.optional(TrimmedNonEmptyString),
   repository: Schema.optional(TrimmedNonEmptyString),
   number: Schema.optional(PositiveInt),
-  host: Schema.optional(TrimmedNonEmptyString),
 });
 export type BoardCardPullRequestTarget = typeof BoardCardPullRequestTarget.Type;
 
