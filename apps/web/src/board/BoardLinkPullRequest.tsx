@@ -2,6 +2,7 @@ import { LinkIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { cn } from "../lib/utils";
+import { BoardHint } from "./BoardHint";
 
 /**
  * "No PR linked · Link one" (T3O-18): attach a pull request the agent didn't
@@ -43,15 +44,16 @@ export function BoardLinkPullRequest(props: {
 
   if (!open) {
     return (
-      <button
-        className="inline-flex items-center gap-1.5 self-start py-0.5 text-[11.5px] text-muted-foreground hover:text-foreground hover:underline hover:underline-offset-2"
-        onClick={() => setOpen(true)}
-        title="Attach a pull request the agent didn't record"
-        type="button"
-      >
-        <LinkIcon className="size-3" />
-        No PR linked · Link one
-      </button>
+      <BoardHint label="Attach a pull request the agent didn't record">
+        <button
+          className="inline-flex items-center gap-1.5 self-start py-0.5 text-[11.5px] text-muted-foreground hover:text-foreground hover:underline hover:underline-offset-2"
+          onClick={() => setOpen(true)}
+          type="button"
+        >
+          <LinkIcon className="size-3" />
+          No PR linked · Link one
+        </button>
+      </BoardHint>
     );
   }
   return (
@@ -95,13 +97,14 @@ export function BoardLinkPullRequest(props: {
           aria-label="Cancel"
           className="grid size-[30px] place-items-center rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground"
           onClick={close}
-          title="Cancel"
           type="button"
         >
           <XIcon className="size-[13px]" />
         </button>
       </div>
-      {error === null ? null : <span className="text-[11px] text-destructive-foreground">{error}</span>}
+      {error === null ? null : (
+        <span className="text-[11px] text-destructive-foreground">{error}</span>
+      )}
     </div>
   );
 }

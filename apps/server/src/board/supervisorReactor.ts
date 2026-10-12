@@ -4139,9 +4139,7 @@ const make = Effect.gen(function* () {
           currentLink === null ||
           found.number !== currentLink.number ||
           (currentLink.linked === true) !== linked ||
-          (isBoardCardPullRequestTerminal(currentLink)
-            ? found.state !== "merged"
-            : !linked)
+          (isBoardCardPullRequestTerminal(currentLink) ? found.state !== "merged" : !linked)
         ) {
           return boardRefreshOutcomeOf(currentLink);
         }
@@ -4352,28 +4350,27 @@ const make = Effect.gen(function* () {
     projectId: ProjectId,
     target: BoardCardPullRequestTarget,
   ) {
-    const project = yield* snapshotQuery
-      .getProjectShellById(projectId)
-      .pipe(Effect.map(Option.getOrUndefined), Effect.orElseSucceed(() => undefined));
+    const project = yield* snapshotQuery.getProjectShellById(projectId).pipe(
+      Effect.map(Option.getOrUndefined),
+      Effect.orElseSucceed(() => undefined),
+    );
     const resolved = resolveCardPullRequestTarget(target, project?.repositoryIdentity);
     if ("refused" in resolved) {
       return { outcome: "refused", detail: resolved.refused } as const;
     }
-    const found = yield* pullRequests
-      .get({ projectId, number: resolved.number, force: true })
-      .pipe(
-        Effect.map((summary) => ({ summary }) as const),
-        Effect.catch((error) =>
-          Effect.succeed({
-            failure: `Could not find pull request #${resolved.number}: ${error.detail}`,
-          } as const),
-        ),
-        Effect.catchCause(() =>
-          Effect.succeed({
-            failure: `Could not find pull request #${resolved.number}: the lookup failed unexpectedly.`,
-          } as const),
-        ),
-      );
+    const found = yield* pullRequests.get({ projectId, number: resolved.number, force: true }).pipe(
+      Effect.map((summary) => ({ summary }) as const),
+      Effect.catch((error) =>
+        Effect.succeed({
+          failure: `Could not find pull request #${resolved.number}: ${error.detail}`,
+        } as const),
+      ),
+      Effect.catchCause(() =>
+        Effect.succeed({
+          failure: `Could not find pull request #${resolved.number}: the lookup failed unexpectedly.`,
+        } as const),
+      ),
+    );
     if ("failure" in found) return { outcome: "refused", detail: found.failure } as const;
     const summary = found.summary;
     const pullRequest = {

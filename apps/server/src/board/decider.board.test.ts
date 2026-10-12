@@ -4287,10 +4287,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     it.effect("a branch lookup can neither replace nor clear a linked pull request", () =>
       Effect.gen(function* () {
         const linked = boardWith(card({ pullRequest: pr(75, { linked: true }) }));
-        assert.include(
-          String(yield* decideFail(record(pr(90)), linked)),
-          "linked explicitly",
-        );
+        assert.include(String(yield* decideFail(record(pr(90)), linked)), "linked explicitly");
         assert.include(String(yield* decideFail(record(null), linked)), "linked explicitly");
         // The same number without the marker is a branch lookup too.
         assert.include(

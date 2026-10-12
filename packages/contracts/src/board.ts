@@ -4446,8 +4446,7 @@ export const BoardCardSetLinkedPullRequestCommand = Schema.Struct({
   pullRequest: Schema.NullOr(BoardCardPullRequest),
   createdAt: IsoDateTime,
 });
-export type BoardCardSetLinkedPullRequestCommand =
-  typeof BoardCardSetLinkedPullRequestCommand.Type;
+export type BoardCardSetLinkedPullRequestCommand = typeof BoardCardSetLinkedPullRequestCommand.Type;
 
 /** The activity kinds that are pure REPORTING — the board telling the user
     what it did to their repository, with no card field behind it. */

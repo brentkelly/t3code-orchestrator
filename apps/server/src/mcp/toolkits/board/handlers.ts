@@ -227,7 +227,10 @@ const resolveLinkablePullRequest = (projectId: ProjectId, target: BoardCardPullR
   });
 
 /** Link `resolved` to the card, or clear its explicit link when null. */
-const linkCardPullRequest = (card: Pick<BoardCard, "id" | "key">, resolved: BoardCardPullRequest | null) =>
+const linkCardPullRequest = (
+  card: Pick<BoardCard, "id" | "key">,
+  resolved: BoardCardPullRequest | null,
+) =>
   Effect.gen(function* () {
     const supervisor = yield* SupervisorReactor;
     const result = yield* supervisor.linkPullRequest(

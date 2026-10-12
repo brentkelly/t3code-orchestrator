@@ -93,9 +93,7 @@ const SupervisorLinkStub = Layer.effect(
       linkPullRequest: (cardId, target, options) =>
         Effect.gen(function* () {
           const resolution =
-            target === null || options?.resolved !== undefined
-              ? null
-              : resolve(target);
+            target === null || options?.resolved !== undefined ? null : resolve(target);
           if (resolution?.outcome === "refused") return resolution;
           const pullRequest =
             target === null ? null : (options?.resolved ?? resolution!.pullRequest!);
@@ -2290,7 +2288,10 @@ it.layer(makeLayer("t3o-board-mcp-link-pr-test-"))(
       Effect.gen(function* () {
         yield* seedOther;
         yield* boardHandlers
-          .board_update_card({ cardId: otherCard, pullRequest: { repository: "acme/repo", number: 75 } })
+          .board_update_card({
+            cardId: otherCard,
+            pullRequest: { repository: "acme/repo", number: 75 },
+          })
           .pipe(withScope(linkedThread));
         const other = yield* boardHandlers
           .board_get_card({ card: otherCard })
@@ -2304,7 +2305,9 @@ it.layer(makeLayer("t3o-board-mcp-link-pr-test-"))(
           linked: true,
         });
         // The caller's own card is untouched — the bug was the PR landing here.
-        const own = yield* boardHandlers.board_get_card({ card: cardId }).pipe(withScope(linkedThread));
+        const own = yield* boardHandlers
+          .board_get_card({ card: cardId })
+          .pipe(withScope(linkedThread));
         assert.isNull(own.pullRequest);
       }),
     );
@@ -2352,23 +2355,25 @@ it.layer(makeLayer("t3o-board-mcp-link-pr-test-"))(
       }),
     );
 
-    it.effect("board_create_card({ pullRequest }) makes a card that already shows its pull request", () =>
-      Effect.gen(function* () {
-        yield* seed();
-        const created = yield* boardHandlers
-          .board_create_card({
-            projectId,
-            title: "Review stack layer 2",
-            stage: BoardStageId.make("sprint"),
-            pullRequest: { url: "https://github.com/acme/repo/pull/75" },
-          })
-          .pipe(withScope(linkedThread));
-        const card = yield* boardHandlers
-          .board_get_card({ card: created.key })
-          .pipe(withScope(linkedThread));
-        assert.strictEqual(card.pullRequest?.number, 75);
-        assert.isTrue(card.pullRequest?.linked);
-      }),
+    it.effect(
+      "board_create_card({ pullRequest }) makes a card that already shows its pull request",
+      () =>
+        Effect.gen(function* () {
+          yield* seed();
+          const created = yield* boardHandlers
+            .board_create_card({
+              projectId,
+              title: "Review stack layer 2",
+              stage: BoardStageId.make("sprint"),
+              pullRequest: { url: "https://github.com/acme/repo/pull/75" },
+            })
+            .pipe(withScope(linkedThread));
+          const card = yield* boardHandlers
+            .board_get_card({ card: created.key })
+            .pipe(withScope(linkedThread));
+          assert.strictEqual(card.pullRequest?.number, 75);
+          assert.isTrue(card.pullRequest?.linked);
+        }),
     );
 
     it.effect("board_create_card rejects a missing pull request before creating any card", () =>

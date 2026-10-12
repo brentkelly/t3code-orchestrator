@@ -118,7 +118,9 @@ describe("linking a pull request to a card", () => {
       {
         board: { nextCardNumberByProject: {}, cards: [reviewCard()] },
         settings: settings(),
-        pullRequestByNumber: { failWith: "Could not resolve to a PullRequest with the number of 9." },
+        pullRequestByNumber: {
+          failWith: "Could not resolve to a PullRequest with the number of 9.",
+        },
       },
       (h) =>
         Effect.gen(function* () {

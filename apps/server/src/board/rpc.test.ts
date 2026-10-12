@@ -155,7 +155,7 @@ const supervisorStub: SupervisorReactorShape = {
   // know, so a test can see the refusal travel back unchanged.
   linkPullRequest: (cardId, target) =>
     Effect.sync(() => {
-      supervisorCalls.link.push(`${String(cardId)}:${JSON.stringify(target)}`);
+      supervisorCalls.link.push(`${String(cardId)}:${target?.url ?? `#${target?.number}`}`);
       return target?.number === 404
         ? ({ outcome: "refused", detail: "Could not find pull request #404: Not Found" } as const)
         : ({
@@ -402,8 +402,8 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-link-pr-test-"))(
         assert.deepStrictEqual(outcome, { outcome: "linked", number: 75 });
         yield* handlers["board.linkCardPullRequest"]({ cardId, target: "#76" });
         assert.deepStrictEqual(supervisorCalls.link, [
-          `${String(cardId)}:{"url":"https://github.com/acme/repo/pull/75"}`,
-          `${String(cardId)}:{"number":76}`,
+          `${String(cardId)}:https://github.com/acme/repo/pull/75`,
+          `${String(cardId)}:#76`,
         ]);
       }),
     );
