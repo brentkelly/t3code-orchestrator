@@ -196,6 +196,39 @@ it.effect("a wait that never ends escalates to a human once the ladder is spent"
   ),
 );
 
+it.effect("a commit mid-wait restarts the schedule and the stall streak", () => {
+  // The branch's newest commit, read lazily so the agent can commit mid-test.
+  let committedAt = "";
+  const input = {
+    ...fixture(),
+    get latestBranchCommitIso() {
+      return committedAt;
+    },
+  };
+  return withGovernor(input, (h) =>
+    Effect.gen(function* () {
+      yield* startWaiting(h);
+      yield* after(h, 5);
+      yield* after(h, 10);
+      yield* after(h, 15);
+      yield* after(h, 30);
+      assert.strictEqual(checkInsOf(yield* h.commands), 4);
+      assert.strictEqual(stateOf(yield* h.board)?.stallCount, 1, "one charged check-in");
+
+      // The agent commits real work while its job runs: a new wait.
+      committedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* after(h, 1);
+      yield* after(h, 5);
+      assert.strictEqual(checkInsOf(yield* h.commands), 5, "the new wait's first check");
+
+      const reset = stateOf(yield* h.board);
+      assert.strictEqual(reset?.stallCount, 0, "progress zeroes the streak");
+      assert.strictEqual(reset?.attempt, 1);
+      assert.strictEqual(reset?.stageEntryRecoveries, 1, "the stage ceiling is never reset");
+    }),
+  );
+});
+
 it.effect("a todo edit while answering a check-in does not restart the schedule", () => {
   const todos = new Map<string, TodoRow>();
   return withGovernor(fixture(todos), (h) =>

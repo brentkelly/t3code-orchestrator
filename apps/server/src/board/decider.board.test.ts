@@ -2214,6 +2214,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           cardId: BoardCardId.make("card-settle"),
           stepId: "s1",
           charged: false,
+          progressed: false,
           createdAt: NOW,
         },
         // On-demand kickoff (D7): emits board.card-stage-thread-requested for

@@ -4000,10 +4000,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not running; nothing to check in on.`,
         );
       }
+      // Progress resets the ladder exactly as it does on `recover-step`;
+      // `stageEntryRecoveries` is never reset, for the same reason.
       const state: BoardCardStepState = {
         ...current,
-        attempt: command.charged ? current.attempt + 1 : current.attempt,
-        stallCount: command.charged ? current.stallCount + 1 : current.stallCount,
+        attempt: command.progressed ? 1 : command.charged ? current.attempt + 1 : current.attempt,
+        stallCount: (command.progressed ? 0 : current.stallCount) + (command.charged ? 1 : 0),
         stageEntryRecoveries: command.charged
           ? current.stageEntryRecoveries + 1
           : current.stageEntryRecoveries,

@@ -4819,8 +4819,10 @@ export type BoardCardNoteHumanTurnCommand = typeof BoardCardNoteHumanTurnCommand
  * pending-turn tests measure from the check-in. `charged` — from the fourth
  * check-in of a wait — also spends the recovery budget (`attempt`,
  * `stallCount`, `stageEntryRecoveries`), so a background job that never ends
- * still reaches a human at the existing ceilings. Internal — dispatched by the
- * reactor's timeout sweep.
+ * still reaches a human at the existing ceilings. `progressed` — the agent
+ * committed since the last check-in — resets `attempt` and `stallCount` as it
+ * does on `recover-step`, so a long job that keeps committing never climbs the
+ * stall ladder. Internal — dispatched by the reactor's timeout sweep.
  */
 export const BoardCardCheckInStepCommand = Schema.Struct({
   type: Schema.Literal("board.card.check-in-step"),
@@ -4828,6 +4830,7 @@ export const BoardCardCheckInStepCommand = Schema.Struct({
   cardId: BoardCardId,
   stepId: TrimmedNonEmptyString,
   charged: Schema.Boolean,
+  progressed: Schema.Boolean,
   createdAt: IsoDateTime,
 });
 export type BoardCardCheckInStepCommand = typeof BoardCardCheckInStepCommand.Type;

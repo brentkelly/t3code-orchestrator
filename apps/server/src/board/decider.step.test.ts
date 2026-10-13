@@ -1117,13 +1117,14 @@ it.effect("note-human-turn with a null instant spends the free ending and nothin
 
 const CHECKED_IN_AT = "2026-01-01T00:05:00.000Z";
 
-const checkIn = (charged: boolean) =>
+const checkIn = (charged: boolean, progressed = false) =>
   ({
     type: "board.card.check-in-step",
     commandId: CommandId.make("c-check-in"),
     cardId: BoardCardId.make("card-1"),
     stepId: "build",
     charged,
+    progressed,
     createdAt: CHECKED_IN_AT,
   }) as const;
 
@@ -1184,6 +1185,33 @@ it.effect("a charged check-in spends the recovery budget like a recovery (T3O-20
       assert.strictEqual(event.payload.state.slotHeld, true);
     }
   }),
+);
+
+it.effect(
+  "a check-in after progress resets the stall ladder but not the stage ceiling (T3O-20)",
+  () =>
+    Effect.gen(function* () {
+      const board = makeReadModel({
+        cards: [makeCard({ id: "card-1" })],
+        stepStates: [
+          stepState("card-1", "running", {
+            attempt: 3,
+            stallCount: 2,
+            stageEntryRecoveries: 3,
+            lastNudgeAt: NOW,
+            slotHeld: true,
+          }),
+        ],
+        nextCardNumberByProject: {},
+      });
+      const event = yield* decide(checkIn(false, true), board);
+      assert.strictEqual(event.type, "board.card-step-checked-in");
+      if (event.type === "board.card-step-checked-in") {
+        assert.strictEqual(event.payload.state.attempt, 1);
+        assert.strictEqual(event.payload.state.stallCount, 0);
+        assert.strictEqual(event.payload.state.stageEntryRecoveries, 3);
+      }
+    }),
 );
 
 it.effect("a check-in refuses a step that is no longer running (T3O-20)", () =>

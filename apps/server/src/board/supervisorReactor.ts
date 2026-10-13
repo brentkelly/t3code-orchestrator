@@ -8132,7 +8132,8 @@ const make = Effect.gen(function* () {
   // finding a quiet thread with background work). The turn that answers a
   // check-in keeps the schedule; any other turn ending still waiting — the
   // provider waking the agent, a human's message — starts a fresh one, as does
-  // a commit since the wait began. Cleared by a turn that ends with no
+  // a commit since the wait began — which the next check-in reports as
+  // progress, resetting the stall ladder. Cleared by a turn that ends with no
   // background work, and with the step once it leaves running.
   // In-memory on purpose: background work dies with the server, so after a
   // restart ordinary recovery is the right supervisor.
@@ -8142,13 +8143,15 @@ const make = Effect.gen(function* () {
       readonly since: string;
       readonly checkInsSent: number;
       readonly checkInOutstanding: boolean;
+      readonly progressed: boolean;
     }
   >();
-  const beginBackgroundWait = (threadId: ThreadId, now: string) =>
+  const beginBackgroundWait = (threadId: ThreadId, now: string, progressed = false) =>
     void backgroundWaits.set(String(threadId), {
       since: now,
       checkInsSent: 0,
       checkInOutstanding: false,
+      progressed,
     });
   /** A turn ended with background work still running. Only the reply to a
       check-in continues the current schedule: what the agent writes while
@@ -8223,7 +8226,7 @@ const make = Effect.gen(function* () {
     // read here (see `committedSince`); a wake that did real work restarts the
     // schedule through its own turn end instead.
     if (yield* committedSince(state, card, wait.since)) {
-      beginBackgroundWait(state.threadId, input.now);
+      beginBackgroundWait(state.threadId, input.now, true);
       return true;
     }
     const sinceMs = Date.parse(wait.since);
@@ -8261,6 +8264,7 @@ const make = Effect.gen(function* () {
       cardId: card.id,
       stepId: state.stepId,
       charged,
+      progressed: wait.progressed,
       createdAt: input.now,
     });
     if (!checkedIn) return true;
@@ -8268,6 +8272,7 @@ const make = Effect.gen(function* () {
       since: wait.since,
       checkInsSent: wait.checkInsSent + 1,
       checkInOutstanding: true,
+      progressed: false,
     });
     yield* sendTurn({
       threadId: state.threadId,
