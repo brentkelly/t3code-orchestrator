@@ -45,6 +45,7 @@ import {
   BoardCardStepSettledPayload,
   BoardCardStepRetunedPayload,
   BoardCardStepSteeredPayload,
+  BoardCardStepCheckedInPayload,
   BoardProviderLimitRecordedPayload,
   BoardProviderLimitClearedPayload,
   BoardCardStageThreadRequestedPayload,
@@ -173,6 +174,9 @@ const decodeBoardCardStepRecoveredPayload = Schema.decodeUnknownEffect(
 const decodeBoardCardStepSettledPayload = Schema.decodeUnknownEffect(BoardCardStepSettledPayload);
 const decodeBoardCardStepRetunedPayload = Schema.decodeUnknownEffect(BoardCardStepRetunedPayload);
 const decodeBoardCardStepSteeredPayload = Schema.decodeUnknownEffect(BoardCardStepSteeredPayload);
+const decodeBoardCardStepCheckedInPayload = Schema.decodeUnknownEffect(
+  BoardCardStepCheckedInPayload,
+);
 const decodeBoardProviderLimitRecordedPayload = Schema.decodeUnknownEffect(
   BoardProviderLimitRecordedPayload,
 );
@@ -889,6 +893,12 @@ export function projectBoardEvent(
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
+    case "board.card-step-checked-in":
+      return decodeBoardCardStepCheckedInPayload(event.payload).pipe(
+        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
     // T3o (T3O-22): the provider-cooldown slice. Keyed on the provider
     // instance, so — unlike every case above — it touches no card at all.
     case "board.provider-limit-recorded":
@@ -1291,6 +1301,9 @@ export function boardShellStreamEvent(
     // either: the step is still running and still owned by the same thread.
     // Only the supervisor's private nudge bookkeeping moved.
     case "board.card-step-steered":
+    // A background-wait check-in (T3O-20) leaves the step running on the same
+    // thread; the card's "Waiting" label is thread-derived, not step-derived.
+    case "board.card-step-checked-in":
     // Branch cleanup is card DETAIL too: it lands on the activity rail, which
     // rides `board.subscribeCard`, and changes nothing a column card renders.
     case "board.card-note-recorded":

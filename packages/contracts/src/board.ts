@@ -1963,6 +1963,10 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
       it replaced, or single dependencies added or removed. Whole-value edits
       stay off the rail, as they always have. */
   "card-edited",
+  /** The supervisor checked in on an agent that ended its turn with background
+      work still running (T3O-20). Repeats collapse on the rail, so a long wait
+      reads as one row. */
+  "card-step-checked-in",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -4804,6 +4808,30 @@ export const BoardCardNoteHumanTurnCommand = Schema.Struct({
 });
 export type BoardCardNoteHumanTurnCommand = typeof BoardCardNoteHumanTurnCommand.Type;
 
+/**
+ * Record a background-wait check-in (T3O-20): the supervisor woke a step whose
+ * agent ended its turn with background work still running, to make it verify
+ * that work is still alive.
+ *
+ * Distinct from `recover-step`, which is the stall ladder's nudge: a step
+ * waiting on its own background work is not stalled, so it stays `running`,
+ * keeps its slot and parks nowhere. Moves `lastNudgeAt` so the progress and
+ * pending-turn tests measure from the check-in. `charged` — from the fourth
+ * check-in of a wait — also spends the recovery budget (`attempt`,
+ * `stallCount`, `stageEntryRecoveries`), so a background job that never ends
+ * still reaches a human at the existing ceilings. Internal — dispatched by the
+ * reactor's timeout sweep.
+ */
+export const BoardCardCheckInStepCommand = Schema.Struct({
+  type: Schema.Literal("board.card.check-in-step"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  stepId: TrimmedNonEmptyString,
+  charged: Schema.Boolean,
+  createdAt: IsoDateTime,
+});
+export type BoardCardCheckInStepCommand = typeof BoardCardCheckInStepCommand.Type;
+
 // ── Event payloads ─────────────────────────────────────────────────────
 
 /**
@@ -5373,6 +5401,15 @@ export const BoardCardStepPausedPayload = Schema.Struct({
 });
 export type BoardCardStepPausedPayload = typeof BoardCardStepPausedPayload.Type;
 
+/** A background-wait check-in (T3O-20). Carries the whole state like every
+    other step event, plus whether it spent the recovery budget. */
+export const BoardCardStepCheckedInPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+  charged: Schema.Boolean,
+});
+export type BoardCardStepCheckedInPayload = typeof BoardCardStepCheckedInPayload.Type;
+
 export const BoardCardStepRecoveredPayload = Schema.Struct({
   cardId: BoardCardId,
   state: BoardCardStepState,
@@ -5795,6 +5832,11 @@ export const BoardCardShell = Schema.Struct({
   threadState: BoardCardThreadState,
   /** The active linked thread's `hasPendingUserInput`. */
   awaitingInput: Schema.Boolean,
+  /** Every live thread is between turns, none needs a human, and at least one
+      is waiting on its own background work (T3O-20) — the card face's
+      "Waiting" label. Key-optional, present only when true; derived alongside
+      `threadState` by `deriveBoardCardThreadState`. */
+  waitingOnBackground: Schema.optionalKey(Schema.Boolean),
   /** The most recently linked live (non-tombstoned) thread, so clients can
       re-derive `threadState` / `awaitingInput` from the thread shells they
       already hold as those threads change — card deltas are a pure function
@@ -6001,32 +6043,43 @@ export function deriveBoardCardThreadState(
 ): {
   readonly threadState: BoardCardThreadState;
   readonly awaitingInput: boolean;
+  /** No thread is mid-turn and none needs a human, but at least one ended its
+      turn with background work still running — a background command, a
+      monitor, or subagents (T3O-20). Additive to `threadState`: a card waiting
+      on subagents still reads `working`. */
+  readonly waitingOnBackground: boolean;
 } {
   const live = (Array.isArray(threads) ? threads : [threads]).filter(
     (thread): thread is BoardThreadStateSource => thread !== null && thread !== undefined,
   );
-  if (live.length === 0) return { threadState: "none", awaitingInput: false };
+  if (live.length === 0) {
+    return { threadState: "none", awaitingInput: false, waitingOnBackground: false };
+  }
   const awaitingInput = live.some((thread) => thread.hasPendingUserInput);
   const awaitingPermission = live.some(isThreadAwaitingPermission);
   if (awaitingInput || awaitingPermission) {
-    return { threadState: "waiting", awaitingInput };
+    return { threadState: "waiting", awaitingInput, waitingOnBackground: false };
   }
-  const working = live.some((thread) => {
+  const midTurn = live.some((thread) => {
     const sessionStatus = thread.session?.status;
-    if (sessionStatus === "starting" || sessionStatus === "running") return true;
-    // A failed session outranks lingering background liveness, the same way the
-    // thread list ranks them (`resolveSidebarThreadStatus`): the human must see
-    // the failure, not a stale Working.
-    if (sessionStatus === "error") return false;
-    return thread.backgroundLiveness === "working";
+    return sessionStatus === "starting" || sessionStatus === "running";
   });
-  if (working) return { threadState: "working", awaitingInput };
+  // A failed session outranks lingering background liveness, the same way the
+  // thread list ranks them (`resolveSidebarThreadStatus`): the human must see
+  // the failure, not a stale Working.
+  const background = live.filter(
+    (thread) => thread.session?.status !== "error" && thread.backgroundLiveness != null,
+  );
+  const waitingOnBackground = !midTurn && background.length > 0;
+  if (midTurn || background.some((thread) => thread.backgroundLiveness === "working")) {
+    return { threadState: "working", awaitingInput, waitingOnBackground };
+  }
   // Nothing is running, so a dead thread is the loudest thing left to say
   // (t3o-10, D5). Ranked BELOW `working`, so a card with one errored thread and
   // one live one still reads as working — which is what keeps a review loop's
   // errored earlier phase from darkening a card whose next phase is running.
   const failed = live.some((thread) => thread.session?.status === "error");
-  return { threadState: failed ? "failed" : "stopped", awaitingInput };
+  return { threadState: failed ? "failed" : "stopped", awaitingInput, waitingOnBackground };
 }
 
 /** The card's active thread: the most recently linked live link, by the
@@ -6212,7 +6265,9 @@ export function makeBoardCardShell(input: {
     | null
     | undefined;
 }): BoardCardShell {
-  const { threadState, awaitingInput } = deriveBoardCardThreadState(input.thread);
+  const { threadState, awaitingInput, waitingOnBackground } = deriveBoardCardThreadState(
+    input.thread,
+  );
   return {
     cardId: input.cardId,
     key: input.key,
@@ -6245,6 +6300,9 @@ export function makeBoardCardShell(input: {
       : {}),
     threadState,
     awaitingInput,
+    // T3O-20: key omitted when false, so an ordinary card's shell is
+    // byte-identical to a pre-T3O-20 payload.
+    ...(waitingOnBackground ? { waitingOnBackground: true } : {}),
     activeThreadId: input.activeThreadId,
     // Absent-means-preserve (see the schema): a producer without the brief
     // body or the plan slice in hand omits the key entirely rather than
@@ -6738,6 +6796,8 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardRetuneStepCommand,
   // T3O-17: a human's own turn on a step thread, and the free ending it buys.
   BoardCardNoteHumanTurnCommand,
+  // T3O-20: a check-in on a step waiting on its own background work.
+  BoardCardCheckInStepCommand,
   BoardProviderLimitRecordCommand,
   BoardProviderLimitClearCommand,
   BoardCardAttachCommand,
@@ -6789,6 +6849,8 @@ export const BOARD_EVENT_TYPES = [
   "board.card-step-retuned",
   // T3O-17: a human steered a running unattended step by typing into it.
   "board.card-step-steered",
+  // T3O-20: the supervisor checked in on a step waiting on background work.
+  "board.card-step-checked-in",
   "board.provider-limit-recorded",
   "board.provider-limit-cleared",
 ] as const;
@@ -7031,6 +7093,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-step-steered"),
       payload: BoardCardStepSteeredPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-step-checked-in"),
+      payload: BoardCardStepCheckedInPayload,
     }),
     Schema.Struct({
       ...base,

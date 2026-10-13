@@ -319,6 +319,71 @@ export function boardRecoveryNudge(input: {
 }
 
 /**
+ * When a background-wait check-in goes out (T3O-20), as offsets from the moment
+ * the wait began: +5, +15 and +30 minutes, then every 30 minutes after that.
+ *
+ * An agent that ends its turn with a background command, a monitor or
+ * subagents still running is waiting, not stalled — the provider wakes it when
+ * the work reports back. But sometimes nothing ever wakes it, and sometimes it
+ * claims the work is running when it died long ago, so the board still asks.
+ * Early check-ins are close together because most background work is short;
+ * past half an hour the job is long, and asking more often is just noise.
+ *
+ * Fixed constants rather than a multiple of the step's `timeoutMs`: how long a
+ * background job runs says nothing about how long a turn should take.
+ */
+export const BOARD_BACKGROUND_CHECK_IN_OFFSETS_MS = [5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
+export const BOARD_BACKGROUND_CHECK_IN_INTERVAL_MS = 30 * 60_000;
+
+/** When the next check-in of a wait is due, in epoch ms. `checkInsSent` is how
+    many this wait has already had. */
+export function boardBackgroundCheckInDueMs(input: {
+  readonly sinceMs: number;
+  readonly checkInsSent: number;
+}): number {
+  const offsets: ReadonlyArray<number> = BOARD_BACKGROUND_CHECK_IN_OFFSETS_MS;
+  const scheduled = offsets[input.checkInsSent];
+  if (scheduled !== undefined) return input.sinceMs + scheduled;
+  const beyond = input.checkInsSent - offsets.length + 1;
+  return (
+    input.sinceMs +
+    (offsets.at(-1) ?? 0) +
+    Math.max(beyond, 1) * BOARD_BACKGROUND_CHECK_IN_INTERVAL_MS
+  );
+}
+
+/** Whether a check-in spends the recovery budget (T3O-20). The scheduled ones
+    in the first half hour are free; every one after that is charged like a
+    recovery, so a background job that never finishes reaches a human at the
+    existing ceilings — about three hours at the default `maxAttempts` of 5. */
+export function boardBackgroundCheckInCharged(checkInsSent: number): boolean {
+  return checkInsSent >= BOARD_BACKGROUND_CHECK_IN_OFFSETS_MS.length;
+}
+
+/**
+ * The words a background-wait check-in sends into the step's thread (T3O-20).
+ *
+ * Deliberately not `boardRecoveryNudge`: the agent did nothing wrong by ending
+ * its turn to wait, and text that reads as a failure makes it apologise and end
+ * another turn. What it must do is LOOK — agents routinely report work as
+ * still running without checking, long after it died.
+ */
+export function boardBackgroundCheckInNudge(input: { readonly hasTodoList: boolean }): string {
+  const lines = [
+    `You ended your turn with background work still running (a background command, a monitor, or subagents), and this is a scheduled check-in on it.`,
+    `Actually verify it is still alive — check the process, its output file, or the task status — rather than assuming it is.`,
+    `If it has finished or died, deal with the result and carry on toward board_complete_step.`,
+    `If it is genuinely still running, end your turn again; you will be woken when it reports.`,
+  ];
+  if (!input.hasTodoList) {
+    lines.push(
+      `You are not keeping a todo list: write one now (your task/plan tool), so progress is visible.`,
+    );
+  }
+  return lines.join(" ");
+}
+
+/**
  * What the board says to an agent when a provider's usage window reopens
  * (T3O-22, D9) — sent into the parked step's thread when the cooldown lifts.
  *

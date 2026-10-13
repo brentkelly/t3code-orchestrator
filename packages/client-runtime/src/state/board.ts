@@ -204,10 +204,22 @@ function withDerivedThreadFields(
   cardThreads?: ReadonlyArray<BoardCardThreadShell> | undefined,
 ): BoardCardShell {
   const threads = liveCardThreadIds(card, cardThreads).map(threadById);
-  const { threadState, awaitingInput } = deriveBoardCardThreadState(threads);
-  return card.threadState === threadState && card.awaitingInput === awaitingInput
-    ? card
-    : { ...card, threadState, awaitingInput };
+  const { threadState, awaitingInput, waitingOnBackground } = deriveBoardCardThreadState(threads);
+  if (
+    card.threadState === threadState &&
+    card.awaitingInput === awaitingInput &&
+    (card.waitingOnBackground ?? false) === waitingOnBackground
+  ) {
+    return card;
+  }
+  // T3O-20: the key is omitted when false, matching the server's shell.
+  const { waitingOnBackground: _previous, ...rest } = card;
+  return {
+    ...rest,
+    threadState,
+    awaitingInput,
+    ...(waitingOnBackground ? { waitingOnBackground: true } : {}),
+  };
 }
 
 /** The review slice (t3o-22, D7) — carried as a group, never field by field.

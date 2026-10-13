@@ -10,9 +10,10 @@
  * nudge interrupted the agent and made it end another turn, so the card climbed
  * the stall ladder while its subagents were doing the work.
  *
- * The thread already says when subagents are running: the shell's
- * `backgroundLiveness` is what draws the composer's "N agents working" banner
- * and the card's working dot. The turn-end handler reads the same field.
+ * The thread already says when background work is running: the shell's
+ * `backgroundLiveness` is what draws the composer's "N agents working" /
+ * "Monitoring" banner and the card's working dot. The turn-end handler reads
+ * the same field, and since T3O-20 treats a monitor the same as subagents.
  *
  * Driven through the live reactor against the stateful engine double, because
  * the behaviour spans the turn-end handler and the decider.
@@ -122,20 +123,27 @@ it.effect("once the subagents finish, a turn that ends without completing recove
   ),
 );
 
-// Watch loops (a Monitor, a background shell tailing a PR) are not subagents:
-// they can run indefinitely, and the thread itself shows "Monitoring", not
-// "agents working". An unattended agent that leaves one behind is still
-// supervised as stopped.
-it.effect("a turn that ends with only a watch loop running still recovers", () =>
-  withGovernor(oneBuildCard("watch"), ({ pumpDomain, pumpRuntime, board, commands, shells }) =>
-    Effect.gen(function* () {
-      const threadId = yield* startBuild({ pumpDomain, board }, "watch");
-      yield* setShell(shells, threadId, "monitoring");
+// A background command or a Monitor ("monitoring", T3O-20) is a wait too:
+// the provider wakes the agent when it reports. It used to be supervised as a
+// stop, so the agent was nudged with "your turn ended without calling
+// board_complete_step", replied "still waiting" and climbed the stall ladder.
+// The timeout sweep's check-ins supervise it instead
+// (`backgroundWaitCheckIns.test.ts`).
+it.effect(
+  "a turn that ends with a background command or monitor running leaves the step running",
+  () =>
+    withGovernor(oneBuildCard("watch"), ({ pumpDomain, pumpRuntime, board, commands, shells }) =>
+      Effect.gen(function* () {
+        const threadId = yield* startBuild({ pumpDomain, board }, "watch");
+        yield* setShell(shells, threadId, "monitoring");
 
-      yield* pumpRuntime(turnCompleted(threadId));
+        yield* pumpRuntime(turnCompleted(threadId));
 
-      assert.strictEqual(recoveries(yield* commands), 1);
-      assert.strictEqual(stateOf(yield* board, "watch")?.stallCount, 1);
-    }),
-  ),
+        const after = stateOf(yield* board, "watch");
+        assert.strictEqual(recoveries(yield* commands), 0);
+        assert.strictEqual(after?.status, "running");
+        assert.strictEqual(after?.stallCount, 0);
+        assert.strictEqual(after?.stageEntryRecoveries, 0);
+      }),
+    ),
 );

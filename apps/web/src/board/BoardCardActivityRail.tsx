@@ -35,6 +35,7 @@ import {
   GitMergeIcon,
   GitPullRequestIcon,
   HardDriveIcon,
+  HourglassIcon,
   LayersIcon,
   ListTreeIcon,
   FolderSyncIcon,
@@ -149,6 +150,9 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <HardDriveIcon className={className} />;
     case "card-edited":
       return <PencilIcon className={className} />;
+    // T3O-20: a check-in on a background wait claims nothing — neutral.
+    case "card-step-checked-in":
+      return <HourglassIcon className={className} />;
   }
 }
 
@@ -365,6 +369,12 @@ function activitySentence(
       );
     case "card-edited":
       return <>{describeCardEdit(payload)}</>;
+    case "card-step-checked-in":
+      return payload.stepLabel === undefined ? (
+        <>checked on a background task</>
+      ) : (
+        <>checked on a background task in {payload.stepLabel}</>
+      );
   }
 }
 

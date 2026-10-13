@@ -2206,6 +2206,16 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           at: NOW,
           createdAt: NOW,
         },
+        // A background-wait check-in (T3O-20): bookkeeping on the live step,
+        // emits board.card-step-checked-in — never a move.
+        "board.card.check-in-step": {
+          type: "board.card.check-in-step",
+          commandId: CommandId.make("cmd-check-in-step"),
+          cardId: BoardCardId.make("card-settle"),
+          stepId: "s1",
+          charged: false,
+          createdAt: NOW,
+        },
         // On-demand kickoff (D7): emits board.card-stage-thread-requested for
         // the card's CURRENT stage — never a move.
         "board.card.start-stage-thread": {

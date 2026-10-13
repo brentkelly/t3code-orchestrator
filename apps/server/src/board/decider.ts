@@ -3984,6 +3984,43 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       };
     }
 
+    // A background-wait check-in (T3O-20). Only a RUNNING step is checked in
+    // on: anything else has already been parked, paused or settled, and a
+    // check-in landing there would move a clock nobody is watching. Status,
+    // slot and thread are untouched — the agent is waiting, not stalled. A
+    // charged check-in spends the budget exactly as an unprogressed recovery
+    // does, which is what lets the existing ceilings escalate a background job
+    // that never ends.
+    case "board.card.check-in-step": {
+      yield* requireActiveBoardCard({ board, command });
+      const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
+      if (current.status !== "running") {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' step '${command.stepId}' is '${current.status}', not running; nothing to check in on.`,
+        );
+      }
+      const state: BoardCardStepState = {
+        ...current,
+        attempt: command.charged ? current.attempt + 1 : current.attempt,
+        stallCount: command.charged ? current.stallCount + 1 : current.stallCount,
+        stageEntryRecoveries: command.charged
+          ? current.stageEntryRecoveries + 1
+          : current.stageEntryRecoveries,
+        lastNudgeAt: command.createdAt,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-step-checked-in",
+        payload: { cardId: command.cardId, state, charged: command.charged },
+      };
+    }
+
     // ── Provider cooldowns (T3O-22) ──────────────────────────────────
     // A different aggregate from every case above: keyed on a provider
     // INSTANCE, because a usage limit belongs to an ACCOUNT and the cards it

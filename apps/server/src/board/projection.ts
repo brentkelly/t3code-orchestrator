@@ -3065,6 +3065,23 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
         });
         return;
 
+      // A background-wait check-in (T3O-20) is on the rail: it is the board
+      // talking to the agent while nothing else on the card moves, and the
+      // rail collapses repeats, so a long wait still reads as one row.
+      case "board.card-step-checked-in":
+        yield* upsertStepState(event.payload.state);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-step-checked-in",
+          payload: {
+            stepId: event.payload.state.stepId,
+            ...boardActivityStepLabel(event.payload.state),
+          },
+          threadId: event.payload.state.threadId,
+        });
+        return;
+
       case "board.card-step-selected":
       case "board.card-step-admitted":
       // A human pausing a step (T3O-23) stays off the rail for the same reason:
