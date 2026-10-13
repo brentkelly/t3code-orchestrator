@@ -15,6 +15,7 @@ import {
   type BoardStageId,
   type BoardState,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
@@ -88,7 +89,7 @@ const completePlanning = (h: Harness, threadId: ThreadId, sequence: number) =>
         createdAt: NOW,
       },
       readModel: yield* Ref.get(h.model),
-    });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.orDie);
     for (const planned of boardDecidedEvents(decided)) {
       const event = { ...planned, sequence } as unknown as OrchestrationEvent;
       const next = yield* projectBoardEvent(
