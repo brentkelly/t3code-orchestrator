@@ -800,6 +800,32 @@ describe("board shell reducer", () => {
     expect(next.cards?.[0]?.awaitingInput).toBe(true);
   });
 
+  it("re-derives the background wait both ways (T3O-20)", () => {
+    const linked = cardShell("card-1", {
+      threadLinks: [{ threadId, role: "build", linkedAt: NOW, tombstonedAt: null }],
+    });
+    const waiting = applyShellStreamEvent(
+      snapshot({ threads: [threadShell({ backgroundLiveness: "monitoring" })] }),
+      { kind: "card-upserted", sequence: 2, card: linked },
+    );
+    expect(waiting.cards?.[0]?.waitingOnBackground).toBe(true);
+
+    // The provider woke the agent: mid-turn is no longer a wait, and the key
+    // goes away rather than resting at false, matching the server's shell.
+    const woken = applyShellStreamEvent(
+      snapshot({
+        threads: [
+          threadShell({
+            backgroundLiveness: "monitoring",
+            session: { status: "running" } as OrchestrationThreadShell["session"],
+          }),
+        ],
+      }),
+      { kind: "card-upserted", sequence: 2, card: { ...linked, waitingOnBackground: true } },
+    );
+    expect(woken.cards?.[0]).not.toHaveProperty("waitingOnBackground");
+  });
+
   it("leaves thread-derived fields at rest for a card with no live link", () => {
     const next = applyShellStreamEvent(
       snapshot({ threads: [threadShell({ hasPendingUserInput: true })] }),

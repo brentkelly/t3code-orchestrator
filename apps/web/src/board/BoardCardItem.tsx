@@ -524,6 +524,20 @@ export function BoardCardContent({
             />
           </BoardHint>
         )}
+        {card.waitingOnBackground === true && notice === null ? (
+          // T3o (T3O-20): the agent ended its turn to wait on a background
+          // command, a monitor or subagents. Beside the dot, which stays lit
+          // because something really is running. Muted, never violet: no human
+          // is needed, and the board checks in on the wait by itself.
+          <BoardHint label="Waiting for background task">
+            <span
+              aria-label="Waiting for background task"
+              className="inline-flex h-4 shrink-0 items-center rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+            >
+              Waiting
+            </span>
+          </BoardHint>
+        ) : null}
         {notice === null ? null : (
           // ONE notice, whatever the source: the card face has room for a single
           // status word, and rendering two was what let "Stalled" and "Input
