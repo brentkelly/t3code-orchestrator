@@ -4,6 +4,8 @@ T3o is a fork of T3 Code and is published nowhere. There is no `npx`, no install
 registry — you clone this repository, build it, and point a service at the build. This page is the long
 form of the fork section in [`README.md`](../../README.md).
 
+Copy-paste from a Linux terminal: [linux-setup.md](./linux-setup.md).
+
 Upstream's own background-service instructions ([docs/user/background-service.md](../user/background-service.md))
 do not apply. `t3 service install` runs `npm install t3@<version>` from the public registry
 (`apps/server/src/cloud/pinnedRuntime.ts`), so it would serve **upstream's** server against this fork's
