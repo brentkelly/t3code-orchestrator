@@ -39,6 +39,7 @@ import {
   type BoardCardPullRequestActionInput,
   // T3o: the refresh's own payload (T3O-48).
   type BoardRefreshCardPullRequestInput,
+  type BoardLinkCardPullRequestInput,
   type BoardProviderLimitActionInput,
   type BoardProviderLimitResumeAtInput,
   type BoardSubscribeCardInput,
@@ -56,6 +57,7 @@ import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
+import { parseCardPullRequestText } from "./cardPullRequestTarget.ts";
 import {
   BoardAttachmentClaimError,
   claimBoardCardAttachment,
@@ -170,6 +172,27 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
           ),
         ),
       ),
+
+    /**
+     * "No PR linked · Link one" on the card detail (T3O-18). The input is sent
+     * as typed; the server owns the parsing, so the card and the agent tools
+     * accept exactly the same names for a pull request.
+     */
+    [BOARD_WS_METHODS.linkCardPullRequest]: (input: BoardLinkCardPullRequestInput) => {
+      const target = parseCardPullRequestText(input.target);
+      return observeRpcEffect(
+        BOARD_WS_METHODS.linkCardPullRequest,
+        authorized(
+          BOARD_WS_METHODS.linkCardPullRequest,
+          target === null
+            ? Effect.succeed({
+                outcome: "refused",
+                detail: `'${input.target}' names no pull request. Enter its URL or #number.`,
+              } as const)
+            : deps.boardSupervisor.linkPullRequest(input.cardId, target),
+        ),
+      );
+    },
 
     /**
      * Merge the card's pull request and advance it — the blue Merge button.

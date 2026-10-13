@@ -32,6 +32,7 @@ import {
   CircleSlashIcon,
   FileTextIcon,
   CloudOffIcon,
+  GitBranchIcon,
   GitMergeIcon,
   GitPullRequestIcon,
   HardDriveIcon,
@@ -125,6 +126,8 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <GitMergeIcon className={className} />;
     case "card-branch-deleted":
       return <ScissorsIcon className={className} />;
+    case "card-branch-kept":
+      return <GitBranchIcon className={className} />;
     case "card-merge-refused":
       return <TriangleAlertIcon className={cn(className, "text-destructive-foreground")} />;
     case "card-branch-push-skipped":
@@ -321,6 +324,8 @@ function activitySentence(
       );
     case "card-branch-deleted":
       return payload.detail === undefined ? <>deleted the branch</> : <>{payload.detail}</>;
+    case "card-branch-kept":
+      return payload.detail === undefined ? <>kept the branch</> : <>{payload.detail}</>;
     case "card-merge-refused":
       return payload.detail === undefined ? (
         <>could not merge the pull request</>

@@ -140,6 +140,7 @@ import type { BoardAttachmentLimits, BoardPendingUpload } from "./boardAttachmen
 import { BoardDeleteConfirmDialog } from "./BoardDeleteConfirmDialog";
 import { BoardLabelChips } from "./BoardLabelChips";
 import { BoardLabelField } from "./BoardLabelField";
+import { BoardLinkPullRequest } from "./BoardLinkPullRequest";
 import {
   BoardDependencySection,
   BoardSectionHeading as SectionHeading,
@@ -489,6 +490,9 @@ export interface BoardCardDetailViewProps {
   /** Whether that re-check is in flight, so the button can spin and refuse a
       second click across the round trip. */
   readonly checkingForPullRequest?: boolean | undefined;
+  /** T3o (T3O-18): "Link one" on a card with no pull request. Resolves to the
+      refusal to show inline, or null once linked. Absent hides the control. */
+  readonly onLinkPullRequest?: ((target: string) => Promise<string | null>) | undefined;
   /** T3O-52 (D5): the card is finished and still holds its worktree, or null.
       Resolved by the container, which holds the settings. */
   readonly worktreeKept?: {
@@ -1550,6 +1554,19 @@ function ActionsSection({
           onCheck: card.worktree === null ? undefined : props.onCheckForPullRequest,
         }
       : null;
+  // T3o (T3O-18): a card from Code review onward with no pull request to show
+  // can be given one by hand — the PR an agent opened elsewhere, or a review
+  // card made for a PR. Keyed on the stage ROLE so a renamed or added column
+  // behaves the same. Gated on the LIVE slot, not `displayed`: a card on its
+  // next round still shows last round's retired pull request, and can still
+  // be given this round's.
+  const linkPullRequest =
+    !archived &&
+    pullRequest === null &&
+    props.onLinkPullRequest !== undefined &&
+    (stageRole === "review" || stageRole === "merge" || stageRole === "done")
+      ? props.onLinkPullRequest
+      : null;
   // The per-card human-in-the-loop toggle shows only on the Build role (D6);
   // `props.humanInLoop` is non-null exactly then.
   const humanInLoop = archived ? null : props.humanInLoop;
@@ -1568,7 +1585,8 @@ function ActionsSection({
     stopRound === null &&
     // T3o (T3O-48): a card with nothing but the missing-PR notice still needs
     // the section, or the one thing it has to say has nowhere to render.
-    missingPullRequest === null
+    missingPullRequest === null &&
+    linkPullRequest === null
   ) {
     return null;
   }
@@ -1802,6 +1820,7 @@ function ActionsSection({
           </button>
         </BoardHint>
       ) : null}
+      {linkPullRequest === null ? null : <BoardLinkPullRequest onLink={linkPullRequest} />}
       {blocked ? (
         <div className="flex gap-[7px] rounded-lg border border-warning/35 bg-warning/8 px-2.5 py-2.5 text-[11.5px]/[1.45] text-warning-foreground">
           <LockIcon className="mt-px size-3.5 shrink-0" />

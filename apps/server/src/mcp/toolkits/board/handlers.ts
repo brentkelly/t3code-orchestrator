@@ -34,6 +34,8 @@ import {
   type BoardCardUnarchiveCommand,
   type BoardCardUpdateCommand,
   type BoardCard,
+  type BoardCardPullRequest,
+  type BoardCardPullRequestTarget,
   type BoardLabelId,
   type BoardPlansProposeCommand,
   type BoardPlanWriteCommand,
@@ -68,6 +70,7 @@ import { boardCardAttachmentManifest } from "../../../board/attachments.ts";
 import { boardAgentActor, stampBoardActivityActor } from "../../../board/activityActors.ts";
 import { boardBriefVersion } from "../../../board/briefEdits.ts";
 import { isKeptStepThread, keptPlanningStepId } from "../../../board/planningThreadKeep.ts";
+import { SupervisorReactor } from "../../../board/supervisorReactor.ts";
 import { BoardToolError, BoardToolkit } from "./tools.ts";
 
 const nonEmpty = (value: string | undefined, fallback: string): string =>
@@ -210,6 +213,42 @@ const mintUuid: Effect.Effect<string, never, Crypto.Crypto> = Crypto.Crypto.pipe
   Effect.flatMap((crypto) => crypto.randomUUIDv4),
   Effect.orDie,
 );
+
+/** Check a pull request can be linked to a card in `projectId` (T3O-18) —
+    on the project's repository and known to the forge — or reject the call
+    with the reason. Records nothing, so a create can check before it writes. */
+const resolveLinkablePullRequest = (projectId: ProjectId, target: BoardCardPullRequestTarget) =>
+  Effect.gen(function* () {
+    const supervisor = yield* SupervisorReactor;
+    const resolution = yield* supervisor.resolvePullRequestLink(projectId, target);
+    if (resolution.outcome === "refused") {
+      return yield* new BoardToolError({ code: "invalid-input", message: resolution.detail });
+    }
+    return resolution.pullRequest;
+  });
+
+/** Link `resolved` to the card, or clear its explicit link when null. */
+const linkCardPullRequest = (
+  card: Pick<BoardCard, "id" | "key">,
+  resolved: BoardCardPullRequest | null,
+) =>
+  Effect.gen(function* () {
+    const supervisor = yield* SupervisorReactor;
+    const result = yield* supervisor.linkPullRequest(
+      card.id,
+      resolved === null ? null : { number: resolved.number },
+      resolved === null ? undefined : { resolved },
+    );
+    if (result.outcome === "refused") {
+      return yield* new BoardToolError({ code: "rejected", message: result.detail });
+    }
+    if (result.outcome === "unknown-card") {
+      return yield* new BoardToolError({
+        code: "card-not-found",
+        message: `Card '${card.key}' no longer exists.`,
+      });
+    }
+  });
 
 /** The card the calling thread owns, or an actionable rejection telling the
     agent how to be adopted (D3: unlinked callers get more than a bare error). */
@@ -816,6 +855,21 @@ export const boardHandlers = {
         briefVersion: boardBriefVersion(brief),
         dependencies: describeDependencies(board, card),
         plans: detail?.plans ?? [],
+        pullRequest:
+          card.pullRequest === null
+            ? null
+            : {
+                number: card.pullRequest.number,
+                url: card.pullRequest.url,
+                state: card.pullRequest.state,
+                title: card.pullRequest.title,
+                isDraft: card.pullRequest.isDraft === true,
+                linked: card.pullRequest.linked === true,
+              },
+        pullRequestHistory: card.pullRequestHistory.map((entry) => ({
+          number: entry.number,
+          state: entry.state,
+        })),
       };
     }),
 
@@ -892,6 +946,13 @@ export const boardHandlers = {
           });
         }
       }
+      // Checked before the card exists (T3O-18), so a pull request that is
+      // missing or on another repository rejects the call with no card left
+      // behind to clean up.
+      const pullRequest =
+        input.pullRequest === undefined
+          ? null
+          : yield* resolveLinkablePullRequest(projectId, input.pullRequest);
       const cardId = BoardCardId.make(yield* mintUuid);
       // ONE atomic command: the create command carries `brief` and `dependsOn`
       // natively (t3o-06), so the card lands whole — no follow-up update whose
@@ -918,7 +979,21 @@ export const boardHandlers = {
       // Read back the allocated key.
       const after = yield* readBoardState(deps);
       const created = after.cards.find((card) => card.id === cardId);
-      return { cardId, key: created?.key ?? cardId };
+      const key = created?.key ?? cardId;
+      if (pullRequest !== null) {
+        // The card exists now, so a failure here must say so: a retried
+        // create would make a second card.
+        yield* linkCardPullRequest({ id: cardId, key }, pullRequest).pipe(
+          Effect.mapError(
+            (error) =>
+              new BoardToolError({
+                code: error.code,
+                message: `Card ${key} was created, but linking pull request #${pullRequest.number} failed: ${error.message} Retry the link with board_update_card on ${key}; do not create the card again.`,
+              }),
+          ),
+        );
+      }
+      return { cardId, key };
     }),
 
   board_move_card: (input) =>
@@ -990,23 +1065,62 @@ export const boardHandlers = {
               board.cards.find((card) => card.id === id)?.key.toLowerCase() === value.toLowerCase(),
           ) ?? BoardCardId.make(value),
       );
-      const command: BoardCardUpdateCommand = {
-        type: "board.card.update",
-        commandId: yield* mintCommandId,
-        cardId,
-        title: input.title,
-        brief: input.brief,
-        briefAppend: input.briefAppend,
-        briefSection: input.briefSection,
-        expectedBriefVersion: input.expectedBriefVersion,
-        labels,
-        dependsOn: input.dependsOn,
-        addDependsOn,
-        removeDependsOn,
-        externalRef: input.externalRef,
-        createdAt: yield* nowIso,
-      };
-      yield* dispatch(deps, command);
+      // Checked before anything is written (T3O-18), so a bad pull request
+      // rejects the whole update rather than half of it.
+      const pullRequest =
+        input.pullRequest === undefined || input.pullRequest === null
+          ? input.pullRequest
+          : yield* resolveLinkablePullRequest(target.projectId, input.pullRequest);
+      // A call that only links a pull request has no card fields to update,
+      // and the decider refuses an update that changes nothing.
+      const updatesFields = [
+        input.title,
+        input.brief,
+        input.briefAppend,
+        input.briefSection,
+        input.labels,
+        input.dependsOn,
+        input.addDependsOn,
+        input.removeDependsOn,
+        input.externalRef,
+      ].some((value) => value !== undefined);
+      if (updatesFields || input.pullRequest === undefined) {
+        const command: BoardCardUpdateCommand = {
+          type: "board.card.update",
+          commandId: yield* mintCommandId,
+          cardId,
+          title: input.title,
+          brief: input.brief,
+          briefAppend: input.briefAppend,
+          briefSection: input.briefSection,
+          expectedBriefVersion: input.expectedBriefVersion,
+          labels,
+          dependsOn: input.dependsOn,
+          addDependsOn,
+          removeDependsOn,
+          externalRef: input.externalRef,
+          createdAt: yield* nowIso,
+        };
+        yield* dispatch(deps, command);
+      }
+      if (pullRequest !== undefined) {
+        // When the field changes have already landed, a failure here must say
+        // so: a retried whole call would apply them twice (briefAppend).
+        yield* linkCardPullRequest(target, pullRequest).pipe(
+          Effect.mapError((error) =>
+            updatesFields
+              ? new BoardToolError({
+                  code: error.code,
+                  message: `The other changes to card ${target.key} were saved, but ${
+                    pullRequest === null
+                      ? "clearing its pull request"
+                      : `linking pull request #${pullRequest.number}`
+                  } failed: ${error.message} Retry with pullRequest alone; do not repeat the other changes.`,
+                })
+              : error,
+          ),
+        );
+      }
       return { cardId };
     }),
 

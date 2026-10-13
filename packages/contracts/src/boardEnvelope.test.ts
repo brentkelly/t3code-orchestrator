@@ -186,6 +186,33 @@ describe("boardStepPreamble", () => {
   });
 });
 
+describe("boardStepPreamble linked pull request (T3O-18)", () => {
+  const card = { key: "T3-9", title: "A card", stage: "review" };
+  const pullRequest = { number: 42, headBranch: "stack/layer-2" };
+
+  it("names a linked pull request and its head branch, and forbids opening another", () => {
+    const preamble = boardStepPreamble({
+      card: { ...card, pullRequest: { ...pullRequest, linked: true } },
+      stageLabel: "Code review",
+      step: { stepLabel: "Review · round 1" },
+    });
+    expect(preamble).toContain("linked to pull request #42");
+    expect(preamble).toContain("`stack/layer-2`");
+    expect(preamble).toContain("never open a new pull request for this card");
+  });
+
+  it("says nothing for a pull request found on the card's own branch", () => {
+    for (const pr of [pullRequest, null]) {
+      const preamble = boardStepPreamble({
+        card: { ...card, pullRequest: pr },
+        stageLabel: "Code review",
+        step: { stepLabel: "Review · round 1" },
+      });
+      expect(preamble).not.toContain("pull request");
+    }
+  });
+});
+
 describe("step vocabulary is conditional (t3o-19)", () => {
   // AC 1: the whole point. `board_complete_step` is the tool's NAME, so it is
   // the one permitted occurrence.

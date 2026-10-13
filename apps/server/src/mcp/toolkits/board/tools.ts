@@ -23,6 +23,8 @@ import {
   BoardCardExternalRef,
   BoardCardAttachmentId,
   BoardCardId,
+  BoardCardPullRequestState,
+  BoardCardPullRequestTarget,
   BoardBriefSectionEdit,
   BoardPlan,
   BoardPlanWithBody,
@@ -31,6 +33,7 @@ import {
   BoardStepCompletion,
   BoardStepOutcome,
   BoardStepStatus,
+  PositiveInt,
   ProjectId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -44,6 +47,7 @@ import { OrchestrationEngineService } from "../../../orchestration/Services/Orch
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ServerConfig from "../../../config.ts";
+import { SupervisorReactor } from "../../../board/supervisorReactor.ts";
 
 /**
  * The single failure a board tool returns. `message` is the agent-facing,
@@ -79,6 +83,9 @@ const dependencies = [
   // state directory.
   ServerConfig.ServerConfig,
   Path.Path,
+  // Linking a pull request to a card (T3O-18) asks the forge through the
+  // supervisor, which owns the card's pull-request refresh and settle.
+  SupervisorReactor,
 ];
 
 // ── Read shapes ────────────────────────────────────────────────────────
@@ -153,6 +160,18 @@ const BoardCardContext = Schema.Struct({
   threads: Schema.Array(BoardCardThreadShell),
 });
 
+/** A card's pull request as an agent checks it (T3O-18). `linked` is true
+    when it was linked explicitly (board_create_card / board_update_card or
+    the card's "Link one") rather than found on the card's branch. */
+const BoardCardReadPullRequest = Schema.Struct({
+  number: PositiveInt,
+  url: TrimmedNonEmptyString,
+  state: BoardCardPullRequestState,
+  title: Schema.NullOr(TrimmedNonEmptyString),
+  isDraft: Schema.Boolean,
+  linked: Schema.Boolean,
+});
+
 /** Another card, read-only (T3O-53): what an agent planning or building one
     card needs to know about a neighbour before editing it. Deliberately
     without the orientation that only makes sense for the caller's own card —
@@ -183,6 +202,12 @@ const BoardCardReadResult = Schema.Struct({
   dependencies: Schema.Array(BoardCardContextDependency),
   /** The card's proposed plans, each with its full markdown body. */
   plans: Schema.Array(BoardPlanWithBody),
+  /** The pull request the card tracks now, or null (T3O-18). */
+  pullRequest: Schema.NullOr(BoardCardReadPullRequest),
+  /** Pull requests of rounds the card has finished, oldest first. */
+  pullRequestHistory: Schema.Array(
+    Schema.Struct({ number: PositiveInt, state: BoardCardPullRequestState }),
+  ),
 });
 
 const BoardCardListItem = Schema.Struct({
@@ -298,7 +323,7 @@ export const BoardListCardsTool = Tool.make("board_list_cards", {
 
 export const BoardGetCardTool = Tool.make("board_get_card", {
   description:
-    "Read any card on the board by key (e.g. 'Z5-39') or id: its title, stage, labels, blocked and archived state, parent card, base branch, brief, dependencies (with keys, titles and whether each is met) and its plans with their full bodies. Read-only. Use it before editing another card, so you change what is there rather than writing blind. It returns briefVersion: pass that back as board_update_card's expectedBriefVersion to have your edit rejected if someone changed the brief after you read it. For your own card's assigned work, history and thread to-do lists use board_get_card_context instead.",
+    "Read any card on the board by key (e.g. 'Z5-39') or id: its title, stage, labels, blocked and archived state, parent card, base branch, brief, dependencies (with keys, titles and whether each is met), its plans with their full bodies, and its pull request (with linked: true when it was linked explicitly) plus the pull requests of earlier rounds. Read-only. Check pullRequest here before finishing work that linked one. Use it before editing another card, so you change what is there rather than writing blind. It returns briefVersion: pass that back as board_update_card's expectedBriefVersion to have your edit rejected if someone changed the brief after you read it. For your own card's assigned work, history and thread to-do lists use board_get_card_context instead.",
   parameters: Schema.Struct({
     /** A card key such as `Z5-39` (case-insensitive) or a card id. */
     card: TrimmedNonEmptyString,
@@ -325,7 +350,7 @@ export const BoardListProjectsTool = Tool.make("board_list_projects", {
 
 export const BoardCreateCardTool = Tool.make("board_create_card", {
   description:
-    "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. Omit projectId to create the card in this thread's own project (the common case); pass one only to target a different project. A projectId is matched first as a project id, then leniently against a project's title or workspace-root folder name, so a name from the app usually resolves — but the id from board_list_projects is unambiguous. An unresolvable projectId is rejected with the live project list. A card may be created into ANY existing stage (omit stage for Backlog). CAUTION: creating into an auto-executing stage (e.g. Building) starts an unattended agent run immediately, with a worktree and a concurrency slot — default to the early stages unless a human asked for mid-pipeline work; the build-onward dependency gate still applies. NOT idempotent: a retried call creates a second card, so on a timeout list cards before retrying. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created. dependsOn lists card ids this card waits on. A dependency must sit at the card's own level: a top-level card depends on top-level cards, and a sub-board child only on its siblings. To wait on another card's child, depend on that child's parent instead, because the child merges into its parent's branch, not the base.",
+    "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. Omit projectId to create the card in this thread's own project (the common case); pass one only to target a different project. A projectId is matched first as a project id, then leniently against a project's title or workspace-root folder name, so a name from the app usually resolves — but the id from board_list_projects is unambiguous. An unresolvable projectId is rejected with the live project list. A card may be created into ANY existing stage (omit stage for Backlog). CAUTION: creating into an auto-executing stage (e.g. Building) starts an unattended agent run immediately, with a worktree and a concurrency slot — default to the early stages unless a human asked for mid-pipeline work; the build-onward dependency gate still applies. When you make a card for an existing pull request, pass pullRequest so the card tracks it (status, merge, settling) from the start — a url, or repository and number; it must be on the card's project repository, and a pull request the forge cannot find rejects the call before any card is made. NOT idempotent: a retried call creates a second card, so on a timeout list cards before retrying. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created. dependsOn lists card ids this card waits on. A dependency must sit at the card's own level: a top-level card depends on top-level cards, and a sub-board child only on its siblings. To wait on another card's child, depend on that child's parent instead, because the child merges into its parent's branch, not the base.",
   parameters: Schema.Struct({
     projectId: Schema.optional(ProjectId),
     title: TrimmedNonEmptyString,
@@ -334,6 +359,8 @@ export const BoardCreateCardTool = Tool.make("board_create_card", {
     labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
     stage: Schema.optional(BoardStageId),
     dependsOn: Schema.optional(Schema.Array(BoardCardId)),
+    /** A pull request on the project's repository for the card to track. */
+    pullRequest: Schema.optional(BoardCardPullRequestTarget),
   }),
   success: Schema.Struct({ cardId: BoardCardId, key: TrimmedNonEmptyString }),
   failure: BoardToolError,
@@ -355,7 +382,7 @@ export const BoardMoveCardTool = Tool.make("board_move_card", {
 
 export const BoardUpdateCardTool = Tool.make("board_update_card", {
   description:
-    "Update a card's title, brief, labels, dependencies, or external reference. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (named against the catalogue, unknown names rejected); dependsOn (the whole dependency set); externalRef (null clears). ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, and not dependsOn together with addDependsOn/removeDependsOn. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. A dependency must sit at the card's own level: a top-level card depends on top-level cards, and a sub-board child only on its siblings. To wait on another card's child, depend on that child's parent instead, because the child merges into its parent's branch, not the base.",
+    "Update a card's title, brief, labels, dependencies, external reference, or linked pull request. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (named against the catalogue, unknown names rejected); dependsOn (the whole dependency set); externalRef (null clears); pullRequest links a pull request to the card so it tracks its status, merge and settling just as if the card's own branch had opened it — a url, or repository and number, on the card's project repository, checked with the forge first. Use it to link a pull request to ANY card, not only your own, instead of setting externalRef. Linking the pull request the card already has changes nothing; pullRequest null removes an explicit link only, and a pull request found on the card's own branch reappears on the next refresh. ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, and not dependsOn together with addDependsOn/removeDependsOn. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. A dependency must sit at the card's own level: a top-level card depends on top-level cards, and a sub-board child only on its siblings. To wait on another card's child, depend on that child's parent instead, because the child merges into its parent's branch, not the base.",
   parameters: Schema.Struct({
     /** Card key or id. */
     cardId: TrimmedNonEmptyString,
@@ -371,6 +398,7 @@ export const BoardUpdateCardTool = Tool.make("board_update_card", {
     /** Card keys or ids. */
     removeDependsOn: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
     externalRef: Schema.optional(Schema.NullOr(BoardCardExternalRef)),
+    pullRequest: Schema.optional(Schema.NullOr(BoardCardPullRequestTarget)),
   }),
   success: Schema.Struct({ cardId: BoardCardId }),
   failure: BoardToolError,
