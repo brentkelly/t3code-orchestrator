@@ -336,7 +336,9 @@ describe("boardReleasedThreadIds", () => {
       assert.deepStrictEqual(released(state), []);
     });
 
-    it("is released once the thread reports its step, even as failed", () => {
+    // A failed or blocked report still needs the human, and a re-entry resumes
+    // the thread: settling it would hide the conversation the card returns to.
+    it("stays in the inbox after the thread reports its step failed", () => {
       const state = kept({
         stepCompletions: [
           {
@@ -350,7 +352,7 @@ describe("boardReleasedThreadIds", () => {
           },
         ],
       } as unknown as Partial<BoardState>);
-      assert.deepStrictEqual(released(state), ["thread-plan"]);
+      assert.deepStrictEqual(released(state), []);
     });
 
     // An agent often writes the plan, then asks the human to confirm it before

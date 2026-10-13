@@ -49,9 +49,8 @@ export function keepsPlanningThreadOnExit(
  * stage as usual.
  *
  * This is the card's most recent live link for the stage, unless the interview
- * already finished: that thread completed the step successfully. A finished
- * interview is not resumed: re-entry keeps its existing rule and leaves that
- * thread alone on the card.
+ * already finished (`interviewFinished`). A finished interview is not resumed:
+ * re-entry keeps its existing rule and leaves that thread alone on the card.
  */
 export function keptPlanningThreadId(
   board: BoardState,
@@ -62,13 +61,32 @@ export function keptPlanningThreadId(
     (candidate) => candidate.role === card.stage && candidate.tombstonedAt === null,
   );
   if (link === undefined) return null;
-  const finished = boardCardStepCompletions(board, card.id).some(
+  return interviewFinished(board, card, card.stage, link.threadId) ? null : link.threadId;
+}
+
+/**
+ * Whether the kept thread finished its planning interview: it reported the step
+ * succeeded. The resume and release rules share this, so a thread is either
+ * resumed and kept in the inbox, or left alone and settled — never one of each.
+ *
+ * Only success finishes it. A thread that reported failed or blocked still
+ * needs the human, so it stays in the inbox and a re-entry resumes it there.
+ * A written plan does not finish it either: planning ends with
+ * `board_complete_step`, and an agent often writes the plan, then asks the
+ * human to confirm it before reporting.
+ */
+function interviewFinished(
+  board: BoardState,
+  card: Pick<BoardCard, "id">,
+  stepId: string,
+  threadId: ThreadId,
+): boolean {
+  return boardCardStepCompletions(board, card.id).some(
     (completion) =>
-      completion.stepId === card.stage &&
+      completion.stepId === stepId &&
       completion.outcome === "succeeded" &&
-      completion.threadId === link.threadId,
+      completion.threadId === threadId,
   );
-  return finished ? null : link.threadId;
 }
 
 /**
@@ -78,12 +96,8 @@ export function keptPlanningThreadId(
  * The release sweep leaves such a thread in the inbox. The card has moved on,
  * but the conversation has not: the agent may still ask something in prose, or
  * wait on an answer, and settling it would hide that from everywhere but the
- * card's own thread tab. A thread that reported its step at all, even as
- * failed, has nothing more to say and is released.
- *
- * A written plan does not finish the interview: planning ends with
- * `board_complete_step`, and an agent often writes the plan, then asks the
- * human to confirm it before reporting.
+ * card's own thread tab. Once it finishes (`interviewFinished`) it has nothing
+ * more to say and is released.
  */
 export function isUnfinishedKeptInterview(
   board: BoardState,
@@ -91,12 +105,7 @@ export function isUnfinishedKeptInterview(
   threadId: ThreadId,
 ): boolean {
   const stepId = keptPlanningStepId(board, card, threadId);
-  return (
-    stepId !== null &&
-    !boardCardStepCompletions(board, card.id).some(
-      (completion) => completion.stepId === stepId && completion.threadId === threadId,
-    )
-  );
+  return stepId !== null && !interviewFinished(board, card, stepId, threadId);
 }
 
 /**

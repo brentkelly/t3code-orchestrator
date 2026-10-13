@@ -23,6 +23,7 @@ import * as Ref from "effect/Ref";
 import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
 import {
   isKeptStepThread,
+  isUnfinishedKeptInterview,
   keepsPlanningThreadOnExit,
   keptPlanningThreadId,
 } from "./planningThreadKeep.ts";
@@ -442,6 +443,32 @@ describe("the planning-thread rules", () => {
       plans: [{ cardId, ordinal: 0 }],
     } as unknown as Partial<BoardState>);
     assert.strictEqual(keptPlanningThreadId(planned, card), thread);
+  });
+
+  // The resume and release rules must agree: a thread is either resumed and
+  // kept in the inbox, or left alone and settled.
+  it("treats a failed report as unfinished in both the resume and release rules", () => {
+    const card = linked(PLANNING);
+    const reported = (outcome: "succeeded" | "failed" | "blocked") =>
+      board([card], {
+        stepCompletions: [
+          {
+            cardId,
+            stepId: PLANNING,
+            outcome,
+            summary: outcome,
+            payload: null,
+            threadId: thread,
+            completedAt: NOW,
+          },
+        ],
+      } as Partial<BoardState>);
+    for (const outcome of ["failed", "blocked"] as const) {
+      assert.strictEqual(keptPlanningThreadId(reported(outcome), card), thread);
+      assert.isTrue(isUnfinishedKeptInterview(reported(outcome), linked(READY), thread));
+    }
+    assert.isNull(keptPlanningThreadId(reported("succeeded"), card));
+    assert.isFalse(isUnfinishedKeptInterview(reported("succeeded"), linked(READY), thread));
   });
 
   it("lets only the still-linked planning thread of a card that left record it", () => {
