@@ -53,7 +53,7 @@ export function BoardPlanningExitConfirmDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <Button
-            variant="destructive-outline"
+            variant="outline"
             onClick={() => {
               onOpenChange(false);
               onConfirm();

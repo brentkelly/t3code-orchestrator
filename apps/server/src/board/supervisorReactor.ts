@@ -7486,7 +7486,7 @@ const make = Effect.gen(function* () {
         // thread: linked, and its turn left to run, so a plan it is still
         // writing lands. Back in Planning, `beginStageRun` resumes the step on
         // this same thread instead of starting the interview from scratch.
-        // Settled out of the inbox by the release sweep, like any finished run.
+        // The release sweep leaves it in the inbox until the interview finishes.
       } else if (existing.threadId !== null) {
         yield* dispatch({
           type: "board.card.unlink-thread",

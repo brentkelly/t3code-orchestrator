@@ -62,14 +62,45 @@ export function keptPlanningThreadId(
     (candidate) => candidate.role === card.stage && candidate.tombstonedAt === null,
   );
   if (link === undefined) return null;
-  if (boardCardPlans(board, card.id).length > 0) return null;
-  const finished = boardCardStepCompletions(board, card.id).some(
+  return interviewFinished(board, card, card.stage, link.threadId) ? null : link.threadId;
+}
+
+/** A planning interview is finished once its thread completed the step
+    successfully or the card has a plan (written after the move, perhaps). */
+const interviewFinished = (
+  board: BoardState,
+  card: Pick<BoardCard, "id">,
+  stepId: string,
+  threadId: ThreadId,
+): boolean =>
+  boardCardPlans(board, card.id).length > 0 ||
+  boardCardStepCompletions(board, card.id).some(
     (completion) =>
-      completion.stepId === card.stage &&
+      completion.stepId === stepId &&
       completion.outcome === "succeeded" &&
-      completion.threadId === link.threadId,
+      completion.threadId === threadId,
   );
-  return finished ? null : link.threadId;
+
+/**
+ * Whether `threadId` is a planning interview the card kept when it left, and
+ * that has not finished yet.
+ *
+ * The release sweep leaves such a thread in the inbox. The card has moved on,
+ * but the conversation has not: the agent may still ask something in prose, or
+ * wait on an answer, and settling it would hide that from everywhere but the
+ * card's own thread tab.
+ */
+export function isUnfinishedKeptInterview(
+  board: BoardState,
+  card: Pick<BoardCard, "id" | "threadLinks">,
+  state: Pick<BoardCardStepState, "stepId" | "status" | "threadId"> | null,
+  threadId: ThreadId,
+): boolean {
+  return (
+    state !== null &&
+    isKeptStepThread(board, card, state, state.stepId, threadId) &&
+    !interviewFinished(board, card, state.stepId, threadId)
+  );
 }
 
 /**

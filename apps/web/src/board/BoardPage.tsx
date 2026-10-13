@@ -827,10 +827,13 @@ function EnvironmentBoard({
   );
 
   // T3o (T3O-19): a drag out of Planning with no plan written waits for the
-  // human to confirm it, exactly as the detail pane's move does.
+  // human to confirm it, exactly as the detail pane's move does. The drop is
+  // held as the card it landed before, not as a column order: the column can
+  // change while the dialog is open, so the order is rebuilt on confirm.
   const [unplannedDrop, setUnplannedDrop] = useState<{
     readonly targetStage: BoardStageId;
-    readonly orderedIds: ReadonlyArray<string>;
+    /** The card the drop landed before; null appends to the column. */
+    readonly beforeId: string | null;
     readonly source: FoundCard;
   } | null>(null);
   const dispatchDrop = useCallback(
@@ -843,7 +846,8 @@ function EnvironmentBoard({
           planCount: source.card.planCount ?? 0,
         })
       ) {
-        setUnplannedDrop({ targetStage, orderedIds, source });
+        const ownIndex = orderedIds.indexOf(source.card.cardId as string);
+        setUnplannedDrop({ targetStage, beforeId: orderedIds[ownIndex + 1] ?? null, source });
         return;
       }
       performDrop(targetStage, orderedIds, source);
@@ -1489,7 +1493,16 @@ function EnvironmentBoard({
         }
         onConfirm={() => {
           if (unplannedDrop === null) return;
-          performDrop(unplannedDrop.targetStage, unplannedDrop.orderedIds, unplannedDrop.source);
+          const cardId = unplannedDrop.source.card.cardId as string;
+          const source = findBoardCard(columns, cardId);
+          if (source === null) return;
+          const list = (columns[unplannedDrop.targetStage] ?? EMPTY_CARDS)
+            .map((card) => card.cardId as string)
+            .filter((id) => id !== cardId);
+          const anchor =
+            unplannedDrop.beforeId === null ? -1 : list.indexOf(unplannedDrop.beforeId);
+          list.splice(anchor < 0 ? list.length : anchor, 0, cardId);
+          performDrop(unplannedDrop.targetStage, list, source);
         }}
       />
       <BoardCardCreateDialog

@@ -33,8 +33,9 @@ card is not in that stage any more — and if you send it forward again, whichev
 comes back with it.
 
 Moving a card on from Planning before its plan is written asks you to confirm first. If you go
-ahead, the card keeps its planning thread and any agent reply still in progress finishes. Move the
-card back to Planning and the interview picks up in that same thread rather than starting again.
+ahead, the card keeps its planning thread and any agent reply still in progress finishes. That
+thread stays in your inbox until the plan is written. Move the card back to Planning and the
+interview picks up in that same thread rather than starting again.
 
 ## Timing
 

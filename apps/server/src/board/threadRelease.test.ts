@@ -273,4 +273,50 @@ describe("boardReleasedThreadIds", () => {
     });
     assert.deepStrictEqual(released(state, new Set(["thread-build"])), ["thread-build"]);
   });
+
+  // T3O-19: a card that left Planning before the plan was written keeps its
+  // interview, which may still ask something after the move. It stays in the
+  // inbox until it finishes: a plan is written or the thread completes.
+  describe("a planning interview the card left unfinished", () => {
+    const planning = String(BOARD_SEED_STAGE_IDS.planning);
+    const kept = (extra: Partial<BoardState> = {}): BoardState =>
+      ({
+        ...board({
+          card: card({
+            stage: String(BOARD_SEED_STAGE_IDS.ready),
+            links: [link("thread-plan", planning)],
+          }),
+          step: stepState({ stepId: planning, threadId: "thread-plan", status: "abandoned" }),
+        }),
+        ...extra,
+      }) as BoardState;
+
+    it("stays in the inbox while unfinished", () => {
+      assert.deepStrictEqual(released(kept()), []);
+    });
+
+    it("is released once a plan is written", () => {
+      const state = kept({
+        plans: [{ cardId: BoardCardId.make("card-1"), ordinal: 0 }],
+      } as unknown as Partial<BoardState>);
+      assert.deepStrictEqual(released(state), ["thread-plan"]);
+    });
+
+    it("is released once the thread completes its step", () => {
+      const state = kept({
+        stepCompletions: [
+          {
+            cardId: BoardCardId.make("card-1"),
+            stepId: planning,
+            outcome: "succeeded",
+            summary: "planned",
+            payload: null,
+            threadId: ThreadId.make("thread-plan"),
+            completedAt: NOW,
+          },
+        ],
+      } as unknown as Partial<BoardState>);
+      assert.deepStrictEqual(released(state), ["thread-plan"]);
+    });
+  });
 });
