@@ -468,14 +468,14 @@ describe("board card shell derivation", () => {
         hasPendingApprovals: false,
         session: { status: "running" },
       }),
-    ).toEqual({ threadState: "waiting", awaitingInput: true });
+    ).toEqual({ threadState: "waiting", awaitingInput: true, waitingOnBackground: false });
     expect(
       deriveBoardCardThreadState({
         hasPendingUserInput: false,
         hasPendingApprovals: true,
         session: { status: "running" },
       }),
-    ).toEqual({ threadState: "waiting", awaitingInput: false });
+    ).toEqual({ threadState: "waiting", awaitingInput: false, waitingOnBackground: false });
     // A session that died mid-prompt keeps its approval row, but nobody can
     // approve into it: the card reads failed, not Needs permission (T3O-16).
     expect(
@@ -484,7 +484,7 @@ describe("board card shell derivation", () => {
         hasPendingApprovals: true,
         session: { status: "error" },
       }),
-    ).toEqual({ threadState: "failed", awaitingInput: false });
+    ).toEqual({ threadState: "failed", awaitingInput: false, waitingOnBackground: false });
     expect(
       deriveBoardCardThreadState({
         hasPendingUserInput: false,
@@ -966,6 +966,7 @@ describe("deriveBoardCardThreadState aggregates across live threads (t3o-18, D7)
     expect(deriveBoardCardThreadState(failed)).toEqual({
       threadState: "failed",
       awaitingInput: false,
+      waitingOnBackground: false,
     });
   });
 
@@ -990,6 +991,48 @@ describe("deriveBoardCardThreadState aggregates across live threads (t3o-18, D7)
   it("awaitingInput is untouched by the new state", () => {
     expect(deriveBoardCardThreadState(failed).awaitingInput).toBe(false);
     expect(deriveBoardCardThreadState([failed, waiting]).awaitingInput).toBe(true);
+  });
+});
+
+describe("deriveBoardCardThreadState flags a background wait (T3O-20)", () => {
+  const between = (backgroundLiveness: "working" | "monitoring" | null) => ({
+    hasPendingUserInput: false,
+    hasPendingApprovals: false,
+    session: { status: "ready" },
+    backgroundLiveness,
+  });
+
+  it("an idle thread with a monitor running is waiting on background work", () => {
+    const state = deriveBoardCardThreadState(between("monitoring"));
+    expect(state.waitingOnBackground).toBe(true);
+    // Nothing about the status vocabulary moves: a monitor alone is not work.
+    expect(state.threadState).toBe("stopped");
+  });
+
+  it("an idle thread with subagents running keeps `working` and adds the flag", () => {
+    const state = deriveBoardCardThreadState(between("working"));
+    expect(state.waitingOnBackground).toBe(true);
+    expect(state.threadState).toBe("working");
+  });
+
+  it("a thread mid-turn is not waiting, even with background work", () => {
+    const midTurn = { ...between("monitoring"), session: { status: "running" } };
+    expect(deriveBoardCardThreadState(midTurn).waitingOnBackground).toBe(false);
+    // Nor is a card where ANY live thread is mid-turn.
+    expect(deriveBoardCardThreadState([between("monitoring"), midTurn]).waitingOnBackground).toBe(
+      false,
+    );
+  });
+
+  it("a thread waiting on a human is not waiting on background work", () => {
+    const asking = { ...between("monitoring"), hasPendingUserInput: true };
+    expect(deriveBoardCardThreadState(asking).waitingOnBackground).toBe(false);
+  });
+
+  it("no background work, or a failed session, is no wait", () => {
+    expect(deriveBoardCardThreadState(between(null)).waitingOnBackground).toBe(false);
+    const failed = { ...between("monitoring"), session: { status: "error" } };
+    expect(deriveBoardCardThreadState(failed).waitingOnBackground).toBe(false);
   });
 });
 

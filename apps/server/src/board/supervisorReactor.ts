@@ -80,6 +80,7 @@ import {
   isBoardMintedCommandId,
   isBoardParkedStepStatus,
   isBoardTerminalStepStatus,
+  deriveBoardCardThreadState,
   isThreadAwaitingPermission,
   MessageId,
   effectiveBoardRuntimeMode,
@@ -160,6 +161,9 @@ import {
 import {
   BOARD_STEP_RESUME_NUDGE,
   BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE,
+  boardBackgroundCheckInCharged,
+  boardBackgroundCheckInDueMs,
+  boardBackgroundCheckInNudge,
   boardRecoveryNudge,
   composeStepPrompt,
   orderBoardQueue,
@@ -919,8 +923,32 @@ const make = Effect.gen(function* () {
     "board-supervisor-resolveProgressedSinceLastNudge",
   )(function* (state: BoardCardStepState, card: BoardCard) {
     if (state.lastNudgeAt === null) return false;
+    return yield* progressedSince(state, card, state.lastNudgeAt);
+  });
+
+  /** The progress signal itself, measured from any instant: the step thread's
+      todo list advanced, or a commit unique to the card's branch landed, after
+      `since`. */
+  const progressedSince = Effect.fn("board-supervisor-progressedSince")(function* (
+    state: BoardCardStepState,
+    card: BoardCard,
+    since: string,
+  ) {
     const todo = yield* threadTodoState(state.threadId);
-    if (todo?.advancedAt != null && isAfter(todo.advancedAt, state.lastNudgeAt)) return true;
+    if (todo?.advancedAt != null && isAfter(todo.advancedAt, since)) return true;
+    return yield* committedSince(state, card, since);
+  });
+
+  /** A commit unique to the card's branch landed after `since`. The
+      background-wait check-ins (T3O-20) read only this half of the progress
+      signal: answering a check-in is itself a todo edit, so a todo advance
+      would restart the schedule on every reply and the wait would never reach
+      the ladder's ceiling. */
+  const committedSince = Effect.fn("board-supervisor-committedSince")(function* (
+    state: BoardCardStepState,
+    card: BoardCard,
+    since: string,
+  ) {
     // A commit counts too (D2); only a build-mode step has a worktree to
     // inspect, and only a commit unique to the card's branch is its agent's
     // work (t3o-10, D4) — otherwise a sibling's merge, synced in from the base,
@@ -929,7 +957,7 @@ const make = Effect.gen(function* () {
     const baseRefName = card.worktree?.baseRefName ?? null;
     if (state.mode !== "build" || worktreePath === null || baseRefName === null) return false;
     const committedAt = yield* latestBranchCommitIso(worktreePath, baseRefName);
-    return committedAt !== null && isAfter(committedAt, state.lastNudgeAt);
+    return committedAt !== null && isAfter(committedAt, since);
   });
 
   /** Whether the step's agent stopped with something for a human to answer
@@ -3977,6 +4005,40 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /** Land a step `stalled` for a human: recovery gave up. Shared by the
+      ladder (`recoverStep`) and the background-wait check-ins (T3O-20), so a
+      wait that exhausts the budget ends exactly the way a stall does. */
+  const escalateStep = Effect.fn("board-supervisor-escalateStep")(function* (input: {
+    readonly card: BoardCard;
+    readonly state: BoardCardStepState;
+    readonly progressed: boolean;
+  }) {
+    // Escalation lands the step `stalled` — non-terminal, so it never reaches
+    // `settleStep` and its disarm. A conflict fix that stalls has handed the
+    // card to a human, and the human's next move must be an explicit Merge
+    // click; leaving the card armed would let some later merge-stage step
+    // succeeding turn into a merge nobody asked for.
+    disarmPendingMerge(input.card.id);
+    yield* dispatch({
+      type: "board.card.recover-step",
+      commandId: yield* commandId("recover-step"),
+      cardId: input.card.id,
+      stepId: input.state.stepId,
+      threadId: input.state.threadId,
+      escalateToHuman: true,
+      progressed: input.progressed,
+      // The loud reading of `stalled` (T3O-22, D10): recovery gave up, and
+      // there is no time at which it will try again.
+      stalledReason: "gave-up",
+      createdAt: yield* nowIso,
+    });
+    // Release the held slot exactly once (D4), riding the existing machinery:
+    // the pre-escalation state's `slotHeld` gates the release, and the decider
+    // has set the persisted `slotHeld` to false, so a re-run releases nothing.
+    yield* releaseSlot(input.state);
+    yield* schedule();
+  });
+
   const recoverStep = Effect.fn("board-supervisor-recoverStep")(function* (input: {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
@@ -4026,30 +4088,11 @@ const make = Effect.gen(function* () {
         stallCount: decision.stallCount,
         question: decision.question,
       });
-      // Escalation lands the step `stalled` — non-terminal, so it never reaches
-      // `settleStep` and its disarm. A conflict fix that stalls has handed the
-      // card to a human, and the human's next move must be an explicit Merge
-      // click; leaving the card armed would let some later merge-stage step
-      // succeeding turn into a merge nobody asked for.
-      disarmPendingMerge(input.card.id);
-      yield* dispatch({
-        type: "board.card.recover-step",
-        commandId: yield* commandId("recover-step"),
-        cardId: input.card.id,
-        stepId: input.state.stepId,
-        threadId: input.state.threadId,
-        escalateToHuman: true,
+      yield* escalateStep({
+        card: input.card,
+        state: input.state,
         progressed: progressedSinceLastNudge,
-        // The loud reading of `stalled` (T3O-22, D10): recovery gave up, and
-        // there is no time at which it will try again.
-        stalledReason: "gave-up",
-        createdAt: yield* nowIso,
       });
-      // Release the held slot exactly once (D4), riding the existing machinery:
-      // the pre-escalation state's `slotHeld` gates the release, and the decider
-      // has set the persisted `slotHeld` to false, so a re-run releases nothing.
-      yield* releaseSlot(input.state);
-      yield* schedule();
       return;
     }
 
@@ -5966,6 +6009,8 @@ const make = Effect.gen(function* () {
     const found = stepThreadCard(board, threadId);
     if (found === null) return;
     if (found.state.status !== "running" && found.state.status !== "awaiting-input") return;
+    const classifyUnattendedTurn = () =>
+      classifyUsageLimitTurn(found, threadId, turnErrorMessage, turnState);
     // Only a SUCCEEDED completion hands the step to the completion handler for
     // good. A `failed`/`blocked` completion must not disarm death detection —
     // after a failure + recovery nudge, a retry thread that dies silently
@@ -6043,16 +6088,46 @@ const make = Effect.gen(function* () {
       }
       return;
     }
-    // The agent ended its turn to wait on its own background subagents
-    // (T3O-9). The provider wakes it when they report back, so this is a wait,
-    // not a stop: recovering here parked the card as "nothing is running" and
-    // later nudged the agent mid-wait, which made it end another turn and climb
-    // the stall ladder while its subagents did the work. Read the field that
-    // draws the thread's own "N agents working" banner, so the board and the
-    // thread cannot disagree. Watch loops ("monitoring") stay supervised: they
-    // can run indefinitely. A subagent that hangs is still caught by the
-    // timeout sweep.
-    if (shell?.backgroundLiveness === "working") return;
+    // The agent ended its turn to wait on its own background work: subagents
+    // ("working", T3O-9), or a background command or monitor ("monitoring",
+    // T3O-20). The provider wakes it when that work reports back, so this is a
+    // wait, not a stop: recovering here parked the card as "nothing is
+    // running" and nudged the agent mid-wait with "your turn ended without
+    // calling board_complete_step", so it replied "still waiting", ended
+    // another turn and climbed the stall ladder while the work ran. Read the
+    // field that draws the thread's own "Working"/"Monitoring" banner, so the
+    // board and the thread cannot disagree.
+    //
+    // A wait is still supervised — work can hang, die unnoticed or run for
+    // ever — but by the timeout sweep's check-ins (`sweepBackgroundWait`), not
+    // by recovery. A human-in-the-loop run keeps its pre-T3O-20 handling of a
+    // monitor: it parks on the human, who is the pacing there.
+    //
+    // An unattended turn is classified for a usage limit FIRST: a refused turn
+    // that happens to end with a monitor still live is the provider stopping,
+    // not the agent waiting, and must park on the cooldown (T3O-22) rather than
+    // be checked in on until it escalates.
+    //
+    // The sweep supervises running steps alone, so an unattended step still
+    // awaiting input (its agent answered and started a job) is put back to
+    // running first; a wait noted on a parked step would never be checked in
+    // on, and the card would sit violet while its agent worked.
+    const backgroundLiveness = shell?.backgroundLiveness ?? null;
+    if (
+      backgroundLiveness !== null &&
+      (backgroundLiveness === "working" || !found.state.humanInLoop)
+    ) {
+      if (!found.state.humanInLoop) {
+        if (yield* classifyUnattendedTurn()) {
+          backgroundWaits.delete(String(threadId));
+          return;
+        }
+        if (found.state.status !== "running" && !(yield* resumeParkedStep(threadId))) return;
+        yield* noteBackgroundTurnEnd(found, threadId);
+      }
+      return;
+    }
+    backgroundWaits.delete(String(threadId));
     // The free turn-ending a human's own turn bought (T3O-17, D3). Either this
     // IS that turn completing, or it is the turn the human's message
     // superseded arriving late — neither is a stall, and neither should draw a
@@ -6116,6 +6191,22 @@ const make = Effect.gen(function* () {
     // Additive: it fires only on a match, and on no match — or on a
     // `slow-down`, which the retry backoff already covers — control falls
     // through to `recoverStep` exactly as before.
+    if (yield* classifyUnattendedTurn()) return;
+    // Unattended, running with no question → died mid-work. Awaiting-input with
+    // no pending question → the human answered and the agent ran another turn
+    // without completing (or died); either way death detection is re-armed.
+    yield* recoverStep(found);
+  });
+
+  /** The usage-limit classifier for an unattended turn end (T3O-22). Answers
+      whether the turn was a limit and has been handled (parked on the
+      cooldown); on no match it zeroes the loose-match tally for a clean turn. */
+  const classifyUsageLimitTurn = Effect.fn("board-supervisor-classifyUsageLimitTurn")(function* (
+    found: { readonly card: BoardCard; readonly state: BoardCardStepState },
+    threadId: ThreadId,
+    turnErrorMessage: string | null,
+    turnState: RuntimeTurnState | undefined,
+  ) {
     const match = yield* usageLimits.classifyTurn({
       threadId,
       turnErrorMessage,
@@ -6123,13 +6214,12 @@ const make = Effect.gen(function* () {
       since: found.state.lastNudgeAt ?? found.state.startedAt,
     });
     if (match !== null) {
-      const handled = yield* handleUsageLimitMatch({
+      return yield* handleUsageLimitMatch({
         card: found.card,
         state: found.state,
         match,
         nowMs: yield* detectorNowMs,
       });
-      if (handled) return;
     } else if (turnState === undefined || turnState === "completed") {
       // A turn the catalogue says nothing about is proof the provider is
       // answering, so the loose-match tally zeroes (D6). Done HERE rather than
@@ -6145,10 +6235,7 @@ const make = Effect.gen(function* () {
       // exactly as the ingestion layer normalises it.
       clearLooseMatches(String(found.state.providerInstanceId));
     }
-    // Unattended, running with no question → died mid-work. Awaiting-input with
-    // no pending question → the human answered and the agent ran another turn
-    // without completing (or died); either way death detection is re-armed.
-    yield* recoverStep(found);
+    return false;
   });
 
   /**
@@ -7992,9 +8079,9 @@ const make = Effect.gen(function* () {
   ) {
     const board = yield* readBoard;
     const found = stepThreadCard(board, threadId);
-    if (found === null) return;
-    if (!isBoardParkedStepStatus(found.state.status)) return;
-    if (found.card.archivedAt !== null) return;
+    if (found === null) return false;
+    if (!isBoardParkedStepStatus(found.state.status)) return false;
+    if (found.card.archivedAt !== null) return false;
     // OBSERVED, not fire-and-forget: a refused resume must never restore a slot
     // that nothing will release — the same discipline `admitBuildCandidate`
     // applies around `admit-step`.
@@ -8005,7 +8092,7 @@ const make = Effect.gen(function* () {
       stepId: found.state.stepId,
       createdAt: yield* nowIso,
     });
-    if (!landed) return;
+    if (!landed) return false;
     // A human put this step back to work themselves, so a schedule that would
     // stop it again later has been overtaken (T3O-19, D6). Cleared here rather
     // than only on the `board.card-step-recovered` this dispatch produces,
@@ -8017,6 +8104,7 @@ const make = Effect.gen(function* () {
     // request — the `forceStart` and boot-reconcile precedent. The count may sit
     // over the ceiling until the step settles and releases exactly once.
     if (found.state.mode === "build") yield* slots.restore(found.state.providerInstanceId);
+    return true;
   });
 
   /**
@@ -8309,6 +8397,170 @@ const make = Effect.gen(function* () {
   // mid-prompt re-stamps on the next overdue sweep. An entry is dropped once
   // released and a window old, and with the step once it leaves running.
   const permissionHeldAt = new Map<string, string>();
+
+  // Step threads whose agent ended its turn with background work still running
+  // (T3O-20): when the wait began, how many check-ins it has had, and whether
+  // the latest one is still unanswered. Begun by the turn end (or by the sweep
+  // finding a quiet thread with background work). The turn that answers a
+  // check-in keeps the schedule; any other turn ending still waiting — the
+  // provider waking the agent, a human's message — starts a fresh one, as does
+  // a commit since the wait began — which the next check-in reports as
+  // progress, resetting the stall ladder. Cleared by a turn that ends with no
+  // background work, and with the step once it leaves running.
+  // In-memory on purpose: background work dies with the server, so after a
+  // restart ordinary recovery is the right supervisor.
+  const backgroundWaits = new Map<
+    string,
+    {
+      readonly since: string;
+      readonly checkInsSent: number;
+      readonly checkInOutstanding: boolean;
+      readonly progressed: boolean;
+    }
+  >();
+  const beginBackgroundWait = (threadId: ThreadId, now: string, progressed = false) =>
+    void backgroundWaits.set(String(threadId), {
+      since: now,
+      checkInsSent: 0,
+      checkInOutstanding: false,
+      progressed,
+    });
+  /** A turn ended with background work still running. Only the reply to a
+      check-in continues the current schedule: what the agent writes while
+      answering one — a todo edit, a "still running" — is not new work, and
+      counting it would restart the free check-ins on every reply. Any other
+      turn starts a fresh wait, carrying forward a commit made since the old
+      one began: the fresh wait's `since` is now, so the sweep could never see
+      a commit the woken turn itself made. */
+  const noteBackgroundTurnEnd = Effect.fn("board-supervisor-noteBackgroundTurnEnd")(function* (
+    found: { readonly card: BoardCard; readonly state: BoardCardStepState },
+    threadId: ThreadId,
+  ) {
+    const wait = backgroundWaits.get(String(threadId));
+    if (wait?.checkInOutstanding === true) {
+      backgroundWaits.set(String(threadId), { ...wait, checkInOutstanding: false });
+      return;
+    }
+    const progressed =
+      wait !== undefined &&
+      (wait.progressed || (yield* committedSince(found.state, found.card, wait.since)));
+    beginBackgroundWait(threadId, yield* nowIso, progressed);
+  });
+  /** The thread's shell when it is between turns, needs no human and has
+      background work — the same reading the card's "Waiting" label makes. */
+  const threadWaitingOnBackground = (threadId: ThreadId) =>
+    snapshotQuery
+      .getThreadShellById(threadId)
+      .pipe(
+        Effect.map(
+          (shell) =>
+            Option.isSome(shell) && deriveBoardCardThreadState(shell.value).waitingOnBackground,
+        ),
+      );
+
+  /**
+   * Supervise a step whose agent is waiting on its own background work
+   * (T3O-20). Answers whether the step was handled here, in which case the
+   * ordinary timeout logic must not run: a waiting agent is not stalled, and
+   * the stall nudge is exactly what made it end turn after turn saying "still
+   * waiting".
+   *
+   * Check-ins go out at +5, +15 and +30 minutes from the start of the wait,
+   * then every 30 minutes, and ask the agent to VERIFY the work is alive. The
+   * first three are free; after that each is charged like a recovery, and the
+   * one that would cross a ceiling escalates instead. Charged check-ins skip
+   * the backoff park (T3O-22, D7): that exists to stop rapid-fire requests, and
+   * these are already half an hour apart. The step stays running throughout.
+   */
+  const sweepBackgroundWait = Effect.fn("board-supervisor-sweepBackgroundWait")(function* (input: {
+    readonly board: BoardState;
+    readonly state: BoardCardStepState;
+    readonly now: string;
+    readonly nowMs: number;
+  }) {
+    const { board, state } = input;
+    if (state.threadId === null) return false;
+    const key = String(state.threadId);
+    const wait = backgroundWaits.get(key);
+    if (wait === undefined) {
+      // The turn end was missed (a dropped event): begin the wait here, ahead of the
+      // caller's `timeoutMs` gate, so a step with no timeout is still checked
+      // on and a timed one does not idle a whole timeout first.
+      if (!(yield* threadWaitingOnBackground(state.threadId))) return false;
+      beginBackgroundWait(state.threadId, input.now);
+      return true;
+    }
+    const shell = Option.getOrUndefined(yield* snapshotQuery.getThreadShellById(state.threadId));
+    if (shell === undefined || !deriveBoardCardThreadState(shell).waitingOnBackground) {
+      // A live turn (a check-in being answered) is supervised the ordinary
+      // way and keeps the wait; background work that is gone ends it.
+      if (shell === undefined || shell.backgroundLiveness == null) backgroundWaits.delete(key);
+      return false;
+    }
+    const card = board.cards.find((candidate) => candidate.id === state.cardId);
+    if (card === undefined || card.archivedAt !== null) return true;
+    // The agent committed real work: whatever it is waiting on now is a new
+    // wait, and gets a fresh five-minute first check. A todo advance is not
+    // read here (see `committedSince`); a wake that did real work restarts the
+    // schedule through its own turn end instead.
+    if (yield* committedSince(state, card, wait.since)) {
+      beginBackgroundWait(state.threadId, input.now, true);
+      return true;
+    }
+    const sinceMs = Date.parse(wait.since);
+    if (input.nowMs < boardBackgroundCheckInDueMs({ sinceMs, checkInsSent: wait.checkInsSent })) {
+      return true;
+    }
+    // A human's message is already on its way in; the board's would land
+    // behind it (T3O-17).
+    if (yield* supersededByPendingTurn(state)) return true;
+    const charged = boardBackgroundCheckInCharged(wait.checkInsSent);
+    if (charged) {
+      const exec = resolveBoardStageExecution(yield* boardSettings, card.stage);
+      const ceiling = recoveryCeilingCrossed({
+        stallCount: state.stallCount + 1,
+        maxAttempts: state.maxAttempts,
+        stageEntryRecoveries: boardStageEntryRecoveryCount(board, card.id) + 1,
+        maxRecoveriesPerStageEntry: exec.maxInvocationsPerStageEntry,
+      });
+      if (ceiling !== null) {
+        yield* Effect.logWarning("board supervisor: background wait escalated to a human", {
+          cardId: card.id,
+          stepId: state.stepId,
+          ceiling,
+          waitingSince: wait.since,
+          checkInsSent: wait.checkInsSent,
+        });
+        backgroundWaits.delete(key);
+        yield* escalateStep({ card, state, progressed: false });
+        return true;
+      }
+    }
+    const checkedIn = yield* dispatchOptional({
+      type: "board.card.check-in-step",
+      commandId: yield* commandId("check-in-step"),
+      cardId: card.id,
+      stepId: state.stepId,
+      charged,
+      progressed: wait.progressed,
+      createdAt: input.now,
+    });
+    if (!checkedIn) return true;
+    backgroundWaits.set(key, {
+      since: wait.since,
+      checkInsSent: wait.checkInsSent + 1,
+      checkInOutstanding: true,
+      progressed: false,
+    });
+    yield* sendTurn({
+      threadId: state.threadId,
+      text: boardBackgroundCheckInNudge({
+        hasTodoList: (yield* threadTodoState(state.threadId))?.hasList ?? false,
+      }),
+      runtimeMode: state.runtimeMode,
+    });
+    return true;
+  });
   const threadAwaitingPermission = (threadId: ThreadId) =>
     snapshotQuery
       .getThreadShellById(threadId)
@@ -8417,6 +8669,10 @@ const make = Effect.gen(function* () {
     const nowMs = Date.parse(now);
     for (const state of board.stepStates ?? []) {
       if (state.status !== "running" || state.humanInLoop) continue;
+      // Ahead of the `timeoutMs` gate: a background wait runs on its own fixed
+      // schedule (T3O-20), and with turn-end recovery suppressed for it, a
+      // step with no timeout would otherwise never be checked on at all.
+      if (yield* sweepBackgroundWait({ board, state, now, nowMs })) continue;
       if (state.timeoutMs <= 0) continue;
       // The clock runs from the LATEST life sign: the last nudge/start, the step
       // thread's todo list ADVANCING (`advancedAt` on `board_thread_todos`), the
@@ -8515,6 +8771,9 @@ const make = Effect.gen(function* () {
     );
     for (const id of permissionHeldAt.keys()) {
       if (!runningThreadIds.has(id)) permissionHeldAt.delete(id);
+    }
+    for (const id of backgroundWaits.keys()) {
+      if (!runningThreadIds.has(id)) backgroundWaits.delete(id);
     }
   }).pipe(
     Effect.catchCause((cause) =>

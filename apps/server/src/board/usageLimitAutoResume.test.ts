@@ -211,6 +211,40 @@ it.effect("a strict wait parks the card, costs nothing, and cools the provider d
   ),
 );
 
+it.effect("a refusal that ends with a monitor still live parks on the cooldown, not a wait", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("a", "a")], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        const threadId = yield* startCard(harness, "a", "a", 1);
+        // A background-wait turn end (T3O-20) must not swallow the refusal.
+        yield* Ref.update(harness.shells, (current) => {
+          const shell = current.get(String(threadId))!;
+          return new Map([
+            ...current,
+            [String(threadId), { ...shell, backgroundLiveness: "monitoring" as const }],
+          ]);
+        });
+        yield* endTurn(harness, threadId, waitAt());
+
+        const parked = yield* stepOf(harness, "a");
+        assert.strictEqual(parked?.status, "stalled");
+        assert.strictEqual(parked?.stalledReason, "usage-limit");
+        assert.strictEqual((yield* limitOf(harness, codex))?.kind, "wait");
+
+        // No background-wait check-in follows the park.
+        yield* TestClock.adjust(Duration.minutes(5));
+        yield* harness.reactor.sweep;
+        yield* harness.reactor.drain;
+        const texts = yield* turnTextsFor(harness, threadId);
+        assert.isFalse(texts.some((text) => text.includes("scheduled check-in")));
+      }),
+  ),
+);
+
 it.effect("a second card on the instance is withheld before any worktree is cut", () =>
   withGovernor(
     {

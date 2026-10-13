@@ -10,6 +10,10 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  boardBackgroundCheckInCharged,
+  boardBackgroundCheckInDueMs,
+  boardBackgroundCheckInNudge,
+  boardRecoveryNudge,
   composeStepPrompt,
   orderBoardQueue,
   reconcileStepDecision,
@@ -580,5 +584,49 @@ describe("resolveBoardConcurrencyLimit (t3o-11 D11)", () => {
       ProviderInstanceId.make("codex"),
     );
     assert.deepStrictEqual(limit, { perInstance: null, global: 3 });
+  });
+});
+
+describe("background-wait check-ins (T3O-20)", () => {
+  const minute = 60_000;
+  const due = (checkInsSent: number) =>
+    boardBackgroundCheckInDueMs({ sinceMs: 0, checkInsSent }) / minute;
+
+  it("goes out at +5, +15 and +30 minutes, then every 30", () => {
+    assert.deepStrictEqual([0, 1, 2, 3, 4, 5].map(due), [5, 15, 30, 60, 90, 120]);
+  });
+
+  it("measures from when the wait began", () => {
+    assert.strictEqual(
+      boardBackgroundCheckInDueMs({ sinceMs: 1_000, checkInsSent: 0 }),
+      1_000 + 5 * minute,
+    );
+  });
+
+  it("is free for the first half hour and charged after", () => {
+    assert.deepStrictEqual([0, 1, 2, 3, 4].map(boardBackgroundCheckInCharged), [
+      false,
+      false,
+      false,
+      true,
+      true,
+    ]);
+  });
+
+  it("asks the agent to verify its work rather than reading as a failure", () => {
+    const text = boardBackgroundCheckInNudge({ hasTodoList: true });
+    assert.include(text, "verify it is still alive");
+    assert.include(text, "board_complete_step");
+    assert.include(text, "end your turn again");
+    assert.notInclude(text, "your work is not finished");
+    assert.notInclude(text, "todo list");
+    assert.notStrictEqual(
+      text,
+      boardRecoveryNudge({ stallCount: 1, hasTodoList: true, endedWithQuestion: false }),
+    );
+  });
+
+  it("asks for a todo list only when the thread keeps none", () => {
+    assert.include(boardBackgroundCheckInNudge({ hasTodoList: false }), "todo list");
   });
 });
