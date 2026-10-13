@@ -102,14 +102,28 @@ const stepState = (input: {
 const board = (input: {
   readonly card: BoardCard;
   readonly step?: BoardCardStepState;
-  /** The card has a plan, so its planning interview finished. */
-  readonly planned?: boolean;
+  /** This thread completed the planning step, so its interview finished. */
+  readonly plannedBy?: string;
 }): BoardState =>
   ({
     cards: [input.card],
     nextCardNumberByProject: {},
     ...(input.step === undefined ? {} : { stepStates: [input.step] }),
-    ...(input.planned === true ? { plans: [{ cardId: input.card.id, ordinal: 0 }] } : {}),
+    ...(input.plannedBy === undefined
+      ? {}
+      : {
+          stepCompletions: [
+            {
+              cardId: input.card.id,
+              stepId: String(BOARD_SEED_STAGE_IDS.planning),
+              outcome: "succeeded",
+              summary: "planned",
+              payload: null,
+              threadId: ThreadId.make(input.plannedBy),
+              completedAt: NOW,
+            },
+          ],
+        }),
   }) as unknown as BoardState;
 
 const released = (state: BoardState, abandoned?: ReadonlySet<string>): ReadonlyArray<string> =>
@@ -130,7 +144,7 @@ describe("boardReleasedThreadIds", () => {
       step: stepState({ stepId: "review@2", threadId: "thread-r2", status: "running" }),
       // Planned, so the planning thread is a finished interview rather than one
       // the card kept unfinished (T3O-19).
-      planned: true,
+      plannedBy: "thread-plan",
     });
     assert.deepStrictEqual(released(state), ["thread-plan", "thread-build", "thread-r1"]);
   });
@@ -229,7 +243,7 @@ describe("boardReleasedThreadIds", () => {
         stage: String(BOARD_SEED_STAGE_IDS.backlog),
         links: [link("thread-old", String(BOARD_SEED_STAGE_IDS.planning))],
       }),
-      planned: true,
+      plannedBy: "thread-old",
     });
     assert.deepStrictEqual(released(state), ["thread-old"]);
   });
@@ -283,7 +297,7 @@ describe("boardReleasedThreadIds", () => {
 
   // T3O-19: a card that left Planning before the plan was written keeps its
   // interview, which may still ask something after the move. It stays in the
-  // inbox until it finishes: a plan is written or the thread completes.
+  // inbox until it finishes: the thread reports its step.
   describe("a planning interview the card left unfinished", () => {
     const planning = String(BOARD_SEED_STAGE_IDS.planning);
     const kept = (extra: Partial<BoardState> = {}): BoardState =>
@@ -339,11 +353,13 @@ describe("boardReleasedThreadIds", () => {
       assert.deepStrictEqual(released(state), ["thread-plan"]);
     });
 
-    it("is released once a plan is written", () => {
+    // An agent often writes the plan, then asks the human to confirm it before
+    // reporting: the interview is not over until it reports.
+    it("stays in the inbox with the plan written but the step not reported", () => {
       const state = kept({
         plans: [{ cardId: BoardCardId.make("card-1"), ordinal: 0 }],
       } as unknown as Partial<BoardState>);
-      assert.deepStrictEqual(released(state), ["thread-plan"]);
+      assert.deepStrictEqual(released(state), []);
     });
 
     it("is released once the thread completes its step", () => {

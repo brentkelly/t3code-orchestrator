@@ -3313,9 +3313,17 @@ const make = Effect.gen(function* () {
       // Refused (the step moved on under us): the ordinary pass spawns for it.
       if (!admitted) return yield* schedule();
       const shell = yield* snapshotQuery.getThreadShellById(threadId);
-      if (Option.isSome(shell) && threadIsAlive(shell.value)) return;
+      // A thread holding a structured question is alive but waiting on the
+      // human, and no turn.completed comes until they answer: park it now, as
+      // handleTurnCompleted would.
+      const pendingQuestion =
+        Option.isSome(shell) &&
+        shell.value.hasPendingUserInput &&
+        shell.value.session?.status !== "error";
+      if (!pendingQuestion && Option.isSome(shell) && threadIsAlive(shell.value)) return;
       const state = boardCardStepState(yield* readBoard, card.id);
       if (state === null || state.threadId !== threadId) return;
+      if (pendingQuestion) return yield* parkStepForInput({ card, state, reason: "question" });
       if (!state.humanInLoop) return yield* recoverStep({ card, state });
       yield* parkStepForInput({
         card,

@@ -12,11 +12,12 @@
  * state.
  */
 import {
-  boardCardPlans,
   boardCardStepCompletions,
+  boardCardStepState,
   boardStageById,
   BoardStageId,
   effectiveBoardStageRole,
+  isBoardTerminalStepStatus,
   type BoardCard,
   type BoardCardStepState,
   type BoardState,
@@ -48,8 +49,7 @@ export function keepsPlanningThreadOnExit(
  * stage as usual.
  *
  * This is the card's most recent live link for the stage, unless the interview
- * already finished: that thread completed the step successfully, or a plan was
- * written (the thread may have written it after the card left). A finished
+ * already finished: that thread completed the step successfully. A finished
  * interview is not resumed: re-entry keeps its existing rule and leaves that
  * thread alone on the card.
  */
@@ -62,24 +62,14 @@ export function keptPlanningThreadId(
     (candidate) => candidate.role === card.stage && candidate.tombstonedAt === null,
   );
   if (link === undefined) return null;
-  return interviewFinished(board, card, card.stage, link.threadId) ? null : link.threadId;
-}
-
-/** A planning interview is finished once its thread completed the step
-    successfully or the card has a plan (written after the move, perhaps). */
-const interviewFinished = (
-  board: BoardState,
-  card: Pick<BoardCard, "id">,
-  stepId: string,
-  threadId: ThreadId,
-): boolean =>
-  boardCardPlans(board, card.id).length > 0 ||
-  boardCardStepCompletions(board, card.id).some(
+  const finished = boardCardStepCompletions(board, card.id).some(
     (completion) =>
-      completion.stepId === stepId &&
+      completion.stepId === card.stage &&
       completion.outcome === "succeeded" &&
-      completion.threadId === threadId,
+      completion.threadId === link.threadId,
   );
+  return finished ? null : link.threadId;
+}
 
 /**
  * Whether `threadId` is a planning interview the card kept when it left, and
@@ -90,6 +80,10 @@ const interviewFinished = (
  * wait on an answer, and settling it would hide that from everywhere but the
  * card's own thread tab. A thread that reported its step at all, even as
  * failed, has nothing more to say and is released.
+ *
+ * A written plan does not finish the interview: planning ends with
+ * `board_complete_step`, and an agent often writes the plan, then asks the
+ * human to confirm it before reporting.
  */
 export function isUnfinishedKeptInterview(
   board: BoardState,
@@ -99,7 +93,6 @@ export function isUnfinishedKeptInterview(
   const stepId = keptPlanningStepId(board, card, threadId);
   return (
     stepId !== null &&
-    boardCardPlans(board, card.id).length === 0 &&
     !boardCardStepCompletions(board, card.id).some(
       (completion) => completion.stepId === stepId && completion.threadId === threadId,
     )
@@ -117,7 +110,7 @@ export function isUnfinishedKeptInterview(
  */
 export function isKeptStepThread(
   board: BoardState,
-  card: Pick<BoardCard, "stage" | "threadLinks">,
+  card: Pick<BoardCard, "id" | "stage" | "threadLinks">,
   stepId: string,
   threadId: ThreadId | null,
 ): boolean {
@@ -132,19 +125,26 @@ export function isKeptStepThread(
  * and the next stage's step replaces the abandoned planning one (Planning →
  * Ready → Building), while the kept thread is still talking. Every other
  * stage's thread was dropped when its card left, so a live link under a
- * plan-role stage the card is not standing in can only be a kept interview,
- * finished or not.
+ * plan-role stage can only be a kept interview, finished or not.
+ *
+ * The one exception is a link to the stage's live step: back in Planning, the
+ * step is running again and the ordinary live-step rule owns it. A card back in
+ * Planning whose step stayed terminal (it was not resumed) still keeps the
+ * thread, so the interview can report.
  */
 export function keptPlanningStepId(
   board: BoardState,
-  card: Pick<BoardCard, "stage" | "threadLinks">,
+  card: Pick<BoardCard, "id" | "stage" | "threadLinks">,
   threadId: ThreadId,
 ): string | null {
   const link = card.threadLinks.findLast(
-    (candidate) =>
-      candidate.threadId === threadId &&
-      candidate.tombstonedAt === null &&
-      candidate.role !== card.stage,
+    (candidate) => candidate.threadId === threadId && candidate.tombstonedAt === null,
   );
-  return link !== undefined && isPlanStage(board, link.role) ? link.role : null;
+  if (link === undefined || !isPlanStage(board, link.role)) return null;
+  if (link.role === card.stage) {
+    const state = boardCardStepState(board, card.id);
+    if (state !== null && state.stepId === link.role && !isBoardTerminalStepStatus(state.status))
+      return null;
+  }
+  return link.role;
 }

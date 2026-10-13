@@ -229,6 +229,63 @@ describe("leaving Planning before the plan is written", () => {
     ),
   );
 
+  // A structured question keeps the thread alive, but no turn.completed comes
+  // until the human answers it.
+  it.effect("re-entered while the thread holds a question, the step parks on it", () =>
+    withGovernor({ board: { cards: [sprintCard()], nextCardNumberByProject: {} }, settings }, (h) =>
+      Effect.gen(function* () {
+        const threadId = yield* startPlanning(h);
+        yield* move(h, READY, 2);
+        yield* setShell(h, threadId, {
+          ...idleThreadShell(String(threadId)),
+          hasPendingUserInput: true,
+        });
+
+        yield* move(h, PLANNING, 3);
+
+        const state = boardCardStepState(yield* h.board, cardId);
+        assert.strictEqual(state?.threadId, threadId);
+        assert.strictEqual(state?.status, "awaiting-input");
+        assert.strictEqual(state?.awaitingReason, "question");
+      }),
+    ),
+  );
+
+  // Planning ends with board_complete_step. An agent often writes the plan,
+  // then asks the human to confirm it before reporting.
+  it.effect("a plan written but not reported is resumed on return, and can report", () =>
+    withGovernor({ board: { cards: [sprintCard()], nextCardNumberByProject: {} }, settings }, (h) =>
+      Effect.gen(function* () {
+        const threadId = yield* startPlanning(h);
+        yield* move(h, READY, 2);
+        yield* Ref.update(h.model, (model) => ({
+          ...model,
+          board: {
+            ...model.board!,
+            plans: [{ cardId, ordinal: 0 }] as unknown as BoardState["plans"],
+          },
+        }));
+        assert.notInclude(boardReleasedThreadIds(yield* h.board), threadId);
+        yield* setShell(h, threadId, idleThreadShell(String(threadId)));
+        const before = yield* h.commands;
+
+        yield* move(h, PLANNING, 3);
+
+        const state = boardCardStepState(yield* h.board, cardId);
+        assert.strictEqual(state?.threadId, threadId);
+        assert.strictEqual(state?.status, "awaiting-input");
+        assert.strictEqual(spawnedThreads((yield* h.commands).slice(before.length)), 0);
+
+        yield* completePlanning(h, threadId, 4);
+        const recorded = boardCardStepCompletions(yield* h.board, cardId).find(
+          (completion) => completion.stepId === PLANNING,
+        );
+        assert.strictEqual(recorded?.outcome, "succeeded");
+        assert.strictEqual(recorded?.threadId, threadId);
+      }),
+    ),
+  );
+
   it.effect(
     "the kept thread finishing after the move records its plan, so return does not resume it",
     () =>
@@ -380,11 +437,11 @@ describe("the planning-thread rules", () => {
       ],
     } as Partial<BoardState>);
     assert.isNull(keptPlanningThreadId(finished, card));
-    // A plan on the card is a finished interview too, however it was recorded.
+    // A written plan alone is not: the thread has not reported yet.
     const planned = board([card], {
       plans: [{ cardId, ordinal: 0 }],
     } as unknown as Partial<BoardState>);
-    assert.isNull(keptPlanningThreadId(planned, card));
+    assert.strictEqual(keptPlanningThreadId(planned, card), thread);
   });
 
   it("lets only the still-linked planning thread of a card that left record it", () => {
@@ -397,8 +454,15 @@ describe("the planning-thread rules", () => {
     assert.isFalse(isKeptStepThread(b, card, PLANNING, null));
     assert.isFalse(isKeptStepThread(b, card, String(BOARD_SEED_STAGE_IDS.building), thread));
     assert.isFalse(isKeptStepThread(b, { ...card, threadLinks: [] }, PLANNING, thread));
-    // Back in Planning the step is live again, and that rule owns it.
-    assert.isFalse(isKeptStepThread(b, linked(PLANNING), PLANNING, thread));
+    // Back in Planning with the step live again, the live-step rule owns it...
+    const stepRow = (status: "running" | "abandoned") =>
+      board([], {
+        stepStates: [{ cardId, stepId: PLANNING, threadId: thread, status }],
+      } as unknown as Partial<BoardState>);
+    assert.isFalse(isKeptStepThread(stepRow("running"), linked(PLANNING), PLANNING, thread));
+    // ...but a card back in Planning whose step was not resumed still lets the
+    // kept thread report.
+    assert.isTrue(isKeptStepThread(stepRow("abandoned"), linked(PLANNING), PLANNING, thread));
     // Only a planning link: no other stage keeps its thread past the move.
     const building = String(BOARD_SEED_STAGE_IDS.building);
     const buildingCard = {
