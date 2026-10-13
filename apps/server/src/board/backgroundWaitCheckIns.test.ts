@@ -196,22 +196,48 @@ it.effect("a wait that never ends escalates to a human once the ladder is spent"
   ),
 );
 
-it.effect("progress since the wait began restarts the schedule", () => {
+it.effect("a todo edit while answering a check-in does not restart the schedule", () => {
   const todos = new Map<string, TodoRow>();
   return withGovernor(fixture(todos), (h) =>
     Effect.gen(function* () {
       const threadId = yield* startWaiting(h);
       yield* after(h, 5);
-      yield* after(h, 10);
-      assert.strictEqual(checkInsOf(yield* h.commands), 2);
+      assert.strictEqual(checkInsOf(yield* h.commands), 1);
 
-      // The agent woke, worked through its list and started a new job.
+      // The agent answers the check-in the way it is asked to — flipping its
+      // todo list — and ends the turn with the monitor still running.
       todos.set(String(threadId), {
         advancedAt: DateTime.formatIso(yield* DateTime.now),
         hasList: true,
       });
+      yield* h.pumpRuntime(turnCompleted(threadId));
+
+      // Nothing new at +5 from the reply; the second is still due at +15 from
+      // the start of the wait.
+      yield* after(h, 9);
+      assert.strictEqual(checkInsOf(yield* h.commands), 1, "the reply did not restart the wait");
       yield* after(h, 1);
-      assert.strictEqual(checkInsOf(yield* h.commands), 2, "progress sends nothing");
+      assert.strictEqual(checkInsOf(yield* h.commands), 2);
+      yield* after(h, 15);
+      assert.strictEqual(checkInsOf(yield* h.commands), 3);
+    }),
+  );
+});
+
+it.effect("a turn the board did not start restarts the schedule", () =>
+  withGovernor(fixture(), (h) =>
+    Effect.gen(function* () {
+      const threadId = yield* startWaiting(h);
+      yield* after(h, 5);
+      yield* h.pumpRuntime(turnCompleted(threadId));
+      yield* after(h, 10);
+      yield* h.pumpRuntime(turnCompleted(threadId));
+      assert.strictEqual(checkInsOf(yield* h.commands), 2);
+
+      // The provider woke the agent; it worked, started a new job and ended
+      // its turn still waiting. That is a new wait.
+      yield* after(h, 1);
+      yield* h.pumpRuntime(turnCompleted(threadId));
 
       // The new wait's first check is five minutes out — not the old +30.
       yield* after(h, 4);
@@ -219,8 +245,28 @@ it.effect("progress since the wait began restarts the schedule", () => {
       yield* after(h, 1);
       assert.strictEqual(checkInsOf(yield* h.commands), 3);
     }),
-  );
-});
+  ),
+);
+
+it.effect("a quiet thread with background work is put on the schedule without a turn end", () =>
+  withGovernor(fixture(), (h) =>
+    Effect.gen(function* () {
+      yield* h.pumpDomain(movedToBuilding(buildingCard(CARD, "m"), 1));
+      const threadId = stateOf(yield* h.board)!.threadId!;
+      // The turn ended with a monitor running, but its completion never
+      // reached the reactor.
+      yield* setShell(h.shells, threadId, "monitoring");
+
+      // Long before the step's timeout, the sweep begins the wait...
+      yield* after(h, 1);
+      assert.strictEqual(checkInsOf(yield* h.commands), 0);
+      // ...and its first check-in goes out five minutes later.
+      yield* after(h, 5);
+      assert.strictEqual(checkInsOf(yield* h.commands), 1);
+      assert.strictEqual(recoveriesOf(yield* h.commands), 0);
+    }),
+  ),
+);
 
 it.effect("a turn that ends with the background work gone ends the wait", () =>
   withGovernor(fixture(), (h) =>

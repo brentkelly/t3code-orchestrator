@@ -147,3 +147,28 @@ it.effect(
       }),
     ),
 );
+
+// A human-in-the-loop run keeps its pre-T3O-20 handling of a monitor: the human
+// is the pacing, so the step parks on them rather than starting a wait.
+it.effect("a human-in-the-loop turn that ends with a monitor running parks on the human", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("hitl", "m", true)], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, pumpRuntime, board, commands, shells }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(buildingCard("hitl", "m", true), 1));
+        const threadId = stateOf(yield* board, "hitl")!.threadId!;
+        yield* setShell(shells, threadId, "monitoring");
+
+        yield* pumpRuntime(turnCompleted(threadId));
+
+        const parked = stateOf(yield* board, "hitl");
+        assert.strictEqual(parked?.humanInLoop, true);
+        assert.strictEqual(parked?.status, "awaiting-input");
+        assert.strictEqual(parked?.awaitingReason, "stopped");
+        assert.strictEqual(recoveries(yield* commands), 0);
+      }),
+  ),
+);

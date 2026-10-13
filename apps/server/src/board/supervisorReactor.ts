@@ -906,8 +906,7 @@ const make = Effect.gen(function* () {
 
   /** The progress signal itself, measured from any instant: the step thread's
       todo list advanced, or a commit unique to the card's branch landed, after
-      `since`. The background-wait check-ins (T3O-20) measure from the moment
-      the wait began rather than from the last nudge. */
+      `since`. */
   const progressedSince = Effect.fn("board-supervisor-progressedSince")(function* (
     state: BoardCardStepState,
     card: BoardCard,
@@ -915,6 +914,19 @@ const make = Effect.gen(function* () {
   ) {
     const todo = yield* threadTodoState(state.threadId);
     if (todo?.advancedAt != null && isAfter(todo.advancedAt, since)) return true;
+    return yield* committedSince(state, card, since);
+  });
+
+  /** A commit unique to the card's branch landed after `since`. The
+      background-wait check-ins (T3O-20) read only this half of the progress
+      signal: answering a check-in is itself a todo edit, so a todo advance
+      would restart the schedule on every reply and the wait would never reach
+      the ladder's ceiling. */
+  const committedSince = Effect.fn("board-supervisor-committedSince")(function* (
+    state: BoardCardStepState,
+    card: BoardCard,
+    since: string,
+  ) {
     // A commit counts too (D2); only a build-mode step has a worktree to
     // inspect, and only a commit unique to the card's branch is its agent's
     // work (t3o-10, D4) — otherwise a sibling's merge, synced in from the base,
@@ -5837,7 +5849,7 @@ const make = Effect.gen(function* () {
       backgroundLiveness !== null &&
       (backgroundLiveness === "working" || !found.state.humanInLoop)
     ) {
-      if (!found.state.humanInLoop) yield* beginBackgroundWait(threadId);
+      if (!found.state.humanInLoop) yield* noteBackgroundTurnEnd(threadId);
       return;
     }
     backgroundWaits.delete(String(threadId));
@@ -8090,22 +8102,41 @@ const make = Effect.gen(function* () {
   const permissionHeldAt = new Map<string, string>();
 
   // Step threads whose agent ended its turn with background work still running
-  // (T3O-20): when the wait began and how many check-ins it has had. Begun by
-  // the turn end (or by the sweep finding a quiet thread with background work);
-  // a check-in turn that ends still waiting keeps it. Cleared by a turn that
-  // ends with no background work, by progress since the wait began (which
-  // starts a fresh schedule), and with the step once it leaves running.
+  // (T3O-20): when the wait began, how many check-ins it has had, and whether
+  // the latest one is still unanswered. Begun by the turn end (or by the sweep
+  // finding a quiet thread with background work). The turn that answers a
+  // check-in keeps the schedule; any other turn ending still waiting — the
+  // provider waking the agent, a human's message — starts a fresh one, as does
+  // a commit since the wait began. Cleared by a turn that ends with no
+  // background work, and with the step once it leaves running.
   // In-memory on purpose: background work dies with the server, so after a
   // restart ordinary recovery is the right supervisor.
   const backgroundWaits = new Map<
     string,
-    { readonly since: string; readonly checkInsSent: number }
+    {
+      readonly since: string;
+      readonly checkInsSent: number;
+      readonly checkInOutstanding: boolean;
+    }
   >();
-  const beginBackgroundWait = (threadId: ThreadId) =>
+  const beginBackgroundWait = (threadId: ThreadId, now: string) =>
+    void backgroundWaits.set(String(threadId), {
+      since: now,
+      checkInsSent: 0,
+      checkInOutstanding: false,
+    });
+  /** A turn ended with background work still running. Only the reply to a
+      check-in continues the current schedule: what the agent writes while
+      answering one — a todo edit, a "still running" — is not new work, and
+      counting it would restart the free check-ins on every reply. */
+  const noteBackgroundTurnEnd = (threadId: ThreadId) =>
     nowIso.pipe(
       Effect.map((now) => {
-        if (!backgroundWaits.has(String(threadId))) {
-          backgroundWaits.set(String(threadId), { since: now, checkInsSent: 0 });
+        const wait = backgroundWaits.get(String(threadId));
+        if (wait?.checkInOutstanding === true) {
+          backgroundWaits.set(String(threadId), { ...wait, checkInOutstanding: false });
+        } else {
+          beginBackgroundWait(threadId, now);
         }
       }),
     );
@@ -8145,7 +8176,14 @@ const make = Effect.gen(function* () {
     if (state.threadId === null) return false;
     const key = String(state.threadId);
     const wait = backgroundWaits.get(key);
-    if (wait === undefined) return false;
+    if (wait === undefined) {
+      // The turn end was missed (a dropped event): begin the wait here, ahead of the
+      // caller's `timeoutMs` gate, so a step with no timeout is still checked
+      // on and a timed one does not idle a whole timeout first.
+      if (!(yield* threadWaitingOnBackground(state.threadId))) return false;
+      beginBackgroundWait(state.threadId, input.now);
+      return true;
+    }
     const shell = Option.getOrUndefined(yield* snapshotQuery.getThreadShellById(state.threadId));
     if (shell === undefined || !deriveBoardCardThreadState(shell).waitingOnBackground) {
       // A live turn (a check-in being answered) is supervised the ordinary
@@ -8155,10 +8193,12 @@ const make = Effect.gen(function* () {
     }
     const card = board.cards.find((candidate) => candidate.id === state.cardId);
     if (card === undefined || card.archivedAt !== null) return true;
-    // The agent woke and did real work: whatever it is waiting on now is a new
-    // wait, and gets a fresh five-minute first check.
-    if (yield* progressedSince(state, card, wait.since)) {
-      backgroundWaits.set(key, { since: input.now, checkInsSent: 0 });
+    // The agent committed real work: whatever it is waiting on now is a new
+    // wait, and gets a fresh five-minute first check. A todo advance is not
+    // read here (see `committedSince`); a wake that did real work restarts the
+    // schedule through its own turn end instead.
+    if (yield* committedSince(state, card, wait.since)) {
+      beginBackgroundWait(state.threadId, input.now);
       return true;
     }
     const sinceMs = Date.parse(wait.since);
@@ -8199,7 +8239,11 @@ const make = Effect.gen(function* () {
       createdAt: input.now,
     });
     if (!checkedIn) return true;
-    backgroundWaits.set(key, { since: wait.since, checkInsSent: wait.checkInsSent + 1 });
+    backgroundWaits.set(key, {
+      since: wait.since,
+      checkInsSent: wait.checkInsSent + 1,
+      checkInOutstanding: true,
+    });
     yield* sendTurn({
       threadId: state.threadId,
       text: boardBackgroundCheckInNudge({
@@ -8406,13 +8450,6 @@ const make = Effect.gen(function* () {
       // pacing. Read last, so only an already-overdue step pays for it.
       if (state.threadId !== null && (yield* threadAwaitingPermission(state.threadId))) {
         permissionHeldAt.set(String(state.threadId), now);
-        continue;
-      }
-      // A quiet thread with background work is waiting, not hung (T3O-20) —
-      // reached here only when its turn end was missed. Begin the wait; its
-      // check-ins take over.
-      if (state.threadId !== null && (yield* threadWaitingOnBackground(state.threadId))) {
-        backgroundWaits.set(String(state.threadId), { since: now, checkInsSent: 0 });
         continue;
       }
       yield* recoverStep({ card, state });
