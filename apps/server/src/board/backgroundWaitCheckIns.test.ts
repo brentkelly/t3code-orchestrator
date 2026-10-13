@@ -21,7 +21,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
-import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
@@ -207,7 +207,7 @@ it.effect("progress since the wait began restarts the schedule", () => {
 
       // The agent woke, worked through its list and started a new job.
       todos.set(String(threadId), {
-        advancedAt: new Date(yield* Clock.currentTimeMillis).toISOString(),
+        advancedAt: DateTime.formatIso(yield* DateTime.now),
         hasList: true,
       });
       yield* after(h, 1);
