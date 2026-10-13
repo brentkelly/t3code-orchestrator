@@ -344,12 +344,9 @@ export function boardBackgroundCheckInDueMs(input: {
   const offsets: ReadonlyArray<number> = BOARD_BACKGROUND_CHECK_IN_OFFSETS_MS;
   const scheduled = offsets[input.checkInsSent];
   if (scheduled !== undefined) return input.sinceMs + scheduled;
+  // Past the offsets, so `beyond` is at least 1.
   const beyond = input.checkInsSent - offsets.length + 1;
-  return (
-    input.sinceMs +
-    (offsets.at(-1) ?? 0) +
-    Math.max(beyond, 1) * BOARD_BACKGROUND_CHECK_IN_INTERVAL_MS
-  );
+  return input.sinceMs + (offsets.at(-1) ?? 0) + beyond * BOARD_BACKGROUND_CHECK_IN_INTERVAL_MS;
 }
 
 /** Whether a check-in spends the recovery budget (T3O-20). The scheduled ones
