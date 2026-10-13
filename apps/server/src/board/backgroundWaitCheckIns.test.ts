@@ -229,6 +229,80 @@ it.effect("a commit mid-wait restarts the schedule and the stall streak", () => 
   );
 });
 
+it.effect("a commit made during a woken turn resets the stall streak", () => {
+  let committedAt = "";
+  const input = {
+    ...fixture(),
+    get latestBranchCommitIso() {
+      return committedAt;
+    },
+  };
+  return withGovernor(input, (h) =>
+    Effect.gen(function* () {
+      const threadId = yield* startWaiting(h);
+      yield* after(h, 5);
+      yield* after(h, 10);
+      yield* after(h, 15);
+      yield* after(h, 30);
+      // The agent answers the charged check-in, still waiting.
+      yield* h.pumpRuntime(turnCompleted(threadId));
+      assert.strictEqual(stateOf(yield* h.board)?.stallCount, 1, "one charged check-in");
+
+      // The provider wakes the agent; it commits and ends still waiting, with
+      // no sweep in between to see the commit against the old wait.
+      yield* after(h, 1);
+      committedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* h.pumpRuntime(turnCompleted(threadId));
+
+      yield* after(h, 5);
+      assert.strictEqual(checkInsOf(yield* h.commands), 5, "the new wait's first check");
+      const reset = stateOf(yield* h.board);
+      assert.strictEqual(reset?.stallCount, 0, "the woken turn's commit zeroes the streak");
+      assert.strictEqual(reset?.attempt, 1);
+    }),
+  );
+});
+
+it.effect(
+  "a step awaiting input whose agent starts a monitor goes back to running and is checked in on",
+  () =>
+    withGovernor(fixture(), (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(movedToBuilding(buildingCard(CARD, "m"), 1));
+        const threadId = stateOf(yield* h.board)!.threadId!;
+        // The agent raised a structured question and the step parked on it.
+        yield* Ref.update(
+          h.shells,
+          (current) =>
+            new Map([
+              ...current,
+              [
+                String(threadId),
+                {
+                  ...shellOf(threadId, null),
+                  hasPendingUserInput: true,
+                } as OrchestrationThreadShell,
+              ],
+            ]),
+        );
+        yield* h.pumpRuntime(turnCompleted(threadId));
+        assert.strictEqual(stateOf(yield* h.board)?.status, "awaiting-input");
+
+        // Answered, the agent starts a monitor and ends its turn.
+        yield* setShell(h.shells, threadId, "monitoring");
+        yield* h.pumpRuntime(turnCompleted(threadId));
+        assert.strictEqual(stateOf(yield* h.board)?.status, "running", "not left violet");
+
+        // Back on running, the wait is one the sweep checks in on.
+        yield* after(h, 5);
+        const commands = yield* h.commands;
+        assert.strictEqual(checkInsOf(commands), 1);
+        assert.strictEqual(recoveriesOf(commands), 0);
+        assert.strictEqual(stallNudgesOf(commands), 0);
+      }),
+    ),
+);
+
 it.effect("a todo edit while answering a check-in does not restart the schedule", () => {
   const todos = new Map<string, TodoRow>();
   return withGovernor(fixture(todos), (h) =>

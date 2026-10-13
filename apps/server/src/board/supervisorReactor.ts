@@ -5851,6 +5851,11 @@ const make = Effect.gen(function* () {
     // that happens to end with a monitor still live is the provider stopping,
     // not the agent waiting, and must park on the cooldown (T3O-22) rather than
     // be checked in on until it escalates.
+    //
+    // The sweep supervises running steps alone, so an unattended step still
+    // awaiting input (its agent answered and started a job) is put back to
+    // running first; a wait noted on a parked step would never be checked in
+    // on, and the card would sit violet while its agent worked.
     const backgroundLiveness = shell?.backgroundLiveness ?? null;
     if (
       backgroundLiveness !== null &&
@@ -5861,7 +5866,8 @@ const make = Effect.gen(function* () {
           backgroundWaits.delete(String(threadId));
           return;
         }
-        yield* noteBackgroundTurnEnd(threadId);
+        if (found.state.status !== "running" && !(yield* resumeParkedStep(threadId))) return;
+        yield* noteBackgroundTurnEnd(found, threadId);
       }
       return;
     }
@@ -7808,9 +7814,9 @@ const make = Effect.gen(function* () {
   ) {
     const board = yield* readBoard;
     const found = stepThreadCard(board, threadId);
-    if (found === null) return;
-    if (!isBoardParkedStepStatus(found.state.status)) return;
-    if (found.card.archivedAt !== null) return;
+    if (found === null) return false;
+    if (!isBoardParkedStepStatus(found.state.status)) return false;
+    if (found.card.archivedAt !== null) return false;
     // OBSERVED, not fire-and-forget: a refused resume must never restore a slot
     // that nothing will release — the same discipline `admitBuildCandidate`
     // applies around `admit-step`.
@@ -7821,7 +7827,7 @@ const make = Effect.gen(function* () {
       stepId: found.state.stepId,
       createdAt: yield* nowIso,
     });
-    if (!landed) return;
+    if (!landed) return false;
     // A human put this step back to work themselves, so a schedule that would
     // stop it again later has been overtaken (T3O-19, D6). Cleared here rather
     // than only on the `board.card-step-recovered` this dispatch produces,
@@ -7833,6 +7839,7 @@ const make = Effect.gen(function* () {
     // request — the `forceStart` and boot-reconcile precedent. The count may sit
     // over the ceiling until the step settles and releases exactly once.
     if (found.state.mode === "build") yield* slots.restore(found.state.providerInstanceId);
+    return true;
   });
 
   /**
@@ -8156,18 +8163,24 @@ const make = Effect.gen(function* () {
   /** A turn ended with background work still running. Only the reply to a
       check-in continues the current schedule: what the agent writes while
       answering one — a todo edit, a "still running" — is not new work, and
-      counting it would restart the free check-ins on every reply. */
-  const noteBackgroundTurnEnd = (threadId: ThreadId) =>
-    nowIso.pipe(
-      Effect.map((now) => {
-        const wait = backgroundWaits.get(String(threadId));
-        if (wait?.checkInOutstanding === true) {
-          backgroundWaits.set(String(threadId), { ...wait, checkInOutstanding: false });
-        } else {
-          beginBackgroundWait(threadId, now);
-        }
-      }),
-    );
+      counting it would restart the free check-ins on every reply. Any other
+      turn starts a fresh wait, carrying forward a commit made since the old
+      one began: the fresh wait's `since` is now, so the sweep could never see
+      a commit the woken turn itself made. */
+  const noteBackgroundTurnEnd = Effect.fn("board-supervisor-noteBackgroundTurnEnd")(function* (
+    found: { readonly card: BoardCard; readonly state: BoardCardStepState },
+    threadId: ThreadId,
+  ) {
+    const wait = backgroundWaits.get(String(threadId));
+    if (wait?.checkInOutstanding === true) {
+      backgroundWaits.set(String(threadId), { ...wait, checkInOutstanding: false });
+      return;
+    }
+    const progressed =
+      wait !== undefined &&
+      (wait.progressed || (yield* committedSince(found.state, found.card, wait.since)));
+    beginBackgroundWait(threadId, yield* nowIso, progressed);
+  });
   /** The thread's shell when it is between turns, needs no human and has
       background work — the same reading the card's "Waiting" label makes. */
   const threadWaitingOnBackground = (threadId: ThreadId) =>
