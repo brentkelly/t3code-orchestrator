@@ -88,47 +88,63 @@ const interviewFinished = (
  * The release sweep leaves such a thread in the inbox. The card has moved on,
  * but the conversation has not: the agent may still ask something in prose, or
  * wait on an answer, and settling it would hide that from everywhere but the
- * card's own thread tab.
+ * card's own thread tab. A thread that reported its step at all, even as
+ * failed, has nothing more to say and is released.
  */
 export function isUnfinishedKeptInterview(
   board: BoardState,
-  card: Pick<BoardCard, "id" | "threadLinks">,
-  state: Pick<BoardCardStepState, "stepId" | "status" | "threadId"> | null,
+  card: Pick<BoardCard, "id" | "stage" | "threadLinks">,
   threadId: ThreadId,
 ): boolean {
+  const stepId = keptPlanningStepId(board, card, threadId);
   return (
-    state !== null &&
-    isKeptStepThread(board, card, state, state.stepId, threadId) &&
-    !interviewFinished(board, card, state.stepId, threadId)
+    stepId !== null &&
+    boardCardPlans(board, card.id).length === 0 &&
+    !boardCardStepCompletions(board, card.id).some(
+      (completion) => completion.stepId === stepId && completion.threadId === threadId,
+    )
   );
 }
 
 /**
- * Whether `threadId` is the kept planning thread of the card's abandoned step,
- * and so may still record that step's completion.
+ * Whether `threadId` is the kept planning thread of the card's plan-role step
+ * `stepId`, and so may still record that step's completion.
  *
  * Leaving Planning settles the step as `abandoned` but keeps its thread running
  * (`keepsPlanningThreadOnExit`), so the interview can finish after the card has
  * moved on. Its `board_complete_step` must land, or the finished interview is
- * never recorded and a re-entry resumes it as if it were not. Only the thread
- * still linked to the card under a plan-role step qualifies: every other
- * stage's thread was dropped when its card left, and has nothing to record.
+ * never recorded and a re-entry resumes it as if it were not.
  */
 export function isKeptStepThread(
   board: BoardState,
-  card: Pick<BoardCard, "threadLinks">,
-  state: Pick<BoardCardStepState, "stepId" | "status" | "threadId"> | null,
+  card: Pick<BoardCard, "stage" | "threadLinks">,
   stepId: string,
   threadId: ThreadId | null,
 ): boolean {
-  return (
-    state !== null &&
-    state.stepId === stepId &&
-    state.status === "abandoned" &&
-    state.threadId === threadId &&
-    isPlanStage(board, stepId) &&
-    card.threadLinks.some(
-      (link) => link.threadId === threadId && link.role === stepId && link.tombstonedAt === null,
-    )
+  return threadId !== null && keptPlanningStepId(board, card, threadId) === stepId;
+}
+
+/**
+ * The plan-role step whose thread `threadId` the card kept when it left that
+ * stage, or null.
+ *
+ * Read from the card's links, never its step-state row: the card holds one row,
+ * and the next stage's step replaces the abandoned planning one (Planning →
+ * Ready → Building), while the kept thread is still talking. Every other
+ * stage's thread was dropped when its card left, so a live link under a
+ * plan-role stage the card is not standing in can only be a kept interview,
+ * finished or not.
+ */
+export function keptPlanningStepId(
+  board: BoardState,
+  card: Pick<BoardCard, "stage" | "threadLinks">,
+  threadId: ThreadId,
+): string | null {
+  const link = card.threadLinks.findLast(
+    (candidate) =>
+      candidate.threadId === threadId &&
+      candidate.tombstonedAt === null &&
+      candidate.role !== card.stage,
   );
+  return link !== undefined && isPlanStage(board, link.role) ? link.role : null;
 }

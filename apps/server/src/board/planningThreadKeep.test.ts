@@ -27,6 +27,7 @@ import {
   keptPlanningThreadId,
 } from "./planningThreadKeep.ts";
 import { projectBoardEvent } from "./projector.ts";
+import { boardReleasedThreadIds } from "./threadRelease.ts";
 import {
   aliveThreadShell,
   cardMoved,
@@ -44,6 +45,7 @@ import {
 const PLANNING = BOARD_SEED_STAGE_IDS.planning;
 const READY = BOARD_SEED_STAGE_IDS.ready;
 const SPRINT = BOARD_SEED_STAGE_IDS.sprint;
+const BUILDING = BOARD_SEED_STAGE_IDS.building;
 const cardId = BoardCardId.make("card-1");
 
 const settings = settingsWith({
@@ -260,6 +262,53 @@ describe("leaving Planning before the plan is written", () => {
       ),
   );
 
+  // The card holds one step row, and the next stage's step replaces the
+  // abandoned planning one. The kept thread is still the card's interview.
+  it.effect("moved straight on to Building, the kept thread stays in the inbox and records", () =>
+    withGovernor({ board: { cards: [sprintCard()], nextCardNumberByProject: {} }, settings }, (h) =>
+      Effect.gen(function* () {
+        const threadId = yield* startPlanning(h);
+        yield* setShell(h, threadId, aliveThreadShell(String(threadId)));
+        yield* move(h, BUILDING, 2);
+        assert.strictEqual(boardCardStepState(yield* h.board, cardId)?.stepId, BUILDING);
+
+        assert.notInclude(boardReleasedThreadIds(yield* h.board), threadId);
+        yield* completePlanning(h, threadId, 3);
+        const recorded = boardCardStepCompletions(yield* h.board, cardId).find(
+          (completion) => completion.stepId === PLANNING,
+        );
+        assert.strictEqual(recorded?.threadId, threadId);
+        // Finished: the sweep may settle it now.
+        assert.include(boardReleasedThreadIds(yield* h.board), threadId);
+      }),
+    ),
+  );
+
+  it.effect("a kept thread deleted while the card was away is replaced on return", () =>
+    withGovernor({ board: { cards: [sprintCard()], nextCardNumberByProject: {} }, settings }, (h) =>
+      Effect.gen(function* () {
+        const threadId = yield* startPlanning(h);
+        yield* move(h, READY, 2);
+        yield* Ref.update(h.shells, (current) => {
+          const next = new Map(current);
+          next.delete(String(threadId));
+          return next;
+        });
+
+        yield* move(h, PLANNING, 3);
+
+        const state = boardCardStepState(yield* h.board, cardId);
+        assert.strictEqual(state?.stepId, PLANNING);
+        assert.strictEqual(state?.status, "running");
+        assert.notStrictEqual(state?.threadId, threadId);
+        assert.deepStrictEqual(
+          liveLinks(yield* h.board).map((link) => link.threadId),
+          [state!.threadId],
+        );
+      }),
+    ),
+  );
+
   it.effect("a stalled interview is still dropped, so dragging back restarts it", () =>
     withGovernor({ board: { cards: [sprintCard()], nextCardNumberByProject: {} }, settings }, (h) =>
       Effect.gen(function* () {
@@ -338,25 +387,24 @@ describe("the planning-thread rules", () => {
     assert.isNull(keptPlanningThreadId(planned, card));
   });
 
-  it("lets only the still-linked thread of the abandoned step record it", () => {
+  it("lets only the still-linked planning thread of a card that left record it", () => {
     const b = board([]);
     const card = linked(READY);
-    const abandoned = { stepId: PLANNING, status: "abandoned" as const, threadId: thread };
-    assert.isTrue(isKeptStepThread(b, card, abandoned, PLANNING, thread));
-    assert.isFalse(isKeptStepThread(b, card, abandoned, PLANNING, ThreadId.make("thread-other")));
-    assert.isFalse(isKeptStepThread(b, card, abandoned, PLANNING, null));
-    assert.isFalse(
-      isKeptStepThread(b, card, { ...abandoned, status: "stalled" as const }, PLANNING, thread),
-    );
-    assert.isFalse(isKeptStepThread(b, { ...card, threadLinks: [] }, abandoned, PLANNING, thread));
-    // Only a planning step: no other stage keeps its thread past the move.
+    assert.isTrue(isKeptStepThread(b, card, PLANNING, thread));
+    // Whatever the card's step row says now: a later stage's step replaces it.
+    assert.isTrue(isKeptStepThread(b, linked(BOARD_SEED_STAGE_IDS.building), PLANNING, thread));
+    assert.isFalse(isKeptStepThread(b, card, PLANNING, ThreadId.make("thread-other")));
+    assert.isFalse(isKeptStepThread(b, card, PLANNING, null));
+    assert.isFalse(isKeptStepThread(b, card, String(BOARD_SEED_STAGE_IDS.building), thread));
+    assert.isFalse(isKeptStepThread(b, { ...card, threadLinks: [] }, PLANNING, thread));
+    // Back in Planning the step is live again, and that rule owns it.
+    assert.isFalse(isKeptStepThread(b, linked(PLANNING), PLANNING, thread));
+    // Only a planning link: no other stage keeps its thread past the move.
     const building = String(BOARD_SEED_STAGE_IDS.building);
     const buildingCard = {
       ...card,
       threadLinks: [{ threadId: thread, role: building, linkedAt: NOW, tombstonedAt: null }],
     } as BoardCard;
-    assert.isFalse(
-      isKeptStepThread(b, buildingCard, { ...abandoned, stepId: building }, building, thread),
-    );
+    assert.isFalse(isKeptStepThread(b, buildingCard, building, thread));
   });
 });

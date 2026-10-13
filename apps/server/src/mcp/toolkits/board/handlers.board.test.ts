@@ -546,7 +546,9 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const own = yield* seedOwnCard("sibling-idle");
       yield* startStep({ ...own, suffix: "sibling-idle" });
       // A second thread linked to the same card — an adopted conversation, say.
-      // It owns no run, so it has nothing to complete.
+      // It owns no run, so it has nothing to complete. Adopted under `linked`,
+      // as every client links: only the board links a thread under a stage, and
+      // a planning link outliving its stage is a kept interview (T3O-19).
       const engine = yield* OrchestrationEngineService;
       const sibling = ThreadId.make("thread-other-idle");
       yield* engine.dispatch({
@@ -567,7 +569,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         commandId: CommandId.make("cmd-link-other-idle"),
         cardId: own.ownCard,
         threadId: sibling,
-        role: "planning",
+        role: "linked",
         createdAt: t0,
       });
 
@@ -610,7 +612,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         commandId: CommandId.make("cmd-link-other-explicit"),
         cardId: own.ownCard,
         threadId: sibling,
-        role: "planning",
+        role: "linked",
         createdAt: t0,
       });
 

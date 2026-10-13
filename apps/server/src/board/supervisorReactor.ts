@@ -993,18 +993,6 @@ const make = Effect.gen(function* () {
   const hasLiveStageThread = (card: BoardCard, stageId: string): boolean =>
     card.threadLinks.some((link) => link.role === stageId && link.tombstonedAt === null);
 
-  /** The planning thread a card kept when it left Planning unfinished
-      (T3O-19), still on the card and still present — the one a re-entry
-      resumes rather than replacing. Null when there is none to resume. */
-  const keptPlanningThread = Effect.fn("board-supervisor-keptPlanningThread")(function* (
-    board: BoardState,
-    card: BoardCard,
-  ) {
-    const threadId = keptPlanningThreadId(board, card);
-    if (threadId === null || (yield* threadGone(threadId))) return null;
-    return threadId;
-  });
-
   // Send a follow-up turn (recovery nudge or escalation question) to an
   // existing step thread.
   const sendTurn = Effect.fn("board-supervisor-sendTurn")(function* (input: {
@@ -2280,8 +2268,25 @@ const make = Effect.gen(function* () {
       // Never trample a thread already running this stage (D7) — except the
       // planning thread the card kept when it left unfinished (T3O-19), which
       // the step resumes on below rather than spawning a fresh interview.
-      kept = yield* keptPlanningThread(board, card);
-      if (kept === null && hasLiveStageThread(card, card.stage)) return;
+      kept = keptPlanningThreadId(board, card);
+      let stageLinks = card.threadLinks;
+      if (kept !== null && (yield* threadGone(kept))) {
+        // Deleted while the card was away: nothing to resume, and its link
+        // would trip the guard below for good. Drop it and run the stage as
+        // a card that never kept a thread would.
+        yield* dispatch({
+          type: "board.card.unlink-thread",
+          commandId: yield* commandId("unlink-kept-gone"),
+          cardId: card.id,
+          threadId: kept,
+          createdAt: yield* nowIso,
+        });
+        const gone = kept;
+        stageLinks = stageLinks.filter((link) => link.threadId !== gone);
+        kept = null;
+      }
+      if (kept === null && hasLiveStageThread({ ...card, threadLinks: stageLinks }, card.stage))
+        return;
       if (existing !== null && !isBoardTerminalStepStatus(existing.status)) return;
     }
     // Auto-kickoff fires only for an auto-executing stage; on-demand runs any

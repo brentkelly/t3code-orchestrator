@@ -2403,7 +2403,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // A planning thread the card kept when it left Planning unfinished
       // (T3O-19) may still record its own step: its interview runs on after the
       // move, and a finished plan must not read as unfinished on re-entry.
-      const keptMatch = isKeptStepThread(board, card, current, command.stepId, command.threadId);
+      const keptMatch = isKeptStepThread(board, card, command.stepId, command.threadId);
       const recordable = liveMatch || keptMatch;
       // The stepId must be the card's live step or an already-recorded
       // completion (an idempotent retry). Step ids are predictable, so without

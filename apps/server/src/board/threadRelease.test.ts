@@ -102,11 +102,14 @@ const stepState = (input: {
 const board = (input: {
   readonly card: BoardCard;
   readonly step?: BoardCardStepState;
+  /** The card has a plan, so its planning interview finished. */
+  readonly planned?: boolean;
 }): BoardState =>
   ({
     cards: [input.card],
     nextCardNumberByProject: {},
     ...(input.step === undefined ? {} : { stepStates: [input.step] }),
+    ...(input.planned === true ? { plans: [{ cardId: input.card.id, ordinal: 0 }] } : {}),
   }) as unknown as BoardState;
 
 const released = (state: BoardState, abandoned?: ReadonlySet<string>): ReadonlyArray<string> =>
@@ -125,6 +128,9 @@ describe("boardReleasedThreadIds", () => {
         ],
       }),
       step: stepState({ stepId: "review@2", threadId: "thread-r2", status: "running" }),
+      // Planned, so the planning thread is a finished interview rather than one
+      // the card kept unfinished (T3O-19).
+      planned: true,
     });
     assert.deepStrictEqual(released(state), ["thread-plan", "thread-build", "thread-r1"]);
   });
@@ -223,6 +229,7 @@ describe("boardReleasedThreadIds", () => {
         stage: String(BOARD_SEED_STAGE_IDS.backlog),
         links: [link("thread-old", String(BOARD_SEED_STAGE_IDS.planning))],
       }),
+      planned: true,
     });
     assert.deepStrictEqual(released(state), ["thread-old"]);
   });
@@ -293,6 +300,43 @@ describe("boardReleasedThreadIds", () => {
 
     it("stays in the inbox while unfinished", () => {
       assert.deepStrictEqual(released(kept()), []);
+    });
+
+    // The card holds one step row: the next stage's step replaces the
+    // abandoned planning one, and the interview is still unfinished.
+    it("stays in the inbox once a later stage's step replaces the planning row", () => {
+      const state = board({
+        card: card({
+          stage: String(BOARD_SEED_STAGE_IDS.building),
+          links: [
+            link("thread-plan", planning),
+            link("thread-build", String(BOARD_SEED_STAGE_IDS.building)),
+          ],
+        }),
+        step: stepState({
+          stepId: String(BOARD_SEED_STAGE_IDS.building),
+          threadId: "thread-build",
+          status: "running",
+        }),
+      });
+      assert.deepStrictEqual(released(state), []);
+    });
+
+    it("is released once the thread reports its step, even as failed", () => {
+      const state = kept({
+        stepCompletions: [
+          {
+            cardId: BoardCardId.make("card-1"),
+            stepId: planning,
+            outcome: "failed",
+            summary: "gave up",
+            payload: null,
+            threadId: ThreadId.make("thread-plan"),
+            completedAt: NOW,
+          },
+        ],
+      } as unknown as Partial<BoardState>);
+      assert.deepStrictEqual(released(state), ["thread-plan"]);
     });
 
     it("is released once a plan is written", () => {

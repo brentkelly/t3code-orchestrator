@@ -148,7 +148,7 @@ export function boardReleasedThreadIds(
         continue;
       // A planning interview the card left unfinished (T3O-19) is still a
       // conversation, whatever column the card is in.
-      if (card.archivedAt === null && isUnfinishedKeptInterview(board, card, state, link.threadId))
+      if (card.archivedAt === null && isUnfinishedKeptInterview(board, card, link.threadId))
         continue;
       add(link.threadId);
     }
