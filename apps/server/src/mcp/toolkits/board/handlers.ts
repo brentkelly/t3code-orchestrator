@@ -67,6 +67,7 @@ import * as ServerConfig from "../../../config.ts";
 import { boardCardAttachmentManifest } from "../../../board/attachments.ts";
 import { boardAgentActor, stampBoardActivityActor } from "../../../board/activityActors.ts";
 import { boardBriefVersion } from "../../../board/briefEdits.ts";
+import { isKeptStepThread } from "../../../board/planningThreadKeep.ts";
 import { BoardToolError, BoardToolkit } from "./tools.ts";
 
 const nonEmpty = (value: string | undefined, fallback: string): string =>
@@ -325,6 +326,9 @@ const refuseLiveWork = (
  *    point: `resolveBoardCardForThread` resolves a card from ANY non-tombstoned
  *    link, so a sibling thread on the same card must not be able to settle a run
  *    it did not perform.
+ *    The planning thread a card kept when it left Planning unfinished (T3O-19)
+ *    counts as owning its abandoned step: the interview runs on after the move,
+ *    and its completion has to land.
  * 2. The caller has a SETTLED completion of its own on this card → that step,
  *    which lands on the decider's idempotent path and re-returns the recorded
  *    outcome. The supervisor settles the run row the instant it sees the first
@@ -347,6 +351,10 @@ const resolveCompletionStepId = (
 ): Effect.Effect<string, BoardToolError> => {
   const state = boardCardStepState(board, card.id);
   const live = state !== null && !isBoardTerminalStepStatus(state.status) ? state : null;
+  const kept =
+    state !== null && isKeptStepThread(board, card, state, state.stepId, scope.threadId)
+      ? state
+      : null;
   const ownCompletions = boardCardStepCompletions(board, card.id).filter(
     (completion) => completion.threadId === scope.threadId,
   );
@@ -356,7 +364,7 @@ const resolveCompletionStepId = (
       ? stepId
       : live !== null && live.threadId === scope.threadId
         ? live.stepId
-        : ownCompletions[ownCompletions.length - 1]?.stepId;
+        : (kept?.stepId ?? ownCompletions[ownCompletions.length - 1]?.stepId);
 
   if (candidate === undefined) {
     return Effect.fail(
@@ -675,7 +683,11 @@ export const boardHandlers = {
         liveState !== null &&
         liveState.stepId === stepId &&
         !isBoardTerminalStepStatus(liveState.status);
-      const supersedes = existing !== undefined && existing.outcome !== "succeeded" && liveMatch;
+      // The decider's matching rule for a planning thread kept past its stage
+      // (T3O-19): it may still record its own abandoned step.
+      const keptMatch = isKeptStepThread(board, card, liveState, stepId, deps.scope.threadId);
+      const supersedes =
+        existing !== undefined && existing.outcome !== "succeeded" && (liveMatch || keptMatch);
       // The OTHER path where a retry is not a no-op: a `succeeded` record whose
       // payload nothing can read is repaired rather than re-emitted (T3O-14).
       // The decider decides it — this mirrors the rule so the reply does not
@@ -697,7 +709,7 @@ export const boardHandlers = {
       // to record, and a confirming retry of a step that already completed
       // validly still gets its documented `alreadyCompleted` reply rather than
       // an error about arguments nothing was going to read.
-      const recordable = liveMatch || repairs;
+      const recordable = liveMatch || keptMatch || repairs;
       // The agent's structured payload is stored verbatim as an opaque JSON
       // string (D8: carried through unread), so a schema codec would add
       // nothing over a plain stringify — except for the one thing a stringify

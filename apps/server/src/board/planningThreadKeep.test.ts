@@ -6,7 +6,10 @@
 import {
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
+  boardCardStepCompletions,
   boardCardStepState,
+  CommandId,
+  type OrchestrationEvent,
   ThreadId,
   type BoardCard,
   type BoardStageId,
@@ -16,7 +19,12 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
-import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
+import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
+import {
+  isKeptStepThread,
+  keepsPlanningThreadOnExit,
+  keptPlanningThreadId,
+} from "./planningThreadKeep.ts";
 import { projectBoardEvent } from "./projector.ts";
 import {
   aliveThreadShell,
@@ -62,6 +70,35 @@ const move = (h: Harness, toStage: BoardStageId, sequence: number) =>
 
 const setShell = (h: Harness, threadId: ThreadId, shell: ReturnType<typeof idleThreadShell>) =>
   Ref.update(h.shells, (current) => new Map(current).set(String(threadId), shell));
+
+/** The kept thread reports its step done, through the real decider, the way its
+    `board_complete_step` call reaches the board. */
+const completePlanning = (h: Harness, threadId: ThreadId, sequence: number) =>
+  Effect.gen(function* () {
+    const decided = yield* decideBoardCommand({
+      command: {
+        type: "board.card.complete-step",
+        commandId: CommandId.make(`cmd-complete-${sequence}`),
+        cardId,
+        stepId: PLANNING,
+        outcome: "succeeded",
+        summary: "plan written",
+        payload: null,
+        threadId,
+        createdAt: NOW,
+      },
+      readModel: yield* Ref.get(h.model),
+    });
+    for (const planned of boardDecidedEvents(decided)) {
+      const event = { ...planned, sequence } as unknown as OrchestrationEvent;
+      const next = yield* projectBoardEvent(
+        yield* Ref.get(h.model),
+        event as Parameters<typeof projectBoardEvent>[1],
+      ).pipe(Effect.orDie);
+      yield* Ref.set(h.model, next);
+      yield* h.pumpDomain(event);
+    }
+  });
 
 const liveLinks = (board: BoardState) =>
   board.cards
@@ -159,6 +196,39 @@ describe("leaving Planning before the plan is written", () => {
     ),
   );
 
+  it.effect(
+    "the kept thread finishing after the move records its plan, so return does not resume it",
+    () =>
+      withGovernor(
+        { board: { cards: [sprintCard()], nextCardNumberByProject: {} }, settings },
+        (h) =>
+          Effect.gen(function* () {
+            const threadId = yield* startPlanning(h);
+            yield* setShell(h, threadId, aliveThreadShell(String(threadId)));
+            yield* move(h, READY, 2);
+
+            // The interview finishes while the card sits in Ready.
+            yield* completePlanning(h, threadId, 3);
+            const recorded = boardCardStepCompletions(yield* h.board, cardId).find(
+              (completion) => completion.stepId === PLANNING,
+            );
+            assert.strictEqual(recorded?.outcome, "succeeded");
+            assert.strictEqual(recorded?.threadId, threadId);
+
+            yield* setShell(h, threadId, idleThreadShell(String(threadId)));
+            const before = yield* h.commands;
+            yield* move(h, PLANNING, 4);
+
+            // A finished interview is left alone: no resume onto it, no fresh one.
+            const state = boardCardStepState(yield* h.board, cardId);
+            assert.strictEqual(state?.status, "abandoned");
+            const after = (yield* h.commands).slice(before.length);
+            assert.strictEqual(spawnedThreads(after), 0);
+            assert.isUndefined(after.find((command) => command.type === "board.card.admit-step"));
+          }),
+      ),
+  );
+
   it.effect("a stalled interview is still dropped, so dragging back restarts it", () =>
     withGovernor({ board: { cards: [sprintCard()], nextCardNumberByProject: {} }, settings }, (h) =>
       Effect.gen(function* () {
@@ -230,5 +300,32 @@ describe("the planning-thread rules", () => {
       ],
     } as Partial<BoardState>);
     assert.isNull(keptPlanningThreadId(finished, card));
+    // A plan on the card is a finished interview too, however it was recorded.
+    const planned = board([card], {
+      plans: [{ cardId, ordinal: 0 }],
+    } as unknown as Partial<BoardState>);
+    assert.isNull(keptPlanningThreadId(planned, card));
+  });
+
+  it("lets only the still-linked thread of the abandoned step record it", () => {
+    const b = board([]);
+    const card = linked(READY);
+    const abandoned = { stepId: PLANNING, status: "abandoned" as const, threadId: thread };
+    assert.isTrue(isKeptStepThread(b, card, abandoned, PLANNING, thread));
+    assert.isFalse(isKeptStepThread(b, card, abandoned, PLANNING, ThreadId.make("thread-other")));
+    assert.isFalse(isKeptStepThread(b, card, abandoned, PLANNING, null));
+    assert.isFalse(
+      isKeptStepThread(b, card, { ...abandoned, status: "stalled" as const }, PLANNING, thread),
+    );
+    assert.isFalse(isKeptStepThread(b, { ...card, threadLinks: [] }, abandoned, PLANNING, thread));
+    // Only a planning step: no other stage keeps its thread past the move.
+    const building = String(BOARD_SEED_STAGE_IDS.building);
+    const buildingCard = {
+      ...card,
+      threadLinks: [{ threadId: thread, role: building, linkedAt: NOW, tombstonedAt: null }],
+    } as BoardCard;
+    assert.isFalse(
+      isKeptStepThread(b, buildingCard, { ...abandoned, stepId: building }, building, thread),
+    );
   });
 });

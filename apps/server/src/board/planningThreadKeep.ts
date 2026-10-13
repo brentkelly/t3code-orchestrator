@@ -12,6 +12,7 @@
  * state.
  */
 import {
+  boardCardPlans,
   boardCardStepCompletions,
   boardStageById,
   BoardStageId,
@@ -46,10 +47,11 @@ export function keepsPlanningThreadOnExit(
  * The thread a card re-entering its plan-role stage resumes, or null to run the
  * stage as usual.
  *
- * This is the card's most recent live link for the stage, unless that thread
- * already completed the step successfully. A finished interview is not
- * resumed: re-entry keeps its existing rule and leaves that thread alone on the
- * card.
+ * This is the card's most recent live link for the stage, unless the interview
+ * already finished: that thread completed the step successfully, or a plan was
+ * written (the thread may have written it after the card left). A finished
+ * interview is not resumed: re-entry keeps its existing rule and leaves that
+ * thread alone on the card.
  */
 export function keptPlanningThreadId(
   board: BoardState,
@@ -60,6 +62,7 @@ export function keptPlanningThreadId(
     (candidate) => candidate.role === card.stage && candidate.tombstonedAt === null,
   );
   if (link === undefined) return null;
+  if (boardCardPlans(board, card.id).length > 0) return null;
   const finished = boardCardStepCompletions(board, card.id).some(
     (completion) =>
       completion.stepId === card.stage &&
@@ -67,4 +70,34 @@ export function keptPlanningThreadId(
       completion.threadId === link.threadId,
   );
   return finished ? null : link.threadId;
+}
+
+/**
+ * Whether `threadId` is the kept planning thread of the card's abandoned step,
+ * and so may still record that step's completion.
+ *
+ * Leaving Planning settles the step as `abandoned` but keeps its thread running
+ * (`keepsPlanningThreadOnExit`), so the interview can finish after the card has
+ * moved on. Its `board_complete_step` must land, or the finished interview is
+ * never recorded and a re-entry resumes it as if it were not. Only the thread
+ * still linked to the card under a plan-role step qualifies: every other
+ * stage's thread was dropped when its card left, and has nothing to record.
+ */
+export function isKeptStepThread(
+  board: BoardState,
+  card: Pick<BoardCard, "threadLinks">,
+  state: Pick<BoardCardStepState, "stepId" | "status" | "threadId"> | null,
+  stepId: string,
+  threadId: ThreadId | null,
+): boolean {
+  return (
+    state !== null &&
+    state.stepId === stepId &&
+    state.status === "abandoned" &&
+    state.threadId === threadId &&
+    isPlanStage(board, stepId) &&
+    card.threadLinks.some(
+      (link) => link.threadId === threadId && link.role === stepId && link.tombstonedAt === null,
+    )
+  );
 }

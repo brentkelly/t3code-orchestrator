@@ -429,6 +429,57 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  // T3O-19: a card leaving Planning unfinished abandons the step but keeps its
+  // thread, whose interview may still finish after the move. Its completion has
+  // to land, or the finished plan reads as unfinished on re-entry.
+  it.effect("records the completion of a planning thread the card kept past the move", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("kept");
+      const engine = yield* OrchestrationEngineService;
+      const planner = ThreadId.make("thread-kept-planner");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-kept-planner"),
+        threadId: planner,
+        projectId: own.ownProject,
+        title: "Planner",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.link-thread",
+        commandId: CommandId.make("cmd-link-kept-planner"),
+        cardId: own.ownCard,
+        threadId: planner,
+        role: "planning",
+        createdAt: t0,
+      });
+      yield* startStep({ ...own, ownThread: planner, suffix: "kept", stepId: "planning" });
+      yield* engine.dispatch({
+        type: "board.card.settle-step",
+        commandId: CommandId.make("cmd-abandon-kept"),
+        cardId: own.ownCard,
+        stepId: "planning",
+        outcome: "abandoned",
+        createdAt: t0,
+      });
+
+      const result = yield* boardHandlers
+        .board_complete_step({ outcome: "succeeded", summary: "Plan written" })
+        .pipe(withScope(planner));
+      assert.strictEqual(result.stepId, "planning");
+      assert.strictEqual(result.alreadyCompleted, false);
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(planner));
+      assert.strictEqual(context.steps[0]?.stepId, "planning");
+      assert.strictEqual(context.steps[0]?.outcome, "succeeded");
+    }),
+  );
+
   it.effect("rejects an omitted stepId from a thread with no work in progress", () =>
     Effect.gen(function* () {
       yield* seed();
