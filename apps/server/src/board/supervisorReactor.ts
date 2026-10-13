@@ -185,6 +185,7 @@ import {
 } from "./boardMergeState.ts";
 import { probeLocalMergeConflict } from "./localMergeConflict.ts";
 import { stageExecutorForRole } from "./stageExecutor.ts";
+import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
 /** What a Merge click did, for the RPC to turn into a toast. */
@@ -2244,6 +2245,7 @@ const make = Effect.gen(function* () {
     // same step. It is not reckless either: the client disables the row while a
     // run is genuinely in flight, so this path is reached at rest.
     const existing = boardCardStepState(board, card.id);
+    let kept: ThreadId | null = null;
     if (onDemand) {
       if (existing !== null && !isBoardTerminalStepStatus(existing.status)) {
         yield* settleStep({ card, state: existing, outcome: "abandoned" });
@@ -2284,8 +2286,28 @@ const make = Effect.gen(function* () {
       }
       if (emptyOnDemand) return;
     } else {
-      // Never trample a thread already running this stage (D7).
-      if (hasLiveStageThread(card, card.stage)) return;
+      // Never trample a thread already running this stage (D7) — except the
+      // planning thread the card kept when it left unfinished (T3O-19), which
+      // the step resumes on below rather than spawning a fresh interview.
+      kept = keptPlanningThreadId(board, card);
+      let stageLinks = card.threadLinks;
+      if (kept !== null && (yield* threadGone(kept))) {
+        // Deleted while the card was away: nothing to resume, and its link
+        // would trip the guard below for good. Drop it and run the stage as
+        // a card that never kept a thread would.
+        yield* dispatch({
+          type: "board.card.unlink-thread",
+          commandId: yield* commandId("unlink-kept-gone"),
+          cardId: card.id,
+          threadId: kept,
+          createdAt: yield* nowIso,
+        });
+        const gone = kept;
+        stageLinks = stageLinks.filter((link) => link.threadId !== gone);
+        kept = null;
+      }
+      if (kept === null && hasLiveStageThread({ ...card, threadLinks: stageLinks }, card.stage))
+        return;
       if (existing !== null && !isBoardTerminalStepStatus(existing.status)) return;
     }
     // Auto-kickoff fires only for an auto-executing stage; on-demand runs any
@@ -2461,6 +2483,10 @@ const make = Effect.gen(function* () {
       baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
       createdAt: yield* nowIso,
     });
+    if (kept !== null) {
+      yield* resumeKeptPlanningThread({ card, stepId: plan.stepId, threadId: kept });
+      return;
+    }
     // Provisioning is `schedule`'s job, not a second call here: it already
     // provisions (or retries) the worktree of every pending build-mode step,
     // including the one just selected, and plan mode needs none. Doing it
@@ -3276,6 +3302,61 @@ const make = Effect.gen(function* () {
     // step boundary — the whole point of releasing it.
     yield* schedule();
   });
+
+  /**
+   * Resume a re-entered planning step on the thread the card kept when it left
+   * Planning unfinished (T3O-19), instead of spawning a fresh interview.
+   *
+   * The planning prompt is not resent: the conversation picks up where it
+   * stopped. A turn still running is left to end on its own, and its
+   * `turn.completed` drives the step as usual. An idle thread is handled here
+   * the way a completed turn would be, so the card never shows a running step
+   * that nothing is running: it parks on the human. Planning is always
+   * human-in-the-loop (`resolveBoardStageExecution` forces it), so the
+   * unattended arm is a guard, and does what a completed turn would do there.
+   */
+  const resumeKeptPlanningThread = Effect.fn("board-supervisor-resumeKeptPlanningThread")(
+    function* (input: {
+      readonly card: BoardCard;
+      readonly stepId: string;
+      readonly threadId: ThreadId;
+    }) {
+      const { card, stepId, threadId } = input;
+      const admitted = yield* dispatchOptional({
+        type: "board.card.admit-step",
+        commandId: yield* commandId("admit-kept-thread"),
+        cardId: card.id,
+        stepId,
+        admitted: true,
+        threadId,
+        createdAt: yield* nowIso,
+      });
+      // Refused (the step moved on under us): the ordinary pass spawns for it.
+      if (!admitted) return yield* schedule();
+      const shell = yield* snapshotQuery.getThreadShellById(threadId);
+      // A thread holding a structured question is alive but waiting on the
+      // human, and no turn.completed comes until they answer: park it now, as
+      // handleTurnCompleted would.
+      const pendingQuestion =
+        Option.isSome(shell) &&
+        shell.value.hasPendingUserInput &&
+        shell.value.session?.status !== "error";
+      if (!pendingQuestion && Option.isSome(shell) && threadIsAlive(shell.value)) return;
+      const state = boardCardStepState(yield* readBoard, card.id);
+      if (state === null || state.threadId !== threadId) return;
+      if (pendingQuestion) return yield* parkStepForInput({ card, state, reason: "question" });
+      if (!state.humanInLoop) return yield* recoverStep({ card, state });
+      yield* parkStepForInput({
+        card,
+        state,
+        // Read the thread's last message whenever it was sent: the step row is
+        // new, so its own start time would hide every message before it.
+        reason: (yield* endedWithQuestion({ threadId, lastNudgeAt: null, startedAt: null }))
+          ? "question"
+          : "stopped",
+      });
+    },
+  );
 
   /**
    * Park a live step as `paused`: stop its turn, give back its slot, keep its
@@ -7585,7 +7666,16 @@ const make = Effect.gen(function* () {
     let kickoffCard = card;
     if (existing !== null && !isBoardTerminalStepStatus(existing.status)) {
       yield* settleStep({ card, state: existing, outcome: "abandoned" });
-      if (existing.threadId !== null) {
+      if (
+        existing.threadId !== null &&
+        keepsPlanningThreadOnExit(board, existing, event.payload.toStage)
+      ) {
+        // A planning interview left before it finished (T3O-19) keeps its
+        // thread: linked, and its turn left to run, so a plan it is still
+        // writing lands. Back in Planning, `beginStageRun` resumes the step on
+        // this same thread instead of starting the interview from scratch.
+        // The release sweep leaves it in the inbox until the interview finishes.
+      } else if (existing.threadId !== null) {
         yield* dispatch({
           type: "board.card.unlink-thread",
           commandId: yield* commandId("unlink-moved"),

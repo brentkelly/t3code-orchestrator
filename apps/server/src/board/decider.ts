@@ -113,6 +113,7 @@ import {
   briefUnclosedFence,
   replaceBriefSection,
 } from "./briefEdits.ts";
+import { isKeptStepThread } from "./planningThreadKeep.ts";
 
 export type BoardCommand = Extract<OrchestrationCommand, { type: `board.${string}` }>;
 
@@ -2399,11 +2400,16 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         current !== null &&
         current.stepId === command.stepId &&
         !isBoardTerminalStepStatus(current.status);
+      // A planning thread the card kept when it left Planning unfinished
+      // (T3O-19) may still record its own step: its interview runs on after the
+      // move, and a finished plan must not read as unfinished on re-entry.
+      const keptMatch = isKeptStepThread(board, card, command.stepId, command.threadId);
+      const recordable = liveMatch || keptMatch;
       // The stepId must be the card's live step or an already-recorded
       // completion (an idempotent retry). Step ids are predictable, so without
       // this an agent could pre-complete a FUTURE step and the pinned record
       // would make `continueStage` / boot reconcile skip it as already-ran.
-      if (existing === undefined && !liveMatch) {
+      if (existing === undefined && !recordable) {
         return yield* invariant(
           command,
           `Step '${command.stepId}' is not card '${command.cardId}''s live step${
@@ -2419,7 +2425,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // board_complete_step when done, so the successful retry must supersede
       // the earlier failure (the projector upserts on (cardId, stepId)).
       // With no live step, the recorded outcome re-emits verbatim.
-      const supersede = existing !== undefined && existing.outcome !== "succeeded" && liveMatch;
+      const supersede = existing !== undefined && existing.outcome !== "succeeded" && recordable;
       // Idempotency is conditional on VALIDITY, not just on outcome (T3O-14).
       // A `succeeded` record whose payload nothing can read is not a completed
       // step wearing a green tick — it is a step that claimed a result it never

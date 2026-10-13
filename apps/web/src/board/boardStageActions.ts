@@ -15,6 +15,7 @@
  */
 import {
   effectiveBoardStageRole,
+  boardStageById,
   boardStageIndex,
   boardNextStageId,
   boardStageWithRole,
@@ -211,4 +212,27 @@ export function boardStagePrimaryAction(
     return { kind: "move", label: "Begin build", toStage: next, emphasised: true };
   }
   return { kind: "move", label: `Move to ${nextStage.label}`, toStage: next, emphasised: false };
+}
+
+/**
+ * Whether a move would carry a card forward out of its plan-role stage before a
+ * plan was written (T3O-19). Such a move is usually a slip, so the board asks
+ * before making it. The planning thread survives the move either way; the
+ * question is whether the human meant to skip planning.
+ *
+ * A backward move (deprioritising the card) is deliberate and goes through
+ * unasked. A sub-board child is planned by its parent and never asks.
+ */
+export function boardMoveLeavesPlanningUnwritten(input: {
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+  readonly card: { readonly stage: BoardStageId; readonly parentCardId: string | null };
+  readonly toStage: BoardStageId;
+  readonly planCount: number;
+}): boolean {
+  const { card, toStage } = input;
+  if (input.planCount > 0 || card.parentCardId !== null) return false;
+  const board = stateOf(input.stages);
+  const from = boardStageById(board, card.stage);
+  if (from === null || effectiveBoardStageRole(from) !== "plan") return false;
+  return boardStageIndex(board, toStage) > boardStageIndex(board, card.stage);
 }

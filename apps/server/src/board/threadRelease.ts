@@ -28,7 +28,9 @@
  *
  * Every live link on a card is released EXCEPT the card's current work — the
  * step-state row's own thread, while that row still belongs to the stage the
- * card is standing in. Everything that rule protects is deliberate:
+ * card is standing in — and a planning interview the card left before it
+ * finished (T3O-19), which the card keeps on purpose. Everything that rule
+ * protects is deliberate:
  *
  *  - A `running` step's thread, obviously.
  *  - An `awaiting-input` or `stalled` step's thread: the whole point of those
@@ -83,6 +85,8 @@ import {
   type BoardCardStepState,
   type BoardState,
 } from "@t3tools/contracts";
+
+import { isUnfinishedKeptInterview } from "./planningThreadKeep.ts";
 
 /**
  * Whether a card's step-state row is work of the stage the card is standing in.
@@ -141,6 +145,10 @@ export function boardReleasedThreadIds(
     for (const link of card.threadLinks) {
       if (link.tombstonedAt !== null) continue;
       if (current !== null && (current.threadId === link.threadId || current.stepId === link.role))
+        continue;
+      // A planning interview the card left unfinished (T3O-19) is still a
+      // conversation, whatever column the card is in.
+      if (card.archivedAt === null && isUnfinishedKeptInterview(board, card, link.threadId))
         continue;
       add(link.threadId);
     }

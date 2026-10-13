@@ -538,6 +538,19 @@ it.effect("boot reconcile settles the threads finished while nothing was asking"
             updatedAt: NOW,
           },
         ],
+        // The interview finished: an unfinished one the card kept stays in the
+        // inbox (T3O-19).
+        stepCompletions: [
+          {
+            cardId: BoardCardId.make("card-1"),
+            stepId: String(BOARD_SEED_STAGE_IDS.planning),
+            outcome: "succeeded",
+            summary: "planned",
+            payload: null,
+            threadId: ThreadId.make("thread-plan-1"),
+            completedAt: NOW,
+          },
+        ],
       } as never,
       settings: reviewSettings(),
       initialShells: shellsFor([

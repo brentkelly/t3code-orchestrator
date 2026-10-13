@@ -102,11 +102,28 @@ const stepState = (input: {
 const board = (input: {
   readonly card: BoardCard;
   readonly step?: BoardCardStepState;
+  /** This thread completed the planning step, so its interview finished. */
+  readonly plannedBy?: string;
 }): BoardState =>
   ({
     cards: [input.card],
     nextCardNumberByProject: {},
     ...(input.step === undefined ? {} : { stepStates: [input.step] }),
+    ...(input.plannedBy === undefined
+      ? {}
+      : {
+          stepCompletions: [
+            {
+              cardId: input.card.id,
+              stepId: String(BOARD_SEED_STAGE_IDS.planning),
+              outcome: "succeeded",
+              summary: "planned",
+              payload: null,
+              threadId: ThreadId.make(input.plannedBy),
+              completedAt: NOW,
+            },
+          ],
+        }),
   }) as unknown as BoardState;
 
 const released = (state: BoardState, abandoned?: ReadonlySet<string>): ReadonlyArray<string> =>
@@ -125,6 +142,9 @@ describe("boardReleasedThreadIds", () => {
         ],
       }),
       step: stepState({ stepId: "review@2", threadId: "thread-r2", status: "running" }),
+      // Planned, so the planning thread is a finished interview rather than one
+      // the card kept unfinished (T3O-19).
+      plannedBy: "thread-plan",
     });
     assert.deepStrictEqual(released(state), ["thread-plan", "thread-build", "thread-r1"]);
   });
@@ -223,6 +243,7 @@ describe("boardReleasedThreadIds", () => {
         stage: String(BOARD_SEED_STAGE_IDS.backlog),
         links: [link("thread-old", String(BOARD_SEED_STAGE_IDS.planning))],
       }),
+      plannedBy: "thread-old",
     });
     assert.deepStrictEqual(released(state), ["thread-old"]);
   });
@@ -272,5 +293,92 @@ describe("boardReleasedThreadIds", () => {
       }),
     });
     assert.deepStrictEqual(released(state, new Set(["thread-build"])), ["thread-build"]);
+  });
+
+  // T3O-19: a card that left Planning before the plan was written keeps its
+  // interview, which may still ask something after the move. It stays in the
+  // inbox until it finishes: the thread reports its step.
+  describe("a planning interview the card left unfinished", () => {
+    const planning = String(BOARD_SEED_STAGE_IDS.planning);
+    const kept = (extra: Partial<BoardState> = {}): BoardState =>
+      ({
+        ...board({
+          card: card({
+            stage: String(BOARD_SEED_STAGE_IDS.ready),
+            links: [link("thread-plan", planning)],
+          }),
+          step: stepState({ stepId: planning, threadId: "thread-plan", status: "abandoned" }),
+        }),
+        ...extra,
+      }) as BoardState;
+
+    it("stays in the inbox while unfinished", () => {
+      assert.deepStrictEqual(released(kept()), []);
+    });
+
+    // The card holds one step row: the next stage's step replaces the
+    // abandoned planning one, and the interview is still unfinished.
+    it("stays in the inbox once a later stage's step replaces the planning row", () => {
+      const state = board({
+        card: card({
+          stage: String(BOARD_SEED_STAGE_IDS.building),
+          links: [
+            link("thread-plan", planning),
+            link("thread-build", String(BOARD_SEED_STAGE_IDS.building)),
+          ],
+        }),
+        step: stepState({
+          stepId: String(BOARD_SEED_STAGE_IDS.building),
+          threadId: "thread-build",
+          status: "running",
+        }),
+      });
+      assert.deepStrictEqual(released(state), []);
+    });
+
+    // A failed or blocked report still needs the human, and a re-entry resumes
+    // the thread: settling it would hide the conversation the card returns to.
+    it("stays in the inbox after the thread reports its step failed", () => {
+      const state = kept({
+        stepCompletions: [
+          {
+            cardId: BoardCardId.make("card-1"),
+            stepId: planning,
+            outcome: "failed",
+            summary: "gave up",
+            payload: null,
+            threadId: ThreadId.make("thread-plan"),
+            completedAt: NOW,
+          },
+        ],
+      } as unknown as Partial<BoardState>);
+      assert.deepStrictEqual(released(state), []);
+    });
+
+    // An agent often writes the plan, then asks the human to confirm it before
+    // reporting: the interview is not over until it reports.
+    it("stays in the inbox with the plan written but the step not reported", () => {
+      const state = kept({
+        plans: [{ cardId: BoardCardId.make("card-1"), ordinal: 0 }],
+      } as unknown as Partial<BoardState>);
+      assert.deepStrictEqual(released(state), []);
+    });
+
+    it("is released once the thread completes its step", () => {
+      const state = kept({
+        stepCompletions: [
+          {
+            cardId: BoardCardId.make("card-1"),
+            stepId: planning,
+            outcome: "succeeded",
+            summary: "planned",
+            payload: null,
+            threadId: ThreadId.make("thread-plan"),
+            completedAt: NOW,
+          },
+        ],
+      } as unknown as Partial<BoardState>);
+      assert.deepStrictEqual(released(state), ["thread-plan"]);
+    });
   });
 });
