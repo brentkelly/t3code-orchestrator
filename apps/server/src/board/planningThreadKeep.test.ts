@@ -177,6 +177,36 @@ describe("leaving Planning before the plan is written", () => {
     ),
   );
 
+  // The interview is always human-in-the-loop, whatever the settings say
+  // (`resolveBoardStageExecution` forces it), so an idle kept thread is parked
+  // on the human rather than shown `running` until the timeout sweep.
+  it.effect("an idle kept thread parks on the human even with Planning set unattended", () =>
+    withGovernor(
+      {
+        board: { cards: [sprintCard()], nextCardNumberByProject: {} },
+        settings: settingsWith({
+          building: [codexStep],
+          planning: codexStep,
+          planningHumanInLoop: false,
+          globalMaxConcurrent: 3,
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const threadId = yield* startPlanning(h);
+          yield* move(h, READY, 2);
+          yield* setShell(h, threadId, idleThreadShell(String(threadId)));
+
+          yield* move(h, PLANNING, 3);
+
+          const state = boardCardStepState(yield* h.board, cardId);
+          assert.strictEqual(state?.threadId, threadId);
+          assert.isTrue(state?.humanInLoop);
+          assert.strictEqual(state?.status, "awaiting-input");
+        }),
+    ),
+  );
+
   it.effect("re-entered while the turn still runs, the step runs on and parks when it ends", () =>
     withGovernor({ board: { cards: [sprintCard()], nextCardNumberByProject: {} }, settings }, (h) =>
       Effect.gen(function* () {

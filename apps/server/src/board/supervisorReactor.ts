@@ -3281,11 +3281,13 @@ const make = Effect.gen(function* () {
    * Resume a re-entered planning step on the thread the card kept when it left
    * Planning unfinished (T3O-19), instead of spawning a fresh interview.
    *
-   * Nothing is sent: the conversation picks up where it stopped. A turn still
-   * running is left to end on its own, and its `turn.completed` parks the step
-   * as usual. An idle thread on a human-in-the-loop step is parked here, the
-   * same as a completed turn would park it. Otherwise the card would show a
-   * running step that nothing is running.
+   * The planning prompt is not resent: the conversation picks up where it
+   * stopped. A turn still running is left to end on its own, and its
+   * `turn.completed` drives the step as usual. An idle thread is handled here
+   * the way a completed turn would be, so the card never shows a running step
+   * that nothing is running: it parks on the human. Planning is always
+   * human-in-the-loop (`resolveBoardStageExecution` forces it), so the
+   * unattended arm is a guard, and does what a completed turn would do there.
    */
   const resumeKeptPlanningThread = Effect.fn("board-supervisor-resumeKeptPlanningThread")(
     function* (input: {
@@ -3308,9 +3310,8 @@ const make = Effect.gen(function* () {
       const shell = yield* snapshotQuery.getThreadShellById(threadId);
       if (Option.isSome(shell) && threadIsAlive(shell.value)) return;
       const state = boardCardStepState(yield* readBoard, card.id);
-      // An unattended step on an idle thread is left `running`; the timeout
-      // sweep nudges it, as it does any admitted step with no turn.
-      if (state === null || state.threadId !== threadId || !state.humanInLoop) return;
+      if (state === null || state.threadId !== threadId) return;
+      if (!state.humanInLoop) return yield* recoverStep({ card, state });
       yield* parkStepForInput({
         card,
         state,
