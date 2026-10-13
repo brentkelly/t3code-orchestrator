@@ -5753,6 +5753,8 @@ const make = Effect.gen(function* () {
     const found = stepThreadCard(board, threadId);
     if (found === null) return;
     if (found.state.status !== "running" && found.state.status !== "awaiting-input") return;
+    const classifyUnattendedTurn = () =>
+      classifyUsageLimitTurn(found, threadId, turnErrorMessage, turnState);
     // Only a SUCCEEDED completion hands the step to the completion handler for
     // good. A `failed`/`blocked` completion must not disarm death detection —
     // after a failure + recovery nudge, a retry thread that dies silently
@@ -5844,12 +5846,23 @@ const make = Effect.gen(function* () {
     // ever — but by the timeout sweep's check-ins (`sweepBackgroundWait`), not
     // by recovery. A human-in-the-loop run keeps its pre-T3O-20 handling of a
     // monitor: it parks on the human, who is the pacing there.
+    //
+    // An unattended turn is classified for a usage limit FIRST: a refused turn
+    // that happens to end with a monitor still live is the provider stopping,
+    // not the agent waiting, and must park on the cooldown (T3O-22) rather than
+    // be checked in on until it escalates.
     const backgroundLiveness = shell?.backgroundLiveness ?? null;
     if (
       backgroundLiveness !== null &&
       (backgroundLiveness === "working" || !found.state.humanInLoop)
     ) {
-      if (!found.state.humanInLoop) yield* noteBackgroundTurnEnd(threadId);
+      if (!found.state.humanInLoop) {
+        if (yield* classifyUnattendedTurn()) {
+          backgroundWaits.delete(String(threadId));
+          return;
+        }
+        yield* noteBackgroundTurnEnd(threadId);
+      }
       return;
     }
     backgroundWaits.delete(String(threadId));
@@ -5916,6 +5929,22 @@ const make = Effect.gen(function* () {
     // Additive: it fires only on a match, and on no match — or on a
     // `slow-down`, which the retry backoff already covers — control falls
     // through to `recoverStep` exactly as before.
+    if (yield* classifyUnattendedTurn()) return;
+    // Unattended, running with no question → died mid-work. Awaiting-input with
+    // no pending question → the human answered and the agent ran another turn
+    // without completing (or died); either way death detection is re-armed.
+    yield* recoverStep(found);
+  });
+
+  /** The usage-limit classifier for an unattended turn end (T3O-22). Answers
+      whether the turn was a limit and has been handled (parked on the
+      cooldown); on no match it zeroes the loose-match tally for a clean turn. */
+  const classifyUsageLimitTurn = Effect.fn("board-supervisor-classifyUsageLimitTurn")(function* (
+    found: { readonly card: BoardCard; readonly state: BoardCardStepState },
+    threadId: ThreadId,
+    turnErrorMessage: string | null,
+    turnState: RuntimeTurnState | undefined,
+  ) {
     const match = yield* usageLimits.classifyTurn({
       threadId,
       turnErrorMessage,
@@ -5923,13 +5952,12 @@ const make = Effect.gen(function* () {
       since: found.state.lastNudgeAt ?? found.state.startedAt,
     });
     if (match !== null) {
-      const handled = yield* handleUsageLimitMatch({
+      return yield* handleUsageLimitMatch({
         card: found.card,
         state: found.state,
         match,
         nowMs: yield* detectorNowMs,
       });
-      if (handled) return;
     } else if (turnState === undefined || turnState === "completed") {
       // A turn the catalogue says nothing about is proof the provider is
       // answering, so the loose-match tally zeroes (D6). Done HERE rather than
@@ -5945,10 +5973,7 @@ const make = Effect.gen(function* () {
       // exactly as the ingestion layer normalises it.
       clearLooseMatches(String(found.state.providerInstanceId));
     }
-    // Unattended, running with no question → died mid-work. Awaiting-input with
-    // no pending question → the human answered and the agent ran another turn
-    // without completing (or died); either way death detection is re-armed.
-    yield* recoverStep(found);
+    return false;
   });
 
   /**
