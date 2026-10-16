@@ -1651,9 +1651,19 @@ code {
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: var(--app-scrollbar-width);
+  /* T3o: the board canvas scrolls on both axes, so the horizontal bar needs
+     the same thickness as the vertical one (#113). */
+  height: var(--app-scrollbar-width);
 }
 
 ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* T3o: where two scrollbars meet, Chromium paints its default light corner
+   square unless told otherwise — a white box at the board's bottom-right in
+   dark mode (#113). */
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 
