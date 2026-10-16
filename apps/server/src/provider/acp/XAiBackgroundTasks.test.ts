@@ -63,6 +63,11 @@ describe("Grok background tasks", () => {
     ["stopped", 137, "task.completed", "stopped"],
     ["killed", 137, "task.completed", "stopped"],
     ["cancelled", 137, "task.completed", "stopped"],
+    ["terminated", null, "task.completed", "stopped"],
+    ["terminated by signal signal 15", null, "task.completed", "stopped"],
+    ["exited", null, "task.completed", "stopped"],
+    ["exited", 0, "task.completed", "completed"],
+    ["exited", 1, "task.completed", "failed"],
     [undefined, 0, "task.completed", "completed"],
     [undefined, 1, "task.completed", "failed"],
   ])("maps poll status %s / exit %s", (status, exit_code, type, expectedStatus) => {
@@ -145,6 +150,54 @@ describe("Grok background tasks", () => {
       undefined,
       undefined,
     ]);
+  });
+
+  it("retires a shell TaskOutput of terminated with a null exit_code", () => {
+    const { tasks, update } = mapper();
+    update(shell);
+    const events = update({
+      type: "TaskOutput",
+      Result: {
+        task_id: "shell-1",
+        command: "sleep 40",
+        status: "terminated",
+        exit_code: null,
+      },
+    });
+    expect(events).toEqual([
+      {
+        type: "task.completed",
+        turnId,
+        payload: {
+          taskId: "shell-1",
+          taskType: "shell",
+          description: "sleep 40",
+          title: "sleep 40",
+          toolUseId: "call-1",
+          status: "stopped",
+        },
+      },
+    ]);
+    expect(tasks.size).toBe(0);
+  });
+
+  it("retires a shell killed by signal with no status or exit_code", () => {
+    const { tasks, update } = mapper();
+    update(shell);
+    const events = update({
+      type: "TaskOutput",
+      Result: {
+        task_id: "shell-1",
+        command: "sleep 40",
+        exit_code: null,
+        signal: "SIGTERM",
+      },
+    });
+    expect(events[0]).toMatchObject({
+      type: "task.completed",
+      payload: { taskId: "shell-1", status: "stopped" },
+    });
+    expect(tasks.size).toBe(0);
   });
 
   it("retires only successfully killed tasks, including mixed results", () => {

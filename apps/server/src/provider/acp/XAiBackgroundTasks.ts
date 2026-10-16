@@ -32,8 +32,13 @@ function text(value: unknown): string | undefined {
   return typeof value === "string" ? value.trim() || undefined : undefined;
 }
 
-function lifecycle(status: unknown, exitCode: unknown) {
-  switch (text(status)?.toLowerCase()) {
+function hasSignal(signal: unknown) {
+  return text(signal) !== undefined || (typeof signal === "number" && Number.isFinite(signal));
+}
+
+function lifecycle(status: unknown, exitCode: unknown, signal?: unknown) {
+  const normalized = text(status)?.toLowerCase();
+  switch (normalized) {
     case "pending":
     case "running":
       return "running";
@@ -47,13 +52,22 @@ function lifecycle(status: unknown, exitCode: unknown) {
     case "stopped":
     case "killed":
     case "cancelled":
+    case "terminated":
       return "stopped";
-    default:
+    case "exited":
       return typeof exitCode === "number" && Number.isFinite(exitCode)
         ? exitCode === 0
           ? "completed"
           : "failed"
-        : undefined;
+        : "stopped";
+    default:
+      // T3o: Grok reports SIGTERM as "terminated by signal signal N" with a
+      // null exit_code, which otherwise never emits task.completed (#163).
+      if (normalized?.startsWith("terminated")) return "stopped";
+      if (typeof exitCode === "number" && Number.isFinite(exitCode)) {
+        return exitCode === 0 ? "completed" : "failed";
+      }
+      return hasSignal(signal) ? "stopped" : undefined;
   }
 }
 
@@ -134,7 +148,7 @@ export function buildGrokBackgroundTaskEvents(input: {
         continue;
       }
       const command = text(result.command);
-      const status = lifecycle(result.status, result.exit_code);
+      const status = lifecycle(result.status, result.exit_code, result.signal);
       if (!command || !status || command.startsWith("[subagent:")) continue;
       const task = start(id, /^\[monitor[:\]]/.test(command) ? "monitor" : "shell", command);
       const summary = text(result.output)
