@@ -23,6 +23,9 @@ T3o is not published to any registry. `npx t3@latest`, the desktop installers an
 recipes under [Installation](#installation) all give you **upstream**, without the board. To run T3o you
 build it from this checkout.
 
+Linux, from GitHub, in a terminal: [docs/t3o/linux-setup.md](./docs/t3o/linux-setup.md). Flags and
+service details: [docs/t3o/install.md](./docs/t3o/install.md).
+
 ### Requirements
 
 - **Node.js 24.13.1 or newer** — `engines.node` is pinned to `^24.13.1`. Distro packages are usually far

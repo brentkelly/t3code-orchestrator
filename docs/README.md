@@ -1,5 +1,12 @@
 # T3 Code docs
 
+<!-- T3o: fork install, so a clone of this repo is not sent to upstream's install page. -->
+
+## T3o (this fork)
+
+- [Linux, from GitHub, in a terminal](./t3o/linux-setup.md)
+- [Installing and deploying T3o](./t3o/install.md)
+
 ## Using T3 Code
 
 - [Install T3 Code](./user/install.md)
