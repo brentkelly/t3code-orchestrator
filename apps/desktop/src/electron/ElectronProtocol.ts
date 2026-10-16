@@ -10,10 +10,13 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
+// T3o: the desktop app's own identity (T3O-1).
+import { t3oDesktopIdentity } from "@t3tools/shared/t3oIdentity";
 
 export const DESKTOP_HOST = "app";
-const DESKTOP_PRODUCTION_SCHEME = "t3code";
-const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
+// T3o: own URL schemes, so T3o and T3 Code never answer each other's links.
+const DESKTOP_PRODUCTION_SCHEME = t3oDesktopIdentity(false).scheme;
+const DESKTOP_DEVELOPMENT_SCHEME = t3oDesktopIdentity(true).scheme;
 
 export function getDesktopScheme(isDevelopment: boolean): string {
   return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;

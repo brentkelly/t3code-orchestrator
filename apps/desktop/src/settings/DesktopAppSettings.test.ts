@@ -325,7 +325,8 @@ describe("DesktopSettings", () => {
             serverExposureMode: "network-accessible",
             tailscaleServeEnabled: true,
             tailscaleServePort: 8443,
-            updateChannel: "nightly",
+            // T3o: no nightly track on the fork, so the persisted nightly choice reads as stable.
+            updateChannel: "latest",
             updateChannelConfiguredByUser: true,
             wslBackendEnabled: false,
             wslOnly: false,

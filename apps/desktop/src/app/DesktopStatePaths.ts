@@ -1,4 +1,6 @@
 import * as Option from "effect/Option";
+// T3o: the desktop app's own data directory (T3O-1).
+import { T3O_DESKTOP_HOME_DIR_NAME } from "@t3tools/shared/t3oIdentity";
 
 export type JoinPath = (first: string, ...segments: string[]) => string;
 
@@ -16,7 +18,8 @@ export function resolveDesktopBaseDir(input: {
   readonly t3Home: Option.Option<string>;
 }): string {
   return Option.getOrElse(normalizeConfiguredBaseDir(input.t3Home), () =>
-    input.joinPath(input.homeDirectory, ".t3"),
+    // T3o: ~/.t3o, apart from T3 Code's and t3o.service's ~/.t3.
+    input.joinPath(input.homeDirectory, T3O_DESKTOP_HOME_DIR_NAME),
   );
 }
 

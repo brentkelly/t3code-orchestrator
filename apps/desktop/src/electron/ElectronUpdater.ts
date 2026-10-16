@@ -4,7 +4,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { autoUpdater } from "electron-updater";
+// T3o: an AppImage always updates as an AppImage (see t3o/autoUpdater.ts).
+import { t3oAutoUpdater as autoUpdater } from "../t3o/autoUpdater.ts";
 
 type AutoUpdater = typeof autoUpdater;
 

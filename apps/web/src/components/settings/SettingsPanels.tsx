@@ -62,6 +62,8 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { isElectron } from "../../env";
+// T3o: the fork has no nightly update track.
+import { T3O_HAS_NIGHTLY_UPDATE_TRACK } from "@t3tools/shared/t3oIdentity";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useCustomThemes } from "../../hooks/useCustomThemes";
 import {
@@ -434,7 +436,8 @@ function AboutVersionSection() {
           </Tooltip>
         }
       />
-      {hasDesktopBridge ? (
+      {/* T3o: no nightly track on the fork, so no track picker in the desktop app. */}
+      {hasDesktopBridge && T3O_HAS_NIGHTLY_UPDATE_TRACK ? (
         <SettingsRow
           title="Update track"
           description="Use stable releases or nightly builds. Switch back anytime."

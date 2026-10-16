@@ -221,6 +221,8 @@ import {
 } from "../integration/TransferBudgetReport.integration.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { otlpSerializationLayer } from "@t3tools/shared/observability";
+// T3o: T3o desktop renderer origins.
+import { T3O_DESKTOP_RENDERER_ORIGINS } from "@t3tools/shared/t3oIdentity";
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -4337,7 +4339,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  for (const desktopOrigin of ["t3code://app", "t3code-dev://app"]) {
+  // T3o: the T3o desktop renderer's origins too.
+  for (const desktopOrigin of [
+    "t3code://app",
+    "t3code-dev://app",
+    ...T3O_DESKTOP_RENDERER_ORIGINS,
+  ]) {
     it.effect(`allows credentialed preflights from ${desktopOrigin} in development`, () =>
       Effect.gen(function* () {
         yield* buildAppUnderTest({
