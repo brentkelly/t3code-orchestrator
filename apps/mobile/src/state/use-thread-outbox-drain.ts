@@ -22,6 +22,8 @@ import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn"
 import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
 import { randomHex } from "../lib/uuid";
+// T3o: settings-sync commandIds are keyed on the setting value (#120).
+import { settingValueKey } from "../lib/settingsCommandIdKey";
 import { isModelSelectionUnavailable } from "../lib/modelOptions";
 import {
   retainAcknowledgedThreadMessage,
@@ -112,8 +114,13 @@ function findCreationProject(
   );
 }
 
-function settingsCommandId(message: QueuedThreadMessage, setting: string): CommandId {
-  return CommandId.make(`${message.commandId}:${setting}`);
+function settingsCommandId(
+  message: QueuedThreadMessage,
+  setting: string,
+  // T3o: key the id on the value so an edited setting is a new command (#120).
+  value: unknown,
+): CommandId {
+  return CommandId.make(`${message.commandId}:${setting}:${settingValueKey(value)}`);
 }
 
 /**
@@ -707,7 +714,7 @@ export function useThreadOutboxDrain(): void {
         const updateResult = await updateThreadMetadata({
           environmentId: queuedMessage.environmentId,
           input: {
-            commandId: settingsCommandId(queuedMessage, "model-selection"),
+            commandId: settingsCommandId(queuedMessage, "model-selection", settings.modelSelection),
             threadId: queuedMessage.threadId,
             modelSelection: settings.modelSelection,
           },
@@ -722,7 +729,7 @@ export function useThreadOutboxDrain(): void {
         const runtimeResult = await setThreadRuntimeMode({
           environmentId: queuedMessage.environmentId,
           input: {
-            commandId: settingsCommandId(queuedMessage, "runtime-mode"),
+            commandId: settingsCommandId(queuedMessage, "runtime-mode", settings.runtimeMode),
             threadId: queuedMessage.threadId,
             runtimeMode: settings.runtimeMode,
             createdAt: queuedMessage.createdAt,
@@ -738,7 +745,11 @@ export function useThreadOutboxDrain(): void {
         const interactionResult = await setThreadInteractionMode({
           environmentId: queuedMessage.environmentId,
           input: {
-            commandId: settingsCommandId(queuedMessage, "interaction-mode"),
+            commandId: settingsCommandId(
+              queuedMessage,
+              "interaction-mode",
+              settings.interactionMode,
+            ),
             threadId: queuedMessage.threadId,
             interactionMode: settings.interactionMode,
             createdAt: queuedMessage.createdAt,
