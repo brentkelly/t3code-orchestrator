@@ -111,8 +111,10 @@ Other subcommands, via `node scripts/t3o-service.mjs <command>`:
   hands a service a bare PATH, so anything missing from this list fails at spawn with `ENOENT` when a card
   tries to start a turn. Install providers before installing the service; re-run the install after adding
   one.
-- `Restart=on-failure` and `OOMScoreAdjust=-500`, so a test run that exhausts memory does not get the
-  server picked as the kernel's victim.
+- `Restart=on-failure`, plus `MemoryHigh=65%`, `MemoryMax=80%` and `OOMPolicy=continue`. Board agents' builds
+  run inside the service's cgroup, so a build that exhausts memory is killed there, and the server keeps
+  running, instead of the kernel killing unrelated services across the machine. Don't add a negative
+  `OOMScoreAdjust`: every agent child inherits it.
 
 ### Taking over from another server
 

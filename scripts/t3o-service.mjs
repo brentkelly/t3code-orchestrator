@@ -206,9 +206,15 @@ function buildUnit() {
     `ExecStart=${process.execPath} ${NodePath.join(appDir, "dist/bin.mjs")} serve --host ${values.host} --port ${values.port}`,
     "Restart=on-failure",
     "RestartSec=5",
-    // Matches the t3code.service drop-in: keep the kernel from picking the
-    // server as its OOM victim when a test run exhausts memory.
-    "OOMScoreAdjust=-500",
+    // Board agents run builds as children of this unit, so its memory is
+    // theirs too. Cap the cgroup so a runaway build is OOM-killed in here
+    // instead of the kernel picking unrelated services machine-wide, and keep
+    // the unit up when that happens (the default OOMPolicy=stop takes the
+    // server down with the build). No OOMScoreAdjust: children inherit it, and
+    // -500 made every agent build outrank the rest of the box for survival.
+    "MemoryHigh=65%",
+    "MemoryMax=80%",
+    "OOMPolicy=continue",
     "",
     "[Install]",
     "WantedBy=multi-user.target",
