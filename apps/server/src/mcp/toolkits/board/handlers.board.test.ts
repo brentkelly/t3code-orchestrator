@@ -345,6 +345,14 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   /** A card of its own, plus a thread linked to it — the toolkit's tests share
       one layer (and so one database), so a step-lifecycle test that reused
       `card-1` would collide with whatever step an earlier test left live. */
+  /** A build-role completion the handler accepts (T3O-21). */
+  const validBuild = {
+    lead: "Built it on `board/x`, 1 commit, pushed.",
+    notes: [],
+    checks: [],
+    areas: [],
+  };
+
   const seedOwnCard = Effect.fn("seedOwnCard")(function* (suffix: string) {
     const engine = yield* OrchestrationEngineService;
     const ownCard = BoardCardId.make(`card-${suffix}`);
@@ -461,7 +469,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const own = yield* seedOwnCard("omit");
       yield* startStep({ ...own, suffix: "omit" });
       const result = yield* boardHandlers
-        .board_complete_step({ outcome: "succeeded", summary: "Built it" })
+        .board_complete_step({ outcome: "succeeded", summary: "Built it", payload: validBuild })
         .pipe(withScope(own.ownThread));
       // The board resolved the id the agent was never told.
       assert.strictEqual(result.stepId, "building");
@@ -474,7 +482,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
 
   /** What an agent that stringified its own payload hands the tool — and, once
       the handler unwraps it, exactly what storing the object itself produces. */
-  const stringifiedPayload = JSON.stringify({ reviewedSha: "abc123", findings: [] });
+  const stringifiedPayload = JSON.stringify(validBuild);
   const encodedPlainPayload = JSON.stringify("all done");
 
   // T3O-2: agents reach this tool over MCP, and some of them hand it a payload
@@ -506,7 +514,8 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     Effect.gen(function* () {
       yield* seed();
       const own = yield* seedOwnCard("plain-string");
-      yield* startStep({ ...own, suffix: "plain-string" });
+      // An opaque step — the build step now owes a structured payload (T3O-21).
+      yield* startStep({ ...own, suffix: "plain-string", stepId: "planning" });
       yield* boardHandlers
         .board_complete_step({ outcome: "succeeded", summary: "Built", payload: "all done" })
         .pipe(withScope(own.ownThread));
@@ -586,7 +595,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const own = yield* seedOwnCard("retry");
       yield* startStep({ ...own, suffix: "retry" });
       yield* boardHandlers
-        .board_complete_step({ outcome: "succeeded", summary: "Built it" })
+        .board_complete_step({ outcome: "succeeded", summary: "Built it", payload: validBuild })
         .pipe(withScope(own.ownThread));
       // The completion event writes the ledger; the run row stays live until
       // the reactor settles it. So a repeat call resolves the SAME step and
@@ -607,7 +616,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const own = yield* seedOwnCard("settled");
       yield* startStep({ ...own, suffix: "settled" });
       yield* boardHandlers
-        .board_complete_step({ outcome: "succeeded", summary: "Built it" })
+        .board_complete_step({ outcome: "succeeded", summary: "Built it", payload: validBuild })
         .pipe(withScope(own.ownThread));
       // What the reactor does the moment it sees the completion — so in
       // production a retry almost always arrives against a TERMINAL run row.
@@ -714,6 +723,109 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       assert.include(failure.message, "another thread");
       const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
       assert.strictEqual(context.steps.length, 0);
+    }),
+  );
+
+  // ── T3O-21: the build step owes the Summary pane a structured payload ──
+
+  it.effect("refuses a succeeded build with no payload, and accepts the retry", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("build-null");
+      yield* startStep({ ...own, suffix: "build-null" });
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_complete_step({ outcome: "succeeded", summary: "Built it" })
+          .pipe(withScope(own.ownThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "{ lead, notes:");
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps.length, 0);
+      assert.strictEqual(context.currentStep?.stepId, "building");
+      const retry = yield* boardHandlers
+        .board_complete_step({ outcome: "succeeded", summary: "Built it", payload: validBuild })
+        .pipe(withScope(own.ownThread));
+      assert.strictEqual(retry.alreadyCompleted, false);
+      const recorded = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(recorded.steps[0]?.payload, stringifiedPayload);
+    }),
+  );
+
+  it.effect("refuses a build payload of the wrong shape", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("build-shape");
+      yield* startStep({ ...own, suffix: "build-shape" });
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_complete_step({
+            outcome: "succeeded",
+            summary: "Built it",
+            payload: { ...validBuild, checks: [{ status: "green", name: "lint", detail: "" }] },
+          })
+          .pipe(withScope(own.ownThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "does not parse");
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps.length, 0);
+    }),
+  );
+
+  it.effect("lets a build that produced nothing report failed without a payload", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("build-failed");
+      yield* startStep({ ...own, suffix: "build-failed" });
+      const result = yield* boardHandlers
+        .board_complete_step({ outcome: "failed", summary: "Tests would not build" })
+        .pipe(withScope(own.ownThread));
+      assert.strictEqual(result.outcome, "failed");
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps.length, 1);
+    }),
+  );
+
+  it.effect("leaves every other stage's payload opaque", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("build-other");
+      yield* startStep({ ...own, suffix: "build-other", stepId: "planning" });
+      const result = yield* boardHandlers
+        .board_complete_step({ outcome: "succeeded", summary: "Planned it" })
+        .pipe(withScope(own.ownThread));
+      assert.strictEqual(result.outcome, "succeeded");
+      assert.strictEqual(result.alreadyCompleted, false);
+    }),
+  );
+
+  it.effect("a build recorded before the contract stays frozen, not repairable", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("build-legacy");
+      yield* startStep({ ...own, suffix: "build-legacy" });
+      // What every pre-T3O-21 build left behind: a success with no payload,
+      // written straight to the decider as the handler once did.
+      const engine = yield* OrchestrationEngineService;
+      yield* engine.dispatch({
+        type: "board.card.complete-step",
+        commandId: CommandId.make("cmd-complete-build-legacy"),
+        cardId: own.ownCard,
+        stepId: "building",
+        outcome: "succeeded",
+        summary: "Built it",
+        payload: null,
+        threadId: own.ownThread,
+        createdAt: t0,
+      });
+      const retry = yield* boardHandlers
+        .board_complete_step({ outcome: "succeeded", summary: "Again", payload: validBuild })
+        .pipe(withScope(own.ownThread));
+      assert.strictEqual(retry.alreadyCompleted, true);
+      const context = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.strictEqual(context.steps.length, 1);
+      assert.strictEqual(context.steps[0]?.payload, null);
     }),
   );
 
@@ -1075,7 +1187,11 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       // decider supersedes a non-succeeded completion here, so the reply must
       // not tell the agent its success was a no-op that stayed `failed`.
       const retry = yield* boardHandlers
-        .board_complete_step({ outcome: "succeeded", summary: "Finished after the nudge" })
+        .board_complete_step({
+          outcome: "succeeded",
+          summary: "Finished after the nudge",
+          payload: validBuild,
+        })
         .pipe(withScope(own.ownThread));
       assert.strictEqual(retry.outcome, "succeeded");
       assert.strictEqual(retry.alreadyCompleted, false);
@@ -1102,7 +1218,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       assert.strictEqual(running.steps.length, 0);
 
       yield* boardHandlers
-        .board_complete_step({ outcome: "succeeded", summary: "Built it" })
+        .board_complete_step({ outcome: "succeeded", summary: "Built it", payload: validBuild })
         .pipe(withScope(own.ownThread));
       yield* settleStep({ ownCard: own.ownCard, suffix: "context" });
       const settled = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));

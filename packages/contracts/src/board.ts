@@ -8198,6 +8198,84 @@ export function boardStepPayloadDefect(input: {
   return null;
 }
 
+/** A Heads-up note on a build summary (T3O-21): a deviation from the plan,
+    something left undone, or a shortcut taken. These never go in `areas`. */
+export const BOARD_BUILD_SUMMARY_NOTE_KINDS = ["plan_change", "not_done", "shortcut"] as const;
+export const BoardBuildSummaryNote = Schema.Struct({
+  kind: Schema.Literals(BOARD_BUILD_SUMMARY_NOTE_KINDS),
+  text: TrimmedNonEmptyString,
+  detail: Schema.optionalKey(Schema.String),
+});
+export type BoardBuildSummaryNote = typeof BoardBuildSummaryNote.Type;
+export type BoardBuildSummaryNoteKind = BoardBuildSummaryNote["kind"];
+
+/** One check the build agent ran or deliberately skipped. `fail_preexisting`
+    is a failure this card did not cause. */
+export const BOARD_BUILD_SUMMARY_CHECK_STATUSES = [
+  "pass",
+  "not_run",
+  "fail_preexisting",
+  "fail",
+] as const;
+export const BoardBuildSummaryCheck = Schema.Struct({
+  status: Schema.Literals(BOARD_BUILD_SUMMARY_CHECK_STATUSES),
+  name: TrimmedNonEmptyString,
+  detail: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type BoardBuildSummaryCheck = typeof BoardBuildSummaryCheck.Type;
+export type BoardBuildSummaryCheckStatus = BoardBuildSummaryCheck["status"];
+
+/** A group of what was built (Data, API, Panel, Docs…), one short line per item. */
+export const BoardBuildSummaryArea = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  items: Schema.Array(TrimmedNonEmptyString),
+});
+export type BoardBuildSummaryArea = typeof BoardBuildSummaryArea.Type;
+
+/** The build-role step's completion payload (T3O-21), rendered by the Summary
+    pane. `lead` is also sent as the completion's `summary`, so text-only
+    readers keep a good one-liner. */
+export const BoardBuildSummaryPayload = Schema.Struct({
+  lead: TrimmedNonEmptyString,
+  notes: Schema.Array(BoardBuildSummaryNote),
+  checks: Schema.Array(BoardBuildSummaryCheck),
+  areas: Schema.Array(BoardBuildSummaryArea),
+});
+export type BoardBuildSummaryPayload = typeof BoardBuildSummaryPayload.Type;
+
+export const BOARD_BUILD_SUMMARY_PAYLOAD_SHAPE =
+  "{ lead, notes: [{ kind, text, detail? }], checks: [{ status, name, detail }], areas: [{ name, items }] }";
+
+const decodeBoardBuildSummaryPayloadUnknown = Schema.decodeUnknownOption(BoardBuildSummaryPayload);
+
+/** A build completion's stored payload, decoded — `None` when it is absent or
+    malformed (a legacy card, a failed build), which readers render as the plain
+    summary instead. */
+export function decodeBoardBuildSummaryPayloadOption(
+  payload: string | null,
+): Option.Option<BoardBuildSummaryPayload> {
+  return decodeBoardBuildSummaryPayloadUnknown(parseBoardStepPayloadJson(payload));
+}
+
+/**
+ * Why a build-role step's payload cannot be read, or `null` when it can
+ * (T3O-21). The build counterpart of `boardStepPayloadDefect`, kept separate
+ * on purpose: that function also drives the decider's repair and reopen paths,
+ * and every build recorded before T3O-21 carries a null payload — folding
+ * build in would make all of them "defective" and so repairable. Only the
+ * completion handler asks this, and only for a `succeeded` build.
+ */
+export function boardBuildStepPayloadDefect(payload: string | null): string | null {
+  const label = `The build step succeeds only with a payload shaped ${BOARD_BUILD_SUMMARY_PAYLOAD_SHAPE}`;
+  if (payload === null) {
+    return `${label}, and none was recorded. Send the structured result as the tool's own \`payload\` argument — never inside \`summary\` — and complete the step again. If you cannot produce one, complete with outcome failed instead.`;
+  }
+  if (Option.isNone(decodeBoardBuildSummaryPayloadOption(payload))) {
+    return `${label}, and the one recorded does not parse to it. \`lead\` must be a non-empty sentence, \`notes\`, \`checks\` and \`areas\` must be arrays (empty is fine), a note's \`kind\` is plan_change, not_done or shortcut, and a check's \`status\` is pass, not_run, fail_preexisting or fail. Re-send a payload of that exact shape, or complete with outcome failed instead.`;
+  }
+  return null;
+}
+
 export interface BoardReviewLoopWalk {
   /** The phase the loop runs next, while it still runs. */
   readonly next: { readonly phase: BoardReviewPhaseId; readonly round: number } | null;

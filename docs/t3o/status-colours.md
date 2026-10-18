@@ -115,6 +115,9 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   card's thread last finished a turn. Only those two: a pending question is answerable the moment it
   is asked, a stall has already exhausted recovery, and a pause is the human's own instruction —
   none of them is guessing about a beat that has not finished.
+- **The Summary pane's Heads-up tags and check tiles follow it too.** Plan change is violet (it
+  waits on a human's read), Not done is amber, and Shortcut is neutral, never blue, because blue
+  means running. A failing check tile is amber, not red.
 
 ## Deliberately outside the convention
 

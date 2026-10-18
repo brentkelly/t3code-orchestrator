@@ -12,6 +12,7 @@
 import {
   assignBoardKeyPrefix,
   boardAppendOrderKey,
+  boardBuildStepPayloadDefect,
   boardCardPlans,
   boardCardStepCompletions,
   boardCardStepState,
@@ -800,6 +801,16 @@ export const boardHandlers = {
         const defect = boardStepPayloadDefect({ stepId, payload });
         if (defect !== null) {
           return yield* new BoardToolError({ code: "invalid-input", message: defect });
+        }
+        // The build-role stage's step (its id is the stage id) owes the
+        // structured summary the Summary pane renders (T3O-21). Checked here
+        // only — never in the decider — so builds recorded before the
+        // contract keep their null payloads without reading as repairable.
+        if (boardStageWithRole(board, "build")?.stageId === stepId) {
+          const buildDefect = boardBuildStepPayloadDefect(payload);
+          if (buildDefect !== null) {
+            return yield* new BoardToolError({ code: "invalid-input", message: buildDefect });
+          }
         }
       }
       const command: BoardCardCompleteStepCommand = {

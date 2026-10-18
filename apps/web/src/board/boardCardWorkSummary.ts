@@ -10,7 +10,9 @@ import {
   boardReviewHeldLabel,
   boardStageById,
   boardStageWithRole,
+  decodeBoardBuildSummaryPayloadOption,
   effectiveBoardStageRole,
+  type BoardBuildSummaryPayload,
   type BoardCard,
   type BoardCardDetail,
   type BoardCardPullRequestState,
@@ -19,6 +21,8 @@ import {
   type BoardState,
   type BoardStepCompletion,
 } from "@t3tools/contracts";
+
+import * as Option from "effect/Option";
 
 import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
 import type { BoardPlanRows } from "./boardPlanRows";
@@ -39,11 +43,6 @@ export interface BoardCardWorkSummaryReview {
   readonly empty: boolean;
   readonly currentRound: number;
   readonly maxRounds: number;
-  readonly severities: {
-    readonly critical: number;
-    readonly improvement: number;
-    readonly nitpick: number;
-  };
   readonly counts: {
     readonly raised: number;
     readonly fixed: number;
@@ -63,7 +62,14 @@ export interface BoardCardWorkSummaryChild {
 
 export interface BoardCardWorkSummaryBuild {
   readonly empty: boolean;
+  /** The build completion's plain summary: the lead's fallback when the
+      payload is absent or unreadable (legacy cards, failed builds). */
   readonly summary: string | null;
+  /** The structured payload (T3O-21), checks sorted with `fail` first. */
+  readonly structured: BoardBuildSummaryPayload | null;
+  /** Bullets across every area, and how many areas hold them. */
+  readonly changeCount: number;
+  readonly areaCount: number;
   readonly children: {
     readonly done: number;
     readonly total: number;
@@ -100,7 +106,6 @@ const EMPTY_REVIEW: BoardCardWorkSummaryReview = {
   empty: true,
   currentRound: 0,
   maxRounds: DEFAULT_BOARD_REVIEW_ROUNDS,
-  severities: { critical: 0, improvement: 0, nitpick: 0 },
   counts: { raised: 0, fixed: 0, rejected: 0, open: 0, disputed: 0 },
   outstanding: [],
 };
@@ -235,21 +240,12 @@ function deriveReview(
       : outstandingSource.findings
           .filter((entry) => entry.resolution === "open" || entry.resolution === "disputed")
           .map((entry) => ({ id: entry.finding.id, title: entry.finding.title }));
-  const severities = loop.rounds.reduce(
-    (acc, round) => ({
-      critical: acc.critical + round.severities.critical,
-      improvement: acc.improvement + round.severities.improvement,
-      nitpick: acc.nitpick + round.severities.nitpick,
-    }),
-    { critical: 0, improvement: 0, nitpick: 0 },
-  );
   return {
     status: loop.status,
     recap: {
       empty: false,
       currentRound: loop.currentRound,
       maxRounds: loop.maxRounds,
-      severities,
       counts: loop.totals,
       outstanding,
     },
@@ -265,6 +261,24 @@ function buildCompletionOf(
   return completions.find((completion) => completion.stepId === String(buildId)) ?? null;
 }
 
+/** Only a succeeded build owes the payload; a failed or blocked one renders its
+    plain summary. A real failure leads the Checks tiles (stable otherwise). */
+function structuredBuildOf(
+  completion: BoardStepCompletion | null,
+): BoardBuildSummaryPayload | null {
+  if (completion === null || completion.outcome !== "succeeded") return null;
+  const decoded = decodeBoardBuildSummaryPayloadOption(completion.payload);
+  if (Option.isNone(decoded)) return null;
+  const payload = decoded.value;
+  return {
+    ...payload,
+    checks: [
+      ...payload.checks.filter((check) => check.status === "fail"),
+      ...payload.checks.filter((check) => check.status !== "fail"),
+    ],
+  };
+}
+
 function deriveBuild(input: {
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly completions: ReadonlyArray<BoardStepCompletion>;
@@ -272,6 +286,8 @@ function deriveBuild(input: {
 }): BoardCardWorkSummaryBuild {
   const completion = buildCompletionOf(input.stages, input.completions);
   const summary = completion?.summary ?? null;
+  const structured = structuredBuildOf(completion);
+  const areas = structured?.areas.filter((area) => area.items.length > 0) ?? [];
   const children =
     input.planRows === null
       ? null
@@ -292,7 +308,14 @@ function deriveBuild(input: {
           ),
         };
   const empty = summary === null && (children === null || children.total === 0);
-  return { empty, summary, children };
+  return {
+    empty,
+    summary,
+    structured,
+    changeCount: areas.reduce((total, area) => total + area.items.length, 0),
+    areaCount: areas.length,
+    children,
+  };
 }
 
 function derivePullRequest(
