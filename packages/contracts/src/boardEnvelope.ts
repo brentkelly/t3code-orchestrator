@@ -27,7 +27,11 @@
  * handles — unit-testable without a server, and safe to import from the web.
  */
 import type { BoardCardPullRequest, BoardReviewPhaseId, BoardStageRole } from "./board.ts";
-import { BOARD_REVIEW_PHASE_LABELS, DEFAULT_BOARD_SYNC_PHASE_PROMPT } from "./board.ts";
+import {
+  BOARD_BUILD_SUMMARY_PAYLOAD_SHAPE,
+  BOARD_REVIEW_PHASE_LABELS,
+  DEFAULT_BOARD_SYNC_PHASE_PROMPT,
+} from "./board.ts";
 
 /**
  * The wording for "ask through your question tool, never in prose" (D5).
@@ -64,6 +68,19 @@ export const BOARD_ENVELOPE_PLAN_DELIVERABLE = [
   "Two or more plans is not a longer plan — it splits this card into that many child cards, each with its own branch, build and code review, and holds the card behind a human approval gate until someone approves it.",
   "Split only when this card is a large feature whose parts are worth building and reviewing one at a time, or whose parts could be built concurrently for a real speed-up; then pass splitRationale saying why.",
   "A bug fix, a contained change, or work that is merely long is one plan with several sections.",
+].join(" ");
+
+/** The `build` role's deliverable contract (T3O-21): the structured payload
+    the Summary pane renders. Forced here, not in the editable Build prompt, so
+    no user rewrite can drop it — the completion handler refuses a succeeded
+    build without it. */
+export const BOARD_ENVELOPE_BUILD_DELIVERABLE = [
+  `Complete a succeeded build with a JSON payload ${BOARD_BUILD_SUMMARY_PAYLOAD_SHAPE}, and put the same \`lead\` sentence in \`summary\`.`,
+  "`lead` is one sentence covering what was built, the branch, the commit count and whether it is pushed.",
+  "`notes` holds every plan change, unfinished item and shortcut — `kind` is plan_change, not_done or shortcut, with optional `detail` — and these never go in `areas`.",
+  "`checks` lists every check or test suite you ran or deliberately skipped, with `status` pass, not_run, fail_preexisting or fail; use fail_preexisting only for a failure this card did not cause, and say why in `detail`.",
+  "`areas` groups what was built under names like Data, API, Site core, Panel or Docs, each item one short line.",
+  "Wrap code identifiers in backticks. If you cannot produce the payload, complete with outcome failed instead.",
 ].join(" ");
 
 /** The frozen execution config a spawn needs, read off the step-state run row
@@ -226,7 +243,12 @@ export function boardStepPostamble(input: {
         `Keep a todo list current as you work (your task/plan tool) and commit as you go: the supervisor watches your list advance to tell a productive long job from a wedged one, and without it a working agent looks the same as a stalled one and will be escalated.`,
         `If you are truly blocked and need a human decision, ${BOARD_ENVELOPE_QUESTION_MECHANISM}; never end a turn with an unanswered question in prose.`,
       ];
-  const deliverable = input.role === "plan" ? [BOARD_ENVELOPE_PLAN_DELIVERABLE] : [];
+  const deliverable =
+    input.role === "plan"
+      ? [BOARD_ENVELOPE_PLAN_DELIVERABLE]
+      : input.role === "build"
+        ? [BOARD_ENVELOPE_BUILD_DELIVERABLE]
+        : [];
   return [...stance, ...deliverable, BOARD_ENVELOPE_MOVE_GUARD].join("\n");
 }
 
@@ -299,17 +321,17 @@ export function boardReviewPhaseProtocol(input: {
 /** How to open a draft on each forge, and what to do around it (T3O-12).
     Written per forge, because the agent — not the board — opens the pull
     request. */
-const BOARD_DRAFT_PULL_REQUEST_HOW =
-  "`gh pr create --draft` on GitHub, `glab mr create --draft` on GitLab, and on Forgejo or Gitea a title that starts with `WIP: `. If the pull request already exists, leave its draft state alone. If the forge refuses a draft (some plans do not offer them), open a normal pull request instead and say so in your summary. Never mark the pull request ready for review yourself — the board does that once the review converges.";
+const boardDraftPullRequestHow = (sayWhere: string) =>
+  `\`gh pr create --draft\` on GitHub, \`glab mr create --draft\` on GitLab, and on Forgejo or Gitea a title that starts with \`WIP: \`. If the pull request already exists, leave its draft state alone. If the forge refuses a draft (some plans do not offer them), open a normal pull request instead and ${sayWhere}. Never mark the pull request ready for review yourself — the board does that once the review converges.`;
 
 /** The review phase's open-as-draft instruction (T3O-12). It outranks any
     skill's own default (such as /pullrequest opening a ready one). */
-export const BOARD_DRAFT_PULL_REQUEST_OPEN = `Open this card's pull request as a DRAFT, whatever any skill or workflow you use would do by default: ${BOARD_DRAFT_PULL_REQUEST_HOW}`;
+export const BOARD_DRAFT_PULL_REQUEST_OPEN = `Open this card's pull request as a DRAFT, whatever any skill or workflow you use would do by default: ${boardDraftPullRequestHow("say so in your summary")}`;
 
 /** The build stage's draft line (T3O-12). Conditional, because a build step
     need not open a pull request at all — the review phase opens one if it
     did not. */
-export const BOARD_DRAFT_PULL_REQUEST_BUILD = `If you open this card's pull request, yourself or through a skill such as /pullrequest, open it as a DRAFT, whatever that skill would do by default: ${BOARD_DRAFT_PULL_REQUEST_HOW}`;
+export const BOARD_DRAFT_PULL_REQUEST_BUILD = `If you open this card's pull request, yourself or through a skill such as /pullrequest, open it as a DRAFT, whatever that skill would do by default: ${boardDraftPullRequestHow("record it as a `shortcut` note in your payload")}`;
 
 /** The line every later loop step carries while drafts are on (T3O-12): the
     fix commits the loop pushes must not start the repository's full CI. */

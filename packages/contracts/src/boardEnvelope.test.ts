@@ -20,6 +20,7 @@ import {
   effectiveBoardStageRole,
 } from "./board.ts";
 import {
+  BOARD_ENVELOPE_BUILD_DELIVERABLE,
   BOARD_ENVELOPE_MOVE_GUARD,
   BOARD_ENVELOPE_PLAN_DELIVERABLE,
   BOARD_ENVELOPE_QUESTION_MECHANISM,
@@ -125,6 +126,37 @@ describe("boardStepPostamble (envelope split)", () => {
     expect(postamble.indexOf(BOARD_ENVELOPE_PLAN_DELIVERABLE)).toBeLessThan(
       postamble.indexOf(BOARD_ENVELOPE_MOVE_GUARD),
     );
+  });
+});
+
+describe("build deliverable (T3O-21)", () => {
+  it("carries the structured summary protocol on the build role only", () => {
+    const build = boardStepPostamble({ humanInLoop: false, role: "build", step: stepOf(null) });
+    expect(build).toContain(BOARD_ENVELOPE_BUILD_DELIVERABLE);
+    expect(build).toContain("{ lead, notes: [{ kind, text, detail? }]");
+    expect(build.indexOf(BOARD_ENVELOPE_BUILD_DELIVERABLE)).toBeLessThan(
+      build.indexOf(BOARD_ENVELOPE_MOVE_GUARD),
+    );
+    for (const role of ["plan", null] as const) {
+      const other = boardStepPostamble({ humanInLoop: false, role, step: stepOf(null) });
+      expect(other).not.toContain(BOARD_ENVELOPE_BUILD_DELIVERABLE);
+    }
+  });
+
+  it("survives an emptied editable prompt", () => {
+    const prompt = composeStepPrompt({
+      card: { key: "T3-9", title: "A card", stage: "building" },
+      stageLabel: "Building",
+      step: { stepId: "building", stepLabel: null, prompt: "", humanInLoop: false },
+      role: "build",
+    });
+    expect(prompt).toContain(BOARD_ENVELOPE_BUILD_DELIVERABLE);
+  });
+
+  it("points a refused build draft at a shortcut note; the review phase keeps the summary", () => {
+    expect(BOARD_DRAFT_PULL_REQUEST_BUILD).toContain("`shortcut` note");
+    expect(BOARD_DRAFT_PULL_REQUEST_BUILD).not.toContain("say so in your summary");
+    expect(BOARD_DRAFT_PULL_REQUEST_OPEN).toContain("say so in your summary");
   });
 });
 
