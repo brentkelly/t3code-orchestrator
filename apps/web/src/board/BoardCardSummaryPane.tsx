@@ -160,6 +160,8 @@ export function BoardCardSummaryPane({
             <p className="text-[15px]/[1.5] font-medium text-pretty text-foreground">
               <InlineCode text={lead} />
             </p>
+          ) : build.empty ? (
+            <p className="text-[15px]/[1.5] text-muted-foreground">No build summary</p>
           ) : null}
           <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
             <span

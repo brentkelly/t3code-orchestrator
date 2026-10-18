@@ -66,6 +66,7 @@ describe("BoardCardSummaryPane", () => {
     expect(html).toContain("Build summary");
     expect(html).toContain("Back to thread");
     expect(html).toContain("Review not started");
+    expect(html).toContain("No build summary");
     for (const section of [
       "Heads-up",
       "Open findings",
@@ -105,6 +106,7 @@ describe("BoardCardSummaryPane", () => {
       build: { ...empty.build, empty: false, summary: "Wired the pane" },
     });
     expect(html).toContain("Wired the pane");
+    expect(html).not.toContain("No build summary");
     for (const section of ["Heads-up", "Checks", "What was built"]) {
       expect(html).not.toContain(section);
     }
