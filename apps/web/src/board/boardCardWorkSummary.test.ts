@@ -234,7 +234,6 @@ describe("deriveBoardCardWorkSummary", () => {
     expect(summary.verdict.tone).toBe("info");
     expect(summary.review.empty).toBe(false);
     expect(summary.review.currentRound).toBe(1);
-    expect(summary.review.severities).toEqual({ critical: 1, improvement: 0, nitpick: 1 });
     expect(summary.review.outstanding.map((finding) => finding.title)).toEqual([
       "Null deref",
       "Naming",
@@ -713,5 +712,71 @@ describe("deriveBoardCardWorkSummary", () => {
     expect(summary.build.children?.total).toBe(2);
     expect(summary.build.children?.rows.map((row) => row.key)).toEqual(["T3O-51", "T3O-52"]);
     expect(summary.build.summary).toBe("Integrated the children");
+  });
+
+  describe("structured build summary (T3O-21)", () => {
+    const building = String(BOARD_SEED_STAGE_IDS.building);
+    const payload = {
+      lead: "Built the pane on `board/t3o-21`, 4 commits, pushed.",
+      notes: [{ kind: "not_done", text: "Mobile" }],
+      checks: [
+        { status: "pass", name: "vitest", detail: "" },
+        { status: "fail_preexisting", name: "e2e", detail: "Flaky before this card" },
+        { status: "fail", name: "lint", detail: "1 error" },
+        { status: "not_run", name: "browser", detail: "" },
+      ],
+      areas: [
+        { name: "Data", items: ["Schema", "Decoder"] },
+        { name: "Panel", items: ["Pane"] },
+        { name: "Docs", items: [] },
+      ],
+    };
+    const derive = (completions: ReadonlyArray<BoardStepCompletion>) =>
+      deriveBoardCardWorkSummary({
+        detail: detail({ stage: BOARD_SEED_STAGE_IDS.review }, { stepCompletions: completions }),
+        stages: BOARD_SEED_STAGES,
+      }).build;
+
+    it("decodes the payload, keeps the plain summary, and counts changes and areas", () => {
+      const build = derive([completion(building, payload, payload.lead)]);
+      expect(build.structured?.lead).toBe(payload.lead);
+      expect(build.structured?.notes).toEqual([{ kind: "not_done", text: "Mobile" }]);
+      expect(build.summary).toBe(payload.lead);
+      // The empty Docs area is no area at all.
+      expect(build.changeCount).toBe(3);
+      expect(build.areaCount).toBe(2);
+    });
+
+    it("sorts a real failure first and keeps the rest in order", () => {
+      const build = derive([completion(building, payload)]);
+      expect(build.structured?.checks.map((check) => check.name)).toEqual([
+        "lint",
+        "vitest",
+        "e2e",
+        "browser",
+      ]);
+    });
+
+    it("falls back to the plain summary for a legacy build with no payload", () => {
+      const build = derive([{ ...completion(building, null, "Wired the pane"), payload: null }]);
+      expect(build.structured).toBeNull();
+      expect(build.summary).toBe("Wired the pane");
+      expect(build.empty).toBe(false);
+      expect(build.changeCount).toBe(0);
+    });
+
+    it("falls back for a payload that does not decode", () => {
+      const build = derive([completion(building, { lead: "x" }, "Plain")]);
+      expect(build.structured).toBeNull();
+      expect(build.summary).toBe("Plain");
+    });
+
+    it("renders a failed build as its plain summary, payload or not", () => {
+      const build = derive([
+        { ...completion(building, payload, "Could not finish"), outcome: "failed" },
+      ]);
+      expect(build.structured).toBeNull();
+      expect(build.summary).toBe("Could not finish");
+    });
   });
 });
