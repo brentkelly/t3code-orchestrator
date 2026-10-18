@@ -748,7 +748,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         .pipe(withScope(own.ownThread));
       assert.strictEqual(retry.alreadyCompleted, false);
       const recorded = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
-      assert.strictEqual(recorded.steps[0]?.payload, JSON.stringify(validBuild));
+      assert.strictEqual(recorded.steps[0]?.payload, stringifiedPayload);
     }),
   );
 
