@@ -56,11 +56,17 @@ const CODE_CLASS = "rounded-[4px] bg-accent px-1 py-px font-mono text-[12px] fon
 
 /** Backtick-delimited identifiers as inline code chips; everything else as
     plain text. Deliberately not markdown: the payload asks for backticks and
-    nothing more. */
+    nothing more. An unpaired trailing backtick stays literal rather than
+    turning the rest of the line into code. */
 function InlineCode({ text }: { readonly text: string }) {
+  const parts = text.split("`");
+  if (parts.length % 2 === 0) {
+    const tail = parts.pop();
+    parts[parts.length - 1] += `\`${tail}`;
+  }
   return (
     <>
-      {text.split("`").map((part, index) =>
+      {parts.map((part, index) =>
         part.length === 0 ? null : index % 2 === 1 ? (
           <code className={CODE_CLASS} key={index}>
             {part}
@@ -100,7 +106,9 @@ function NoteRow({
       <div className="flex min-w-0 flex-col gap-[3px]">
         <div className="text-[13px]/[1.55] text-pretty text-foreground">{children}</div>
         {detail !== undefined && detail.trim().length > 0 ? (
-          <div className="text-[12.5px]/[1.5] text-muted-foreground">{detail}</div>
+          <div className="text-[12.5px]/[1.5] text-muted-foreground">
+            <InlineCode text={detail} />
+          </div>
         ) : null}
       </div>
     </li>
@@ -260,7 +268,7 @@ export function BoardCardSummaryPane({
                     </div>
                     {check.detail.trim().length > 0 ? (
                       <div className="pl-[19px] text-[12px]/[1.45] text-pretty text-muted-foreground">
-                        {check.detail}
+                        <InlineCode text={check.detail} />
                       </div>
                     ) : null}
                   </li>

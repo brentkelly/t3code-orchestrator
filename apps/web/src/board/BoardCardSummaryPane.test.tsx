@@ -119,12 +119,12 @@ describe("BoardCardSummaryPane", () => {
         structured: {
           lead: "Built on `board/t3o-21`, 4 commits, pushed.",
           notes: [
-            { kind: "plan_change", text: "Dropped the chip", detail: "Agreed in planning" },
-            { kind: "not_done", text: "Mobile" },
+            { kind: "plan_change", text: "Dropped the chip", detail: "Agreed in `planning`" },
+            { kind: "not_done", text: "Mobile `half" },
             { kind: "shortcut", text: "Skipped the sweep" },
           ],
           checks: [
-            { status: "fail", name: "lint", detail: "1 error" },
+            { status: "fail", name: "lint", detail: "1 error in `pane.tsx`" },
             { status: "pass", name: "`vitest`", detail: "" },
           ],
           areas: [
@@ -142,9 +142,12 @@ describe("BoardCardSummaryPane", () => {
     expect(html).toMatch(/Built on <code[^>]*>board\/t3o-21<\/code>, 4 commits, pushed\./);
     expect(html).toContain("Heads-up");
     for (const tag of ["Plan change", "Not done", "Shortcut"]) expect(html).toContain(tag);
-    expect(html).toContain("Agreed in planning");
+    // Details go through the inline-code renderer too.
+    expect(html).toMatch(/Agreed in <code[^>]*>planning<\/code>/);
+    // An unpaired backtick stays literal instead of opening a code chip.
+    expect(html).toContain("Mobile `half");
     expect(html).toContain("Checks");
-    expect(html).toContain("1 error");
+    expect(html).toMatch(/1 error in <code[^>]*>pane\.tsx<\/code>/);
     expect(html).toContain("3 changes across 2 areas");
     expect(html).toMatch(/Added <code[^>]*>BoardBuildSummaryPayload<\/code>/);
   });
