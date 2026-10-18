@@ -1,0 +1,1030 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="./support.js"></script>
+  </head>
+  <body>
+    <x-dc>
+      <helmet>
+        <meta name="design_doc_mode" content="canvas" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+          href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap"
+          rel="stylesheet"
+        />
+        <style>
+          :root {
+            --bg: #f4f4f5;
+            --fg: #27272a;
+            --card: #fff;
+            --muted: #fafafa;
+            --muted-fg: #71717a;
+            --accent: #f4f4f5;
+            --border: #e4e4e7;
+            --info-fg: #1d4ed8;
+            --attention: #8b5cf6;
+            --attention-fg: #6d28d9;
+            --success-fg: #047857;
+            --warning: #f59e0b;
+            --warning-fg: #b45309;
+            --destructive-fg: #b91c1c;
+            --font-sans:
+              "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+            --font-mono: "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, Menlo, monospace;
+          }
+          * {
+            box-sizing: border-box;
+          }
+          body {
+            margin: 0;
+            font-family: var(--font-sans);
+            background: var(--bg);
+            color: var(--fg);
+            -webkit-font-smoothing: antialiased;
+          }
+          a {
+            color: var(--info-fg);
+            text-decoration: none;
+          }
+          a:hover {
+            text-decoration: underline;
+          }
+        </style>
+      </helmet>
+
+      <section style="padding: 48px 48px 0; display: flex; flex-direction: column; gap: 20px">
+        <div id="2a" style="display: flex; flex-direction: column; gap: 12px; width: 820px">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <span
+              style="
+                font: 600 12px var(--font-mono);
+                padding: 3px 8px;
+                border-radius: 6px;
+                background: var(--fg);
+                color: var(--card);
+              "
+              >2a</span
+            >
+            <span style="font: 600 13px var(--font-sans)">Sectioned bullets + check tiles</span>
+            <span style="font: 400 12.5px var(--font-sans); color: var(--muted-fg)"
+              ><a href="#1a">1a</a> with the check tiles from <a href="#1b">1b</a></span
+            >
+          </div>
+          <div
+            style="
+              border: 1px solid var(--border);
+              border-radius: 12px;
+              background: var(--card);
+              overflow: hidden;
+            "
+          >
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                height: 44px;
+                padding: 0 12px 0 22px;
+                border-bottom: 1px solid var(--border);
+              "
+            >
+              <span style="font: 600 12.5px var(--font-sans)">Build summary</span>
+              <span style="flex: 1"></span>
+              <button
+                type="button"
+                style="
+                  height: 24px;
+                  padding: 0 8px;
+                  border: none;
+                  border-radius: 6px;
+                  background: transparent;
+                  color: var(--muted-fg);
+                  font: 500 12px var(--font-sans);
+                  cursor: pointer;
+                "
+              >
+                Back to thread
+              </button>
+            </div>
+            <div style="padding: 20px 22px 32px; display: flex; flex-direction: column; gap: 26px">
+              <div style="display: flex; flex-direction: column; gap: 10px">
+                <div style="font: 500 15px/1.5 var(--font-sans); text-wrap: pretty">
+                  AVIF copies built on
+                  <code
+                    style="
+                      font: 500 13px var(--font-mono);
+                      padding: 1px 5px;
+                      border-radius: 4px;
+                      background: var(--accent);
+                    "
+                    >board/z5-141</code
+                  >
+                  (15 commits, not pushed).
+                </div>
+                <div
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                    font: 400 12px var(--font-sans);
+                    color: var(--muted-fg);
+                  "
+                >
+                  <span
+                    style="
+                      font: 500 11.5px var(--font-sans);
+                      padding: 2px 7px;
+                      border-radius: 6px;
+                      background: color-mix(in srgb, var(--attention) 12%, var(--card));
+                      color: var(--attention-fg);
+                    "
+                    >Ready for merge</span
+                  >
+                  <span>Review round 3 of 5</span><span>·</span
+                  ><span>27 raised · 26 fixed · 1 rejected</span><span>·</span> <a href="#">#108</a
+                  ><span style="font: 400 11.5px var(--font-mono)">main ← board/z5-141</span>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 10px">
+                <div style="font: 600 12px var(--font-sans)">Heads-up</div>
+                <sc-for list="{{ notes }}" as="n" hint-placeholder-count="4">
+                  <div
+                    style="
+                      display: grid;
+                      grid-template-columns: 96px minmax(0, 1fr);
+                      gap: 10px;
+                      align-items: baseline;
+                    "
+                  >
+                    <span style="{{ n.tagStyle }}">{{ n.label }}</span>
+                    <div style="display: flex; flex-direction: column; gap: 3px">
+                      <div style="font: 400 13px/1.55 var(--font-sans); text-wrap: pretty">
+                        <sc-for list="{{ n.parts }}" as="pt" hint-placeholder-count="1"
+                          ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                            ><code
+                              style="
+                                font: 500 12px var(--font-mono);
+                                padding: 1px 4px;
+                                border-radius: 4px;
+                                background: var(--accent);
+                              "
+                              >{{ pt.t }}</code
+                            ></sc-if
+                          ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                            >{{ pt.t }}</sc-if
+                          ></sc-for
+                        >
+                      </div>
+                      <sc-if value="{{ n.hasSub }}" hint-placeholder-val="{{ false }}"
+                        ><div style="font: 400 12.5px/1.5 var(--font-sans); color: var(--muted-fg)">
+                          {{ n.sub }}
+                        </div></sc-if
+                      >
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 10px">
+                <div style="font: 600 12px var(--font-sans)">Checks</div>
+                <div
+                  style="
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+                    gap: 8px;
+                  "
+                >
+                  <sc-for list="{{ checks }}" as="c" hint-placeholder-count="4">
+                    <div style="{{ c.tileStyle }}">
+                      <div style="display: flex; gap: 7px; align-items: baseline">
+                        <span style="{{ c.iconStyle }}">{{ c.glyph }}</span>
+                        <span style="font: 500 12.5px/1.4 var(--font-sans)"
+                          ><sc-for list="{{ c.parts }}" as="pt" hint-placeholder-count="1"
+                            ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                              ><code style="font: 500 12px var(--font-mono)"
+                                >{{ pt.t }}</code
+                              ></sc-if
+                            ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                              >{{ pt.t }}</sc-if
+                            ></sc-for
+                          ></span
+                        >
+                      </div>
+                      <div
+                        style="
+                          font: 400 12px/1.45 var(--font-sans);
+                          color: var(--muted-fg);
+                          padding-left: 19px;
+                          text-wrap: pretty;
+                        "
+                      >
+                        {{ c.detail }}
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 14px">
+                <div style="display: flex; align-items: baseline; gap: 8px">
+                  <span style="font: 600 12px var(--font-sans)">What was built</span
+                  ><span style="font: 400 12px var(--font-sans); color: var(--muted-fg)"
+                    >{{ builtMeta }}</span
+                  >
+                </div>
+                <sc-for list="{{ areas }}" as="a" hint-placeholder-count="5">
+                  <div style="display: flex; flex-direction: column; gap: 4px">
+                    <div style="font: 600 12.5px var(--font-sans); color: var(--muted-fg)">
+                      {{ a.name }}
+                    </div>
+                    <sc-for list="{{ a.items }}" as="it" hint-placeholder-count="3">
+                      <div
+                        style="
+                          display: flex;
+                          gap: 9px;
+                          align-items: baseline;
+                          font: 400 13px/1.6 var(--font-sans);
+                        "
+                      >
+                        <span
+                          style="
+                            width: 4px;
+                            height: 4px;
+                            flex: none;
+                            border-radius: 99px;
+                            background: var(--muted-fg);
+                            transform: translateY(-3px);
+                          "
+                        ></span>
+                        <span style="text-wrap: pretty"
+                          ><sc-for list="{{ it.parts }}" as="pt" hint-placeholder-count="1"
+                            ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                              ><code
+                                style="
+                                  font: 500 12px var(--font-mono);
+                                  padding: 1px 4px;
+                                  border-radius: 4px;
+                                  background: var(--accent);
+                                "
+                                >{{ pt.t }}</code
+                              ></sc-if
+                            ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                              >{{ pt.t }}</sc-if
+                            ></sc-for
+                          ></span
+                        >
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section style="padding: 48px; display: flex; flex-direction: column; gap: 20px">
+        <div style="display: flex; flex-direction: column; gap: 6px; max-width: 900px">
+          <div style="font: 600 18px var(--font-sans)">Build summary — scannable layouts</div>
+          <div
+            style="
+              font: 400 13.5px/1.55 var(--font-sans);
+              color: var(--muted-fg);
+              text-wrap: pretty;
+            "
+          >
+            Same Z5-141 content in all three. Verdict, review recap and PR identity collapse into
+            one header line. Plan changes, gaps and failures are pulled out of the prose so they're
+            never buried. Requires the build agent to emit areas, notes and checks as structured
+            fields rather than one paragraph.
+          </div>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 40px; align-items: flex-start">
+          <!-- 1a -->
+          <div id="1a" style="display: flex; flex-direction: column; gap: 12px; width: 820px">
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span
+                style="
+                  font: 600 12px var(--font-mono);
+                  padding: 3px 8px;
+                  border-radius: 6px;
+                  background: var(--fg);
+                  color: var(--card);
+                "
+                >1a</span
+              >
+              <span style="font: 600 13px var(--font-sans)">Sectioned bullets</span>
+              <span style="font: 400 12.5px var(--font-sans); color: var(--muted-fg)"
+                >Heads-up, checks, then grouped bullets by area</span
+              >
+            </div>
+            <div
+              style="
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                background: var(--card);
+                overflow: hidden;
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                  height: 44px;
+                  padding: 0 12px 0 22px;
+                  border-bottom: 1px solid var(--border);
+                "
+              >
+                <span style="font: 600 12.5px var(--font-sans)">Build summary</span>
+                <span style="flex: 1"></span>
+                <button
+                  type="button"
+                  style="
+                    height: 24px;
+                    padding: 0 8px;
+                    border: none;
+                    border-radius: 6px;
+                    background: transparent;
+                    color: var(--muted-fg);
+                    font: 500 12px var(--font-sans);
+                    cursor: pointer;
+                  "
+                >
+                  Back to thread
+                </button>
+              </div>
+              <div
+                style="padding: 20px 22px 32px; display: flex; flex-direction: column; gap: 26px"
+              >
+                <div style="display: flex; flex-direction: column; gap: 10px">
+                  <div style="font: 500 15px/1.5 var(--font-sans); text-wrap: pretty">
+                    AVIF copies built on
+                    <code
+                      style="
+                        font: 500 13px var(--font-mono);
+                        padding: 1px 5px;
+                        border-radius: 4px;
+                        background: var(--accent);
+                      "
+                      >board/z5-141</code
+                    >
+                    (15 commits, not pushed).
+                  </div>
+                  <div
+                    style="
+                      display: flex;
+                      align-items: center;
+                      gap: 8px;
+                      flex-wrap: wrap;
+                      font: 400 12px var(--font-sans);
+                      color: var(--muted-fg);
+                    "
+                  >
+                    <span
+                      style="
+                        font: 500 11.5px var(--font-sans);
+                        padding: 2px 7px;
+                        border-radius: 6px;
+                        background: color-mix(in srgb, var(--attention) 12%, var(--card));
+                        color: var(--attention-fg);
+                      "
+                      >Ready for merge</span
+                    >
+                    <span>Review round 3 of 5</span><span>·</span
+                    ><span>27 raised · 26 fixed · 1 rejected</span><span>·</span>
+                    <a href="#">#108</a
+                    ><span style="font: 400 11.5px var(--font-mono)">main ← board/z5-141</span>
+                  </div>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 10px">
+                  <div style="font: 600 12px var(--font-sans)">Heads-up</div>
+                  <sc-for list="{{ notes }}" as="n" hint-placeholder-count="4">
+                    <div
+                      style="
+                        display: grid;
+                        grid-template-columns: 96px minmax(0, 1fr);
+                        gap: 10px;
+                        align-items: baseline;
+                      "
+                    >
+                      <span style="{{ n.tagStyle }}">{{ n.label }}</span>
+                      <div style="display: flex; flex-direction: column; gap: 3px">
+                        <div style="font: 400 13px/1.55 var(--font-sans); text-wrap: pretty">
+                          <sc-for list="{{ n.parts }}" as="pt" hint-placeholder-count="1"
+                            ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                              ><code
+                                style="
+                                  font: 500 12px var(--font-mono);
+                                  padding: 1px 4px;
+                                  border-radius: 4px;
+                                  background: var(--accent);
+                                "
+                                >{{ pt.t }}</code
+                              ></sc-if
+                            ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                              >{{ pt.t }}</sc-if
+                            ></sc-for
+                          >
+                        </div>
+                        <sc-if value="{{ n.hasSub }}" hint-placeholder-val="{{ false }}"
+                          ><div
+                            style="font: 400 12.5px/1.5 var(--font-sans); color: var(--muted-fg)"
+                          >
+                            {{ n.sub }}
+                          </div></sc-if
+                        >
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 8px">
+                  <div style="font: 600 12px var(--font-sans)">Checks</div>
+                  <sc-for list="{{ checks }}" as="c" hint-placeholder-count="4">
+                    <div style="display: flex; gap: 9px; align-items: baseline">
+                      <span style="{{ c.iconStyle }}">{{ c.glyph }}</span>
+                      <div style="font: 400 13px/1.55 var(--font-sans); text-wrap: pretty">
+                        <span style="font-weight: 500"
+                          ><sc-for list="{{ c.parts }}" as="pt" hint-placeholder-count="1"
+                            ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                              ><code style="font: 500 12px var(--font-mono)"
+                                >{{ pt.t }}</code
+                              ></sc-if
+                            ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                              >{{ pt.t }}</sc-if
+                            ></sc-for
+                          ></span
+                        >
+                        <span style="color: var(--muted-fg)">{{ c.detail }}</span>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 14px">
+                  <div style="display: flex; align-items: baseline; gap: 8px">
+                    <span style="font: 600 12px var(--font-sans)">What was built</span
+                    ><span style="font: 400 12px var(--font-sans); color: var(--muted-fg)"
+                      >{{ builtMeta }}</span
+                    >
+                  </div>
+                  <sc-for list="{{ areas }}" as="a" hint-placeholder-count="5">
+                    <div style="display: flex; flex-direction: column; gap: 4px">
+                      <div style="font: 600 12.5px var(--font-sans); color: var(--muted-fg)">
+                        {{ a.name }}
+                      </div>
+                      <sc-for list="{{ a.items }}" as="it" hint-placeholder-count="3">
+                        <div
+                          style="
+                            display: flex;
+                            gap: 9px;
+                            align-items: baseline;
+                            font: 400 13px/1.6 var(--font-sans);
+                          "
+                        >
+                          <span
+                            style="
+                              width: 4px;
+                              height: 4px;
+                              flex: none;
+                              border-radius: 99px;
+                              background: var(--muted-fg);
+                              transform: translateY(-3px);
+                            "
+                          ></span>
+                          <span style="text-wrap: pretty"
+                            ><sc-for list="{{ it.parts }}" as="pt" hint-placeholder-count="1"
+                              ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                                ><code
+                                  style="
+                                    font: 500 12px var(--font-mono);
+                                    padding: 1px 4px;
+                                    border-radius: 4px;
+                                    background: var(--accent);
+                                  "
+                                  >{{ pt.t }}</code
+                                ></sc-if
+                              ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                                >{{ pt.t }}</sc-if
+                              ></sc-for
+                            ></span
+                          >
+                        </div>
+                      </sc-for>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 1b -->
+          <div id="1b" style="display: flex; flex-direction: column; gap: 12px; width: 820px">
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span
+                style="
+                  font: 600 12px var(--font-mono);
+                  padding: 3px 8px;
+                  border-radius: 6px;
+                  background: var(--fg);
+                  color: var(--card);
+                "
+                >1b</span
+              >
+              <span style="font: 600 13px var(--font-sans)">Gutter index</span>
+              <span style="font: 400 12.5px var(--font-sans); color: var(--muted-fg)"
+                >Labels in a left rail; check tiles; area bullets in two columns</span
+              >
+            </div>
+            <div
+              style="
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                background: var(--card);
+                overflow: hidden;
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                  height: 44px;
+                  padding: 0 12px 0 22px;
+                  border-bottom: 1px solid var(--border);
+                "
+              >
+                <span style="font: 600 12.5px var(--font-sans)">Build summary</span>
+                <span style="flex: 1"></span>
+                <button
+                  type="button"
+                  style="
+                    height: 24px;
+                    padding: 0 8px;
+                    border: none;
+                    border-radius: 6px;
+                    background: transparent;
+                    color: var(--muted-fg);
+                    font: 500 12px var(--font-sans);
+                    cursor: pointer;
+                  "
+                >
+                  Back to thread
+                </button>
+              </div>
+              <div style="display: flex; flex-direction: column">
+                <div
+                  style="
+                    padding: 18px 22px;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                    font: 400 12px var(--font-sans);
+                    color: var(--muted-fg);
+                    border-bottom: 1px solid var(--border);
+                    background: var(--muted);
+                  "
+                >
+                  <span
+                    style="
+                      font: 500 11.5px var(--font-sans);
+                      padding: 2px 7px;
+                      border-radius: 6px;
+                      background: color-mix(in srgb, var(--attention) 12%, var(--card));
+                      color: var(--attention-fg);
+                    "
+                    >Ready for merge</span
+                  >
+                  <span>Round 3 of 5</span><span>·</span
+                  ><span>27 raised · 26 fixed · 1 rejected</span>
+                  <span style="flex: 1"></span>
+                  <a href="#">#108</a
+                  ><span style="font: 400 11.5px var(--font-mono)">main ← board/z5-141</span
+                  ><span>·</span><span>15 commits, not pushed</span>
+                </div>
+
+                <div
+                  style="
+                    display: grid;
+                    grid-template-columns: 120px minmax(0, 1fr);
+                    gap: 14px 18px;
+                    padding: 20px 22px;
+                    border-bottom: 1px solid var(--border);
+                  "
+                >
+                  <div
+                    style="
+                      font: 600 11px var(--font-sans);
+                      letter-spacing: 0.05em;
+                      text-transform: uppercase;
+                      color: var(--muted-fg);
+                      padding-top: 3px;
+                    "
+                  >
+                    Needs a look
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 12px">
+                    <sc-for list="{{ notes }}" as="n" hint-placeholder-count="4">
+                      <div style="display: flex; flex-direction: column; gap: 4px">
+                        <span style="{{ n.tagStyle }}">{{ n.label }}</span>
+                        <div style="font: 400 13px/1.55 var(--font-sans); text-wrap: pretty">
+                          <sc-for list="{{ n.parts }}" as="pt" hint-placeholder-count="1"
+                            ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                              ><code
+                                style="
+                                  font: 500 12px var(--font-mono);
+                                  padding: 1px 4px;
+                                  border-radius: 4px;
+                                  background: var(--accent);
+                                "
+                                >{{ pt.t }}</code
+                              ></sc-if
+                            ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                              >{{ pt.t }}</sc-if
+                            ></sc-for
+                          >
+                        </div>
+                        <sc-if value="{{ n.hasSub }}" hint-placeholder-val="{{ false }}"
+                          ><div
+                            style="font: 400 12.5px/1.5 var(--font-sans); color: var(--muted-fg)"
+                          >
+                            {{ n.sub }}
+                          </div></sc-if
+                        >
+                      </div>
+                    </sc-for>
+                  </div>
+
+                  <div
+                    style="
+                      font: 600 11px var(--font-sans);
+                      letter-spacing: 0.05em;
+                      text-transform: uppercase;
+                      color: var(--muted-fg);
+                      padding-top: 10px;
+                    "
+                  >
+                    Checks
+                  </div>
+                  <div
+                    style="
+                      display: grid;
+                      grid-template-columns: repeat(2, minmax(0, 1fr));
+                      gap: 8px;
+                    "
+                  >
+                    <sc-for list="{{ checks }}" as="c" hint-placeholder-count="4">
+                      <div style="{{ c.tileStyle }}">
+                        <div style="display: flex; gap: 7px; align-items: baseline">
+                          <span style="{{ c.iconStyle }}">{{ c.glyph }}</span>
+                          <span style="font: 500 12.5px/1.4 var(--font-sans)"
+                            ><sc-for list="{{ c.parts }}" as="pt" hint-placeholder-count="1"
+                              ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                                ><code style="font: 500 12px var(--font-mono)"
+                                  >{{ pt.t }}</code
+                                ></sc-if
+                              ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                                >{{ pt.t }}</sc-if
+                              ></sc-for
+                            ></span
+                          >
+                        </div>
+                        <div
+                          style="
+                            font: 400 12px/1.45 var(--font-sans);
+                            color: var(--muted-fg);
+                            padding-left: 19px;
+                            text-wrap: pretty;
+                          "
+                        >
+                          {{ c.detail }}
+                        </div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </div>
+
+                <div
+                  style="
+                    display: grid;
+                    grid-template-columns: 120px minmax(0, 1fr);
+                    gap: 18px;
+                    padding: 20px 22px 30px;
+                  "
+                >
+                  <sc-for list="{{ areas }}" as="a" hint-placeholder-count="5">
+                    <div style="display: flex; flex-direction: column; gap: 2px; padding-top: 2px">
+                      <span style="font: 600 12.5px var(--font-sans)">{{ a.name }}</span>
+                      <span style="font: 400 11.5px var(--font-sans); color: var(--muted-fg)"
+                        >{{ a.count }}</span
+                      >
+                    </div>
+                    <div
+                      style="
+                        display: grid;
+                        grid-template-columns: repeat(2, minmax(0, 1fr));
+                        gap: 4px 20px;
+                      "
+                    >
+                      <sc-for list="{{ a.items }}" as="it" hint-placeholder-count="3">
+                        <div
+                          style="
+                            display: flex;
+                            gap: 9px;
+                            align-items: baseline;
+                            font: 400 13px/1.55 var(--font-sans);
+                          "
+                        >
+                          <span
+                            style="
+                              width: 4px;
+                              height: 4px;
+                              flex: none;
+                              border-radius: 99px;
+                              background: var(--muted-fg);
+                              transform: translateY(-3px);
+                            "
+                          ></span>
+                          <span style="text-wrap: pretty; min-width: 0"
+                            ><sc-for list="{{ it.parts }}" as="pt" hint-placeholder-count="1"
+                              ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                                ><code
+                                  style="
+                                    font: 500 12px var(--font-mono);
+                                    padding: 1px 4px;
+                                    border-radius: 4px;
+                                    background: var(--accent);
+                                    overflow-wrap: anywhere;
+                                  "
+                                  >{{ pt.t }}</code
+                                ></sc-if
+                              ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                                >{{ pt.t }}</sc-if
+                              ></sc-for
+                            ></span
+                          >
+                        </div>
+                      </sc-for>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 1c -->
+          <div id="1c" style="display: flex; flex-direction: column; gap: 12px; width: 820px">
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span
+                style="
+                  font: 600 12px var(--font-mono);
+                  padding: 3px 8px;
+                  border-radius: 6px;
+                  background: var(--fg);
+                  color: var(--card);
+                "
+                >1c</span
+              >
+              <span style="font: 600 13px var(--font-sans)">Filterable ledger</span>
+              <span style="font: 400 12.5px var(--font-sans); color: var(--muted-fg)"
+                >Every line tagged by kind and area; filter to what you care about</span
+              >
+            </div>
+            <div
+              style="
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                background: var(--card);
+                overflow: hidden;
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                  height: 44px;
+                  padding: 0 12px 0 22px;
+                  border-bottom: 1px solid var(--border);
+                "
+              >
+                <span style="font: 600 12.5px var(--font-sans)">Build summary</span>
+                <span style="flex: 1"></span>
+                <button
+                  type="button"
+                  style="
+                    height: 24px;
+                    padding: 0 8px;
+                    border: none;
+                    border-radius: 6px;
+                    background: transparent;
+                    color: var(--muted-fg);
+                    font: 500 12px var(--font-sans);
+                    cursor: pointer;
+                  "
+                >
+                  Back to thread
+                </button>
+              </div>
+              <div
+                style="padding: 20px 22px 12px; display: flex; flex-direction: column; gap: 14px"
+              >
+                <div style="display: flex; flex-direction: column; gap: 8px">
+                  <div style="font: 500 15px/1.5 var(--font-sans)">
+                    AVIF copies built on
+                    <code
+                      style="
+                        font: 500 13px var(--font-mono);
+                        padding: 1px 5px;
+                        border-radius: 4px;
+                        background: var(--accent);
+                      "
+                      >board/z5-141</code
+                    >
+                    (15 commits, not pushed).
+                  </div>
+                  <div
+                    style="
+                      display: flex;
+                      align-items: center;
+                      gap: 8px;
+                      flex-wrap: wrap;
+                      font: 400 12px var(--font-sans);
+                      color: var(--muted-fg);
+                    "
+                  >
+                    <span
+                      style="
+                        font: 500 11.5px var(--font-sans);
+                        padding: 2px 7px;
+                        border-radius: 6px;
+                        background: color-mix(in srgb, var(--attention) 12%, var(--card));
+                        color: var(--attention-fg);
+                      "
+                      >Ready for merge</span
+                    >
+                    <span>Round 3 of 5</span><span>·</span
+                    ><span>27 raised · 26 fixed · 1 rejected</span><span>·</span>
+                    <a href="#">#108</a
+                    ><span style="font: 400 11.5px var(--font-mono)">main ← board/z5-141</span>
+                  </div>
+                </div>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px">
+                  <sc-for list="{{ checks }}" as="c" hint-placeholder-count="4">
+                    <span title="{{ c.detail }}" style="{{ c.chipStyle }}"
+                      ><span style="{{ c.iconStyle }}">{{ c.glyph }}</span
+                      ><sc-for list="{{ c.parts }}" as="pt" hint-placeholder-count="1"
+                        ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                          ><code style="font: 500 11.5px var(--font-mono)">{{ pt.t }}</code></sc-if
+                        ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                          >{{ pt.t }}</sc-if
+                        ></sc-for
+                      ></span
+                    >
+                  </sc-for>
+                </div>
+                <div
+                  style="
+                    display: flex;
+                    gap: 4px;
+                    flex-wrap: wrap;
+                    padding: 3px;
+                    border-radius: 8px;
+                    background: var(--accent);
+                    align-self: flex-start;
+                  "
+                >
+                  <sc-for list="{{ filters }}" as="f" hint-placeholder-count="5">
+                    <button type="button" onClick="{{ f.select }}" style="{{ f.style }}">
+                      {{ f.label }}
+                      <span style="color: var(--muted-fg); font-weight: 400">{{ f.n }}</span>
+                    </button>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="display: flex; flex-direction: column; padding: 0 0 18px">
+                <sc-for list="{{ ledger }}" as="r" hint-placeholder-count="8">
+                  <div
+                    style="
+                      display: grid;
+                      grid-template-columns: 92px 72px minmax(0, 1fr);
+                      gap: 12px;
+                      align-items: baseline;
+                      padding: 8px 22px;
+                      border-top: 1px solid var(--border);
+                    "
+                  >
+                    <span style="{{ r.tagStyle }}">{{ r.kindLabel }}</span>
+                    <span style="font: 500 12px var(--font-sans); color: var(--muted-fg)"
+                      >{{ r.area }}</span
+                    >
+                    <div style="display: flex; flex-direction: column; gap: 2px">
+                      <div style="font: 400 13px/1.55 var(--font-sans); text-wrap: pretty">
+                        <sc-for list="{{ r.parts }}" as="pt" hint-placeholder-count="1"
+                          ><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"
+                            ><code
+                              style="
+                                font: 500 12px var(--font-mono);
+                                padding: 1px 4px;
+                                border-radius: 4px;
+                                background: var(--accent);
+                              "
+                              >{{ pt.t }}</code
+                            ></sc-if
+                          ><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"
+                            >{{ pt.t }}</sc-if
+                          ></sc-for
+                        >
+                      </div>
+                      <sc-if value="{{ r.hasSub }}" hint-placeholder-val="{{ false }}"
+                        ><div style="font: 400 12.5px/1.5 var(--font-sans); color: var(--muted-fg)">
+                          {{ r.sub }}
+                        </div></sc-if
+                      >
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </x-dc>
+    <script type="text/x-dc" data-dc-script>
+      const P = (s) => s.split("`").map((t, i) => ({ t, code: i % 2 === 1, plain: i % 2 === 0 })).filter((p) => p.t);
+      const AREAS = [
+        ["Data", ["Migration `0040`: AVIF columns on `media_level_copies`, `media.effort_override`, `image_effort` setting", "Sync stream 7 `avif`", "Clean-up removes AVIF"]],
+        ["API", ["Re-makes carry WebP, AVIF or both", "Effort endpoints", "Ordered images-to-update list and totals", "Site-core version gate (`knows_avif` > 0.13.0)"]],
+        ["Site core", ["`<picture class=\"core-picture\">` AVIF first", "Repo images AVIF q40", "Edit map `priorityMedia`"]],
+        ["Panel", ["`@jsquash/avif`: one thread, one decode for both formats", "Thorough: 5 min, falling back to Standard", "After-upload copies through the same run", "Settings › Image quality (old route redirects)", "Grid filter and marker", "Image page: Smaller copies with Thorough option", "Sidebar indicator", "Demo mode", "Sweep states plus an image-quality check", "Help registry"]],
+        ["Docs", ["D79 and D107 amended; new D186"]],
+      ];
+      const NOTES = [
+        { kind: "plan", area: "Panel", text: "AVIF address includes the effort (`<hash>/<level>/<effort>/<width>.avif`) because stored files are write-once, so heroes can be upgraded to Thorough.", sub: "A superseded set stays until its level is cleaned up (parking lot item)." },
+        { kind: "notdone", area: "Panel", text: "Optional AVIF at upload completion (unused)" },
+        { kind: "notdone", area: "Panel", text: "Indicator on phones (no sidebar there)" },
+        { kind: "shortcut", area: "Panel", text: "`help-registry.json` made from the registry with the same function, not the full browser sweep" },
+      ];
+      const CHECKS = [
+        { st: "pass", name: "`cargo xtask check`", detail: "fmt, clippy, sqlx, 2787 Rust tests, panel" },
+        { st: "pass", name: "Site core package check", detail: "Passes" },
+        { st: "skip", name: "Panel browser sweep", detail: "Not run (Tier Full)" },
+        { st: "warn", name: "Site template build test", detail: "3 failures from earlier site core changes (llms.txt in robots.txt, form attributes, data-core- on forms), not from this card" },
+      ];
+      const KIND = {
+        plan: { label: "Plan change", c: "var(--attention)", fg: "var(--attention-fg)" },
+        notdone: { label: "Not done", c: "var(--warning)", fg: "var(--warning-fg)" },
+        shortcut: { label: "Shortcut", c: "#3b82f6", fg: "var(--info-fg)" },
+        built: { label: "Built", c: "var(--fg)", fg: "var(--muted-fg)" },
+      };
+      const tag = (k) => ({
+        font: "500 11.5px var(--font-sans)", padding: "2px 7px", borderRadius: 6, whiteSpace: "nowrap", justifySelf: "start", alignSelf: "flex-start",
+        background: "color-mix(in srgb," + KIND[k].c + (k === "built" ? " 6%" : " 12%") + ",var(--card))", color: KIND[k].fg,
+      });
+      const ST = { pass: ["✓", "var(--success-fg)"], skip: ["–", "var(--muted-fg)"], warn: ["!", "var(--warning-fg)"] };
+
+      class Component extends DCLogic {
+        state = { filter: "attention" };
+        renderVals() {
+          const areas = AREAS.map(([name, items]) => ({ name, count: items.length + (items.length === 1 ? " change" : " changes"), items: items.map((t) => ({ parts: P(t) })) }));
+          const notes = NOTES.map((n) => ({ ...n, label: KIND[n.kind].label, tagStyle: tag(n.kind), parts: P(n.text), hasSub: !!n.sub }));
+          const checks = CHECKS.map((c) => {
+            const [glyph, col] = ST[c.st];
+            return {
+              ...c, glyph, parts: P(c.name),
+              iconStyle: { font: "700 12px var(--font-sans)", color: col, width: 12, flex: "none", textAlign: "center" },
+              tileStyle: { display: "flex", flexDirection: "column", gap: 3, padding: "9px 11px", borderRadius: 8, border: "1px solid var(--border)", background: c.st === "warn" ? "color-mix(in srgb,var(--warning) 7%,var(--card))" : "var(--card)" },
+              chipStyle: { display: "inline-flex", alignItems: "center", gap: 5, height: 24, padding: "0 9px", borderRadius: 99, border: "1px solid var(--border)", font: "500 12px var(--font-sans)", color: "var(--fg)", background: c.st === "warn" ? "color-mix(in srgb,var(--warning) 8%,var(--card))" : "var(--card)" },
+            };
+          });
+          const rows = [
+            ...NOTES.map((n) => ({ kind: n.kind, area: n.area, text: n.text, sub: n.sub })),
+            ...AREAS.flatMap(([area, items]) => items.map((text) => ({ kind: "built", area, text }))),
+          ];
+          const FILTERS = [
+            ["attention", "Needs a look", (r) => r.kind !== "built"],
+            ["all", "All", () => true],
+            ...AREAS.map(([a]) => [a, a, (r) => r.area === a && r.kind === "built"]),
+          ];
+          const cur = FILTERS.find((f) => f[0] === this.state.filter) || FILTERS[0];
+          const filters = FILTERS.map(([id, label, fn]) => ({
+            label, n: rows.filter(fn).length,
+            select: () => this.setState({ filter: id }),
+            style: { height: 26, padding: "0 10px", border: "none", borderRadius: 6, cursor: "pointer", font: "500 12px var(--font-sans)", color: "var(--fg)", background: id === cur[0] ? "var(--card)" : "transparent", boxShadow: id === cur[0] ? "0 1px 2px rgb(0 0 0 / 8%)" : "none" },
+          }));
+          const ledger = rows.filter(cur[2]).map((r) => ({ ...r, kindLabel: KIND[r.kind].label, tagStyle: tag(r.kind), parts: P(r.text), hasSub: !!r.sub }));
+          const total = AREAS.reduce((s, a) => s + a[1].length, 0);
+          return { areas, notes, checks, filters, ledger, builtMeta: total + " changes across " + AREAS.length + " areas" };
+        }
+      }
+    </script>
+  </body>
+</html>
