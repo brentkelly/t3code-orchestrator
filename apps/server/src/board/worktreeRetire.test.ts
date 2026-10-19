@@ -600,6 +600,31 @@ describe("retireRemovedThreadWorktree (the stock vcsRemoveWorktree)", () => {
     }),
   );
 
+  it.effect(
+    "force:true fails, not waits, while a board cleanup is retiring the same worktree",
+    () =>
+      Effect.gen(function* () {
+        const { result, events } = yield* withRetirer(teardownOnce, (retirer, dirs, events) =>
+          Effect.gen(function* () {
+            const first = yield* parkedRetirement(retirer, dirs, events);
+            // The first retirement stays parked: a call that waited would hang.
+            const error = yield* retireRemovedThreadWorktree(
+              retirer,
+              { cwd: dirs.projectCwd, path: dirs.worktreePath, force: true },
+              stockRemove(events),
+              Effect.void,
+            ).pipe(Effect.flip);
+            yield* first.release;
+            yield* Fiber.join(first.fiber);
+            return error;
+          }),
+        );
+        assert.instanceOf(result, GitCommandError);
+        assert.include(result.detail, "already being removed");
+        assert.isFalse(events.includes("stock-remove"));
+      }),
+  );
+
   it.effect("force:true kills what is left, then makes the stock removal", () =>
     Effect.gen(function* () {
       const survivor = { pid: 4412, name: "cargo" };

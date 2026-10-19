@@ -70,6 +70,12 @@ export interface WorktreeRetireInput {
   readonly remove?: Effect.Effect<void, GitCommandError> | undefined;
   /** Runs once the checks have passed and remove scripts are about to start. */
   readonly onScriptsStarting?: Effect.Effect<void> | undefined;
+  /**
+   * Abandon (null) rather than wait when the path is already being retired.
+   * Always the case for a reclaim; a forced caller that must not block, such
+   * as the stock RPC, opts in.
+   */
+  readonly skipIfBusy?: boolean | undefined;
 }
 
 export type WorktreeRetireResult =
@@ -566,7 +572,7 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
               Effect.ensuring(release),
             );
           }
-          if (input.kind === "reclaim") {
+          if (input.kind === "reclaim" || input.skipIfBusy === true) {
             yield* Effect.logInfo("worktree retire: already being retired; skipped", {
               worktreePath: input.worktreePath,
             });
@@ -587,7 +593,10 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
  * The stock thread-delete removal (`vcsRemoveWorktree`), retired first. The
  * client has already stopped the thread's session and closed its terminals.
  * `force` picks the kind: forced kills what is left, otherwise a process still
- * running fails the call, as does a board cleanup already retiring the path. `remove` is the stock call.
+ * running fails the call. A board cleanup already retiring the path fails it
+ * too, forced or not: waiting for that cleanup's scripts would stall the
+ * client's VCS queue before the early return below could fire. `remove` is
+ * the stock call.
  *
  * Without remove scripts the call waits for the removal, as the stock one
  * does. With them it returns once they start: the client queues its VCS
@@ -611,6 +620,7 @@ export const retireRemovedThreadWorktree = (
         worktreePath: input.path,
         kind: input.force === true ? "forced" : "reclaim",
         verifiedClean: false,
+        skipIfBusy: true,
         remove,
         onScriptsStarting: Deferred.succeed(scriptsStarted, undefined).pipe(Effect.asVoid),
       })
