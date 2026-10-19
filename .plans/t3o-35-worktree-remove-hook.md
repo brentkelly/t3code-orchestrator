@@ -21,7 +21,9 @@ Two gaps in how t3o removes a worktree, fixed together because the second needs 
 
    You can see the result on disk today: `~/.t3/worktrees/z5/board-z5-37`, `-77` and `-95` are
    root-owned `docker/` directories that a bind-mounted container recreated after their worktrees
-   were removed.
+   were removed. Stopping t3o's own processes does not prevent that on its own: a container's
+   processes run as root in their own namespace, so the process check cannot see them. Stopping
+   containers started from the worktree is the project's `runOnWorktreeRemove` script's job.
 
 2. **A project can't save anything from a worktree before t3o deletes it.** `t3.json` has
    `runOnWorktreeCreate` but no counterpart for removal, and git has no worktree-removal hook. On
