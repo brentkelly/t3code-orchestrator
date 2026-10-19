@@ -843,7 +843,7 @@ const make = Effect.gen(function* () {
         Effect.catchCause(() => Effect.succeed(null as string | null)),
       );
 
-  /** The step thread's cached todo row, or null (t3o-18, D16). Best-effort: a
+  /** The step thread's cached todo row, or null (t3o-18). Best-effort: a
       snapshot query built without the board factory (upstream test mocks) or a
       read failure both answer "no list", which reads as "no progress" — the
       conservative direction. */
@@ -1722,7 +1722,6 @@ const make = Effect.gen(function* () {
           : state.stalledReason === "waiting-retry"
             ? boardRecoveryNudge({
                 stallCount: state.stallCount,
-                hasTodoList: (yield* threadTodoState(state.threadId))?.hasList ?? false,
                 endedWithQuestion: yield* endedWithQuestion(state),
               })
             : BOARD_STEP_RESUME_NUDGE;
@@ -4054,11 +4053,9 @@ const make = Effect.gen(function* () {
       input.card,
     );
     const stageEntryRecoveries = boardStageEntryRecoveryCount(board, input.card.id);
-    const todo = yield* threadTodoState(input.state.threadId);
     const decision = recoveryDecision({
       stepState: input.state,
       progressedSinceLastNudge,
-      hasTodoList: todo?.hasList ?? false,
       stageEntryRecoveries,
       // The settings key keeps its older name (T3O-12, D6); the pure function's
       // parameter says what it actually bounds.
@@ -8554,9 +8551,7 @@ const make = Effect.gen(function* () {
     });
     yield* sendTurn({
       threadId: state.threadId,
-      text: boardBackgroundCheckInNudge({
-        hasTodoList: (yield* threadTodoState(state.threadId))?.hasList ?? false,
-      }),
+      text: boardBackgroundCheckInNudge(),
       runtimeMode: state.runtimeMode,
     });
     return true;

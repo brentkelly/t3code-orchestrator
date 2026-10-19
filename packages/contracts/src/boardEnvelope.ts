@@ -225,9 +225,9 @@ export function boardStepPostamble(input: {
   const call = completionCall(step);
   const stance = input.humanInLoop
     ? [
-        // Human-in-the-loop envelopes carry no todo-list nudge (t3o-18 D16,
-        // preserving t3o-17 AC 6's asymmetry): these runs are not
-        // stall-supervised and the human is already in the conversation.
+        // Human-in-the-loop envelopes carry no progress instruction (t3o-17
+        // AC 6's asymmetry): these runs are not stall-supervised and the human
+        // is already in the conversation.
         `This is a human-in-the-loop run: ask me anything you need directly, and it is fine to end a turn waiting on my answer.`,
         `When the work is done, call ${call}.`,
       ]
@@ -236,11 +236,10 @@ export function boardStepPostamble(input: {
         step.stepLabel === null
           ? `When the work is done, call ${call}. That is the ONLY way to finish; ending your turn any other way is treated as a failure and recovered.`
           : `When this step is finished, call ${call}. That is the ONLY way to finish; ending your turn any other way is treated as a failure and recovered.`,
-        // The todo-list line (t3o-18 D16) replaced t3o-17's
-        // `board_report_progress` instruction: the supervisor's progress signal
-        // watches the agent's own plan tool advance, so this nudges a behaviour
-        // the agent already wants rather than an extra MCP call.
-        `Keep a todo list current as you work (your task/plan tool) and commit as you go: the supervisor watches your list advance to tell a productive long job from a wedged one, and without it a working agent looks the same as a stalled one and will be escalated.`,
+        // No todo-list ask (T3O-22): Claude Code dropped its todo tools on
+        // Claude 5-era models, so asking for one made agents report a missing
+        // tool. The supervisor still reads a plan tool when a provider emits one.
+        `Commit as you go: the supervisor watches for new commits and activity to tell a productive long job from a wedged one, and a run that shows neither will be nudged and eventually escalated.`,
         `If you are truly blocked and need a human decision, ${BOARD_ENVELOPE_QUESTION_MECHANISM}; never end a turn with an unanswered question in prose.`,
       ];
   const deliverable =

@@ -110,8 +110,7 @@ const boardWithStep = (step: BoardCardStepState): BoardState => ({
 
 /** A cached todo whose list last advanced at `at` — the t3o-18 liveness signal
     that replaced the deleted `board_report_progress` watermark. */
-const todoAdvancedAt = (at: string) =>
-  new Map([[String(threadId), { advancedAt: at, hasList: true }]]);
+const todoAdvancedAt = (at: string) => new Map([[String(threadId), { advancedAt: at }]]);
 
 /** The thread's last OUTPUT — its newest assistant message or activity row
     (T3O-12, D1). The life sign the sweep never had. */

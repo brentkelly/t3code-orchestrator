@@ -157,8 +157,7 @@ export function recoveryCeilingCrossed(input: {
  *
  * Either ceiling crossed → escalate (the reactor lands the step in `stalled` and
  * releases its slot); it never loops. Prevention lives in the envelope (the
- * unattended postamble asks the agent to keep a todo list current, t3o-18 D16);
- * cure lives here.
+ * unattended postamble asks the agent to commit as it goes); cure lives here.
  */
 export function recoveryDecision(input: {
   readonly stepState: Pick<
@@ -170,20 +169,6 @@ export function recoveryDecision(input: {
       whose in-progress item changed — or a new commit landed on the card's
       branch, since the last nudge. Resets `stallCount`. */
   readonly progressedSinceLastNudge: boolean;
-  /** Whether the step's thread has a todo list at all (t3o-18, D16), resolved by
-      the reactor from `board_thread_todos` and passed in — the same pattern
-      `progressedSinceLastNudge` establishes, so this function stays pure with no
-      git and no SQL.
-
-      This is the conditional the INITIAL envelope cannot express: at step start
-      no turn has run, so no thread has a list yet, and only recovery time knows
-      the difference. A nudged thread with no list is explicitly asked to write
-      one and work through it; one that already has a list is not nagged.
-
-      An agent that produces a list and then freezes it still stalls correctly —
-      absence of a list and a frozen list are both "no progress", which is the
-      right reading of each. */
-  readonly hasTodoList: boolean;
   /** The stage entry's total RECOVERIES so far (D5, re-pointed by T3O-12 D4),
       summed across its steps by the reactor. This recovery is one more, so the
       ceiling is checked against `stageEntryRecoveries + 1`. */
@@ -254,7 +239,6 @@ export function recoveryDecision(input: {
     stallCount: nextStallCount,
     nudge: boardRecoveryNudge({
       stallCount: nextStallCount,
-      hasTodoList: input.hasTodoList,
       endedWithQuestion: input.endedWithQuestion,
     }),
   };
@@ -277,22 +261,12 @@ export function boardRecoveryNudge(input: {
   /** The step's CONSECUTIVE stall count, already including this stall. The
       outstanding-work reminder appears from the third onward. */
   readonly stallCount: number;
-  readonly hasTodoList: boolean;
   readonly endedWithQuestion: boolean;
 }): string {
   const nudgeLines = [
     `Your previous turn ended without calling board_complete_step, so your work is not finished.`,
     `Continue where you left off and call board_complete_step when done; if you are blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}.`,
   ];
-  // The nudge asks again, CONDITIONALLY (t3o-18, D16). Only a thread with no
-  // list is asked for one — a thread already keeping one needs no reminder, and
-  // repeating the ask would read as noise exactly where the agent is doing the
-  // right thing.
-  if (!input.hasTodoList) {
-    nudgeLines.push(
-      `You are not keeping a todo list: write one now (your task/plan tool) and work through it, so progress is visible and this run is not escalated as stalled.`,
-    );
-  }
   if (input.stallCount >= 3) {
     nudgeLines.splice(
       1,
@@ -365,19 +339,13 @@ export function boardBackgroundCheckInCharged(checkInsSent: number): boolean {
  * another turn. What it must do is LOOK — agents routinely report work as
  * still running without checking, long after it died.
  */
-export function boardBackgroundCheckInNudge(input: { readonly hasTodoList: boolean }): string {
-  const lines = [
+export function boardBackgroundCheckInNudge(): string {
+  return [
     `You ended your turn with background work still running (a background command, a monitor, or subagents), and this is a scheduled check-in on it.`,
     `Actually verify it is still alive — check the process, its output file, or the task status — rather than assuming it is.`,
     `If it has finished or died, deal with the result and carry on toward board_complete_step.`,
     `If it is genuinely still running, end your turn again; you will be woken when it reports.`,
-  ];
-  if (!input.hasTodoList) {
-    lines.push(
-      `You are not keeping a todo list: write one now (your task/plan tool), so progress is visible.`,
-    );
-  }
-  return lines.join(" ");
+  ].join(" ");
 }
 
 /**

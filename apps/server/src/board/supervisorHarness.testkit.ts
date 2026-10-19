@@ -662,12 +662,9 @@ export function withGovernor(
       model: Ref.Ref<OrchestrationReadModel>,
     ) => Effect.Effect<void>;
     /** The cached todo state per thread id (t3o-18): the reactor reads
-        `advancedAt` for the stall-reset / timeout-liveness signal and `hasList`
-        for the recovery nudge. Absent threads answer "no list". */
-    readonly threadTodos?: ReadonlyMap<
-      string,
-      { readonly advancedAt: string | null; readonly hasList: boolean }
-    >;
+        `advancedAt` for the stall-reset / timeout-liveness signal. Absent
+        threads answer "no list". */
+    readonly threadTodos?: ReadonlyMap<string, { readonly advancedAt: string | null }>;
     /** The last ASSISTANT message per thread id (t3o-34, D2): the reactor reads
         it to decide whether a stopped turn ended with something for a human to
         answer. Absent threads answer "no message", which reads as "no
@@ -915,9 +912,8 @@ export function withGovernor(
           todo === undefined
             ? null
             : {
-                hasList: todo.hasList,
                 doneCount: 0,
-                totalCount: todo.hasList ? 1 : 0,
+                totalCount: 1,
                 advancedAt: todo.advancedAt,
               },
         );

@@ -95,7 +95,6 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     readonly stallCount: number;
     readonly maxAttempts?: number;
     readonly progressedSinceLastNudge?: boolean;
-    readonly hasTodoList?: boolean;
     readonly stageEntryRecoveries?: number;
     readonly maxRecoveriesPerStageEntry?: number;
     readonly endedWithQuestion?: boolean;
@@ -115,9 +114,6 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
       // t3o-34 D6: default to "the turn ended with no question", so the
       // question-specific case is the one that opts in.
       endedWithQuestion: input.endedWithQuestion ?? false,
-      // t3o-18 D16: default to "the thread keeps a list", so the todo-specific
-      // assertions below are the only ones that see the extra nudge line.
-      hasTodoList: input.hasTodoList ?? true,
       stageEntryRecoveries: input.stageEntryRecoveries ?? 0,
       maxRecoveriesPerStageEntry: input.maxRecoveriesPerStageEntry ?? 20,
     });
@@ -149,16 +145,15 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     assert.strictEqual(secondStall.kind === "resume" ? secondStall.stallCount : -1, 1);
   });
 
-  it("t3o-18 D16: a nudged thread with NO todo list is asked to write one; one with a list is not", () => {
-    const without = decide({ stallCount: 0, hasTodoList: false });
-    assert.strictEqual(without.kind, "resume");
-    if (without.kind === "resume") {
-      assert.include(without.nudge, "todo list");
-      assert.include(without.nudge, "write one");
+  it("T3O-22: no recovery nudge asks for a todo list, at any rung of the ladder", () => {
+    for (const stallCount of [0, 2]) {
+      const resumed = decide({ stallCount });
+      assert.strictEqual(resumed.kind, "resume");
+      if (resumed.kind === "resume") {
+        assert.notInclude(resumed.nudge, "todo list");
+        assert.notInclude(resumed.nudge, "task/plan tool");
+      }
     }
-    const withList = decide({ stallCount: 0, hasTodoList: true });
-    assert.strictEqual(withList.kind, "resume");
-    if (withList.kind === "resume") assert.notInclude(withList.nudge, "write one");
   });
 
   // t3o-19 AC 11: the escalation a human reads names the STEP only when the
@@ -210,7 +205,6 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     const unnamed = recoveryDecision({
       stepState: { attempt: 5, stallCount: 4, maxAttempts: 5, stepLabel: null, stageLabel: null },
       progressedSinceLastNudge: false,
-      hasTodoList: true,
       stageEntryRecoveries: 0,
       maxRecoveriesPerStageEntry: 20,
       endedWithQuestion: false,
@@ -229,7 +223,6 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
         stageLabel: "Code review",
       },
       progressedSinceLastNudge: false,
-      hasTodoList: true,
       stageEntryRecoveries: 0,
       maxRecoveriesPerStageEntry: 20,
       endedWithQuestion: false,
@@ -255,7 +248,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
         role: "build",
       }),
       (() => {
-        const resumed = decide({ stallCount: 0, hasTodoList: false });
+        const resumed = decide({ stallCount: 0 });
         return resumed.kind === "resume" ? resumed.nudge : "";
       })(),
       (() => {
@@ -269,7 +262,7 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
     }
   });
 
-  it("t3o-18 D16: the unattended postamble asks for a todo list; the human-in-the-loop one does not", () => {
+  it("T3O-22: neither postamble asks for a todo list; only the unattended one asks for commits", () => {
     const step = { stepId: "building", stepLabel: null, prompt: "Do the work" };
     const card = { key: "T3O-1", title: "Card", stage: BOARD_SEED_STAGE_IDS.building };
     const unattended = composeStepPrompt({
@@ -278,9 +271,13 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
       step: { ...step, humanInLoop: false },
       role: "build",
     });
-    assert.include(unattended, "todo list");
-    // AC 25: nagging a conversational turn into a todo list for a one-line
-    // answer is noise, and these steps are not stall-supervised anyway.
+    // Claude Code ships no todo tool on Claude 5-era models, so asking for a
+    // list made agents report a missing tool instead of working.
+    assert.notInclude(unattended, "todo list");
+    assert.notInclude(unattended, "task/plan tool");
+    assert.include(unattended, "Commit as you go");
+    // AC 25: human-in-the-loop steps are not stall-supervised, so they carry no
+    // progress instruction at all.
     const humanInLoop = composeStepPrompt({
       card,
       stageLabel: "Building",
@@ -288,6 +285,8 @@ describe("recoveryDecision (t3o-17 consecutive-stall recovery, bounded, PURE)", 
       role: "build",
     });
     assert.notInclude(humanInLoop, "todo list");
+    assert.notInclude(humanInLoop, "task/plan tool");
+    assert.notInclude(humanInLoop, "Commit as you go");
   });
 
   it("crit 2: five consecutive stalls with no progress escalate on the fifth", () => {
@@ -614,19 +613,23 @@ describe("background-wait check-ins (T3O-20)", () => {
   });
 
   it("asks the agent to verify its work rather than reading as a failure", () => {
-    const text = boardBackgroundCheckInNudge({ hasTodoList: true });
+    const text = boardBackgroundCheckInNudge();
     assert.include(text, "verify it is still alive");
     assert.include(text, "board_complete_step");
     assert.include(text, "end your turn again");
     assert.notInclude(text, "your work is not finished");
     assert.notInclude(text, "todo list");
-    assert.notStrictEqual(
-      text,
-      boardRecoveryNudge({ stallCount: 1, hasTodoList: true, endedWithQuestion: false }),
-    );
+    assert.notStrictEqual(text, boardRecoveryNudge({ stallCount: 1, endedWithQuestion: false }));
   });
 
-  it("asks for a todo list only when the thread keeps none", () => {
-    assert.include(boardBackgroundCheckInNudge({ hasTodoList: false }), "todo list");
+  it("T3O-22: neither the check-in nor a late recovery nudge asks for a todo list", () => {
+    for (const text of [
+      boardBackgroundCheckInNudge(),
+      boardRecoveryNudge({ stallCount: 1, endedWithQuestion: false }),
+      boardRecoveryNudge({ stallCount: 3, endedWithQuestion: true }),
+    ]) {
+      assert.notInclude(text, "todo list");
+      assert.notInclude(text, "task/plan tool");
+    }
   });
 });
