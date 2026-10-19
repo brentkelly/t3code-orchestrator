@@ -5162,27 +5162,34 @@ const make = Effect.gen(function* () {
     (
       request:
         | { readonly kind: "settle"; readonly card: BoardCard }
-        | { readonly kind: "reclaim"; readonly cardId: BoardCardId }
-        | {
-            readonly kind: "retire-forced";
-            readonly cardId: BoardCardId;
-            readonly projectCwd: string;
-            readonly worktreePath: string | null;
-            readonly branch: string;
-          },
+        | { readonly kind: "reclaim"; readonly cardId: BoardCardId },
     ) =>
       Effect.gen(function* () {
         if (request.kind === "settle") {
           yield* settleCardAtDone(request.card);
           return;
         }
-        if (request.kind === "retire-forced") {
-          yield* retireDeletedCardWorktree(request);
-          return;
-        }
         const card = yield* readCard(request.cardId);
         if (card !== null) yield* reclaimCardWorktree(card);
       }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("board supervisor: card worktree cleanup failed", {
+                cause: Cause.pretty(cause),
+              }),
+        ),
+      ),
+  );
+
+  /**
+   * Deleted cards' retirements (T3O-23), on a worker of their own: each runs
+   * the remove scripts, minutes apiece at worst, and a Done settle or archive
+   * reclaim queued behind one would wait that long for no reason.
+   */
+  const cardRetireWorker = yield* makeDrainableWorker(
+    (request: Parameters<typeof retireDeletedCardWorktree>[0]) =>
+      retireDeletedCardWorktree(request).pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.failCause(cause)
@@ -7447,9 +7454,8 @@ const make = Effect.gen(function* () {
       const cwd = projectCwd(model, card);
       if (cwd !== null) {
         // T3O-23: retiring runs the remove scripts, which can take minutes, so
-        // it goes to the cleanup worker and the delete handler moves on.
-        yield* cardCleanupWorker.enqueue({
-          kind: "retire-forced",
+        // it goes to its own worker and the delete handler moves on.
+        yield* cardRetireWorker.enqueue({
           cardId: card.id,
           projectCwd: cwd,
           worktreePath: worktree.status === "ready" ? worktree.path : null,
@@ -9030,12 +9036,16 @@ const make = Effect.gen(function* () {
     fireProbes: sweepProviderLimits,
     fireAutoMerges: sweepAutoMergeHolds,
     releaseThreads: releaseFinishedThreads,
-    drain: Effect.andThen(worker.drain, cardCleanupWorker.drain),
+    drain: worker.drain.pipe(
+      Effect.andThen(cardCleanupWorker.drain),
+      Effect.andThen(cardRetireWorker.drain),
+    ),
     sweepWorktrees: requestWorktreeSweep,
     // The main worker first: boot reconcile and event handlers are what
     // request passes, so a pass may not be queued until they have run.
     drainWorktreeSweep: worker.drain.pipe(
       Effect.andThen(cardCleanupWorker.drain),
+      Effect.andThen(cardRetireWorker.drain),
       Effect.andThen(worktreeSweepWorker.drain),
     ),
     checkWorktree: (cardId) =>

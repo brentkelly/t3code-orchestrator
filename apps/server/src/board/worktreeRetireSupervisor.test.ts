@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import {
   buildingCard,
+  cardArchived,
   cardDeleted,
   codexStep,
   makeBoardCard,
@@ -204,6 +205,65 @@ describe("card delete (T3O-23)", () => {
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.join(pump);
           assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/doomed"]);
+        }),
+    );
+  });
+
+  it.effect("an archive reclaim does not wait behind a deleted card's remove scripts", () => {
+    let started: Deferred.Deferred<void> | undefined;
+    let release: Deferred.Deferred<void> | undefined;
+    let otherRemoved: Deferred.Deferred<void> | undefined;
+    // Only the deleted card's retirement hangs; any other removes at once.
+    const hangingRetirer = Layer.effect(
+      WorktreeRetirer,
+      Effect.gen(function* () {
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        return WorktreeRetirer.of({
+          retire: (input) =>
+            Effect.gen(function* () {
+              const doomed = input.worktreePath === "/tmp/wt/doomed";
+              if (doomed) {
+                yield* Deferred.succeed(started!, undefined);
+                yield* Deferred.await(release!);
+              }
+              yield* git.removeWorktree({ cwd: input.projectCwd, path: input.worktreePath });
+              if (!doomed) yield* Deferred.succeed(otherRemoved!, undefined);
+              return { outcome: "removed" as const, hookWarning: null };
+            }),
+        });
+      }),
+    );
+    // Shelved in Backlog: nothing reclaims it before its archive does.
+    const shelved = doneCard({ stage: String(BOARD_SEED_STAGE_IDS.backlog) });
+    return withGovernor(
+      {
+        board: { cards: [buildingCard("doomed", "m"), shelved], nextCardNumberByProject: {} },
+        settings: settings(),
+        pullRequest: null,
+        worktreeRetirer: hangingRetirer,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          started = yield* Deferred.make<void>();
+          release = yield* Deferred.make<void>();
+          otherRemoved = yield* Deferred.make<void>();
+          yield* h.pumpDomain(movedToBuilding(buildingCard("doomed", "m"), 1));
+          const board = yield* h.board;
+          const running = boardCardStepState(board, BoardCardId.make("doomed"))!;
+          const doomed = board.cards.find((card) => card.id === BoardCardId.make("doomed"))!;
+
+          const deleted = yield* Effect.forkChild(h.pumpDomain(cardDeleted(doomed, 2, running)));
+          yield* Deferred.await(started);
+          assert.deepEqual(yield* h.removedWorktrees, []);
+          const archived = yield* Effect.forkChild(h.pumpDomain(cardArchived(shelved, 3)));
+          // Hangs here if the reclaim is queued behind the hanging retirement.
+          yield* Deferred.await(otherRemoved);
+          assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1"]);
+
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(deleted);
+          yield* Fiber.join(archived);
+          assert.deepEqual(yield* h.removedWorktrees, ["/tmp/wt/card-1", "/tmp/wt/doomed"]);
         }),
     );
   });
