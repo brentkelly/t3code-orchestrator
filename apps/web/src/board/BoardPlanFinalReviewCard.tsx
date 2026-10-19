@@ -10,7 +10,7 @@
  * here would be a second path into a transition that already has an owner,
  * enabled only in a race the reactor normally wins.
  */
-import { GitMergeIcon } from "lucide-react";
+import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 
 import { cn } from "../lib/utils";
 
@@ -34,7 +34,7 @@ export function BoardPlanFinalReviewCard({
       )}
     >
       <span className="inline-flex size-[26px] shrink-0 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground">
-        <GitMergeIcon className="size-3.5" />
+        <PullRequestGlyph.merged className="size-3.5" />
       </span>
       <div className="min-w-0">
         <div className="text-[12.5px] font-semibold text-foreground">

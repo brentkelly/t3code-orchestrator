@@ -11,12 +11,13 @@
  */
 
 /** The GraphQL selection each gated `gh --json` field name stands for in the core query. */
-const GATED_SELECTIONS: Readonly<Record<string, { readonly selection: string; readonly empty: unknown }>> =
-  {
-    reviewRequests: { selection: "reviewRequests(", empty: { nodes: [] } },
-    // The rollup is the only thing the core query reads from `commits`.
-    statusCheckRollup: { selection: "commits(", empty: { nodes: [] } },
-  };
+const GATED_SELECTIONS: Readonly<
+  Record<string, { readonly selection: string; readonly empty: unknown }>
+> = {
+  reviewRequests: { selection: "reviewRequests(", empty: { nodes: [] } },
+  // The rollup is the only thing the core query reads from `commits`.
+  statusCheckRollup: { selection: "commits(", empty: { nodes: [] } },
+};
 
 const selectionKey = (selection: string) => selection.slice(0, -1);
 

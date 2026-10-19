@@ -17,7 +17,8 @@ import type {
   ProjectIconColor,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { GitBranchIcon, GitPullRequestIcon, Link2Icon } from "lucide-react";
+import { GitBranchIcon, Link2Icon } from "lucide-react";
+import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 
 import { cn } from "../lib/utils";
 import { boardEnvironment } from "../state/board";
@@ -91,7 +92,7 @@ export function BoardSubBoardHeader({
           label={`${parentShell.key}'s integration pull request is open — ${pullRequest.url}`}
         >
           <span className="inline-flex shrink-0 items-center gap-1 rounded bg-info/12 px-1.5 py-0.5 text-[11px] font-medium text-info-foreground">
-            <GitPullRequestIcon className="size-3" />
+            <PullRequestGlyph.pullRequest className="size-3" />
             PR #{pullRequest.number}
           </span>
         </BoardHint>

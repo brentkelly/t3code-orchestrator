@@ -1,10 +1,9 @@
 import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
-import { Fragment, memo, type ReactNode } from "react";
-import type { VariantProps } from "class-variance-authority";
+import { type ComponentProps, Fragment, memo, type ReactNode } from "react";
 import { ChevronDownIcon, EllipsisIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
-import { Button, buttonVariants } from "../ui/button";
+import { Button } from "../ui/button";
 import {
   Menu,
   MenuPopup,
@@ -41,7 +40,7 @@ export const BoardModelControlsMenu = memo(function BoardModelControlsMenu(props
   onRuntimeModeChange?: (mode: RuntimeMode) => void;
   /** Trigger contents; the bare ellipsis when omitted. */
   triggerLabel?: ReactNode;
-  triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
+  triggerVariant?: ComponentProps<typeof Button>["variant"];
   triggerClassName?: string;
   ariaLabel?: string;
   align?: "start" | "end";

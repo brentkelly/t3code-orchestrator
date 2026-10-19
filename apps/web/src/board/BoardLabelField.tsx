@@ -157,11 +157,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
 
       {/* `align="end"` pins the popover to the trigger's right edge, which is
           where the field sits in the create dialog's Title/Label row. */}
-      <PopoverPopup
-        align="end"
-        className="w-[280px] max-w-[calc(100vw-80px)] p-1.5"
-        padding="none"
-      >
+      <PopoverPopup align="end" className="w-[280px] max-w-[calc(100vw-80px)] p-1.5" padding="none">
         <div className="flex min-w-0 flex-col gap-[5px]">
           <Input
             autoFocus

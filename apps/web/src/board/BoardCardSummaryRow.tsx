@@ -29,7 +29,6 @@ import {
 import {
   ChevronDownIcon,
   ChevronRightIcon,
-  GitPullRequestIcon,
   ImageIcon,
   Link2Icon,
   ListIcon,
@@ -37,6 +36,7 @@ import {
   PaperclipIcon,
   type LucideIcon,
 } from "lucide-react";
+import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 
 import { cn } from "../lib/utils";
 import { BOARD_CARD_REVIEW_ITEM_KINDS } from "./boardCardProgressBlock";
@@ -487,7 +487,7 @@ export function BoardCardMetaRow({ meta }: { readonly meta: BoardCardMeta }) {
       )}
       {meta.prNumber === undefined ? null : (
         <MetaCount
-          icon={GitPullRequestIcon}
+          icon={PullRequestGlyph.pullRequest}
           // A draft is neutral (T3O-12): not running, not done, not blocked —
           // the board marks it ready when the card reaches Ready for merge.
           tint={meta.prDraft ? "text-muted-foreground" : "text-info-foreground"}

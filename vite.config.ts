@@ -284,6 +284,18 @@ export default defineConfig({
         },
       },
       {
+        // T3o: the board UI predates upstream's design-token lint rollout (v0.0.43-45) and
+        // has not been restyled onto the tokens yet. Until it is, these rules stay off for
+        // fork-owned web files only; upstream files keep the full rule set (T3O-54).
+        files: ["apps/web/src/board/**", "apps/web/src/components/settings/Board*.tsx"],
+        rules: {
+          "shadcn/no-arbitrary-values": "off",
+          "shadcn/no-restyle": "off",
+          "shadcn/no-raw-colors": "off",
+          "shadcn/require-static-classes": "off",
+        },
+      },
+      {
         // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
         files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],
         rules: { "shadcn/no-arbitrary-values": "off" },

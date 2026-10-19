@@ -33,14 +33,13 @@ import type {
 } from "@t3tools/contracts";
 import {
   ClockIcon,
-  GitMergeIcon,
-  GitPullRequestIcon,
   HardDriveIcon,
   LayersIcon,
   LockIcon,
   PauseIcon,
   TriangleAlertIcon,
 } from "lucide-react";
+import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import type { DragEvent, ReactNode } from "react";
 
 import { cn } from "../lib/utils";
@@ -180,7 +179,7 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
         }
       : notice.kind === "conflicts"
         ? {
-            icon: <GitMergeIcon className="size-3 shrink-0" />,
+            icon: <PullRequestGlyph.merged className="size-3 shrink-0" />,
             label: notice.fix.label,
             tooltip: notice.fix.tooltip,
             tint: "text-warning-foreground",
@@ -203,7 +202,7 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
                 // does: nobody is working, the board cannot move this card on by
                 // itself, and it is waiting on something outside itself.
                 // `docs/t3o/status-colours.md` gives amber to blocked or held.
-                icon: <GitPullRequestIcon className="size-3 shrink-0" />,
+                icon: <PullRequestGlyph.pullRequest className="size-3 shrink-0" />,
                 label: "No PR",
                 // Not "…and check again": the re-check needs a branch, and a
                 // merge-stage card that never built one has none. The pane
@@ -623,7 +622,7 @@ export function BoardCardContent({
               aria-label="Auto-merge armed"
               className="inline-flex shrink-0 items-center gap-0.5 text-[10.5px] font-medium text-muted-foreground"
             >
-              <GitMergeIcon className="size-3" />
+              <PullRequestGlyph.merged className="size-3" />
               Auto
             </span>
           </BoardHint>
