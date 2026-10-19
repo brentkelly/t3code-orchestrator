@@ -2071,6 +2071,9 @@ export const BoardCardActivityPayload = Schema.Struct({
   prState: Schema.optionalKey(BoardCardPullRequestState),
   /** card-worktree-removed: a human forced it past the safety rule. */
   forced: Schema.optionalKey(Schema.Boolean),
+  /** card-worktree-removed (T3O-23): the remove script failed or timed out,
+      and the removal went ahead anyway. */
+  hookWarning: Schema.optionalKey(TrimmedNonEmptyString),
   /** card-edited (T3O-53): what an incremental edit changed. */
   ...BoardCardEditSummary.fields,
 });
@@ -4407,6 +4410,9 @@ export const BoardCardReclaimWorktreeCommand = Schema.Struct({
   reason: Schema.optional(TrimmedNonEmptyString),
   /** A human's "Remove worktree" (T3O-52, D5): removed past the safety rule. */
   forced: Schema.optional(Schema.Boolean),
+  /** T3O-23: a `removed` worktree whose `runOnWorktreeRemove` script failed or
+      timed out. The removal went ahead; this says what the script did not do. */
+  hookWarning: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 export type BoardCardReclaimWorktreeCommand = typeof BoardCardReclaimWorktreeCommand.Type;
@@ -5344,6 +5350,9 @@ export const BoardCardWorktreeReclaimedPayload = Schema.Struct({
       so the projection rails a refusal once rather than on every repeat. False
       for events written before it existed, which therefore add no row. */
   reasonChanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** T3O-23: a `removed` worktree whose remove script failed or timed out.
+      Absent from events written before it existed, and on a clean run. */
+  hookWarning: Schema.optional(TrimmedNonEmptyString),
   card: BoardCard,
 });
 export type BoardCardWorktreeReclaimedPayload = typeof BoardCardWorktreeReclaimedPayload.Type;

@@ -31,14 +31,18 @@ import {
   reclaimBoardCardWorktree,
   resolveBoardCardBaseRef,
 } from "./worktree.ts";
+import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-board-worktree-test-",
 });
-const TestLayer = GitVcsDriver.layer.pipe(
+const GitLayer = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfigLayer),
   Layer.provideMerge(NodeServices.layer),
 );
+// T3O-23: reclaim and forced removal retire through the real retirer; no
+// threads, no survivors and no remove scripts, so it only removes.
+const TestLayer = worktreeRetirerTestLayer().pipe(Layer.provideMerge(GitLayer));
 
 const makeTmpDir = (
   prefix = "board-worktree-test-",

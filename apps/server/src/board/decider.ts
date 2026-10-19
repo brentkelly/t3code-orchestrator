@@ -3463,6 +3463,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           outcome: command.outcome,
           reason: command.outcome === "removed" ? null : blockedReason,
           forced: command.outcome === "removed" && command.forced === true,
+          ...(command.outcome === "removed" && command.hookWarning !== undefined
+            ? { hookWarning: command.hookWarning }
+            : {}),
           // T3O-52 (D5): the rail gets one row per distinct refusal, not one
           // per attempt — a kept worktree is re-checked on every card open.
           reasonChanged:

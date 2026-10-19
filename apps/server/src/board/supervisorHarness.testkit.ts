@@ -85,6 +85,8 @@ import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
 import { projectBoardEvent } from "./projector.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
 import { UsageLimitDetector, type UsageLimitDetectorShape } from "./UsageLimitDetector.ts";
+import type { WorktreeRetirer } from "./worktreeRetire.ts";
+import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
 
 export const NOW = "2026-01-01T00:00:00.000Z";
 export const projectId = ProjectId.make("project-1");
@@ -693,6 +695,10 @@ export function withGovernor(
         answer null — "the catalogue says nothing" — so every fixture written
         before this behaves identically. See `setUsageVerdict`. */
     readonly usageVerdicts?: ReadonlyMap<string, BoardUsageLimitMatch | null>;
+    /** The worktree retirer (T3O-23), over the stubbed git driver. By default
+        the real one with nothing running and no remove scripts, so it only
+        removes — what every fixture written before it expects. */
+    readonly worktreeRetirer?: Layer.Layer<WorktreeRetirer, never, GitVcsDriver.GitVcsDriver>;
   },
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
@@ -1242,12 +1248,14 @@ export function withGovernor(
         Effect.succeed(usageVerdicts.get(String(classifyInput.threadId)) ?? null),
     };
 
+    const gitLayer = Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub);
     const deps = Layer.mergeAll(
+      (input.worktreeRetirer ?? worktreeRetirerTestLayer()).pipe(Layer.provide(gitLayer)),
       Layer.succeed(OrchestrationEngineService, engineStub),
       Layer.succeed(ProjectionSnapshotQuery, snapshotStub),
       Layer.succeed(ProviderService, providerStub),
       Layer.succeed(ServerSettingsService, settingsStub),
-      Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub),
+      gitLayer,
       Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),
       Layer.succeed(BoardPullRequestGateway, pullRequestStub),
       Layer.succeed(UsageLimitDetector, usageLimitStub),

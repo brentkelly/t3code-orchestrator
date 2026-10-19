@@ -1,0 +1,525 @@
+/**
+ * T3o (T3O-23): retire a worktree before git removes it.
+ *
+ * Every removal T3o starts goes through `WorktreeRetirer.retire`, in this
+ * order:
+ *
+ * 1. Stop T3o's own processes: close every terminal of each thread working in
+ *    the worktree and stop its provider session.
+ * 2. Check that nothing else is still running there. A `reclaim` with
+ *    survivors is held back (`blocked`); a `forced` removal, which a person
+ *    confirmed, kills them.
+ * 3. Run the project's `runOnWorktreeRemove` scripts, in order, as plain child
+ *    processes. A failure becomes `hookWarning` and never stops the removal.
+ * 4. Remove the worktree.
+ *
+ * Steps 1 and 2 come before 3 so a script that moves a cache out of the
+ * worktree can rely on nothing still writing into it. Containers started from
+ * the worktree are invisible to the process check (they run as root in their
+ * own namespace), so stopping them is the script's job.
+ */
+import { spawn } from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFs from "node:fs/promises";
+import * as NodePath from "node:path";
+import { createInterface } from "node:readline";
+
+import {
+  CommandId,
+  type GitCommandError,
+  type OrchestrationReadModel,
+  type ProjectScript,
+} from "@t3tools/contracts";
+import { projectScriptRuntimeEnv, resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+
+import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+
+export type WorktreeRetireKind = "reclaim" | "forced";
+
+export interface WorktreeRetireInput {
+  readonly projectCwd: string;
+  /** The project, when the caller knows it; otherwise it is found by `projectCwd`. */
+  readonly projectId?: string | undefined;
+  readonly worktreePath: string;
+  readonly kind: WorktreeRetireKind;
+  /** True only when the reclaim decision just proved the tree clean and its work durable. */
+  readonly verifiedClean: boolean;
+  /**
+   * Asked before anything is stopped and again just before the removal. False
+   * abandons the retirement (the result is null) and leaves the worktree.
+   */
+  readonly stillWanted?: Effect.Effect<boolean> | undefined;
+  /** The removal itself. Defaults to `git worktree remove`, forced for `forced`. */
+  readonly remove?: Effect.Effect<void, GitCommandError> | undefined;
+}
+
+export type WorktreeRetireResult =
+  | { readonly outcome: "removed"; readonly hookWarning: string | null }
+  | { readonly outcome: "blocked"; readonly reason: string }
+  | null;
+
+export interface WorktreeProcess {
+  readonly pid: number;
+  readonly name: string;
+}
+
+export class WorktreeRetirer extends Context.Service<
+  WorktreeRetirer,
+  {
+    readonly retire: (
+      input: WorktreeRetireInput,
+    ) => Effect.Effect<WorktreeRetireResult, GitCommandError>;
+  }
+>()("t3o/board/WorktreeRetirer") {}
+
+export interface WorktreeRetirerOptions {
+  /** Processes whose working directory is inside the path. */
+  readonly findProcessesInDirectory?: (
+    path: string,
+  ) => Effect.Effect<ReadonlyArray<WorktreeProcess>>;
+  readonly signalProcess?: (pid: number, signal: NodeJS.Signals) => Effect.Effect<void>;
+  readonly hookTimeoutMs?: number;
+  /** How long a SIGTERM gets before SIGKILL, on a forced removal. */
+  readonly killGraceMs?: number;
+  /** Closing a terminal kills its processes asynchronously: how often, and how
+      many times, to look again before treating what is left as real. */
+  readonly settleIntervalMs?: number;
+  readonly settleAttempts?: number;
+}
+
+const HOOK_TIMEOUT_MS = 5 * 60 * 1000;
+const KILL_GRACE_MS = 5_000;
+const SETTLE_INTERVAL_MS = 500;
+const SETTLE_ATTEMPTS = 6;
+
+const isWithin = (child: string, root: string): boolean => {
+  const relative = NodePath.relative(root, child);
+  return relative === "" || (!relative.startsWith("..") && !NodePath.isAbsolute(relative));
+};
+
+/** The /proc reads the Linux finder makes, injectable so a test can refuse one. */
+export interface ProcFs {
+  readonly readdir: (path: string) => Promise<ReadonlyArray<string>>;
+  readonly readlink: (path: string) => Promise<string>;
+  readonly readFile: (path: string) => Promise<string>;
+  readonly realpath: (path: string) => Promise<string>;
+}
+
+const nodeProcFs: ProcFs = {
+  readdir: (path) => NodeFs.readdir(path),
+  readlink: (path) => NodeFs.readlink(path),
+  readFile: (path) => NodeFs.readFile(path, "utf8"),
+  realpath: (path) => NodeFs.realpath(path),
+};
+
+/**
+ * Linux: every process whose `/proc/<pid>/cwd` resolves inside `directory`. An
+ * entry that cannot be read — another user's process, a container's, or one
+ * that exited mid-scan — is skipped, not counted: it is not one we could stop.
+ */
+export const findProcessesInDirectoryLinux = async (
+  directory: string,
+  options: { readonly procFs?: ProcFs; readonly selfPid?: number } = {},
+): Promise<ReadonlyArray<WorktreeProcess>> => {
+  const procFs = options.procFs ?? nodeProcFs;
+  const selfPid = options.selfPid ?? process.pid;
+  const root = await procFs.realpath(directory).catch(() => directory);
+  const entries = await procFs.readdir("/proc").catch(() => [] as ReadonlyArray<string>);
+  const found: Array<WorktreeProcess> = [];
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    const pid = Number(entry);
+    if (pid === selfPid) continue;
+    const cwd = await procFs.readlink(`/proc/${entry}/cwd`).catch(() => null);
+    if (cwd === null) continue;
+    const resolved = await procFs.realpath(cwd).catch(() => cwd);
+    if (!isWithin(resolved, root)) continue;
+    const name = await procFs.readFile(`/proc/${entry}/comm`).catch(() => "");
+    found.push({ pid, name: name.trim() || "process" });
+  }
+  return found;
+};
+
+/**
+ * Parse `lsof -F pcf` output into the processes holding `cwd` or `txt` under
+ * the directory. Fields arrive as one per line: `p<pid>`, `c<command>`, then
+ * `f<fd>` for each open file.
+ */
+export const parseLsofProcesses = (
+  output: string,
+  selfPid: number = process.pid,
+): ReadonlyArray<WorktreeProcess> => {
+  const found = new Map<number, WorktreeProcess>();
+  let pid: number | null = null;
+  let name = "process";
+  for (const line of output.split("\n")) {
+    const tag = line[0];
+    const value = line.slice(1).trim();
+    if (tag === "p") {
+      pid = Number(value);
+      name = "process";
+    } else if (tag === "c") {
+      name = value || "process";
+    } else if (tag === "f" && pid !== null && pid !== selfPid && Number.isFinite(pid)) {
+      if (value === "cwd" || value === "txt") found.set(pid, { pid, name });
+    }
+  }
+  return [...found.values()];
+};
+
+const findProcessesInDirectoryMac = (directory: string): Promise<ReadonlyArray<WorktreeProcess>> =>
+  new Promise((resolve) => {
+    // lsof exits 1 when it finds nothing; only its output matters.
+    const child = spawn("lsof", ["-w", "-F", "pcf", "+D", directory], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let output = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      output += chunk;
+    });
+    child.on("error", () => resolve([]));
+    child.on("close", () => resolve(parseLsofProcesses(output)));
+  });
+
+/** The host's process finder. Windows refuses to delete open files on its own. */
+export const findProcessesInDirectory = (
+  directory: string,
+): Effect.Effect<ReadonlyArray<WorktreeProcess>> =>
+  Effect.promise(() =>
+    process.platform === "linux"
+      ? findProcessesInDirectoryLinux(directory)
+      : process.platform === "darwin"
+        ? findProcessesInDirectoryMac(directory)
+        : Promise.resolve([]),
+  ).pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<WorktreeProcess>));
+
+const signalProcessDefault = (pid: number, signal: NodeJS.Signals) =>
+  Effect.sync(() => {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // Already gone, or not ours to signal; the re-check reports what is left.
+    }
+  });
+
+/** `cargo (pid 4412) and 2 other processes are still running in the worktree`. */
+export const survivorReason = (survivors: ReadonlyArray<WorktreeProcess>): string => {
+  const [first, ...rest] = survivors;
+  const named = `${first?.name ?? "A process"} (pid ${first?.pid ?? "?"})`;
+  if (rest.length === 0) return `${named} is still running in the worktree`;
+  const others = rest.length === 1 ? "1 other process" : `${rest.length} other processes`;
+  return `${named} and ${others} are still running in the worktree`;
+};
+
+export interface WorktreeHookRun {
+  readonly script: Pick<ProjectScript, "name" | "command">;
+  readonly cwd: string;
+  readonly env: Record<string, string>;
+  readonly timeoutMs: number;
+}
+
+export type WorktreeHookExit =
+  | { readonly kind: "exited"; readonly code: number | null; readonly signal: string | null }
+  | { readonly kind: "timed-out" }
+  | { readonly kind: "spawn-failed"; readonly message: string };
+
+/**
+ * Run one remove script as a plain child process in its own process group, so
+ * a timeout can kill everything it started. Output goes to the server log one
+ * line at a time, prefixed with the worktree path.
+ */
+export const runWorktreeHook = Effect.fn("runWorktreeHook")(function* (run: WorktreeHookRun) {
+  const lines = yield* Queue.unbounded<string, Cause.Done>();
+  const logger = yield* Stream.fromQueue(lines).pipe(
+    Stream.runForEach((line) => Effect.logInfo(`[${run.cwd}] ${line}`)),
+    Effect.forkChild,
+  );
+  const exit = yield* Effect.callback<WorktreeHookExit>((resume) => {
+    const detached = process.platform !== "win32";
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(run.script.command, {
+        cwd: run.cwd,
+        env: { ...process.env, ...run.env },
+        shell: true,
+        detached,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      resume(Effect.succeed({ kind: "spawn-failed", message: String(error) }));
+      return;
+    }
+    for (const stream of [child.stdout, child.stderr]) {
+      if (stream === null) continue;
+      createInterface({ input: stream }).on("line", (line) => {
+        Queue.offerUnsafe(lines, line);
+      });
+    }
+    child.on("error", (error) =>
+      resume(Effect.succeed({ kind: "spawn-failed", message: error.message })),
+    );
+    child.on("exit", (code, signal) =>
+      resume(Effect.succeed({ kind: "exited", code, signal: signal ?? null })),
+    );
+    // Interrupted — the timeout below — so the whole group goes.
+    return Effect.sync(() => {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(detached ? -child.pid : child.pid, "SIGKILL");
+      } catch {
+        // Already exited.
+      }
+    });
+  }).pipe(
+    Effect.timeoutOption(run.timeoutMs),
+    Effect.map((result) =>
+      result._tag === "Some" ? result.value : ({ kind: "timed-out" } satisfies WorktreeHookExit),
+    ),
+  );
+  yield* Queue.end(lines);
+  // A grandchild that left the group can hold the pipes open; never wait on it.
+  yield* Fiber.join(logger).pipe(Effect.timeoutOption(1_000), Effect.ignore);
+  return exit;
+});
+
+const hookFailure = (name: string, exit: WorktreeHookExit, timeoutMs: number): string | null => {
+  switch (exit.kind) {
+    case "exited":
+      if (exit.code === 0) return null;
+      return exit.code === null
+        ? `Remove script "${name}" was stopped by ${exit.signal ?? "a signal"}`
+        : `Remove script "${name}" exited with code ${exit.code}`;
+    case "timed-out": {
+      const minutes = timeoutMs / 60_000;
+      const limit =
+        minutes >= 1 && Number.isInteger(minutes)
+          ? `${minutes} minute${minutes === 1 ? "" : "s"}`
+          : `${timeoutMs} ms`;
+      return `Remove script "${name}" timed out after ${limit} and was stopped`;
+    }
+    case "spawn-failed":
+      return `Remove script "${name}" could not start: ${exit.message}`;
+  }
+};
+
+/** The project's remove scripts, in stored order. */
+export const worktreeRemoveScripts = (
+  scripts: ReadonlyArray<ProjectScript>,
+): ReadonlyArray<ProjectScript> => scripts.filter((script) => script.runOnWorktreeRemove === true);
+
+export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
+  Effect.gen(function* () {
+    const terminals = yield* TerminalManager.TerminalManager;
+    const engine = yield* OrchestrationEngineService;
+    const snapshotQuery = yield* ProjectionSnapshotQuery;
+    const serverSettings = yield* ServerSettingsService;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const findProcesses = options.findProcessesInDirectory ?? findProcessesInDirectory;
+    const signalProcess = options.signalProcess ?? signalProcessDefault;
+    const hookTimeoutMs = options.hookTimeoutMs ?? HOOK_TIMEOUT_MS;
+    const killGraceMs = options.killGraceMs ?? KILL_GRACE_MS;
+    const settleIntervalMs = options.settleIntervalMs ?? SETTLE_INTERVAL_MS;
+    const settleAttempts = options.settleAttempts ?? SETTLE_ATTEMPTS;
+
+    const samePath = (left: string, right: string) =>
+      NodePath.resolve(left) === NodePath.resolve(right);
+
+    /** Survivors once the asynchronous kills have had a moment to land. */
+    const settledSurvivors = Effect.fn("worktreeRetire.settledSurvivors")(function* (path: string) {
+      let survivors = yield* findProcesses(path);
+      for (let attempt = 1; attempt < settleAttempts && survivors.length > 0; attempt += 1) {
+        yield* Effect.sleep(settleIntervalMs);
+        survivors = yield* findProcesses(path);
+      }
+      return survivors;
+    });
+
+    const stopOwnProcesses = Effect.fn("worktreeRetire.stopOwnProcesses")(function* (
+      model: OrchestrationReadModel | null,
+      worktreePath: string,
+    ) {
+      const threads = (model?.threads ?? []).filter(
+        (thread) => thread.worktreePath !== null && samePath(thread.worktreePath, worktreePath),
+      );
+      for (const thread of threads) {
+        yield* terminals.close({ threadId: thread.id, deleteHistory: false }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("worktree retire: closing a thread's terminals failed", {
+              threadId: thread.id,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+        // A deleted thread's session is stopped by its deletion.
+        if (thread.deletedAt !== null) continue;
+        if (thread.session === null || thread.session.status === "stopped") continue;
+        yield* engine
+          .dispatch({
+            type: "thread.session.stop",
+            commandId: CommandId.make(`server:worktree-retire-stop:${NodeCrypto.randomUUID()}`),
+            threadId: thread.id,
+            createdAt: new Date().toISOString(),
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("worktree retire: stopping a thread's session failed", {
+                threadId: thread.id,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+      }
+    });
+
+    const killSurvivors = Effect.fn("worktreeRetire.killSurvivors")(function* (
+      worktreePath: string,
+      survivors: ReadonlyArray<WorktreeProcess>,
+    ) {
+      yield* Effect.logWarning("worktree retire: stopping processes left in the worktree", {
+        worktreePath,
+        processes: survivors.map((survivor) => `${survivor.name} (${survivor.pid})`),
+      });
+      for (const survivor of survivors) yield* signalProcess(survivor.pid, "SIGTERM");
+      yield* Effect.sleep(killGraceMs);
+      const stubborn = yield* findProcesses(worktreePath);
+      if (stubborn.length === 0) return;
+      for (const survivor of stubborn) yield* signalProcess(survivor.pid, "SIGKILL");
+      const left = yield* settledSurvivors(worktreePath);
+      if (left.length > 0) {
+        yield* Effect.logWarning("worktree retire: processes survived SIGKILL; removing anyway", {
+          worktreePath,
+          reason: survivorReason(left),
+        });
+      }
+    });
+
+    const runHooks = Effect.fn("worktreeRetire.runHooks")(function* (
+      model: OrchestrationReadModel | null,
+      input: WorktreeRetireInput,
+    ) {
+      const project =
+        model?.projects.find(
+          (candidate) =>
+            candidate.deletedAt === null &&
+            (input.projectId !== undefined
+              ? candidate.id === input.projectId
+              : samePath(candidate.workspaceRoot, input.projectCwd)),
+        ) ?? null;
+      if (project === null) return null;
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("worktree retire: settings unreadable; no remove scripts run", {
+            worktreePath: input.worktreePath,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      if (settings === null) return null;
+      const scripts = worktreeRemoveScripts(resolveProjectScripts(settings, project));
+      if (scripts.length === 0) return null;
+      const env = {
+        ...projectScriptRuntimeEnv({
+          project: { cwd: project.workspaceRoot },
+          worktreePath: input.worktreePath,
+        }),
+        T3_WORKTREE_PATH: input.worktreePath,
+        T3_PROJECT_ROOT: project.workspaceRoot,
+        T3_REMOVAL: input.kind,
+        T3_WORKTREE_VERIFIED_CLEAN: input.verifiedClean ? "1" : "0",
+      };
+      const failures: Array<string> = [];
+      for (const script of scripts) {
+        yield* Effect.logInfo("worktree retire: running remove script", {
+          worktreePath: input.worktreePath,
+          script: script.name,
+        });
+        const exit = yield* runWorktreeHook({
+          script,
+          cwd: input.worktreePath,
+          env,
+          timeoutMs: hookTimeoutMs,
+        });
+        const failure = hookFailure(script.name, exit, hookTimeoutMs);
+        if (failure === null) continue;
+        yield* Effect.logWarning("worktree retire: remove script failed; removing anyway", {
+          worktreePath: input.worktreePath,
+          failure,
+        });
+        failures.push(failure);
+      }
+      return failures.length === 0 ? null : failures.join("; ");
+    });
+
+    const retire = Effect.fn("worktreeRetire.retire")(function* (input: WorktreeRetireInput) {
+      const stillWanted = input.stillWanted ?? Effect.succeed(true);
+      // Before anything is stopped, too: a card restarted since the caller
+      // decided owns live sessions in this checkout.
+      if (!(yield* stillWanted)) return null;
+      const model = yield* snapshotQuery.getCommandReadModel().pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("worktree retire: read model unreadable", {
+            worktreePath: input.worktreePath,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      yield* stopOwnProcesses(model, input.worktreePath);
+      const survivors = yield* settledSurvivors(input.worktreePath);
+      if (survivors.length > 0) {
+        if (input.kind === "reclaim") {
+          return { outcome: "blocked", reason: survivorReason(survivors) } as const;
+        }
+        yield* killSurvivors(input.worktreePath, survivors);
+      }
+      const hookWarning = yield* runHooks(model, input);
+      // Stopping and the scripts take long enough for a person to drag the
+      // card back out of Done. Its caches may have moved out; that only costs
+      // a rebuild.
+      if (!(yield* stillWanted)) return null;
+      yield* (
+        input.remove ??
+          git.removeWorktree({
+            cwd: input.projectCwd,
+            path: input.worktreePath,
+            ...(input.kind === "forced" ? { force: true } : {}),
+          })
+      );
+      return { outcome: "removed", hookWarning } as const;
+    });
+
+    return WorktreeRetirer.of({ retire });
+  });
+
+/**
+ * The stock thread-delete removal (`vcsRemoveWorktree`), retired first. The
+ * client has already stopped the thread's session and closed its terminals;
+ * a person confirmed the delete, so it is forced. `remove` is the stock call.
+ */
+export const retireRemovedThreadWorktree = (
+  retirer: WorktreeRetirer["Service"],
+  input: { readonly cwd: string; readonly path: string },
+  remove: Effect.Effect<void, GitCommandError>,
+) =>
+  retirer
+    .retire({
+      projectCwd: input.cwd,
+      worktreePath: input.path,
+      kind: "forced",
+      verifiedClean: false,
+      remove,
+    })
+    .pipe(Effect.asVoid);
+
+export const WorktreeRetirerLive = Layer.effect(WorktreeRetirer, makeWorktreeRetirer());

@@ -47,6 +47,7 @@ import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts
 import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
 import { projectBoardEvent } from "./projector.ts";
 import { UsageLimitDetector } from "./UsageLimitDetector.ts";
+import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -265,6 +266,9 @@ function reconcileCommandObjects(input: {
       Layer.succeed(ProviderService, providerStub),
       Layer.succeed(ServerSettingsService, settingsStub),
       Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub),
+      worktreeRetirerTestLayer().pipe(
+        Layer.provide(Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub)),
+      ),
       Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),
       // Boot reconcile never looks a pull request up (it reconciles step state,
       // not forge state), so an always-empty gateway is the honest stub here.

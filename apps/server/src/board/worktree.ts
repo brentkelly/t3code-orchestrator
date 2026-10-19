@@ -32,6 +32,7 @@ import * as Schema from "effect/Schema";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { WorktreeRetirer } from "./worktreeRetire.ts";
 
 /**
  * The card's branch name, derived from its key so it is human-legible and
@@ -423,6 +424,8 @@ export const probeBoardWorktreeDurability = Effect.fn("probeBoardWorktreeDurabil
 export interface BoardCardWorktreeReclaimResult {
   readonly outcome: BoardCardWorktreeReclaimOutcome;
   readonly reason: string | null;
+  /** T3O-23: a removal whose remove script failed or timed out. */
+  readonly hookWarning?: string | null;
 }
 
 /**
@@ -471,7 +474,12 @@ const goneBoardWorktreePath = Effect.fn("goneBoardWorktreePath")(function* (
  * and its work is durable, otherwise leave it and report why so the card can
  * flag it. The caller records the outcome through `board.card.reclaim-worktree`.
  *
- * `stillWanted` is asked AFTER the probe and immediately before the removal.
+ * A safe tree is then RETIRED (T3O-23, `worktreeRetire.ts`): its processes
+ * stopped, its remove scripts run, and only then removed. Something still
+ * running in it holds the reclaim back like any other reason to keep it.
+ *
+ * `stillWanted` is asked AFTER the probe, and again by the retirement
+ * immediately before the removal.
  * The probe fetches from the remote and can take minutes, and the caller's
  * reason to remove — the card is finished, the checkout has no owner — was
  * read before it started; a card restarted or provisioned in the meantime
@@ -499,9 +507,23 @@ export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(fu
   if (!decision.safe) {
     return { outcome: "blocked", reason: decision.reason } satisfies BoardCardWorktreeReclaimResult;
   }
-  if (stillWanted !== undefined && !(yield* stillWanted)) return null;
-  yield* git.removeWorktree({ cwd: input.projectCwd, path: input.worktreePath });
-  return { outcome: "removed", reason: null } satisfies BoardCardWorktreeReclaimResult;
+  const retirer = yield* WorktreeRetirer;
+  const retired = yield* retirer.retire({
+    projectCwd: input.projectCwd,
+    worktreePath: input.worktreePath,
+    kind: "reclaim",
+    verifiedClean: true,
+    stillWanted,
+  });
+  if (retired === null) return null;
+  if (retired.outcome === "blocked") {
+    return { outcome: "blocked", reason: retired.reason } satisfies BoardCardWorktreeReclaimResult;
+  }
+  return {
+    outcome: "removed",
+    reason: null,
+    ...(retired.hookWarning === null ? {} : { hookWarning: retired.hookWarning }),
+  } satisfies BoardCardWorktreeReclaimResult;
 });
 
 /**
@@ -513,8 +535,16 @@ export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(fu
  */
 export const forceRemoveBoardCardWorktree = Effect.fn("forceRemoveBoardCardWorktree")(
   function* (input: { readonly projectCwd: string; readonly worktreePath: string }) {
-    const git = yield* GitVcsDriver.GitVcsDriver;
-    yield* git.removeWorktree({ cwd: input.projectCwd, path: input.worktreePath, force: true });
+    const retirer = yield* WorktreeRetirer;
+    // T3O-23: forced, so survivors are killed rather than holding it back;
+    // the result is always `removed`, carrying any remove-script failure.
+    const retired = yield* retirer.retire({
+      projectCwd: input.projectCwd,
+      worktreePath: input.worktreePath,
+      kind: "forced",
+      verifiedClean: false,
+    });
+    return { hookWarning: retired?.outcome === "removed" ? retired.hookWarning : null };
   },
 );
 
