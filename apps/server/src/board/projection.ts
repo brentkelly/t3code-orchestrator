@@ -3995,7 +3995,7 @@ export interface BoardSnapshotQueryMethods {
   readonly boardSweepThreadTodos: () => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
-/** What the supervisor reads off one cached todo row (t3o-18, D16). */
+/** What the supervisor reads off one cached todo row (t3o-18). */
 export interface BoardThreadTodoState {
   readonly doneCount: number;
   readonly totalCount: number;
