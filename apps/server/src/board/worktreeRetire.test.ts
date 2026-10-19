@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * T3o (T3O-23): retiring a worktree — stop its processes, run its remove
  * scripts, then remove it.
@@ -6,13 +7,14 @@
  * and git are doubles (see `worktreeRetire.testkit.ts`). Remove scripts run as
  * real child processes in a real temporary worktree folder.
  */
-import { spawn } from "node:child_process";
-import * as NodeFs from "node:fs";
-import * as NodeOs from "node:os";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
 import type { OrchestrationReadModel, ProjectScript } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -32,11 +34,11 @@ import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
 const projectId = "project-1";
 
 const makeDirs = () => {
-  const root = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "t3o-retire-test-"));
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-retire-test-"));
   const projectCwd = NodePath.join(root, "repo");
   const worktreePath = NodePath.join(root, "worktree");
-  NodeFs.mkdirSync(projectCwd);
-  NodeFs.mkdirSync(worktreePath);
+  NodeFS.mkdirSync(projectCwd);
+  NodeFS.mkdirSync(worktreePath);
   return { root, projectCwd, worktreePath };
 };
 
@@ -119,7 +121,7 @@ const retireWith = (
     }).pipe(Effect.provide(layer));
     const read = (name: string) => {
       const path = NodePath.join(dirs.root, name);
-      return NodeFs.existsSync(path) ? NodeFs.readFileSync(path, "utf8") : null;
+      return NodeFS.existsSync(path) ? NodeFS.readFileSync(path, "utf8") : null;
     };
     return { result, events, dirs, read };
   });
@@ -136,7 +138,7 @@ describe("retireWorktree", () => {
       const git = {
         removeWorktree: () =>
           Effect.sync(() => {
-            events.push(NodeFs.existsSync(marker) ? "remove-after-hook" : "remove-before-hook");
+            events.push(NodeFS.existsSync(marker) ? "remove-after-hook" : "remove-before-hook");
           }),
       } as unknown as GitVcsDriver.GitVcsDriver["Service"];
       const layer = worktreeRetirerTestLayer({
@@ -264,7 +266,7 @@ describe("retireWorktree", () => {
       const reclaimed = yield* retireWith({ scripts }, () => reclaim);
       assert.strictEqual(
         reclaimed.read("cwd.txt")?.trim(),
-        NodeFs.realpathSync(reclaimed.dirs.worktreePath),
+        NodeFS.realpathSync(reclaimed.dirs.worktreePath),
       );
       assert.deepStrictEqual(reclaimed.read("env.txt")?.trimEnd().split("\n"), [
         reclaimed.dirs.worktreePath,
@@ -348,12 +350,14 @@ describe("retireWorktree", () => {
         } catch {
           return false;
         }
-        const stat = NodeFs.existsSync(`/proc/${childPid}/stat`)
-          ? NodeFs.readFileSync(`/proc/${childPid}/stat`, "utf8")
+        const stat = NodeFS.existsSync(`/proc/${childPid}/stat`)
+          ? NodeFS.readFileSync(`/proc/${childPid}/stat`, "utf8")
           : "";
         return !/\) Z /.test(stat);
       })();
-      if (process.platform === "linux") assert.isFalse(alive, "the hook's child was not killed");
+      if ((yield* HostProcessPlatform) === "linux") {
+        assert.isFalse(alive, "the hook's child was not killed");
+      }
     }),
   );
 
@@ -463,17 +467,18 @@ describe("findProcessesInDirectoryLinux", () => {
     ]);
   });
 
-  it.runIf(process.platform === "linux")("finds a real process running in a folder", async () => {
-    const dir = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "t3o-retire-proc-"));
-    const child = spawn("sleep", ["30"], { cwd: dir, stdio: "ignore" });
-    try {
-      await new Promise((resolve) => child.once("spawn", resolve));
-      const found = await findProcessesInDirectoryLinux(dir);
+  it.live("finds a real process running in a folder (Linux)", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcessPlatform) !== "linux") return;
+      const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-retire-proc-"));
+      const child = NodeChildProcess.spawn("sleep", ["30"], { cwd: dir, stdio: "ignore" });
+      const found = yield* Effect.promise(async () => {
+        await new Promise((resolve) => child.once("spawn", resolve));
+        return findProcessesInDirectoryLinux(dir);
+      }).pipe(Effect.ensuring(Effect.sync(() => child.kill("SIGKILL"))));
       assert.deepInclude(found, { pid: child.pid!, name: "sleep" });
-    } finally {
-      child.kill("SIGKILL");
-    }
-  });
+    }),
+  );
 });
 
 describe("parseLsofProcesses", () => {

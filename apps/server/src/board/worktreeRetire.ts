@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+// Remove scripts need a detached process group, and the /proc scan needs readlink.
 /**
  * T3o (T3O-23): retire a worktree before git removes it.
  *
@@ -18,11 +20,11 @@
  * the worktree are invisible to the process check (they run as root in their
  * own namespace), so stopping them is the script's job.
  */
-import { spawn } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
-import * as NodeFs from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { createInterface } from "node:readline";
+import * as NodeReadline from "node:readline";
 
 import {
   CommandId,
@@ -30,9 +32,11 @@ import {
   type OrchestrationReadModel,
   type ProjectScript,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { projectScriptRuntimeEnv, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -81,7 +85,7 @@ export class WorktreeRetirer extends Context.Service<
       input: WorktreeRetireInput,
     ) => Effect.Effect<WorktreeRetireResult, GitCommandError>;
   }
->()("t3o/board/WorktreeRetirer") {}
+>()("t3/board/worktreeRetire/WorktreeRetirer") {}
 
 export interface WorktreeRetirerOptions {
   /** Processes whose working directory is inside the path. */
@@ -117,10 +121,10 @@ export interface ProcFs {
 }
 
 const nodeProcFs: ProcFs = {
-  readdir: (path) => NodeFs.readdir(path),
-  readlink: (path) => NodeFs.readlink(path),
-  readFile: (path) => NodeFs.readFile(path, "utf8"),
-  realpath: (path) => NodeFs.realpath(path),
+  readdir: (path) => NodeFSP.readdir(path),
+  readlink: (path) => NodeFSP.readlink(path),
+  readFile: (path) => NodeFSP.readFile(path, "utf8"),
+  realpath: (path) => NodeFSP.realpath(path),
 };
 
 /**
@@ -181,7 +185,7 @@ export const parseLsofProcesses = (
 const findProcessesInDirectoryMac = (directory: string): Promise<ReadonlyArray<WorktreeProcess>> =>
   new Promise((resolve) => {
     // lsof exits 1 when it finds nothing; only its output matters.
-    const child = spawn("lsof", ["-w", "-F", "pcf", "+D", directory], {
+    const child = NodeChildProcess.spawn("lsof", ["-w", "-F", "pcf", "+D", directory], {
       stdio: ["ignore", "pipe", "ignore"],
     });
     let output = "";
@@ -197,13 +201,16 @@ const findProcessesInDirectoryMac = (directory: string): Promise<ReadonlyArray<W
 export const findProcessesInDirectory = (
   directory: string,
 ): Effect.Effect<ReadonlyArray<WorktreeProcess>> =>
-  Effect.promise(() =>
-    process.platform === "linux"
-      ? findProcessesInDirectoryLinux(directory)
-      : process.platform === "darwin"
-        ? findProcessesInDirectoryMac(directory)
-        : Promise.resolve([]),
-  ).pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<WorktreeProcess>));
+  Effect.gen(function* () {
+    const platform = yield* HostProcessPlatform;
+    return yield* Effect.promise(() =>
+      platform === "linux"
+        ? findProcessesInDirectoryLinux(directory)
+        : platform === "darwin"
+          ? findProcessesInDirectoryMac(directory)
+          : Promise.resolve([]),
+    );
+  }).pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<WorktreeProcess>));
 
 const signalProcessDefault = (pid: number, signal: NodeJS.Signals) =>
   Effect.sync(() => {
@@ -241,16 +248,17 @@ export type WorktreeHookExit =
  * line at a time, prefixed with the worktree path.
  */
 export const runWorktreeHook = Effect.fn("runWorktreeHook")(function* (run: WorktreeHookRun) {
+  // Windows has no process groups to kill; there the shell alone is stopped.
+  const detached = (yield* HostProcessPlatform) !== "win32";
   const lines = yield* Queue.unbounded<string, Cause.Done>();
   const logger = yield* Stream.fromQueue(lines).pipe(
     Stream.runForEach((line) => Effect.logInfo(`[${run.cwd}] ${line}`)),
     Effect.forkChild,
   );
   const exit = yield* Effect.callback<WorktreeHookExit>((resume) => {
-    const detached = process.platform !== "win32";
-    let child: ReturnType<typeof spawn>;
+    let child: ReturnType<typeof NodeChildProcess.spawn>;
     try {
-      child = spawn(run.script.command, {
+      child = NodeChildProcess.spawn(run.script.command, {
         cwd: run.cwd,
         env: { ...process.env, ...run.env },
         shell: true,
@@ -263,7 +271,7 @@ export const runWorktreeHook = Effect.fn("runWorktreeHook")(function* (run: Work
     }
     for (const stream of [child.stdout, child.stderr]) {
       if (stream === null) continue;
-      createInterface({ input: stream }).on("line", (line) => {
+      NodeReadline.createInterface({ input: stream }).on("line", (line) => {
         Queue.offerUnsafe(lines, line);
       });
     }
@@ -370,7 +378,7 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
             type: "thread.session.stop",
             commandId: CommandId.make(`server:worktree-retire-stop:${NodeCrypto.randomUUID()}`),
             threadId: thread.id,
-            createdAt: new Date().toISOString(),
+            createdAt: DateTime.formatIso(yield* DateTime.now),
           })
           .pipe(
             Effect.catchCause((cause) =>

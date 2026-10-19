@@ -4744,7 +4744,7 @@ const make = Effect.gen(function* () {
     // Abandoned: the card was no longer finished by the time the probe ended.
     if (reclaimed === null) return null;
     const { outcome, reason } = reclaimed;
-    const hookWarning = reclaimed.hookWarning ?? null;
+    const hookWarning = reclaimed.outcome === "removed" ? (reclaimed.hookWarning ?? null) : null;
     const attempt: BoardCardReclaimAttempt =
       outcome === "removed" ? { outcome: "removed" } : { outcome: "kept", reason };
     if (outcome === "blocked" && reason === worktree.reclaimBlockedReason) return attempt;
@@ -5171,15 +5171,18 @@ const make = Effect.gen(function* () {
             readonly branch: string;
           },
     ) =>
-      (request.kind === "settle"
-        ? settleCardAtDone(request.card)
-        : request.kind === "retire-forced"
-          ? retireDeletedCardWorktree(request)
-          : Effect.flatMap(readCard(request.cardId), (card) =>
-              card === null ? Effect.succeed(null) : reclaimCardWorktree(card),
-            )
-      ).pipe(
-        Effect.asVoid,
+      Effect.gen(function* () {
+        if (request.kind === "settle") {
+          yield* settleCardAtDone(request.card);
+          return;
+        }
+        if (request.kind === "retire-forced") {
+          yield* retireDeletedCardWorktree(request);
+          return;
+        }
+        const card = yield* readCard(request.cardId);
+        if (card !== null) yield* reclaimCardWorktree(card);
+      }).pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.failCause(cause)
