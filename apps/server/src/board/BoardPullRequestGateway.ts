@@ -198,7 +198,8 @@ export class BoardPullRequestGateway extends Context.Service<
       readonly force?: boolean;
     }) => Effect.Effect<BoardFoundPullRequest | null, BoardPullRequestGatewayError>;
     /**
-     * The pull request with this number on the project's own remote.
+     * The pull request with this number on the board's repository — the
+     * project's `origin` (T3O-24).
      *
      * Used when the card already holds a link — a merged title backfill — so
      * the answer must not depend on a board branch Done may already have

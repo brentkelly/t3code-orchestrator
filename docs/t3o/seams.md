@@ -551,10 +551,17 @@ the same default as plain `git push`, with no `gh repo set-default` read and no 
 guess. `SourceControlProviderRegistry.selectProviderContext` already resolves an origin-preferring
 context; only the GitHub provider was ignoring it.
 
-**Known debt, not fixed by that card.** Upstream's `RepositoryIdentityResolver.pickPrimaryRemote`
-prefers `upstream` over `origin` — the same bug class one level up. It drives upstream's own Pull
-Requests page rather than the board, so the board is unaffected today, but it will need an answer
-when `T3O-47` adopts `apps/server/src/pullRequest/`.
+**The same bug one level up (`T3O-24`).** Upstream's `RepositoryIdentityResolver.pickPrimaryRemote`
+prefers `upstream` over `origin` on purpose: a contributor-style fork opens its pull requests
+against upstream. Once `T3O-47` routed the board through `apps/server/src/pullRequest/`, which
+addresses a project by that identity, Merge on a T3o card targeted `pingdotgg/t3code#N` and linking
+the fork's own pull request was refused. The resolver is left alone, because changing it would
+regress those contributor forks. Instead the board resolves its own repository from `origin` in
+`board/boardRepository.ts` and passes `host` on every `PullRequestService` reference, which routes
+an explicitly hosted repository without an upstream edit. The Threads view's Pull Requests page
+still follows the identity. Board worktrees also get `remote.origin.gh-resolved=base` at worktree
+scope when a repo has several remotes and no `gh` default, so agents' own `gh pr create` opens on
+origin too.
 
 Per-project GitHub token overrides (`t3o-34`, see [gitenv](./gitenv.md)) added 15 markers across 7
 upstream-owned files: `config.ts` 2 (import + `initGitenv` in `make`, which only `pair` still reaches),

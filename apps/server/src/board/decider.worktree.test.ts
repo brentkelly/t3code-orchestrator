@@ -14,11 +14,12 @@ import {
   CommandId,
   ProjectId,
   type BoardCard,
+  type BoardCardPullRequest,
   type BoardState,
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert } from "@effect/vitest";
+import { assert, describe } from "@effect/vitest";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -823,6 +824,81 @@ it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {
       assert.match(String(failure), /already records a merged pull request/);
     }),
   );
+
+  // T3O-24: card keys get reused, so a card's branch can carry a pull request
+  // an earlier card merged months before this one existed.
+  describe("a pull request that closed before the card existed", () => {
+    const BEFORE = "2025-09-09T10:00:00Z";
+    const record = (pullRequest: BoardCardPullRequest | null) => ({
+      type: "board.card.record-pull-request" as const,
+      commandId: CommandId.make("cmd-record-pr-pre-card"),
+      cardId: BoardCardId.make("card-1"),
+      pullRequest,
+      createdAt: NOW,
+    });
+
+    it.effect("is refused, so branch cleanup can never act on it", () =>
+      Effect.gen(function* () {
+        const card = makeCard({ id: "card-1", worktree: readyWorktree });
+        const failure = yield* decideFail(
+          record({ ...mergedPr(87), closedAt: BEFORE }),
+          makeReadModel(boardWith([card])),
+        );
+        assert.match(String(failure), /before the card was created/);
+      }),
+    );
+
+    it.effect("is accepted when linked explicitly", () =>
+      Effect.gen(function* () {
+        const card = makeCard({ id: "card-1", worktree: readyWorktree });
+        const event = yield* decide(
+          record({ ...mergedPr(87), closedAt: BEFORE, linked: true }),
+          makeReadModel(boardWith([card])),
+        );
+        assert.strictEqual(event.type, "board.card-pull-request-recorded");
+      }),
+    );
+
+    it.effect("can be backfilled onto the link that already holds it", () =>
+      Effect.gen(function* () {
+        const card = makeCard({ id: "card-1", pullRequest: mergedPr(87), worktree: readyWorktree });
+        const event = yield* decide(
+          record({ ...mergedPr(87), closedAt: BEFORE }),
+          makeReadModel(boardWith([card])),
+        );
+        assert.strictEqual(event.type, "board.card-pull-request-recorded");
+      }),
+    );
+
+    it.effect("held as a merged link, gives way to the card's own pull request or none", () =>
+      Effect.gen(function* () {
+        const card = makeCard({
+          id: "card-1",
+          pullRequest: { ...mergedPr(87), closedAt: BEFORE },
+          worktree: readyWorktree,
+        });
+        const replaced = yield* decide(
+          record({ ...mergedPr(175), state: "open" }),
+          makeReadModel(boardWith([card])),
+        );
+        assert.strictEqual(replaced.type, "board.card-pull-request-recorded");
+        const cleared = yield* decide(record(null), makeReadModel(boardWith([card])));
+        assert.strictEqual(cleared.type, "board.card-pull-request-recorded");
+      }),
+    );
+
+    it.effect("a merged link closed AFTER the card existed still cannot be unlinked", () =>
+      Effect.gen(function* () {
+        const card = makeCard({
+          id: "card-1",
+          pullRequest: { ...mergedPr(175), closedAt: "2026-01-02T00:00:00Z" },
+          worktree: readyWorktree,
+        });
+        const failure = yield* decideFail(record(null), makeReadModel(boardWith([card])));
+        assert.match(String(failure), /already records a merged pull request/);
+      }),
+    );
+  });
 
   it.effect("reclaiming a removed worktree clears the path and marks it reclaimed", () =>
     Effect.gen(function* () {

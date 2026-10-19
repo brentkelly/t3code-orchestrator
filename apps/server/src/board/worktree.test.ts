@@ -23,6 +23,7 @@ import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
   boardCardWorktreeReclaimDecision,
+  boardWorktreeGhDefaultDecision,
   forceRemoveBoardCardWorktree,
   parseRegisteredWorktrees,
   parseStatusPorcelainPaths,
@@ -445,6 +446,178 @@ it.effect("entering Building creates the card's branch and worktree", () =>
       assert.isTrue(yield* fileSystem.exists(result.path), "worktree directory exists on disk");
       const branches = yield* git(cwd, ["branch", "--list", "board/card-1"]);
       assert.match(branches, /board\/card-1/);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+// ── gh's default repository (T3O-24) ───────────────────────────────────
+
+const ghDefaultCases: ReadonlyArray<{
+  readonly name: string;
+  readonly input: Parameters<typeof boardWorktreeGhDefaultDecision>[0];
+  readonly expected: "pin" | "skip";
+}> = [
+  {
+    name: "a fork with nothing chosen is pinned",
+    input: {
+      remotes: ["origin", "upstream"],
+      ghResolvedConfigured: false,
+      worktreeConfigEnabled: false,
+      sharedCoreBare: false,
+      sharedCoreWorktree: false,
+    },
+    expected: "pin",
+  },
+  {
+    name: "one remote is left alone — gh picks it anyway",
+    input: {
+      remotes: ["origin"],
+      ghResolvedConfigured: false,
+      worktreeConfigEnabled: false,
+      sharedCoreBare: false,
+      sharedCoreWorktree: false,
+    },
+    expected: "skip",
+  },
+  {
+    name: "no origin is left alone",
+    input: {
+      remotes: ["fork", "upstream"],
+      ghResolvedConfigured: false,
+      worktreeConfigEnabled: false,
+      sharedCoreBare: false,
+      sharedCoreWorktree: false,
+    },
+    expected: "skip",
+  },
+  {
+    name: "a default somebody already chose is never overridden",
+    input: {
+      remotes: ["origin", "upstream"],
+      ghResolvedConfigured: true,
+      worktreeConfigEnabled: false,
+      sharedCoreBare: false,
+      sharedCoreWorktree: false,
+    },
+    expected: "skip",
+  },
+  {
+    name: "a shared core.worktree blocks turning on per-worktree config",
+    input: {
+      remotes: ["origin", "upstream"],
+      ghResolvedConfigured: false,
+      worktreeConfigEnabled: false,
+      sharedCoreBare: false,
+      sharedCoreWorktree: true,
+    },
+    expected: "skip",
+  },
+  {
+    name: "a shared core.bare blocks it too, unless it is already on",
+    input: {
+      remotes: ["origin", "upstream"],
+      ghResolvedConfigured: false,
+      worktreeConfigEnabled: true,
+      sharedCoreBare: true,
+      sharedCoreWorktree: false,
+    },
+    expected: "pin",
+  },
+];
+
+for (const testCase of ghDefaultCases) {
+  it.effect(`gh default decision: ${testCase.name}`, () =>
+    Effect.sync(() => {
+      assert.strictEqual(boardWorktreeGhDefaultDecision(testCase.input), testCase.expected);
+    }),
+  );
+}
+
+/** A config read that answers "" for an unset key rather than failing. */
+const configValue = (cwd: string, args: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const result = yield* driver.execute({
+      operation: "board.worktree.test.config",
+      cwd,
+      args: ["config", ...args],
+      allowNonZeroExit: true,
+      timeoutMs: 10_000,
+    });
+    return result.stdout.trim();
+  });
+
+it.effect("pins gh to origin in a fork's board worktree, and only there", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["remote", "add", "origin", "https://github.com/me/fork.git"]);
+      yield* git(cwd, ["remote", "add", "upstream", "https://github.com/them/repo.git"]);
+
+      const result = yield* provisionBoardCardWorktree({
+        projectCwd: cwd,
+        branch: "board/card-1",
+        baseRefName: initialBranch,
+      });
+
+      assert.strictEqual(
+        yield* configValue(result.path, ["--worktree", "--get", "remote.origin.gh-resolved"]),
+        "base",
+      );
+      // The user's own checkout resolves exactly what it did before.
+      assert.strictEqual(yield* configValue(cwd, ["--get", "remote.origin.gh-resolved"]), "");
+      assert.strictEqual(yield* configValue(cwd, ["--get", "remote.upstream.gh-resolved"]), "");
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("leaves a gh default somebody already chose alone", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["remote", "add", "origin", "https://github.com/me/fork.git"]);
+      yield* git(cwd, ["remote", "add", "upstream", "https://github.com/them/repo.git"]);
+      yield* git(cwd, ["config", "remote.upstream.gh-resolved", "base"]);
+
+      const result = yield* provisionBoardCardWorktree({
+        projectCwd: cwd,
+        branch: "board/card-1",
+        baseRefName: initialBranch,
+      });
+
+      assert.strictEqual(
+        yield* configValue(result.path, ["--get", "remote.origin.gh-resolved"]),
+        "",
+      );
+      assert.strictEqual(
+        yield* configValue(result.path, ["--get", "remote.upstream.gh-resolved"]),
+        "base",
+      );
+      assert.strictEqual(yield* configValue(cwd, ["--get", "extensions.worktreeConfig"]), "");
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("touches nothing in a single-remote repository", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["remote", "add", "origin", "https://github.com/me/repo.git"]);
+
+      const result = yield* provisionBoardCardWorktree({
+        projectCwd: cwd,
+        branch: "board/card-1",
+        baseRefName: initialBranch,
+      });
+
+      assert.strictEqual(
+        yield* configValue(result.path, ["--get", "remote.origin.gh-resolved"]),
+        "",
+      );
+      assert.strictEqual(yield* configValue(cwd, ["--get", "extensions.worktreeConfig"]), "");
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

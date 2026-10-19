@@ -12,9 +12,10 @@
  *  1. "Check again" reaches the forge rather than the lookup cache — including
  *     a cached lookup FAILURE, whose backoff only the epoch bump clears
  *     (T3O-48).
- *  2. A pull request is addressed by the project's own repository, resolved
- *     from the read model the way `PullRequestService` resolves its own — a
- *     mismatch here is refused by the service as "not this project's".
+ *  2. A pull request is addressed by the board's repository: the project's
+ *     `origin`, host-qualified when that is not the project identity (a fork,
+ *     whose identity names upstream — T3O-24). A hostless reference to another
+ *     repository is refused by the service as "not this project's".
  *  3. The refusal probe reads the state AFTER the refused merge, not the one
  *     the detail cache was already holding (T3O-47).
  */
