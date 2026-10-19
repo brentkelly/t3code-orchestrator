@@ -34,6 +34,14 @@ import {
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
+// T3o: the fork's identity, icons and Linux packages (T3O-1).
+import {
+  applyT3oBuildConfig,
+  T3O_ICON_PATHS,
+  T3O_STAGE_PACKAGE,
+  t3oStagePackageMetadata,
+} from "./lib/t3o-desktop-build.ts";
+import { T3O_APP_ID, T3O_PRODUCT_NAME } from "@t3tools/shared/t3oIdentity";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
@@ -54,7 +62,8 @@ import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code";
+// T3o: own app id, so T3o installs beside T3 Code instead of replacing it.
+const DESKTOP_APP_ID = T3O_APP_ID;
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -2588,11 +2597,8 @@ export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIcon
     };
   }
 
-  return {
-    macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
-    linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
-    windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
-  };
+  // T3o: packaged builds carry the derived T3o icon.
+  return T3O_ICON_PATHS;
 }
 
 export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefined): string {
@@ -2615,7 +2621,8 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
     ? "T3 Code (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+    : // T3o: the app, its bundle and its installers are named T3o.
+      T3O_PRODUCT_NAME;
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -2774,6 +2781,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.win = winConfig;
   }
 
+  // T3o: the fork's identity over upstream's config (scripts/lib/t3o-desktop-build.ts).
+  applyT3oBuildConfig(buildConfig, target, version);
   return buildConfig;
 });
 
@@ -3644,15 +3653,19 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    // T3o: the deb/rpm packages are named t3o.
+    name: T3O_STAGE_PACKAGE.name,
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description: "T3 Code desktop build",
+    // T3o: and described as T3o.
+    description: T3O_STAGE_PACKAGE.description,
     author: "T3 Tools",
     main: "apps/desktop/dist-electron/main.cjs",
+    // T3o: package name, homepage and signing stamp of the fork's builds.
+    ...t3oStagePackageMetadata(options.signed),
     build: yield* createBuildConfig(
       options.platform,
       options.target,

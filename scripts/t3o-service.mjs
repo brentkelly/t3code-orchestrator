@@ -9,10 +9,11 @@
  * `--takeover` records the unit it displaced, and uninstall re-enables it, so
  * the switch is reversible rather than a one-way door.
  *
- * Upstream's `t3 service install` is not usable here: it runs
- * `npm install t3@<version>` from the public registry (see
- * apps/server/src/cloud/pinnedRuntime.ts) and would install upstream's server
- * against this fork's data. This writes a unit pointing at our own build.
+ * Upstream's `t3 service install` is not usable here: it downloads the release
+ * archive for the running version from GitHub Releases (see
+ * apps/server/src/cloud/pinnedRuntime.ts), and a build from this checkout
+ * carries no published version to download. This writes a unit pointing at
+ * our own build.
  *
  * The service never runs out of the worktree. `vp pack` cleans apps/server/dist
  * on every build, which would pull the tree out from under a live process, so

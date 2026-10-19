@@ -15,11 +15,13 @@ const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+// T3o: the launcher names, identifies and registers the app as T3o. Kept in step
+// with packages/shared/src/t3oIdentity.ts (this script runs before any TS loader).
+const APP_DISPLAY_NAME = isDevelopment ? "T3o (Dev)" : "T3o (Alpha)";
 const APP_BUNDLE_ID = isDevelopment
-  ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
-  : "com.t3tools.t3code";
-const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
+  ? `io.github.brentkelly.t3o.dev.${devBundleIdSuffix || "local"}`
+  : "io.github.brentkelly.t3o";
+const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3o-dev"] : ["t3o"];
 const LAUNCHER_VERSION = 19;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
@@ -27,7 +29,8 @@ const developmentMacIconPngPath = NodePath.join(
   "dev",
   "blueprint-macos-1024.png",
 );
-const productionMacIconPngPath = NodePath.join(repoRoot, "assets", "prod", "black-macos-1024.png");
+// T3o: the derived T3o icon.
+const productionMacIconPngPath = NodePath.join(repoRoot, "assets", "t3o", "t3o-macos-1024.png");
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher script has no Effect runtime.
 const hostPlatform = NodeOS.platform();
 

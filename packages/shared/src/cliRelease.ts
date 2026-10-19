@@ -5,15 +5,19 @@
  * platform key, so a rename here is a release-breaking change.
  */
 
-const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
+import { T3O_RELEASE_REPOSITORY } from "./t3oIdentity.ts";
+
+// T3o: runtimes, `t3 update` and SSH installs download the fork's releases, which carry the board.
+const CLI_RELEASE_REPOSITORY = T3O_RELEASE_REPOSITORY;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 /** Overrides the download origin for mirrors and air-gapped installs. */
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 
 /**
  * The archives a release attaches. Kept in step with the build_linux_cli
- * matrix, build_windows_arm64_cli, and the `cli_archive` rows in
- * .github/workflows/release.yml: a key here without a build there produces
+ * matrix, build_windows_arm64_cli, the `cli_archive` rows in
+ * .github/workflows/release.yml, and the checksum step in
+ * .github/workflows/t3o-release.yml: a key here without a build there produces
  * download URLs that 404, and a build there without a key here is
  * unreachable from every installer.
  */

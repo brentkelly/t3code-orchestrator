@@ -80,7 +80,8 @@ describe("DesktopClerk", () => {
           {
             storage: storageAdapter,
             passkeys: true,
-            renderer: { scheme: "t3code-dev", host: "app" },
+            // T3o: the renderer is served from the t3o-dev scheme.
+            renderer: { scheme: "t3o-dev", host: "app" },
           },
         ],
       ]);

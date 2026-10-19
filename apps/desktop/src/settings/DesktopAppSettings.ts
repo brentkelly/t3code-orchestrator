@@ -22,6 +22,8 @@ import {
   type LinuxPasswordStorePreference,
 } from "../linuxSecretStorage.ts";
 import { resolveDefaultDesktopUpdateChannel } from "../updates/updateChannels.ts";
+// T3o: the fork has no nightly update track.
+import { isT3oUpdateChannel } from "@t3tools/shared/t3oIdentity";
 import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
 export interface DesktopSettings {
@@ -239,7 +241,11 @@ function normalizeDesktopSettingsDocument(
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
     tailscaleServePort: normalizeTailscaleServePort(parsed.tailscaleServePort),
     updateChannel: updateChannelConfiguredByUser
-      ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
+      ? // T3o: no nightly track on the fork, so a persisted nightly choice is ignored.
+        Option.getOrElse(
+          Option.filter(parsedUpdateChannel, isT3oUpdateChannel),
+          () => defaultSettings.updateChannel,
+        )
       : defaultSettings.updateChannel,
     updateChannelConfiguredByUser,
     wslBackendEnabled,

@@ -243,6 +243,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libsecret-1-dev pkg-config
+          # T3o: rpmbuild, for the deb/rpm packages a T3o release builds beside the AppImage.
+          sudo apt-get install -y rpm
           if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
               sudo apt-get install -y imagemagick
           fi
@@ -511,6 +513,8 @@ jobs:
             "release/*.zip"
             "release/*.AppImage"
             "release/*.exe"
+            # T3o: the deb/rpm packages a T3o release builds beside the AppImage.
+            "release/*.deb" "release/*.rpm"
           )
           # Preview builds have no publish config, so electron-builder writes
           # no feed manifest for them, but it still emits blockmaps beside the

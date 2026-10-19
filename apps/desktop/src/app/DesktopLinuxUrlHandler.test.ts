@@ -170,11 +170,12 @@ describe("DesktopLinuxUrlHandler", () => {
         recorded.files[0]?.content,
         'Exec="/home/alice/Applications/T3-Code.AppImage" %U',
       );
-      assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
+      // T3o: the handler claims the t3o scheme.
+      assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3o;");
       assert.deepEqual(recorded.commands, [
         {
           command: "xdg-mime",
-          args: ["default", "com.t3tools.T3Code.desktop", "x-scheme-handler/t3code"],
+          args: ["default", "com.t3tools.T3Code.desktop", "x-scheme-handler/t3o"],
         },
       ]);
     });
@@ -201,7 +202,8 @@ describe("DesktopLinuxUrlHandler", () => {
         existingEntry: DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
           displayName: "T3 Code (Alpha)",
           execTarget: "/home/alice/Applications/T3-Code.AppImage",
-          scheme: "t3code",
+          // T3o: the entry pre-ready setup writes carries the t3o scheme.
+          scheme: "t3o",
         }),
       });
 
