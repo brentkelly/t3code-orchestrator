@@ -478,7 +478,9 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
       return failures.length === 0 ? null : failures.join("; ");
     });
 
-    const retire = Effect.fn("worktreeRetire.retire")(function* (input: WorktreeRetireInput) {
+    const retireOnce = Effect.fn("worktreeRetire.retireOnce")(function* (
+      input: WorktreeRetireInput,
+    ) {
       const stillWanted = input.stillWanted ?? Effect.succeed(true);
       // Before anything is stopped, too: a card restarted since the caller
       // decided owns live sessions in this checkout.
@@ -515,6 +517,25 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
       return { outcome: "removed", hookWarning } as const;
     });
 
+    // Paths being retired right now. A deleted card's retirement and an orphan
+    // sweep can both reach the same checkout; the second is abandoned (null)
+    // so the remove scripts never run twice at once.
+    const retiring = new Set<string>();
+
+    const retire = (
+      input: WorktreeRetireInput,
+    ): Effect.Effect<WorktreeRetireResult, GitCommandError> =>
+      Effect.suspend(() => {
+        const key = NodePath.resolve(input.worktreePath);
+        if (retiring.has(key)) {
+          return Effect.logInfo("worktree retire: already being retired; skipped", {
+            worktreePath: input.worktreePath,
+          }).pipe(Effect.as(null));
+        }
+        retiring.add(key);
+        return retireOnce(input).pipe(Effect.ensuring(Effect.sync(() => retiring.delete(key))));
+      });
+
     return WorktreeRetirer.of({ retire });
   });
 
@@ -527,8 +548,10 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
  * Without remove scripts the call waits for the removal, as the stock one
  * does. With them it returns once they start: the client queues its VCS
  * commands per project, and minutes of teardown would stall every one behind
- * it. The rest finishes in the background, a failure is logged, and
- * `afterRemoval` (the git status refresh) runs when it is done.
+ * it. The rest finishes in the background and `afterRemoval` (the git status
+ * refresh) runs when it is done. A failure after the scripts start reaches
+ * only the server log: the client already has its success, and the refreshed
+ * status is what shows the worktree still there.
  */
 export const retireRemovedThreadWorktree = (
   retirer: WorktreeRetirer["Service"],

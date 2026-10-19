@@ -21,6 +21,7 @@ import {
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -418,6 +419,44 @@ describe("retireWorktree", () => {
       );
       assert.deepStrictEqual(result, { outcome: "removed", hookWarning: null });
       assert.deepStrictEqual(events, ["check-processes", "remove:force"]);
+    }),
+  );
+
+  it.effect("a second retirement of a path already being retired is skipped", () =>
+    Effect.gen(function* () {
+      const { result, events, read } = yield* withRetirer(
+        {
+          scripts: [script("teardown", "echo ran >> ../hook.log", { runOnWorktreeRemove: true })],
+        },
+        (retirer, dirs) =>
+          Effect.gen(function* () {
+            const started = yield* Deferred.make<void>();
+            const gate = yield* Deferred.make<void>();
+            const first = yield* retirer
+              .retire({
+                projectCwd: dirs.projectCwd,
+                worktreePath: dirs.worktreePath,
+                ...forced,
+                // Park the first retirement just before its scripts run.
+                onScriptsStarting: Deferred.succeed(started, undefined).pipe(
+                  Effect.andThen(Deferred.await(gate)),
+                ),
+              })
+              .pipe(Effect.forkChild);
+            yield* Deferred.await(started);
+            const second = yield* retirer.retire({
+              projectCwd: dirs.projectCwd,
+              worktreePath: NodePath.join(dirs.worktreePath, "."),
+              ...forced,
+            });
+            yield* Deferred.succeed(gate, undefined);
+            return { first: yield* Fiber.join(first), second };
+          }),
+      );
+      assert.isNull(result.second);
+      assert.deepStrictEqual(result.first, { outcome: "removed", hookWarning: null });
+      assert.strictEqual(read("hook.log"), "ran\n");
+      assert.strictEqual(events.filter((event) => event.startsWith("remove")).length, 1);
     }),
   );
 

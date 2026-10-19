@@ -7454,7 +7454,14 @@ const make = Effect.gen(function* () {
       const cwd = projectCwd(model, card);
       if (cwd !== null) {
         // T3O-23: retiring runs the remove scripts, which can take minutes, so
-        // it goes to its own worker and the delete handler moves on.
+        // it goes to its own worker and the delete handler moves on. The queue
+        // is in memory: a restart before it runs leaves the branch behind, so
+        // the log names it for whoever finds it.
+        yield* Effect.logInfo("board: deleted card's worktree and branch queued for cleanup", {
+          cardId: card.id,
+          branch: worktree.branch,
+          worktreePath: worktree.path,
+        });
         yield* cardRetireWorker.enqueue({
           cardId: card.id,
           projectCwd: cwd,
