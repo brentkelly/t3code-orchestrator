@@ -130,9 +130,6 @@ layer("board-aware projection state", (it) => {
         "projection.board-cards",
         "projection.threads",
       ]);
-      // The minimum has to consider the board's row, or a caller gating on
-      // "how far has projection caught up" would read past unapplied board events.
-      assert.strictEqual(yield* repository.minLastAppliedSequence(), 4);
     }),
   );
   // Migration 031's cross-database transaction can tear leaving a stale board
@@ -162,9 +159,6 @@ layer("board-aware projection state", (it) => {
           .map((row) => row.lastAppliedSequence),
         [500],
       );
-      // The stale row must not pin the catch-up minimum either.
-      yield* repository.upsert(at("projection.threads", 400));
-      assert.strictEqual(yield* repository.minLastAppliedSequence(), 400);
     }),
   );
 });

@@ -128,6 +128,6 @@ describe("migration 016: recompute blocked build-onward", () => {
         dangling: 1,
         "sprint-open": 0,
       });
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });

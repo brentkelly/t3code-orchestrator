@@ -135,7 +135,7 @@ describe("board migration reconciliation", () => {
       const choreAgain =
         yield* sql`SELECT label_id FROM board_labels WHERE label_id = 'label-chore'`;
       assert.strictEqual(choreAgain.length, 0);
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect("completes a partially-migrated legacy database", () =>
@@ -182,7 +182,7 @@ describe("board migration reconciliation", () => {
         SELECT migration_id FROM effect_sql_migrations WHERE migration_id >= ${LEGACY_FLOOR}
       `;
       assert.strictEqual(legacyAfter.length, 0);
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect("runs the board lineage from 1 on a fresh database", () =>
@@ -215,6 +215,6 @@ describe("board migration reconciliation", () => {
         SELECT migration_id FROM effect_sql_migrations WHERE migration_id >= ${LEGACY_FLOOR}
       `;
       assert.strictEqual(upstreamHighRows.length, 0);
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });

@@ -85,7 +85,9 @@ function ModelControlsMenu(props: {
       ultrathinkPromptControlled: false,
     });
     if (display.label.length > 0) labels.push(display.label);
-    if (display.showFastModeIcon) labels.push("Fast");
+    if (display.speedIcon !== null) {
+      labels.push(display.speedIcon === "ultrafast" ? "Ultrafast" : "Fast");
+    }
   }
   if (props.runtimeMode !== undefined) {
     labels.push(runtimeModeConfig[props.runtimeMode].label);
@@ -251,7 +253,7 @@ export function ModelRow(props: {
             <PopoverPopup
               align="end"
               className="border-0 bg-transparent p-0 shadow-none before:hidden [-webkit-backdrop-filter:none]! [--viewport-inline-padding:0] [backdrop-filter:none]!"
-              viewportClassName="rounded-lg !overflow-hidden p-0"
+              padding="none"
             >
               <ModelPickerContent
                 activeInstanceId={active.instanceId}

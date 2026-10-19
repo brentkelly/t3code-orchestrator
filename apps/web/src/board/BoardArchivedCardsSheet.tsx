@@ -18,15 +18,15 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { ArchiveRestoreIcon, HardDriveIcon, LayersIcon, Trash2Icon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { Button } from "../components/ui/button";
+import { ScrollArea } from "../components/ui/scroll-area";
 import {
   Sheet,
   SheetHeader,
-  SheetPanel,
   SheetPopup,
   SheetTitle,
   SheetDescription,
@@ -252,7 +252,7 @@ export function BoardArchivedCardsSheet({
             already false whenever the sheet is closed — so the query still
             cannot start before there is a reader — and stays true through the
             exit animation, which an `open` gate would render blank. */}
-        <SheetPanel>
+        <SheetBody>
           <ArchivedCardList
             environmentId={environmentId}
             liveCardKeyById={liveCardKeyById}
@@ -261,8 +261,22 @@ export function BoardArchivedCardsSheet({
             onSelectCard={onSelectCard}
             scopeProjectId={scopeProjectId}
           />
-        </SheetPanel>
+        </SheetBody>
       </SheetPopup>
     </Sheet>
+  );
+}
+
+/**
+ * The sheet's scrolling body. Upstream's `SheetPanel` was removed as unused in v0.0.45, so the
+ * board keeps its own copy (T3O-54).
+ */
+function SheetBody({ children }: { children: ReactNode }) {
+  return (
+    <ScrollArea scrollFade>
+      <div className="p-6 in-[[data-slot=sheet-popup]:has([data-slot=sheet-header])]:pt-1">
+        {children}
+      </div>
+    </ScrollArea>
   );
 }

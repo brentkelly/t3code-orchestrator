@@ -160,7 +160,7 @@ export function BoardLabelField(props: BoardLabelFieldProps) {
       <PopoverPopup
         align="end"
         className="w-[280px] max-w-[calc(100vw-80px)] p-1.5"
-        viewportClassName="p-0"
+        padding="none"
       >
         <div className="flex min-w-0 flex-col gap-[5px]">
           <Input
