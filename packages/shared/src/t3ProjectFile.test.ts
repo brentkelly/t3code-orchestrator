@@ -36,6 +36,7 @@ describe("buildT3ProjectFileJsonSchema", () => {
       "defaultThreadEnvMode",
       "iconPath",
       "scripts",
+      "worktreeSubmodules",
     ]);
     expect(schema.required).toBeUndefined();
     expect(schema.properties.iconPath?.description).toContain("Workspace-relative path");
@@ -51,6 +52,8 @@ describe("buildT3ProjectFileJsonSchema", () => {
       "name",
       "previewUrl",
       "runOnWorktreeCreate",
+      // T3o: T3O-23 remove scripts.
+      "runOnWorktreeRemove",
     ]);
   });
 

@@ -122,6 +122,6 @@ describe("migration 012: recompute blocked", () => {
         unblocked: 0,
         dangling: 1,
       });
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });

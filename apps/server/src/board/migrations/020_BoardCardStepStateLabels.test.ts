@@ -91,7 +91,7 @@ describe("migration 020: nullable step label + frozen stage label", () => {
         stall_count: 2,
         last_nudge_at: NOW,
       });
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect("accepts a null step label, which the NOT NULL column rejected", () =>
@@ -121,7 +121,7 @@ describe("migration 020: nullable step label + frozen stage label", () => {
       }>`SELECT step_label, stage_label FROM board_card_step_state WHERE card_id = 'card-a'`;
       assert.strictEqual(rows[0]?.step_label, null);
       assert.strictEqual(rows[0]?.stage_label, "Planning");
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect("keeps card_id a primary key, so the projector's upsert still works", () =>
@@ -151,6 +151,6 @@ describe("migration 020: nullable step label + frozen stage label", () => {
       assert.strictEqual(rows.length, 1);
       assert.strictEqual(rows[0]?.step_id, "review");
       assert.strictEqual(rows[0]?.step_label, "Review · round 1");
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });

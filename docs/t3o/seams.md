@@ -223,7 +223,7 @@ destroys the ancestry the next `git merge main` relies on.
 
 ```bash
 git checkout t3o && git merge --no-ff sync/upstream-vX.Y.Z && git push
-git push origin main                                # the fast-forwarded mirror
+git push origin main vX.Y.Z                         # the fast-forwarded mirror and its tag
 git merge-base --is-ancestor vX.Y.Z t3o && echo ok  # must print ok
 ```
 
@@ -233,10 +233,11 @@ not a setting.
 
 ### If a sync was squashed anyway
 
-It happened once: PR #57 landed the `v0.0.38` sync as a squash (`5698920b4`, one parent). The tree
-was right and the ancestry was gone, so `git merge-base t3o v0.0.42` resolved to a commit a month
-older than `v0.0.38` and the next merge produced **891** conflicted files instead of 50. The alarm is
-`git merge-base --is-ancestor <last-synced-tag> t3o` returning false.
+It has happened twice. PR #57 landed the `v0.0.38` sync as a squash (`5698920b4`, one parent). The
+tree was right and the ancestry was gone, so `git merge-base t3o v0.0.42` resolved to a commit a
+month older than `v0.0.38` and the next merge produced **891** conflicted files instead of 50. PR
+#110 then squashed the `v0.0.42` sync the same way (`6268e74c4`), and `T3O-54` grafted it back. The
+alarm is `git merge-base --is-ancestor <last-synced-tag> t3o` returning false.
 
 The repair is a graft — a merge that changes no file and records the missing parent:
 
@@ -281,6 +282,7 @@ settles it is a few merges done by hand. `t3o-02` is the first place that gets w
 | 2026-08-09 | 4 commits, 68 files, ~1.6k insertions (`main` ff'd to `1a003e383`), run against the `t3o-02a` generalised seams                                         | **1 file**: `apps/server/src/persistence/Migrations.ts` — two hunks, both "upstream appended `039`/`040` where we spread `...BOARD_MIGRATIONS`" at the list tails                                                                                                                                                                                                                                                                                                                                                                                                                       | Kept both, upstream first. Every other seamed file — including four the delta churned directly (`decider.ts`, `projector.ts`, `ProjectionPipeline.ts`, `ProjectionSnapshotQuery.ts`, `orchestration.ts`, `ws.ts`) — auto-merged through the new predicate/spread seams. All 38 markers survived (`rg "T3o:"` row-for-row against the inventory).                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Merge + resolution ≈ 1 minute; verification (install, 4 typechecks, walking-skeleton + engine + pipeline + snapshot-query + projector + event-store + reducer + contracts suites, all green) ≈ 3 minutes.                                                                                                   |
 | 2026-09-02 | 595 commits, 1,591 files (`main` ff'd to tag `v0.0.38`, `c0995d2ea`); spec `t3o-31`                                                                     | **18 files, 27 hunks** + 32 `.plans` rename/delete. 11 were inventoried seams that moved with upstream churn (`ws.ts` dispatch body rewritten around the t3o-18 actor stamp; the t3o-05 tabs moved into upstream's new `WorkspacePageHeader`; three import seams; `index.css`; `orchestration.ts`/`rpc.ts`/`settings.ts`). 7 were **unmarked** fork edits (`serverSettings.ts`, `GitHubCli.ts`, `AppSidebarLayout.tsx`, `ChatComposer.tsx`, `server.ts` layer substitution, `contracts/orchestration.ts` `RuntimeMode` move, `settingsSearch.test.ts`). `routeTree.gen.ts` regenerated. | Every conflict resolved as upstream's code with the seam re-inserted; the unmarked hunks got markers on the way through. After the merge: 3 type errors (`planModeEnabled` on the board model row, a widened PR-cache key, an upstream-new integration test that drives the startup seam), 2 test failures (upstream tests now enumerate `ORCHESTRATION_PROJECTOR_NAMES` against the split `projection_state`; a settings-search substring), and 61 errors from upstream's new `no-native-title-tooltip` rule, fixed with a board-owned `BoardHint`. Ten pre-existing fork type errors were cleared first so the merge's own breakage was attributable.                                                                                                                                                                      | Trial merge + measurement ≈ 2 h; real merge + resolution ≈ 20 min; fixes ≈ 1 h; verification (per-package typecheck, 5 test suites: 3,539 server / 3,280 web / 633 / 446 / 379, lint, two headless boots against copies of real databases) ≈ 40 min.                                                        |
 | 2026-09-20 | 1,051 commits, 14,650 files — 11,726 of them `.repos/` vendored references that merge silently, ~2,900 real (tag `v0.0.42`, `719a76ca1`); card `T3O-46` | **50 files, ≈120 hunks** after the ancestry graft; **891 files** before it (the `v0.0.38` sync had been squash-merged — see "If a sync was squashed anyway"). 3 needed thought (`ws.ts` shell coalescing, `OrchestrationEventStore.ts` paging, the composer pair), 3 were the MCP capability union, 3 + 13 registration files were Forgejo, 4 docs, 2 regenerated (`routeTree.gen.ts`, `pnpm-lock.yaml`), the rest keep-both.                                                                                                                                                           | Forgejo resolved wholly to upstream's `fj`/`tea` implementation, with the board's two merge seams re-attached from a fork-owned `forgejoMerge.ts`. Everything else: upstream's code with the seam re-inserted. After the merge: `Schema.TaggedErrorClass` → `TaggedError` (5 fork files), `NodeSqliteClient` moved to `@t3tools/shared` (6 board tests), `ProjectionStateRepository` gained `upsertMany`, `thread.auto-settle` gained `settledAt`, thread shells gained `pullRequests` (3 fixtures), and four web helpers the board used were replaced upstream (`useAssetUrl`, `openPullRequestLink`, `createDebouncedStorage`, a router search reducer). 3 upstream tests needed a marked fork expectation. Lint: 2 `Array#toSorted` hits from the one new rule (`no-hermes-unsupported-array-methods`), 1 unused disable. | Merge + resolution ≈ 1 h 15 min; type/test/lint fixes ≈ 50 min; Forgejo seams + tests ≈ 25 min; verification (7 per-package typechecks, 952 board + 1,742 + 1,932 server / 3,172 packages / 5,493 web tests, both lint passes, the boot-time database sequence twice against copies of real data) ≈ 30 min. |
+| 2026-10-20 | 551 commits, 1,996 files outside `.repos/` (tag `v0.0.45`, `6c8fed35d`, the last orchestration-v1 release); card `T3O-54`                               | **24 files** (23 content, 1 modify/delete) after re-grafting `v0.0.42`, which PR #110 had squashed. 4 needed thought (`serviceProtocol.ts`, `GitHubPullRequestCli.ts`, `GitHubCli.ts` + `GitHubSourceControlProvider.ts`, `GitManager.ts`); 2 keep-both test files; 1 regenerated (`pnpm-lock.yaml`); the rest upstream's code with the seam re-inserted.                                                                                                                                                                                                                               | Mobile `threadPresentation.ts` deletion accepted (the surviving v2 list already had the fork palette). After the merge: 2 server API removals (`NodeSqliteClient.layerMemory`, `minLastAppliedSequence`), 6 web type errors from upstream dropping `viewportClassName`/`inputClassName`/`SheetPanel`, the new `monogram` icon kind and `speedIcon`; 3 upstream tests caught the board snapshot wrapper dropping `unsettledOnly`; 2 provider tests moved to the batched head lookup. Lint: ~600 findings from upstream's design-token rules, almost all in board UI (see decisions). 1 pre-existing test failure (`t3ProjectFile.test.ts`, from #175) cleared.                                                                                                                                                                | Merge + resolution ≈ 1 h; fixes ≈ 45 min; verification (7 per-package typechecks; 3,491 server / 1,553 web / 3,616 package / 245 mobile tests; both lint passes; the boot-time database sequence twice against copies of real data) ≈ 50 min.                                                               |
 
 Notes from the first run: the merge was executed against a scratch branch carrying the full `t3o-02`
 seam set (a merge against bare `t3o` would not have exercised the seams). Every other seamed file —
@@ -308,9 +310,10 @@ resolution is regenerate, not hand-merge.
   spreads in and, since `t3o-26`, hit the split `projection_state`. Policy: a marked test-side fix
   each time (`isBoardProjectorName` routes seeding/assertions to `boards.projection_state`), not a
   registry restructure.
-- **Launcher protocol.** The fork is at `SERVICE_LAUNCHER_PROTOCOL = 3` (multi-database backup,
-  `t3o-26`); upstream is still `2`. A future upstream bump to `3` auto-merges as a _semantic_
-  conflict — check `cloud/serviceProtocol.ts` on every sync.
+- **Launcher protocol.** The fork is at `SERVICE_LAUNCHER_PROTOCOL = 4`: upstream's `3` plus the
+  multi-database backup (`t3o-26`). The fork's number must stay ahead of upstream's, so an upstream
+  bump is a _semantic_ conflict even when it merges cleanly. Check `cloud/serviceProtocol.ts` on
+  every sync (see the `v0.0.45` decisions).
 - **`migrate-dev-db`** (new upstream script) rebuilds and migrates `state.sqlite` only. It neither
   copies nor migrates `boards.sqlite`. Follow-up, not blocking.
 - **Adopted in `T3O-47`:** upstream's `apps/server/src/pullRequest/` module. See the decisions
@@ -443,26 +446,82 @@ differing from `v0.0.42` at all. Four files became pure upstream again
 pinning. Five fork-owned files were deleted outright (`gitHubMergeState.ts`, `forgejoMerge.ts`,
 `forgejoMergeState.ts` and two test files); `board/boardMergeState.ts` is the one added.
 
+### Decisions recorded on the `v0.0.45` sync (`T3O-54`)
+
+- **`v0.0.45` is the last orchestration-v1 release.** `v0.1.0` deleted orchestration v1 and
+  replaced it with `orchestration-v2`, which everything the board builds on depends on. Syncing past
+  `v0.0.45` is a port, not a merge, and is card `T3O-55`.
+- **The squash happened a second time, and was grafted again.** PR #110 landed the `v0.0.42` sync
+  as a squash, so `git merge-base t3o upstream/main` had fallen back to `0640410726` (2026-08-08).
+  The sync branch opens with `git merge -s ours v0.0.42` (empty diff, verified), which took the
+  conflict count to 24. `origin/main` had also been left at `v0.0.38`; the landing commands push
+  the mirror and the tag.
+- **Launcher protocol 4.** Upstream bumped `SERVICE_LAUNCHER_PROTOCOL` to `3` for the standalone
+  executable layout, the same number the fork already used for the multi-database snapshot. It
+  merged as a one-comment conflict, but keeping `3` would have let an upstream `v0.0.43+` launcher,
+  which snapshots only `state.sqlite`, trial a fork server and roll back with `boards.sqlite`
+  migrated forward. The fork is now at `4`, and `servicePreflight.test.ts` carries a marked `3` in
+  its blocked list. Existing fork installs need their launcher updated once, which is exactly what
+  preflight's exact-match block asks for.
+- **The `T3O-8` missing-scope fallback now covers GraphQL.** Upstream reads a pull request's detail
+  through one GraphQL document that asks for team review requests and the check rollup, and GitHub
+  refuses the whole document over either. The fork's `withReviewScopeFallback` now wraps that read
+  too: it drops `reviewRequests`, then the `commits` connection carrying the rollup, from the
+  document, and fills them back in empty before decoding (fork-owned
+  `pullRequest/t3oGraphQlScopeFallback.ts`). A detail read without the rollup is marked
+  `checksUnread`, as before. Upstream's batched summary read already falls back to one `gh pr view`
+  per pull request when the batch fails; that per-entry read keeps the fork's field fallback.
+- **The batched head lookup honours the `T3O-48` origin pin.** Upstream's new
+  `GitHubCli.listPullRequestsByHead` picks its repository the way `gh` does, which in a fork is the
+  `upstream` parent. It now takes the pinned `repository`: on the lookup's own host it replaces the
+  guess, on another host the lookup stays on `gh` with `--repo`, and the batch's per-head `gh`
+  fallback names it too (`t3oPinnedHeadRepository` in `githubRemote.ts`).
+- **PR lookup TTLs.** Upstream now caches "no open PR" answers for five minutes and open ones for
+  one. The `T3O-45` rule still runs first: an answer that never reached the forge is not cached.
+- **The board snapshot wrapper passes options through.** Upstream's background sweeps read
+  `getShellSnapshot({ unsettledOnly: true })`; the board's wrapper took no options, so every sweep
+  read every thread. Three upstream tests caught it.
+- **Upstream's design-token lint rules are off for fork-owned web files.** `v0.0.43`–`v0.0.45`
+  rolled out `shadcn/no-arbitrary-values`, `no-restyle`, `no-raw-colors` and
+  `require-static-classes` across `apps/web`. The board UI produced about 600 findings, almost all
+  pixel sizes and restyles on ui components. Restyling the board onto the tokens is a redesign, not
+  sync fallout, so one marked override in `vite.config.ts` turns those four rules off for
+  `apps/web/src/board/**` and `components/settings/Board*.tsx` only. The board's pull-request icons
+  moved onto `PullRequestGlyph`, which the restricted-import rule asks for.
+- **Upstream removed `SheetPanel`, `viewportClassName` and `inputClassName`** from the ui
+  components. Board popovers use `padding="none"`; the archived-cards sheet keeps a local scrolling
+  body; the card sheet keeps T3O-51's 0.5rem short-screen sliver with a negative margin into the
+  dialog viewport's padding instead of overriding the padding.
+- **Mobile `threadPresentation.ts` was deleted upstream**, with the legacy grouped thread list. The
+  fork's violet "awaiting input" lived there; the surviving v2 list already carried the fork's
+  violet/blue palette, so the deletion was accepted.
+- **Boot check, as on `v0.0.42`:** the boot-time database sequence plus a decode of the shell and
+  command read models, twice, against `VACUUM INTO` copies of real data. Upstream ledger 52 → 54,
+  board ledger steady at 43, both integrity checks `ok`, 966 threads and 121 cards read back; the
+  second boot ran no migration.
+
 ### Unmarked edits (debt)
 
-Upstream-owned files the fork changes **without** a `T3o:` marker, measured after the `v0.0.42`
-merge (`git diff --numstat v0.0.42 HEAD`, files present in `v0.0.42`, excluding `.plans/` and
-`.repos/`; 93 upstream-owned files differ in all, 66 of them marked). These are where the next
+Upstream-owned files the fork changes **without** a `T3o` marker, measured after the `v0.0.45`
+merge (`git diff --numstat v0.0.45 HEAD`, files present in `v0.0.45`, excluding `.plans/` and
+`.repos/`; 108 upstream-owned files differ in all, 93 of them marked). These are where the next
 sync's non-seam conflicts will come from. Tests, docs and generated files are listed for
 completeness; the code rows are the ones worth seaming.
 
 | File                                                                                                                                                             | +/−      | Owner / what                                              |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------- |
-| `apps/server/src/serviceLauncher.ts`                                                                                                                             | 97/18    | `t3o-26` multi-database backup/restore (protocol 3)       |
+| `apps/server/src/serviceLauncher.ts`                                                                                                                             | 97/18    | `t3o-26` multi-database backup/restore (protocol 4)       |
 | `packages/contracts/src/model.ts`                                                                                                                                | 16/0     | `t3o-21` `RuntimeMode` moved here from `orchestration.ts` |
-| `apps/server/src/cloud/serviceProtocol.ts`                                                                                                                       | 10/2     | `t3o-26` `SERVICE_LAUNCHER_PROTOCOL = 3`                  |
 | `packages/contracts/src/git.ts`                                                                                                                                  | 5/1      | board PR lookup                                           |
 | `apps/web/src/main.tsx`, `apps/web/src/appearanceFonts.ts`                                                                                                       | 5/0, 4/1 | DM Sans font                                              |
 | `vite.config.ts`, `package.json`, `scripts/dev-runner.ts`, `apps/web/package.json`                                                                               | ≤6       | tooling                                                   |
 | `apps/web/src/components/chat/TraitsPicker.tsx`                                                                                                                  | 1/1      | export                                                    |
 | tests: `serviceLauncher.test.ts` (159), `shared/serverSettings.test.ts` (93), `GitManager.test.ts` (58), `GitHubCli.test.ts` (140), `settingsSearch.test.ts` (6) |          | fork test additions                                       |
 | docs: `docs/user/thread-sidebar.md` (+6)                                                                                                                         |          | the Board/Threads tabs section                            |
-| generated: `apps/web/src/routeTree.gen.ts` (+63), `apps/mobile/generated-uniwind-themes.css` (+12), `pnpm-lock.yaml` (+8)                                        |          | regenerate / reinstall                                    |
+| docs: `docs/user/project-settings.md` (+3)                                                                                                                       |          | the `T3O-23` remove-script flag                           |
+| generated: `apps/web/src/routeTree.gen.ts` (+63), `apps/mobile/generated-uniwind-themes.css` (+12), `pnpm-lock.yaml` (+10)                                       |          | regenerate / reinstall                                    |
+
+Cleared on the `v0.0.45` sync: `cloud/serviceProtocol.ts` (now marked, protocol 4).
 
 Cleared on the `v0.0.42` sync: `CompactComposerControlsMenu.tsx` and the `ChatComposer.tsx` picker
 extraction (both upstream's again — see the decisions above), `GitManager.ts`, `VcsProcess.ts`,
@@ -490,6 +549,15 @@ expectation — `McpSessionRegistry.test.ts` 1 (`"board"` capability), `Projecti
 1 (cursor batch is 3 statements), `serverSettings.test.ts` 1. `McpInvocationContext.ts` went 2 → 1:
 upstream generalised `requireMcpCapability`, so the fork's note explaining why it stayed
 `"preview"`-only was obsolete and is gone.
+
+After the `v0.0.45` sync (`T3O-54`): **214 markers across 81 upstream-owned files**, from 206
+across 77 the moment before it (cards since `v0.0.42` had added 29). The sync added 8:
+`GitHubCli.ts` +4 (10; the batched head lookup's `repository` input, its request field, its `gh`
+fallback args and the pin itself), `serviceProtocol.ts` 1, `servicePreflight.test.ts` 1,
+`GitHubSourceControlProvider.test.ts` 1, `t3ProjectFile.test.ts` 1 and `vite.config.ts` 1 (the
+design-token override). `threadPresentation.ts` and its 1 marker were deleted upstream. The
+`GitHubPullRequestCli.ts` fallback markers use the `T3o (T3O-N):` form, which this metric does not
+count.
 
 For reference, the `v0.0.38` sync stood at 121 markers across 44 files. Counts recorded then that
 differ from their rows in the table below:
@@ -732,6 +800,10 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `packages/contracts/src/pullRequest.ts`                                | `T3O-47`     | `headSha` on `PullRequestDetail`, for the auto-merge ladder's reset                       | one-line append, optional field                                           |
 | `apps/server/src/pullRequest/PullRequestProvider.ts`                   | `T3O-47`     | `headSha` on `ProviderChangeRequestDetail`                                                | one-line append, optional field                                           |
 | `apps/server/src/pullRequest/PullRequestService.ts`                    | `T3O-47`     | Carry `headSha` into the assembled detail                                                 | one-line append at an object tail                                         |
+| `apps/server/src/pullRequest/GitHubPullRequestCli.ts`                  | `T3O-54`     | The GraphQL core detail read keeps the `T3O-8` missing-scope fallback                     | wrap in the fork's fallback + one import from a fork-owned helper         |
+| `apps/server/src/sourceControl/GitHubCli.ts`                           | `T3O-54`     | The batched head lookup takes the `T3O-48` origin `repository`                            | optional input + request field + pin + `--repo` on the `gh` fallback      |
+| `apps/server/src/cloud/serviceProtocol.ts`                             | `T3O-54`     | `SERVICE_LAUNCHER_PROTOCOL = 4` (upstream's 3 + multi-database snapshot)                  | constant + comment (re-check every sync)                                  |
+| `vite.config.ts`                                                       | `T3O-54`     | Design-token lint rules off for fork-owned web files                                      | one override block                                                        |
 | `apps/server/src/server.ts`                                            | `T3O-47`     | The board's PR gateway joins `RuntimeCoreDependenciesLive`                                | provideMerge of a board-owned layer                                       |
 | `apps/server/src/server.ts`                                            | `T3O-23`     | Import the worktree retirer layer                                                         | one-line append (import)                                                  |
 | `apps/server/src/server.ts`                                            | `T3O-23`     | The worktree retirer joins `RuntimeCoreDependenciesLive`                                  | provideMerge of a board-owned layer                                       |

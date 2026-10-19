@@ -98,3 +98,21 @@ export function gitHubRepositoryPositionalArgs(
 ): ReadonlyArray<string> {
   return repository == null ? [] : [`${repository.host}/${repository.nameWithOwner}`];
 }
+
+/**
+ * T3O-54: the repository upstream's batched head lookup should ask, given a pinned origin.
+ *
+ * Upstream's batch picks its repository the way `gh` does, which in a fork is the `upstream`
+ * parent. A pinned origin on the lookup's own host replaces that guess; one on another host is
+ * `"other-host"`, which keeps the lookup on `gh` (where `--repo` still pins it); no pin at all is
+ * null, which leaves upstream's guess in charge.
+ */
+export function t3oPinnedHeadRepository(
+  repository: GitHubRemote | null | undefined,
+  host: string | undefined,
+): { readonly owner: string; readonly name: string } | "other-host" | null {
+  if (repository == null) return null;
+  if (host === undefined || repository.host.toLowerCase() !== host) return "other-host";
+  const [owner, name] = repository.nameWithOwner.split("/");
+  return owner && name ? { owner, name } : "other-host";
+}

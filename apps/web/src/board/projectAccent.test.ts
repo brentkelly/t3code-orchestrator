@@ -109,10 +109,8 @@ describe("projectIconColorOf", () => {
       projectIconColorOf({ projectIcon: { kind: "lucide", name: "rocket", color: "teal" } }),
     ).toBe("teal");
     expect(
-      projectIconColorOf({
-        projectIcon: { kind: "lucide", name: "rocket", color: "rose", monogram: "T3" },
-      }),
-    ).toBe("rose");
+      projectIconColorOf({ projectIcon: { kind: "monogram", text: "T3", color: "violet" } }),
+    ).toBe("violet");
   });
 
   it("has no colour for an emoji, a missing override, or a missing project", () => {

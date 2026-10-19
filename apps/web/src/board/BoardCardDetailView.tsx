@@ -78,9 +78,6 @@ import {
   CircleAlertIcon,
   ClockIcon,
   EllipsisVerticalIcon,
-  GitMergeIcon,
-  GitPullRequestArrowIcon,
-  GitPullRequestIcon,
   ExternalLinkIcon,
   FileIcon,
   FileTextIcon,
@@ -99,6 +96,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
+import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
@@ -1263,7 +1261,7 @@ function BoardStageSecondaryMenu({
               }}
               type="button"
             >
-              <GitPullRequestArrowIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+              <PullRequestGlyph.pullRequest className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
               <span className="flex min-w-0 flex-col">
                 <span className="text-[12.5px] font-medium text-foreground">{action.label}</span>
                 <span className="mt-px text-[11.5px]/[1.4] text-muted-foreground">
@@ -1605,7 +1603,7 @@ function ActionsSection({
       {missingPullRequest === null ? null : (
         <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2.5">
           <div className="flex gap-[7px] text-[11.5px]/[1.45] text-muted-foreground">
-            <GitPullRequestIcon className="mt-px size-3.5 shrink-0" />
+            <PullRequestGlyph.pullRequest className="mt-px size-3.5 shrink-0" />
             <span>
               {missingPullRequest.branch === null ? (
                 "No pull request, and no branch to look one up on."
@@ -1807,7 +1805,7 @@ function ActionsSection({
             onClick={() => props.onOpenPullRequest(displayed.url)}
             type="button"
           >
-            <GitPullRequestIcon className="size-3.5" />
+            <PullRequestGlyph.pullRequest className="size-3.5" />
             <span>View PR</span>
             <span className="text-muted-foreground">{`#${displayed.number}`}</span>
             {/* Neutral (T3O-12): a draft is waiting for the review loop, not on
@@ -2246,7 +2244,7 @@ export function BoardCardAutoMergeMenuItem(props: {
         variant="switch"
       >
         <span className="flex items-start gap-2 py-0.5">
-          <GitMergeIcon className="mt-px size-4 shrink-0 text-muted-foreground" />
+          <PullRequestGlyph.merged className="mt-px size-4 shrink-0 text-muted-foreground" />
           <span className="flex min-w-0 flex-col gap-0.5">
             <span>{arm.copy.label}</span>
             <span className="text-[11px] text-muted-foreground leading-snug">{arm.copy.hint}</span>
@@ -2518,7 +2516,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         {archived || done || autoMergeChip === null ? null : (
           <BoardHint label={autoMergeChip.tooltip}>
             <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-              <GitMergeIcon className="size-2.5" />
+              <PullRequestGlyph.merged className="size-2.5" />
               {autoMergeChip.label}
             </span>
           </BoardHint>
@@ -3052,13 +3050,13 @@ export function BoardCardDetailPopup({
           ? "fixed inset-0 h-screen max-h-none w-screen max-w-none rounded-none border-0"
           : wide
             ? // Under 1000px tall the 7vh gaps above and below cost the
-              // thread pane too much, so the sheet takes all but a sliver
-              // (T3O-51). `sm:` leaves the phone bottom sheet alone.
-              "h-[86vh] max-h-[86vh] w-[min(1220px,100%)] max-w-[1220px] sm:[@media(max-height:999.98px)]:h-[calc(100dvh-1rem)] sm:[@media(max-height:999.98px)]:max-h-[calc(100dvh-1rem)]"
+              // thread pane too much, so the sheet takes all but a 0.5rem
+              // sliver (T3O-51): the negative margin reaches halfway into the
+              // dialog viewport's 1rem padding. `sm:` leaves the phone bottom
+              // sheet alone.
+              "h-[86vh] max-h-[86vh] w-[min(1220px,100%)] max-w-[1220px] sm:[@media(max-height:999.98px)]:-my-2 sm:[@media(max-height:999.98px)]:h-[calc(100dvh-1rem)] sm:[@media(max-height:999.98px)]:max-h-[calc(100dvh-1rem)]"
             : "max-h-[86vh] w-[min(760px,100%)] max-w-[760px]",
       )}
-      // The sliver itself: the viewport's 1rem padding halves to 0.5rem.
-      viewportClassName={wide && !maximised ? "sm:[@media(max-height:999.98px)]:py-2" : ""}
       ref={setSheet}
       showCloseButton={false}
       {...(cardId === null ? {} : { "data-board-card-detail": cardId })}

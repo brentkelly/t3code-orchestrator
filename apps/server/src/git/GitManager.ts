@@ -2,6 +2,7 @@ import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as ByteSize from "effect/ByteSize";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -31,6 +32,7 @@ import {
   ModelSelection,
   type ProjectId,
   SourceControlProviderError,
+  type SourceControlProviderKind,
   type SourceControlWritingStyleSettings,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -143,6 +145,12 @@ const STATUS_RESULT_CACHE_CAPACITY = 2_048;
 // exponentially via prLookupFailureTtl, so throttling pressure still drops
 // under 429s instead of amplifying it.
 const PR_LOOKUP_CACHE_TTL = Duration.seconds(60);
+// Answers without an open PR ("no PR yet", merged, closed) only change when
+// someone opens a PR, and the paths that do that in-app (turn end, push,
+// create PR, user refresh) bypass this cache. Re-asking every minute for each
+// idle branch was the bulk of background GitHub quota use, so these wait out
+// a longer TTL and a PR opened outside the app shows up within minutes.
+const PR_LOOKUP_NO_OPEN_PR_CACHE_TTL = Duration.minutes(5);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
@@ -595,6 +603,26 @@ function parseCustomCommitMessage(raw: string): { subject: string; body: string 
   };
 }
 
+// Without the owner selector, a bare branch name also lists same-named
+// branches on other forks (`main`, `patch-1`), so GitHub probes ask for a full
+// page and let matchesBranchHeadContext pick the right head. gh fetches up to
+// 100 in one request, and GitHub prices a first:100 connection like first:1.
+const GITHUB_HEAD_BRANCH_PROBE_LIMIT = 100;
+
+// `gh pr list --head` filters on the head ref name alone and accepts anything, so an
+// `owner:branch` or `remote:branch` selector silently lists zero pull requests
+// while spending a GraphQL call. Git branch names cannot contain ":", and the
+// bare head branch is always among the selectors, so GitHub probes skip them and
+// leave the owner check to matchesBranchHeadContext.
+function probeableHeadSelectors(
+  providerKind: SourceControlProviderKind,
+  headSelectors: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  return providerKind === "github"
+    ? headSelectors.filter((selector) => !selector.includes(":"))
+    : headSelectors;
+}
+
 function appendUnique(values: string[], next: string | null | undefined): void {
   const trimmed = next?.trim() ?? "";
   if (trimmed.length === 0 || values.includes(trimmed)) {
@@ -715,7 +743,7 @@ export const make = Effect.gen(function* () {
         return "";
       }
       const info = yield* fileSystem.stat(instructionPath);
-      if (info.type !== "File" || info.size > FileSystem.Size(20_000)) {
+      if (info.type !== "File" || info.size > ByteSize.bytes(20_000)) {
         return "";
       }
       return (yield* fileSystem.readFileString(instructionPath)).trim();
@@ -1117,11 +1145,13 @@ export const make = Effect.gen(function* () {
           // The TTL exists to ration hosting-provider API calls, and a skip
           // spends none — it is a statement about local git state that a single
           // `git push` falsifies. Holding one for the full TTL means a branch
-          // pushed moments after its last lookup reads as "no pull request" for
-          // two minutes, which is long enough for every trigger a card has to
-          // fire and record nothing. Re-running it costs a handful of local
-          // ref reads; a published branch still caches for the full TTL.
-          return exit.value.askedForge ? PR_LOOKUP_CACHE_TTL : Duration.zero;
+          // pushed moments after its last lookup reads as "no pull request"
+          // long enough for every trigger a card has to fire and record
+          // nothing. Re-running it costs a handful of local ref reads.
+          if (!exit.value.askedForge) return Duration.zero;
+          return exit.value.latest?.state === "open"
+            ? PR_LOOKUP_CACHE_TTL
+            : PR_LOOKUP_NO_OPEN_PR_CACHE_TTL;
         }
         return nextPrLookupFailureTtl(key);
       },
@@ -1612,12 +1642,14 @@ export const make = Effect.gen(function* () {
       | "isCrossRepository"
     >,
   ) {
-    for (const headSelector of headContext.headSelectors) {
-      const pullRequests = yield* (yield* sourceControlProvider(cwd)).listChangeRequests({
+    const provider = yield* sourceControlProvider(cwd);
+    const headSelectors = probeableHeadSelectors(provider.kind, headContext.headSelectors);
+    for (const headSelector of headSelectors) {
+      const pullRequests = yield* provider.listChangeRequests({
         cwd,
         headSelector,
         state: "open",
-        limit: 1,
+        limit: provider.kind === "github" ? GITHUB_HEAD_BRANCH_PROBE_LIMIT : 1,
       });
       const normalizedPullRequests = pullRequests.map(toPullRequestInfo);
 
@@ -1642,12 +1674,13 @@ export const make = Effect.gen(function* () {
   ) {
     const parsedByNumber = new Map<number, PullRequestInfo>();
 
-    for (const headSelector of headContext.headSelectors) {
-      const pullRequests = yield* (yield* sourceControlProvider(cwd)).listChangeRequests({
+    const provider = yield* sourceControlProvider(cwd);
+    for (const headSelector of probeableHeadSelectors(provider.kind, headContext.headSelectors)) {
+      const pullRequests = yield* provider.listChangeRequests({
         cwd,
         headSelector,
         state: "all",
-        limit: 20,
+        limit: provider.kind === "github" ? GITHUB_HEAD_BRANCH_PROBE_LIMIT : 20,
       });
 
       for (const pr of pullRequests.map(toPullRequestInfo)) {
@@ -2082,7 +2115,7 @@ export const make = Effect.gen(function* () {
         title: generated.title,
         bodyFile,
       })
-      .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))));
+      .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.ignore)));
 
     const created = yield* findOpenPr(cwd, headContext);
     if (!created) {
@@ -2560,11 +2593,20 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const worktree = yield* gitCore.createWorktree({
-        cwd: input.cwd,
-        refName: localPullRequestBranch,
-        path: null,
-      });
+      const worktree = yield* gitCore.createWorktree(
+        {
+          cwd: input.cwd,
+          refName: localPullRequestBranch,
+          path: null,
+        },
+        {
+          // Best effort: a settings read failure falls back to the checkout's t3.json.
+          submodules: yield* projectSettingsFor(input).pipe(
+            Effect.map((settings) => settings.worktreeSubmodules),
+            Effect.orElseSucceed(() => null),
+          ),
+        },
+      );
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);
 

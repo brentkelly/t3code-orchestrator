@@ -33,8 +33,6 @@ import {
   FileTextIcon,
   CloudOffIcon,
   GitBranchIcon,
-  GitMergeIcon,
-  GitPullRequestIcon,
   HardDriveIcon,
   HourglassIcon,
   LayersIcon,
@@ -48,6 +46,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
+import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "../lib/utils";
@@ -122,9 +121,9 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <TriangleAlertIcon className={cn(className, "text-destructive-foreground")} />;
     case "card-pull-request-linked":
     case "card-pull-request-state-changed":
-      return <GitPullRequestIcon className={className} />;
+      return <PullRequestGlyph.pullRequest className={className} />;
     case "card-pull-request-merged":
-      return <GitMergeIcon className={className} />;
+      return <PullRequestGlyph.merged className={className} />;
     case "card-branch-deleted":
       return <ScissorsIcon className={className} />;
     case "card-branch-kept":
@@ -136,7 +135,7 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
     // A stale base is a merge that cannot proceed, so it wears the blocked
     // amber rather than the blue that now means "running".
     case "card-base-stale":
-      return <GitPullRequestIcon className={cn(className, "text-warning-foreground")} />;
+      return <PullRequestGlyph.pullRequest className={cn(className, "text-warning-foreground")} />;
     // A round somebody asked for is work about to run, not work that stopped,
     // so it stays neutral: the round itself will wear the running blue on the
     // card face.
@@ -144,7 +143,7 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <RotateCcwIcon className={className} />;
     // CI starting is work about to run, not a verdict, so it stays neutral.
     case "card-pull-request-ready":
-      return <GitPullRequestIcon className={className} />;
+      return <PullRequestGlyph.pullRequest className={className} />;
     // T3O-52: a kept worktree is a cleanup that is blocked — amber; a removal
     // is disk given back, which claims nothing and stays neutral.
     case "card-worktree-kept":

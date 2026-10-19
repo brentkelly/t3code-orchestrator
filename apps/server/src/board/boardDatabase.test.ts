@@ -85,7 +85,7 @@ describe("board database", () => {
 
       const databases = yield* sql<{ readonly name: string }>`PRAGMA database_list`;
       assert.strictEqual(databases.filter((db) => db.name === "boards").length, 1);
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect("moves a legacy layout's tables, indexes, rows and ledger into the board file", () =>
@@ -128,7 +128,7 @@ describe("board database", () => {
         sql`INSERT INTO boards.board_cards VALUES ('card-1', 'proj', 'Duplicate')`,
       );
       assert.strictEqual(duplicate._tag, "Failure");
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect("is a no-op when there is nothing to relocate", () =>
@@ -138,7 +138,7 @@ describe("board database", () => {
       yield* relocateBoardSchema();
 
       assert.deepStrictEqual(yield* tableNames("boards"), []);
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
   // Finding-driven: a relocation that dies partway used to leave a table already
   // created in `boards` while `main` still held the rest, and the retry died on
@@ -178,7 +178,7 @@ describe("board database", () => {
         cards.map((row) => row.title),
         ["Kept", "Also kept"],
       );
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   // `DROP TABLE` takes a table's triggers with it, so anything defined on a board
@@ -201,7 +201,7 @@ describe("board database", () => {
         triggers.map((row) => row.name),
         ["board_cards_touch"],
       );
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
   // An older build, which knows nothing of boards.sqlite, recreates the board
   // schema in main from scratch and the user works in it. Upgrading again then
@@ -246,7 +246,7 @@ describe("board database", () => {
         inMain.map((row) => row.title),
         ["Kept", "Also kept"],
       );
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
   // The legacy 900+ reconciler seeds the ledger in main just before relocation,
   // and in its test harness the board tables are already in boards. That state —
@@ -281,7 +281,7 @@ describe("board database", () => {
         cards.map((row) => row.title),
         ["Already here"],
       );
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
   // A data-destroying gate must fail closed: two EMPTY ledgers differ by zero
   // rows via EXCEPT, which would otherwise read as a "proven copy" and let the
@@ -326,6 +326,6 @@ describe("board database", () => {
         ),
         ["Boards"],
       );
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });

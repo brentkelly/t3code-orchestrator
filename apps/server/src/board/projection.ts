@@ -4092,7 +4092,10 @@ export function boardSnapshotQueryMethods(
     getCommandReadModel: () => withBoardReadModel(queries, base.getCommandReadModel()),
     // Bounded card shells + the label catalogue ride the shell snapshot
     // (D2/D7; catalogue once, t3o-06a).
-    getShellSnapshot: () =>
+    // Options pass through: upstream's background sweeps read only unsettled
+    // threads (`unsettledOnly`, v0.0.45), and dropping it here would turn every
+    // sweep back into a full read (T3O-54).
+    getShellSnapshot: (options) =>
       isolated(
         "shell snapshot",
         // t3o-18: the card->thread + todo array is the outermost enricher, so a
@@ -4108,12 +4111,12 @@ export function boardSnapshotQueryMethods(
               // it was not connected for.
               withBoardShellProviderLimits(
                 queries,
-                withBoardShellCards(queries, base.getShellSnapshot()),
+                withBoardShellCards(queries, base.getShellSnapshot(options)),
               ),
             ),
           ),
         ),
-        base.getShellSnapshot(),
+        base.getShellSnapshot(options),
       ),
     // Archived cards ride the archive page's snapshot (t3o-13, D7), with the
     // catalogue so their label chips render like any other card's.

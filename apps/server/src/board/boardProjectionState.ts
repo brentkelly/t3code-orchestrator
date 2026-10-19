@@ -19,10 +19,8 @@
  * atomically. Upstream projectors are untouched and still read and write
  * `main.projection_state`.
  *
- * Reads that span all projectors (`listAll`, `minLastAppliedSequence`) union the
- * two tables, so callers still see one logical set of watermarks.
+ * `listAll` unions the two tables, so callers still see one logical set of watermarks.
  */
-import { NonNegativeInt } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -60,10 +58,6 @@ export const isBoardProjectorName = (projector: string): boolean =>
  * the prefix contains none.)
  */
 const BOARD_PROJECTOR_NAME_LIKE = `${BOARD_PROJECTOR_NAME_PREFIX}%`;
-
-const MinRowSchema = Schema.Struct({
-  minLastAppliedSequence: Schema.NullOr(NonNegativeInt),
-});
 
 const makeBoardAwareProjectionStateRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -115,19 +109,6 @@ const makeBoardAwareProjectionStateRepository = Effect.gen(function* () {
       UNION ALL
       SELECT projector, last_applied_sequence AS "lastAppliedSequence", updated_at AS "updatedAt"
       FROM boards.projection_state WHERE projector = ${projector}
-    `,
-  });
-
-  const selectMin = SqlSchema.findOne({
-    Request: Schema.Void,
-    Result: MinRowSchema,
-    execute: () => sql`
-      SELECT MIN(last_applied_sequence) AS "minLastAppliedSequence" FROM (
-        SELECT last_applied_sequence FROM main.projection_state
-        WHERE projector NOT LIKE ${BOARD_PROJECTOR_NAME_LIKE}
-        UNION ALL
-        SELECT last_applied_sequence FROM boards.projection_state
-      )
     `,
   });
 
@@ -195,20 +176,11 @@ const makeBoardAwareProjectionStateRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionStateRepository.listAll:query")),
     );
 
-  const minLastAppliedSequence: ProjectionStateRepositoryShape["minLastAppliedSequence"] = () =>
-    selectMin(undefined).pipe(
-      Effect.mapError(
-        toPersistenceSqlError("ProjectionStateRepository.minLastAppliedSequence:query"),
-      ),
-      Effect.map((row) => row.minLastAppliedSequence),
-    );
-
   return {
     upsert,
     upsertMany,
     getByProjector,
     listAll,
-    minLastAppliedSequence,
   } satisfies ProjectionStateRepositoryShape;
 });
 

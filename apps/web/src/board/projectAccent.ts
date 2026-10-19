@@ -188,7 +188,7 @@ export function projectIconColorOf(
   project: { readonly projectIcon?: ProjectIconOverride | null | undefined } | null | undefined,
 ): ProjectIconColor | null {
   const icon = project?.projectIcon;
-  return icon?.kind === "lucide" ? icon.color : null;
+  return icon?.kind === "lucide" || icon?.kind === "monogram" ? icon.color : null;
 }
 
 /**

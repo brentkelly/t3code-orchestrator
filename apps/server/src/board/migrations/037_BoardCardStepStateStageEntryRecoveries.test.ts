@@ -71,7 +71,7 @@ it.effect("a step-state row written before 037 reads a recovery total of 0", () 
     // falsely escalated the moment the server restarts.
     assert.strictEqual(rows[0]?.attempt, 45);
     assert.strictEqual(rows[0]?.stage_entry_recoveries, 0);
-  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
 it.effect("a row written after 037 without the column still defaults to 0", () =>
@@ -97,5 +97,5 @@ it.effect("a row written after 037 without the column still defaults to 0", () =
       SELECT stage_entry_recoveries FROM board_card_step_state WHERE card_id = 'card-2'
     `;
     assert.strictEqual(rows[0]?.stage_entry_recoveries, 0);
-  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );

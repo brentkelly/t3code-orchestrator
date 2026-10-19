@@ -16,6 +16,7 @@ import {
   OrchestrationEventType,
   ProjectId,
   ProviderInstanceId,
+  ProjectIconOverride,
   ThreadId,
 } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -36,6 +37,7 @@ import {
   type OrchestrationEventStoreShape,
 } from "../Services/OrchestrationEventStore.ts";
 
+const encodeProjectIcon = Schema.encodeSync(ProjectIconOverride);
 const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 
 /**
@@ -355,7 +357,10 @@ const makeEventStore = Effect.gen(function* () {
       actorKind: inferActorKind(event),
       occurredAt: event.occurredAt,
       commandId: event.commandId,
-      payloadJson: event.payload,
+      payloadJson:
+        "projectIcon" in event.payload && event.payload.projectIcon
+          ? { ...event.payload, projectIcon: encodeProjectIcon(event.payload.projectIcon) }
+          : event.payload,
       metadataJson: event.metadata,
     }).pipe(
       Effect.mapError(
