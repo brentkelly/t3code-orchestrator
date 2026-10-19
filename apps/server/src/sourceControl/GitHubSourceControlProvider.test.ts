@@ -179,6 +179,8 @@ it.effect("lists change request history through the batched head lookup", () =>
       state: "all",
       limit: 10,
       rateLimitHost: "enterprise.test",
+      // T3o: the origin repository rides along (T3O-48).
+      repository: { host: "enterprise.test", nameWithOwner: "acme/web" },
     });
     assert.strictEqual(changeRequests[0]?.provider, "github");
     assert.strictEqual(changeRequests[0]?.state, "merged");
@@ -522,14 +524,15 @@ it.effect("passes the origin repository into every pull request lookup", () =>
   }),
 );
 
-it.effect("names the origin repository on a non-open list, which builds its own args", () =>
+it.effect("names the origin repository on a non-open list", () =>
   Effect.gen(function* () {
-    const seen: Array<ReadonlyArray<string>> = [];
+    const seen: Array<unknown> = [];
     const provider = yield* makeProvider({
-      execute: (input) => {
-        seen.push(input.args);
-        return Effect.succeed(processResult("[]"));
-      },
+      listPullRequestsByHead: (input) =>
+        Effect.sync(() => {
+          seen.push(input.repository);
+          return [];
+        }),
     });
 
     yield* provider.listChangeRequests({
@@ -539,11 +542,8 @@ it.effect("names the origin repository on a non-open list, which builds its own 
       state: "all",
     });
 
-    assert.deepStrictEqual(seen[0]?.slice(0, 4), [
-      "pr",
-      "list",
-      "--repo",
-      "github.com/brentkelly/t3code-orchestrator",
+    assert.deepStrictEqual(seen, [
+      { host: "github.com", nameWithOwner: "brentkelly/t3code-orchestrator" },
     ]);
   }),
 );

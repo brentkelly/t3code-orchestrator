@@ -354,6 +354,115 @@ describe("GitHubCli.listPullRequestsByHead", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  // T3o (T3O-48, T3O-54): gh's base-repository rule prefers a remote named `upstream`, so in a
+  // fork the batch would ask the parent. A pinned origin replaces that guess.
+  const forkRemotes =
+    "origin\tgit@github.com:brentkelly/t3code-orchestrator.git (fetch)\n" +
+    "upstream\tgit@github.com:pingdotgg/t3code.git (fetch)\n";
+  const origin = { host: "github.com", nameWithOwner: "brentkelly/t3code-orchestrator" };
+
+  it.effect("asks the pinned origin repository in the batched document", () =>
+    Effect.gen(function* () {
+      const documents: Array<{ query: string; variables: Record<string, unknown> }> = [];
+      mockRun.mockImplementation((input) =>
+        Effect.sync(() => {
+          if (input.command === "git") return processOutput(forkRemotes);
+          documents.push(decodeRequest(input.stdin ?? ""));
+          return jsonOutput({ data: { repository: { h0: { nodes: [] } } } });
+        }),
+      );
+      const gh = yield* GitHubCli.GitHubCli;
+      const lookup = yield* gh
+        .listPullRequestsByHead({
+          cwd: "/repo",
+          headSelector: "board/t3o-54",
+          state: "all",
+          limit: 20,
+          rateLimitHost: "github.com",
+          repository: origin,
+        })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("50 millis");
+      assert.deepStrictEqual(yield* Fiber.join(lookup), []);
+      assert.strictEqual(documents.length, 1);
+      assert.strictEqual(documents[0]!.variables.owner, "brentkelly");
+      assert.strictEqual(documents[0]!.variables.name, "t3code-orchestrator");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("names the pinned origin when the batch leaves a head to gh", () =>
+    Effect.gen(function* () {
+      const commands: Array<ReadonlyArray<string>> = [];
+      mockRun.mockImplementation((input) =>
+        Effect.sync(() => {
+          commands.push([input.command, ...input.args]);
+          if (input.command === "git") return processOutput(forkRemotes);
+          return input.args[0] === "api"
+            ? jsonOutput({ data: { repository: { h0: null } } })
+            : jsonOutput([]);
+        }),
+      );
+      const gh = yield* GitHubCli.GitHubCli;
+      const lookup = yield* gh
+        .listPullRequestsByHead({
+          cwd: "/repo",
+          headSelector: "board/t3o-54",
+          state: "all",
+          limit: 20,
+          rateLimitHost: "github.com",
+          repository: origin,
+        })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("50 millis");
+      yield* Fiber.join(lookup);
+      assert.deepStrictEqual(commands.at(-1)?.slice(0, 5), [
+        "gh",
+        "pr",
+        "list",
+        "--repo",
+        "github.com/brentkelly/t3code-orchestrator",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps a pinned repository on another host on gh, still named", () =>
+    Effect.gen(function* () {
+      const commands: Array<ReadonlyArray<string>> = [];
+      mockRun.mockImplementation((input) =>
+        Effect.sync(() => {
+          commands.push([input.command, ...input.args]);
+          return input.command === "git" ? processOutput(forkRemotes) : jsonOutput([]);
+        }),
+      );
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.listPullRequestsByHead({
+        cwd: "/repo",
+        headSelector: "board/t3o-54",
+        state: "all",
+        limit: 20,
+        rateLimitHost: "github.com",
+        repository: { host: "ghe.example.com", nameWithOwner: "acme/web" },
+      });
+      assert.deepStrictEqual(commands, [
+        [
+          "gh",
+          "pr",
+          "list",
+          "--repo",
+          "ghe.example.com/acme/web",
+          "--head",
+          "board/t3o-54",
+          "--state",
+          "all",
+          "--limit",
+          "20",
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+        ],
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("fails a rate-limited document whole instead of asking head by head", () =>
     Effect.gen(function* () {
       let ghCalls = 0;
