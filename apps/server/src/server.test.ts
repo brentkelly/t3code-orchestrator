@@ -160,6 +160,7 @@ import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import { SupervisorReactor } from "./board/supervisorReactor.ts";
+import { WorktreeRetirer } from "./board/worktreeRetire.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -939,6 +940,13 @@ const buildAppUnderTest = (options?: {
           Layer.mock(SupervisorReactor)({
             refreshPullRequest: () => Effect.succeed({ outcome: "none" as const }),
             mergePullRequest: () => Effect.succeed({ outcome: "no-pull-request" as const }),
+          }),
+          // T3o: T3O-23 — retirement passes straight through to the stock removal.
+          Layer.mock(WorktreeRetirer)({
+            retire: (input) =>
+              (input.remove ?? Effect.void).pipe(
+                Effect.as({ outcome: "removed" as const, hookWarning: null }),
+              ),
           }),
         ),
       ),

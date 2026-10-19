@@ -155,7 +155,12 @@ export function resolveProjectScriptTerminalId(input: {
 }
 
 export function projectScriptMenuLabel(script: ProjectScript): string {
-  return script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name;
+  // T3o: T3O-23 — remove scripts read (teardown), alongside setup.
+  const roles = [
+    ...(script.runOnWorktreeCreate ? ["setup"] : []),
+    ...(script.runOnWorktreeRemove === true ? ["teardown"] : []),
+  ];
+  return roles.length === 0 ? script.name : `${script.name} (${roles.join(", ")})`;
 }
 
 export function projectScriptMenuIcon(icon: ProjectScript["icon"]) {

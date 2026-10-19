@@ -42,10 +42,17 @@ export const T3ProjectFileScript = Schema.Struct({
         "When true, the script runs automatically after a worktree is created for a new thread.",
     }),
   ),
+  // T3o: T3O-23 — the counterpart to runOnWorktreeCreate, run as a worktree is retired.
+  runOnWorktreeRemove: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "When true, the script runs in a worktree just before T3 Code removes it, after every process T3 Code can see in it has been stopped. Removal waits for the script (up to 5 minutes); a failure is logged and does not stop the removal. Stopping containers started from the worktree is the script's job.",
+    }),
+  ),
   async: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:
-        "Only for runOnWorktreeCreate scripts. When true (the default), the agent starts while the script is still running. Set false to hold the agent until the script exits.",
+        "Only for runOnWorktreeCreate scripts; it has no effect on runOnWorktreeRemove. When true (the default), the agent starts while the script is still running. Set false to hold the agent until the script exits.",
     }),
   ),
   previewUrl: Schema.optionalKey(

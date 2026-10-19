@@ -12,6 +12,8 @@ export interface ProjectScriptInput {
   readonly command: ProjectScript["command"];
   readonly icon: ProjectScript["icon"];
   readonly runOnWorktreeCreate: ProjectScript["runOnWorktreeCreate"];
+  // T3o: T3O-23 — run just before the worktree is removed.
+  readonly runOnWorktreeRemove?: boolean;
   readonly waitForSetup: boolean;
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
   readonly autoOpenPreview: boolean;
@@ -25,6 +27,8 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
     icon: input.icon,
     runOnWorktreeCreate: input.runOnWorktreeCreate,
     ...(input.runOnWorktreeCreate && input.waitForSetup ? { async: false } : {}),
+    // T3o: T3O-23 — only stored when set, so existing scripts keep their shape.
+    ...(input.runOnWorktreeRemove ? { runOnWorktreeRemove: true } : {}),
     ...(input.previewUrl === null
       ? {}
       : {
@@ -87,6 +91,9 @@ export function nextProjectScriptId(name: string, existingIds: Iterable<string>)
 }
 
 export function primaryProjectScript(scripts: ReadonlyArray<ProjectScript>): ProjectScript | null {
-  const regular = scripts.find((script) => !script.runOnWorktreeCreate);
-  return regular ?? scripts[0] ?? null;
+  // T3o: T3O-23 — a remove script is teardown, never the main run button.
+  const regular = scripts.find(
+    (script) => !script.runOnWorktreeCreate && script.runOnWorktreeRemove !== true,
+  );
+  return regular ?? scripts.find((script) => script.runOnWorktreeRemove !== true) ?? null;
 }

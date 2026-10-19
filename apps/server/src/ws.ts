@@ -112,6 +112,8 @@ import { boardShellStreamEvent, isBoardEvent } from "./board/projector.ts";
 // the card-threads shell delta live beside them (t3o-18, D3/D11).
 import { boardActorStamp, boardCardThreadsShellEvents, boardRpcHandlers } from "./board/rpc.ts";
 import { SupervisorReactor } from "./board/supervisorReactor.ts";
+// T3o: T3O-23 — thread-delete worktree removal stops processes and runs remove scripts first.
+import { retireRemovedThreadWorktree, WorktreeRetirer } from "./board/worktreeRetire.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
@@ -567,6 +569,8 @@ const makeWsRpcLayer = (
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      // T3o: T3O-23 — see vcsRemoveWorktree.
+      const worktreeRetirer = yield* WorktreeRetirer;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -3317,7 +3321,13 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRemoveWorktree,
-            gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            // T3o: T3O-23 — retire (stop, remove scripts) before the stock removal.
+            retireRemovedThreadWorktree(
+              worktreeRetirer,
+              input,
+              gitWorkflow.removeWorktree(input),
+              refreshGitStatus(input.cwd),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>

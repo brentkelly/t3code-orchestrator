@@ -38,6 +38,12 @@ export function ProjectActionsList({
                 setup
               </span>
             ) : null}
+            {/* T3o: T3O-23 — a remove script's badge, beside setup's. */}
+            {script.runOnWorktreeRemove === true ? (
+              <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground">
+                teardown
+              </span>
+            ) : null}
             {script.previewUrl ? (
               <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground max-sm:hidden">
                 preview · desktop only

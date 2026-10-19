@@ -189,6 +189,7 @@ import {
 } from "./boardMergeState.ts";
 import { probeLocalMergeConflict } from "./localMergeConflict.ts";
 import { stageExecutorForRole } from "./stageExecutor.ts";
+import { WorktreeRetirer } from "./worktreeRetire.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
@@ -520,6 +521,8 @@ const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const pullRequests = yield* BoardPullRequestGateway;
   const setupRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  // T3O-23: every removal stops the worktree's processes and runs its remove scripts first.
+  const retirer = yield* WorktreeRetirer;
   // The activation boundary the boot reconcile waits on (t3o-10, D3). Captured
   // at CONSTRUCTION, where the reference is in scope (`activationLayer` is
   // provided to the runtime services layer), because `reconcile` itself runs on
@@ -4728,6 +4731,7 @@ const make = Effect.gen(function* () {
     ).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, git),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(WorktreeRetirer, retirer),
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: worktree reclaim failed", {
           cardId: card.id,
@@ -4740,6 +4744,7 @@ const make = Effect.gen(function* () {
     // Abandoned: the card was no longer finished by the time the probe ended.
     if (reclaimed === null) return null;
     const { outcome, reason } = reclaimed;
+    const hookWarning = reclaimed.outcome === "removed" ? (reclaimed.hookWarning ?? null) : null;
     const attempt: BoardCardReclaimAttempt =
       outcome === "removed" ? { outcome: "removed" } : { outcome: "kept", reason };
     if (outcome === "blocked" && reason === worktree.reclaimBlockedReason) return attempt;
@@ -4752,6 +4757,7 @@ const make = Effect.gen(function* () {
       cardId: card.id,
       outcome,
       ...(reason === null ? {} : { reason }),
+      ...(hookWarning === null ? {} : { hookWarning }),
       createdAt: yield* nowIso,
     });
     return attempt;
@@ -5006,6 +5012,7 @@ const make = Effect.gen(function* () {
         ).pipe(
           Effect.provideService(GitVcsDriver.GitVcsDriver, git),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(WorktreeRetirer, retirer),
           Effect.catchCause((cause) =>
             Effect.logWarning("board supervisor: orphan worktree check failed", {
               path: registered.path,
@@ -5095,6 +5102,55 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * A deleted card's checkout (T3O-23): retire it — forced, as the human
+   * confirmed the delete — then delete its branch, which git refuses while a
+   * worktree still has it checked out. Queued rather than run in the delete
+   * handler because the remove scripts can take minutes; the card is gone
+   * already, so a script failure has no rail to land on and is only logged.
+   */
+  const retireDeletedCardWorktree = Effect.fn("board-supervisor-retireDeletedCardWorktree")(
+    function* (request: {
+      readonly cardId: BoardCardId;
+      readonly projectCwd: string;
+      readonly worktreePath: string | null;
+      readonly branch: string;
+    }) {
+      if (request.worktreePath !== null) {
+        const { hookWarning } = yield* forceRemoveBoardCardWorktree({
+          projectCwd: request.projectCwd,
+          worktreePath: request.worktreePath,
+        }).pipe(
+          Effect.provideService(WorktreeRetirer, retirer),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board supervisor: worktree removal on card delete failed", {
+              cardId: request.cardId,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.as({ hookWarning: null })),
+          ),
+        );
+        if (hookWarning !== null) {
+          yield* Effect.logWarning("board supervisor: remove script failed on card delete", {
+            cardId: request.cardId,
+            hookWarning,
+          });
+        }
+      }
+      // Attempted whatever the worktree's state — a card can carry a branch
+      // whose worktree was already reclaimed (at an earlier archive, or at
+      // Done), and that branch is exactly the one nothing else will collect.
+      yield* deleteCardBranch({ git, cwd: request.projectCwd, branch: request.branch }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: branch cleanup on card delete failed", {
+            cardId: request.cardId,
+            branch: request.branch,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+    },
+  );
+
+  /**
    * Per-card cleanup the reactor's own worker asks for (T3O-52): the settle on
    * a move into Done, and the reclaim on archive. Both probe the remote before
    * removing anything, so they run here rather than inline — a slow or
@@ -5108,13 +5164,32 @@ const make = Effect.gen(function* () {
         | { readonly kind: "settle"; readonly card: BoardCard }
         | { readonly kind: "reclaim"; readonly cardId: BoardCardId },
     ) =>
-      (request.kind === "settle"
-        ? settleCardAtDone(request.card)
-        : Effect.flatMap(readCard(request.cardId), (card) =>
-            card === null ? Effect.succeed(null) : reclaimCardWorktree(card),
-          )
-      ).pipe(
-        Effect.asVoid,
+      Effect.gen(function* () {
+        if (request.kind === "settle") {
+          yield* settleCardAtDone(request.card);
+          return;
+        }
+        const card = yield* readCard(request.cardId);
+        if (card !== null) yield* reclaimCardWorktree(card);
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("board supervisor: card worktree cleanup failed", {
+                cause: Cause.pretty(cause),
+              }),
+        ),
+      ),
+  );
+
+  /**
+   * Deleted cards' retirements (T3O-23), on a worker of their own: each runs
+   * the remove scripts, minutes apiece at worst, and a Done settle or archive
+   * reclaim queued behind one would wait that long for no reason.
+   */
+  const cardRetireWorker = yield* makeDrainableWorker(
+    (request: Parameters<typeof retireDeletedCardWorktree>[0]) =>
+      retireDeletedCardWorktree(request).pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.failCause(cause)
@@ -5186,15 +5261,17 @@ const make = Effect.gen(function* () {
       });
       return { outcome: "failed" } as const;
     }
-    yield* forceRemoveBoardCardWorktree({ projectCwd: cwd, worktreePath: worktree.path }).pipe(
-      Effect.provideService(GitVcsDriver.GitVcsDriver, git),
-    );
+    const { hookWarning } = yield* forceRemoveBoardCardWorktree({
+      projectCwd: cwd,
+      worktreePath: worktree.path,
+    }).pipe(Effect.provideService(WorktreeRetirer, retirer));
     yield* dispatchOptional({
       type: "board.card.reclaim-worktree",
       commandId: yield* commandId("force-reclaim-worktree"),
       cardId: card.id,
       outcome: "removed",
       forced: true,
+      ...(hookWarning === null ? {} : { hookWarning }),
       createdAt: yield* nowIso,
     });
     return { outcome: "removed" } as const;
@@ -7376,32 +7453,21 @@ const make = Effect.gen(function* () {
       const model = yield* snapshotQuery.getCommandReadModel();
       const cwd = projectCwd(model, card);
       if (cwd !== null) {
-        if (worktree.status === "ready" && worktree.path !== null) {
-          yield* forceRemoveBoardCardWorktree({
-            projectCwd: cwd,
-            worktreePath: worktree.path,
-          }).pipe(
-            Effect.provideService(GitVcsDriver.GitVcsDriver, git),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("board supervisor: worktree removal on card delete failed", {
-                cardId: card.id,
-                cause: Cause.pretty(cause),
-              }),
-            ),
-          );
-        }
-        // Attempted whatever the worktree's state — a card can carry a branch
-        // whose worktree was already reclaimed (at an earlier archive, or at
-        // Done), and that branch is exactly the one nothing else will collect.
-        yield* deleteCardBranch({ git, cwd, branch: worktree.branch }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("board supervisor: branch cleanup on card delete failed", {
-              cardId: card.id,
-              branch: worktree.branch,
-              cause: Cause.pretty(cause),
-            }),
-          ),
-        );
+        // T3O-23: retiring runs the remove scripts, which can take minutes, so
+        // it goes to its own worker and the delete handler moves on. The queue
+        // is in memory: a restart before it runs leaves the branch behind, so
+        // the log names it for whoever finds it.
+        yield* Effect.logInfo("board: deleted card's worktree and branch queued for cleanup", {
+          cardId: card.id,
+          branch: worktree.branch,
+          worktreePath: worktree.path,
+        });
+        yield* cardRetireWorker.enqueue({
+          cardId: card.id,
+          projectCwd: cwd,
+          worktreePath: worktree.status === "ready" ? worktree.path : null,
+          branch: worktree.branch,
+        });
       }
     }
 
@@ -8977,12 +9043,16 @@ const make = Effect.gen(function* () {
     fireProbes: sweepProviderLimits,
     fireAutoMerges: sweepAutoMergeHolds,
     releaseThreads: releaseFinishedThreads,
-    drain: Effect.andThen(worker.drain, cardCleanupWorker.drain),
+    drain: worker.drain.pipe(
+      Effect.andThen(cardCleanupWorker.drain),
+      Effect.andThen(cardRetireWorker.drain),
+    ),
     sweepWorktrees: requestWorktreeSweep,
     // The main worker first: boot reconcile and event handlers are what
     // request passes, so a pass may not be queued until they have run.
     drainWorktreeSweep: worker.drain.pipe(
       Effect.andThen(cardCleanupWorker.drain),
+      Effect.andThen(cardRetireWorker.drain),
       Effect.andThen(worktreeSweepWorker.drain),
     ),
     checkWorktree: (cardId) =>

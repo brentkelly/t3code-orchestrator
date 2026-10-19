@@ -15,6 +15,7 @@ import { shortcutLabelForCommand } from "~/keybindings";
 import {
   EMPTY_PROJECT_SCRIPT_INPUT,
   editorRequestForScript,
+  newProjectScriptInputFromFile,
   ProjectScriptEditorDialog,
   ScriptIcon,
   type NewProjectScriptInput,
@@ -108,16 +109,8 @@ export default function ProjectScriptsControl({
   );
 
   const importFileScript = async (fileScript: T3ProjectFileScript) => {
-    const payload: NewProjectScriptInput = {
-      name: fileScript.name,
-      command: fileScript.command,
-      icon: fileScript.icon ?? "play",
-      runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
-      waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
-      keybinding: null,
-      previewUrl: fileScript.previewUrl ?? null,
-      autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
-    };
+    // T3o: T3O-23 — shared with Settings → Project actions so no field is dropped.
+    const payload: NewProjectScriptInput = newProjectScriptInputFromFile(fileScript);
     const result = await onAddScript(payload);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       // Surface the failure through the regular add dialog, prefilled so the
@@ -204,7 +197,14 @@ export default function ProjectScriptsControl({
                   >
                     <ScriptIcon icon={script.icon} className="size-4" />
                     <span className="truncate">
-                      {script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name}
+                      {/* T3o: T3O-23 — remove scripts read (teardown), alongside setup. */}
+                      {script.runOnWorktreeCreate && script.runOnWorktreeRemove === true
+                        ? `${script.name} (setup, teardown)`
+                        : script.runOnWorktreeCreate
+                          ? `${script.name} (setup)`
+                          : script.runOnWorktreeRemove === true
+                            ? `${script.name} (teardown)`
+                            : script.name}
                     </span>
                     <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end">
                       {shortcutLabel && (

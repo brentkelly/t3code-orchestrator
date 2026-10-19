@@ -2893,7 +2893,12 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
             event,
             cardId: event.payload.cardId,
             kind: "card-worktree-removed",
-            payload: event.payload.forced ? { forced: true } : {},
+            payload: {
+              ...(event.payload.forced ? { forced: true } : {}),
+              ...(event.payload.hookWarning === undefined
+                ? {}
+                : { hookWarning: event.payload.hookWarning }),
+            },
             threadId: null,
           });
         } else if (event.payload.reasonChanged && event.payload.reason !== null) {

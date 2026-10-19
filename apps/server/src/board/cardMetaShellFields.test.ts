@@ -947,6 +947,8 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
             cardId,
             outcome: "removed",
             forced: true,
+            // T3O-23: the remove script failed, and the removal went ahead.
+            hookWarning: 'Remove script "park" exited with code 1',
             createdAt,
           });
           const gone = cardsOf(yield* snapshotQuery.getArchivedShellSnapshot()).find(
@@ -966,6 +968,10 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
           const removed = activity.filter((entry) => entry.kind === "card-worktree-removed");
           assert.strictEqual(removed.length, 1);
           assert.strictEqual(removed[0]?.payload.forced, true);
+          assert.strictEqual(
+            removed[0]?.payload.hookWarning,
+            'Remove script "park" exited with code 1',
+          );
         }),
     );
   },

@@ -89,6 +89,7 @@ import { SupervisorReactorLive } from "./board/supervisorReactor.ts";
 import { BoardStepSlotsLive } from "./board/BoardStepSlots.ts";
 import { UsageLimitDetectorLive } from "./board/UsageLimitDetector.ts";
 import { layer as BoardPullRequestGatewayLive } from "./board/BoardPullRequestGateway.ts";
+import { WorktreeRetirerLive } from "./board/worktreeRetire.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import * as ThreadPullRequestReactor from "./orchestration/ThreadPullRequestReactor.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
@@ -502,6 +503,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // service and the git manager that satisfy it, so the supervisor reactor
   // never depends on either whole surface to link or merge a card.
   Layer.provideMerge(BoardPullRequestGatewayLive),
+  // T3o: T3O-23 — retires worktrees for the supervisor and the thread-delete RPC.
+  Layer.provideMerge(WorktreeRetirerLive.pipe(Layer.provide(ServerSettingsLayerLive))),
   Layer.provideMerge(
     Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive),
   ),
