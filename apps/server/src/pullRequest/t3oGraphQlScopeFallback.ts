@@ -35,11 +35,11 @@ const withoutSelection = (query: string, selection: string): string => {
     if (char === "}") {
       depth -= 1;
       if (depth === 0) {
+        // Only the whitespace after the field goes, so whatever preceded it still separates
+        // its neighbours, inline or line by line.
         let end = index + 1;
         while (query[end] === " " || query[end] === "\n") end += 1;
-        let lineStart = start;
-        while (lineStart > 0 && query[lineStart - 1] === " ") lineStart -= 1;
-        return withoutSelection(query.slice(0, lineStart) + query.slice(end), selection);
+        return withoutSelection(query.slice(0, start) + query.slice(end), selection);
       }
     }
   }

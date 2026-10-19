@@ -90,6 +90,12 @@ describe("coreQueryForFields", () => {
     expect(query.match(/stackEntry/g)).toHaveLength(2);
     expect(balanced(query)).toBe(true);
   });
+  it("keeps the names either side of an inline selection apart", () => {
+    expect(coreQueryForFields("{ x { a commits(last: 1) { n } b } }", "")).toBe("{ x { a b } }");
+    expect(coreQueryForFields("{ x {\n  a\n  commits(last: 1) { n }\n  b\n} }", "")).toBe(
+      "{ x {\n  a\n  b\n} }",
+    );
+  });
 });
 
 describe("fillDroppedCoreFields", () => {
