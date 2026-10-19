@@ -197,12 +197,14 @@ export default function ProjectScriptsControl({
                   >
                     <ScriptIcon icon={script.icon} className="size-4" />
                     <span className="truncate">
-                      {/* T3o: T3O-23 — remove scripts read (teardown). */}
-                      {script.runOnWorktreeCreate
-                        ? `${script.name} (setup)`
-                        : script.runOnWorktreeRemove === true
-                          ? `${script.name} (teardown)`
-                          : script.name}
+                      {/* T3o: T3O-23 — remove scripts read (teardown), alongside setup. */}
+                      {script.runOnWorktreeCreate && script.runOnWorktreeRemove === true
+                        ? `${script.name} (setup, teardown)`
+                        : script.runOnWorktreeCreate
+                          ? `${script.name} (setup)`
+                          : script.runOnWorktreeRemove === true
+                            ? `${script.name} (teardown)`
+                            : script.name}
                     </span>
                     <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end">
                       {shortcutLabel && (

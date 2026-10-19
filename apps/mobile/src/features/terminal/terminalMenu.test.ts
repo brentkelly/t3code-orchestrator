@@ -246,5 +246,8 @@ describe("projectScriptMenuLabel", () => {
     expect(projectScriptMenuLabel({ ...script, runOnWorktreeRemove: true })).toBe(
       "Park caches (teardown)",
     );
+    expect(
+      projectScriptMenuLabel({ ...script, runOnWorktreeCreate: true, runOnWorktreeRemove: true }),
+    ).toBe("Park caches (setup, teardown)");
   });
 });
