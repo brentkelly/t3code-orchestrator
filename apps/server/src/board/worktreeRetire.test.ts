@@ -148,6 +148,38 @@ const retireWith = (
 const reclaim = { kind: "reclaim", verifiedClean: true } as const;
 const forced = { kind: "forced", verifiedClean: false } as const;
 
+/** Start a forced retirement and park it just before its remove scripts run. */
+const parkedRetirement = (
+  retirer: WorktreeRetirer["Service"],
+  dirs: ReturnType<typeof makeDirs>,
+  events: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const gate = yield* Deferred.make<void>();
+    const fiber = yield* retirer
+      .retire({
+        projectCwd: dirs.projectCwd,
+        worktreePath: dirs.worktreePath,
+        ...forced,
+        onScriptsStarting: Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(gate)),
+        ),
+        // Removes the folder for real, as git would.
+        remove: Effect.sync(() => {
+          NodeFS.rmSync(dirs.worktreePath, { recursive: true, force: true });
+          (events as Array<string>).push("remove:first");
+        }),
+      })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    return { fiber, release: Deferred.succeed(gate, undefined) };
+  });
+
+const teardownOnce = {
+  scripts: [script("teardown", "echo ran >> ../hook.log", { runOnWorktreeRemove: true })],
+};
+
 describe("retireWorktree", () => {
   it.effect("runs the steps in order: stop, check, hook, remove", () =>
     Effect.gen(function* () {
@@ -422,41 +454,89 @@ describe("retireWorktree", () => {
     }),
   );
 
-  it.effect("a second retirement of a path already being retired is skipped", () =>
+  it.effect("a reclaim of a path already being retired is skipped", () =>
     Effect.gen(function* () {
-      const { result, events, read } = yield* withRetirer(
-        {
-          scripts: [script("teardown", "echo ran >> ../hook.log", { runOnWorktreeRemove: true })],
-        },
-        (retirer, dirs) =>
-          Effect.gen(function* () {
-            const started = yield* Deferred.make<void>();
-            const gate = yield* Deferred.make<void>();
-            const first = yield* retirer
-              .retire({
-                projectCwd: dirs.projectCwd,
-                worktreePath: dirs.worktreePath,
-                ...forced,
-                // Park the first retirement just before its scripts run.
-                onScriptsStarting: Deferred.succeed(started, undefined).pipe(
-                  Effect.andThen(Deferred.await(gate)),
-                ),
-              })
-              .pipe(Effect.forkChild);
-            yield* Deferred.await(started);
-            const second = yield* retirer.retire({
-              projectCwd: dirs.projectCwd,
-              worktreePath: NodePath.join(dirs.worktreePath, "."),
-              ...forced,
-            });
-            yield* Deferred.succeed(gate, undefined);
-            return { first: yield* Fiber.join(first), second };
-          }),
+      const { result, events, read } = yield* withRetirer(teardownOnce, (retirer, dirs, events) =>
+        Effect.gen(function* () {
+          const first = yield* parkedRetirement(retirer, dirs, events);
+          const second = yield* retirer.retire({
+            projectCwd: dirs.projectCwd,
+            worktreePath: NodePath.join(dirs.worktreePath, "."),
+            ...reclaim,
+          });
+          yield* first.release;
+          return { first: yield* Fiber.join(first.fiber), second };
+        }),
       );
       assert.isNull(result.second);
       assert.deepStrictEqual(result.first, { outcome: "removed", hookWarning: null });
       assert.strictEqual(read("hook.log"), "ran\n");
-      assert.strictEqual(events.filter((event) => event.startsWith("remove")).length, 1);
+      assert.deepStrictEqual(
+        events.filter((event) => event.startsWith("remove")),
+        ["remove:first"],
+      );
+    }),
+  );
+
+  it.effect("a forced removal of a path already being retired waits for it, not skips it", () =>
+    Effect.gen(function* () {
+      const { result, events, read } = yield* withRetirer(teardownOnce, (retirer, dirs, events) =>
+        Effect.gen(function* () {
+          const first = yield* parkedRetirement(retirer, dirs, events);
+          const second = yield* retirer
+            .retire({
+              projectCwd: dirs.projectCwd,
+              worktreePath: NodePath.join(dirs.worktreePath, "."),
+              ...forced,
+            })
+            .pipe(
+              Effect.tap(() => Effect.sync(() => (events as Array<string>).push("second-done"))),
+              Effect.forkChild,
+            );
+          yield* first.release;
+          return { first: yield* Fiber.join(first.fiber), second: yield* Fiber.join(second) };
+        }),
+      );
+      // A real removal, reported only once the first one has made it.
+      assert.deepStrictEqual(result.second, { outcome: "removed", hookWarning: null });
+      assert.deepStrictEqual(result.first, { outcome: "removed", hookWarning: null });
+      assert.strictEqual(read("hook.log"), "ran\n", "the scripts must not run twice");
+      assert.deepStrictEqual(
+        events.filter((event) => event.startsWith("remove") || event === "second-done"),
+        ["remove:first", "second-done"],
+      );
+    }),
+  );
+
+  it.effect("a forced removal still runs after the retirement it waited for left the folder", () =>
+    Effect.gen(function* () {
+      const { result, events } = yield* withRetirer({}, (retirer, dirs) =>
+        Effect.gen(function* () {
+          const gate = yield* Deferred.make<void>();
+          const started = yield* Deferred.make<void>();
+          // A reclaim abandoned at its first stillWanted: it leaves the worktree.
+          const first = yield* retirer
+            .retire({
+              projectCwd: dirs.projectCwd,
+              worktreePath: dirs.worktreePath,
+              ...reclaim,
+              stillWanted: Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Deferred.await(gate)),
+                Effect.as(false),
+              ),
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          const second = yield* retirer
+            .retire({ projectCwd: dirs.projectCwd, worktreePath: dirs.worktreePath, ...forced })
+            .pipe(Effect.forkChild);
+          yield* Deferred.succeed(gate, undefined);
+          return { first: yield* Fiber.join(first), second: yield* Fiber.join(second) };
+        }),
+      );
+      assert.isNull(result.first);
+      assert.deepStrictEqual(result.second, { outcome: "removed", hookWarning: null });
+      assert.deepStrictEqual(events, ["check-processes", "remove:force"]);
     }),
   );
 
@@ -495,6 +575,28 @@ describe("retireRemovedThreadWorktree (the stock vcsRemoveWorktree)", () => {
       assert.instanceOf(result, GitCommandError);
       assert.include(result.detail, "cargo is still running in the worktree");
       assert.deepStrictEqual(events, ["check-processes"]);
+    }),
+  );
+
+  it.effect("force:false fails while a board cleanup is retiring the same worktree", () =>
+    Effect.gen(function* () {
+      const { result, events } = yield* withRetirer(teardownOnce, (retirer, dirs, events) =>
+        Effect.gen(function* () {
+          const first = yield* parkedRetirement(retirer, dirs, events);
+          const error = yield* retireRemovedThreadWorktree(
+            retirer,
+            { cwd: dirs.projectCwd, path: dirs.worktreePath, force: false },
+            stockRemove(events),
+            Effect.void,
+          ).pipe(Effect.flip);
+          yield* first.release;
+          yield* Fiber.join(first.fiber);
+          return error;
+        }),
+      );
+      assert.instanceOf(result, GitCommandError);
+      assert.include(result.detail, "already being removed");
+      assert.isFalse(events.includes("stock-remove"));
     }),
   );
 

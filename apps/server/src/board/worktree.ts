@@ -536,7 +536,8 @@ export const reclaimBoardCardWorktree = Effect.fn("reclaimBoardCardWorktree")(fu
 export const forceRemoveBoardCardWorktree = Effect.fn("forceRemoveBoardCardWorktree")(
   function* (input: { readonly projectCwd: string; readonly worktreePath: string }) {
     const retirer = yield* WorktreeRetirer;
-    // T3O-23: forced, so survivors are killed rather than holding it back;
+    // T3O-23: forced, so survivors are killed rather than holding it back,
+    // and a retirement already in flight is waited out rather than skipped:
     // the result is always `removed`, carrying any remove-script failure.
     const retired = yield* retirer.retire({
       projectCwd: input.projectCwd,

@@ -62,7 +62,8 @@ export interface WorktreeRetireInput {
   readonly verifiedClean: boolean;
   /**
    * Asked before anything is stopped and again just before the removal. False
-   * abandons the retirement (the result is null) and leaves the worktree.
+   * abandons the retirement (the result is null) and leaves the worktree. A
+   * reclaim of a path already being retired is abandoned the same way.
    */
   readonly stillWanted?: Effect.Effect<boolean> | undefined;
   /** The removal itself. Defaults to `git worktree remove`, forced for `forced`. */
@@ -109,6 +110,14 @@ const HOOK_TIMEOUT_MS = 5 * 60 * 1000;
 const KILL_GRACE_MS = 5_000;
 const SETTLE_INTERVAL_MS = 500;
 const SETTLE_ATTEMPTS = 6;
+
+const pathExists = (path: string) =>
+  Effect.promise(() =>
+    NodeFSP.access(path).then(
+      () => true,
+      () => false,
+    ),
+  );
 
 const isWithin = (child: string, root: string): boolean => {
   const relative = NodePath.relative(root, child);
@@ -517,23 +526,58 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
       return { outcome: "removed", hookWarning } as const;
     });
 
-    // Paths being retired right now. A deleted card's retirement and an orphan
-    // sweep can both reach the same checkout; the second is abandoned (null)
-    // so the remove scripts never run twice at once.
-    const retiring = new Set<string>();
+    // Paths being retired right now, each with a latch released when its
+    // retirement ends. A deleted card's retirement and an orphan sweep can both
+    // reach the same checkout, and the remove scripts must never run twice at
+    // once. A second reclaim is abandoned (null): leaving the worktree is
+    // always a reclaim's safe answer. A second forced removal, which a person
+    // confirmed, waits its turn instead, so it never reports a removal that did
+    // not happen. If the folder is gone once it is through, the first one
+    // removed it.
+    const retiring = new Map<string, Deferred.Deferred<void>>();
 
     const retire = (
       input: WorktreeRetireInput,
     ): Effect.Effect<WorktreeRetireResult, GitCommandError> =>
-      Effect.suspend(() => {
+      Effect.gen(function* () {
         const key = NodePath.resolve(input.worktreePath);
-        if (retiring.has(key)) {
-          return Effect.logInfo("worktree retire: already being retired; skipped", {
+        let waited = false;
+        while (true) {
+          // Checked and claimed in one step, so two callers never both win.
+          const claim = yield* Effect.sync(() => {
+            const busy = retiring.get(key);
+            if (busy !== undefined) return { busy } as const;
+            const done = Deferred.makeUnsafe<void>();
+            retiring.set(key, done);
+            return { done } as const;
+          });
+          if ("done" in claim) {
+            const release = Effect.sync(() => retiring.delete(key)).pipe(
+              Effect.andThen(Deferred.succeed(claim.done, undefined)),
+            );
+            const gone = waited ? pathExists(key).pipe(Effect.map((exists) => !exists)) : null;
+            return yield* (gone === null ? Effect.succeed(false) : gone).pipe(
+              Effect.flatMap(
+                (removedMeanwhile): Effect.Effect<WorktreeRetireResult, GitCommandError> =>
+                  removedMeanwhile
+                    ? Effect.succeed({ outcome: "removed", hookWarning: null })
+                    : retireOnce(input),
+              ),
+              Effect.ensuring(release),
+            );
+          }
+          if (input.kind === "reclaim") {
+            yield* Effect.logInfo("worktree retire: already being retired; skipped", {
+              worktreePath: input.worktreePath,
+            });
+            return null;
+          }
+          yield* Effect.logInfo("worktree retire: already being retired; waiting", {
             worktreePath: input.worktreePath,
-          }).pipe(Effect.as(null));
+          });
+          yield* Deferred.await(claim.busy);
+          waited = true;
         }
-        retiring.add(key);
-        return retireOnce(input).pipe(Effect.ensuring(Effect.sync(() => retiring.delete(key))));
       });
 
     return WorktreeRetirer.of({ retire });
@@ -543,7 +587,7 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
  * The stock thread-delete removal (`vcsRemoveWorktree`), retired first. The
  * client has already stopped the thread's session and closed its terminals.
  * `force` picks the kind: forced kills what is left, otherwise a process still
- * running fails the call. `remove` is the stock call.
+ * running fails the call, as does a board cleanup already retiring the path. `remove` is the stock call.
  *
  * Without remove scripts the call waits for the removal, as the stock one
  * does. With them it returns once they start: the client queues its VCS
@@ -572,13 +616,14 @@ export const retireRemovedThreadWorktree = (
       })
       .pipe(
         Effect.flatMap((result) =>
-          result?.outcome === "blocked"
+          result === null || result.outcome === "blocked"
             ? Effect.fail(
                 new GitCommandError({
                   operation: "WorktreeRetirer.retire",
                   command: "git worktree remove",
                   cwd: input.cwd,
-                  detail: result.reason,
+                  // Null: a board cleanup is retiring this worktree right now.
+                  detail: result?.reason ?? "The worktree is already being removed.",
                 }),
               )
             : Effect.void,
