@@ -3949,9 +3949,9 @@ export interface BoardSnapshotQueryMethods {
   readonly boardCardIdForThread: (
     threadId: ThreadId,
   ) => Effect.Effect<BoardCardId | null, ProjectionRepositoryError>;
-  /** One thread's cached todo row (t3o-18, D16): the supervisor reads
-      `hasTodoList` and the stall-reset signal from it, so `recoveryDecision`
-      stays pure with no SQL of its own. Null when the thread has no list. */
+  /** One thread's cached todo row (t3o-18): the supervisor reads the
+      stall-reset signal from it, so `recoveryDecision` stays pure with no SQL
+      of its own. Null when the thread has no list. */
   readonly boardThreadTodo: (
     threadId: ThreadId,
   ) => Effect.Effect<BoardThreadTodoState | null, ProjectionRepositoryError>;
@@ -3997,7 +3997,6 @@ export interface BoardSnapshotQueryMethods {
 
 /** What the supervisor reads off one cached todo row (t3o-18, D16). */
 export interface BoardThreadTodoState {
-  readonly hasList: boolean;
   readonly doneCount: number;
   readonly totalCount: number;
   /** When the list last ADVANCED — `done_count` rose or the in-progress item
@@ -4158,7 +4157,6 @@ export function boardSnapshotQueryMethods(
           Option.match({
             onNone: () => null,
             onSome: (row): BoardThreadTodoState => ({
-              hasList: row.totalCount > 0,
               doneCount: row.doneCount,
               totalCount: row.totalCount,
               advancedAt: row.advancedAt,

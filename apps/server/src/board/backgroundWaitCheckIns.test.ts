@@ -39,7 +39,7 @@ import {
 
 const CARD = "waiting";
 
-type TodoRow = { readonly advancedAt: string | null; readonly hasList: boolean };
+type TodoRow = { readonly advancedAt: string | null };
 
 const fixture = (threadTodos?: Map<string, TodoRow>) => ({
   board: { cards: [buildingCard(CARD, "m")], nextCardNumberByProject: {} },
@@ -311,11 +311,10 @@ it.effect("a todo edit while answering a check-in does not restart the schedule"
       yield* after(h, 5);
       assert.strictEqual(checkInsOf(yield* h.commands), 1);
 
-      // The agent answers the check-in the way it is asked to — flipping its
-      // todo list — and ends the turn with the monitor still running.
+      // The agent answers the check-in — its todo list advances — and ends the
+      // turn with the monitor still running.
       todos.set(String(threadId), {
         advancedAt: DateTime.formatIso(yield* DateTime.now),
-        hasList: true,
       });
       yield* h.pumpRuntime(turnCompleted(threadId));
 

@@ -635,7 +635,7 @@ it.effect("a backoff rung arriving delivers the recovery nudge it deferred", () 
         // moving again — and a generic "you were paused" drops every one of them.
         const delivered = (yield* turnTextsFor(harness, thread)).at(-1) ?? "";
         assert.include(delivered, "board_complete_step");
-        assert.include(delivered, "todo list");
+        assert.include(delivered, "your work is not finished");
 
         // And the reason does not outlive the resume: a step back at work wears
         // no stall, so the next pause cannot inherit this one's words.

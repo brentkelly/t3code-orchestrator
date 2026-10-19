@@ -309,7 +309,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
       );
       const advanced = yield* methods.boardThreadTodo(linkedThread);
       assert.strictEqual(advanced?.advancedAt, at(9));
-      assert.strictEqual(advanced?.hasList, true);
+      assert.strictEqual(advanced?.totalCount, 2);
     }),
   );
 
