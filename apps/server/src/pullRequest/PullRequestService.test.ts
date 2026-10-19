@@ -1846,6 +1846,47 @@ it.effect("routes a hosted reference to another repository through a project on 
   }),
 );
 
+// T3o (T3O-24): a fork's board addresses its origin, which no project's identity names.
+it.effect(
+  "routes a hosted reference through the referencing project before another on the host",
+  () =>
+    Effect.gen(function* () {
+      const seen: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "other",
+            title: "other",
+            workspaceRoot: "/other",
+            repository: "acme/other",
+          }),
+          project({
+            id: "fork",
+            title: "fork",
+            workspaceRoot: "/fork",
+            repository: "acme/upstream",
+          }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            getChangeRequestSummary: (input) =>
+              Effect.sync(() => {
+                seen.push(`${input.cwd} ${input.repository}`);
+                return changeRequest(7, "2026-07-02T00:00:00Z");
+              }),
+          }),
+        ],
+      });
+
+      yield* service.summary(
+        { projectId: "fork" as ProjectId, host: "github.com", repository: "me/fork", number: 7 },
+        { recoverTransientFailure: false },
+      );
+
+      assert.deepStrictEqual(seen, ["/fork me/fork"]);
+    }),
+);
+
 it.effect("routes Azure reads and writes through the requested organization's checkout", () =>
   Effect.gen(function* () {
     const seen: string[] = [];

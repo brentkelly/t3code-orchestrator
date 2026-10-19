@@ -209,6 +209,25 @@ describe("a card already holding an earlier card's merge heals", () => {
         }),
     ),
   );
+
+  it.effect("to nothing on a card with no worktree to look a branch up in", () => {
+    const card = makeBoardCard({
+      id: "card-1",
+      stage: String(BOARD_SEED_STAGE_IDS.merge),
+      orderKey: "m",
+      pullRequest: { ...legacyOldLink, closedAt: BEFORE },
+    });
+    return withGovernor(
+      { board: { nextCardNumberByProject: {}, cards: [card] }, settings: settings() },
+      (h) =>
+        Effect.gen(function* () {
+          const outcome = yield* h.reactor.refreshPullRequest(card.id);
+          assert.deepEqual(outcome, { outcome: "no-branch" });
+          assert.deepEqual(recorded(yield* h.commands), [null]);
+          assert.equal((yield* h.board).cards[0]!.pullRequest, null);
+        }),
+    );
+  });
 });
 
 describe("what the rule leaves alone", () => {

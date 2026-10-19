@@ -465,6 +465,7 @@ const ghDefaultCases: ReadonlyArray<{
       worktreeConfigEnabled: false,
       sharedCoreBare: false,
       sharedCoreWorktree: false,
+      repositoryFormatV0: true,
     },
     expected: "pin",
   },
@@ -476,6 +477,7 @@ const ghDefaultCases: ReadonlyArray<{
       worktreeConfigEnabled: false,
       sharedCoreBare: false,
       sharedCoreWorktree: false,
+      repositoryFormatV0: true,
     },
     expected: "skip",
   },
@@ -487,6 +489,7 @@ const ghDefaultCases: ReadonlyArray<{
       worktreeConfigEnabled: false,
       sharedCoreBare: false,
       sharedCoreWorktree: false,
+      repositoryFormatV0: true,
     },
     expected: "skip",
   },
@@ -498,6 +501,7 @@ const ghDefaultCases: ReadonlyArray<{
       worktreeConfigEnabled: false,
       sharedCoreBare: false,
       sharedCoreWorktree: false,
+      repositoryFormatV0: true,
     },
     expected: "skip",
   },
@@ -509,6 +513,7 @@ const ghDefaultCases: ReadonlyArray<{
       worktreeConfigEnabled: false,
       sharedCoreBare: false,
       sharedCoreWorktree: true,
+      repositoryFormatV0: true,
     },
     expected: "skip",
   },
@@ -520,6 +525,31 @@ const ghDefaultCases: ReadonlyArray<{
       worktreeConfigEnabled: true,
       sharedCoreBare: true,
       sharedCoreWorktree: false,
+      repositoryFormatV0: true,
+    },
+    expected: "pin",
+  },
+  {
+    name: "a version-1 repository is never upgraded to per-worktree config",
+    input: {
+      remotes: ["origin", "upstream"],
+      ghResolvedConfigured: false,
+      worktreeConfigEnabled: false,
+      sharedCoreBare: false,
+      sharedCoreWorktree: false,
+      repositoryFormatV0: false,
+    },
+    expected: "skip",
+  },
+  {
+    name: "a version-1 repository with it already on is pinned",
+    input: {
+      remotes: ["origin", "upstream"],
+      ghResolvedConfigured: false,
+      worktreeConfigEnabled: true,
+      sharedCoreBare: false,
+      sharedCoreWorktree: false,
+      repositoryFormatV0: false,
     },
     expected: "pin",
   },
@@ -594,6 +624,30 @@ it.effect("leaves a gh default somebody already chose alone", () =>
       assert.strictEqual(
         yield* configValue(result.path, ["--get", "remote.upstream.gh-resolved"]),
         "base",
+      );
+      assert.strictEqual(yield* configValue(cwd, ["--get", "extensions.worktreeConfig"]), "");
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("never turns on per-worktree config in a version-1 repository", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["config", "core.repositoryformatversion", "1"]);
+      yield* git(cwd, ["remote", "add", "origin", "https://github.com/me/fork.git"]);
+      yield* git(cwd, ["remote", "add", "upstream", "https://github.com/them/repo.git"]);
+
+      const result = yield* provisionBoardCardWorktree({
+        projectCwd: cwd,
+        branch: "board/card-1",
+        baseRefName: initialBranch,
+      });
+
+      assert.strictEqual(
+        yield* configValue(result.path, ["--get", "remote.origin.gh-resolved"]),
+        "",
       );
       assert.strictEqual(yield* configValue(cwd, ["--get", "extensions.worktreeConfig"]), "");
     }),

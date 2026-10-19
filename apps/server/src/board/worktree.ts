@@ -168,6 +168,15 @@ export const provisionBoardCardWorktree = Effect.fn("provisionBoardCardWorktree"
  * nobody has chosen a default already, and the shared config does not hold a
  * `core.bare = true` or `core.worktree`, which git requires to move into each
  * worktree's own config once `extensions.worktreeConfig` is on.
+ *
+ * Turning the extension on writes the shared config and is not undone when the
+ * worktree goes, so it is only ever turned on in a repository at
+ * `core.repositoryformatversion` 0 — what `git clone` and `git init` create.
+ * There git honours `worktreeConfig` and libgit2 and JGit ignore `extensions.*`
+ * altogether, so no tool can refuse the repository over it; git's own
+ * `sparse-checkout init` makes the same upgrade. At version 1 a tool that does
+ * not know the extension refuses the repository, so a v1 repo is pinned only
+ * when the extension is already on.
  */
 export function boardWorktreeGhDefaultDecision(input: {
   readonly remotes: ReadonlyArray<string>;
@@ -175,10 +184,14 @@ export function boardWorktreeGhDefaultDecision(input: {
   readonly worktreeConfigEnabled: boolean;
   readonly sharedCoreBare: boolean;
   readonly sharedCoreWorktree: boolean;
+  readonly repositoryFormatV0: boolean;
 }): "pin" | "skip" {
   if (!input.remotes.includes("origin") || input.remotes.length < 2) return "skip";
   if (input.ghResolvedConfigured) return "skip";
-  if (!input.worktreeConfigEnabled && (input.sharedCoreBare || input.sharedCoreWorktree)) {
+  if (
+    !input.worktreeConfigEnabled &&
+    (input.sharedCoreBare || input.sharedCoreWorktree || !input.repositoryFormatV0)
+  ) {
     return "skip";
   }
   return "pin";
@@ -234,6 +247,12 @@ export const pinBoardWorktreeGhDefault = Effect.fn("pinBoardWorktreeGhDefault")(
       "--get",
       "core.worktree",
     ]);
+    const formatVersion = yield* run("formatVersion", [
+      "config",
+      "--local",
+      "--get",
+      "core.repositoryformatversion",
+    ]);
     const decision = boardWorktreeGhDefaultDecision({
       remotes: remotes.stdout
         .split("\n")
@@ -243,6 +262,8 @@ export const pinBoardWorktreeGhDefault = Effect.fn("pinBoardWorktreeGhDefault")(
       worktreeConfigEnabled: worktreeConfig.stdout.trim() === "true",
       sharedCoreBare: coreBare.stdout.trim() === "true",
       sharedCoreWorktree: configured(coreWorktree),
+      // Unset reads as version 0, as it does to git.
+      repositoryFormatV0: ["", "0"].includes(formatVersion.stdout.trim()),
     });
     if (decision === "skip") return;
     if (worktreeConfig.stdout.trim() !== "true") {

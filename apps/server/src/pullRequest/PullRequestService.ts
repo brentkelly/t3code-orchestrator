@@ -780,6 +780,9 @@ export const make = Effect.gen(function* () {
                   candidate.api.kind !== "azure-devops" &&
                   candidate.repository.toLowerCase() === repository.toLowerCase(),
               ) ??
+              // T3o (T3O-24): fall back to the referencing project's own checkout before any
+              // other on the host, so a fork's pull request runs with that project's credentials.
+              (own?.host === host && own.api.kind !== "azure-devops" ? own : undefined) ??
               onHost.find((candidate) => candidate.api.kind !== "azure-devops");
             if (route === undefined) {
               return Effect.fail(

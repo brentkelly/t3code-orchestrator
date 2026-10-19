@@ -4321,9 +4321,22 @@ const make = Effect.gen(function* () {
       }
 
       if (worktree === null) {
-        return disowned === null
-          ? ({ outcome: "no-branch" } as const)
-          : boardRefreshOutcomeOf((yield* readCard(card.id))?.pullRequest ?? recorded);
+        if (disowned === null) return { outcome: "no-branch" } as const;
+        // No branch to find the card's own on, so the earlier card's link is
+        // cleared rather than left pointing View PR at it — unless another
+        // refresh has replaced it meanwhile.
+        const held = (yield* readCard(card.id))?.pullRequest ?? null;
+        if (held !== null && held.number === disowned && held.linked !== true) {
+          yield* dispatchOptional({
+            type: "board.card.record-pull-request",
+            commandId: yield* commandId("record-pr"),
+            cardId: card.id,
+            pullRequest: null,
+            createdAt: yield* nowIso,
+          });
+          return { outcome: "no-branch" } as const;
+        }
+        return boardRefreshOutcomeOf(held);
       }
 
       const model = yield* snapshotQuery.getCommandReadModel();
