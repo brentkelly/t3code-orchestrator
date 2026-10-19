@@ -51,6 +51,8 @@ import { decideOrchestrationCommand } from "../decider.ts";
 import { boardCommandAggregateRef, isBoardCommand } from "../../board/decider.ts";
 // T3o: durable state a board command is decided against (T3O-53).
 import { loadBoardDecisionContext } from "../../board/decisionContext.ts";
+// T3o: commandId dedup compares the command itself, not just its aggregate (#120).
+import { makeCommandFingerprints } from "../../board/commandFingerprints.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -111,6 +113,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const crypto = yield* Crypto.Crypto;
+  // T3o: fingerprints of accepted commands (#120).
+  const commandFingerprints = makeCommandFingerprints(sql);
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   let commandReadModel = createEmptyReadModel(yield* nowIso);
@@ -182,6 +186,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               commandAggregateId: aggregateRef.aggregateId,
             });
           }
+          // T3o: refuse to replay a receipt for a different command reusing its id (#120).
+          yield* commandFingerprints.assertReplayMatches(envelope.command, existingReceipt.value);
           if (existingReceipt.value.status === "accepted") {
             return {
               sequence: existingReceipt.value.resultSequence,
@@ -330,6 +336,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 status: "accepted",
                 error: null,
               });
+              // T3o: fingerprint the accepted command beside its receipt (#120).
+              yield* commandFingerprints.record(envelope.command);
 
               return {
                 committedEvents,
