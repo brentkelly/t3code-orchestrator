@@ -386,6 +386,12 @@ specific item finished, where a prose note asserts only that the model still had
 
 #### The envelope asks for a list, and the nudge asks again
 
+> **Reverted 2026-10-19 (T3O-22).** Claude Code 2.1.233 stopped shipping its todo/task tools on
+> Claude 5-era models, so this ask made agents report a missing tool. The postamble now asks only
+> for commits, and neither nudge asks for a list; `hasTodoList` is gone. The reset signal above,
+> the todo-advance life sign and passive observation (cache, card strip) remain, since Codex,
+> Cursor, OpenCode and older Claude models still emit plans unprompted.
+
 t3o-17 D2 argues that the envelope instruction is *"load-bearing, not a nicety"* — without an
 observable progress signal, D1 degrades to today's behaviour with a higher ceiling, which is
 *"strictly worse"*. That argument survives the substitution intact, so the requirement is **kept and
