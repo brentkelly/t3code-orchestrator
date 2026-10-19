@@ -3050,10 +3050,11 @@ export function BoardCardDetailPopup({
           ? "fixed inset-0 h-screen max-h-none w-screen max-w-none rounded-none border-0"
           : wide
             ? // Under 1000px tall the 7vh gaps above and below cost the
-              // thread pane too much, so the sheet takes all but the dialog
-              // viewport's 1rem padding (T3O-51). `sm:` leaves the phone
-              // bottom sheet alone.
-              "h-[86vh] max-h-[86vh] w-[min(1220px,100%)] max-w-[1220px] sm:[@media(max-height:999.98px)]:h-[calc(100dvh-2rem)] sm:[@media(max-height:999.98px)]:max-h-[calc(100dvh-2rem)]"
+              // thread pane too much, so the sheet takes all but a 0.5rem
+              // sliver (T3O-51): the negative margin reaches halfway into the
+              // dialog viewport's 1rem padding. `sm:` leaves the phone bottom
+              // sheet alone.
+              "h-[86vh] max-h-[86vh] w-[min(1220px,100%)] max-w-[1220px] sm:[@media(max-height:999.98px)]:-my-2 sm:[@media(max-height:999.98px)]:h-[calc(100dvh-1rem)] sm:[@media(max-height:999.98px)]:max-h-[calc(100dvh-1rem)]"
             : "max-h-[86vh] w-[min(760px,100%)] max-w-[760px]",
       )}
       ref={setSheet}

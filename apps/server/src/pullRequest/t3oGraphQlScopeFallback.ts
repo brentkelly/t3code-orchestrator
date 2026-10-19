@@ -7,7 +7,8 @@
  * over either, which would cost the board the mergeability it routes conflicts on. The fork's
  * fallback reads again without each gated field in turn; these helpers let it do that against
  * the GraphQL document by removing a field's selection and filling the shape the decoder
- * expects back in, empty.
+ * expects back in, empty. The batched summary read uses the same removal on its aliased
+ * document, where the check rollup's selection repeats once per pull request.
  */
 
 /** The GraphQL selection each gated `gh --json` field name stands for in the core query. */
@@ -21,7 +22,7 @@ const GATED_SELECTIONS: Readonly<
 
 const selectionKey = (selection: string) => selection.slice(0, -1);
 
-/** Removes one field (with its arguments and sub-selection) from a GraphQL document. */
+/** Removes every occurrence of one field (with its arguments and sub-selection) from a document. */
 const withoutSelection = (query: string, selection: string): string => {
   const start = query.indexOf(selection);
   if (start === -1) return query;
@@ -38,7 +39,7 @@ const withoutSelection = (query: string, selection: string): string => {
         while (query[end] === " " || query[end] === "\n") end += 1;
         let lineStart = start;
         while (lineStart > 0 && query[lineStart - 1] === " ") lineStart -= 1;
-        return query.slice(0, lineStart) + query.slice(end);
+        return withoutSelection(query.slice(0, lineStart) + query.slice(end), selection);
       }
     }
   }

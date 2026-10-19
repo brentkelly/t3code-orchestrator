@@ -1888,16 +1888,25 @@ export const make = Effect.gen(function* () {
         batchable.map((entry) => entry.request),
         first.request.host === "github.com",
       );
+      // T3o (T3O-54): the document asks for each head's check rollup, which a token without the
+      // Checks permission is refused over, so it keeps the detail read's missing-scope fallback
+      // rather than leaving every entry to its own read on each sync tick.
       const batched =
         query === null
           ? Effect.succeed(new Map<number, GitHubPullRequestSummary>())
-          : graphqlRead({
-              cwd: first.request.cwd,
-              host: first.request.host,
-              operation: "getPullRequestSummary",
-              query,
-              decode: decodePullRequestSummariesJson,
-            });
+          : withReviewScopeFallback(
+              first.request.host,
+              "statusCheckRollup",
+              (fields) =>
+                graphqlRead({
+                  cwd: first.request.cwd,
+                  host: first.request.host,
+                  operation: "getPullRequestSummary",
+                  query: coreQueryForFields(query, fields),
+                  decode: decodePullRequestSummariesJson,
+                }),
+              ["statusCheckRollup"],
+            );
       return batched.pipe(
         // A GraphQL error anywhere fails the whole document — one repository gone or out of
         // reach — so a batch that could not be read leaves every entry to its own read. A paused

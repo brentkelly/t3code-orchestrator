@@ -490,8 +490,8 @@ pinning. Five fork-owned files were deleted outright (`gitHubMergeState.ts`, `fo
   moved onto `PullRequestGlyph`, which the restricted-import rule asks for.
 - **Upstream removed `SheetPanel`, `viewportClassName` and `inputClassName`** from the ui
   components. Board popovers use `padding="none"`; the archived-cards sheet keeps a local scrolling
-  body; the card sheet's short-screen height now subtracts the dialog viewport's full 1rem padding
-  instead of overriding it.
+  body; the card sheet keeps T3O-51's 0.5rem short-screen sliver with a negative margin into the
+  dialog viewport's padding instead of overriding the padding.
 - **Mobile `threadPresentation.ts` was deleted upstream**, with the legacy grouped thread list. The
   fork's violet "awaiting input" lived there; the surviving v2 list already carried the fork's
   violet/blue palette, so the deletion was accepted.

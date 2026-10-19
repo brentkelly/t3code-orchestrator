@@ -3448,9 +3448,12 @@ layer("GitHubPullRequestCli.layer", (it) => {
       return yield* Fiber.join(read);
     });
 
+  // The batch asks for no team requests, so here it is simply silent about the pull request.
+  const silentBatch = () => output('{"data":{"s0":{"pullRequest":null}}}');
+
   it.effect("reads the summary without reviewers when the token cannot read team requests", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(silentBatch()));
       mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
       mockedExecute.mockReturnValueOnce(Effect.succeed(conflictedDetailJson()));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
@@ -3477,8 +3480,8 @@ layer("GitHubPullRequestCli.layer", (it) => {
       // The detail's GraphQL read, refused and then answered without reviewers.
       mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
       mockedExecute.mockReturnValueOnce(Effect.succeed(coreResponseWithout("reviewRequests")));
-      // The summary's batch, refused, then its own read, refused and answered without reviewers.
-      mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
+      // The summary's batch, silent, then its own read, refused and answered without reviewers.
+      mockedExecute.mockReturnValueOnce(Effect.succeed(silentBatch()));
       mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
       mockedExecute.mockReturnValueOnce(Effect.succeed(conflictedDetailJson()));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
@@ -3492,6 +3495,57 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       assert.strictEqual(warnings.length, 1);
       assert.strictEqual(mockedExecute.mock.calls.length, 5);
+    }),
+  );
+
+  it.effect("reads the batched summaries without checks when the token cannot read them", () =>
+    Effect.gen(function* () {
+      const node = (number: number) => ({
+        number,
+        title: `PR ${number}`,
+        url: `https://github.com/acme/web/pull/${number}`,
+        headRefName: `feat/${number}`,
+        baseRefName: "main",
+        state: "OPEN",
+        isDraft: false,
+        mergeable: "CONFLICTING",
+        reviewDecision: null,
+        updatedAt: "2026-08-24T12:34:56.000Z",
+      });
+      mockedExecute.mockReturnValueOnce(Effect.fail(ghExit("missing-scope")));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({ data: { s0: { pullRequest: node(7) }, s1: { pullRequest: node(8) } } }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const reads = yield* Effect.forEach(
+        [7, 8],
+        (number) =>
+          cli.getPullRequestSummary({
+            cwd: "/w",
+            repository: "acme/web",
+            host: "github.com",
+            number,
+          }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const [seven, eight] = yield* Fiber.join(reads);
+
+      // One refused document and one without the rollup, not a `gh pr view` per pull request.
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      expect(callAt(0).args.at(-1)).toContain("statusCheckRollup");
+      const retried = callAt(1).args.at(-1) ?? "";
+      expect(retried).not.toContain("commits(");
+      expect(retried).toContain("pullRequest(number: 7)");
+      expect(retried).toContain("pullRequest(number: 8)");
+      expect(seven?.mergeability).toBe("conflicting");
+      expect(seven?.checksState).toBeNull();
+      expect(eight?.headBranch).toBe("feat/8");
     }),
   );
 

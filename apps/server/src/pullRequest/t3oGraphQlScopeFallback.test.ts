@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as Result from "effect/Result";
 
 import {
+  buildPullRequestSummariesGraphQlQuery,
   decodePullRequestCoreJson,
   PULL_REQUEST_CORE_GRAPHQL_QUERY,
 } from "./gitHubPullRequestJson.ts";
@@ -71,6 +72,22 @@ describe("coreQueryForFields", () => {
     expect(query).not.toContain("commits(");
     expect(query).not.toContain("statusCheckRollup");
     expect(query).toContain("autoMergeRequest");
+    expect(balanced(query)).toBe(true);
+  });
+  it("drops the check rollup from every pull request in a batched summary read", () => {
+    const batch = buildPullRequestSummariesGraphQlQuery(
+      [
+        { repository: "acme/web", number: 7 },
+        { repository: "acme/api", number: 8 },
+      ],
+      true,
+    );
+    if (batch === null) throw new Error("expected a batched document");
+    const query = coreQueryForFields(batch, "");
+    expect(query).not.toContain("commits(");
+    expect(query).not.toContain("statusCheckRollup");
+    expect(query.match(/latestReviews/g)).toHaveLength(2);
+    expect(query.match(/stackEntry/g)).toHaveLength(2);
     expect(balanced(query)).toBe(true);
   });
 });
