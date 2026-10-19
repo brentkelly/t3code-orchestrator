@@ -560,12 +560,16 @@ regress those contributor forks. Instead the board resolves its own repository f
 `board/boardRepository.ts` and passes `host` on every `PullRequestService` reference, which routes
 an explicitly hosted repository. One marker in `PullRequestService.requireProject` makes that route
 prefer the referencing project's own checkout over the first one on the host, so the fork's pull
-requests run with that project's credentials. The Threads view's Pull Requests page
+requests run with that project's credentials. Card keys restart, so a board branch can carry an
+earlier card's closed pull request. A marker in `GitManager.findLatestPrForHeadContext` therefore
+picks the PR that closed last when none is open, not the one updated last. A late comment on the
+earlier PR would otherwise win. The Threads view's Pull Requests page
 still follows the identity. Board worktrees also get `remote.origin.gh-resolved=base` at worktree
 scope when a repo has several remotes and no `gh` default, so agents' own `gh pr create` opens on
 origin too. That turns on `extensions.worktreeConfig` in the shared config, which outlives the
 worktree, so it is done only at `core.repositoryformatversion` 0, where no tool can refuse the repo
-over it.
+over it. The pin runs on every build-mode spawn as well as at provisioning, so a worktree that
+predates it is pinned before its next agent runs.
 
 Per-project GitHub token overrides (`t3o-34`, see [gitenv](./gitenv.md)) added 15 markers across 7
 upstream-owned files: `config.ts` 2 (import + `initGitenv` in `make`, which only `pair` still reaches),

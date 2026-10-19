@@ -192,6 +192,14 @@ const pullRequestUpdatedAtDescOrder: Order.Order<PullRequestInfo> = Order.mapInp
   (pullRequest) => pullRequest.updatedAt,
 );
 
+// T3o (T3O-24): closure order for a branch with no open pull request. A
+// comment on an older closed pull request bumps its updatedAt, not when it
+// closed, so updatedAt alone can hand back a reused branch's earlier PR.
+const pullRequestClosedAtDescOrder: Order.Order<PullRequestInfo> = Order.mapInput(
+  Order.flip(Option.makeOrder(Order.String)),
+  (pullRequest) => Option.fromNullishOr(pullRequest.mergedAt ?? pullRequest.closedAt),
+);
+
 interface ResolvedPullRequest {
   number: number;
   title: string;
@@ -1656,7 +1664,8 @@ export const make = Effect.gen(function* () {
     if (latestOpenPr) {
       return latestOpenPr;
     }
-    return parsed[0] ?? null;
+    // T3o (T3O-24): the last to close, not the last touched (stable sort keeps updatedAt for ties).
+    return Arr.sort(parsed, pullRequestClosedAtDescOrder)[0] ?? null;
   });
   const buildCompletionToast = Effect.fn("buildCompletionToast")(function* (
     cwd: string,

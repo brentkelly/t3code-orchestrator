@@ -163,6 +163,27 @@ it.effect("a build-mode spawn failure gives the slot back, so the next card stil
   ),
 );
 
+// T3O-24: the gh pin used to run only while provisioning a worktree, so a card
+// whose worktree was already ready never got it. Every build-mode spawn pins.
+it.effect("a build spawn into an already-ready worktree pins gh's default repository", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("card-a", "a")], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+    },
+    ({ pumpDomain, board, gitInvocations }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(buildingCard("card-a", "a"), 1));
+
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("card-a")), "running");
+        const pinProbe = (yield* gitInvocations).find(
+          (args) => args[0] === "rev-parse" && args.includes("--git-common-dir"),
+        );
+        assert.isDefined(pinProbe, "the spawn checked the worktree for a gh pin");
+      }),
+  ),
+);
+
 // ── Moving a card that still carries a leftover step ────────────────────────
 // The reported regression: a card is moved into Planning and lands with NO
 // thread. A card holds ONE step-state row, so a run that stalled (or was still

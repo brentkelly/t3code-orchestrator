@@ -155,6 +155,7 @@ import {
   provisionBoardCardWorktree,
   forceRemoveBoardCardWorktree,
   parseRegisteredWorktrees,
+  pinBoardWorktreeGhDefault,
   reclaimBoardCardWorktree,
   resolveBoardCardBaseRef,
   runBoardCardWorktreeSetup,
@@ -1505,6 +1506,14 @@ const make = Effect.gen(function* () {
     // needed" and continues once a human approves. Tool access stays
     // `interactionMode: "default"` (the MCP write tools are a separate axis).
     const runtimeMode = step.runtimeMode;
+    // T3o (T3O-24): pin the agent's gh to origin on every build-mode spawn,
+    // not only at provisioning, so a worktree that predates the pin gets it
+    // before its next agent runs. Idempotent and never fails the spawn.
+    if (input.branch !== null) {
+      yield* pinBoardWorktreeGhDefault(input.worktreePath).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+      );
+    }
     // The thread is created with its OWN command first. `thread.turn.start`
     // carries a `bootstrap.createThread` block, but that block is interpreted
     // by the WebSocket dispatch path (`dispatchBootstrapTurnStart` in ws.ts),
