@@ -126,6 +126,7 @@ export const provisionBoardCardWorktree = Effect.fn("provisionBoardCardWorktree"
     const existingPath = parseWorktreePathForBranch(worktrees.stdout, input.branch);
     if (existingPath !== null) {
       // A prior attempt already checked the branch out — reuse it, don't fail.
+      yield* pinBoardWorktreeGhDefault(existingPath);
       return {
         path: existingPath,
         branch: input.branch,
@@ -143,12 +144,131 @@ export const provisionBoardCardWorktree = Effect.fn("provisionBoardCardWorktree"
       baseRefName: input.baseRefName,
       path: null,
     });
+    yield* pinBoardWorktreeGhDefault(created.worktree.path);
     return {
       path: created.worktree.path,
       branch: created.worktree.refName,
       baseRefName: input.baseRefName,
     } satisfies BoardCardWorktreeProvisionResult;
   },
+);
+
+/**
+ * Whether a board worktree should get its own `gh` default (T3O-24), from what
+ * git reports about the repository. Pure, so it is table-tested without a repo.
+ *
+ * `gh` picks the repository a bare `gh pr create` talks to from the remotes,
+ * and it PREFERS one named `upstream` unless some remote carries
+ * `remote.<name>.gh-resolved`. In a fork that means an agent's pull request is
+ * opened against upstream. The board pushes to `origin` and resolves its pull
+ * requests there, so its agents' `gh` should too.
+ *
+ * Only when it would change anything and cannot break anything: there is an
+ * `origin`, there is more than one remote (with one, `gh` picks it anyway),
+ * nobody has chosen a default already, and the shared config does not hold a
+ * `core.bare = true` or `core.worktree`, which git requires to move into each
+ * worktree's own config once `extensions.worktreeConfig` is on.
+ */
+export function boardWorktreeGhDefaultDecision(input: {
+  readonly remotes: ReadonlyArray<string>;
+  readonly ghResolvedConfigured: boolean;
+  readonly worktreeConfigEnabled: boolean;
+  readonly sharedCoreBare: boolean;
+  readonly sharedCoreWorktree: boolean;
+}): "pin" | "skip" {
+  if (!input.remotes.includes("origin") || input.remotes.length < 2) return "skip";
+  if (input.ghResolvedConfigured) return "skip";
+  if (!input.worktreeConfigEnabled && (input.sharedCoreBare || input.sharedCoreWorktree)) {
+    return "skip";
+  }
+  return "pin";
+}
+
+/**
+ * Pin `gh`'s default repository to `origin` in ONE board worktree (T3O-24),
+ * with `git config --worktree`, so the user's main checkout and every
+ * non-board thread keep resolving exactly what they did. `git worktree remove`
+ * deletes the worktree's config with it.
+ *
+ * Defence in depth, not a gate: any failure is logged and the worktree is
+ * provisioned regardless.
+ */
+export const pinBoardWorktreeGhDefault = Effect.fn("pinBoardWorktreeGhDefault")(
+  function* (worktreePath: string) {
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const run = (operation: string, args: ReadonlyArray<string>) =>
+      git.execute({
+        operation: `boardCardWorktree.ghDefault.${operation}`,
+        cwd: worktreePath,
+        args,
+        allowNonZeroExit: true,
+        timeoutMs: 10_000,
+      });
+    const configured = (result: { readonly exitCode: number; readonly stdout: string }) =>
+      result.exitCode === 0 && result.stdout.trim().length > 0;
+    // Never the main checkout: its worktree config is the user's own.
+    const dirs = yield* run("gitDirs", [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-dir",
+      "--git-common-dir",
+    ]);
+    const [gitDir, commonDir] = dirs.stdout.split("\n").map((line) => line.trim());
+    if (dirs.exitCode !== 0 || !gitDir || gitDir === commonDir) return;
+    const remotes = yield* run("remotes", ["remote"]);
+    const ghResolved = yield* run("ghResolved", [
+      "config",
+      "--get-regexp",
+      "^remote\\..*\\.gh-resolved$",
+    ]);
+    const worktreeConfig = yield* run("worktreeConfig", [
+      "config",
+      "--bool",
+      "--get",
+      "extensions.worktreeConfig",
+    ]);
+    const coreBare = yield* run("coreBare", ["config", "--local", "--bool", "--get", "core.bare"]);
+    const coreWorktree = yield* run("coreWorktree", [
+      "config",
+      "--local",
+      "--get",
+      "core.worktree",
+    ]);
+    const decision = boardWorktreeGhDefaultDecision({
+      remotes: remotes.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0),
+      ghResolvedConfigured: configured(ghResolved),
+      worktreeConfigEnabled: worktreeConfig.stdout.trim() === "true",
+      sharedCoreBare: coreBare.stdout.trim() === "true",
+      sharedCoreWorktree: configured(coreWorktree),
+    });
+    if (decision === "skip") return;
+    if (worktreeConfig.stdout.trim() !== "true") {
+      yield* git.execute({
+        operation: "boardCardWorktree.ghDefault.enableWorktreeConfig",
+        cwd: worktreePath,
+        args: ["config", "extensions.worktreeConfig", "true"],
+        timeoutMs: 10_000,
+      });
+    }
+    yield* git.execute({
+      operation: "boardCardWorktree.ghDefault.pin",
+      cwd: worktreePath,
+      args: ["config", "--worktree", "remote.origin.gh-resolved", "base"],
+      timeoutMs: 10_000,
+    });
+  },
+  (effect, worktreePath) =>
+    effect.pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("board worktree: could not pin gh's default repository to origin", {
+          worktreePath,
+          detail: error.message,
+        }),
+      ),
+    ),
 );
 
 /**

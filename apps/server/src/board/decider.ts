@@ -44,6 +44,7 @@ import {
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterSubBoardFloor,
   boardCardPullRequestsEqual,
+  boardPullRequestPredatesCard,
   isBoardCardPullRequestTerminal,
   boardCardDeletableThreadIds,
   boardCardStepCompletions,
@@ -3160,6 +3161,24 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${command.cardId}' pull request #${next.number} is ${next.state} and at or below its floor of #${card.pullRequestFloor}; it belongs to a completed round of work.`,
         );
       }
+      // T3O-24: a pull request that closed before the card existed belongs to
+      // an earlier card that used the same branch name (keys can be reused),
+      // and adopting it would let branch cleanup delete this card's unmerged
+      // work. Refused here for the same reason as the floor. The card's
+      // current link is exempt so a link recorded before `closedAt` existed
+      // can be backfilled — that backfill is what lets the guard below
+      // release it. An explicit link is the card's by decision.
+      if (
+        next !== null &&
+        !isCurrentLink &&
+        next.linked !== true &&
+        boardPullRequestPredatesCard(next, card.createdAt)
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${command.cardId}' pull request #${next.number} ${next.state} before the card was created; it belongs to an earlier card on the same branch.`,
+        );
+      }
       // No-op guard at the decider, not just at the caller. The refresh
       // triggers fire on every step boundary, stage move and card open, and
       // the overwhelming majority of those lookups return exactly what the
@@ -3194,10 +3213,13 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // still holds the open or closed snapshot it looked up. Writing that
       // would let the next branch lookup — which finds none once Done has
       // deleted `board/<key>` — unlink the badge. Same-number still-merged
-      // is the title backfill.
+      // is the title backfill. T3O-24: except a link the card never owned —
+      // one the board adopted that merged before the card existed — which
+      // the next lookup replaces with the card's own, or with nothing.
       if (
         previous !== null &&
         isBoardCardPullRequestTerminal(previous) &&
+        !(previous.linked !== true && boardPullRequestPredatesCard(previous, card.createdAt)) &&
         (next === null || next.number !== previous.number || next.state !== "merged")
       ) {
         return yield* invariant(

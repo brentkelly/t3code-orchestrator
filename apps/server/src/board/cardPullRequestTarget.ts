@@ -8,9 +8,11 @@
  * only that repository, so a pull request anywhere else is refused here with
  * a message that says so, before any forge call.
  */
-import type { BoardCardPullRequestTarget, RepositoryIdentity } from "@t3tools/contracts";
+import type { BoardCardPullRequestTarget } from "@t3tools/contracts";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
+
+import type { BoardRepository } from "./boardRepository.ts";
 
 const positiveNumber = (digits: string): number | null => {
   const value = Number(digits);
@@ -34,14 +36,6 @@ export function parseCardPullRequestText(text: string): BoardCardPullRequestTarg
   return null;
 }
 
-/** The project's repository path below its host, lower case — `owner/repo`. */
-function projectRepositoryPath(identity: RepositoryIdentity | null | undefined): string | null {
-  if (!identity) return null;
-  const canonical = canonicalRepositoryKey(identity.canonicalKey.trim().toLowerCase());
-  const separator = canonical.indexOf("/");
-  return separator === -1 ? null : canonical.slice(separator + 1);
-}
-
 /**
  * A repository as an agent might write it — `owner/repo`, `owner/repo.git`,
  * `github.com/owner/repo` or its URL — lower case, without scheme, `.git` or
@@ -60,6 +54,9 @@ function repositoryPath(repository: string): string {
 /**
  * The pull request number to link, or why it cannot be linked.
  *
+ * `repository` is the board's — the project's `origin` (T3O-24), which in a
+ * fork is not the project identity's upstream.
+ *
  * The repository is compared by its path below the host, not by host: a
  * Forgejo URL carries a port the project's portless identity does not, and
  * two hosts serving the same `owner/repo` to one project is not a case worth
@@ -67,7 +64,7 @@ function repositoryPath(repository: string): string {
  */
 export function resolveCardPullRequestTarget(
   target: BoardCardPullRequestTarget,
-  identity: RepositoryIdentity | null | undefined,
+  boardRepository: BoardRepository | null | undefined,
 ): { readonly number: number } | { readonly refused: string } {
   let repository: string | undefined;
   let number: number | undefined;
@@ -90,7 +87,7 @@ export function resolveCardPullRequestTarget(
   if (number === undefined) {
     return { refused: "Name the pull request: pass its url, or its number (with its repository)." };
   }
-  const own = projectRepositoryPath(identity);
+  const own = boardRepository?.path ?? null;
   if (own === null) {
     return { refused: "This card's project has no recognised source-control remote to link from." };
   }

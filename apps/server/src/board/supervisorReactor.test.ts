@@ -271,6 +271,7 @@ function reconcileCommandObjects(input: {
       Layer.succeed(
         BoardPullRequestGateway,
         BoardPullRequestGateway.of({
+          repository: () => Effect.succeed(null),
           find: () => Effect.succeed(null),
           get: () =>
             Effect.fail(

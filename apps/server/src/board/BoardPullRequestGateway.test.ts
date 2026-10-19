@@ -37,6 +37,7 @@ import * as GitManager from "../git/GitManager.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 
 /** How upstream reports a host that was asked and said no: the placeholder
     `VcsProcessExitError` leaves behind once the subprocess's stderr is
@@ -117,13 +118,19 @@ function detail(overrides: Partial<PullRequestDetail> = {}): PullRequestDetail {
   };
 }
 
-/** A gateway over recording stubs of the two services it delegates to. */
+/** A host-qualified reference records as `host=<host>:`; a hostless one as nothing. */
+const hostOf = (reference: { readonly host?: string | undefined }) =>
+  reference.host === undefined ? "" : `host=${reference.host}:`;
+
+/** A gateway over recording stubs of the services it delegates to. */
 function makeGateway(
   options: {
     readonly repository?: string | null;
     readonly detail?: PullRequestDetail;
     readonly runActionFails?: boolean;
     readonly runActionError?: unknown;
+    /** `remote.origin.url` (T3O-24). Absent is a checkout with no origin. */
+    readonly originUrl?: string;
   } = {},
 ) {
   const calls: string[] = [];
@@ -140,6 +147,12 @@ function makeGateway(
             Effect.sync(() => {
               calls.push(`invalidateStatus:${cwd}`);
             }),
+        }),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          readConfigValue: (cwd, key) =>
+            Effect.succeed(
+              cwd === "/repo" && key === "remote.origin.url" ? (options.originUrl ?? null) : null,
+            ),
         }),
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
           getProjectShellById: (projectId) =>
@@ -159,7 +172,7 @@ function makeGateway(
           runAction: (input) =>
             Effect.suspend(() => {
               calls.push(
-                `runAction:${input.repository}:${input.number}:${input.action}:${input.mergeMethod}`,
+                `runAction:${hostOf(input)}${input.repository}:${input.number}:${input.action}:${input.mergeMethod}`,
               );
               if (options.runActionError !== undefined) {
                 return Effect.fail(options.runActionError as PullRequestOperationError);
@@ -168,23 +181,27 @@ function makeGateway(
             }),
           invalidate: (input: PullRequestInvalidateInput) =>
             Effect.sync(() => {
-              calls.push(`invalidate:${input.reference?.repository}:${input.reference?.number}`);
+              calls.push(
+                `invalidate:${input.reference === undefined ? "" : hostOf(input.reference)}${input.reference?.repository}:${input.reference?.number}`,
+              );
             }),
           update: (input: PullRequestUpdateInput) =>
             Effect.sync(() => {
-              calls.push(`update:${input.repository}:${input.number}:title=${input.title}`);
+              calls.push(
+                `update:${hostOf(input)}${input.repository}:${input.number}:title=${input.title}`,
+              );
             }),
           detail: (input: PullRequestRef) =>
             Effect.sync(() => {
               calls.push(
-                `detail:${input.repository}:${input.number}:allowStale=${input.allowStale}`,
+                `detail:${hostOf(input)}${input.repository}:${input.number}:allowStale=${input.allowStale}`,
               );
               return options.detail ?? detail();
             }),
           summary: (input: PullRequestRef) =>
             Effect.sync(() => {
               calls.push(
-                `summary:${input.repository}:${input.number}:allowStale=${input.allowStale}`,
+                `summary:${hostOf(input)}${input.repository}:${input.number}:allowStale=${input.allowStale}`,
               );
               const current = options.detail ?? detail();
               return {
@@ -515,5 +532,76 @@ describe("boardTitleWithoutWipPrefix (T3O-12)", () => {
       "Fix the WIP: thing",
     );
     assert.strictEqual(BoardPullRequestGateway.boardTitleWithoutWipPrefix("WIP:"), null);
+  });
+});
+
+// T3O-24: in a fork the project identity names `upstream` — upstream's
+// resolver prefers it on purpose — while the board pushes to and opens its
+// pull requests on `origin`. Every operation has to reach the fork.
+describe("BoardPullRequestGateway in a fork (T3O-24)", () => {
+  const fork = {
+    repository: "pingdotgg/t3code",
+    originUrl: "git@github.com:brentkelly/t3code-orchestrator.git",
+  } as const;
+
+  it.effect("merges on origin, host-qualified so the service acts on it", () => {
+    const { calls, layer } = makeGateway(fork);
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      yield* gateway.merge({ projectId: PROJECT, number: 175, method: "squash" });
+      assert.deepStrictEqual(calls, [
+        "runAction:host=github.com:brentkelly/t3code-orchestrator:175:merge:squash",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reads, probes and readies on origin too", () => {
+    const { calls, layer } = makeGateway({
+      ...fork,
+      detail: detail({
+        isDraft: true,
+        title: "WIP: change",
+        capabilities: { actions: [] } as unknown as PullRequestDetail["capabilities"],
+      }),
+    });
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      yield* gateway.get({ projectId: PROJECT, number: 110, force: true });
+      yield* gateway.mergeState({ projectId: PROJECT, number: 110 });
+      yield* gateway.markReady({ projectId: PROJECT, number: 110 });
+      assert.deepStrictEqual(calls, [
+        "invalidate:host=github.com:brentkelly/t3code-orchestrator:110",
+        "summary:host=github.com:brentkelly/t3code-orchestrator:110:allowStale=false",
+        "invalidate:host=github.com:brentkelly/t3code-orchestrator:110",
+        "detail:host=github.com:brentkelly/t3code-orchestrator:110:allowStale=false",
+        "invalidate:host=github.com:brentkelly/t3code-orchestrator:110",
+        "detail:host=github.com:brentkelly/t3code-orchestrator:110:allowStale=false",
+        "update:host=github.com:brentkelly/t3code-orchestrator:110:title=change",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reports origin as the board's repository", () => {
+    const { layer } = makeGateway(fork);
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      const repository = yield* gateway.repository(PROJECT);
+      assert.deepStrictEqual(repository, {
+        repository: "brentkelly/t3code-orchestrator",
+        path: "brentkelly/t3code-orchestrator",
+        host: "github.com",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("leaves a project whose identity already is origin hostless, as before", () => {
+    const { calls, layer } = makeGateway({
+      originUrl: "https://github.com/brentkelly/t3code-orchestrator.git",
+    });
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      yield* gateway.merge({ projectId: PROJECT, number: 110, method: "squash" });
+      assert.deepStrictEqual(calls, ["runAction:brentkelly/t3code-orchestrator:110:merge:squash"]);
+    }).pipe(Effect.provide(layer));
   });
 });
