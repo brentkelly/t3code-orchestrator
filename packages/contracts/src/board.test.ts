@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardPullRequestPredatesCard,
   BoardCardStepState,
   BOARD_CARD_LABELS_MAX,
   BOARD_THREAD_TODO_CURRENT_MAX_BYTES,
@@ -2736,5 +2737,38 @@ describe("board column scope and arrival placement (T3O-27)", () => {
       }
       expect(sorted(placed)).toEqual(placed);
     });
+  });
+});
+
+// T3O-24: a pull request an earlier card on the same branch name closed.
+describe("boardPullRequestPredatesCard", () => {
+  const created = "2026-10-19T19:07:15.683Z";
+  it("is true only for a non-open pull request that closed before the card", () => {
+    expect(
+      boardPullRequestPredatesCard({ state: "merged", closedAt: "2026-09-09T10:00:00Z" }, created),
+    ).toBe(true);
+    expect(
+      boardPullRequestPredatesCard({ state: "closed", closedAt: "2026-09-09T10:00:00Z" }, created),
+    ).toBe(true);
+    expect(
+      boardPullRequestPredatesCard({ state: "merged", closedAt: "2026-10-20T01:00:00Z" }, created),
+    ).toBe(false);
+  });
+
+  it("never disowns an open pull request, or one with no known date", () => {
+    expect(
+      boardPullRequestPredatesCard({ state: "open", closedAt: "2026-09-09T10:00:00Z" }, created),
+    ).toBe(false);
+    expect(boardPullRequestPredatesCard({ state: "merged" }, created)).toBe(false);
+    expect(boardPullRequestPredatesCard({ state: "merged", closedAt: null }, created)).toBe(false);
+    expect(boardPullRequestPredatesCard({ state: "merged", closedAt: "garbage" }, created)).toBe(
+      false,
+    );
+  });
+
+  it("compares instants, not strings, across fractional-second formats", () => {
+    expect(
+      boardPullRequestPredatesCard({ state: "merged", closedAt: "2026-10-19T19:07:15Z" }, created),
+    ).toBe(true);
   });
 });

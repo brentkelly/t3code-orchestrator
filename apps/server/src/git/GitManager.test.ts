@@ -907,6 +907,58 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  // T3o (T3O-24): board cards reuse branch names, so a branch can carry an
+  // earlier card's merged PR. A late comment bumps that PR's updatedAt; the
+  // branch's latest PR is still the one that closed last.
+  it.effect(
+    "with no open PR, the lookup returns the PR that closed last, not the last touched",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/reused-branch"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/reused-branch"]);
+
+        const { manager } = yield* makeManager({
+          ghScenario: {
+            prListSequence: [
+              encodeCliJson([
+                {
+                  number: 30,
+                  title: "Earlier card's PR",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/30",
+                  baseRefName: "main",
+                  headRefName: "feature/reused-branch",
+                  state: "MERGED",
+                  mergedAt: "2026-01-01T00:00:00Z",
+                  updatedAt: "2026-01-09T00:00:00Z",
+                },
+                {
+                  number: 31,
+                  title: "This card's PR",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/31",
+                  baseRefName: "main",
+                  headRefName: "feature/reused-branch",
+                  state: "MERGED",
+                  mergedAt: "2026-01-05T00:00:00Z",
+                  updatedAt: "2026-01-05T00:00:00Z",
+                },
+              ]),
+            ],
+          },
+        });
+
+        const pullRequest = yield* manager.branchPullRequest({
+          cwd: repoDir,
+          branch: "feature/reused-branch",
+        });
+
+        expect(pullRequest?.number).toBe(31);
+      }),
+  );
+
   it.effect("status returns an explicit non-repo result for non-git directories", () =>
     Effect.gen(function* () {
       const cwd = yield* makeTempDir("t3code-git-manager-non-repo-");

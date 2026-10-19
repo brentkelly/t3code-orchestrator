@@ -27,7 +27,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import type {
   ProjectId,
   PullRequestMergeMethod,
@@ -39,7 +38,9 @@ import * as GitManager from "../git/GitManager.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { boardMergeStateOf, type BoardMergeState } from "./boardMergeState.ts";
+import { boardRepositoryOf, type BoardRepository } from "./boardRepository.ts";
 
 /**
  * Where a refused merge was refused (T3O-47) — the one bit the board cannot
@@ -137,15 +138,15 @@ export function boardTitleWithoutWipPrefix(title: string): string | null {
 }
 
 /** A pull request as the board addresses it. `repository` is resolved here
-    rather than carried on the card: it is the project's own remote, which the
-    read model already records, and a card that predates the field would
-    otherwise be unmergeable. */
+    rather than carried on the card: it is the project's `origin` remote
+    (T3O-24, see `boardRepository.ts`), and a card that predates the field
+    would otherwise be unmergeable. */
 export interface BoardPullRequestRef {
   readonly projectId: ProjectId;
   readonly number: number;
 }
 
-function vcsStatusOf(summary: PullRequestSummary): VcsStatusChangeRequest {
+function vcsStatusOf(summary: PullRequestSummary): BoardFoundPullRequest {
   return {
     number: summary.number,
     title: summary.title,
@@ -155,8 +156,21 @@ function vcsStatusOf(summary: PullRequestSummary): VcsStatusChangeRequest {
     state: summary.state,
     ...(summary.isDraft === true ? { isDraft: true } : {}),
     ...(summary.updatedAt !== undefined ? { updatedAt: summary.updatedAt } : {}),
+    ...(summary.mergedAt !== undefined ? { mergedAt: summary.mergedAt } : {}),
+    ...(summary.closedAt !== undefined ? { closedAt: summary.closedAt } : {}),
   };
 }
+
+/**
+ * A pull request as the board reads it: the VCS status shape, plus when it
+ * merged or closed (T3O-24) — what tells a pull request this card opened from
+ * one an earlier card left on the same branch name. Absent where the host
+ * does not report it.
+ */
+export type BoardFoundPullRequest = VcsStatusChangeRequest & {
+  readonly mergedAt?: string | null;
+  readonly closedAt?: string | null;
+};
 
 export class BoardPullRequestGateway extends Context.Service<
   BoardPullRequestGateway,
@@ -182,9 +196,10 @@ export class BoardPullRequestGateway extends Context.Service<
        * answered out of the cache that produced the answer being questioned is
        * a button that does nothing. */
       readonly force?: boolean;
-    }) => Effect.Effect<VcsStatusChangeRequest | null, BoardPullRequestGatewayError>;
+    }) => Effect.Effect<BoardFoundPullRequest | null, BoardPullRequestGatewayError>;
     /**
-     * The pull request with this number on the project's own remote.
+     * The pull request with this number on the board's repository — the
+     * project's `origin` (T3O-24).
      *
      * Used when the card already holds a link — a merged title backfill — so
      * the answer must not depend on a board branch Done may already have
@@ -198,7 +213,7 @@ export class BoardPullRequestGateway extends Context.Service<
      */
     readonly get: (
       input: BoardPullRequestRef & { readonly force?: boolean },
-    ) => Effect.Effect<VcsStatusChangeRequest, BoardPullRequestGatewayError>;
+    ) => Effect.Effect<BoardFoundPullRequest, BoardPullRequestGatewayError>;
     /**
      * Merge it, with the strategy the merge stage is configured for.
      *
@@ -234,6 +249,15 @@ export class BoardPullRequestGateway extends Context.Service<
     readonly markReady: (
       input: BoardPullRequestRef,
     ) => Effect.Effect<"readied" | "not-draft", BoardPullRequestGatewayError>;
+    /**
+     * The repository the board's pull requests live on (T3O-24): the
+     * project's `origin`, falling back to its identity. Null when the project
+     * has neither. Every other operation here addresses this one, so a pull
+     * request linked to a card is checked against it too.
+     */
+    readonly repository: (
+      projectId: ProjectId,
+    ) => Effect.Effect<BoardRepository | null, BoardPullRequestGatewayError>;
   }
 >()("t3/board/BoardPullRequestGateway") {}
 
@@ -248,12 +272,14 @@ export const layer: Layer.Layer<
   BoardPullRequestGateway,
   never,
   | GitManager.GitManager
+  | GitVcsDriver.GitVcsDriver
   | PullRequestService.PullRequestService
   | ProjectionSnapshotQuery.ProjectionSnapshotQuery
 > = Layer.effect(
   BoardPullRequestGateway,
   Effect.gen(function* () {
     const gitManager = yield* GitManager.GitManager;
+    const git = yield* GitVcsDriver.GitVcsDriver;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
 
@@ -261,22 +287,32 @@ export const layer: Layer.Layer<
       Effect.fail(new BoardPullRequestGatewayError({ operation, detail: failureDetail(error) }));
 
     /**
-     * The `owner/repo` selector `PullRequestService` addresses a project by,
-     * read from the same place the service reads its own: the project shell's
-     * repository identity. A project whose remote was never resolved has no
-     * pull requests to act on, and saying so names the reason.
+     * The repository `PullRequestService` addresses the board's pull requests
+     * by: the project's `origin`, with the host that lets the service act on
+     * it when that is not the project identity's own repository (T3O-24, see
+     * `boardRepository.ts`). A project with neither has no pull requests to
+     * act on, and saying so names the reason.
      */
+    const repository = (projectId: ProjectId, operation = "repository") =>
+      projections.getProjectShellById(projectId).pipe(
+        Effect.catch(fail(operation)),
+        Effect.flatMap((option) => {
+          const project = Option.getOrUndefined(option);
+          if (project === undefined) return Effect.succeed(null);
+          return git.readConfigValue(project.workspaceRoot, "remote.origin.url").pipe(
+            Effect.orElseSucceed(() => null),
+            Effect.map((originUrl) => boardRepositoryOf(project.repositoryIdentity, originUrl)),
+          );
+        }),
+      );
+
     const repositoryOf = (
       operation: string,
       projectId: ProjectId,
       refusal?: BoardPullRequestRefusal,
     ) =>
-      projections.getProjectShellById(projectId).pipe(
-        Effect.catch(fail(operation)),
-        Effect.flatMap((project) => {
-          const repository = sourceControlRepositorySelector(
-            Option.getOrUndefined(project)?.repositoryIdentity,
-          );
+      repository(projectId, operation).pipe(
+        Effect.flatMap((repository) => {
           return repository === null
             ? Effect.fail(
                 new BoardPullRequestGatewayError({
@@ -289,12 +325,16 @@ export const layer: Layer.Layer<
         }),
       );
 
+    /** The `PullRequestService` reference fields for a board repository. */
+    const addressOf = ({ repository, host }: BoardRepository) =>
+      host === undefined ? { repository } : { repository, host };
+
     const markReady = (input: BoardPullRequestRef) =>
       repositoryOf("markReady", input.projectId, "blocked").pipe(
         Effect.flatMap((repository) => {
           const reference = {
             projectId: input.projectId,
-            repository,
+            ...addressOf(repository),
             number: input.number,
             allowStale: false,
           } as const;
@@ -335,6 +375,7 @@ export const layer: Layer.Layer<
       );
 
     return BoardPullRequestGateway.of({
+      repository: (projectId) => repository(projectId),
       markReady,
       find: (input) =>
         // T3o (T3O-48): a forced lookup bumps this checkout's PR-lookup epoch,
@@ -354,7 +395,7 @@ export const layer: Layer.Layer<
           Effect.flatMap((repository) => {
             const reference = {
               projectId: input.projectId,
-              repository,
+              ...addressOf(repository),
               number: input.number,
               allowStale: false,
             } as const;
@@ -373,7 +414,7 @@ export const layer: Layer.Layer<
           Effect.flatMap((repository) =>
             pullRequests.runAction({
               projectId: input.projectId,
-              repository,
+              ...addressOf(repository),
               number: input.number,
               action: "merge",
               mergeMethod: input.method,
@@ -394,7 +435,7 @@ export const layer: Layer.Layer<
           Effect.flatMap((repository) => {
             const reference = {
               projectId: input.projectId,
-              repository,
+              ...addressOf(repository),
               number: input.number,
               // The probe runs immediately after a refused merge, and it is the
               // refusal it has to explain. `runAction` leaves the in-process

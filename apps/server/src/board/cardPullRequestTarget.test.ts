@@ -6,9 +6,10 @@
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
+import { boardRepositoryOf } from "./boardRepository.ts";
 import { parseCardPullRequestText, resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
 
-const identity: RepositoryIdentity = {
+const zeald: RepositoryIdentity = {
   canonicalKey: "github.com/zeald/core.z5",
   locator: {
     source: "git-remote",
@@ -19,6 +20,8 @@ const identity: RepositoryIdentity = {
   owner: "Zeald",
   name: "core.z5",
 };
+/** A single-remote project: its identity is its origin. */
+const identity = boardRepositoryOf(zeald, zeald.locator.remoteUrl);
 
 describe("parseCardPullRequestText", () => {
   it("reads a bare number, with or without #", () => {
@@ -90,5 +93,46 @@ describe("resolveCardPullRequestTarget", () => {
       "refused" in resolveCardPullRequestTarget({ repository: "zeald/core.z5" }, identity),
     ).toBe(true);
     expect("refused" in resolveCardPullRequestTarget({ number: 1 }, null)).toBe(true);
+  });
+});
+
+// T3O-24: upstream's identity prefers an `upstream` remote, so in a fork it
+// names the repository the board's pull requests are NOT on.
+describe("resolveCardPullRequestTarget in a fork", () => {
+  const upstream: RepositoryIdentity = {
+    canonicalKey: "github.com/pingdotgg/t3code",
+    locator: {
+      source: "git-remote",
+      remoteName: "upstream",
+      remoteUrl: "https://github.com/pingdotgg/t3code.git",
+    },
+    provider: "github",
+    owner: "pingdotgg",
+    name: "t3code",
+  };
+  const fork = boardRepositoryOf(upstream, "git@github.com:brentkelly/t3code-orchestrator.git");
+
+  it("links the fork's own pull request", () => {
+    expect(
+      resolveCardPullRequestTarget(
+        { url: "https://github.com/brentkelly/t3code-orchestrator/pull/175" },
+        fork,
+      ),
+    ).toEqual({ number: 175 });
+    expect(
+      resolveCardPullRequestTarget(
+        { repository: "brentkelly/t3code-orchestrator", number: 175 },
+        fork,
+      ),
+    ).toEqual({ number: 175 });
+  });
+
+  it("refuses upstream's, naming the fork as the card's repository", () => {
+    const result = resolveCardPullRequestTarget(
+      { url: "https://github.com/pingdotgg/t3code/pull/175" },
+      fork,
+    );
+    expect("refused" in result && result.refused).toContain("pingdotgg/t3code#175");
+    expect("refused" in result && result.refused).toContain("brentkelly/t3code-orchestrator");
   });
 });

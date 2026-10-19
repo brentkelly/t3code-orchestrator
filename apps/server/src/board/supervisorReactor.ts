@@ -25,6 +25,7 @@ import {
   boardSubBoardFloorStage,
   unmetBoardCardDependencies,
   boardCardPullRequestsEqual,
+  boardPullRequestPredatesCard,
   boardCardStepCompletions,
   boardCardUnfinishedChildren,
   boardCardStepState,
@@ -154,6 +155,7 @@ import {
   provisionBoardCardWorktree,
   forceRemoveBoardCardWorktree,
   parseRegisteredWorktrees,
+  pinBoardWorktreeGhDefault,
   reclaimBoardCardWorktree,
   resolveBoardCardBaseRef,
   runBoardCardWorktreeSetup,
@@ -1507,6 +1509,14 @@ const make = Effect.gen(function* () {
     // needed" and continues once a human approves. Tool access stays
     // `interactionMode: "default"` (the MCP write tools are a separate axis).
     const runtimeMode = step.runtimeMode;
+    // T3o (T3O-24): pin the agent's gh to origin on every build-mode spawn,
+    // not only at provisioning, so a worktree that predates the pin gets it
+    // before its next agent runs. Idempotent and never fails the spawn.
+    if (input.branch !== null) {
+      yield* pinBoardWorktreeGhDefault(input.worktreePath).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+      );
+    }
     // The thread is created with its OWN command first. `thread.turn.start`
     // carries a `bootstrap.createThread` block, but that block is interpreted
     // by the WebSocket dispatch path (`dispatchBootstrapTurnStart` in ws.ts),
@@ -4152,6 +4162,15 @@ const make = Effect.gen(function* () {
   // recover. A still-pending question is the legitimate gate (D13), not death.
   // ── Card ↔ pull request ─────────────────────────────────────────────
 
+  /** T3o (T3O-24): `BoardCardPullRequest.closedAt` from a forge answer —
+      when it stopped being open, keyed only on a non-open pull request. */
+  const boardClosedAtOf = (found: {
+    readonly state: BoardCardPullRequest["state"];
+    readonly mergedAt?: string | null | undefined;
+    readonly closedAt?: string | null | undefined;
+  }): { readonly closedAt?: string | null } =>
+    found.state === "open" ? {} : { closedAt: found.mergedAt ?? found.closedAt ?? null };
+
   /** T3o (T3O-48): the card's link, as the refresh RPC reports it. */
   const boardRefreshOutcomeOf = (
     pullRequest: BoardCardPullRequest | null,
@@ -4218,9 +4237,28 @@ const make = Effect.gen(function* () {
       // by-number path for every state, never the branch lookup — the card
       // may have no worktree at all, or the link may name a PR on another
       // branch (a stack layer), and either way the branch would answer wrong.
+      //
+      // T3o (T3O-24): a merged link the board ADOPTED that closed before the
+      // card existed is an earlier card's, found on a reused branch name. It
+      // skips this path and goes to the branch lookup, which replaces it with
+      // the card's own pull request or with nothing. A merged link recorded
+      // before `closedAt` existed is looked up by number once to learn it.
       const linked = recorded?.linked === true;
-      if (recorded !== null && (linked || isBoardCardPullRequestTerminal(recorded))) {
-        if (isBoardCardPullRequestTerminal(recorded) && recorded.title !== null) {
+      // The pull request the card holds but never owned, once known.
+      let disowned: number | null =
+        recorded !== null && !linked && boardPullRequestPredatesCard(recorded, card.createdAt)
+          ? recorded.number
+          : null;
+      if (
+        recorded !== null &&
+        disowned === null &&
+        (linked || isBoardCardPullRequestTerminal(recorded))
+      ) {
+        if (
+          isBoardCardPullRequestTerminal(recorded) &&
+          recorded.title !== null &&
+          (linked || recorded.closedAt !== undefined)
+        ) {
           return boardRefreshOutcomeOf(recorded);
         }
         // Only a human's "Check again" forces past the PR read cache; every
@@ -4276,20 +4314,42 @@ const make = Effect.gen(function* () {
           baseRef: found.baseRef,
           ...(found.isDraft === true ? { isDraft: true } : {}),
           ...(linked ? { linked: true } : {}),
+          ...boardClosedAtOf(found),
           checkedAt: yield* nowIso,
         } satisfies BoardCardPullRequest;
-        if (boardCardPullRequestsEqual(currentLink, next)) return boardRefreshOutcomeOf(next);
-        yield* dispatchOptional({
-          type: "board.card.record-pull-request",
-          commandId: yield* commandId("record-pr"),
-          cardId: card.id,
-          pullRequest: next,
-          createdAt: yield* nowIso,
-        });
-        return boardRefreshOutcomeOf(next);
+        if (!boardCardPullRequestsEqual(currentLink, next)) {
+          yield* dispatchOptional({
+            type: "board.card.record-pull-request",
+            commandId: yield* commandId("record-pr"),
+            cardId: card.id,
+            pullRequest: next,
+            createdAt: yield* nowIso,
+          });
+        }
+        if (linked || !boardPullRequestPredatesCard(next, card.createdAt)) {
+          return boardRefreshOutcomeOf(next);
+        }
+        disowned = next.number;
       }
 
-      if (worktree === null) return { outcome: "no-branch" } as const;
+      if (worktree === null) {
+        if (disowned === null) return { outcome: "no-branch" } as const;
+        // No branch to find the card's own on, so the earlier card's link is
+        // cleared rather than left pointing View PR at it — unless another
+        // refresh has replaced it meanwhile.
+        const held = (yield* readCard(card.id))?.pullRequest ?? null;
+        if (held !== null && held.number === disowned && held.linked !== true) {
+          yield* dispatchOptional({
+            type: "board.card.record-pull-request",
+            commandId: yield* commandId("record-pr"),
+            cardId: card.id,
+            pullRequest: null,
+            createdAt: yield* nowIso,
+          });
+          return { outcome: "no-branch" } as const;
+        }
+        return boardRefreshOutcomeOf(held);
+      }
 
       const model = yield* snapshotQuery.getCommandReadModel();
       const cwd = worktree.path ?? projectCwd(model, card);
@@ -4328,8 +4388,16 @@ const make = Effect.gen(function* () {
         return { outcome: "lookup-failed", detail: found.failure } as const;
       }
 
+      // T3o (T3O-24): a pull request that closed before the card existed is
+      // an earlier card's on the same branch name — the lookup falls back to
+      // the newest pull request on the branch when none is open — so it is
+      // no pull request at all for this card.
       const next =
-        found === null
+        found === null ||
+        boardPullRequestPredatesCard(
+          { state: found.state, ...boardClosedAtOf(found) },
+          card.createdAt,
+        )
           ? null
           : ({
               number: found.number,
@@ -4339,6 +4407,7 @@ const make = Effect.gen(function* () {
               headBranch: found.headRef,
               baseRef: found.baseRef,
               ...(found.isDraft === true ? { isDraft: true } : {}),
+              ...boardClosedAtOf(found),
               checkedAt: yield* nowIso,
             } satisfies BoardCardPullRequest);
 
@@ -4359,9 +4428,16 @@ const make = Effect.gen(function* () {
       // that started while the link was still open — lastGoodSummary can
       // still say that after another refresh recorded the merge — and writing
       // it would let the next null find unlink the badge.
+      // T3o (T3O-24): except a link the card never owned (see above).
+      const currentDisowned =
+        current.pullRequest !== null &&
+        current.pullRequest.linked !== true &&
+        (current.pullRequest.number === disowned ||
+          boardPullRequestPredatesCard(current.pullRequest, card.createdAt));
       if (
         isBoardCardPullRequestTerminal(current.pullRequest) &&
         current.pullRequest !== null &&
+        !currentDisowned &&
         (next === null || next.number !== current.pullRequest.number || next.state !== "merged")
       ) {
         return boardRefreshOutcomeOf(current.pullRequest);
@@ -4474,11 +4550,12 @@ const make = Effect.gen(function* () {
     projectId: ProjectId,
     target: BoardCardPullRequestTarget,
   ) {
-    const project = yield* snapshotQuery.getProjectShellById(projectId).pipe(
-      Effect.map(Option.getOrUndefined),
-      Effect.orElseSucceed(() => undefined),
-    );
-    const resolved = resolveCardPullRequestTarget(target, project?.repositoryIdentity);
+    // T3o (T3O-24): the board's repository — `origin` — not the project
+    // identity, which in a fork names upstream.
+    const repository = yield* pullRequests
+      .repository(projectId)
+      .pipe(Effect.orElseSucceed(() => null));
+    const resolved = resolveCardPullRequestTarget(target, repository);
     if ("refused" in resolved) {
       return { outcome: "refused", detail: resolved.refused } as const;
     }
@@ -4581,6 +4658,13 @@ const make = Effect.gen(function* () {
     const worktree = card.worktree;
     if (worktree === null) return;
     if (card.pullRequest === null || card.pullRequest.state !== "merged") return;
+    // T3o (T3O-24): an earlier card's merge on a reused branch name.
+    if (
+      card.pullRequest.linked !== true &&
+      boardPullRequestPredatesCard(card.pullRequest, card.createdAt)
+    ) {
+      return;
+    }
 
     const settings = yield* boardSettings;
     const board = yield* readBoard;
@@ -4722,7 +4806,14 @@ const make = Effect.gen(function* () {
         baseRefName: worktree.baseRefName,
         branch: worktree.branch,
         mergedPullRequestNumbers: pullRequests
-          .filter((pullRequest) => pullRequest.state === "merged")
+          .filter(
+            (pullRequest) =>
+              pullRequest.state === "merged" &&
+              // T3o (T3O-24): an earlier card's merge on a reused branch name
+              // proves nothing about this card's work.
+              (pullRequest.linked === true ||
+                !boardPullRequestPredatesCard(pullRequest, card.createdAt)),
+          )
           .map((pullRequest) => pullRequest.number),
         openPullRequestNumber: card.pullRequest?.state === "open" ? card.pullRequest.number : null,
         fetchedBases,
@@ -4870,6 +4961,15 @@ const make = Effect.gen(function* () {
 
     if (!inDone) return attempt;
     if (card.pullRequest === null || card.pullRequest.state !== "merged") return attempt;
+    // T3o (T3O-24): a pull request that merged before the card existed is an
+    // earlier card's on a reused branch name; it says nothing about this
+    // card's work, which may be sitting unmerged on that very branch.
+    if (
+      card.pullRequest.linked !== true &&
+      boardPullRequestPredatesCard(card.pullRequest, card.createdAt)
+    ) {
+      return attempt;
+    }
     if (options?.branchCleanup === "after-reclaim" && !removedHere) return attempt;
     // Branch cleanup hangs off the pull-request refresh, and a refresh fires
     // every time anyone OPENS the card — so without a guard a card sitting in

@@ -40,7 +40,6 @@ import {
   type BoardCardPullRequest,
   type BoardStageExecutionMerge,
   type BoardStageExecutionReview,
-  type VcsStatusChangeRequest,
   type BoardCardWorktree,
   type BoardSettings,
   type BoardStageExecution,
@@ -75,6 +74,7 @@ import { BoardStepSlots, BoardStepSlotsLive } from "./BoardStepSlots.ts";
 import {
   BoardPullRequestGateway,
   BoardPullRequestGatewayError,
+  type BoardFoundPullRequest,
   type BoardPullRequestRefusal,
 } from "./BoardPullRequestGateway.ts";
 import {
@@ -82,6 +82,7 @@ import {
   OrchestrationThreadSettleBlockedError,
 } from "../orchestration/Errors.ts";
 import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
+import { boardRepositoryOf } from "./boardRepository.ts";
 import { projectBoardEvent } from "./projector.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
 import { UsageLimitDetector, type UsageLimitDetectorShape } from "./UsageLimitDetector.ts";
@@ -579,25 +580,29 @@ export function withGovernor(
     /** What a branch pull-request lookup answers. `undefined` (the default) is
         "no pull request"; a `detail` string makes the lookup FAIL, which is a
         different answer the reactor must not confuse with "there is none". */
-    readonly pullRequest?: VcsStatusChangeRequest | { readonly failWith: string } | null;
+    readonly pullRequest?: BoardFoundPullRequest | { readonly failWith: string } | null;
     /** T3o (T3O-48): the same answer, read afresh on every lookup, for a test
         whose point is that the answer CHANGED between two of them — a pull
         request opened after the board was last told there was none. Takes
         precedence over `pullRequest` when both are given. */
     readonly pullRequestOf?: () =>
-      | VcsStatusChangeRequest
+      | BoardFoundPullRequest
       | { readonly failWith: string }
       | null
       | undefined;
     /** What a number lookup answers. `undefined` reuses `pullRequest` /
         `pullRequestOf` so fixtures that only care about the forge's one
         answer stay as they are. `null` is "this number is gone". */
-    readonly pullRequestByNumber?: VcsStatusChangeRequest | { readonly failWith: string } | null;
+    readonly pullRequestByNumber?: BoardFoundPullRequest | { readonly failWith: string } | null;
     /** The repository every project's shell reports (T3O-18) — what a linked
         pull request is checked against. Defaults to `github.com/acme/repo`,
         the repository the pull-request fixtures live on; `null` is a project
         with no recognised remote. */
     readonly projectRepository?: RepositoryIdentity | null;
+    /** The project's `remote.origin.url` (T3O-24). Absent is a checkout
+        whose identity already is its origin; a fork sets this to its own
+        repository while `projectRepository` names upstream. */
+    readonly projectOriginUrl?: string;
     /** Run before every branch pull-request lookup answers. The lookup is the
         reactor's one forge round trip on the refresh path, so it is the window
         another trigger can record a link in — a test that wants to drive that
@@ -859,6 +864,20 @@ export function withGovernor(
     const staleThreadMessages = input.staleThreadMessages ?? new Set<string>();
     const threadSignals = input.threadSignals ?? new Map<string, string>();
     const threadPendingTurnStarts = input.threadPendingTurnStarts ?? new Map<string, string>();
+    const projectRepositoryIdentity: RepositoryIdentity | null =
+      input.projectRepository === undefined
+        ? {
+            canonicalKey: "github.com/acme/repo",
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "git@github.com:acme/repo.git",
+            },
+            provider: "github",
+            owner: "acme",
+            name: "repo",
+          }
+        : input.projectRepository;
     const snapshotStub = {
       // The thread rows carry the CURRENT shell session, so a fixture that moves
       // a thread from mid-turn to idle moves both the shell the decider guard
@@ -878,20 +897,7 @@ export function withGovernor(
         Effect.succeed(
           Option.some({
             id,
-            repositoryIdentity:
-              input.projectRepository === undefined
-                ? {
-                    canonicalKey: "github.com/acme/repo",
-                    locator: {
-                      source: "git-remote",
-                      remoteName: "origin",
-                      remoteUrl: "git@github.com:acme/repo.git",
-                    },
-                    provider: "github",
-                    owner: "acme",
-                    name: "repo",
-                  }
-                : input.projectRepository,
+            repositoryIdentity: projectRepositoryIdentity,
           }),
         ),
       getThreadShellById: (threadId: ThreadId) =>
@@ -1145,6 +1151,10 @@ export function withGovernor(
     >([]);
     const markReadyCalls = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
     const pullRequestStub = BoardPullRequestGateway.of({
+      repository: () =>
+        Effect.succeed(
+          boardRepositoryOf(projectRepositoryIdentity, input.projectOriginUrl ?? null),
+        ),
       markReady: (request) =>
         Ref.updateAndGet(markReadyCalls, (calls) => [...calls, { number: request.number }]).pipe(
           Effect.flatMap((calls) => {

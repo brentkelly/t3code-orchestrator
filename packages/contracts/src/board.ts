@@ -710,6 +710,18 @@ export const BoardCardPullRequest = Schema.Struct({
       worktree at all, or the PR may live on another branch (a stack layer).
       Key-optional and present only when true, like `isDraft`. */
   linked: Schema.optionalKey(Schema.Literal(true)),
+  /** When the pull request stopped being open — merged or closed — as the
+      forge reports it (T3O-24). Present only on a non-open link; null when
+      the forge did not say. Absent on records written before it existed,
+      which the supervisor backfills by number.
+
+      It answers whether the pull request belongs to this card at all. Board
+      branches are named after card keys, and keys can be reused, so a branch
+      lookup can turn up a pull request a previous card merged on the same
+      branch months ago. One that closed before the card was created is not
+      the card's, and is never adopted or kept (see
+      `boardPullRequestPredatesCard`). */
+  closedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** When this state was first observed — NOT when it was last checked.
       Refreshes that find no change record no event at all (the decider's
       no-op guard deliberately excludes this field, or every card open would
@@ -742,7 +754,10 @@ export function boardCardPullRequestsEqual(
     left.headBranch === right.headBranch &&
     left.baseRef === right.baseRef &&
     (left.isDraft === true) === (right.isDraft === true) &&
-    (left.linked === true) === (right.linked === true)
+    (left.linked === true) === (right.linked === true) &&
+    // Strict: absent (recorded before the field existed) and null (the
+    // forge did not say) are different, so the backfill can land a null.
+    left.closedAt === right.closedAt
   );
 }
 
@@ -782,6 +797,23 @@ export function boardCardDisplayPullRequest(
     one reading, shared by the shell's JS producer and its tests. */
 export function boardCardPullRequestIsOpenDraft(pullRequest: BoardCardPullRequest | null): boolean {
   return pullRequest !== null && pullRequest.state === "open" && pullRequest.isDraft === true;
+}
+
+/**
+ * Whether a pull request closed or merged before the card existed (T3O-24),
+ * and so belongs to an earlier card that used the same branch name. An open
+ * pull request never does: a push to the branch updates it, so it is the
+ * branch's live one. A link with no known `closedAt` is given the benefit of
+ * the doubt — it cannot be shown to be someone else's.
+ */
+export function boardPullRequestPredatesCard(
+  pullRequest: { readonly state: string; readonly closedAt?: string | null | undefined },
+  cardCreatedAt: string,
+): boolean {
+  if (pullRequest.state === "open" || pullRequest.closedAt == null) return false;
+  const closed = Date.parse(pullRequest.closedAt);
+  const created = Date.parse(cardCreatedAt);
+  return Number.isFinite(closed) && Number.isFinite(created) && closed < created;
 }
 
 export function isBoardCardPullRequestTerminal(pullRequest: BoardCardPullRequest | null): boolean {
