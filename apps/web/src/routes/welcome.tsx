@@ -1,11 +1,16 @@
 import { createFileRoute, redirect, useLocation, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 
 // T3o: onboarding ends where pairing ends — the board (T3O-34, D2).
 import { resolveOnboardingExitTarget } from "../board/boardHomeRedirect";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { WelcomeWizard } from "../components/onboarding/WelcomeWizard";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+
+const decodeEnvironmentId = Schema.decodeOption(EnvironmentId);
 
 /** Onboarding overlays the workspace. Visiting /welcome reopens setup. */
 export const Route = createFileRoute("/welcome")({
@@ -21,6 +26,10 @@ export const Route = createFileRoute("/welcome")({
 function WelcomeRouteView() {
   const { authGateState } = Route.useRouteContext();
   const navigate = useNavigate();
+  const hash = useLocation({ select: (location) => location.hash });
+  const resumeEnvironmentId = hash.startsWith("agents:")
+    ? Option.getOrUndefined(decodeEnvironmentId(hash.slice("agents:".length)))
+    : undefined;
   // The root shell can remount this pending outlet after the location changes.
   // Never reopen setup while the destination route is still loading.
   const isWelcomeRoute = useLocation({ select: (location) => location.pathname === "/welcome" });
@@ -37,7 +46,8 @@ function WelcomeRouteView() {
       {isWelcomeRoute && !dismissed ? (
         <WelcomeWizard
           localAvailable={localAvailable}
-          onDone={(projectRef) => {
+          resumeEnvironmentId={resumeEnvironmentId}
+          onDone={async (projectRef) => {
             setDismissed(true);
             // T3o: the wizard runs after the cold-start redirect has been
             // spent, so its exit is the one path that would never see the
@@ -45,12 +55,12 @@ function WelcomeRouteView() {
             // it, as upstream intends.
             const exit = resolveOnboardingExitTarget(authGateState.status);
             if (projectRef !== undefined) {
-              void openNewThread(projectRef, { replace: true }).catch(() => {
-                void navigate({ to: exit, replace: true });
-              });
+              await openNewThread(projectRef, { replace: true }).catch(() =>
+                navigate({ to: exit, replace: true }),
+              );
               return;
             }
-            void navigate({ to: exit, replace: true });
+            await navigate({ to: exit, replace: true });
           }}
         />
       ) : null}

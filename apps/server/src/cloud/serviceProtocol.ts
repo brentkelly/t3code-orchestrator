@@ -1,15 +1,14 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 
-/**
- * Protocol 2 snapshotted `state.sqlite` before trials so migrations could be
- * rolled back safely. Protocol 3 snapshots and restores EVERY database in the
- * state directory: a server keeping data in more than one file (t3o-26 adds
- * `boards.sqlite`) must not be trialled under a launcher that would snapshot only
- * one of them, or a rolled-back trial leaves the others migrated forward with a
- * ledger claiming they are current. Preflight blocks on an exact mismatch, which
- * is what forces the launcher upgrade first.
- */
-export const SERVICE_LAUNCHER_PROTOCOL = 3 as const;
+// Protocol 3 requires the standalone executable layout. Bump when runtimePaths
+// or the installed runtime tree changes incompatibly; launchers survive self-updates.
+// T3o: protocol 4 (T3O-54) = upstream's 3 plus snapshotting and restoring EVERY
+// database in the state directory, not just `state.sqlite` (t3o-26 adds
+// `boards.sqlite`). Upstream's v0.0.43+ launchers report 3 but snapshot one file,
+// so a rolled-back trial under one would leave `boards.sqlite` migrated forward
+// with a ledger claiming it is current. Preflight blocks on an exact mismatch,
+// which forces the launcher upgrade first. Re-bump if upstream reaches 4.
+export const SERVICE_LAUNCHER_PROTOCOL = 4 as const;
 export const SERVICE_LAUNCHER_CONTEXT_ENV = "T3_SERVICE_LAUNCHER_CONTEXT";
 export const SERVICE_STATE_FILE = "service-state.json";
 /** Written by the launcher just before an explicit stop kills its child, so

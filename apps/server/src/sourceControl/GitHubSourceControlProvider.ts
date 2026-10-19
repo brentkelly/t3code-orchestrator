@@ -2,18 +2,12 @@ import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
-import {
-  SourceControlProviderError,
-  type ChangeRequest,
-  type ChangeRequestState,
-} from "@t3tools/contracts";
+import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as GitHubCli from "./GitHubCli.ts";
 // T3o: every gh call names the project's origin repository (T3O-48).
-import { gitHubRepositoryArgs, parseGitHubRemoteUrl, type GitHubRemote } from "./githubRemote.ts";
+import { parseGitHubRemoteUrl, type GitHubRemote } from "./githubRemote.ts";
 import { findAuthenticatedGitHubAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
-import { decodeGitHubPullRequestListJson } from "./gitHubPullRequests.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
   combinedAuthOutput,
@@ -151,6 +145,9 @@ export const make = Effect.gen(function* () {
             cwd: input.cwd,
             ...repositoryInput(repositoryOf(input.context)),
             headSelector: input.headSelector,
+            ...(input.context === undefined
+              ? {}
+              : { rateLimitHost: new URL(input.context.provider.baseUrl).host }),
             ...(input.limit !== undefined ? { limit: input.limit } : {}),
           })
           .pipe(
@@ -172,59 +169,30 @@ export const make = Effect.gen(function* () {
           );
       }
 
-      const stateArg: ChangeRequestState | "all" = input.state;
       return github
-        .execute({
+        .listPullRequestsByHead({
           cwd: input.cwd,
-          args: [
-            "pr",
-            "list",
-            // T3o: name the origin repository (T3O-48). This path builds its
-            // args and calls `execute` directly, so it pins itself.
-            ...gitHubRepositoryArgs(repositoryOf(input.context)),
-            "--head",
-            input.headSelector,
-            "--state",
-            stateArg,
-            "--limit",
-            String(input.limit ?? 20),
-            "--json",
-            "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
-          ],
+          headSelector: input.headSelector,
+          state: input.state,
+          limit: input.limit ?? 20,
+          // T3o: name the origin repository (T3O-48).
+          ...repositoryInput(repositoryOf(input.context)),
+          ...(input.context === undefined
+            ? {}
+            : { rateLimitHost: new URL(input.context.provider.baseUrl).host }),
         })
         .pipe(
-          Effect.flatMap((result) => {
-            const raw = result.stdout.trim();
-            if (raw.length === 0) {
-              return Effect.succeed([]);
-            }
-            return Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
-              Effect.flatMap((decoded) =>
-                Result.isSuccess(decoded)
-                  ? Effect.succeed(
-                      decoded.success.map((item) => {
-                        const { updatedAt, ...summary } = item;
-                        return {
-                          ...toChangeRequest({
-                            ...summary,
-                            ...(Option.isSome(updatedAt)
-                              ? { updatedAt: DateTime.formatIso(updatedAt.value) }
-                              : {}),
-                          }),
-                          updatedAt,
-                        };
-                      }),
-                    )
-                  : Effect.fail(
-                      new GitHubCli.GitHubChangeRequestListDecodeError({
-                        command: "gh",
-                        cwd: input.cwd,
-                        cause: decoded.failure,
-                      }),
-                    ),
-              ),
-            );
-          }),
+          Effect.map((items) =>
+            items.map(({ updatedAt, ...summary }) => ({
+              ...toChangeRequest({
+                ...summary,
+                ...(Option.isSome(updatedAt)
+                  ? { updatedAt: DateTime.formatIso(updatedAt.value) }
+                  : {}),
+              }),
+              updatedAt,
+            })),
+          ),
           Effect.mapError(
             (error) =>
               new SourceControlProviderError({
@@ -299,6 +267,9 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           ...repositoryInput(repositoryOf(input.context)),
           reference: input.reference,
+          ...(input.context === undefined
+            ? {}
+            : { rateLimitHost: new URL(input.context.provider.baseUrl).host }),
         })
         .pipe(
           Effect.map(toChangeRequest),
@@ -382,6 +353,9 @@ export const make = Effect.gen(function* () {
         .getDefaultBranch({
           cwd: input.cwd,
           ...repositoryInput(repositoryOf(input.context)),
+          ...(input.context === undefined
+            ? {}
+            : { rateLimitHost: new URL(input.context.provider.baseUrl).host }),
         })
         .pipe(
           Effect.mapError(

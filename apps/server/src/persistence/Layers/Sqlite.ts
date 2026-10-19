@@ -9,6 +9,9 @@ import { runMigrations } from "../Migrations.ts";
 import { initialiseBoardDatabase, runBoardMigrations } from "../../board/migrations/index.ts";
 import { ServerConfig } from "../../config.ts";
 
+// Size the -wal file is cut back to on the first commit after a WAL reset.
+export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
+
 const setup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -16,6 +19,9 @@ const setup = Layer.effectDiscard(
     yield* sql`PRAGMA busy_timeout = 5000;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
     yield* sql`PRAGMA journal_mode = WAL;`;
+    // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
+    // largest size until the last connection closes.
+    yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     // T3o: attach boards.sqlite, relocate any pre-t3o-26 board tables out of this
     // file, and heal the old shared-ledger scheme — all BEFORE upstream migrations
     // run, so a database pinned at the legacy 900+ high-water mark doesn't skip
@@ -41,7 +47,7 @@ export const makeSqlitePersistenceLive = Effect.fn("makeSqlitePersistenceLive")(
       filename: dbPath,
       spanAttributes: {
         "db.name": path.basename(dbPath),
-        "service.name": "t3-server",
+        "service.name": "t3code-server",
       },
     }),
   );
