@@ -50,7 +50,7 @@ Open the card. Its banner names the reason and the worktree's folder, and offers
 
 Before T3 Code removes a worktree, it closes the terminals and stops the agent sessions working in
 it. A finished card whose worktree still has something running in it, such as a dev server or a
-build, is kept with a reason like `cargo (pid 4412) is still running in the worktree`. **Check
+build, is kept with a reason like `cargo is still running in the worktree`. **Check
 again** retries once it has stopped. **Remove worktree** and deleting a card stop those processes
 for you.
 
@@ -71,7 +71,7 @@ removed**, or set `"runOnWorktreeRemove": true` on a script in `t3.json`:
   and `T3_WORKTREE_VERIFIED_CLEAN` (`1` only when the worktree was just checked clean and its work
   saved elsewhere).
 - Several scripts may be marked; they run in order. The removal waits for them, up to 5 minutes
-  each.
+  each. Deleting a thread or a card does not wait: the worktree goes once the scripts finish.
 - A script that fails or times out does not stop the removal. The card's activity notes the failure.
 - T3 Code cannot see processes running inside containers. If the worktree starts containers, stop
   them in this script, or they keep writing into the deleted folder.

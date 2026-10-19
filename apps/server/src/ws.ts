@@ -3326,7 +3326,8 @@ const makeWsRpcLayer = (
               worktreeRetirer,
               input,
               gitWorkflow.removeWorktree(input),
-            ).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+              refreshGitStatus(input.cwd),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>

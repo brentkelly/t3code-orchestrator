@@ -28,7 +28,7 @@ import * as NodeReadline from "node:readline";
 
 import {
   CommandId,
-  type GitCommandError,
+  GitCommandError,
   type OrchestrationReadModel,
   type ProjectScript,
 } from "@t3tools/contracts";
@@ -37,6 +37,7 @@ import { projectScriptRuntimeEnv, resolveProjectScripts } from "@t3tools/shared/
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -66,6 +67,8 @@ export interface WorktreeRetireInput {
   readonly stillWanted?: Effect.Effect<boolean> | undefined;
   /** The removal itself. Defaults to `git worktree remove`, forced for `forced`. */
   readonly remove?: Effect.Effect<void, GitCommandError> | undefined;
+  /** Runs once the checks have passed and remove scripts are about to start. */
+  readonly onScriptsStarting?: Effect.Effect<void> | undefined;
 }
 
 export type WorktreeRetireResult =
@@ -221,13 +224,17 @@ const signalProcessDefault = (pid: number, signal: NodeJS.Signals) =>
     }
   });
 
-/** `cargo (pid 4412) and 2 other processes are still running in the worktree`. */
+/**
+ * `cargo and rustc are still running in the worktree`. Program names only, no
+ * pids or counts: the reason is compared between sweeps, and a build's
+ * changing set of rustc processes is not a new reason to report.
+ */
 export const survivorReason = (survivors: ReadonlyArray<WorktreeProcess>): string => {
-  const [first, ...rest] = survivors;
-  const named = `${first?.name ?? "A process"} (pid ${first?.pid ?? "?"})`;
-  if (rest.length === 0) return `${named} is still running in the worktree`;
-  const others = rest.length === 1 ? "1 other process" : `${rest.length} other processes`;
-  return `${named} and ${others} are still running in the worktree`;
+  const names = [...new Set(survivors.map((survivor) => survivor.name))].sort();
+  if (names.length === 0) return "A process is still running in the worktree";
+  if (names.length === 1) return `${names[0]} is still running in the worktree`;
+  const listed = names.length > 3 ? [...names.slice(0, 3), "others"] : names;
+  return `${listed.slice(0, -1).join(", ")} and ${listed.at(-1)} are still running in the worktree`;
 };
 
 export interface WorktreeHookRun {
@@ -437,6 +444,7 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
       if (settings === null) return null;
       const scripts = worktreeRemoveScripts(resolveProjectScripts(settings, project));
       if (scripts.length === 0) return null;
+      if (input.onScriptsStarting !== undefined) yield* input.onScriptsStarting;
       const env = {
         ...projectScriptRuntimeEnv({
           project: { cwd: project.workspaceRoot },
@@ -512,22 +520,62 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
 
 /**
  * The stock thread-delete removal (`vcsRemoveWorktree`), retired first. The
- * client has already stopped the thread's session and closed its terminals;
- * a person confirmed the delete, so it is forced. `remove` is the stock call.
+ * client has already stopped the thread's session and closed its terminals.
+ * `force` picks the kind: forced kills what is left, otherwise a process still
+ * running fails the call. `remove` is the stock call.
+ *
+ * Without remove scripts the call waits for the removal, as the stock one
+ * does. With them it returns once they start: the client queues its VCS
+ * commands per project, and minutes of teardown would stall every one behind
+ * it. The rest finishes in the background, a failure is logged, and
+ * `afterRemoval` (the git status refresh) runs when it is done.
  */
 export const retireRemovedThreadWorktree = (
   retirer: WorktreeRetirer["Service"],
-  input: { readonly cwd: string; readonly path: string },
+  input: { readonly cwd: string; readonly path: string; readonly force?: boolean | undefined },
   remove: Effect.Effect<void, GitCommandError>,
+  afterRemoval: Effect.Effect<void>,
 ) =>
-  retirer
-    .retire({
-      projectCwd: input.cwd,
-      worktreePath: input.path,
-      kind: "forced",
-      verifiedClean: false,
-      remove,
-    })
-    .pipe(Effect.asVoid);
+  Effect.gen(function* () {
+    const scriptsStarted = yield* Deferred.make<void>();
+    const retirement = yield* retirer
+      .retire({
+        projectCwd: input.cwd,
+        worktreePath: input.path,
+        kind: input.force === true ? "forced" : "reclaim",
+        verifiedClean: false,
+        remove,
+        onScriptsStarting: Deferred.succeed(scriptsStarted, undefined).pipe(Effect.asVoid),
+      })
+      .pipe(
+        Effect.flatMap((result) =>
+          result?.outcome === "blocked"
+            ? Effect.fail(
+                new GitCommandError({
+                  operation: "WorktreeRetirer.retire",
+                  command: "git worktree remove",
+                  cwd: input.cwd,
+                  detail: result.reason,
+                }),
+              )
+            : Effect.void,
+        ),
+        Effect.tapCause((cause) =>
+          Deferred.isDone(scriptsStarted).pipe(
+            Effect.flatMap((inBackground) =>
+              inBackground
+                ? Effect.logWarning("worktree retire: background removal failed", {
+                    worktreePath: input.path,
+                    cause: Cause.pretty(cause),
+                  })
+                : Effect.void,
+            ),
+          ),
+        ),
+        Effect.ensuring(afterRemoval),
+        Effect.forkDetach,
+      );
+    yield* Effect.raceFirst(Fiber.join(retirement), Deferred.await(scriptsStarted));
+  });
 
 export const WorktreeRetirerLive = Layer.effect(WorktreeRetirer, makeWorktreeRetirer());

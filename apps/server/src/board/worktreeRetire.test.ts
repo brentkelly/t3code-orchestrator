@@ -13,8 +13,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
-import type { OrchestrationReadModel, ProjectScript } from "@t3tools/contracts";
+import {
+  GitCommandError,
+  type OrchestrationReadModel,
+  type ProjectScript,
+} from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -22,6 +27,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import {
   findProcessesInDirectoryLinux,
   parseLsofProcesses,
+  retireRemovedThreadWorktree,
   survivorReason,
   WorktreeRetirer,
   type ProcFs,
@@ -77,12 +83,14 @@ interface Fixture {
   readonly options?: WorktreeRetirerOptions;
 }
 
-/** Retire once against a fresh pair of folders, returning what happened. */
-const retireWith = (
+/** Run `body` with a retirer over a fresh pair of folders, returning what happened. */
+const withRetirer = <A, E>(
   fixture: Fixture,
-  input: (
+  body: (
+    retirer: WorktreeRetirer["Service"],
     dirs: ReturnType<typeof makeDirs>,
-  ) => Omit<WorktreeRetireInput, "projectCwd" | "worktreePath">,
+    events: ReadonlyArray<string>,
+  ) => Effect.Effect<A, E>,
 ) =>
   Effect.gen(function* () {
     const dirs = makeDirs();
@@ -112,12 +120,7 @@ const retireWith = (
       ...(fixture.options === undefined ? {} : { options: fixture.options }),
     }).pipe(Layer.provide(Layer.succeed(GitVcsDriver.GitVcsDriver, git)));
     const result = yield* Effect.gen(function* () {
-      const retirer = yield* WorktreeRetirer;
-      return yield* retirer.retire({
-        projectCwd: dirs.projectCwd,
-        worktreePath: dirs.worktreePath,
-        ...input(dirs),
-      });
+      return yield* body(yield* WorktreeRetirer, dirs, events);
     }).pipe(Effect.provide(layer));
     const read = (name: string) => {
       const path = NodePath.join(dirs.root, name);
@@ -125,6 +128,21 @@ const retireWith = (
     };
     return { result, events, dirs, read };
   });
+
+/** Retire once against a fresh pair of folders, returning what happened. */
+const retireWith = (
+  fixture: Fixture,
+  input: (
+    dirs: ReturnType<typeof makeDirs>,
+  ) => Omit<WorktreeRetireInput, "projectCwd" | "worktreePath">,
+) =>
+  withRetirer(fixture, (retirer, dirs) =>
+    retirer.retire({
+      projectCwd: dirs.projectCwd,
+      worktreePath: dirs.worktreePath,
+      ...input(dirs),
+    }),
+  );
 
 const reclaim = { kind: "reclaim", verifiedClean: true } as const;
 const forced = { kind: "forced", verifiedClean: false } as const;
@@ -201,7 +219,7 @@ describe("retireWorktree", () => {
       );
       assert.deepStrictEqual(result, {
         outcome: "blocked",
-        reason: "cargo (pid 4412) and 2 other processes are still running in the worktree",
+        reason: "cargo and rustc are still running in the worktree",
       });
       assert.isFalse(events.some((event) => event.startsWith("remove")));
       assert.isFalse(events.some((event) => event.startsWith("SIG")));
@@ -419,18 +437,100 @@ describe("retireWorktree", () => {
   );
 });
 
+describe("retireRemovedThreadWorktree (the stock vcsRemoveWorktree)", () => {
+  const stockRemove = (events: ReadonlyArray<string>) =>
+    Effect.sync(() => void (events as Array<string>).push("stock-remove"));
+
+  it.effect("force:false fails on a process still running, and removes nothing", () =>
+    Effect.gen(function* () {
+      const { result, events } = yield* withRetirer(
+        { survivors: [[{ pid: 4412, name: "cargo" }]] },
+        (retirer, dirs, events) =>
+          retireRemovedThreadWorktree(
+            retirer,
+            { cwd: dirs.projectCwd, path: dirs.worktreePath, force: false },
+            stockRemove(events),
+            Effect.void,
+          ).pipe(Effect.flip),
+      );
+      assert.instanceOf(result, GitCommandError);
+      assert.include(result.detail, "cargo is still running in the worktree");
+      assert.deepStrictEqual(events, ["check-processes"]);
+    }),
+  );
+
+  it.effect("force:true kills what is left, then makes the stock removal", () =>
+    Effect.gen(function* () {
+      const survivor = { pid: 4412, name: "cargo" };
+      const { events } = yield* withRetirer(
+        { survivors: [[survivor], []] },
+        (retirer, dirs, events) =>
+          retireRemovedThreadWorktree(
+            retirer,
+            { cwd: dirs.projectCwd, path: dirs.worktreePath, force: true },
+            stockRemove(events),
+            Effect.void,
+          ),
+      );
+      assert.deepStrictEqual(events, [
+        "check-processes",
+        "SIGTERM:4412",
+        "check-processes",
+        "stock-remove",
+      ]);
+    }),
+  );
+
+  // Live: the remove script is a real process the test lets finish.
+  it.live("returns once remove scripts start, and finishes the removal in the background", () =>
+    Effect.gen(function* () {
+      const removed = yield* Deferred.make<void>();
+      const { result, events, read } = yield* withRetirer(
+        {
+          scripts: [
+            script("park", "while [ ! -f ../go ]; do sleep 0.05; done; echo ran > ../hook.log", {
+              runOnWorktreeRemove: true,
+            }),
+          ],
+        },
+        (retirer, dirs, events) =>
+          Effect.gen(function* () {
+            yield* retireRemovedThreadWorktree(
+              retirer,
+              { cwd: dirs.projectCwd, path: dirs.worktreePath, force: true },
+              stockRemove(events),
+              Deferred.succeed(removed, undefined).pipe(Effect.asVoid),
+            );
+            // Back while the script still waits: nothing removed yet.
+            const early = [...events];
+            NodeFS.writeFileSync(NodePath.join(dirs.root, "go"), "");
+            yield* Deferred.await(removed);
+            return early;
+          }),
+      );
+      assert.deepStrictEqual(result, ["check-processes"]);
+      assert.strictEqual(read("hook.log"), "ran\n");
+      assert.deepStrictEqual(events, ["check-processes", "stock-remove"]);
+    }),
+  );
+});
+
 describe("survivorReason", () => {
-  it("names one process, or the first plus a count", () => {
+  it("names the programs, without pids or counts, so it stays the same between sweeps", () => {
     assert.strictEqual(
       survivorReason([{ pid: 1, name: "cargo" }]),
-      "cargo (pid 1) is still running in the worktree",
+      "cargo is still running in the worktree",
     );
-    assert.strictEqual(
+    const building = (rustcPids: ReadonlyArray<number>) =>
       survivorReason([
         { pid: 1, name: "cargo" },
-        { pid: 2, name: "rustc" },
-      ]),
-      "cargo (pid 1) and 1 other process are still running in the worktree",
+        ...rustcPids.map((pid) => ({ pid, name: "rustc" })),
+      ]);
+    assert.strictEqual(building([2]), "cargo and rustc are still running in the worktree");
+    assert.strictEqual(building([3, 4, 5]), building([2]));
+    assert.strictEqual(
+      survivorReason(["vite", "node", "esbuild", "cargo"].map((name, pid) => ({ pid, name }))),
+      "cargo, esbuild, node and others are still running in the worktree",
     );
   });
 });

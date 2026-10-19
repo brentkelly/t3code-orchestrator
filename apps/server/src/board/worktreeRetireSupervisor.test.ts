@@ -89,7 +89,7 @@ describe("a process still running in the worktree (T3O-23)", () => {
           assert.equal(kept.worktree?.status, "ready");
           assert.equal(
             kept.worktree?.reclaimBlockedReason,
-            "cargo (pid 4412) is still running in the worktree",
+            "cargo is still running in the worktree",
           );
 
           const result = yield* h.reactor.checkWorktree(kept.id);
