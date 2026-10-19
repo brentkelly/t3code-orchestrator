@@ -11,6 +11,7 @@ import { useEnvironments } from "../../state/environments";
 import {
   EMPTY_PROJECT_SCRIPT_INPUT,
   editorRequestForScript,
+  newProjectScriptInputFromFile,
   ProjectScriptEditorDialog,
   ScriptIcon,
   type NewProjectScriptInput,
@@ -106,16 +107,8 @@ export function ProjectActionsSettings() {
   );
   const importFileScript = useCallback(
     async (fileScript: T3ProjectFileScript) => {
-      const payload: NewProjectScriptInput = {
-        name: fileScript.name,
-        command: fileScript.command,
-        icon: fileScript.icon ?? "play",
-        runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
-        waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
-        keybinding: null,
-        previewUrl: fileScript.previewUrl ?? null,
-        autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
-      };
+      // T3o: T3O-23 — shared with the actions menu so no field is dropped.
+      const payload: NewProjectScriptInput = newProjectScriptInputFromFile(fileScript);
       const result = await submit(null, payload);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);

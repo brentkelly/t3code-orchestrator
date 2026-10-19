@@ -45,3 +45,35 @@ Open the card. Its banner names the reason and the worktree's folder, and offers
   tells you why.
 - **Remove worktree** removes it anyway, after asking you to confirm. Uncommitted changes in it are
   lost. Committed work is not: the branch stays, so you can check it out again any time.
+
+## Before a worktree is removed
+
+Before T3 Code removes a worktree, it closes the terminals and stops the agent sessions working in
+it. A finished card whose worktree still has something running in it, such as a dev server or a
+build, is kept with a reason like `cargo (pid 4412) is still running in the worktree`. **Check
+again** retries once it has stopped. **Remove worktree** and deleting a card stop those processes
+for you.
+
+A project can also run its own script just before the removal, for example to move build caches
+somewhere the next worktree can pick them up. Mark a project action **Run before the worktree is
+removed**, or set `"runOnWorktreeRemove": true` on a script in `t3.json`:
+
+```json
+{
+  "scripts": [
+    { "name": "Park caches", "command": "./scripts/park-caches.sh", "runOnWorktreeRemove": true }
+  ]
+}
+```
+
+- The script runs in the worktree being removed, with `T3_WORKTREE_PATH`, `T3_PROJECT_ROOT`,
+  `T3_REMOVAL` (`reclaim`, or `forced` for **Remove worktree**, a card delete or a thread delete)
+  and `T3_WORKTREE_VERIFIED_CLEAN` (`1` only when the worktree was just checked clean and its work
+  saved elsewhere).
+- Several scripts may be marked; they run in order. The removal waits for them, up to 5 minutes
+  each.
+- A script that fails or times out does not stop the removal. The card's activity notes the failure.
+- T3 Code cannot see processes running inside containers. If the worktree starts containers, stop
+  them in this script, or they keep writing into the deleted folder.
+- A `t3.json` script only takes effect once it is imported into the project, from the actions menu
+  or **Settings → Project actions**. Later edits to `t3.json` are not picked up automatically.

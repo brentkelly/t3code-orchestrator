@@ -366,12 +366,20 @@ function activitySentence(
       ) : (
         <>kept the worktree: {payload.detail}</>
       );
-    case "card-worktree-removed":
-      return payload.forced === true ? (
-        <>removed the worktree (forced)</>
+    case "card-worktree-removed": {
+      const removed =
+        payload.forced === true ? <>removed the worktree (forced)</> : <>removed the worktree</>;
+      // T3O-23: the remove script failed and the removal went ahead. A failure,
+      // so red like a failed worktree; not amber, because nothing is held.
+      return payload.hookWarning === undefined ? (
+        removed
       ) : (
-        <>removed the worktree</>
+        <>
+          {removed}
+          <span className="block text-destructive-foreground">{payload.hookWarning}</span>
+        </>
       );
+    }
     case "card-edited":
       return <>{describeCardEdit(payload)}</>;
     case "card-step-checked-in":

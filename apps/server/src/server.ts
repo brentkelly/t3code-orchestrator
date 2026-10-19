@@ -503,7 +503,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // service and the git manager that satisfy it, so the supervisor reactor
   // never depends on either whole surface to link or merge a card.
   Layer.provideMerge(BoardPullRequestGatewayLive),
-  // T3o (T3O-23): retires worktrees for the supervisor and the thread-delete RPC.
+  // T3o: T3O-23 — retires worktrees for the supervisor and the thread-delete RPC.
   Layer.provideMerge(WorktreeRetirerLive.pipe(Layer.provide(ServerSettingsLayerLive))),
   Layer.provideMerge(
     Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive),

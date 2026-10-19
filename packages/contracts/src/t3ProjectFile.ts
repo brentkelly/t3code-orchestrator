@@ -42,7 +42,7 @@ export const T3ProjectFileScript = Schema.Struct({
         "When true, the script runs automatically after a worktree is created for a new thread.",
     }),
   ),
-  // T3o (T3O-23): the counterpart to runOnWorktreeCreate, run as a worktree is retired.
+  // T3o: T3O-23 — the counterpart to runOnWorktreeCreate, run as a worktree is retired.
   runOnWorktreeRemove: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:

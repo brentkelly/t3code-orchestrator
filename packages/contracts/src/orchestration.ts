@@ -420,7 +420,7 @@ export const ProjectScript = Schema.Struct({
   icon: ProjectScriptIcon,
   runOnWorktreeCreate: Schema.Boolean,
   /**
-   * T3o (T3O-23): run in a worktree just before T3 Code removes it. Optional,
+   * T3o: T3O-23 — run in a worktree just before T3 Code removes it. Optional,
    * because every stored project record and settings override predates it.
    */
   runOnWorktreeRemove: Schema.optional(Schema.Boolean),

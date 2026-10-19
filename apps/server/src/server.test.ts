@@ -941,7 +941,7 @@ const buildAppUnderTest = (options?: {
             refreshPullRequest: () => Effect.succeed({ outcome: "none" as const }),
             mergePullRequest: () => Effect.succeed({ outcome: "no-pull-request" as const }),
           }),
-          // T3o (T3O-23): retirement passes straight through to the stock removal.
+          // T3o: T3O-23 — retirement passes straight through to the stock removal.
           Layer.mock(WorktreeRetirer)({
             retire: (input) =>
               (input.remove ?? Effect.void).pipe(

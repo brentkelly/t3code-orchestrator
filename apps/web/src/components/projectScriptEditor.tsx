@@ -2,6 +2,7 @@ import type {
   ProjectScript,
   ProjectScriptIcon,
   ResolvedKeybindingsConfig,
+  T3ProjectFileScript,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -85,6 +86,8 @@ export interface NewProjectScriptInput {
   command: string;
   icon: ProjectScriptIcon;
   runOnWorktreeCreate: boolean;
+  /** T3o: T3O-23 — run just before the worktree is removed. */
+  runOnWorktreeRemove: boolean;
   /** Setup scripts only: hold the agent until the script exits. */
   waitForSetup: boolean;
   keybinding: string | null;
@@ -101,6 +104,7 @@ export const EMPTY_PROJECT_SCRIPT_INPUT: NewProjectScriptInput = {
   command: "",
   icon: "play",
   runOnWorktreeCreate: false,
+  runOnWorktreeRemove: false, // T3o: T3O-23
   waitForSetup: false,
   keybinding: null,
   previewUrl: null,
@@ -126,11 +130,33 @@ export function editorRequestForScript(
       command: script.command,
       icon: script.icon,
       runOnWorktreeCreate: script.runOnWorktreeCreate,
+      runOnWorktreeRemove: script.runOnWorktreeRemove === true, // T3o: T3O-23
       waitForSetup: script.runOnWorktreeCreate && script.async === false,
       keybinding: keybindingValueForCommand(keybindings, commandForProjectScript(script.id)),
       previewUrl: script.previewUrl ?? null,
       autoOpenPreview: script.autoOpenPreview ?? false,
     },
+  };
+}
+
+/**
+ * T3o: T3O-23 — a `t3.json` script as the editor's input, for both import
+ * paths (the actions menu and Settings → Project actions). One place, so a
+ * field added to the file schema cannot be dropped by one path and not the other.
+ */
+export function newProjectScriptInputFromFile(
+  fileScript: T3ProjectFileScript,
+): NewProjectScriptInput {
+  return {
+    name: fileScript.name,
+    command: fileScript.command,
+    icon: fileScript.icon ?? "play",
+    runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
+    runOnWorktreeRemove: fileScript.runOnWorktreeRemove ?? false,
+    waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
+    keybinding: null,
+    previewUrl: fileScript.previewUrl ?? null,
+    autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
   };
 }
 
@@ -162,6 +188,7 @@ export function ProjectScriptEditorDialog({
   const [icon, setIcon] = useState<ProjectScriptIcon>("play");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
+  const [runOnWorktreeRemove, setRunOnWorktreeRemove] = useState(false); // T3o: T3O-23
   const [waitForSetup, setWaitForSetup] = useState(false);
   const [keybinding, setKeybinding] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
@@ -193,6 +220,7 @@ export function ProjectScriptEditorDialog({
     setIcon(request.initial.icon);
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(request.initial.runOnWorktreeCreate);
+    setRunOnWorktreeRemove(request.initial.runOnWorktreeRemove); // T3o: T3O-23
     setWaitForSetup(request.initial.waitForSetup);
     setKeybinding(request.initial.keybinding ?? "");
     setPreviewUrl(request.initial.previewUrl ?? "");
@@ -253,6 +281,7 @@ export function ProjectScriptEditorDialog({
         command: trimmedCommand,
         icon,
         runOnWorktreeCreate,
+        runOnWorktreeRemove, // T3o: T3O-23
         waitForSetup: runOnWorktreeCreate && waitForSetup,
         keybinding: keybindingRule?.key ?? null,
         previewUrl: trimmedPreviewUrl.length > 0 ? trimmedPreviewUrl : null,
@@ -413,6 +442,14 @@ export function ProjectScriptEditorDialog({
                     checked={waitForSetup}
                     disabled={!runOnWorktreeCreate}
                     onCheckedChange={(checked) => setWaitForSetup(Boolean(checked))}
+                  />
+                </label>
+                {/* T3o: T3O-23 — several actions may set this; they run in order. */}
+                <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+                  <span>Run before the worktree is removed</span>
+                  <Switch
+                    checked={runOnWorktreeRemove}
+                    onCheckedChange={(checked) => setRunOnWorktreeRemove(Boolean(checked))}
                   />
                 </label>
                 <label
