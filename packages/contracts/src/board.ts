@@ -9195,9 +9195,9 @@ export const DEFAULT_BOARD_BUILD_PROMPT =
     pipeline. */
 export const DEFAULT_BOARD_PLANNING_PROMPT = `Build a plan that allows us to implement the functionality requested on this card. Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
 
-Ask the questions one at a time.
+Ask the questions one at a time, and state how many questions I have answered vs total questions you expect to ask so I can track progress.
 
-If a question can be answered by exploring the codebase, explore the codebase instead.`;
+If a question can be answered by exploring the codebase, explore the codebase instead. Answer all questions you consider obvious yourself and let me know what you chose, condensing the interview down to the key important questions for me.`;
 
 /**
  * Two stages ship with `Auto execute` on so an empty settings file is a working
