@@ -42,7 +42,8 @@ saves, and how a new worktree picks it up, lives in the project's own scripts (s
 
 1. One "retire worktree" step (stop, then hook, then remove) used by every t3o-initiated
    removal.
-2. `runOnWorktreeRemove` in `t3.json`.
+2. A `runOnWorktreeRemove` flag on project scripts, end to end: the contracts, the web import and
+   editor, and the server.
 3. Card-facing reporting when a reclaim is held back because something is still running.
 
 **Out**
@@ -119,23 +120,59 @@ build caches may now have been moved out, which only costs a rebuild.
 
 ## Hook contract
 
-`packages/contracts/src/t3ProjectFile.ts:39`, next to `runOnWorktreeCreate`:
+### Where scripts come from
 
-```ts
-runOnWorktreeRemove: Schema.optionalKey(
-  Schema.Boolean.annotate({
-    description:
-      "When true, the script runs in a worktree just before T3 Code removes it, after every process in it has been stopped. Removal waits for the script (up to 5 minutes).",
-  }),
-),
-```
+**The server never reads `t3.json` for scripts.** It reads the **project record** (or the script
+overrides in settings) through `resolveProjectScripts` (`packages/shared/src/projectScripts.ts:17`),
+as `ProjectSetupScriptRunner` does (`ProjectSetupScriptRunner.ts:334`). `t3.json` is only an
+import source. The project's actions menu (`ProjectScriptsControl.tsx:110`) and Settings →
+Project actions (`ProjectActionsSettings.tsx:108`) list its scripts that haven't been imported and
+copy one into the project record when the user picks it.
 
-Mirror the field in `orchestration.ts:421`. Update the `async` field's description to say it
-applies to `runOnWorktreeCreate` only.
+Both import paths and the editor build a script **one field at a time**. A field they don't name
+is dropped on import, and dropped again whenever the script is edited in Settings. So the flag has
+to be threaded through each layer:
+
+1. **`t3.json` schema** (`packages/contracts/src/t3ProjectFile.ts:39`), next to
+   `runOnWorktreeCreate`:
+
+   ```ts
+   runOnWorktreeRemove: Schema.optionalKey(
+     Schema.Boolean.annotate({
+       description:
+         "When true, the script runs in a worktree just before T3 Code removes it, after every process in it has been stopped. Removal waits for the script (up to 5 minutes).",
+     }),
+   ),
+   ```
+
+   Update the `async` field's description to say it applies to `runOnWorktreeCreate` only.
+
+2. **Stored script** (`ProjectScript`, `packages/contracts/src/orchestration.ts:416`):
+   `runOnWorktreeRemove: Schema.optional(Schema.Boolean)`. It must be **optional**, because every
+   stored project record and settings override was written without it.
+3. **Import:** copy `fileScript.runOnWorktreeRemove ?? false` in both `importFileScript` functions
+   (`ProjectScriptsControl.tsx:110`, `ProjectActionsSettings.tsx:108`).
+4. **Editor round trip:**
+   - add the field to `ProjectScriptInput` and `buildProjectScript`
+     (`apps/web/src/projectScripts.ts:10`, `:20`)
+   - add it to the editor's form state and initial values (`projectScriptEditor.tsx:87`, `:103`,
+     `:128`)
+   - add a checkbox, "Run before the worktree is removed", beside the existing worktree-create
+     option
+5. **Not the default action:** the "regular" script pick (`apps/web/src/projectScripts.ts:90`)
+   already skips setup scripts. Skip remove scripts too, so one is never the project's main run
+   button. In the script menu, label them `(teardown)` the way setup scripts get `(setup)`
+   (`ProjectScriptsControl.tsx:207`).
+6. **Server:** the retire step finds its scripts with
+   `resolveProjectScripts(settings, project).filter((s) => s.runOnWorktreeRemove === true)`.
+
+**Projects must import the script.** Adding the flag to `t3.json` changes nothing until someone
+imports that script, and later edits to `t3.json` aren't picked up automatically. Say so in the
+user docs next to `runOnWorktreeCreate`.
 
 | Aspect      | Contract                                                                                                                                                                                                                                    |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source      | The same project scripts `runOnWorktreeCreate` reads.                                                                                                                                                                                       |
+| Source      | `resolveProjectScripts`, filtered to `runOnWorktreeRemove` (see above). Never `t3.json` directly.                                                                                                                                           |
 | Working dir | The worktree being removed.                                                                                                                                                                                                                 |
 | Environment | `T3_WORKTREE_PATH`, `T3_PROJECT_ROOT`, `T3_REMOVAL` (`reclaim` or `forced`), `T3_WORKTREE_VERIFIED_CLEAN` (`1` or `0`).                                                                                                                     |
 | Runs as     | A plain child process, not a terminal. The orphan sweep and forced removals may have no live thread to own a terminal. Output goes to the server log, prefixed with the worktree path.                                                      |
@@ -157,6 +194,13 @@ applies to `runOnWorktreeCreate` only.
   - a hook that hangs is killed at the timeout and the removal proceeds
 - **Card wanted again:** a card dragged out of Done while the hook runs keeps its worktree.
 - **No hook configured:** behaviour is identical to today, apart from the new stop step.
+- **Flag survives import and editing:**
+  - importing a `t3.json` script with `runOnWorktreeRemove: true` from either import path stores
+    the flag
+  - opening that script in the editor and saving it unchanged keeps the flag
+  - a stored script without the field still decodes
+- **Not the default action:** a project whose first script is a remove script doesn't get it as
+  its main run button.
 
 ---
 
@@ -203,6 +247,11 @@ worktrees whose directory is gone (`xtask/src/db/prune.rs`).
 ### Create script (`runOnWorktreeCreate`, with `"async": false`)
 
 `async` must be false. Otherwise the agent may start a cold build before the cache is moved in.
+
+**Both scripts must be imported into the z5 project record**, from the actions menu or Settings →
+Project actions. `async: false` arrives on import as "Wait for setup". As of 2026-10-20, z5's
+project record has no scripts at all, so the existing "Setup Worktree" script in `t3.json` has
+never run. Agents run `cargo xtask db up` themselves, following z5's `AGENTS.md`.
 
 ```sh
 #!/usr/bin/env bash
