@@ -21,7 +21,6 @@ import { ProjectId, ProviderInstanceId, ThreadId, type ModelSelection } from "@t
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
-import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
@@ -172,8 +171,8 @@ export interface FakeThreadGateway {
   readonly states: Ref.Ref<ReadonlyMap<string, BoardThreadState>>;
   /** Threads that actually settled, as opposed to every settle asked for. */
   readonly settled: Effect.Effect<ReadonlySet<string>>;
-  /** Deliver a live signal to `observe`. Buffered, so it is never lost to a
-      subscriber that has not attached yet. */
+  /** Deliver a live signal to every `observe` subscription. Replayed to late
+      subscribers, so it is never lost to one that has not attached yet. */
   readonly emit: (signal: ThreadSignal) => Effect.Effect<void>;
   /** Append a todo signal to the durable todo log. */
   readonly appendTodo: (signal: TodoSignal | null) => Effect.Effect<number>;
@@ -197,7 +196,9 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
     );
     const calls = yield* Ref.make<ReadonlyArray<ThreadGatewayCall>>([]);
     const settled = yield* Ref.make<ReadonlySet<string>>(new Set());
-    const signals = yield* Queue.unbounded<ThreadSignal>();
+    // Every subscription sees every signal, as `observe`'s contract promises; the
+    // unbounded replay stands in for "the subscriber attached before the emit".
+    const signals = yield* PubSub.unbounded<ThreadSignal>({ replay: Number.MAX_SAFE_INTEGER });
     const todoLog = yield* Ref.make<ReadonlyArray<TodoLogEntry>>([]);
     const todoPubSub = yield* PubSub.unbounded<TodoLogEntry>();
     const projects = options.projects ?? [];
@@ -332,7 +333,7 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
       project: (projectId) =>
         Effect.succeed(projects.find((project) => project.id === projectId) ?? null),
 
-      observe: Stream.fromQueue(signals),
+      observe: Stream.fromPubSub(signals),
 
       todoLogHead: Ref.get(todoLog).pipe(Effect.map((log) => log.length)),
       readTodoLog: (after, upTo) =>
@@ -354,7 +355,7 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
       calls: Ref.get(calls),
       states,
       settled: Ref.get(settled),
-      emit: (signal) => Queue.offer(signals, signal).pipe(Effect.asVoid),
+      emit: (signal) => PubSub.publish(signals, signal).pipe(Effect.asVoid),
       appendTodo: (signal) =>
         Effect.gen(function* () {
           const log = yield* Ref.updateAndGet(todoLog, (current) => [
