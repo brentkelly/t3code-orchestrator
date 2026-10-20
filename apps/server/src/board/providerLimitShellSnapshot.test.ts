@@ -22,7 +22,11 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
+import {
+  boardStackEngine,
+  boardStackSnapshotQuery,
+  makeBoardStackTestLayer,
+} from "./boardStack.testkit.ts";
 
 /** One database per scenario: commands are deduped by `commandId`, so a shared
     database would let one scenario's writes satisfy the next one's dispatch. */

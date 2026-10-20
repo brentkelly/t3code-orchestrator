@@ -557,10 +557,12 @@ const make = Effect.gen(function* () {
 
   /** Upstream's command read model with the board engine's board slice on it —
       the one view a pass that reads both threads and cards decides from. */
-  const readModel = Effect.all([snapshotQuery.getCommandReadModel(), boardEngine.getReadModel]).pipe(
-    Effect.map(
-      ([model, board]): OrchestrationReadModel =>
-        board.board === undefined ? model : { ...model, board: board.board },
+  const readModel = Effect.all([
+    snapshotQuery.getCommandReadModel(),
+    boardEngine.getReadModel,
+  ]).pipe(
+    Effect.map(([model, board]): OrchestrationReadModel =>
+      board.board === undefined ? model : { ...model, board: board.board },
     ),
   );
 
@@ -568,8 +570,10 @@ const make = Effect.gen(function* () {
   type SupervisorCommand = OrchestrationCommand | BoardCommand;
   const dispatchAny = (
     command: SupervisorCommand,
-  ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchError | BoardDispatchError> =>
-    isBoardCommand(command) ? boardEngine.dispatch(command) : engine.dispatch(command);
+  ): Effect.Effect<
+    { readonly sequence: number },
+    OrchestrationDispatchError | BoardDispatchError
+  > => (isBoardCommand(command) ? boardEngine.dispatch(command) : engine.dispatch(command));
 
   const dispatch = (command: SupervisorCommand) =>
     dispatchAny(command).pipe(
@@ -9069,59 +9073,62 @@ const make = Effect.gen(function* () {
     // sequential worker.
     yield* forkParked(
       // Thread events from upstream's engine, board events from the board's.
-      Stream.runForEach(Stream.merge(engine.streamDomainEvents, boardEngine.liveBoardEvents), (event) => {
-        // Thread activity is by far the highest-volume event on this stream, and
-        // the board cares about exactly one kind of it (t3o-30, D2), so it is
-        // filtered HERE rather than in `processDomainEvent` — the worker never
-        // sees the tool calls, reasoning and output of every thread on the box.
-        if (event.type === "thread.activity-appended") {
-          return event.payload.activity.kind === "provider.turn.start.failed"
-            ? worker.enqueue({ source: "domain", event })
-            : Effect.void;
-        }
-        // T3O-52 (D4): a worktree provisioned or cleaned up triggers a cleanup
-        // pass. Straight to the single-flight sweep, not the worker: the pass
-        // never touches step state, and it coalesces a burst into one run.
-        if (
-          event.type === "board.card-worktree-ready" ||
-          event.type === "board.card-worktree-reclaimed"
-        ) {
-          return requestWorktreeSweep();
-        }
-        if (
-          event.type !== "thread.turn-start-requested" &&
-          // A human stopping a board-run step (T3O-23). One event per Stop
-          // press, machine-wide — negligible beside what already crosses here.
-          event.type !== "thread.turn-interrupt-requested" &&
-          // A human answering a permission prompt (T3O-16): a life sign for the
-          // timeout sweep. One per answered prompt, negligible volume.
-          event.type !== "thread.approval-response-requested" &&
-          event.type !== "board.card-moved" &&
-          // T3O-33: a card changed project. Human-only and rare, and the whole
-          // point is that the agent working the card in the OLD repository is
-          // stopped now rather than at the next step boundary.
-          event.type !== "board.card-project-changed" &&
-          event.type !== "board.card-created" &&
-          event.type !== "board.card-stage-thread-requested" &&
-          event.type !== "board.card-updated" &&
-          event.type !== "board.card-step-completed" &&
-          // A human's "start it anyway" (t3o-33). Rare, and the whole point is
-          // that it takes effect on the click rather than at the next step
-          // boundary, so it has to cross this filter.
-          event.type !== "board.card-step-force-start-requested" &&
-          // A step going back to the build queue (T3O-23). Emitted by every
-          // recovery too, which is a handful of events an hour at most — far
-          // below the volume that made `thread.activity-appended` need its own
-          // pre-filter above.
-          event.type !== "board.card-step-recovered" &&
-          event.type !== "board.card-archived" &&
-          event.type !== "board.card-deleted" &&
-          event.type !== "board.plans-approved"
-        ) {
-          return Effect.void;
-        }
-        return worker.enqueue({ source: "domain", event });
-      }),
+      Stream.runForEach(
+        Stream.merge(engine.streamDomainEvents, boardEngine.liveBoardEvents),
+        (event) => {
+          // Thread activity is by far the highest-volume event on this stream, and
+          // the board cares about exactly one kind of it (t3o-30, D2), so it is
+          // filtered HERE rather than in `processDomainEvent` — the worker never
+          // sees the tool calls, reasoning and output of every thread on the box.
+          if (event.type === "thread.activity-appended") {
+            return event.payload.activity.kind === "provider.turn.start.failed"
+              ? worker.enqueue({ source: "domain", event })
+              : Effect.void;
+          }
+          // T3O-52 (D4): a worktree provisioned or cleaned up triggers a cleanup
+          // pass. Straight to the single-flight sweep, not the worker: the pass
+          // never touches step state, and it coalesces a burst into one run.
+          if (
+            event.type === "board.card-worktree-ready" ||
+            event.type === "board.card-worktree-reclaimed"
+          ) {
+            return requestWorktreeSweep();
+          }
+          if (
+            event.type !== "thread.turn-start-requested" &&
+            // A human stopping a board-run step (T3O-23). One event per Stop
+            // press, machine-wide — negligible beside what already crosses here.
+            event.type !== "thread.turn-interrupt-requested" &&
+            // A human answering a permission prompt (T3O-16): a life sign for the
+            // timeout sweep. One per answered prompt, negligible volume.
+            event.type !== "thread.approval-response-requested" &&
+            event.type !== "board.card-moved" &&
+            // T3O-33: a card changed project. Human-only and rare, and the whole
+            // point is that the agent working the card in the OLD repository is
+            // stopped now rather than at the next step boundary.
+            event.type !== "board.card-project-changed" &&
+            event.type !== "board.card-created" &&
+            event.type !== "board.card-stage-thread-requested" &&
+            event.type !== "board.card-updated" &&
+            event.type !== "board.card-step-completed" &&
+            // A human's "start it anyway" (t3o-33). Rare, and the whole point is
+            // that it takes effect on the click rather than at the next step
+            // boundary, so it has to cross this filter.
+            event.type !== "board.card-step-force-start-requested" &&
+            // A step going back to the build queue (T3O-23). Emitted by every
+            // recovery too, which is a handful of events an hour at most — far
+            // below the volume that made `thread.activity-appended` need its own
+            // pre-filter above.
+            event.type !== "board.card-step-recovered" &&
+            event.type !== "board.card-archived" &&
+            event.type !== "board.card-deleted" &&
+            event.type !== "board.plans-approved"
+          ) {
+            return Effect.void;
+          }
+          return worker.enqueue({ source: "domain", event });
+        },
+      ),
     );
     yield* forkParked(
       Stream.runForEach(providerService.streamEvents, (event) => {

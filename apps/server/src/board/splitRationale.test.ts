@@ -24,7 +24,11 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
 import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
-import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
+import {
+  boardStackEngine,
+  boardStackSnapshotQuery,
+  makeBoardStackTestLayer,
+} from "./boardStack.testkit.ts";
 
 const makeTestLayer = makeBoardStackTestLayer;
 
@@ -80,7 +84,7 @@ const rehydratedCard = Effect.gen(function* () {
 const replayedCard = Effect.gen(function* () {
   const engine = yield* boardStackEngine;
   const events = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
-  let replayed = ({} as BoardReadModel);
+  let replayed = {} as BoardReadModel;
   for (const event of events) {
     replayed = yield* projectBoardEvent(replayed, event);
   }
@@ -161,9 +165,7 @@ it.layer(makeTestLayer("t3o-split-rationale-3-"))("a log written before migratio
         splitRationale: null,
         createdAt,
       });
-      const events: BoardEvent[] = Array.from(
-        yield* Stream.runCollect(engine.readBoardEvents()),
-      );
+      const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
       const legacy = events.map((event) =>
         event.type === "board.plans-proposed"
           ? {
@@ -179,7 +181,7 @@ it.layer(makeTestLayer("t3o-split-rationale-3-"))("a log written before migratio
         "the log must actually hold the event this test strips",
       );
 
-      let replayed = ({} as BoardReadModel);
+      let replayed = {} as BoardReadModel;
       for (const event of legacy) {
         replayed = yield* projectBoardEvent(replayed, event);
       }

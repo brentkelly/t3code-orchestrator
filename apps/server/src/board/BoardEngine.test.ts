@@ -173,36 +173,41 @@ it.layer(makeBoardStackTestLayer("t3o-board-engine-"))("BoardEngine", (it) => {
       const engine = yield* boardStackEngine;
       yield* engine.dispatch(createProject("conflict"));
       yield* engine.dispatch(createCard("conflict-1"));
-      const reused = { ...createCard("conflict-2"), commandId: CommandId.make("cmd-create-conflict-1") };
+      const reused = {
+        ...createCard("conflict-2"),
+        commandId: CommandId.make("cmd-create-conflict-1"),
+      };
       const failure = yield* Effect.flip(engine.dispatch(reused));
       assert.strictEqual(failure._tag, "BoardCommandIdConflictError");
     }),
   );
 
-  it.effect("streams the log after a cursor and then the live tail, each event once, in order", () =>
-    Effect.gen(function* () {
-      const engine = yield* boardStackEngine;
-      yield* engine.dispatch(createProject("stream"));
-      yield* engine.dispatch(createCard("stream-1"));
-      const cursor = yield* engine.boardEngine.latestSequence;
-      yield* engine.dispatch(moveCard("stream-1", 1, "sprint"));
-      yield* engine.dispatch(moveCard("stream-1", 2, "planning"));
+  it.effect(
+    "streams the log after a cursor and then the live tail, each event once, in order",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* boardStackEngine;
+        yield* engine.dispatch(createProject("stream"));
+        yield* engine.dispatch(createCard("stream-1"));
+        const cursor = yield* engine.boardEngine.latestSequence;
+        yield* engine.dispatch(moveCard("stream-1", 1, "sprint"));
+        yield* engine.dispatch(moveCard("stream-1", 2, "planning"));
 
-      // Two from the log, then two more dispatched while the stream is live.
-      const collected = yield* Effect.forkChild(
-        Stream.runCollect(
-          engine.boardEngine.streamBoardEvents({ afterSequence: cursor }).pipe(Stream.take(4)),
-        ),
-      );
-      yield* engine.dispatch(moveCard("stream-1", 3, "ready"));
-      yield* engine.dispatch(moveCard("stream-1", 4, "planning"));
-      const events: ReadonlyArray<BoardEvent> = Array.from(yield* Fiber.join(collected));
+        // Two from the log, then two more dispatched while the stream is live.
+        const collected = yield* Effect.forkChild(
+          Stream.runCollect(
+            engine.boardEngine.streamBoardEvents({ afterSequence: cursor }).pipe(Stream.take(4)),
+          ),
+        );
+        yield* engine.dispatch(moveCard("stream-1", 3, "ready"));
+        yield* engine.dispatch(moveCard("stream-1", 4, "planning"));
+        const events: ReadonlyArray<BoardEvent> = Array.from(yield* Fiber.join(collected));
 
-      assert.deepStrictEqual(
-        events.map((event) => event.sequence),
-        [cursor + 1, cursor + 2, cursor + 3, cursor + 4],
-      );
-    }),
+        assert.deepStrictEqual(
+          events.map((event) => event.sequence),
+          [cursor + 1, cursor + 2, cursor + 3, cursor + 4],
+        );
+      }),
   );
 
   it.effect("writes nothing to upstream's log or receipts", () =>
@@ -244,9 +249,7 @@ it.layer(makeBoardStackTestLayer("t3o-board-engine-catchup-"))("BoardEngine boot
       const rebooted = yield* Effect.gen(function* () {
         const fresh = yield* BoardEngine;
         return yield* fresh.getReadModel;
-      }).pipe(
-        Effect.provide(BoardEngineLive.pipe(Layer.provide(BoardQueriesLive), Layer.fresh)),
-      );
+      }).pipe(Effect.provide(BoardEngineLive.pipe(Layer.provide(BoardQueriesLive), Layer.fresh)));
 
       assert.ok(rebooted.board?.cards.some((card) => card.id === "catchup-1"));
       const cards = yield* sql`SELECT card_id FROM boards.board_cards WHERE card_id = 'catchup-1'`;

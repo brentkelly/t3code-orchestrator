@@ -34,9 +34,9 @@ import { OrchestrationEventStoreLive } from "../persistence/Layers/Orchestration
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import type { OrchestrationDispatchError } from "../orchestration/Errors.ts";
-import { BoardEngine } from "./BoardEngine.ts";
+import { BoardEngine, BoardEngineLive } from "./BoardEngine.ts";
 import type { BoardDispatchError } from "./errors.ts";
-import { BoardQueries } from "./BoardQueries.ts";
+import { BoardQueries, BoardQueriesLive } from "./BoardQueries.ts";
 import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
 import { makeBoardEventStore } from "./boardEventStore.ts";
 import { BoardThreadTail } from "./boardThreadTail.ts";
@@ -57,13 +57,26 @@ const orchestrationStack = Layer.mergeAll(
   Layer.provide(RepositoryIdentityResolver.layer),
 );
 
+const persistence = (prefix: string) =>
+  SqlitePersistenceMemory.pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
 /** The whole stack on in-memory SQLite, board included. */
 export const makeBoardStackTestLayer = (prefix: string) =>
   BoardRuntimeLive.pipe(
     Layer.provideMerge(orchestrationStack),
-    Layer.provideMerge(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(persistence(prefix)),
+  );
+
+/** The same, without the board's tail of upstream's log — for a suite that
+    starts its own. */
+export const makeBoardStackTestLayerWithoutTail = (prefix: string) =>
+  BoardEngineLive.pipe(
+    Layer.provideMerge(BoardQueriesLive),
+    Layer.provideMerge(orchestrationStack),
+    Layer.provideMerge(persistence(prefix)),
   );
 
 /** Dispatch through the right engine, and read either log. */
@@ -99,9 +112,8 @@ export const boardStackSnapshotQuery = Effect.gen(function* () {
     ...snapshotQuery,
     getCommandReadModel: () =>
       Effect.all([snapshotQuery.getCommandReadModel(), boardQueries.loadBoardState()]).pipe(
-        Effect.map(
-          ([model, board]): OrchestrationReadModel =>
-            board === null ? model : { ...model, board },
+        Effect.map(([model, board]): OrchestrationReadModel =>
+          board === null ? model : { ...model, board },
         ),
       ),
   };

@@ -103,7 +103,9 @@ function inferActorKind(event: PlannedBoardEvent): string {
   return "client";
 }
 
-const decodeRow = (row: BoardEventRow): Effect.Effect<BoardEvent | undefined, ProjectionRepositoryError> => {
+const decodeRow = (
+  row: BoardEventRow,
+): Effect.Effect<BoardEvent | undefined, ProjectionRepositoryError> => {
   if (!KNOWN_BOARD_EVENT_TYPES.has(row.type)) {
     return Effect.as(
       Effect.logWarning("Skipping retired board event type during replay").pipe(
@@ -112,7 +114,9 @@ const decodeRow = (row: BoardEventRow): Effect.Effect<BoardEvent | undefined, Pr
       undefined,
     );
   }
-  return decodeEvent(row).pipe(Effect.mapError(toPersistenceDecodeError("BoardEventStore.decodeRow")));
+  return decodeEvent(row).pipe(
+    Effect.mapError(toPersistenceDecodeError("BoardEventStore.decodeRow")),
+  );
 };
 
 export function makeBoardEventStore(sql: SqlClient.SqlClient) {

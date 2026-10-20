@@ -28,7 +28,11 @@ import * as Effect from "effect/Effect";
 import { boardDecidedEvents } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 import { BoardQueries } from "./BoardQueries.ts";
-import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
+import {
+  boardStackEngine,
+  boardStackSnapshotQuery,
+  makeBoardStackTestLayer,
+} from "./boardStack.testkit.ts";
 
 /** One database — and therefore one `it.layer` block — per scenario. Commands
     are deduped by `commandId` and every scenario shares a seed and a move
@@ -216,8 +220,7 @@ it.layer(makeTestLayer("t3o-board-project-3-"))("the activity rail", (it) => {
       const engine = yield* seedBoard;
       yield* engine.dispatch(moveHighCardToBeta);
 
-      const snapshotQuery = yield* boardStackSnapshotQuery;
-      const board = (yield* BoardQueries);
+      const board = yield* BoardQueries;
       assert.isNotNull(board);
       const activity: ReadonlyArray<BoardCardActivityEntry> =
         yield* board!.boardCardActivity(highCardId);

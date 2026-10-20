@@ -644,7 +644,10 @@ export const boardClientConnection = (deps: {
     const dispatch = (command: Extract<ClientOrchestrationCommand, BoardCommand>) =>
       stampActor(command).pipe(
         Effect.andThen(
-          boardEngine.dispatch(command, deps.origin === undefined ? undefined : { origin: deps.origin }),
+          boardEngine.dispatch(
+            command,
+            deps.origin === undefined ? undefined : { origin: deps.origin },
+          ),
         ),
         Effect.mapError(
           (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
@@ -664,7 +667,10 @@ export const boardClientConnection = (deps: {
         const primary = boardShellStreamEvent(event);
         const deltas = Option.isSome(primary) ? [primary.value] : [];
         // A card's link set changing is what the `card-threads` delta carries.
-        if (event.type === "board.card-thread-linked" || event.type === "board.card-thread-unlinked") {
+        if (
+          event.type === "board.card-thread-linked" ||
+          event.type === "board.card-thread-unlinked"
+        ) {
           return [...deltas, ...(yield* cardThreads(event.payload.cardId, event.sequence))];
         }
         return deltas;

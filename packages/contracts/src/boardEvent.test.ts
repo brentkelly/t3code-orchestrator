@@ -10,6 +10,11 @@ import {
   OrchestrationEventType,
 } from "./orchestration.ts";
 
+const decodeBoardEvent = Schema.decodeUnknownExit(BoardEvent);
+const decodeOrchestrationEvent = Schema.decodeUnknownExit(OrchestrationEvent);
+const decodeClientCommand = Schema.decodeUnknownExit(ClientOrchestrationCommand);
+const decodeServerCommand = Schema.decodeUnknownExit(OrchestrationCommand);
+
 // T3O-56: board events and commands belong to the board's own engine, not to
 // upstream's orchestration unions — except that clients still SEND board
 // commands over `orchestration.dispatchCommand`, so the wire union keeps them.
@@ -37,8 +42,8 @@ const cardCreated = {
 
 describe("board events (T3O-56)", () => {
   it("decode as board events and not as orchestration events", () => {
-    expect(Schema.decodeUnknownExit(BoardEvent)(cardCreated)._tag).toBe("Success");
-    expect(Schema.decodeUnknownExit(OrchestrationEvent)(cardCreated)._tag).toBe("Failure");
+    expect(decodeBoardEvent(cardCreated)._tag).toBe("Success");
+    expect(decodeOrchestrationEvent(cardCreated)._tag).toBe("Failure");
   });
 
   it("keep their own type registry, disjoint from upstream's", () => {
@@ -54,8 +59,8 @@ describe("board events (T3O-56)", () => {
       toStage: "sprint",
       createdAt: "2026-01-01T00:00:00.000Z",
     };
-    expect(Schema.decodeUnknownExit(ClientOrchestrationCommand)(move)._tag).toBe("Success");
-    expect(Schema.decodeUnknownExit(OrchestrationCommand)(move)._tag).toBe("Failure");
+    expect(decodeClientCommand(move)._tag).toBe("Success");
+    expect(decodeServerCommand(move)._tag).toBe("Failure");
     expect(BOARD_CLIENT_COMMANDS.length).toBeGreaterThan(0);
   });
 });

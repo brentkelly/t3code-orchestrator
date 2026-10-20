@@ -168,9 +168,7 @@ export type BoardDecision = PlannedBoardEvent | ReadonlyArray<PlannedBoardEvent>
 /** A decision as the list the engine appends — the single-event case is a
     list of one. Discriminated on `type`, which every event has and no array
     does: `Array.isArray` narrows to `any[]` and leaks `any` into the result. */
-export function boardDecidedEvents(
-  decided: BoardDecision,
-): ReadonlyArray<PlannedBoardEvent> {
+export function boardDecidedEvents(decided: BoardDecision): ReadonlyArray<PlannedBoardEvent> {
   return "type" in decided ? [decided] : decided;
 }
 
@@ -420,11 +418,7 @@ const boardDependentBlockedEvents = Effect.fn("boardDependentBlockedEvents")(fun
   readonly board: BoardState;
   readonly command: BoardCardCommand;
   readonly changed: BoardCard;
-}): Effect.fn.Return<
-  ReadonlyArray<PlannedBoardEvent>,
-  PlatformError.PlatformError,
-  Crypto.Crypto
-> {
+}): Effect.fn.Return<ReadonlyArray<PlannedBoardEvent>, PlatformError.PlatformError, Crypto.Crypto> {
   const cards = input.board.cards.map((card) =>
     card.id === input.changed.id ? input.changed : card,
   );
@@ -877,9 +871,7 @@ function requireBoardProject(input: {
 /** Whether a command needs `BoardDecisionContext` loaded before it is decided
     (T3O-53): an update that edits the brief incrementally or guards it with a
     version. */
-export function boardCommandNeedsBrief(
-  command: BoardCommand,
-): command is BoardCardUpdateCommand {
+export function boardCommandNeedsBrief(command: BoardCommand): command is BoardCardUpdateCommand {
   return (
     command.type === "board.card.update" &&
     (command.briefAppend !== undefined ||

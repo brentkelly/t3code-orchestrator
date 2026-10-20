@@ -39,7 +39,11 @@ import * as ServerSettings from "../../../serverSettings.ts";
 import { boardHandlers } from "./handlers.ts";
 import { BoardToolkit } from "./tools.ts";
 import { projectBoardEvent, type BoardReadModel } from "../../../board/projector.ts";
-import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "../../../board/boardStack.testkit.ts";
+import {
+  boardStackEngine,
+  boardStackSnapshotQuery,
+  makeBoardStackTestLayer,
+} from "../../../board/boardStack.testkit.ts";
 
 /** The forge as these tests see it (T3O-18): #75, #76 and #77 exist, nothing
     else. #77 resolves but its link is then refused (`refusedLink`). */
@@ -1875,7 +1879,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const snapshotQuery = yield* boardStackSnapshotQuery;
       const rehydrated = yield* snapshotQuery.getCommandReadModel();
       const events = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
-      let replayed = ({} as BoardReadModel);
+      let replayed = {} as BoardReadModel;
       for (const event of events) replayed = yield* projectBoardEvent(replayed, event);
       // Read-model step completions and plan metadata rehydrated from the
       // 908/909 tables must equal a from-empty replay of the event log.
@@ -1921,7 +1925,7 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
   });
 
   const activityOf = Effect.fn("activityOf")(function* (card: BoardCardId) {
-    const board = (yield* BoardQueries);
+    const board = yield* BoardQueries;
     assert.isNotNull(board);
     return (yield* board!.boardCardActivity(card)).filter((entry) => entry.kind === "card-edited");
   });
@@ -2407,7 +2411,7 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
       const snapshotQuery = yield* boardStackSnapshotQuery;
       const rehydrated = yield* snapshotQuery.getCommandReadModel();
       const events = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
-      let replayed = ({} as BoardReadModel);
+      let replayed = {} as BoardReadModel;
       for (const event of events) replayed = yield* projectBoardEvent(replayed, event);
       assert.deepStrictEqual(replayed.board, rehydrated.board);
     }),

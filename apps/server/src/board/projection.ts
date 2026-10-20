@@ -69,7 +69,6 @@ import {
   type BoardPlanWithBody,
   type BoardState,
   type OrchestrationEvent,
-  type OrchestrationReadModel,
   type OrchestrationShellSnapshot,
   IsoDateTime,
   ProjectId,

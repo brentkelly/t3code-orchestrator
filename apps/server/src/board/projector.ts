@@ -283,8 +283,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
   };
 }
 
-function upsertCard<M extends BoardReadModel>(
-  model: M, card: BoardCard): M {
+function upsertCard<M extends BoardReadModel>(model: M, card: BoardCard): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const cards = (
     board.cards.some((existing) => existing.id === card.id)
@@ -303,8 +302,7 @@ function upsertCard<M extends BoardReadModel>(
  * human reference to either. Deleting the newest card in a project therefore
  * leaves a gap in the key sequence, which is the correct trade.
  */
-function removeCard<M extends BoardReadModel>(
-  model: M, cardId: BoardCardId): M {
+function removeCard<M extends BoardReadModel>(model: M, cardId: BoardCardId): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   // The three per-card slices are stripped from the base and RE-ADDED only when
   // non-empty, so the result matches `loadBoardState`'s absent-vs-empty rule
@@ -343,8 +341,7 @@ function removeCard<M extends BoardReadModel>(
     rows, so replay and rehydration cannot diverge on catalogue order. Every
     label event (create/update/delete/undelete) carries the full post-change
     label, so this one path serves them all. */
-function upsertLabel<M extends BoardReadModel>(
-  model: M, label: BoardLabel): M {
+function upsertLabel<M extends BoardReadModel>(model: M, label: BoardLabel): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const catalogue = boardLabelCatalogue(board);
   const labels = (
@@ -357,10 +354,7 @@ function upsertLabel<M extends BoardReadModel>(
 
 /** Upsert a stage definition into the in-memory model (t3o-15), keeping the
     slice in canonical `compareBoardStages` order so replay equals rehydration. */
-function upsertStage<M extends BoardReadModel>(
-  model: M,
-  stage: BoardStageDefinition,
-): M {
+function upsertStage<M extends BoardReadModel>(model: M, stage: BoardStageDefinition): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const current = boardStages(board);
   const stages = (
@@ -507,10 +501,7 @@ export function compareBoardProviderLimits(
 /** Replace (or add) one provider cooldown (T3O-22). Keyed on the provider
     instance, kept in a stable order so a from-empty replay and a table
     rehydration produce the same array. */
-function upsertProviderLimit<M extends BoardReadModel>(
-  model: M,
-  limit: BoardProviderLimit,
-): M {
+function upsertProviderLimit<M extends BoardReadModel>(model: M, limit: BoardProviderLimit): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const current = board.providerLimits ?? [];
   const exists = current.some(
@@ -544,10 +535,7 @@ function clearProviderLimit<M extends BoardReadModel>(
   };
 }
 
-function upsertStepState<M extends BoardReadModel>(
-  model: M,
-  state: BoardCardStepState,
-): M {
+function upsertStepState<M extends BoardReadModel>(model: M, state: BoardCardStepState): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const current = board.stepStates ?? [];
   const exists = current.some((existing) => existing.cardId === state.cardId);
@@ -593,8 +581,7 @@ function replaceCardPlans<M extends BoardReadModel>(
 }
 
 /** Upsert one plan's metadata (board_write_plan bumps `updatedAt`). */
-function upsertPlan<M extends BoardReadModel>(
-  model: M, plan: BoardPlan): M {
+function upsertPlan<M extends BoardReadModel>(model: M, plan: BoardPlan): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const current = board.plans ?? [];
   const plans = (

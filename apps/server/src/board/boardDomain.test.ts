@@ -22,7 +22,11 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
 import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
-import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
+import {
+  boardStackEngine,
+  boardStackSnapshotQuery,
+  makeBoardStackTestLayer,
+} from "./boardStack.testkit.ts";
 
 const makeBoardDomainTestLayer = makeBoardStackTestLayer;
 
@@ -225,9 +229,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
       // Replay every persisted event from a truly empty read model: the
       // board slice must equal the table-rehydrated one exactly.
       const rehydrated = yield* snapshotQuery.getCommandReadModel();
-      const events: BoardEvent[] = Array.from(
-        yield* Stream.runCollect(engine.readBoardEvents()),
-      );
+      const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
       const boardEventTypes = events
         .filter((event) => event.type.startsWith("board."))
         .map((event) => event.type);
@@ -246,7 +248,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
         "board.card-reordered",
       ]);
 
-      let replayed = ({} as BoardReadModel);
+      let replayed = {} as BoardReadModel;
       for (const event of events) {
         replayed = yield* projectBoardEvent(replayed, event);
       }
@@ -368,14 +370,12 @@ it.layer(makeBoardDomainTestLayer("t3o-board-delete-test-"))("board card delete"
       // point of `board.card-deleted` carrying a removal the projector applies
       // rather than the projection quietly dropping rows.
       const rehydrated = yield* snapshotQuery.getCommandReadModel();
-      const events: BoardEvent[] = Array.from(
-        yield* Stream.runCollect(engine.readBoardEvents()),
-      );
+      const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
       assert.include(
         events.map((event) => event.type),
         "board.card-deleted",
       );
-      let replayed = ({} as BoardReadModel);
+      let replayed = {} as BoardReadModel;
       for (const event of events) {
         replayed = yield* projectBoardEvent(replayed, event);
       }
@@ -449,7 +449,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-base-branch-test-"))(
           "release/2.4",
         );
 
-        let replayed = ({} as BoardReadModel);
+        let replayed = {} as BoardReadModel;
         for (const event of Array.from(yield* Stream.runCollect(engine.readBoardEvents()))) {
           replayed = yield* projectBoardEvent(replayed, event);
         }

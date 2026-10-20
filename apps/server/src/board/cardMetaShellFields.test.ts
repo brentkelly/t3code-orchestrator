@@ -29,7 +29,11 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { BoardQueries } from "./BoardQueries.ts";
-import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
+import {
+  boardStackEngine,
+  boardStackSnapshotQuery,
+  makeBoardStackTestLayer,
+} from "./boardStack.testkit.ts";
 
 /** One database per scenario: commands are deduped by `commandId` and every
     scenario shares a seed, so a shared database would let one scenario's writes
@@ -339,7 +343,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
         });
       yield* record("linked", null);
       yield* record("titled", "Summary tab");
-      const board = (yield* BoardQueries);
+      const board = yield* BoardQueries;
       assert.isNotNull(board);
       const activity = yield* board!.boardCardActivity(titleCardId);
       const prRows = activity.filter(
@@ -391,7 +395,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       yield* record("linked", "open", null);
       yield* record("merged", "merged", null);
       yield* record("titled", "merged", "Summary tab");
-      const board = (yield* BoardQueries);
+      const board = yield* BoardQueries;
       assert.isNotNull(board);
       const activity = yield* board!.boardCardActivity(mergedTitleCardId);
       const mergedRows = activity.filter((entry) => entry.kind === "card-pull-request-merged");
@@ -930,7 +934,7 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
 
           // The rail: one `kept` row (a repeated refusal adds none — the decider
           // marks only a changed reason), and one forced `removed` row.
-          const board = (yield* BoardQueries);
+          const board = yield* BoardQueries;
           assert.isNotNull(board);
           const activity = yield* board!.boardCardActivity(cardId);
           const keptRows = activity.filter((entry) => entry.kind === "card-worktree-kept");

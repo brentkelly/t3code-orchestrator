@@ -92,9 +92,7 @@ const harness = Effect.gen(function* () {
     ),
     Layer.succeed(BoardThreadTail, {
       todoChanges: Stream.fromPubSub(todoChanges),
-      subscribeTodoChanges: PubSub.subscribe(todoChanges).pipe(
-        Effect.map(Stream.fromSubscription),
-      ),
+      subscribeTodoChanges: PubSub.subscribe(todoChanges).pipe(Effect.map(Stream.fromSubscription)),
       drain: Effect.void,
     }),
   );

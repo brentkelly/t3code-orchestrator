@@ -24,7 +24,11 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { BoardQueries } from "./BoardQueries.ts";
-import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
+import {
+  boardStackEngine,
+  boardStackSnapshotQuery,
+  makeBoardStackTestLayer,
+} from "./boardStack.testkit.ts";
 
 /** One database per scenario. Commands are deduped by `commandId` and every
     scenario shares a seed, so a single database would let one scenario's
@@ -202,10 +206,9 @@ it.layer(makeTestLayer("t3o-board-archive-4-"))("card detail dependency refs", (
   it.effect("resolves an archived dependency on the card detail rather than dropping it", () =>
     Effect.gen(function* () {
       const engine = yield* seedBoard;
-      const snapshotQuery = yield* boardStackSnapshotQuery;
       yield* engine.dispatch(archiveDependency);
 
-      const board = (yield* BoardQueries);
+      const board = yield* BoardQueries;
       assert.isNotNull(board);
       if (board === null) return;
 

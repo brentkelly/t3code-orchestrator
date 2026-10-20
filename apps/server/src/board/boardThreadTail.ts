@@ -68,7 +68,16 @@ export const makeBoardThreadTail = Effect.gen(function* () {
   const live = yield* engine.subscribeDomainEvents;
   const head = yield* engine.latestSequence;
   const stored = yield* store.getWatermark(BOARD_THREAD_TAIL_PROJECTOR).pipe(Effect.orDie);
-  const cursor = stored ?? head;
+  // A cursor AHEAD of upstream's head means the two files drifted apart — a
+  // backup restored for one and not the other, or copies taken a moment apart.
+  // Trusting it would skip every plan update until the log caught up with it,
+  // so the tail resumes at the head instead and says so.
+  if (stored !== null && stored > head) {
+    yield* Effect.logWarning(
+      "board thread tail cursor is ahead of upstream's log; resuming at its head",
+    ).pipe(Effect.annotateLogs({ cursor: stored, head }));
+  }
+  const cursor = stored === null || stored > head ? head : stored;
   const processed = yield* SubscriptionRef.make(cursor);
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -110,7 +119,7 @@ export const makeBoardThreadTail = Effect.gen(function* () {
     );
     yield* SubscriptionRef.set(processed, head);
   }
-  if (stored === null || cursor < head) {
+  if (stored !== head) {
     yield* saveCursor(head).pipe(Effect.ignore);
   }
 

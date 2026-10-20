@@ -21,10 +21,7 @@
  * whose transaction has not committed. `streamBoardEvents` relies on that to
  * hand over from the durable log to the live tail without a gap or a duplicate.
  */
-import {
-  type CommandId,
-  type OrchestrationClientOrigin,
-} from "@t3tools/contracts";
+import { type CommandId, type OrchestrationClientOrigin } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";

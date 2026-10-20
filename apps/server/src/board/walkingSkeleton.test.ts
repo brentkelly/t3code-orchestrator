@@ -21,9 +21,12 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
-import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
+import {
+  boardStackEngine,
+  boardStackSnapshotQuery,
+  makeBoardStackTestLayer,
+} from "./boardStack.testkit.ts";
 
 const makeBoardSkeletonTestLayer = makeBoardStackTestLayer;
 
@@ -158,9 +161,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         // Replaying the board's own log from a truly empty read model must land
         // on the same board state. The project's event is in upstream's log; the
         // board log holds board events and nothing else (T3O-56).
-        const events: BoardEvent[] = Array.from(
-          yield* Stream.runCollect(engine.readBoardEvents()),
-        );
+        const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
         assert.deepStrictEqual(
           events.map((event) => event.type),
           ["board.card-created"],
@@ -169,7 +170,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         assert.strictEqual(cardEvent.aggregateKind, "card");
         assert.strictEqual(cardEvent.aggregateId, cardId);
 
-        let replayed = ({} as BoardReadModel);
+        let replayed = {} as BoardReadModel;
         for (const event of events) {
           replayed = yield* projectBoardEvent(replayed, event);
         }
@@ -281,10 +282,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
       assert.strictEqual(tips.get("review@1"), "tip-abc123");
       assert.strictEqual(tips.get("planning"), null);
 
-      const events: BoardEvent[] = Array.from(
-        yield* Stream.runCollect(engine.readBoardEvents()),
-      );
-      let replayed = ({} as BoardReadModel);
+      const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
+      let replayed = {} as BoardReadModel;
       for (const event of events) {
         replayed = yield* projectBoardEvent(replayed, event);
       }
@@ -353,10 +352,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
       assert.strictEqual(state?.status, "queued");
       assert.strictEqual(state?.forceStart, true);
 
-      const events: BoardEvent[] = Array.from(
-        yield* Stream.runCollect(engine.readBoardEvents()),
-      );
-      let replayed = ({} as BoardReadModel);
+      const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
+      let replayed = {} as BoardReadModel;
       for (const event of events) {
         replayed = yield* projectBoardEvent(replayed, event);
       }
@@ -431,10 +428,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
       assert.strictEqual(state?.lastNudgeAt, typedAt);
       assert.strictEqual(state?.status, "running");
 
-      const events: BoardEvent[] = Array.from(
-        yield* Stream.runCollect(engine.readBoardEvents()),
-      );
-      let replayed = ({} as BoardReadModel);
+      const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
+      let replayed = {} as BoardReadModel;
       for (const event of events) {
         replayed = yield* projectBoardEvent(replayed, event);
       }
@@ -474,10 +469,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
       // The catalogue rides the shell once, as a top-level array.
       assert.isTrue((shell.boardLabels?.length ?? 0) >= 3);
 
-      const events: BoardEvent[] = Array.from(
-        yield* Stream.runCollect(engine.readBoardEvents()),
-      );
-      let replayed = ({} as BoardReadModel);
+      const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
+      let replayed = {} as BoardReadModel;
       for (const event of events) replayed = yield* projectBoardEvent(replayed, event);
       assert.deepStrictEqual(replayed.board, rehydrated.board);
     }),
@@ -527,10 +520,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
       assert.isTrue(rehydratedCard?.autoMerge);
       assert.strictEqual(rehydratedCard?.autoMergeHold?.attempt, 2);
 
-      const events: BoardEvent[] = Array.from(
-        yield* Stream.runCollect(engine.readBoardEvents()),
-      );
-      let replayed = ({} as BoardReadModel);
+      const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
+      let replayed = {} as BoardReadModel;
       for (const event of events) replayed = yield* projectBoardEvent(replayed, event);
       assert.deepStrictEqual(replayed.board, rehydrated.board);
     }),
@@ -615,10 +606,8 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-order-test-"))(
           [BoardCardId.make("card-early"), BoardCardId.make("card-late")],
         );
 
-        const events: BoardEvent[] = Array.from(
-          yield* Stream.runCollect(engine.readBoardEvents()),
-        );
-        let replayed = ({} as BoardReadModel);
+        const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
+        let replayed = {} as BoardReadModel;
         for (const event of events) {
           replayed = yield* projectBoardEvent(replayed, event);
         }
@@ -642,7 +631,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-empty-test-"))(
         // empty board is an *absent* field on both sides, never `{cards:[]}`
         // on one and `undefined` on the other.
         const rehydrated = yield* snapshotQuery.getCommandReadModel();
-        const replayed = ({} as BoardReadModel);
+        const replayed = {} as BoardReadModel;
         assert.strictEqual(rehydrated.board, undefined);
         assert.deepStrictEqual(rehydrated.board, replayed.board);
 

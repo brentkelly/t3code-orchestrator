@@ -111,10 +111,34 @@ it.effect("copies board history into the board log in order, renumbered from 1",
     yield* Migration044;
 
     assert.deepStrictEqual(yield* boardLog, [
-      { sequence: 1, eventId: "evt-2", type: "board.card-created", streamVersion: 0, payload: '{"n":2}' },
-      { sequence: 2, eventId: "evt-4", type: "board.card-moved", streamVersion: 1, payload: '{"n":4}' },
-      { sequence: 3, eventId: "evt-5", type: "board.label-created", streamVersion: 0, payload: '{"n":5}' },
-      { sequence: 4, eventId: "evt-7", type: "board.card-moved", streamVersion: 2, payload: '{"n":7}' },
+      {
+        sequence: 1,
+        eventId: "evt-2",
+        type: "board.card-created",
+        streamVersion: 0,
+        payload: '{"n":2}',
+      },
+      {
+        sequence: 2,
+        eventId: "evt-4",
+        type: "board.card-moved",
+        streamVersion: 1,
+        payload: '{"n":4}',
+      },
+      {
+        sequence: 3,
+        eventId: "evt-5",
+        type: "board.label-created",
+        streamVersion: 0,
+        payload: '{"n":5}',
+      },
+      {
+        sequence: 4,
+        eventId: "evt-7",
+        type: "board.card-moved",
+        streamVersion: 2,
+        payload: '{"n":7}',
+      },
     ]);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
@@ -171,8 +195,14 @@ it.effect("leaves upstream's log and receipts exactly as they were", () =>
     const before = yield* sql`SELECT * FROM main.orchestration_events ORDER BY sequence`;
     const receiptsBefore = yield* sql`SELECT * FROM main.orchestration_command_receipts`;
     yield* Migration044;
-    assert.deepStrictEqual(yield* sql`SELECT * FROM main.orchestration_events ORDER BY sequence`, before);
-    assert.deepStrictEqual(yield* sql`SELECT * FROM main.orchestration_command_receipts`, receiptsBefore);
+    assert.deepStrictEqual(
+      yield* sql`SELECT * FROM main.orchestration_events ORDER BY sequence`,
+      before,
+    );
+    assert.deepStrictEqual(
+      yield* sql`SELECT * FROM main.orchestration_command_receipts`,
+      receiptsBefore,
+    );
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 

@@ -111,20 +111,15 @@ const stepState = (
   ...overrides,
 });
 
-const decide = (
-  command: BoardCommand,
-  readModel: OrchestrationReadModel,
-) =>
+const decide = (command: BoardCommand, readModel: OrchestrationReadModel) =>
   decideBoardCommandOnModel({ command, readModel }).pipe(
     Effect.map(boardDecidedEvents),
     Effect.map((events) => events[0]!),
     Effect.provide(NodeServices.layer),
   );
 
-const decideFail = (
-  command: BoardCommand,
-  readModel: OrchestrationReadModel,
-) => Effect.flip(decide(command, readModel));
+const decideFail = (command: BoardCommand, readModel: OrchestrationReadModel) =>
+  Effect.flip(decide(command, readModel));
 
 it.effect("select-step records a pending step, freezing the stage's config onto the run row", () =>
   Effect.gen(function* () {

@@ -845,24 +845,24 @@ export function withGovernor(
       });
 
     const dispatchAny = (command: HarnessCommand) =>
-        (input.onDispatch?.(command) ?? Effect.void)
-          .pipe(Effect.andThen(Ref.update(commands, (current) => [...current, command])))
-          .pipe(
-            Effect.andThen(
-              Effect.gen(function* () {
-                if (isBoardCommand(command)) {
-                  const rm = yield* Ref.get(model);
-                  const decided = yield* decideBoardCommandOnModel({ command, readModel: rm });
-                  yield* Effect.forEach(boardDecidedEvents(decided), applyDecided, {
-                    discard: true,
-                  });
-                  return;
-                }
-                yield* dispatchThreadCommand(command);
-              }),
-            ),
-          )
-          .pipe(Effect.andThen(Ref.get(seq).pipe(Effect.map((sequence) => ({ sequence })))));
+      (input.onDispatch?.(command) ?? Effect.void)
+        .pipe(Effect.andThen(Ref.update(commands, (current) => [...current, command])))
+        .pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              if (isBoardCommand(command)) {
+                const rm = yield* Ref.get(model);
+                const decided = yield* decideBoardCommandOnModel({ command, readModel: rm });
+                yield* Effect.forEach(boardDecidedEvents(decided), applyDecided, {
+                  discard: true,
+                });
+                return;
+              }
+              yield* dispatchThreadCommand(command);
+            }),
+          ),
+        )
+        .pipe(Effect.andThen(Ref.get(seq).pipe(Effect.map((sequence) => ({ sequence })))));
 
     // One double answers both engines: the reactor routes board commands to the
     // board engine and thread commands to upstream's, and the harness records
@@ -1464,10 +1464,7 @@ export const stepCompleted = (
     step row with the override set. The pump projects it into the model before
     the reactor observes it, exactly as the projection pipeline does in
     production, so `schedule` reads a row that really carries `forceStart`. */
-export const forceStartRequested = (
-  state: BoardCardStepState,
-  sequence: number,
-): HarnessEvent =>
+export const forceStartRequested = (state: BoardCardStepState, sequence: number): HarnessEvent =>
   ({
     type: "board.card-step-force-start-requested",
     sequence,

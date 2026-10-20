@@ -24,7 +24,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { BoardQueries } from "./BoardQueries.ts";
-import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
+import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 
 const makeLayer = makeBoardStackTestLayer;
 
@@ -106,8 +106,7 @@ const appendAssistantMessage = (threadId: ThreadId, id: string, createdAt: strin
 
 const lastSignalAt = (threadId: ThreadId) =>
   Effect.gen(function* () {
-    const snapshotQuery = yield* boardStackSnapshotQuery;
-    const methods = (yield* BoardQueries);
+    const methods = yield* BoardQueries;
     assert.isNotNull(methods);
     return yield* methods!.boardThreadLastSignalAt(threadId);
   });
