@@ -12,13 +12,7 @@
  * Run through the real seams (decider → event store → projection → snapshot
  * query), because that is where the two producers actually meet.
  */
-import {
-  BoardCardId,
-  CommandId,
-  ProjectId,
-  ProviderInstanceId,
-  type OrchestrationShellSnapshot,
-} from "@t3tools/contracts";
+import { BoardCardId, CommandId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -72,11 +66,11 @@ const seedProject = Effect.gen(function* () {
 
 const shellLimits = Effect.gen(function* () {
   const snapshotQuery = yield* boardStackSnapshotQuery;
-  const snapshot: OrchestrationShellSnapshot = yield* snapshotQuery.getShellSnapshot();
-  return snapshot.boardProviderLimits;
+  const snapshot = yield* snapshotQuery.getBoardSnapshot();
+  return snapshot.providerLimits;
 });
 
-describe("provider cooldowns on the shell SNAPSHOT (T3O-22, D14)", () => {
+describe("provider cooldowns on the board SNAPSHOT (T3O-22, D14)", () => {
   it.layer(makeTestLayer("t3o-limit-snap-1-"))("a live cooldown", (it) => {
     it.effect("rides the snapshot, so a client reconnecting mid-limit still sees it", () =>
       Effect.gen(function* () {
@@ -98,7 +92,9 @@ describe("provider cooldowns on the shell SNAPSHOT (T3O-22, D14)", () => {
   });
 
   it.layer(makeTestLayer("t3o-limit-snap-2-"))("a cleared cooldown", (it) => {
-    it.effect("leaves the slice ABSENT rather than empty, like every other one", () =>
+    // The board snapshot carries every slice as an array (T3O-57): its own
+    // schema, so there is no older client to stay optional for.
+    it.effect("leaves the slice empty", () =>
       Effect.gen(function* () {
         const engine = yield* seedProject;
         yield* engine.dispatch({
@@ -108,7 +104,7 @@ describe("provider cooldowns on the shell SNAPSHOT (T3O-22, D14)", () => {
           createdAt,
         });
 
-        assert.strictEqual(yield* shellLimits, undefined);
+        assert.deepStrictEqual(yield* shellLimits, []);
       }),
     );
   });

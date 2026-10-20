@@ -18,7 +18,6 @@ import {
   ProviderInstanceId,
   unmetBoardCardDependencies,
   type BoardCardShell,
-  type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -102,8 +101,9 @@ const seedBoard = Effect.gen(function* () {
 
 /** `cards` is key-optional on the shell snapshot (a snapshot with no board
     omits it), so every assertion below reads through this. */
-const cardsOf = (snapshot: OrchestrationShellSnapshot): ReadonlyArray<BoardCardShell> =>
-  snapshot.cards ?? [];
+const cardsOf = (snapshot: {
+  readonly cards: ReadonlyArray<BoardCardShell>;
+}): ReadonlyArray<BoardCardShell> => snapshot.cards;
 
 const archiveDependency = {
   type: "board.card.archive",
@@ -121,7 +121,7 @@ it.layer(makeTestLayer("t3o-board-archive-1-"))("archiving a depended-on card", 
       const engine = yield* seedBoard;
       const snapshotQuery = yield* boardStackSnapshotQuery;
 
-      const blocked = yield* snapshotQuery.getShellSnapshot();
+      const blocked = yield* snapshotQuery.getBoardSnapshot();
       assert.strictEqual(
         cardsOf(blocked).find((card) => card.cardId === dependentId)?.blocked,
         true,
@@ -130,7 +130,7 @@ it.layer(makeTestLayer("t3o-board-archive-1-"))("archiving a depended-on card", 
 
       yield* engine.dispatch(archiveDependency);
 
-      const shell = yield* snapshotQuery.getShellSnapshot();
+      const shell = yield* snapshotQuery.getBoardSnapshot();
       // The archived card leaves the live board (D15)…
       assert.deepStrictEqual(
         cardsOf(shell).map((card) => card.cardId),
@@ -172,7 +172,7 @@ it.layer(makeTestLayer("t3o-board-archive-2-"))("moving past a released gate", (
       });
 
       const snapshotQuery = yield* boardStackSnapshotQuery;
-      const shell = yield* snapshotQuery.getShellSnapshot();
+      const shell = yield* snapshotQuery.getBoardSnapshot();
       assert.strictEqual(
         cardsOf(shell).find((card) => card.cardId === dependentId)?.stage,
         "building",
@@ -195,7 +195,7 @@ it.layer(makeTestLayer("t3o-board-archive-3-"))("restoring a depended-on card", 
         createdAt,
       });
 
-      const shell = yield* snapshotQuery.getShellSnapshot();
+      const shell = yield* snapshotQuery.getBoardSnapshot();
       assert.strictEqual(cardsOf(shell).length, 2, "the restored card is back on the live board");
       assert.strictEqual(cardsOf(shell).find((card) => card.cardId === dependentId)?.blocked, true);
     }),
@@ -242,7 +242,7 @@ it.layer(makeTestLayer("t3o-board-archive-5-"))("the archive page's card list", 
       const snapshotQuery = yield* boardStackSnapshotQuery;
       yield* engine.dispatch(archiveDependency);
 
-      const archived = yield* snapshotQuery.getArchivedShellSnapshot();
+      const archived = yield* snapshotQuery.getArchivedBoardCards();
       assert.deepStrictEqual(
         cardsOf(archived).map((card) => card.cardId),
         [dependencyId],
@@ -251,7 +251,7 @@ it.layer(makeTestLayer("t3o-board-archive-5-"))("the archive page's card list", 
 
       // The live snapshot never carries an archived card, and never a
       // populated `archivedAt`.
-      const live = yield* snapshotQuery.getShellSnapshot();
+      const live = yield* snapshotQuery.getBoardSnapshot();
       assert.deepStrictEqual(
         cardsOf(live).map((card) => card.archivedAt),
         [null],

@@ -25,17 +25,6 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
-// T3o: board schema (cards, command/event registries) lives in board.ts.
-import {
-  BOARD_CLIENT_COMMANDS,
-  BOARD_SHELL_STREAM_EVENTS,
-  BoardCardShell,
-  BoardCardThreadShell,
-  BoardProviderLimit,
-  BoardLabel,
-  BoardStageDefinition,
-  BoardState,
-} from "./board.ts";
 import {
   PullRequestActor,
   PullRequestChecksState,
@@ -874,8 +863,6 @@ export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
   threads: Schema.Array(OrchestrationThread),
-  // T3o: board slice of the read model; optional so pre-board models decode.
-  board: Schema.optional(BoardState),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
@@ -963,27 +950,6 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
   threads: Schema.Array(OrchestrationThreadShell),
-  // T3o: bounded card shells ride the shell snapshot (D2/D7); optional for interop.
-  cards: Schema.optional(Schema.Array(BoardCardShell)),
-  // T3o: the label catalogue rides the shell ONCE (t3o-06a) — N labels for the
-  // whole board, never denormalised per card. Optional for interop. Frozen.
-  boardLabels: Schema.optional(Schema.Array(BoardLabel)),
-  // T3o: the user-defined stage list rides the shell ONCE (t3o-15) so the board
-  // reads column order and labels from it (D13). Optional for interop. Frozen.
-  boardStages: Schema.optional(Schema.Array(BoardStageDefinition)),
-  // T3o: live card->thread links and their cached todo summaries (t3o-18, D3).
-  // Its own array, following the `boardLabels` precedent — `BoardCardShell` gains
-  // no field, so the 1280-byte card budget and the scalars-only test stay
-  // untouched. One entry per live link on a non-archived card; the todo fields
-  // are key-optional, so threads without a list cost almost nothing. Optional for
-  // interop.
-  boardCardThreads: Schema.optional(Schema.Array(BoardCardThreadShell)),
-  // T3o: provider cooldowns ride the shell ONCE (T3O-22, D14), following the
-  // `boardLabels` precedent — one fact per provider ACCOUNT, never denormalised
-  // onto the cards that share it, so the top bar can say "Anthropic limit ·
-  // 1:00 AM" with no card on screen. Absent on every board that has never hit a
-  // limit, which is the overwhelming majority. Optional for interop.
-  boardProviderLimits: Schema.optional(Schema.Array(BoardProviderLimit)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
@@ -1009,8 +975,6 @@ export const OrchestrationShellStreamEvent = Schema.Union([
     sequence: NonNegativeInt,
     threadId: ThreadId,
   }),
-  // T3o: card shell deltas, mirroring thread-upserted/thread-removed.
-  ...BOARD_SHELL_STREAM_EVENTS,
 ]);
 export type OrchestrationShellStreamEvent = typeof OrchestrationShellStreamEvent.Type;
 
@@ -1527,9 +1491,6 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadConversationRevertCommand,
   ThreadSessionStopCommand,
-  // T3o: board commands ride orchestration.dispatchCommand until the board has its
-  // own dispatch RPC; the server routes them to the board engine (T3O-56).
-  ...BOARD_CLIENT_COMMANDS,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 

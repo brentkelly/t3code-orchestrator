@@ -24,7 +24,6 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCardShell,
-  type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -112,12 +111,13 @@ const admit = Effect.gen(function* () {
   });
 });
 
-const cardsOf = (snapshot: OrchestrationShellSnapshot): ReadonlyArray<BoardCardShell> =>
-  snapshot.cards ?? [];
+const cardsOf = (snapshot: {
+  readonly cards: ReadonlyArray<BoardCardShell>;
+}): ReadonlyArray<BoardCardShell> => snapshot.cards;
 
 const shellCard = Effect.gen(function* () {
   const snapshotQuery = yield* boardStackSnapshotQuery;
-  const snapshot = yield* snapshotQuery.getShellSnapshot();
+  const snapshot = yield* snapshotQuery.getBoardSnapshot();
   return cardsOf(snapshot).find((card) => card.cardId === cardId);
 });
 

@@ -16,7 +16,6 @@ import {
   type BoardCard,
   type BoardCardPullRequest,
   type BoardState,
-  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe } from "@effect/vitest";
@@ -25,6 +24,7 @@ import * as Effect from "effect/Effect";
 
 import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
+import type { BoardOrchestrationReadModel } from "./projector.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -73,7 +73,7 @@ function makeCard(
   };
 }
 
-function makeReadModel(board: BoardState): OrchestrationReadModel {
+function makeReadModel(board: BoardState): BoardOrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [
@@ -140,15 +140,15 @@ const reclaim = (cardId: string, outcome: "removed" | "blocked", reason?: string
 /** Every event a command decides. Archive and unarchive decide several —
     the card's own, plus a `blocked` re-flag per affected dependent (t3o-13,
     D5) — while every other command decides exactly one. */
-const decideEvents = (command: BoardCommand, readModel: OrchestrationReadModel) =>
+const decideEvents = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
   decideBoardCommandOnModel({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
 
 /** The first (and, for every command but archive/unarchive, only) decided
     event. */
-const decide = (command: BoardCommand, readModel: OrchestrationReadModel) =>
+const decide = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
   decideEvents(command, readModel).pipe(Effect.map((events) => events[0]!));
 
-const decideFail = (command: BoardCommand, readModel: OrchestrationReadModel) =>
+const decideFail = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
   Effect.flip(decide(command, readModel));
 
 it.layer(NodeServices.layer)("board worktree lifecycle decider", (it) => {

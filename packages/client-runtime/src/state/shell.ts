@@ -24,8 +24,6 @@ import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
-// T3o: board deltas carry their own sequence (T3O-56).
-import { isBoardShellStreamEvent } from "./board.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
@@ -161,8 +159,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           : Option.match(next.snapshot, {
               onNone: () => null,
               onSome: (snapshot) =>
-                // T3o: board deltas carry their own sequence; the reducer applies them (T3O-56).
-                item.sequence > snapshot.snapshotSequence || isBoardShellStreamEvent(item)
+                item.sequence > snapshot.snapshotSequence
                   ? applyShellStreamEvent(snapshot, item)
                   : snapshot,
             });

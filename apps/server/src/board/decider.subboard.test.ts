@@ -15,7 +15,6 @@ import {
   type BoardCard,
   type BoardPlan,
   type BoardState,
-  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
@@ -23,6 +22,7 @@ import * as Effect from "effect/Effect";
 
 import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
+import type { BoardOrchestrationReadModel } from "./projector.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -118,7 +118,7 @@ function makeBoard(input?: {
   };
 }
 
-function makeReadModel(board: BoardState): OrchestrationReadModel {
+function makeReadModel(board: BoardState): BoardOrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [
@@ -139,10 +139,10 @@ function makeReadModel(board: BoardState): OrchestrationReadModel {
   };
 }
 
-const decideEvents = (command: BoardCommand, readModel: OrchestrationReadModel) =>
+const decideEvents = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
   decideBoardCommandOnModel({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
 
-const decideFail = (command: BoardCommand, readModel: OrchestrationReadModel) =>
+const decideFail = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
   Effect.flip(decideEvents(command, readModel));
 
 const approve = (cardId = "card-parent"): BoardCommand => ({

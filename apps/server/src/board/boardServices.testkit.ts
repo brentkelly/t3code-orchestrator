@@ -21,11 +21,22 @@ import { inertThreadGateway } from "./threadGateway.testkit.ts";
 
 export const inertBoardQueries = (overrides?: Partial<BoardQueriesShape>): BoardQueriesShape => ({
   loadBoardState: () => Effect.succeed(null),
+  boardShellSnapshot: () =>
+    Effect.succeed({
+      snapshotSequence: 0,
+      cards: [],
+      labels: [],
+      stages: [],
+      cardThreads: [],
+      providerLimits: [],
+    }),
+  boardArchivedCards: () => Effect.succeed([]),
   boardCardDetail: () => Effect.succeed(null),
   boardCardActivity: () => Effect.succeed([]),
   boardCardBrief: () => Effect.succeed(null),
   boardPlanBody: () => Effect.succeed(null),
   boardCardThreads: () => Effect.succeed([]),
+  boardAllCardThreads: () => Effect.succeed([]),
   boardCardIdForThread: () => Effect.succeed(null),
   boardThreadTodo: () => Effect.succeed(null),
   boardSweepThreadTodos: () => Effect.void,

@@ -699,6 +699,7 @@ export function withGovernor(
       boardCardBrief: () => Effect.succeed(null),
       boardPlanBody: () => Effect.succeed(null),
       boardCardThreads: () => Effect.succeed([]),
+      boardAllCardThreads: () => Effect.succeed([]),
       boardCardIdForThread: () => Effect.succeed(null),
       boardThreadTodo: (threadId: ThreadId) => {
         const todo = threadTodos.get(String(threadId));

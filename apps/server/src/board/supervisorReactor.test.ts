@@ -15,7 +15,6 @@ import {
   type BoardCard,
   type BoardCardStepState,
   type BoardState,
-  type OrchestrationReadModel,
   type BoardEvent,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -39,7 +38,7 @@ import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts
 import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 import { boardEngineDouble, boardServicesTestLayer } from "./boardServices.testkit.ts";
-import { projectBoardEvent } from "./projector.ts";
+import { projectBoardEvent, type BoardOrchestrationReadModel } from "./projector.ts";
 import type { BoardThreadState } from "./ThreadGateway.ts";
 import {
   aliveThread,
@@ -134,7 +133,7 @@ const runningState: BoardCardStepState = {
   updatedAt: NOW,
 };
 
-function readModel(board: BoardState): OrchestrationReadModel {
+function readModel(board: BoardState): BoardOrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [

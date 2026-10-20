@@ -1,7 +1,5 @@
 import * as Arr from "effect/Array";
 import type { OrchestrationShellSnapshot, OrchestrationShellStreamEvent } from "@t3tools/contracts";
-// T3o: card shell deltas are reduced in the board module.
-import { applyBoardShellStreamEvent, isBoardShellStreamEvent } from "./board.ts";
 
 /**
  * Reduce a single shell stream event into an existing snapshot, returning a new
@@ -15,8 +13,6 @@ export function applyShellStreamEvent(
   snapshot: OrchestrationShellSnapshot,
   event: OrchestrationShellStreamEvent,
 ): OrchestrationShellSnapshot {
-  // T3o: board deltas carry the board's own sequence, so they skip this guard (T3O-56).
-  if (isBoardShellStreamEvent(event)) return applyBoardShellStreamEvent(snapshot, event);
   if (event.sequence <= snapshot.snapshotSequence) return snapshot;
 
   switch (event.kind) {

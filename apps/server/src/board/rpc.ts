@@ -14,20 +14,21 @@
  * `authorizeEffect`.
  *
  * Writes go through the board's own engine and reads through `BoardQueries`
- * (T3O-56); nothing here touches upstream's orchestration engine.
+ * (T3O-56); nothing here touches upstream's orchestration engine. The board's
+ * client state rides its own subscription and dispatch RPCs (T3O-57).
  */
 import {
   BOARD_RPC_SCOPES,
   BOARD_WS_METHODS,
+  BoardDispatchCommandError,
+  BoardSnapshotError,
   BoardSubscribeCardError,
   EnvironmentAuthorizationError,
-  isBoardCommand,
   BoardCardAttachmentError,
   BoardCardAttachmentId,
   CommandId,
   type BoardAttachCardFileInput,
   type BoardDetachCardFileInput,
-  ThreadId,
   type BoardCardDetail,
   type BoardCardDetailStreamItem,
   type BoardCardId,
@@ -37,17 +38,16 @@ import {
   type BoardLinkCardPullRequestInput,
   type BoardProviderLimitActionInput,
   type BoardProviderLimitResumeAtInput,
+  type BoardClientCommand,
+  type BoardSubscribeBoardInput,
   type BoardSubscribeCardInput,
-  type ClientOrchestrationCommand,
   type OrchestrationClientOrigin,
-  OrchestrationDispatchCommandError,
-  type OrchestrationShellStreamEvent,
   type ProjectId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -61,7 +61,7 @@ import {
   deleteBoardCardAttachmentFile,
 } from "./attachments.ts";
 import { observeRpcEffect, observeRpcStreamEffect } from "../observability/RpcInstrumentation.ts";
-import type { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
+import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import {
   BOARD_HUMAN_ACTOR_FALLBACK_NAME,
   boardHumanActor,
@@ -70,34 +70,54 @@ import {
 import { BoardEngine, type BoardEngineShape } from "./BoardEngine.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import type { BoardQueriesShape } from "./projection.ts";
+import { subscribeBoard } from "./boardSubscription.ts";
 import { BoardThreadTail } from "./boardThreadTail.ts";
 import { ThreadGateway, type ThreadGatewayShape } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
-import { boardShellStreamEvent, type BoardEvent } from "./projector.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
-
-// Re-exported so ws.ts routes board commands with the import it already has.
-export { isBoardCommand };
 
 export interface BoardRpcHandlerDeps {
   readonly currentSession: AuthenticatedSession;
   /** The supervisor reactor performs the card→PR actions: it owns the forge
       gateway and the step machinery a conflict fix needs. */
   readonly boardSupervisor: SupervisorReactorShape;
+  /** The connecting client, stamped on every board event its commands make. */
+  readonly origin: OrchestrationClientOrigin | undefined;
 }
 
 export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
   Effect.gen(function* () {
     const boardEngine = yield* BoardEngine;
     const boardQueries = yield* BoardQueries;
-    return makeBoardRpcHandlers(deps, boardEngine, boardQueries);
+    // Built once per connection, so the actor-name caches live as long as it does.
+    const stampActor = boardActorStamp({
+      threads: yield* ThreadGateway,
+      boardQueries,
+      git: yield* GitVcsDriver,
+    });
+    // The subscription's services, provided here so the handler's stream needs
+    // only the RPC scope.
+    const subscriptionContext = yield* Effect.context<
+      BoardEngine | BoardQueries | BoardThreadTail
+    >();
+    return makeBoardRpcHandlers(deps, {
+      boardEngine,
+      boardQueries,
+      stampActor,
+      subscriptionContext,
+    });
   });
 
 function makeBoardRpcHandlers(
   deps: BoardRpcHandlerDeps,
-  boardEngine: BoardEngineShape,
-  boardQueries: BoardQueriesShape,
+  services: {
+    readonly boardEngine: BoardEngineShape;
+    readonly boardQueries: BoardQueriesShape;
+    readonly stampActor: (command: BoardCommand) => Effect.Effect<void>;
+    readonly subscriptionContext: Context.Context<BoardEngine | BoardQueries | BoardThreadTail>;
+  },
 ) {
+  const { boardEngine, boardQueries } = services;
   const authorized = <A, E, R>(
     method: keyof typeof BOARD_RPC_SCOPES,
     effect: Effect.Effect<A, E, R>,
@@ -144,6 +164,61 @@ function makeBoardRpcHandlers(
   });
 
   return {
+    /**
+     * The board's bounded summary, then its live deltas (t3o-26 D4, T3O-57) —
+     * see `boardSubscription.ts` for the resume rules.
+     */
+    [BOARD_WS_METHODS.subscribeBoard]: (input: BoardSubscribeBoardInput) =>
+      observeRpcStreamEffect(
+        BOARD_WS_METHODS.subscribeBoard,
+        authorized(
+          BOARD_WS_METHODS.subscribeBoard,
+          subscribeBoard(input).pipe(Effect.provide(services.subscriptionContext)),
+        ),
+        { "rpc.aggregate": "board" },
+      ),
+
+    /**
+     * A client board command (T3O-57). The human actor is stamped first: this
+     * RPC is the transport that knows a person is on the other end (t3o-18).
+     */
+    [BOARD_WS_METHODS.dispatchCommand]: (command: BoardClientCommand) =>
+      observeRpcEffect(
+        BOARD_WS_METHODS.dispatchCommand,
+        authorized(
+          BOARD_WS_METHODS.dispatchCommand,
+          services.stampActor(command).pipe(
+            Effect.andThen(
+              boardEngine.dispatch(
+                command,
+                deps.origin === undefined ? undefined : { origin: deps.origin },
+              ),
+            ),
+            Effect.mapError(
+              (cause) => new BoardDispatchCommandError({ message: cause.message, cause }),
+            ),
+          ),
+        ),
+        { "rpc.aggregate": "board" },
+      ),
+
+    /** The archive page's cards (t3o-13), read when the page opens. */
+    [BOARD_WS_METHODS.getArchivedCards]: (_input: Record<string, never>) =>
+      observeRpcEffect(
+        BOARD_WS_METHODS.getArchivedCards,
+        authorized(
+          BOARD_WS_METHODS.getArchivedCards,
+          boardQueries.boardArchivedCards().pipe(
+            Effect.map((cards) => ({ cards })),
+            Effect.mapError(
+              (cause) =>
+                new BoardSnapshotError({ message: "Failed to load archived cards.", cause }),
+            ),
+          ),
+        ),
+        { "rpc.aggregate": "board" },
+      ),
+
     /**
      * Re-resolve the card's pull request from the forge.
      *
@@ -520,12 +595,12 @@ function makeBoardRpcHandlers(
 // ── The human dispatch boundary (t3o-18, D11) ──────────────────────────
 
 /**
- * Stamp the HUMAN actor on a board command arriving over the web client's
- * `orchestration.dispatchCommand` RPC, so the Activity rail can say "brent moved
- * to Building" rather than attributing every drag to the system.
+ * Stamp the HUMAN actor on a board command arriving over `board.dispatchCommand`,
+ * so the Activity rail can say "brent moved to Building" rather than
+ * attributing every drag to the system.
  *
- * Called from ws.ts immediately before dispatch: that RPC is the transport that
- * knows a person is on the other end, and no other caller can claim to be one.
+ * Called immediately before dispatch: that RPC is the transport that knows a
+ * person is on the other end, and no other caller can claim to be one.
  * A non-board command, or one that names no card, is left alone.
  *
  * **The name** is the card's project git `user.name`, cached per project and
@@ -601,109 +676,3 @@ export function boardActorStamp(deps: {
       if (command.type === "board.card.set-project") projectByCard.delete(String(cardId));
     }).pipe(Effect.catchCause(() => Effect.void));
 }
-
-// ── The client's board connection (T3O-56) ─────────────────────────
-
-/**
- * What one client connection needs from the board, built once per socket so
- * the actor-name caches live as long as it does. ws.ts calls each member in one
- * line:
- *
- * - `dispatch` takes a board command off `orchestration.dispatchCommand`,
- *   stamps the human actor and hands it to the board engine. Board commands
- *   never reach upstream's engine.
- * - `shellDeltas` attaches the board's half of the shell stream: card, label,
- *   stage and provider-limit deltas from the board engine, and `card-threads`
- *   deltas from link changes and the todo tail. Attached when the effect
- *   returns, so nothing committed during the snapshot read is lost.
- * - `shellNeedsSnapshot` answers whether a resuming shell must take a full
- *   snapshot: the board's deltas are not in upstream's log, so a resume replay
- *   cannot carry them, and any board history at all means the client's cached
- *   board may be stale.
- *
- * Board deltas carry the BOARD's sequence. The client applies them without the
- * shell's sequence guard and without advancing `snapshotSequence` (see
- * `client-runtime/state/board.ts`), so the two sequence spaces never mix.
- */
-export const boardClientConnection = (deps: {
-  readonly git: GitVcsDriver["Service"];
-  readonly origin: OrchestrationClientOrigin | undefined;
-}) =>
-  Effect.gen(function* () {
-    const boardEngine = yield* BoardEngine;
-    const boardQueries = yield* BoardQueries;
-    const threadTail = yield* BoardThreadTail;
-    const stampActor = boardActorStamp({
-      threads: yield* ThreadGateway,
-      boardQueries,
-      git: deps.git,
-    });
-
-    const dispatch = (command: Extract<ClientOrchestrationCommand, BoardCommand>) =>
-      stampActor(command).pipe(
-        Effect.andThen(
-          boardEngine.dispatch(
-            command,
-            deps.origin === undefined ? undefined : { origin: deps.origin },
-          ),
-        ),
-        Effect.mapError(
-          (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
-        ),
-      );
-
-    const cardThreads = (cardId: BoardCardId, sequence: number) =>
-      boardQueries.boardCardThreads(cardId).pipe(
-        Effect.map((threads): ReadonlyArray<OrchestrationShellStreamEvent> => [
-          { kind: "card-threads" as const, sequence, cardId, threads },
-        ]),
-        Effect.catchCause(() => Effect.succeed([] as ReadonlyArray<OrchestrationShellStreamEvent>)),
-      );
-
-    const fromBoardEvent = (event: BoardEvent) =>
-      Effect.gen(function* () {
-        const primary = boardShellStreamEvent(event);
-        const deltas = Option.isSome(primary) ? [primary.value] : [];
-        // A card's link set changing is what the `card-threads` delta carries.
-        if (
-          event.type === "board.card-thread-linked" ||
-          event.type === "board.card-thread-unlinked"
-        ) {
-          return [...deltas, ...(yield* cardThreads(event.payload.cardId, event.sequence))];
-        }
-        return deltas;
-      });
-
-    // A todo list changed (or its thread was deleted, which drops the row while
-    // the link stays live): refetch the card's thread summaries. Stamped with the
-    // board head — the delta is applied unguarded, so any board sequence will do.
-    const fromTodoChange = (threadId: ThreadId) =>
-      Effect.gen(function* () {
-        const cardId = yield* boardQueries
-          .boardCardIdForThread(threadId)
-          .pipe(Effect.catchCause(() => Effect.succeed(null)));
-        if (cardId === null) return [] as ReadonlyArray<OrchestrationShellStreamEvent>;
-        return yield* cardThreads(cardId, yield* boardEngine.latestSequence);
-      });
-
-    const shellDeltas = Effect.gen(function* () {
-      const boardEvents = yield* boardEngine.subscribeBoardEvents;
-      const todoChanges = yield* threadTail.subscribeTodoChanges;
-      // Merge the raw inputs, THEN refetch in one lane: `card-threads` is applied
-      // unguarded as a wholesale replacement, so two concurrent refetches could
-      // land out of order and leave the older link set on screen.
-      return Stream.merge(
-        boardEvents.pipe(Stream.map((event) => ({ kind: "board" as const, event }))),
-        todoChanges.pipe(Stream.map((threadId) => ({ kind: "todo" as const, threadId }))),
-      ).pipe(
-        Stream.mapEffect((input) =>
-          input.kind === "board" ? fromBoardEvent(input.event) : fromTodoChange(input.threadId),
-        ),
-        Stream.flatMap((deltas) => Stream.fromIterable(deltas)),
-      );
-    });
-
-    const shellNeedsSnapshot = Effect.map(boardEngine.latestSequence, (sequence) => sequence > 0);
-
-    return { dispatch, shellDeltas, shellNeedsSnapshot };
-  });
