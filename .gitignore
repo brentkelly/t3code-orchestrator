@@ -29,6 +29,7 @@ squashfs-root/
 .plans/
 # T3o: this fork tracks its plans (see AGENTS.md fork block).
 !.plans/
+/audits/
 dist-electron/
 .electron-runtime/
 .showcase/
