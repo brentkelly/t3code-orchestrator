@@ -10,7 +10,7 @@
 // SQL index would be unused AND its collation could disagree with the decider's
 // JS `toLowerCase`, so it is deliberately omitted (no-speculative-inventory).
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

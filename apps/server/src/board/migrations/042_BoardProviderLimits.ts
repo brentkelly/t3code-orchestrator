@@ -18,7 +18,7 @@
 // table left behind there is enough to make the t3o-26 relocation refuse to run
 // — it would read as two divergent copies of the board and halt the boot.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

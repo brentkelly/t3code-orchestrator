@@ -15,7 +15,7 @@
 // Never edited after it has been applied — additive only, guarded and
 // idempotent (INSERT OR IGNORE).
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

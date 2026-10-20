@@ -31,7 +31,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Rpc from "effect/unstable/rpc/Rpc";
+import * as Rpc from "effect/rpc/Rpc";
 
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 import {
@@ -39,7 +39,8 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentAuthorizationError,
 } from "./auth.ts";
-import { DEFAULT_RUNTIME_MODE, ProviderOptionSelections, RuntimeMode } from "./model.ts";
+import { ProviderOptionSelections } from "./model.ts";
+import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import {
   CommandId,
   IsoDateTime,

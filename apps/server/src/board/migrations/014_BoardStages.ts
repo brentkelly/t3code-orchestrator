@@ -13,7 +13,7 @@
 // card-level snapshot the frozen run row replaces (D1). Greenfield (D14): no
 // backfill, the dev database may be recreated.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

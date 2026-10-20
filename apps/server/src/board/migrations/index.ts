@@ -12,9 +12,9 @@
  *
  * New board migrations: add `NNN_Name.ts` here and append it to BOARD_MIGRATIONS.
  */
-import * as Migrator from "effect/unstable/sql/Migrator";
+import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { attachBoardDatabase, BOARD_SCHEMA, relocateBoardSchema } from "../boardDatabase.ts";
 

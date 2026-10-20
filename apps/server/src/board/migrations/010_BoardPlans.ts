@@ -5,7 +5,7 @@
 // write_plan updates one body. `depends_on` is a JSON array of plan ids;
 // `locked` is 0/1 (SQLite has no boolean).
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

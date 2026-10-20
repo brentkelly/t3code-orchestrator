@@ -17,7 +17,7 @@
 // for, and a map would need its own editor, its own reverse states and a
 // decision about what a stale entry on an already-passed stage means.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

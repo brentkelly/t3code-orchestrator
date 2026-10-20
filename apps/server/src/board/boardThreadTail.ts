@@ -28,7 +28,7 @@ import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { makeBoardEventStore } from "./boardEventStore.ts";
 import { makeBoardSqlProjector } from "./projection.ts";

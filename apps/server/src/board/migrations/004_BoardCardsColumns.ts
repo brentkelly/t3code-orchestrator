@@ -8,7 +8,7 @@
 // constants in contracts board.ts), or a from-empty replay of an old event
 // log would diverge from table rehydration.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

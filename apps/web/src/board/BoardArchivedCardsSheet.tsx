@@ -19,7 +19,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { ArchiveRestoreIcon, HardDriveIcon, LayersIcon, Trash2Icon } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { Button } from "../components/ui/button";
 import { ScrollArea } from "../components/ui/scroll-area";

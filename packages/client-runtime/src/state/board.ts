@@ -45,7 +45,7 @@ import {
 } from "@t3tools/contracts";
 import type * as Crypto from "effect/Crypto";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {

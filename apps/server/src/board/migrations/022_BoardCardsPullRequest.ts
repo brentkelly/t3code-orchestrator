@@ -9,7 +9,7 @@
 // log written before this spec decodes each card's pullRequest to null, and a
 // pre-existing row rehydrates to null, so replay equals rehydration.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

@@ -40,7 +40,7 @@ import {
   OrchestrationEventType,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /**
  * The aggregate kinds t3o adds. The board owns exactly these three (D9 / t3o-06a

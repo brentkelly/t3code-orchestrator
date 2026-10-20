@@ -12,7 +12,7 @@
  * broker.
  */
 import * as Layer from "effect/Layer";
-import { McpServer } from "effect/unstable/ai";
+import { McpServer } from "effect/ai";
 
 import { BoardToolkitHandlersLive } from "./handlers.ts";
 import { BoardToolkit } from "./tools.ts";

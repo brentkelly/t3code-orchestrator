@@ -23,7 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { ServerConfig } from "../config.ts";
 import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";

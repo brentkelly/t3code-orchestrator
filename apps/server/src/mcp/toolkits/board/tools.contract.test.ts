@@ -29,7 +29,7 @@
  * otherwise recur undetected — the exact defect class this test guards.
  */
 import { expect, it } from "@effect/vitest";
-import { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/ai";
 
 import { PreviewSnapshotToolkit, PreviewStandardToolkit } from "../preview/tools.ts";
 import { BoardToolkit } from "./tools.ts";
