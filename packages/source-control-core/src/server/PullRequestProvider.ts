@@ -249,8 +249,6 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly workflowApprovalsRequired?: number;
   /** T3o (T3O-8): the host refused to show the checks — see `PullRequestDetail.checksUnread`. */
   readonly checksUnread?: boolean;
-  /** T3o: the head commit this detail describes (T3O-47) — see `PullRequestDetail.headSha`. */
-  readonly headSha?: string | null;
 }
 
 /** The conversation-shaped half of a detail, loaded after the core can already render. */

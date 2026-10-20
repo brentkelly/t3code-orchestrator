@@ -39,7 +39,6 @@ import {
   type PullRequestLabelCandidateList,
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateMethod,
-  VcsProcessExitError,
   type PullRequestPreview,
 } from "@t3tools/contracts";
 
@@ -1853,9 +1852,6 @@ export const make = Effect.gen(function* () {
         batchable.map((entry) => entry.request),
         first.request.host === "github.com",
       );
-      // T3o (T3O-54): the document asks for each head's check rollup, which a token without the
-      // Checks permission is refused over, so it keeps the detail read's missing-scope fallback
-      // rather than leaving every entry to its own read on each sync tick.
       const batched =
         document === null
           ? Effect.succeed(new Map<number, GitHubPullRequestSummary>())
