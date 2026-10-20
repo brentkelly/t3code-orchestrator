@@ -52,7 +52,7 @@ Attachments and other files outside SQLite are outside this rollback boundary.
 
 ### Every database, not just `state.sqlite` (T3o)
 
-<!-- T3o: the fork keeps board data in its own `boards.sqlite`, so the launcher's snapshot covers every database (launcher protocol 3). -->
+<!-- T3o: the fork keeps board data in its own `boards.sqlite`, so the launcher's snapshot covers every database (launcher protocol 4). -->
 
 In T3o the launcher snapshots **every `*.sqlite` file in the state directory**, along with each
 one's `-wal` and `-shm` sidecars. The set is discovered from disk rather than named, so a database
