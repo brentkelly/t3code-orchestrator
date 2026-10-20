@@ -21,9 +21,9 @@ It is a supervisor, not a view.
 decisions with their rationale and rejected alternatives. Per-feature specs are the numbered
 `.plans/t3o-NN-*.md` files from `t3o-01` onwards; the build order and dependency waves are in the overview.
 
-**Status:** the board is built and in use. Upstream is synced to `v0.0.45` (`T3O-54`), the last
-orchestration-v1 release; going further is a port (`T3O-55`). The seam inventory and sync runbook
-are in `docs/t3o/seams.md`.
+**Status:** the board is built and in use. Upstream is synced to `v0.1.0` (`T3O-59`), the first
+orchestration-v2 release; the board reaches threads only through `board/ThreadGatewayV2.ts`. The
+seam inventory and sync runbook are in `docs/t3o/seams.md`.
 
 **Status colours are a fixed vocabulary.** Green means done and only done, blue means running,
 violet (`--attention`) means waiting on a human, amber means blocked. Read
