@@ -20,6 +20,8 @@ import {
   PlanId,
   ProjectId,
   ProviderInstanceId,
+  ProviderSessionId,
+  ProviderThreadId,
   RunId,
   ThreadId,
   type OrchestrationV2DomainEvent,
@@ -33,6 +35,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
@@ -510,6 +513,93 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           [{ threadId, deleted: false }],
         );
         assert.deepStrictEqual(yield* threads.threadsInWorktree("/tmp/wt/elsewhere"), []);
+      }),
+    );
+
+    it.effect("a thread holds a live session only while one is attached and not stopped", () =>
+      Effect.gen(function* () {
+        yield* ensureProject;
+        const engine = yield* boardStackEngine;
+        const threads = yield* ThreadGateway;
+        const threadId = ThreadId.make("thread-contract-session");
+        yield* engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-contract-session"),
+          threadId,
+          projectId,
+          title: "session",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "board/session",
+          worktreePath: "/tmp/wt/session",
+        });
+        const sessionLive = Effect.map(threads.threadsInWorktree("/tmp/wt/session"), (entries) =>
+          entries.map((entry) => entry.sessionLive),
+        );
+        const providerSessionId = ProviderSessionId.make("ps-contract-session");
+        const session = (status: string) =>
+          ({
+            type: "provider-session.attached",
+            id: EventId.make(`evt-contract-session-${status}`),
+            threadId,
+            occurredAt: at("2026-01-01T00:00:00.000Z"),
+            payload: {
+              id: providerSessionId,
+              driver: "codex",
+              providerInstanceId: modelSelection.instanceId,
+              status,
+              cwd: "/tmp/wt/session",
+              model: null,
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: at("2026-01-01T00:00:00.000Z"),
+              updatedAt: at("2026-01-01T00:00:00.000Z"),
+              lastError: null,
+            },
+          }) as unknown as OrchestrationV2DomainEvent;
+        // The provider thread stays bound after its session goes; it is not a session.
+        yield* providerWrites([
+          {
+            type: "provider-thread.updated",
+            id: EventId.make("evt-contract-session-thread"),
+            threadId,
+            occurredAt: at("2026-01-01T00:00:00.000Z"),
+            payload: {
+              id: ProviderThreadId.make("pt-contract-session"),
+              driver: "codex",
+              providerInstanceId: modelSelection.instanceId,
+              providerSessionId,
+              appThreadId: threadId,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: at("2026-01-01T00:00:00.000Z"),
+              updatedAt: at("2026-01-01T00:00:00.000Z"),
+            },
+          } as unknown as OrchestrationV2DomainEvent,
+          session("ready"),
+        ]);
+        assert.deepStrictEqual(yield* sessionLive, [true]);
+        yield* providerWrites([
+          {
+            type: "provider-session.detached",
+            id: EventId.make("evt-contract-session-detached"),
+            threadId,
+            occurredAt: at("2026-01-01T00:01:00.000Z"),
+            payload: { providerSessionId, detachedAt: at("2026-01-01T00:01:00.000Z") },
+          } as unknown as OrchestrationV2DomainEvent,
+        ]);
+        assert.isNotNull(
+          (yield* ProjectionStore.ProjectionStoreV2.pipe(
+            Effect.flatMap((projections) => projections.getThreadShell(threadId)),
+          ))!.activeProviderThreadId,
+        );
+        assert.deepStrictEqual(yield* sessionLive, [false]);
       }),
     );
 

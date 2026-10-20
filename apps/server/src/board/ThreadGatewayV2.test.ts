@@ -26,8 +26,10 @@ import { assert, describe, it } from "vite-plus/test";
 
 import { EventSinkStreamError } from "../orchestration-v2/EventSink.ts";
 import type { ThreadSignal } from "./ThreadGateway.ts";
+import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
 import {
   boardThreadStateFromShell,
+  commandError,
   followStoredEvents,
   makeSignalReader,
 } from "./ThreadGatewayV2.ts";
@@ -119,6 +121,24 @@ describe("makeSignalReader", () => {
       errorMessage: null,
     });
     assert.isNull(read(stored("run.updated", run("completed"))));
+  });
+
+  it("carries the provider's failure text onto the failed turn's end", () => {
+    const read = singleSignalReader();
+    const failure = {
+      id: TurnItemId.make("item-error"),
+      runId: RunId.make("run-1"),
+      type: "error",
+      failure: { class: "usage_limit", message: "Grok prompt request failed: quota." },
+    };
+    assert.isNull(read(stored("turn-item.updated", failure)));
+    assert.deepStrictEqual(read(stored("run.updated", run("failed"))), {
+      type: "turn-ended",
+      threadId,
+      turnRef: "run-1",
+      outcome: "failed",
+      errorMessage: "Grok prompt request failed: quota.",
+    });
   });
 
   it("reads each terminal status in the board's outcome vocabulary", () => {
@@ -363,6 +383,30 @@ describe("boardThreadStateFromShell", () => {
       nowMs,
     );
     assert.include(asking, { alive: true, awaitingUserInput: true, autoSettleCandidate: false });
+  });
+});
+
+describe("commandError", () => {
+  const dispatchError = (cause: unknown) =>
+    new OrchestratorDispatchError({
+      commandId: CommandId.make("server:board-interrupt-paused:abc"),
+      commandType: "run.interrupt",
+      cause,
+    });
+
+  it("reads the engine's stated refusal as a refusal, in its own words", () => {
+    const error = commandError(
+      "run.interrupt",
+      threadId,
+    )(dispatchError("Run run-1 is not interruptible."));
+    assert.strictEqual(error._tag, "ThreadCommandRefusedError");
+    assert.strictEqual(error.detail, "Run run-1 is not interruptible.");
+  });
+
+  it("reads a dispatch that wrapped a real failure as a failure", () => {
+    const error = commandError("run.interrupt", threadId)(dispatchError(new Error("disk I/O")));
+    assert.strictEqual(error._tag, "ThreadCommandFailedError");
+    assert.strictEqual(error.detail, "disk I/O");
   });
 });
 

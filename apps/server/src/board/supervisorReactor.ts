@@ -6143,9 +6143,10 @@ const make = Effect.gen(function* () {
         base event schema makes it optional and not every adapter stamps it. */
     completedTurnId: string | undefined,
     /** The failed turn's own error text (T3O-22, D4). Grok's quota refusal
-        arrives ONLY this way — `turn.completed` with `state: "failed"` and an
-        `errorMessage`, no assistant message anywhere — and the board dropped it
-        entirely before this. It is also the unambiguous channel: nobody quotes a
+        arrives ONLY this way — a failed run whose provider error (v2's `error`
+        turn item, carried onto the turn end by the gateway) is the only text,
+        no assistant message anywhere — and the board dropped it entirely
+        before this. It is also the unambiguous channel: nobody quotes a
         sentence into a failed turn's error field. */
     turnErrorMessage: string | null = null,
     /** How the turn ended (T3O-22, D9). Read by the loose-match tally clear

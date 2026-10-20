@@ -115,6 +115,25 @@ describe("boardStreamWindowDeltas", () => {
     }),
   );
 
+  it.effect("gives an unarchived card back its thread summaries", () =>
+    Effect.gen(function* () {
+      const { deltas } = yield* windowDeltas([
+        {
+          kind: "board",
+          event: boardEvent({
+            type: "board.card-unarchived",
+            sequence: 5,
+            payload: { cardId, card },
+          }),
+        },
+      ]);
+      assert.deepStrictEqual(
+        deltas.map((delta) => delta.kind),
+        ["card-upserted", "card-threads"],
+      );
+    }),
+  );
+
   it.effect("refetches a card's threads once per window, however many changes hit it", () =>
     Effect.gen(function* () {
       const { deltas, reads } = yield* windowDeltas([

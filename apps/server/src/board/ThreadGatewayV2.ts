@@ -236,6 +236,19 @@ export const makeSignalReader = () => {
   };
   const one = (signal: ThreadSignal | null): ReadonlyArray<ThreadSignal> =>
     signal === null ? [] : [signal];
+  // The provider's own failure text, by run, until that run ends: v2 records it
+  // as an `error` turn item ahead of the run's terminal update, and a refusal
+  // that arrives only this way (Grok's quota sentence) is what the board's
+  // usage-limit classifier reads off the turn end.
+  const failures = new Map<string, string>();
+  const noteFailure = (runId: string, message: string) => {
+    failures.delete(runId);
+    failures.set(runId, message);
+    if (failures.size > SEEN_LIMIT) {
+      const oldest = failures.keys().next().value;
+      if (oldest !== undefined) failures.delete(oldest);
+    }
+  };
 
   return (stored: OrchestrationV2StoredEvent): ReadonlyArray<ThreadSignal> => {
     const event = stored.event;
@@ -261,6 +274,8 @@ export const makeSignalReader = () => {
         const run = event.payload;
         const outcome = turnOutcomeOf(run.status);
         if (outcome === null || !firstTime(`run:${run.id}`)) return [];
+        const failure = failures.get(String(run.id)) ?? null;
+        failures.delete(String(run.id));
         // A run that failed without ever starting is a turn that never began
         // (t3o-30, D2) — workspace preparation, or the provider refusing it.
         if (outcome === "failed" && run.startedAt === null) {
@@ -277,7 +292,7 @@ export const makeSignalReader = () => {
           threadId: event.threadId,
           turnRef: String(run.id),
           outcome,
-          errorMessage: null,
+          errorMessage: outcome === "failed" ? failure : null,
         };
         // v2 records no interrupt request for a run its provider never
         // started, so a human's Stop during start-up arrives only as this end.
@@ -296,6 +311,10 @@ export const makeSignalReader = () => {
       }
       case "turn-item.updated": {
         const item = event.payload;
+        if (item.type === "error" && item.runId !== null) {
+          noteFailure(String(item.runId), item.failure.message);
+          return [];
+        }
         if (item.type !== "run_interrupt_request" || !firstTime(`interrupt:${item.id}`)) return [];
         // The run's end then needs no Stop of its own (below).
         if (item.runId !== null) firstTime(`interrupt-run:${item.runId}`);
@@ -397,13 +416,21 @@ const describe = (error: unknown): string => {
   if (error !== null && typeof error === "object") {
     const record = error as { readonly detail?: unknown; readonly cause?: unknown };
     if (typeof record.detail === "string") return record.detail;
+    if (typeof record.cause === "string") return record.cause;
     if (record.cause instanceof Error) return record.cause.message;
   }
   return error instanceof Error ? error.message : String(error);
 };
 
-const commandError = (command: string, threadId: ThreadId) => (error: DispatchError) =>
-  REFUSAL_TAGS.has(error._tag)
+/** The engine refuses a command whose thread or run is in the wrong state with
+    an `OrchestratorDispatchError` carrying its reason as a sentence; one that
+    wraps a real failure carries the failure. */
+const isRefusal = (error: DispatchError): boolean =>
+  REFUSAL_TAGS.has(error._tag) ||
+  (error._tag === "OrchestratorDispatchError" && typeof error.cause === "string");
+
+export const commandError = (command: string, threadId: ThreadId) => (error: DispatchError) =>
+  isRefusal(error)
     ? new ThreadCommandRefusedError({ command, threadId, detail: describe(error) })
     : new ThreadCommandFailedError({ command, threadId, detail: describe(error), cause: error });
 
@@ -675,15 +702,27 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
         const rows = yield* projections.getThreadWorktreePaths();
         const matching = rows.filter((row) => path.resolve(row.worktreePath) === resolved);
         return yield* Effect.forEach(matching, (row) =>
-          Effect.map(projections.getThreadShell(row.threadId), (shell) => ({
-            threadId: row.threadId,
-            deleted: shell === null || shell.deletedAt !== null,
-            // v2 attaches a provider session per run; a thread with a live run
-            // or a provider thread bound may still hold one.
-            sessionLive:
-              shell !== null &&
-              (shell.activityRunStatus != null || shell.activeProviderThreadId !== null),
-          })),
+          Effect.gen(function* () {
+            const shell = yield* projections.getThreadShell(row.threadId);
+            const deleted = shell === null || shell.deletedAt !== null;
+            // A detached session leaves the projection; one still attached and
+            // not stopped is what a retire has to stop. The bound provider
+            // thread outlives its session, so it says nothing either way.
+            const sessions = deleted
+              ? []
+              : (yield* projections.getThreadRecords(row.threadId, ["providerSessions"]))
+                  .providerSessions;
+            return {
+              threadId: row.threadId,
+              deleted,
+              sessionLive:
+                !deleted &&
+                (shell.activityRunStatus != null ||
+                  sessions.some(
+                    (session) => session.status !== "stopped" && session.status !== "error",
+                  )),
+            };
+          }),
         );
       }).pipe(Effect.mapError(readError("threadsInWorktree"))),
     listLiveThreadIds: () =>

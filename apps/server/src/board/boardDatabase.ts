@@ -55,21 +55,35 @@ const quoted = (identifier: string): string => `"${identifier.replace(/"/g, '""'
 export class BoardRelocationConflictError extends Schema.TaggedError<BoardRelocationConflictError>()(
   "BoardRelocationConflictError",
   {
+    /** The main database's file name, from `PRAGMA database_list`. */
+    mainFile: Schema.String,
     mainTables: Schema.Array(Schema.String),
     boardTables: Schema.Array(Schema.String),
   },
 ) {
   override get message(): string {
+    const main = this.mainFile;
     return (
-      "Refusing to relocate the board schema: both state.sqlite and boards.sqlite hold board " +
-      "tables, and boards.sqlite is not a copy of state.sqlite. This happens after running an " +
-      "older build (which recreated the board tables in state.sqlite) and then upgrading again. " +
-      "Keep ONE copy: to keep the newer data in state.sqlite, delete boards.sqlite; to keep the " +
-      "older data in boards.sqlite, drop the board_* tables and t3o_sql_migrations from " +
-      "state.sqlite. Then start again."
+      `Refusing to relocate the board schema: both ${main} and boards.sqlite hold board ` +
+      `tables, and boards.sqlite is not a copy of ${main}. This happens after running an ` +
+      `older build (which recreated the board tables in ${main}) and then upgrading again. ` +
+      `Keep ONE copy: to keep the newer data in ${main}, delete boards.sqlite; to keep the ` +
+      `older data in boards.sqlite, drop the board_* tables and t3o_sql_migrations from ` +
+      `${main}. Then start again.`
     );
   }
 }
+
+/** The bare file name of `main`, for a message a human acts on. */
+const mainFileName = Effect.fn("mainFileName")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const databases = yield* sql<{ readonly name: string; readonly file: string }>`
+    PRAGMA database_list
+  `;
+  const file = databases.find((database) => database.name === "main")?.file ?? "";
+  const name = file.slice(Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")) + 1);
+  return name === "" ? "the main database" : name;
+});
 
 /** Tables belonging to the board lineage, by name prefix and by exact name. */
 const BOARD_TABLE_PREFIX = "board_";
@@ -249,6 +263,7 @@ export const relocateBoardSchema = Effect.fn("relocateBoardSchema")(function* ()
     const provenCopy = bothHaveLedger && (yield* ledgersIdentical());
     if (!provenCopy) {
       return yield* new BoardRelocationConflictError({
+        mainFile: yield* mainFileName(),
         mainTables: tables.map((table) => table.name),
         boardTables: existing.map((table) => table.name),
       });

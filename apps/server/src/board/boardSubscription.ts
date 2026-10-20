@@ -95,10 +95,13 @@ export const boardStreamWindowDeltas = (
       }
       const delta = boardShellStreamEvent(input.event);
       if (Option.isSome(delta)) deltas.push(delta.value);
-      // A card's link set changing is what the `card-threads` delta carries.
+      // A card's link set changing is what the `card-threads` delta carries. An
+      // unarchived card is back on the board without the thread entries its
+      // archive's `card-removed` dropped.
       if (
         input.event.type === "board.card-thread-linked" ||
-        input.event.type === "board.card-thread-unlinked"
+        input.event.type === "board.card-thread-unlinked" ||
+        input.event.type === "board.card-unarchived"
       ) {
         touchedCards.add(input.event.payload.cardId);
       }
