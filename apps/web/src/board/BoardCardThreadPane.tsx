@@ -37,8 +37,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import ChatView from "../components/ChatView";
 import { cn } from "../lib/utils";
-import { useThreadDetail, useThreadShell, useThreadStatus } from "../state/entities";
-import { resolveThreadSyncPhase } from "../threadSync";
+import { useThreadShell } from "../state/entities";
 import { BoardCardThreadAddMenu, type BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardThreadTodosStrip } from "./BoardCardThreadTodosStrip";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
@@ -57,13 +56,6 @@ function BoardCardChat({
 }) {
   const threadRef = scopeThreadRef(environmentId, threadId);
   const shell = useThreadShell(threadRef);
-  const detail = useThreadDetail(threadRef);
-  const status = useThreadStatus(threadRef);
-  const threadSyncPhase = resolveThreadSyncPhase({
-    detailExists: detail !== null,
-    shellExists: shell !== null,
-    status,
-  });
 
   if (shell === null) {
     return (
@@ -73,14 +65,7 @@ function BoardCardChat({
     );
   }
   return (
-    <ChatView
-      chrome="embedded"
-      environmentId={environmentId}
-      reserveTitleBarControlInset={false}
-      routeKind="server"
-      threadId={threadId}
-      threadSyncPhase={threadSyncPhase}
-    />
+    <ChatView chrome="embedded" environmentId={environmentId} routeKind="server" threadId={threadId} />
   );
 }
 

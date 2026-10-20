@@ -29,6 +29,7 @@ import * as Option from "effect/Option";
 import { projectAccent, projectIconColorOf } from "../../board/projectAccent";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { primaryServerProvidersAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -43,15 +44,19 @@ import { BoardPipelineSection, NumberStepper } from "./BoardPipelineSection";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
-/** Built-in driver ids (the canonical set is `ServerSettings.providers`, so
-    this never drifts from contracts) plus any configured custom instances — the
-    concurrency rows offer these. Free text would risk an invalid slug that
-    fails the whole-settings decode on save. */
+/** The provider instances the server reports, built-in drivers included, plus
+    any configured custom instances — the concurrency rows offer these. Free text
+    would risk an invalid slug that fails the whole-settings decode on save. */
 function useProviderInstanceIds(): ReadonlyArray<string> {
-  const providers = usePrimarySettings((settings) => settings.providers);
+  const providers = useAtomValue(primaryServerProvidersAtom);
   const providerInstances = usePrimarySettings((settings) => settings.providerInstances);
   return useMemo(
-    () => [...new Set([...Object.keys(providers), ...Object.keys(providerInstances)])],
+    () => [
+      ...new Set([
+        ...providers.map((provider) => String(provider.instanceId)),
+        ...Object.keys(providerInstances),
+      ]),
+    ],
     [providers, providerInstances],
   );
 }

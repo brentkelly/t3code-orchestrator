@@ -91,7 +91,7 @@ export interface NewProjectScriptInput {
   icon: ProjectScriptIcon;
   runOnWorktreeCreate: boolean;
   /** T3o: T3O-23 — run just before the worktree is removed. */
-  runOnWorktreeRemove: boolean;
+  runOnWorktreeRemove?: boolean;
   /** Setup scripts only: hold the agent until the script exits. */
   waitForSetup: boolean;
   runOnSettle: boolean;
@@ -214,7 +214,7 @@ export function ProjectScriptEditorDialog({
     setIcon(request.initial.icon);
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(request.initial.runOnWorktreeCreate);
-    setRunOnWorktreeRemove(request.initial.runOnWorktreeRemove); // T3o: T3O-23
+    setRunOnWorktreeRemove(request.initial.runOnWorktreeRemove === true); // T3o: T3O-23
     setWaitForSetup(request.initial.waitForSetup);
     setRunOnSettle(request.initial.runOnSettle);
     setKeybinding(request.initial.keybinding ?? "");

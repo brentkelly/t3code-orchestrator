@@ -2,8 +2,9 @@
  * The settle grace's two inputs (T3O-29): when each card's thread went quiet,
  * and when the board next has to repaint because a grace expired.
  */
-import { BOARD_ATTENTION_SETTLE_MS, BoardCardId, ThreadId, TurnId } from "@t3tools/contracts";
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import { BOARD_ATTENTION_SETTLE_MS, BoardCardId, ThreadId } from "@t3tools/contracts";
+import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import { deriveBoardThreadIdleSince, nextBoardAttentionSettleAt } from "./boardAttentionSettle";
@@ -13,15 +14,10 @@ const cardOf = (id: string, threadId: string | null) => ({
   activeThreadId: threadId === null ? null : ThreadId.make(threadId),
 });
 
-const threadOf = (completedAt: string | null): Pick<OrchestrationThreadShell, "latestTurn"> => ({
-  latestTurn: {
-    turnId: TurnId.make("turn-1"),
-    state: "completed",
-    requestedAt: "2026-09-09T11:59:00.000Z",
-    startedAt: "2026-09-09T11:59:00.000Z",
-    completedAt,
-    assistantMessageId: null,
-  },
+const threadOf = (
+  completedAt: string | null,
+): Pick<OrchestrationV2ThreadShell, "latestRunCompletedAt"> => ({
+  latestRunCompletedAt: completedAt === null ? null : DateTime.makeUnsafe(completedAt),
 });
 
 describe("deriveBoardThreadIdleSince", () => {
@@ -43,7 +39,7 @@ describe("deriveBoardThreadIdleSince", () => {
     const idle = deriveBoardThreadIdleSince({
       cards: [cardOf("card-running", "thread-running"), cardOf("card-fresh", "thread-fresh")],
       threadOf: (threadId) =>
-        threadId === "thread-running" ? threadOf(null) : { latestTurn: null },
+        threadId === "thread-running" ? threadOf(null) : { latestRunCompletedAt: null },
     });
     expect(idle.size).toBe(0);
   });

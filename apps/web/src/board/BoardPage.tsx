@@ -8,6 +8,7 @@
  * placement overlay reconciles against the shell stream. This file decides
  * *when* to dispatch, never *what number* to store.
  */
+import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import {
   BoardCardId,
   BOARD_SEED_STAGES,
@@ -613,7 +614,7 @@ function EnvironmentBoard({
     (threadId: ThreadId) => {
       const shell = threadShellsById.get(threadId);
       if (shell === undefined) return undefined;
-      const { threadState, awaitingInput } = deriveBoardCardThreadState(shell);
+      const { threadState, awaitingInput } = deriveBoardCardThreadState(boardThreadStateSource(shell));
       return {
         awaitingInput,
         running: threadState === "working",
