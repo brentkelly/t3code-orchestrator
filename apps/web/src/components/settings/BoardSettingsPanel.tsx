@@ -22,12 +22,21 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { EyeIcon, EyeOffIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { EyeIcon, EyeOffIcon, SettingsIcon } from "lucide-react";
 import { useMemo } from "react";
 import * as Option from "effect/Option";
 
 import { projectAccent, projectIconColorOf } from "../../board/projectAccent";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import {
+  useClientSettings,
+  usePrimarySettings,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  selectProjectGroupingSettings,
+} from "../../logicalProject";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { environmentShell } from "../../state/shell";
 import { cn } from "../../lib/utils";
@@ -104,7 +113,7 @@ function CardRow(props: { label: string; description?: string; control: React.Re
   );
 }
 
-// ── Card keys ───────────────────────────────────────────────────────
+// ── Projects ───────────────────────────────────────────────────────────
 
 function ProjectsSection({
   board,
@@ -119,11 +128,9 @@ function ProjectsSection({
   return (
     <SettingsSection id="board-projects" title={anchor.title}>
       <p className="max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
-        The prefix for this project's card keys (e.g. T3 → T3-42). A project's first card assigns an
-        acronym from its name (mesh.web → MW) and keeps it; set a prefix here to override it before
-        those keys exist. Cards take their colour from the project's icon, set in the project's
-        settings. The eye hides a project and its cards from the board without touching them —
-        running work carries on.
+        The prefix for each project's card keys (e.g. T3 → T3-42). Cards take their colour from the
+        project's icon; open a project's settings to change it. The eye hides a project and its
+        cards from the board without touching them.
       </p>
       {environmentId === null ? (
         <p className="px-3 text-sm text-muted-foreground sm:px-4">
@@ -147,6 +154,7 @@ function ProjectRows({
 }) {
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const projects = Option.getOrNull(shellState.snapshot)?.projects ?? [];
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
 
   const setProject = (
     projectId: ProjectId,
@@ -193,21 +201,6 @@ function ProjectRows({
               </span>
             ) : null}
             <span className="min-w-2 flex-1" />
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className={cn("text-muted-foreground", hidden && "border border-border")}
-              title={hidden ? "Show on the board" : "Hide from the board"}
-              aria-label={
-                hidden
-                  ? `Show ${project.title} on the board`
-                  : `Hide ${project.title} from the board`
-              }
-              aria-pressed={hidden}
-              onClick={() => setProject(project.id, { hidden: !hidden })}
-            >
-              {hidden ? <EyeOffIcon /> : <EyeIcon />}
-            </Button>
             <Input
               key={`${project.id}:${entry?.keyPrefix ?? ""}`}
               defaultValue={entry?.keyPrefix ?? ""}
@@ -220,6 +213,43 @@ function ProjectRows({
                   setProject(project.id, { keyPrefix: next });
               }}
             />
+            <div className="flex shrink-0 items-center gap-0.5">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className={cn("text-muted-foreground", hidden && "border border-border")}
+                title={hidden ? "Show on the board" : "Hide from the board"}
+                aria-label={
+                  hidden
+                    ? `Show ${project.title} on the board`
+                    : `Hide ${project.title} from the board`
+                }
+                aria-pressed={hidden}
+                onClick={() => setProject(project.id, { hidden: !hidden })}
+              >
+                {hidden ? <EyeOffIcon /> : <EyeIcon />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground"
+                title={`Open ${project.title} settings`}
+                aria-label={`Open ${project.title} settings`}
+                render={
+                  <Link
+                    to="/projects/$projectKey"
+                    params={{
+                      projectKey: deriveLogicalProjectKeyFromSettings(
+                        { ...project, environmentId },
+                        projectGroupingSettings,
+                      ),
+                    }}
+                  />
+                }
+              >
+                <SettingsIcon />
+              </Button>
+            </div>
           </div>
         );
       })}

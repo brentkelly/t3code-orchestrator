@@ -11,7 +11,7 @@
 import type { SettingsSearchItem } from "../components/settings/settingsSearch";
 
 export const BOARD_SETTINGS_SEARCH_ITEMS = [
-  { id: "board-projects", title: "Card keys", to: "/settings/board" },
+  { id: "board-projects", title: "Projects", to: "/settings/board" },
   {
     id: "board-key-prefix",
     title: "Card key prefix",
