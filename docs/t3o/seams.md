@@ -571,6 +571,12 @@ dispatch route moved behind one board-owned `boardClientConnection`. Added: `ser
 board runtime layer), `server.test.ts` +1 (its mocks), `shell.ts` +2 (board deltas skip the shell's
 sequence guard). `shellCoalesce.ts` was fork-owned and is deleted.
 
+The thread gateway (`T3O-58`) added 2: `server.ts` +1 (the v1 gateway layer, provided below the
+board's PR gateway and worktree retirer, which both read through it) and `server.test.ts` +1 (its
+mock). `ws.ts` lost an argument — the board's client connection resolves the gateway itself — and
+no marker. Everything else the board knew about threads moved into `board/ThreadGatewayV1.ts`,
+the one board file allowed to import upstream orchestration, persistence or provider code.
+
 For reference, the `v0.0.38` sync stood at 121 markers across 44 files. Counts recorded then that
 differ from their rows in the table below:
 `serverSettings.ts` 2 (indivisible settings keys), `GitHubCli.ts` 7 (board merge path),
@@ -775,7 +781,9 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/server.ts`                                       | `t3o-10`     | Import the supervisor reactor + its slots layer                                           | one-line append (import)                                                  |
 | `apps/server/src/server.ts`                                       | `t3o-10`     | Supervisor reactor joins `ReactorLayerLive`                                               | provideMerge of a board-owned reactor layer                               |
 | `apps/server/src/server.ts`                                       | `T3O-56`     | Import the board runtime layer                                                            | one-line append (import)                                                  |
-| `apps/server/src/server.ts`                                       | `T3O-56`     | The board engine, queries and upstream tail join `ReactorLayerLive`                       | provideMerge of a board-owned layer                                       |
+| `apps/server/src/server.ts`                                       | `T3O-56`     | The board engine, queries and todo tail join `ReactorLayerLive`                           | provideMerge of a board-owned layer                                       |
+| `apps/server/src/server.ts`                                       | `T3O-58`     | Import the v1 thread gateway layer                                                        | one-line append (import)                                                  |
+| `apps/server/src/server.ts`                                       | `T3O-58`     | The thread gateway joins `RuntimeCoreDependenciesLive`, below every board consumer        | provideMerge of a board-owned layer                                       |
 | `apps/server/src/serverRuntimeStartup.ts`                         | `t3o-10`     | Import the supervisor reactor tag                                                         | one-line append (import)                                                  |
 | `apps/server/src/serverRuntimeStartup.ts`                         | `t3o-10`     | Resolve the supervisor reactor in the startup effect                                      | one-line append (`yield*` the tag)                                        |
 | `apps/server/src/serverRuntimeStartup.ts`                         | `t3o-10`     | Start the supervisor reactor in the `reactors.start` phase                                | one-line append (start call)                                              |
@@ -794,6 +802,7 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/ws.ts`                                           | `T3O-23`     | `vcsRemoveWorktree` retires (stop, remove scripts) before the stock removal               | one-line delegation (`retireRemovedThreadWorktree`), stock call passed in |
 | `apps/server/src/server.test.ts`                                  | `T3O-23`     | Pass-through `WorktreeRetirer` mock beside the supervisor mock                            | layer mock in an existing `mergeAll`                                      |
 | `apps/server/src/server.test.ts`                                  | `T3O-56`     | Quiet board engine, queries and tail mocks beside the supervisor mock                     | layer mocks in an existing `mergeAll`                                     |
+| `apps/server/src/server.test.ts`                                  | `T3O-58`     | Quiet thread gateway mock beside the board mocks                                          | layer mock in an existing `mergeAll`                                      |
 | `packages/contracts/src/t3ProjectFile.ts`                         | `T3O-23`     | `runOnWorktreeRemove` on a `t3.json` script                                               | one optional field                                                        |
 | `packages/contracts/src/orchestration.ts`                         | `T3O-23`     | `runOnWorktreeRemove` on a stored `ProjectScript`                                         | one optional field (frozen)                                               |
 | `apps/web/src/projectScripts.ts`                                  | `T3O-23`     | `runOnWorktreeRemove` input, stored only when set; never the primary script               | one field + one spread + predicate widening                               |

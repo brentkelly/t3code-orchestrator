@@ -64,13 +64,18 @@ an ATTACH, so a board read through it would find no board tables. With the board
 (D2) nothing the board WRITES needs the other file, and every board transaction touches one file
 either way.
 
-Why `T3O-56` kept the ATTACH: the board still READS a few upstream tables — project and thread
+Why the ATTACH is still there: the board READS a few upstream tables — project and thread
 existence for the decider, a thread's last message, last signal and pending turn for the
-supervisor, live threads for the todo-cache sweep, and the D3 tail. Those reads, and only those, are
-isolated in `board/boardUpstreamReads.ts` (plus the tail in `board/boardThreadTail.ts`), and the
-`thread-gateway` card moves them behind a gateway. Once it has, the ATTACH goes and the board opens
-its own client. Until then the attach costs nothing: a transaction confined to `boards.*` is atomic
-regardless of what else the connection can see.
+supervisor, live threads for the todo-cache sweep, and the D3 tail. Since `T3O-58` every one of
+those reads is behind the thread gateway (`board/ThreadGateway.ts`), and only its v1
+implementation (`board/ThreadGatewayV1.ts`) names an upstream table; no other board SQL does
+(`threadGatewayBoundary.test.ts`). What remains is the connection itself: the board and the v1
+gateway still share one client, and the one-time moves out of `main` (`relocateBoardSchema`,
+migration 044) read across it at boot. Giving the board its own client is a change to the
+migration runner, `Sqlite.ts`'s board hook and every suite that seeds board tables through the
+shared client, so it is its own card rather than part of the gateway's. Until then the attach costs
+nothing: a transaction confined to `boards.*` is atomic regardless of what else the connection can
+see.
 
 `journal_mode` is per-database, so the attach issues `PRAGMA boards.journal_mode = WAL`; an attached
 file otherwise starts in `delete` mode. This was validated against `node:sqlite`: attach works, the
@@ -105,9 +110,10 @@ table and a domain (the old D8/D9), and orchestration-v2 has no such seam to par
 
 ### D3 — The board tails upstream's log read-only; the watermark lives in `boards.sqlite`
 
-The board projector consumes exactly two upstream event types — `thread.activity-appended` and
-`thread.deleted` (`projection.ts:2077`, `:2089`) — and both feed only `board_thread_todos`, a
-cache with an existing boot orphan sweep (`projection.ts:1348`).
+The board projector consumes exactly two thread signals — `todos-changed` and `thread-deleted`,
+which the v1 thread gateway derives from `thread.activity-appended` and `thread.deleted` — and both
+feed only `board_thread_todos`, a cache with an existing boot orphan sweep. The tail
+(`board/boardThreadTail.ts`) reads them off the gateway's durable todo log (`T3O-58`).
 
 So the board keeps reading `main.orchestration_events`, filtered to those two types, with its
 cursor stored in `boards.projection_state` under a distinct projector name. Reading is not
