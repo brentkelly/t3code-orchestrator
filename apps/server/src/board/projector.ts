@@ -92,10 +92,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import {
-  toProjectorDecodeError,
-  type OrchestrationProjectorDecodeError,
-} from "../orchestration/Errors.ts";
+import { toBoardProjectorDecodeError, type BoardProjectorDecodeError } from "./errors.ts";
 
 export type { BoardEvent };
 
@@ -595,11 +592,11 @@ function upsertPlan<M extends BoardReadModel>(model: M, plan: BoardPlan): M {
 export function projectBoardEvent<M extends BoardReadModel>(
   model: M,
   event: BoardEvent,
-): Effect.Effect<M, OrchestrationProjectorDecodeError> {
+): Effect.Effect<M, BoardProjectorDecodeError> {
   switch (event.type) {
     case "board.card-created":
       return decodeBoardCardCreatedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) =>
           bumpNextCardNumber(upsertCard(model, boardCardFromCreatedPayload(payload)), payload),
         ),
@@ -607,7 +604,7 @@ export function projectBoardEvent<M extends BoardReadModel>(
 
     case "board.card-moved":
       return decodeBoardCardMovedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
@@ -617,7 +614,7 @@ export function projectBoardEvent<M extends BoardReadModel>(
       // the SQL projection's card-number floor instead — the in-memory model
       // is rebuilt from that floor on the next rehydration.
       return decodeBoardCardProjectChangedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) =>
           bumpNextCardNumber(upsertCard(model, payload.card), {
             projectId: payload.card.projectId,
@@ -628,37 +625,37 @@ export function projectBoardEvent<M extends BoardReadModel>(
 
     case "board.card-reordered":
       return decodeBoardCardReorderedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-updated":
       return decodeBoardCardUpdatedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-thread-linked":
       return decodeBoardCardThreadLinkedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-thread-unlinked":
       return decodeBoardCardThreadUnlinkedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-attached":
       return decodeBoardCardAttachedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-detached":
       return decodeBoardCardDetachedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
@@ -666,13 +663,13 @@ export function projectBoardEvent<M extends BoardReadModel>(
       // The card stays in the model (archivedAt set) so unarchive can
       // restore it on replay; only the shell drops it.
       return decodeBoardCardArchivedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-unarchived":
       return decodeBoardCardUnarchivedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
@@ -681,43 +678,43 @@ export function projectBoardEvent<M extends BoardReadModel>(
       // from-empty replay of a log containing this event reaches a state with
       // no trace of the card — matching the tables the projection just purged.
       return decodeBoardCardDeletedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => removeCard(model, payload.cardId)),
       );
 
     case "board.label-created":
       return decodeBoardLabelCreatedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertLabel(model, payload.label)),
       );
 
     case "board.label-updated":
       return decodeBoardLabelUpdatedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertLabel(model, payload.label)),
       );
 
     case "board.label-deleted":
       return decodeBoardLabelDeletedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertLabel(model, payload.label)),
       );
 
     case "board.label-undeleted":
       return decodeBoardLabelUndeletedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertLabel(model, payload.label)),
       );
 
     case "board.card-step-completed":
       return decodeBoardCardStepCompletedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepCompletion(model, payload.completion)),
       );
 
     case "board.plans-proposed":
       return decodeBoardPlansProposedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) =>
           // The split justification rides the card, not the plan set (card 11),
           // so it is a targeted field set rather than a card upsert: this event
@@ -734,7 +731,7 @@ export function projectBoardEvent<M extends BoardReadModel>(
 
     case "board.plan-written":
       return decodeBoardPlanWrittenPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertPlan(model, payload.plan)),
       );
 
@@ -744,49 +741,49 @@ export function projectBoardEvent<M extends BoardReadModel>(
       // parent so replay is whole even if the move was skipped (parent
       // already sitting in Building).
       return decodeBoardPlansApprovedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-integration-branch-recorded":
       return decodeBoardCardIntegrationBranchRecordedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-base-ref-recorded":
       return decodeBoardCardBaseRefRecordedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-worktree-provisioning":
       return decodeBoardCardWorktreeProvisioningPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-worktree-ready":
       return decodeBoardCardWorktreeReadyPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-worktree-failed":
       return decodeBoardCardWorktreeFailedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-worktree-reclaimed":
       return decodeBoardCardWorktreeReclaimedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
     case "board.card-pull-request-recorded":
       return decodeBoardCardPullRequestRecordedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
@@ -795,7 +792,7 @@ export function projectBoardEvent<M extends BoardReadModel>(
     // above and the upsert is the whole of the fold.
     case "board.card-auto-merge-hold-recorded":
       return decodeBoardCardAutoMergeHoldRecordedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
@@ -807,25 +804,25 @@ export function projectBoardEvent<M extends BoardReadModel>(
 
     case "board.stage-created":
       return decodeBoardStageCreatedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStage(model, payload.stage)),
       );
 
     case "board.stage-renamed":
       return decodeBoardStageRenamedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStage(model, payload.stage)),
       );
 
     case "board.stage-reordered":
       return decodeBoardStageReorderedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStage(model, payload.stage)),
       );
 
     case "board.stage-deleted":
       return decodeBoardStageDeletedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => removeStage(model, payload.stageId)),
       );
 
@@ -833,67 +830,67 @@ export function projectBoardEvent<M extends BoardReadModel>(
       // A request signal only — the reactor reacts; the read model is unchanged.
       // Decoded to fail loudly on a malformed event.
       return decodeBoardCardStageThreadRequestedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.as(model),
       );
 
     case "board.card-step-selected":
       return decodeBoardCardStepSelectedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
     case "board.card-step-admitted":
       return decodeBoardCardStepAdmittedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
     case "board.card-step-force-start-requested":
       return decodeBoardCardStepForceStartRequestedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
     case "board.card-step-awaiting-input":
       return decodeBoardCardStepAwaitingInputPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
     case "board.card-step-paused":
       return decodeBoardCardStepPausedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
     case "board.card-step-recovered":
       return decodeBoardCardStepRecoveredPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
     case "board.card-step-settled":
       return decodeBoardCardStepSettledPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
     case "board.card-step-retuned":
       return decodeBoardCardStepRetunedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
     case "board.card-step-steered":
       return decodeBoardCardStepSteeredPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
     case "board.card-step-checked-in":
       return decodeBoardCardStepCheckedInPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
@@ -901,13 +898,13 @@ export function projectBoardEvent<M extends BoardReadModel>(
     // instance, so — unlike every case above — it touches no card at all.
     case "board.provider-limit-recorded":
       return decodeBoardProviderLimitRecordedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertProviderLimit(model, payload.limit)),
       );
 
     case "board.provider-limit-cleared":
       return decodeBoardProviderLimitClearedPayload(event.payload).pipe(
-        Effect.mapError(toProjectorDecodeError(`${event.type}:payload`)),
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => clearProviderLimit(model, payload.providerInstanceId)),
       );
 

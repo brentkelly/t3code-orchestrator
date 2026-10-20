@@ -808,12 +808,12 @@ export interface BoardDecisionContext {
 export interface BoardProjectRef {
   readonly id: ProjectId;
   readonly title: string;
-  readonly deletedAt: string | null;
+  readonly deleted: boolean;
 }
 
 /** What the decider needs to know about a thread: whether it is deleted. */
 export interface BoardThreadRef {
-  readonly deletedAt: string | null;
+  readonly deleted: boolean;
 }
 
 /** Whether a command names a project the decider must check exists. */
@@ -853,7 +853,7 @@ function requireBoardProject(input: {
   }
   const project = projects.find((candidate) => candidate.id === input.projectId);
   if (project !== undefined) return Effect.succeed(project);
-  const live = projects.filter((candidate) => candidate.deletedAt === null);
+  const live = projects.filter((candidate) => !candidate.deleted);
   const shown = live.slice(0, 10).map((candidate) => `${candidate.id} — ${candidate.title}`);
   const available =
     shown.length === 0
@@ -1820,7 +1820,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
     case "board.card.link-thread": {
       const card = yield* requireActiveBoardCard({ board, command });
       const thread = context?.thread;
-      if (thread === undefined || thread === null || thread.deletedAt !== null) {
+      if (thread === undefined || thread === null || thread.deleted) {
         return yield* invariant(
           command,
           `Thread '${command.threadId}' does not exist or is deleted and cannot be linked.`,
@@ -1891,7 +1891,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // counts as deleted — link-thread requires existence, so a linked
       // thread missing from the read model can only have been deleted.
       const thread = context?.thread;
-      const threadDeleted = thread === undefined || thread === null || thread.deletedAt !== null;
+      const threadDeleted = thread === undefined || thread === null || thread.deleted;
       const tombstonedAt = threadDeleted ? command.createdAt : null;
       const nextCard: BoardCard = {
         ...card,

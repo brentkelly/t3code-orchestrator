@@ -576,7 +576,6 @@ const makeWsRpcLayer = (
       // T3o (T3O-56): the board's side of this connection — board commands and
       // the board's shell deltas — built once per socket.
       const boardConnection = yield* boardClientConnection({
-        projectionSnapshotQuery,
         git: yield* GitVcsDriver.GitVcsDriver,
         origin: hasClientOrigin ? clientOrigin : undefined,
       });

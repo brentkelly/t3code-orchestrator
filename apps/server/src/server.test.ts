@@ -170,6 +170,7 @@ import { WorktreeRetirer } from "./board/worktreeRetire.ts";
 import { BoardEngine } from "./board/BoardEngine.ts";
 import { BoardQueries } from "./board/BoardQueries.ts";
 import { BoardThreadTail } from "./board/boardThreadTail.ts";
+import { ThreadGateway } from "./board/ThreadGateway.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -981,6 +982,8 @@ const buildAppUnderTest = (options?: {
           Layer.mock(BoardThreadTail)({
             subscribeTodoChanges: Effect.succeed(Stream.never),
           }),
+          // T3o: T3O-58 — the board's thread seam, unused by these tests.
+          Layer.mock(ThreadGateway)({}),
           // T3o: T3O-23 — retirement passes straight through to the stock removal.
           Layer.mock(WorktreeRetirer)({
             retire: (input) =>

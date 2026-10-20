@@ -31,7 +31,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { BoardQueries } from "./BoardQueries.ts";
+import { ThreadGateway } from "./ThreadGateway.ts";
 
 export interface UsageLimitDetectorShape {
   /**
@@ -75,7 +75,7 @@ export function serverTimeZone(): string {
 }
 
 const make = Effect.gen(function* () {
-  const boardQueries = yield* BoardQueries;
+  const threads = yield* ThreadGateway;
 
   const classifyTurn: UsageLimitDetectorShape["classifyTurn"] = (input) =>
     Effect.gen(function* () {
@@ -88,8 +88,8 @@ const make = Effect.gen(function* () {
       // Best-effort in the shape of `endedWithQuestion`: a read failure, or a
       // thread with no assistant message at all, answers "no match", which
       // leaves recovery exactly as it was before this feature existed.
-      const message = yield* boardQueries
-        .boardLatestAssistantMessage(input.threadId)
+      const message = yield* threads
+        .latestAssistantMessage(input.threadId)
         .pipe(Effect.catchCause(() => Effect.succeed(null)));
       if (message === null) return null;
       if (input.since !== null && !(message.createdAt > input.since)) return null;

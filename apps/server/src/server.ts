@@ -98,6 +98,7 @@ import { UsageLimitDetectorLive } from "./board/UsageLimitDetector.ts";
 import { BoardRuntimeLive } from "./board/runtimeLayer.ts";
 import { layer as BoardPullRequestGatewayLive } from "./board/BoardPullRequestGateway.ts";
 import { WorktreeRetirerLive } from "./board/worktreeRetire.ts";
+import { ThreadGatewayV1Live } from "./board/ThreadGatewayV1.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import * as ThreadPullRequestReactor from "./orchestration/ThreadPullRequestReactor.ts";
@@ -538,6 +539,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(BoardPullRequestGatewayLive),
   // T3o: T3O-23 — retires worktrees for the supervisor and the thread-delete RPC.
   Layer.provideMerge(WorktreeRetirerLive.pipe(Layer.provide(ServerSettingsLayerLive))),
+  // T3o: T3O-58 — the board's one seam onto threads, below everything board.
+  Layer.provideMerge(ThreadGatewayV1Live),
   // `GitHubCli` is the registry's own instance, exposed because the asset route fetches
   // GitHub-hosted pull request media with the repository's credential.
   Layer.provideMerge(

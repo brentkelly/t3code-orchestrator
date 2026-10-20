@@ -45,7 +45,7 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { BoardEngine } from "../../../board/BoardEngine.ts";
 import { BoardQueries } from "../../../board/BoardQueries.ts";
-import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadGateway } from "../../../board/ThreadGateway.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ServerConfig from "../../../config.ts";
 import { SupervisorReactor } from "../../../board/supervisorReactor.ts";
@@ -71,7 +71,7 @@ export class BoardToolError extends Schema.TaggedError<BoardToolError>()("BoardT
 
 // The board tools all resolve the same services: the calling scope, the board
 // engine (to dispatch and read the board), the board queries (bodies, activity,
-// todos), upstream's snapshot query (projects and threads), crypto (to mint
+// todos), the thread gateway (projects and threads), crypto (to mint
 // command/entity ids) and board settings (the per-project key prefix, D14 —
 // an agent-created card must land in the same key namespace as a human's).
 // Declared uniformly, mirroring the preview toolkit.
@@ -79,7 +79,7 @@ const dependencies = [
   McpInvocationContext.McpInvocationContext,
   BoardEngine,
   BoardQueries,
-  ProjectionSnapshotQuery,
+  ThreadGateway,
   Crypto.Crypto,
   ServerSettings.ServerSettingsService,
   // The brief-attachment manifest (t3o-32) resolves absolute paths off the

@@ -44,7 +44,6 @@ import {
   type BoardState,
   unmetBoardCardDependencies,
   type BoardCommand,
-  type OrchestrationReadModel,
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -54,8 +53,11 @@ import * as Path from "effect/Path";
 
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import type { ProjectionSnapshotQueryShape } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  ThreadGateway,
+  type BoardProject,
+  type ThreadGatewayShape,
+} from "../../../board/ThreadGateway.ts";
 import { BoardEngine, type BoardEngineShape } from "../../../board/BoardEngine.ts";
 import { BoardQueries } from "../../../board/BoardQueries.ts";
 import type { BoardDispatchError } from "../../../board/errors.ts";
@@ -115,7 +117,7 @@ const dispatchError = (error: BoardDispatchError): BoardToolError =>
 interface BoardToolDeps {
   readonly scope: McpInvocationScope;
   readonly boardEngine: BoardEngineShape;
-  readonly snapshotQuery: ProjectionSnapshotQueryShape;
+  readonly threads: ThreadGatewayShape;
   readonly board: BoardQueriesShape;
   /** For the brief-attachment manifest's absolute paths (t3o-32). */
   readonly stateDir: string;
@@ -126,14 +128,14 @@ interface BoardToolDeps {
 const boardToolDeps = Effect.gen(function* () {
   const scope = yield* McpInvocationContext.McpInvocationContext;
   const boardEngine = yield* BoardEngine;
-  const snapshotQuery = yield* ProjectionSnapshotQuery;
+  const threads = yield* ThreadGateway;
   const board = yield* BoardQueries;
   const config = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
   return {
     scope,
     boardEngine,
-    snapshotQuery,
+    threads,
     board,
     stateDir: config.stateDir,
     path,
@@ -444,13 +446,12 @@ const resolveLabelIds = (
   return Effect.succeed(ids);
 };
 
-/** The non-deleted projects the caller can target, from the same command read
-    model the tools already query. */
+/** The non-deleted projects the caller can target. */
 const listProjects = (
   deps: BoardToolDeps,
-): Effect.Effect<ReadonlyArray<OrchestrationReadModel["projects"][number]>, BoardToolError> =>
-  deps.snapshotQuery.getCommandReadModel().pipe(
-    Effect.map((model) => model.projects.filter((project) => project.deletedAt === null)),
+): Effect.Effect<ReadonlyArray<BoardProject>, BoardToolError> =>
+  deps.threads.projects().pipe(
+    Effect.map((projects) => projects.filter((project) => !project.deleted)),
     Effect.mapError(internalError),
   );
 
@@ -465,15 +466,14 @@ const workspaceBasename = (value: string): string => {
 /** Available projects as `id — title`, the same "rejected with the live list"
     shape unknown labels use, so an agent that guessed wrong is handed the exact
     ids to retry with. */
-const formatProjectList = (
-  projects: ReadonlyArray<OrchestrationReadModel["projects"][number]>,
-): string => projects.map((project) => `${project.id} — ${project.title}`).join("; ") || "(none)";
+const formatProjectList = (projects: ReadonlyArray<BoardProject>): string =>
+  projects.map((project) => `${project.id} — ${project.title}`).join("; ") || "(none)";
 
 /**
  * Resolve the project a card should be created in (t3o: agents guess titles,
  * not ids). With no `projectId` the card lands in the calling thread's own
  * project — the common "cards for the project I'm in" case, resolved from the
- * read model via the scope's threadId (a thread's project never changes, so no
+ * scope's thread (a thread's project never changes, so no
  * value has to be baked into the credential). With a `projectId` it is matched
  * as an id first, then leniently against a project's title (case-insensitive)
  * or workspace-root folder name, so a value copied from the app's dropdown
@@ -481,19 +481,19 @@ const formatProjectList = (
  * rather than dispatched to fail deep in the decider with a bare "does not
  * exist".
  *
- * Pure over an already-fetched read model — board_create_card resolves it once
- * and reuses it for the board slice and the key prefix, so a single create does
- * not re-materialise the read model per lookup.
+ * Over an already-fetched project list — board_create_card reads it once and
+ * reuses it for the key-prefix title.
  */
 const resolveProjectId = (
-  model: OrchestrationReadModel,
-  scope: McpInvocationScope,
+  deps: BoardToolDeps,
+  projects: ReadonlyArray<BoardProject>,
   input: string | undefined,
 ): Effect.Effect<ProjectId, BoardToolError> =>
   Effect.gen(function* () {
-    const projects = model.projects.filter((project) => project.deletedAt === null);
     if (input === undefined) {
-      const thread = model.threads.find((candidate) => candidate.id === scope.threadId);
+      const thread = yield* deps.threads
+        .threadState(deps.scope.threadId)
+        .pipe(Effect.mapError(internalError));
       const owned = thread
         ? projects.find((project) => project.id === thread.projectId)
         : undefined;
@@ -915,18 +915,15 @@ export const boardHandlers = {
   board_create_card: (input) =>
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
-      // One read model for the whole create: project resolution, the board
-      // slice, and the key-prefix title all read from it (the card's key is
-      // read back with a fresh model after the write).
-      const model = yield* deps.snapshotQuery
-        .getCommandReadModel()
-        .pipe(Effect.mapError(internalError));
+      // One project read for the whole create: project resolution and the
+      // key-prefix title both read from it.
+      const projects = yield* listProjects(deps);
       // Resolve the target project first (t3o: omitted → this thread's project;
       // a title or workspace folder → its id), so a card never dispatches
       // against a phantom project and an unresolvable target is rejected up
       // front with the live project list.
-      const projectId = yield* resolveProjectId(model, deps.scope, input.projectId);
-      const projectTitle = model.projects.find((project) => project.id === projectId)?.title ?? "";
+      const projectId = yield* resolveProjectId(deps, projects, input.projectId);
+      const projectTitle = projects.find((project) => project.id === projectId)?.title ?? "";
       const board = yield* readBoardState(deps);
       const labels = yield* resolveLabelIds(board, input.labels ?? []);
       const stage = input.stage ?? BOARD_SEED_STAGE_IDS.backlog;

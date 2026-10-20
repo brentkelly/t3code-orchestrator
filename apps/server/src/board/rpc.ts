@@ -61,7 +61,6 @@ import {
   deleteBoardCardAttachmentFile,
 } from "./attachments.ts";
 import { observeRpcEffect, observeRpcStreamEffect } from "../observability/RpcInstrumentation.ts";
-import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import {
   BOARD_HUMAN_ACTOR_FALLBACK_NAME,
@@ -72,6 +71,7 @@ import { BoardEngine, type BoardEngineShape } from "./BoardEngine.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import type { BoardQueriesShape } from "./projection.ts";
 import { BoardThreadTail } from "./boardThreadTail.ts";
+import { ThreadGateway, type ThreadGatewayShape } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import { boardShellStreamEvent, type BoardEvent } from "./projector.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
@@ -539,7 +539,7 @@ function makeBoardRpcHandlers(
  * degrades to the fallback name; none can fail the dispatch.
  */
 export function boardActorStamp(deps: {
-  readonly projectionSnapshotQuery: ProjectionSnapshotQueryShape;
+  readonly threads: Pick<ThreadGatewayShape, "project">;
   readonly boardQueries: BoardQueriesShape;
   readonly git: GitVcsDriver["Service"];
 }): (command: BoardCommand) => Effect.Effect<void> {
@@ -574,10 +574,9 @@ export function boardActorStamp(deps: {
     }
     const cached = nameByProject.get(String(projectId));
     if (cached !== undefined) return cached;
-    const project = yield* deps.projectionSnapshotQuery.getProjectShellById(projectId).pipe(
-      Effect.map(Option.getOrUndefined),
-      Effect.catchCause(() => Effect.succeed(undefined)),
-    );
+    const project = yield* deps.threads
+      .project(projectId)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
     const workspaceRoot = project?.workspaceRoot;
     const resolved =
       workspaceRoot === undefined || workspaceRoot.length === 0
@@ -627,7 +626,6 @@ export function boardActorStamp(deps: {
  * `client-runtime/state/board.ts`), so the two sequence spaces never mix.
  */
 export const boardClientConnection = (deps: {
-  readonly projectionSnapshotQuery: ProjectionSnapshotQueryShape;
   readonly git: GitVcsDriver["Service"];
   readonly origin: OrchestrationClientOrigin | undefined;
 }) =>
@@ -636,7 +634,7 @@ export const boardClientConnection = (deps: {
     const boardQueries = yield* BoardQueries;
     const threadTail = yield* BoardThreadTail;
     const stampActor = boardActorStamp({
-      projectionSnapshotQuery: deps.projectionSnapshotQuery,
+      threads: yield* ThreadGateway,
       boardQueries,
       git: deps.git,
     });

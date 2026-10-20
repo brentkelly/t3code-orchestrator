@@ -58,6 +58,7 @@ import {
   type BoardDispatchError,
 } from "./errors.ts";
 import { makeBoardSqlProjector } from "./projection.ts";
+import { ThreadGateway, type ThreadGatewayShape } from "./ThreadGateway.ts";
 import { projectBoardEvent, type BoardEvent, type BoardReadModel } from "./projector.ts";
 import type { BoardQueriesShape } from "./projection.ts";
 
@@ -101,16 +102,33 @@ interface CommandEnvelope {
 }
 
 /** The state a board command is decided against beyond the board itself. */
-export const loadDecisionContext = (command: BoardCommand, queries: BoardQueriesShape) =>
+export const loadDecisionContext = (
+  command: BoardCommand,
+  queries: BoardQueriesShape,
+  threads: ThreadGatewayShape,
+) =>
   Effect.gen(function* () {
     const brief = boardCommandNeedsBrief(command)
       ? { brief: yield* queries.boardCardBrief(command.cardId) }
       : {};
     const projects = boardCommandNeedsProjects(command)
-      ? { projects: yield* queries.boardProjects() }
+      ? {
+          projects: (yield* threads.projects()).map((project) => ({
+            id: project.id,
+            title: project.title,
+            deleted: project.deleted,
+          })),
+        }
       : {};
     const thread = boardCommandNeedsThread(command)
-      ? { thread: yield* queries.boardThread(command.threadId) }
+      ? {
+          thread: yield* threads.threadRecords([command.threadId]).pipe(
+            Effect.map((records) => {
+              const record = records.get(command.threadId);
+              return record === undefined ? null : { deleted: record.deleted };
+            }),
+          ),
+        }
       : {};
     return { ...brief, ...projects, ...thread } satisfies BoardDecisionContext;
   });
@@ -118,6 +136,7 @@ export const loadDecisionContext = (command: BoardCommand, queries: BoardQueries
 export const makeBoardEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const queries = yield* BoardQueries;
+  const threads = yield* ThreadGateway;
   const crypto = yield* Crypto.Crypto;
   const store = makeBoardEventStore(sql);
   const projector = makeBoardSqlProjector(sql);
@@ -197,7 +216,7 @@ export const makeBoardEngine = Effect.gen(function* () {
         });
       }
 
-      const context = yield* loadDecisionContext(command, queries);
+      const context = yield* loadDecisionContext(command, queries, threads);
       const decided = yield* decideBoardCommand({ command, readModel, context }).pipe(
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.mapError((cause) =>
