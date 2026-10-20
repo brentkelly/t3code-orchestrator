@@ -175,6 +175,7 @@ const shell = (overrides: Partial<OrchestrationV2ThreadShell> = {}): Orchestrati
     snoozedUntil: null,
     deletedAt: null,
     limitRecovery: null,
+    updatedAt: t0,
     ...overrides,
   }) as unknown as OrchestrationV2ThreadShell;
 
@@ -198,6 +199,7 @@ describe("boardThreadStateFromShell", () => {
       lastErrorClass: "usage_limit" as const,
       lastError: "Usage limit reached.",
       usageLimitResetAt: "2026-10-20T05:00:00.000Z",
+      latestRunCompletedAt: DateTime.makeUnsafe("2026-10-20T00:30:00.000Z"),
     };
     assert.deepStrictEqual(boardThreadStateFromShell(shell(limited), nowMs).usageLimit, {
       resetAt: "2026-10-20T05:00:00.000Z",
@@ -223,6 +225,41 @@ describe("boardThreadStateFromShell", () => {
       },
     } as Partial<OrchestrationV2ThreadShell>);
     assert.isFalse(boardThreadStateFromShell(stale, nowMs).usageLimit!.resumeArmed);
+  });
+
+  it("reads an arm v2 will never act on as not armed, so the board still wakes it", () => {
+    const armed = {
+      status: "failed" as const,
+      lastErrorClass: "usage_limit" as const,
+      lastError: "Usage limit reached.",
+      usageLimitResetAt: "2026-10-20T05:00:00.000Z",
+      latestRunCompletedAt: DateTime.makeUnsafe("2026-10-20T00:30:00.000Z"),
+      limitRecovery: {
+        runId: RunId.make("run-1"),
+        resetAt: "2026-10-20T05:00:00.000Z",
+        autoResume: true,
+      },
+    };
+    const refused: ReadonlyArray<Record<string, unknown>> = [
+      { archivedAt: t0 },
+      { settledOverride: "settled" },
+      {
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("q1"),
+          kind: "user_input",
+          createdAt: t0,
+        },
+      },
+      // A reset no later than the failure: v2 refuses it rather than loop.
+      { latestRunCompletedAt: DateTime.makeUnsafe("2026-10-20T06:00:00.000Z") },
+    ];
+    for (const overrides of refused) {
+      const state = boardThreadStateFromShell(
+        shell({ ...armed, ...overrides } as Partial<OrchestrationV2ThreadShell>),
+        nowMs,
+      );
+      assert.isFalse(state.usageLimit!.resumeArmed, JSON.stringify(Object.keys(overrides)));
+    }
   });
 
   it("holds a thread with a question live, even between runs", () => {

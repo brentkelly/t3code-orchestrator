@@ -40,6 +40,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { isAutoSettlementCandidate } from "../orchestration-v2/ThreadSettlementService.ts";
+import { limitRecoveryCommand } from "../orchestration-v2/UsageLimitRecoveryWorker.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import {
   ThreadCommandFailedError,
@@ -89,6 +90,16 @@ const sessionStatusOf = (shell: OrchestrationV2ThreadShell): BoardSessionStatus 
 const isoOrNull = (value: DateTime.Utc | null | undefined): string | null =>
   value == null ? null : DateTime.formatIso(value);
 
+/**
+ * Whether v2's recovery worker will ever act on this thread's usage limit with
+ * auto-resume on — arm it, or resume an arm — read through the worker's own
+ * policy. Asked as of the end of time, so a window that has not reopened yet
+ * still counts. An archived or settled thread, one holding a question, or a
+ * reset no later than the failure is never resumed by v2, so the board keeps it.
+ */
+const v2RecoversLimit = (shell: OrchestrationV2ThreadShell): boolean =>
+  limitRecoveryCommand(shell, true, Number.POSITIVE_INFINITY) !== null;
+
 export const boardThreadStateFromShell = (
   shell: OrchestrationV2ThreadShell,
   nowMs: number,
@@ -125,7 +136,8 @@ export const boardThreadStateFromShell = (
             recovery !== null &&
             recovery.autoResume &&
             recovery.runId === shell.latestRunId &&
-            recovery.resetAt === resetAt,
+            recovery.resetAt === resetAt &&
+            v2RecoversLimit(shell),
         }
       : null,
   };
@@ -513,6 +525,8 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
         const limit = state.usageLimit;
         if (limit === null || limit.resetAt === null || shell.latestRunId === null) return false;
         if (limit.resumeArmed) return true;
+        // An arm v2 would never act on leaves the resume to the board.
+        if (!v2RecoversLimit(shell)) return false;
         yield* run({
           type: "thread.metadata.update",
           commandId: input.commandId,
