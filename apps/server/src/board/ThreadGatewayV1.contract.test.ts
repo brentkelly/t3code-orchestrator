@@ -438,6 +438,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           workspaceRoot,
           deleted: false,
         });
+        assert.deepStrictEqual(listed?.scripts, []);
         const detail = yield* threads.project(projectId);
         assert.strictEqual(detail?.workspaceRoot, workspaceRoot);
         assert.isNull(yield* threads.project(ProjectId.make("project-missing")));

@@ -17,6 +17,7 @@ import {
   IsoDateTime,
   MessageId,
   ProjectId,
+  ProjectScript,
   ThreadId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -292,6 +293,25 @@ export const makeThreadGatewayV1 = Effect.gen(function* () {
     `,
   });
 
+  /* Every project, deleted ones included, without hydrating the read model:
+     the decider asks for these on every project-bearing card command. */
+  const listProjectRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({
+      id: ProjectId,
+      title: Schema.String,
+      workspaceRoot: Schema.String,
+      deletedAt: Schema.NullOr(Schema.String),
+      scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    }),
+    execute: () => sql`
+      SELECT project_id AS "id", title, workspace_root AS "workspaceRoot",
+             deleted_at AS "deletedAt", scripts_json AS "scripts"
+      FROM main.projection_projects
+      ORDER BY created_at ASC, project_id ASC
+    `,
+  });
+
   const listLiveThreadRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: Schema.Struct({ threadId: ThreadId }),
@@ -564,14 +584,14 @@ export const makeThreadGatewayV1 = Effect.gen(function* () {
       ),
 
     projects: () =>
-      snapshotQuery.getCommandReadModel().pipe(
-        Effect.map((model) =>
-          model.projects.map((project) => ({
-            id: project.id,
-            title: project.title,
-            workspaceRoot: project.workspaceRoot,
-            deleted: project.deletedAt !== null,
-            scripts: project.scripts,
+      listProjectRows(undefined).pipe(
+        Effect.map((rows) =>
+          rows.map((row) => ({
+            id: row.id,
+            title: row.title,
+            workspaceRoot: row.workspaceRoot,
+            deleted: row.deletedAt !== null,
+            scripts: row.scripts,
           })),
         ),
         Effect.mapError(readError("projects")),
