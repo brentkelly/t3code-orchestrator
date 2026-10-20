@@ -2420,6 +2420,9 @@ const makeWsRpcLayer = (
                     SHELL_RESUME_MAX_GAP,
                   )) ||
                   // T3o: board deltas are not in this log, so a board resumes by snapshot.
+                  // TODO(board-subscription): this sends the FULL shell snapshot on every
+                  // resume once the board has history; drop it when the board has its own
+                  // subscription.
                   (yield* boardConnection.shellNeedsSnapshot)
                 ) {
                   const snapshot = yield* loadSnapshot;

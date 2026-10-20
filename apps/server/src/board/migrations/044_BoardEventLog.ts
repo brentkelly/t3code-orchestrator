@@ -17,7 +17,10 @@
 // - The old `projection.board-cards` watermark counted MAIN sequences. It splits
 //   in two: the board log projector's watermark in board sequences, and the
 //   cursor of the read-only tail of upstream's thread events (todo cache), which
-//   stays in main sequences.
+//   stays in main sequences. The legacy row itself is LEFT in place, for the
+//   same rollback reason as the source rows: an older build that lost it would
+//   replay every board event in `main` from 0 over tables that already hold
+//   newer work.
 //
 // Re-runnable: every insert skips rows already present, so a second run is a
 // no-op. The migrator runs it once; idempotence is what makes a torn first run
@@ -167,5 +170,4 @@ export default Effect.gen(function* () {
     FROM boards.projection_state
     WHERE projector = ${LEGACY_BOARD_PROJECTOR}
   `;
-  yield* sql`DELETE FROM boards.projection_state WHERE projector = ${LEGACY_BOARD_PROJECTOR}`;
 });

@@ -11,6 +11,11 @@
  * and at the end of a catch-up. A crash therefore re-scans irrelevant events at
  * worst, never re-applies an older plan over a newer one.
  *
+ * An event that fails to apply (or a catch-up that fails part-way) pins the
+ * persisted cursor just before it for the rest of the run. The tail keeps going
+ * so `drain` does not hang, and the next boot replays from the failure, in
+ * order, so the newest plan still lands last.
+ *
  * A database that has never had a cursor starts at upstream's head: a board
  * that has no cards cannot have linked any thread whose history it would miss.
  */
@@ -20,6 +25,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -79,32 +85,44 @@ export const makeBoardThreadTail = Effect.gen(function* () {
   }
   const cursor = stored === null || stored > head ? head : stored;
   const processed = yield* SubscriptionRef.make(cursor);
+  // The last sequence before the first event that failed to apply, if any. The
+  // persisted cursor never passes it, so the next boot retries from there.
+  const pinnedAt = yield* Ref.make<number | null>(null);
+  const pin = (sequence: number) =>
+    Ref.update(pinnedAt, (pinned) => (pinned === null ? sequence : Math.min(pinned, sequence)));
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const saveCursor = (sequence: number) =>
-    nowIso.pipe(
-      Effect.flatMap((at) => store.setWatermark(BOARD_THREAD_TAIL_PROJECTOR, sequence, at)),
-    );
+    Effect.gen(function* () {
+      const pinned = yield* Ref.get(pinnedAt);
+      const at = yield* nowIso;
+      yield* store.setWatermark(
+        BOARD_THREAD_TAIL_PROJECTOR,
+        pinned === null ? sequence : Math.min(pinned, sequence),
+        at,
+      );
+    });
 
   const apply = (event: OrchestrationEvent) =>
     Effect.gen(function* () {
       if (event.sequence <= (yield* SubscriptionRef.get(processed))) return;
       if (isTodoEvent(event)) {
-        yield* sql
+        const applied = yield* sql
           .withTransaction(
             projector.applyThreadEvent(event).pipe(Effect.andThen(saveCursor(event.sequence))),
           )
           .pipe(
+            Effect.as(true),
             Effect.catchCause((cause) =>
               Effect.logWarning("board thread tail failed to apply an event", {
                 eventType: event.type,
                 sequence: event.sequence,
                 cause,
-              }),
+              }).pipe(Effect.andThen(pin(event.sequence - 1)), Effect.as(false)),
             ),
           );
         const threadId = todoThreadId(event);
-        if (threadId !== null) yield* PubSub.publish(changes, threadId);
+        if (applied && threadId !== null) yield* PubSub.publish(changes, threadId);
       }
       yield* SubscriptionRef.set(processed, event.sequence);
     });
@@ -114,7 +132,10 @@ export const makeBoardThreadTail = Effect.gen(function* () {
   if (cursor < head) {
     yield* Stream.runForEach(engine.readEvents(cursor, head - cursor), apply).pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning("board thread tail catch-up failed", { cause }),
+        Effect.logWarning("board thread tail catch-up failed", { cause }).pipe(
+          Effect.andThen(SubscriptionRef.get(processed)),
+          Effect.flatMap(pin),
+        ),
       ),
     );
     yield* SubscriptionRef.set(processed, head);

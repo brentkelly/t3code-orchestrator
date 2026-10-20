@@ -158,5 +158,36 @@ it.layer(makeBoardStackTestLayerWithoutTail("t3o-board-thread-tail-"))(
         assert.strictEqual(todo?.totalCount, 1);
       }),
     );
+
+    it.effect("retries an event that failed to apply on the next boot", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const engine = yield* boardStackEngine;
+        const threadId = yield* seedLinkedThread("failed");
+        yield* setCursor(yield* engine.latestSequence);
+        // Every write to the todo cache fails while this trigger exists.
+        yield* sql`
+          CREATE TRIGGER boards.t3o_test_fail_todos BEFORE INSERT ON board_thread_todos
+          BEGIN SELECT RAISE(ABORT, 'todo write refused'); END`;
+
+        const failed = yield* withFreshTail(
+          Effect.gen(function* () {
+            yield* appendPlan(threadId, "failed");
+            yield* (yield* BoardThreadTail).drain;
+            return yield* (yield* BoardQueries).boardThreadTodo(threadId);
+          }),
+        );
+        assert.isNull(failed);
+
+        yield* sql`DROP TRIGGER boards.t3o_test_fail_todos`;
+        const retried = yield* withFreshTail(
+          Effect.gen(function* () {
+            yield* (yield* BoardThreadTail).drain;
+            return yield* (yield* BoardQueries).boardThreadTodo(threadId);
+          }),
+        );
+        assert.strictEqual(retried?.totalCount, 1);
+      }),
+    );
   },
 );

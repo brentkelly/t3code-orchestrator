@@ -179,6 +179,8 @@ it.effect("splits the old watermark into the board log's and the upstream tail's
       FROM boards.projection_state ORDER BY projector
     `;
     assert.deepStrictEqual(watermarks, [
+      // The legacy row stays, so a rollback does not replay main's board events.
+      { projector: "projection.board-cards", sequence: 5 },
       // Main sequence 5 is the third board event.
       { projector: "projection.board-events", sequence: 3 },
       // The tail of upstream's log resumes exactly where the old projector was.
