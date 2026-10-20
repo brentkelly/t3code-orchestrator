@@ -1,9 +1,9 @@
 /**
- * `boardThreadLastSignalAt` (T3O-12, D1): when a thread last produced OUTPUT.
+ * The thread gateway's `lastSignalAt` (T3O-12, D1): when a thread last produced OUTPUT.
  *
  * The timeout sweep's missing life sign, driven against the real engine and
  * projection so the SQL — a UNION over two upstream projection tables read
- * through the attached board connection — is exercised rather than stubbed.
+ * by the v1 thread gateway — is exercised rather than stubbed.
  *
  * The activity arm is the one that matters most in production: a review phase
  * writes no commits, need not churn a todo list, and can go twenty minutes
@@ -23,7 +23,7 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { BoardQueries } from "./BoardQueries.ts";
+import { ThreadGateway } from "./ThreadGateway.ts";
 import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 
 const makeLayer = makeBoardStackTestLayer;
@@ -106,12 +106,11 @@ const appendAssistantMessage = (threadId: ThreadId, id: string, createdAt: strin
 
 const lastSignalAt = (threadId: ThreadId) =>
   Effect.gen(function* () {
-    const methods = yield* BoardQueries;
-    assert.isNotNull(methods);
-    return yield* methods!.boardThreadLastSignalAt(threadId);
+    const threads = yield* ThreadGateway;
+    return yield* threads.lastSignalAt(threadId);
   });
 
-it.layer(makeLayer("t3o-board-signal-"))("boardThreadLastSignalAt (T3O-12)", (it) => {
+it.layer(makeLayer("t3o-board-signal-"))("ThreadGatewayV1.lastSignalAt (T3O-12)", (it) => {
   it.effect("a thread that has produced nothing has no life sign", () =>
     Effect.gen(function* () {
       const threadId = yield* seed("silent");

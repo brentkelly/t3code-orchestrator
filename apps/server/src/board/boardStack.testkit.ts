@@ -1,7 +1,8 @@
 /**
  * The real stack, board included (T3O-56): upstream's v1 engine, projection
- * pipeline and snapshot query on in-memory SQLite, plus the board's own engine,
- * queries and upstream tail on the same connection.
+ * pipeline and snapshot query on in-memory SQLite, the v1 thread gateway over
+ * them (T3O-58), and the board's own engine, queries and todo tail on the same
+ * connection.
  *
  * `boardStackEngine` and `boardStackSnapshotQuery` are the two facades suites
  * talk to. The engine facade routes a board command to the board engine and
@@ -14,10 +15,13 @@ import {
   type BoardCommand,
   type OrchestrationCommand,
   type OrchestrationReadModel,
+  type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -33,6 +37,7 @@ import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers
 import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
 import type { OrchestrationDispatchError } from "../orchestration/Errors.ts";
 import { BoardEngine, BoardEngineLive } from "./BoardEngine.ts";
 import type { BoardDispatchError } from "./errors.ts";
@@ -41,6 +46,7 @@ import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
 import { makeBoardEventStore } from "./boardEventStore.ts";
 import { BoardThreadTail } from "./boardThreadTail.ts";
 import { BoardRuntimeLive } from "./runtimeLayer.ts";
+import { ThreadGatewayV1Live } from "./ThreadGatewayV1.ts";
 
 /** Upstream's engine, pipeline and snapshot query, without persistence. */
 const orchestrationStack = Layer.mergeAll(
@@ -57,6 +63,27 @@ const orchestrationStack = Layer.mergeAll(
   Layer.provide(RepositoryIdentityResolver.layer),
 );
 
+/** Publishes provider runtime events into the stack's `ProviderService`, which
+    has no real providers behind it. */
+export class StackProviderEvents extends Context.Service<
+  StackProviderEvents,
+  { readonly publish: (event: ProviderRuntimeEvent) => Effect.Effect<void> }
+>()("t3/board/boardStack.testkit/StackProviderEvents") {}
+
+const providerEvents = Layer.unwrap(
+  Effect.gen(function* () {
+    const hub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+    return Layer.mergeAll(
+      Layer.succeed(ProviderService, {
+        streamEvents: Stream.fromPubSub(hub),
+      } as unknown as ProviderService["Service"]),
+      Layer.succeed(StackProviderEvents, {
+        publish: (event) => PubSub.publish(hub, event).pipe(Effect.asVoid),
+      }),
+    );
+  }),
+);
+
 const persistence = (prefix: string) =>
   SqlitePersistenceMemory.pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
@@ -66,6 +93,8 @@ const persistence = (prefix: string) =>
 /** The whole stack on in-memory SQLite, board included. */
 export const makeBoardStackTestLayer = (prefix: string) =>
   BoardRuntimeLive.pipe(
+    Layer.provideMerge(ThreadGatewayV1Live),
+    Layer.provideMerge(providerEvents),
     Layer.provideMerge(orchestrationStack),
     Layer.provideMerge(persistence(prefix)),
   );
@@ -75,6 +104,8 @@ export const makeBoardStackTestLayer = (prefix: string) =>
 export const makeBoardStackTestLayerWithoutTail = (prefix: string) =>
   BoardEngineLive.pipe(
     Layer.provideMerge(BoardQueriesLive),
+    Layer.provideMerge(ThreadGatewayV1Live),
+    Layer.provideMerge(providerEvents),
     Layer.provideMerge(orchestrationStack),
     Layer.provideMerge(persistence(prefix)),
   );

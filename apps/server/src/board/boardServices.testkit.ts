@@ -16,6 +16,8 @@ import * as Stream from "effect/Stream";
 import { BoardEngine, type BoardEngineShape } from "./BoardEngine.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import type { BoardQueriesShape } from "./projection.ts";
+import { ThreadGateway, type ThreadGatewayShape } from "./ThreadGateway.ts";
+import { inertThreadGateway } from "./threadGateway.testkit.ts";
 
 export const inertBoardQueries = (overrides?: Partial<BoardQueriesShape>): BoardQueriesShape => ({
   loadBoardState: () => Effect.succeed(null),
@@ -26,12 +28,7 @@ export const inertBoardQueries = (overrides?: Partial<BoardQueriesShape>): Board
   boardCardThreads: () => Effect.succeed([]),
   boardCardIdForThread: () => Effect.succeed(null),
   boardThreadTodo: () => Effect.succeed(null),
-  boardLatestAssistantMessage: () => Effect.succeed(null),
-  boardThreadLastSignalAt: () => Effect.succeed(null),
-  boardThreadPendingTurnStartAt: () => Effect.succeed(null),
   boardSweepThreadTodos: () => Effect.void,
-  boardProjects: () => Effect.succeed([]),
-  boardThread: () => Effect.succeed(null),
   ...overrides,
 });
 
@@ -48,12 +45,14 @@ export const boardEngineDouble = (input: {
     subscribeBoardEvents: Effect.succeed(Stream.never),
   }) satisfies BoardEngineShape;
 
-/** Both doubles as one layer. */
+/** The doubles as one layer; the thread gateway knows nothing unless given. */
 export const boardServicesTestLayer = (input: {
   readonly engine: BoardEngineShape;
   readonly queries?: BoardQueriesShape;
+  readonly threads?: ThreadGatewayShape;
 }) =>
   Layer.mergeAll(
     Layer.succeed(BoardEngine, input.engine),
     Layer.succeed(BoardQueries, input.queries ?? inertBoardQueries()),
+    Layer.succeed(ThreadGateway, input.threads ?? inertThreadGateway()),
   );

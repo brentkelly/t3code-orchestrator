@@ -45,12 +45,12 @@ import {
 
 /** One call the board made, in gateway vocabulary. */
 export type ThreadGatewayCall =
-  | ({ readonly type: "spawn" } & ThreadSpawnInput)
-  | ({ readonly type: "send" } & ThreadSendInput)
-  | ({ readonly type: "interrupt" } & ThreadTargetInput)
-  | ({ readonly type: "stop-session" } & ThreadTargetInput)
-  | ({ readonly type: "settle" } & ThreadSettleInput)
-  | ({ readonly type: "delete" } & ThreadTargetInput);
+  | ({ readonly type: "thread.spawn" } & ThreadSpawnInput)
+  | ({ readonly type: "thread.send" } & ThreadSendInput)
+  | ({ readonly type: "thread.interrupt" } & ThreadTargetInput)
+  | ({ readonly type: "thread.stop-session" } & ThreadTargetInput)
+  | ({ readonly type: "thread.settle" } & ThreadSettleInput)
+  | ({ readonly type: "thread.delete" } & ThreadTargetInput);
 
 /** The fields a fixture sets on a thread; everything derived is computed. */
 export interface FakeThreadInput {
@@ -227,7 +227,7 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
     const gateway: ThreadGatewayShape = {
       spawn: (input) =>
         Effect.gen(function* () {
-          yield* record({ type: "spawn", ...input });
+          yield* record({ type: "thread.spawn", ...input });
           if (options.rejectSpawn === true) {
             return yield* refuse("spawn", input.threadId, "Refusing to create the thread.");
           }
@@ -244,16 +244,16 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
         }),
       send: (input) =>
         Effect.gen(function* () {
-          yield* record({ type: "send", ...input });
+          yield* record({ type: "thread.send", ...input });
           if (!(yield* exists(input.threadId))) {
             return yield* refuse("send", input.threadId, "The thread does not exist.");
           }
         }),
-      interrupt: (input) => record({ type: "interrupt", ...input }),
-      stopSession: (input) => record({ type: "stop-session", ...input }),
+      interrupt: (input) => record({ type: "thread.interrupt", ...input }),
+      stopSession: (input) => record({ type: "thread.stop-session", ...input }),
       settle: (input) =>
         Effect.gen(function* () {
-          yield* record({ type: "settle", ...input });
+          yield* record({ type: "thread.settle", ...input });
           const state = (yield* Ref.get(states)).get(String(input.threadId));
           if (state?.sessionStatus === "starting" || state?.sessionStatus === "running") {
             return yield* refuse("settle", input.threadId, "The thread is busy.");
@@ -269,7 +269,7 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
         }),
       delete: (input) =>
         Effect.gen(function* () {
-          yield* record({ type: "delete", ...input });
+          yield* record({ type: "thread.delete", ...input });
           yield* Ref.update(records, (current) => {
             const next = new Map(current);
             next.delete(String(input.threadId));

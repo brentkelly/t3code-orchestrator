@@ -138,7 +138,7 @@ export const boardThreadStateFromShell = (
 });
 
 /** The live signal one upstream domain event carries for the supervisor. */
-const domainSignal = (event: OrchestrationEvent): ThreadSignal | null => {
+export const domainSignal = (event: OrchestrationEvent): ThreadSignal | null => {
   switch (event.type) {
     case "thread.turn-start-requested":
       return {
@@ -165,7 +165,7 @@ const domainSignal = (event: OrchestrationEvent): ThreadSignal | null => {
 };
 
 /** The live signal one provider runtime event carries for the supervisor. */
-const runtimeSignal = (event: ProviderRuntimeEvent): ThreadSignal | null => {
+export const runtimeSignal = (event: ProviderRuntimeEvent): ThreadSignal | null => {
   const threadId = ThreadId.make(String(event.threadId));
   switch (event.type) {
     case "turn.completed":
