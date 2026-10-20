@@ -643,13 +643,14 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
       ),
     latestAssistantMessage: (threadId) =>
       Effect.gen(function* () {
+        // Read from the latest run only: a thread's whole assistant history is
+        // unbounded, and anything older than the latest run predates the work
+        // the caller is asking about.
         const shell = yield* shellOf(threadId);
-        const latest = shell?.latestVisibleMessage;
-        if (latest != null && latest.role === "assistant") {
-          return { text: latest.text, createdAt: DateTime.formatIso(latest.updatedAt) };
-        }
+        if (shell === null || shell.latestRunId === null) return null;
         const records = yield* projections.getThreadRecords(threadId, ["messages"], {
           messageRoles: ["assistant"],
+          messageRunIds: [shell.latestRunId],
         });
         const newest = records.messages.at(-1);
         return newest === undefined

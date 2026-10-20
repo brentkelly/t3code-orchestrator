@@ -328,6 +328,7 @@ export interface ThreadGatewayShape {
   ) => Effect.Effect<ReadonlyArray<BoardWorktreeThread>, ThreadReadError>;
   /** Every thread that is not deleted — the todo cache's orphan sweep. */
   readonly listLiveThreadIds: () => Effect.Effect<ReadonlyArray<ThreadId>, ThreadReadError>;
+  /** The newest assistant message of the thread's latest turn, or null. */
   readonly latestAssistantMessage: (
     threadId: ThreadId,
   ) => Effect.Effect<BoardAssistantMessage | null, ThreadReadError>;

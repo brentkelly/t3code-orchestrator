@@ -20,6 +20,7 @@ import {
   PlanId,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2StoredEvent,
@@ -33,6 +34,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 import { ThreadGateway, type ThreadSignal, type TodoLogEntry } from "./ThreadGateway.ts";
 import { makeSignalReader } from "./ThreadGatewayV2.ts";
@@ -489,6 +491,50 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           [{ threadId, deleted: false }],
         );
         assert.deepStrictEqual(yield* threads.threadsInWorktree("/tmp/wt/elsewhere"), []);
+      }),
+    );
+
+    it.effect("the latest assistant message is read from the latest turn only", () =>
+      Effect.gen(function* () {
+        const threadId = yield* spawn("assistant");
+        const threads = yield* ThreadGateway;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const latestRunId = (yield* projections.getThreadShell(threadId))!.latestRunId!;
+        const message = (id: string, runId: RunId, text: string, iso: string) =>
+          ({
+            type: "message.updated",
+            id: EventId.make(`evt-contract-${id}`),
+            threadId,
+            occurredAt: at(iso),
+            payload: {
+              id: MessageId.make(`msg-contract-${id}`),
+              threadId,
+              runId,
+              nodeId: null,
+              role: "assistant",
+              text,
+              attachments: [],
+              streaming: false,
+              createdAt: at(iso),
+              updatedAt: at(iso),
+              createdBy: "agent",
+              creationSource: "provider",
+            },
+          }) as unknown as OrchestrationV2DomainEvent;
+        yield* providerWrites([
+          message("latest", latestRunId, "Which branch?", "2099-01-01T00:00:00.000Z"),
+          // Newer, but another run's: not this turn's last word.
+          message(
+            "other",
+            RunId.make("run-contract-other"),
+            "Elsewhere.",
+            "2099-01-02T00:00:00.000Z",
+          ),
+        ]);
+        assert.deepStrictEqual(yield* threads.latestAssistantMessage(threadId), {
+          text: "Which branch?",
+          createdAt: "2099-01-01T00:00:00.000Z",
+        });
       }),
     );
 
