@@ -6886,6 +6886,16 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardDetachCommand,
 ] as const;
 
+/**
+ * Every board command, as the board's own engine decodes and decides them
+ * (T3O-56). Board commands are not orchestration commands: the client still
+ * sends its share through `orchestration.dispatchCommand` (they ride the wire
+ * union `ClientOrchestrationCommand`), and the server routes them to the board
+ * engine before anything upstream sees them.
+ */
+export const BoardCommand = Schema.Union([...BOARD_CLIENT_COMMANDS, ...BOARD_INTERNAL_COMMANDS]);
+export type BoardCommand = typeof BoardCommand.Type;
+
 export const BOARD_EVENT_TYPES = [
   "board.card-created",
   "board.card-moved",

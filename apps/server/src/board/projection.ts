@@ -1,22 +1,19 @@
 /**
- * T3o board persisted projection and snapshot enrichment.
+ * T3o board persisted projection, board queries and snapshot enrichment.
  *
- * `makeBoardProjectors` returns the `board_cards` projector definition that
- * the upstream ProjectionPipeline spreads into its projector list — same
- * transaction, same cursor bookkeeping as the stock projectors. It owns all
- * three board tables (`board_cards`, `board_card_bodies`,
- * `board_card_thread_links`) so a card and its side rows always commit
- * together. `BOARD_PROJECTOR_NAMES` is spread into the pipeline's name
- * registry the same way; new board projectors register in both, never at the
- * seam.
+ * `makeBoardSqlProjector` folds board events into the `board_*` tables. The
+ * board engine runs it inside the same transaction that appends the event to
+ * `boards.board_events`, so a card and its side rows always commit together and
+ * in one database file (T3O-56). Its `applyThreadEvent` half folds the two
+ * upstream thread events the todo cache needs, driven by the read-only tail in
+ * `boardThreadTail.ts`.
  *
- * `boardSnapshotQueryMethods` wraps the upstream snapshot queries at their
- * assembly point (spread after the base methods so the board-wrapped
- * versions override), so every consumer (engine bootstrap, subscribeShell,
- * HTTP snapshot) sees board state without further seams. The card read runs
- * just after the wrapped query's transaction; a card committed in that
- * window also arrives as a live `card-upserted` delta with a higher
- * sequence, and the client upsert is idempotent, so nothing is lost.
+ * `makeBoardQueries` is the board's read side, served by the `BoardQueries`
+ * service.
+ *
+ * `boardSnapshotQueryMethods` wraps upstream's shell snapshot queries at their
+ * assembly point, so the shell snapshot carries the board's shell slices until
+ * the board has its own subscription (t3o-26 D4).
  */
 import {
   BoardCardStepAwaitingReason,
@@ -58,7 +55,6 @@ import {
   BoardCardReviewSummary,
   deriveBoardCardReviewSummary,
   parseReviewStepId,
-  isBoardEvent,
   isEmptyBoardCardModelOverrides,
   isBoardConflictFixLive,
   isBoardChecksFixLive,
@@ -90,6 +86,8 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../persistence/Errors.ts";
 import { boardActivityActorFor } from "./activityActors.ts";
+import { makeBoardUpstreamReads } from "./boardUpstreamReads.ts";
+import type { BoardProjectRef, BoardThreadRef } from "./decider.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   boardCardFromCreatedPayload,
@@ -98,6 +96,7 @@ import {
   compareBoardStepCompletions,
   compareBoardProviderLimits,
   compareBoardStepStates,
+  type BoardEvent,
 } from "./projector.ts";
 
 /**
@@ -128,21 +127,9 @@ function readTurnPlanSteps(
   return steps;
 }
 
-export const BOARD_CARDS_PROJECTOR_NAME = "projection.board-cards" as const;
-
 /** How many trailing activity entries a context read returns (t3o-08 hygiene);
     outstanding `input-requested` entries are always included on top. */
 export const BOARD_CARD_ACTIVITY_TAIL_LIMIT = 50;
-
-/**
- * Spread into upstream's `ORCHESTRATION_PROJECTOR_NAMES`. Keeping board
- * projectors inside that record (rather than only widening the name type)
- * keeps `Object.keys(ORCHESTRATION_PROJECTOR_NAMES)` equal to the set of
- * projection_state rows the pipeline writes, which upstream tests assert on.
- */
-export const BOARD_PROJECTOR_NAMES = {
-  boardCards: BOARD_CARDS_PROJECTOR_NAME,
-} as const;
 
 // `blocked` travels as 0/1 (SQLite has no boolean); the JSON-shaped columns
 // encode/decode through fromJsonString so the row schema's Type side stays
@@ -1682,27 +1669,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     execute: (cardId) => sql`DELETE FROM board_thread_todos WHERE card_id = ${cardId}`,
   });
 
-  /**
-   * Boot reconciliation sweep (t3o-18, AC 20): drop every cached row whose
-   * thread or link no longer exists — an unlinked or tombstoned link, an
-   * archived card, a deleted thread, or a card that is simply gone. The cache is
-   * a projection, so a leaked row is invisible until it resurfaces on a reused
-   * id; sweeping at boot is the cheap, total answer.
-   */
-  const sweepOrphanBoardThreadTodoRows = SqlSchema.void({
-    Request: Schema.Void,
-    execute: () => sql`
-      DELETE FROM board_thread_todos
-      WHERE thread_id NOT IN (
-              SELECT thread_id FROM board_card_thread_links WHERE tombstoned_at IS NULL
-            )
-         OR card_id NOT IN (SELECT card_id FROM board_cards WHERE archived_at IS NULL)
-         OR thread_id NOT IN (
-              SELECT thread_id FROM main.projection_threads WHERE deleted_at IS NULL
-            )
-    `,
-  });
-
   /** Every live link on a non-archived card, LEFT JOINed to its todo cache
       (t3o-18, D3) — one entry per link, todos when the thread has a list. */
   const listBoardCardThreadShellRows = SqlSchema.findAll({
@@ -2000,107 +1966,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
-  /** The most recent ASSISTANT message on a thread (t3o-34, D2), or none.
-   *
-      The supervisor reads it once per step turn-end to decide whether the agent
-      stopped with something for the human to answer. Upstream's
-      `projection_thread_messages` lives in `main` and the board database is
-      ATTACHED to the same connection (`boardDatabase.ts`), so this is one query
-      on one connection with no new plumbing — and upstream migration 029's
-      `(thread_id, created_at, message_id)` index serves it directly.
-
-      A dedicated two-column, one-row read rather than
-      `ProjectionThreadMessageRepository.listByThreadId`, which returns the
-      WHOLE thread: the supervisor wants the last message, and a planning
-      interview's transcript is exactly the case where "the whole thread" is
-      expensive.
-
-      `createdAt` rides along so the caller can tell the newest message from a
-      RECENT one. A turn that ends having said nothing — interrupted, errored,
-      tool-only — leaves the previous turn's text newest, and reading that back
-      would re-park the card on a question the human has already answered. */
-  const findLatestAssistantMessage = SqlSchema.findOneOption({
-    Request: ThreadId,
-    Result: Schema.Struct({ text: Schema.String, createdAt: IsoDateTime }),
-    execute: (threadId) => sql`
-      SELECT text, created_at AS "createdAt"
-      FROM projection_thread_messages
-      WHERE thread_id = ${threadId}
-        AND role = 'assistant'
-      ORDER BY created_at DESC, message_id DESC
-      LIMIT 1
-    `,
-  });
-
-  /** When a thread last SIGNALLED — the newest `created_at` across its
-      assistant messages and its activity rows — or none for a thread that has
-      produced neither (T3O-12, D1).
-   *
-      This is the timeout sweep's "a turn is producing output right now" life
-      sign, the one the sweep never had. A review phase writes no commits and
-      need not churn its todo list, so a healthy fifty-minute phase looked
-      identical to a dead one and was escalated while the agent kept working.
-      Activity rows are the strong half: every tool call the agent runs writes
-      one, so a phase twenty minutes deep in reads is continuously, observably
-      alive without writing a word of prose. It is provider-agnostic — every
-      adapter feeds the same projection.
-   *
-      One round trip for one scalar, deliberately NOT a second call to
-      `findLatestAssistantMessage`: that drags a whole message body back on
-      every 30-second tick and still misses the tool-only case. Both arms are
-      index-served (`idx_projection_thread_messages_thread_created`,
-      `idx_projection_thread_activities_thread_created`).
-   *
-      `created_at` and not `MAX(updated_at)` (which would advance as a streaming
-      message grows): that column is unindexed, so it would scan the thread's
-      messages, and the next row's `created_at` arrives soon enough that the
-      extra fidelity buys nothing. */
-  const findThreadLastSignalAt = SqlSchema.findOneOption({
-    Request: ThreadId,
-    Result: Schema.Struct({ at: Schema.NullOr(Schema.String) }),
-    execute: (threadId) => sql`
-      SELECT MAX(at) AS "at" FROM (
-        SELECT MAX(created_at) AS at FROM projection_thread_messages
-         WHERE thread_id = ${threadId} AND role = 'assistant'
-        UNION ALL
-        SELECT MAX(created_at) AS at FROM projection_thread_activities
-         WHERE thread_id = ${threadId}
-      )
-    `,
-  });
-
-  /** When a turn was last REQUESTED on a thread but has not begun (T3O-18) —
-      the `requested_at` of upstream's pending turn-start row, or none.
-   *
-      A turn exists as a row from the moment it is asked for, and only claims
-      its id when the provider actually starts it, so between those two moments
-      it is invisible to every "is this thread busy" signal the board had:
-      `session.activeTurnId` is null, the session is not running, and the shell
-      names the turn that just ENDED as the latest one. That window is where the
-      supervisor parked a step whose human had already sent the next message.
-   *
-      Same predicate as upstream's own `getPendingTurnStartByThreadId`, reading
-      the same row — a scalar rather than the row, because the only question is
-      when it was asked for. Kept as a board query rather than a dependency on
-      the turn repository: the board reads upstream projection tables through
-      this file already (`findThreadLastSignalAt` beside it), and a read cannot
-      drift the way a write would. */
-  const findThreadPendingTurnStartAt = SqlSchema.findOneOption({
-    Request: ThreadId,
-    Result: Schema.Struct({ requestedAt: Schema.String }),
-    execute: (threadId) => sql`
-      SELECT requested_at AS "requestedAt"
-      FROM projection_turns
-      WHERE thread_id = ${threadId}
-        AND turn_id IS NULL
-        AND state = 'pending'
-        AND pending_message_id IS NOT NULL
-        AND checkpoint_turn_count IS NULL
-      ORDER BY requested_at DESC
-      LIMIT 1
-    `,
-  });
-
   /** ONE card's live-step stop reason (t3o-30, D2) — the card detail's failure
       banner and nothing else. A one-column read rather than a second use of
       `listBoardCardStepStateRows`: the banner needs the text, never the frozen
@@ -2268,7 +2133,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     findBoardThreadTodoRow,
     deleteBoardThreadTodoRow,
     deleteBoardThreadTodoRowsForCard,
-    sweepOrphanBoardThreadTodoRows,
     listBoardCardThreadShellRows,
     listBoardCardThreadShellRowsForCard,
     findBoardCardIdForLiveThread,
@@ -2283,9 +2147,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     deleteBoardProviderLimitRow,
     listBoardProviderLimitRows,
     findBoardCardStepErrorRow,
-    findLatestAssistantMessage,
-    findThreadLastSignalAt,
-    findThreadPendingTurnStartAt,
     deleteBoardPlansForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
@@ -2295,10 +2156,22 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   };
 }
 
-export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
-  readonly name: typeof BOARD_CARDS_PROJECTOR_NAME;
-  readonly apply: (event: OrchestrationEvent) => Effect.Effect<void, ProjectionRepositoryError>;
-}> {
+/**
+ * The board's SQL projector (T3O-56).
+ *
+ * `applyBoardEvent` folds one board event into the `board_*` tables; the board
+ * engine calls it inside the transaction that appends the event. `applyThreadEvent`
+ * folds the two upstream thread events the todo cache depends on (t3o-18, t3o-26
+ * D3) and ignores every other; the read-only upstream tail calls it.
+ */
+export interface BoardSqlProjector {
+  readonly applyBoardEvent: (event: BoardEvent) => Effect.Effect<void, ProjectionRepositoryError>;
+  readonly applyThreadEvent: (
+    event: OrchestrationEvent,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+}
+
+export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProjector {
   const queries = makeBoardCardQueries(sql);
 
   const upsertCard = (card: BoardCard) =>
@@ -2663,34 +2536,32 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
       .updateBoardPlanBodyRow({ planId, body, updatedAt })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.planBody:query")));
 
-  const applyBoardCardsProjection = Effect.fn("applyBoardCardsProjection")(function* (
+  // T3o-18: two THREAD events feed board-owned tables. Nothing upstream is
+  // written — the todo cache is a projection of the thread activity that
+  // already carries the full plan (D1).
+  const applyThreadEvent = Effect.fn("applyBoardThreadEvent")(function* (
     event: OrchestrationEvent,
   ) {
-    // T3o-18: two THREAD events feed board-owned tables. Nothing upstream is
-    // written — this projector still owns only `board_*` tables — but the board's
-    // todo cache is a projection of the thread activity that already carries the
-    // full plan (D1), so it is captured where every other projection is: in the
-    // event's own transaction.
-    if (!isBoardEvent(event)) {
-      if (event.type === "thread.activity-appended") {
-        const activity = event.payload.activity;
-        if (activity.kind !== "turn.plan.updated") return;
-        const plan = readTurnPlanSteps(activity.payload);
-        if (plan === null) return;
-        yield* captureThreadTodos({
-          threadId: event.payload.threadId,
-          plan,
-          occurredAt: activity.createdAt,
-        });
-        return;
-      }
-      if (event.type === "thread.deleted") {
-        // The link is tombstoned by its own board event, but a deleted thread's
-        // cached list must go now — it can never be updated again (AC 19).
-        yield* dropThreadTodos(event.payload.threadId);
-      }
+    if (event.type === "thread.activity-appended") {
+      const activity = event.payload.activity;
+      if (activity.kind !== "turn.plan.updated") return;
+      const plan = readTurnPlanSteps(activity.payload);
+      if (plan === null) return;
+      yield* captureThreadTodos({
+        threadId: event.payload.threadId,
+        plan,
+        occurredAt: activity.createdAt,
+      });
       return;
     }
+    if (event.type === "thread.deleted") {
+      // The link is tombstoned by its own board event, but a deleted thread's
+      // cached list must go now — it can never be updated again (AC 19).
+      yield* dropThreadTodos(event.payload.threadId);
+    }
+  });
+
+  const applyBoardEvent = Effect.fn("applyBoardEvent")(function* (event: BoardEvent) {
     switch (event.type) {
       case "board.card-created": {
         const card = boardCardFromCreatedPayload(event.payload);
@@ -3195,12 +3066,7 @@ export function makeBoardProjectors(sql: SqlClient.SqlClient): ReadonlyArray<{
     }
   });
 
-  return [
-    {
-      name: BOARD_CARDS_PROJECTOR_NAME,
-      apply: applyBoardCardsProjection,
-    },
-  ];
+  return { applyBoardEvent, applyThreadEvent };
 }
 
 /** The compiled query set — built once at snapshot-query assembly and
@@ -3392,14 +3258,6 @@ export function loadBoardState(
 // off every shell payload (payload discipline). Every consumer already reads
 // through `board ?? EMPTY_BOARD_STATE` / `cards ?? []`, so absent and empty
 // are equivalent downstream.
-export function withBoardReadModel(
-  queries: BoardCardQueries,
-  readModel: Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError>,
-): Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError> {
-  return Effect.all([readModel, loadBoardState(queries)]).pipe(
-    Effect.map(([model, board]) => (board === null ? model : { ...model, board })),
-  );
-}
 
 /** Canonical shell-row order, same comparator family as `compareBoardCards`
     ((createdAt, cardId) by code units) applied to the narrow rows. */
@@ -3913,20 +3771,15 @@ export function makeBoardPlanBodyLoader(
 }
 
 /**
- * Board-only methods riding the `ProjectionSnapshotQuery` record (t3o-04).
- *
- * The upstream service's declared shape erases these keys, so consumers
- * recover them with `boardSnapshotQueryMethodsOf` (a runtime-checked,
- * board-owned accessor). This is deliberate: the snapshot-query assembly is
- * the one place the board already receives the `SqlClient`, so a board
- * reader added HERE needs no new upstream seam — while a board reader
- * anywhere else would either grow the ws layer's requirements (leaking
- * `SqlClient` into every upstream test context) or need a new service
- * layer provided in upstream composition. Growth stays inside this factory,
- * which is exactly what the t3o-02a seam comment promises ("board module
- * wraps what it needs").
+ * The board's read side (T3O-56): every board query, over the board tables and
+ * the isolated upstream reads (`boardUpstreamReads.ts`). Served by the
+ * `BoardQueries` service; this factory is what it is built from, and what a
+ * test builds directly when it wants the real SQL behind a double.
  */
-export interface BoardSnapshotQueryMethods {
+export interface BoardQueriesShape {
+  /** The board slice rehydrated from the board tables, or null for a board
+      no event has ever touched — what the board engine boots from. */
+  readonly loadBoardState: () => Effect.Effect<BoardState | null, ProjectionRepositoryError>;
   /** Full detail for `board.subscribeCard`; null when the card does not exist. */
   readonly boardCardDetail: (
     cardId: BoardCardId,
@@ -3998,6 +3851,15 @@ export interface BoardSnapshotQueryMethods {
   ) => Effect.Effect<string | null, ProjectionRepositoryError>;
   /** Boot reconciliation sweep of orphaned todo rows (t3o-18, AC 20). */
   readonly boardSweepThreadTodos: () => Effect.Effect<void, ProjectionRepositoryError>;
+  /** Every project, for the decider's existence check (T3O-56). */
+  readonly boardProjects: () => Effect.Effect<
+    ReadonlyArray<BoardProjectRef>,
+    ProjectionRepositoryError
+  >;
+  /** One thread's existence, for link/unlink (T3O-56); null when absent. */
+  readonly boardThread: (
+    threadId: ThreadId,
+  ) => Effect.Effect<BoardThreadRef | null, ProjectionRepositoryError>;
 }
 
 /** What the supervisor reads off one cached todo row (t3o-18). */
@@ -4009,72 +3871,80 @@ export interface BoardThreadTodoState {
   readonly advancedAt: string | null;
 }
 
-/**
- * Recover the board-only methods from a `ProjectionSnapshotQuery` service
- * instance. Null when the instance was built without the board factory —
- * e.g. upstream tests that mock the service — so callers degrade to a typed
- * error instead of a crash. The `boardCardDetail` presence check gates the
- * whole board method set (they are added together by the one factory).
- */
-export function boardSnapshotQueryMethodsOf(service: unknown): BoardSnapshotQueryMethods | null {
-  const candidate = service as Partial<BoardSnapshotQueryMethods>;
-  return typeof candidate.boardCardDetail === "function" &&
-    typeof candidate.boardCardActivity === "function" &&
-    typeof candidate.boardCardBrief === "function" &&
-    typeof candidate.boardPlanBody === "function" &&
-    typeof candidate.boardCardThreads === "function" &&
-    typeof candidate.boardCardIdForThread === "function" &&
-    typeof candidate.boardThreadTodo === "function" &&
-    typeof candidate.boardLatestAssistantMessage === "function" &&
-    typeof candidate.boardThreadLastSignalAt === "function" &&
-    typeof candidate.boardThreadPendingTurnStartAt === "function" &&
-    typeof candidate.boardSweepThreadTodos === "function"
-    ? {
-        boardCardDetail: candidate.boardCardDetail,
-        boardCardActivity: candidate.boardCardActivity,
-        boardCardBrief: candidate.boardCardBrief,
-        boardPlanBody: candidate.boardPlanBody,
-        boardCardThreads: candidate.boardCardThreads,
-        boardCardIdForThread: candidate.boardCardIdForThread,
-        boardThreadTodo: candidate.boardThreadTodo,
-        boardLatestAssistantMessage: candidate.boardLatestAssistantMessage,
-        boardThreadLastSignalAt: candidate.boardThreadLastSignalAt,
-        boardThreadPendingTurnStartAt: candidate.boardThreadPendingTurnStartAt,
-        boardSweepThreadTodos: candidate.boardSweepThreadTodos,
-      }
-    : null;
+export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
+  const queries = makeBoardCardQueries(sql);
+  const upstream = makeBoardUpstreamReads(sql);
+  return {
+    loadBoardState: () => loadBoardState(queries),
+    // Board-only detail reader for board.subscribeCard (t3o-04).
+    boardCardDetail: makeBoardCardDetailLoader(queries),
+    // Board-only readers for the MCP context / plan tools (t3o-08).
+    boardCardActivity: makeBoardCardActivityLoader(queries),
+    boardPlanBody: makeBoardPlanBodyLoader(queries),
+    // The brief alone, for the engine's pre-decide read (T3O-53).
+    boardCardBrief: (cardId) =>
+      queries
+        .findBoardCardBodyRow({ cardId, kind: BOARD_CARD_BRIEF_BODY_KIND })
+        .pipe(
+          Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.body })),
+          Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardBrief:query")),
+        ),
+    // Board-only readers for thread todos (t3o-18): the shell delta, the MCP
+    // context tool, the supervisor's stall signal, and the boot sweep.
+    boardCardThreads: (cardId) =>
+      queries.listBoardCardThreadShellRowsForCard(cardId).pipe(
+        Effect.map((rows) => rows.map(toBoardCardThreadShell)),
+        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardThreads:query")),
+      ),
+    boardCardIdForThread: (threadId) =>
+      queries
+        .findBoardCardIdForLiveThread(threadId)
+        .pipe(
+          Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.cardId })),
+          Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardForThread:query")),
+        ),
+    boardThreadTodo: (threadId) =>
+      queries.findBoardThreadTodoRow(threadId).pipe(
+        Effect.map(
+          Option.match({
+            onNone: () => null,
+            onSome: (row): BoardThreadTodoState => ({
+              doneCount: row.doneCount,
+              totalCount: row.totalCount,
+              advancedAt: row.advancedAt,
+            }),
+          }),
+        ),
+        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodo:query")),
+      ),
+    boardLatestAssistantMessage: upstream.latestAssistantMessage,
+    boardThreadLastSignalAt: upstream.threadLastSignalAt,
+    boardThreadPendingTurnStartAt: upstream.threadPendingTurnStartAt,
+    boardSweepThreadTodos: upstream.sweepOrphanThreadTodos,
+    boardProjects: upstream.listProjects,
+    boardThread: upstream.findThread,
+  };
 }
 
 /**
  * Board-wrapped snapshot query methods, spread over the base methods in the
- * upstream ProjectionSnapshotQuery's returned object literal. The board
- * module decides which methods it wraps; when a future spec needs to wrap
- * another one (e.g. `getSnapshot`), only this factory grows. Board-only
- * additions (`BoardSnapshotQueryMethods`) ride the same spread — TS's
- * excess-property checking does not apply to spread members, so the
- * upstream `satisfies ProjectionSnapshotQueryShape` stays intact.
+ * upstream ProjectionSnapshotQuery's returned object literal. Bounded card
+ * shells, the label and stage catalogues, provider cooldowns and the card's
+ * thread todos ride the shell snapshot until the board has its own
+ * subscription (t3o-26 D4).
  */
 export function boardSnapshotQueryMethods(
   sql: SqlClient.SqlClient,
-  base: Pick<
-    ProjectionSnapshotQueryShape,
-    "getCommandReadModel" | "getShellSnapshot" | "getArchivedShellSnapshot"
-  >,
+  base: Pick<ProjectionSnapshotQueryShape, "getShellSnapshot" | "getArchivedShellSnapshot">,
   // Typed Partial deliberately: the spread in the upstream object literal sits
   // after the base methods, and TS rejects a spread that *definitely* rewrites
-  // an earlier key (TS2783). Optional keys express "board may override any
-  // subset", so wrapping more methods later needs no seam change.
-): Partial<ProjectionSnapshotQueryShape> & BoardSnapshotQueryMethods {
+  // an earlier key (TS2783).
+): Partial<ProjectionSnapshotQueryShape> {
   // Compiled once here — every reader below closes over the same query set.
   const queries = makeBoardCardQueries(sql);
-  // Failure isolation for the PRESENTATION overrides: these wrap queries every
-  // consumer runs (engine bootstrap, subscribeShell, HTTP snapshot), so a
-  // board SQL failure must not take the Threads view down for thread-only
-  // users — log loudly and serve the unenriched base snapshot instead. The
-  // command read model is deliberately NOT isolated: the decider decides
-  // against it, and silently substituting a board-less model would let
-  // commands validate against an empty board (e.g. re-minting an existing
-  // card) — a correctness read fails loudly.
+  // Failure isolation: these wrap queries every consumer runs (subscribeShell,
+  // HTTP snapshot), so a board SQL failure must not take the Threads view down
+  // for thread-only users — log loudly and serve the unenriched base snapshot.
   const isolated = <A, E>(
     label: string,
     enriched: Effect.Effect<A, E>,
@@ -4088,8 +3958,6 @@ export function boardSnapshotQueryMethods(
       ),
     );
   return {
-    // Board cards join the engine's command read model (D8).
-    getCommandReadModel: () => withBoardReadModel(queries, base.getCommandReadModel()),
     // Bounded card shells + the label catalogue ride the shell snapshot
     // (D2/D7; catalogue once, t3o-06a).
     // Options pass through: upstream's background sweeps read only unsettled
@@ -4132,76 +4000,5 @@ export function boardSnapshotQueryMethods(
         ),
         base.getArchivedShellSnapshot(),
       ),
-    // Board-only detail reader for board.subscribeCard (t3o-04).
-    boardCardDetail: makeBoardCardDetailLoader(queries),
-    // Board-only readers for the MCP context / plan tools (t3o-08).
-    boardCardActivity: makeBoardCardActivityLoader(queries),
-    boardPlanBody: makeBoardPlanBodyLoader(queries),
-    // The brief alone, for the engine's pre-decide read (T3O-53).
-    boardCardBrief: (cardId) =>
-      queries
-        .findBoardCardBodyRow({ cardId, kind: BOARD_CARD_BRIEF_BODY_KIND })
-        .pipe(
-          Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.body })),
-          Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardBrief:query")),
-        ),
-    // Board-only readers for thread todos (t3o-18): the shell delta, the MCP
-    // context tool, the supervisor's stall signal, and the boot sweep.
-    boardCardThreads: (cardId) =>
-      queries.listBoardCardThreadShellRowsForCard(cardId).pipe(
-        Effect.map((rows) => rows.map(toBoardCardThreadShell)),
-        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardThreads:query")),
-      ),
-    boardCardIdForThread: (threadId) =>
-      queries
-        .findBoardCardIdForLiveThread(threadId)
-        .pipe(
-          Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.cardId })),
-          Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardForThread:query")),
-        ),
-    boardThreadTodo: (threadId) =>
-      queries.findBoardThreadTodoRow(threadId).pipe(
-        Effect.map(
-          Option.match({
-            onNone: () => null,
-            onSome: (row): BoardThreadTodoState => ({
-              doneCount: row.doneCount,
-              totalCount: row.totalCount,
-              advancedAt: row.advancedAt,
-            }),
-          }),
-        ),
-        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodo:query")),
-      ),
-    boardLatestAssistantMessage: (threadId) =>
-      queries.findLatestAssistantMessage(threadId).pipe(
-        Effect.map(
-          Option.match({
-            onNone: () => null,
-            onSome: (row) => ({ text: row.text, createdAt: row.createdAt }),
-          }),
-        ),
-        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.latestAssistantMessage:query")),
-      ),
-    boardThreadLastSignalAt: (threadId) =>
-      queries
-        .findThreadLastSignalAt(threadId)
-        .pipe(
-          Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.at })),
-          Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadLastSignal:query")),
-        ),
-    boardThreadPendingTurnStartAt: (threadId) =>
-      queries
-        .findThreadPendingTurnStartAt(threadId)
-        .pipe(
-          Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.requestedAt })),
-          Effect.mapError(
-            toPersistenceSqlError("BoardCardsProjection.threadPendingTurnStart:query"),
-          ),
-        ),
-    boardSweepThreadTodos: () =>
-      queries
-        .sweepOrphanBoardThreadTodoRows()
-        .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodoSweep:query"))),
   };
 }

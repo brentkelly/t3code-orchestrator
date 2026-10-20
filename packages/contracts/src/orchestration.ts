@@ -29,7 +29,6 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   BOARD_CLIENT_COMMANDS,
   BOARD_EVENT_TYPES,
-  BOARD_INTERNAL_COMMANDS,
   BOARD_SHELL_STREAM_EVENTS,
   BoardCardId,
   BoardCardShell,
@@ -1499,8 +1498,6 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadConversationRevertCommand,
   ThreadSessionStopCommand,
-  // T3o: board commands ride orchestration.dispatchCommand (D2).
-  ...BOARD_CLIENT_COMMANDS,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -1535,7 +1532,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadConversationRevertCommand,
   ThreadSessionStopCommand,
-  // T3o: board commands ride orchestration.dispatchCommand (D2).
+  // T3o: board commands ride orchestration.dispatchCommand until the board has its
+  // own dispatch RPC; the server routes them to the board engine (T3O-56).
   ...BOARD_CLIENT_COMMANDS,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
@@ -1727,10 +1725,6 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTitleRefineCommand,
   ThreadPullRequestSyncCommand,
   ThreadPullRequestLinkSyncCommand,
-  // T3o: server-internal board commands (worktree lifecycle, t3o-09) join the
-  // internal command union — dispatched by the board's own services, never by
-  // a client.
-  ...BOARD_INTERNAL_COMMANDS,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 

@@ -45,8 +45,6 @@ import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
-// T3o-26: board projector watermarks live in boards.projection_state.
-import { isBoardProjectorName } from "../../board/boardProjectionState.ts";
 import { ServerConfig } from "../../config.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
@@ -101,9 +99,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-curs
         });
 
         yield* projectionPipeline.projectEvent(event).pipe(Effect.withTracer(counter.tracer));
-        // T3o: three, not upstream's two — board cursors are a second batch, in
-        // `boards.projection_state` beside the rows they describe (t3o-26).
-        assert.strictEqual(counter.count(), 3);
+        assert.strictEqual(counter.count(), 2);
         assert.deepEqual(
           yield* projectionState.listAll(),
           Object.values(ORCHESTRATION_PROJECTOR_NAMES)
@@ -467,19 +463,14 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       `;
       assert.deepEqual(messageRows, [{ messageId: "message-1", text: "hello" }]);
 
-      // T3o-26: board projector watermarks live in boards.projection_state so a
-      // board projector's writes and its watermark commit inside one database.
-      // The assertion is still "every registered projector advanced", so it reads
-      // the same union the repository does.
       const stateRows = yield* sql<{
         readonly projector: string;
         readonly lastAppliedSequence: number;
       }>`
-        SELECT projector, last_applied_sequence AS "lastAppliedSequence"
-        FROM main.projection_state
-        UNION ALL
-        SELECT projector, last_applied_sequence AS "lastAppliedSequence"
-        FROM boards.projection_state
+        SELECT
+          projector,
+          last_applied_sequence AS "lastAppliedSequence"
+        FROM projection_state
         ORDER BY projector ASC
       `;
       assert.equal(stateRows.length, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length + 1);
@@ -2220,19 +2211,6 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             projector === ORCHESTRATION_PROJECTOR_NAMES.projects
               ? sequenceBeforeBacklog
               : lastSequence;
-          // T3o-26: a board projector's watermark is read from and committed to
-          // boards.projection_state, so seeding it into main would leave a row
-          // there that nothing ever advances.
-          if (isBoardProjectorName(projector)) {
-            return sql`
-              INSERT INTO boards.projection_state (projector, last_applied_sequence, updated_at)
-              VALUES (${projector}, ${lastAppliedSequence}, ${now})
-              ON CONFLICT (projector)
-              DO UPDATE SET
-                last_applied_sequence = excluded.last_applied_sequence,
-                updated_at = excluded.updated_at
-            `;
-          }
           return sql`
             INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
             VALUES (${projector}, ${lastAppliedSequence}, ${now})
@@ -2418,8 +2396,6 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         },
       ]);
 
-      // T3o-26: every registered projector advanced — read the same
-      // main ∪ boards union the repository does.
       const stateRows = yield* sql<{
         readonly projector: string;
         readonly lastAppliedSequence: number;
@@ -2427,12 +2403,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         SELECT
           projector,
           last_applied_sequence AS "lastAppliedSequence"
-        FROM main.projection_state
-        UNION ALL
-        SELECT
-          projector,
-          last_applied_sequence AS "lastAppliedSequence"
-        FROM boards.projection_state
+        FROM projection_state
       `;
       const maxSequenceRows = yield* sql<{ readonly maxSequence: number }>`
         SELECT MAX(sequence) AS "maxSequence" FROM orchestration_events
