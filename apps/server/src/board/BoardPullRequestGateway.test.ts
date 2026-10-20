@@ -375,7 +375,7 @@ describe("BoardPullRequestGateway.merge", () => {
       );
 
       assert.strictEqual(error.refusal, "unavailable");
-      assert.match(error.detail, /not authenticated/iu);
+      assert.match(error.detail, /no working credential/iu);
     }).pipe(Effect.provide(layer));
   });
 

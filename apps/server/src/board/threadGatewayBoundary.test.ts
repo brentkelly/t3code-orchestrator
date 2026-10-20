@@ -8,11 +8,11 @@
  * something does:
  *
  * - no import of upstream orchestration, persistence or provider code outside
- *   `ThreadGatewayV1.ts`;
+ *   `ThreadGatewayV2.ts`;
  * - no SQL against a table the board does not own.
  *
- * Tests and testkits are exempt: a suite that builds the real v1 stack has to
- * import it.
+ * Tests and testkits are exempt: a suite that builds the real engine stack has
+ * to import it.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -22,8 +22,8 @@ import { assert, describe, it } from "@effect/vitest";
 const SERVER_SRC = NodePath.resolve(import.meta.dirname, "..");
 const ROOTS = ["board", NodePath.join("mcp", "toolkits", "board")];
 
-/** The gateway implementation itself — the one place v1 lives. */
-const GATEWAY_IMPLEMENTATION = NodePath.join("board", "ThreadGatewayV1.ts");
+/** The gateway implementation itself — the one place the thread engine lives. */
+const GATEWAY_IMPLEMENTATION = NodePath.join("board", "ThreadGatewayV2.ts");
 
 /**
  * Upstream modules board code may still import, with the reason. Each is an
@@ -31,6 +31,10 @@ const GATEWAY_IMPLEMENTATION = NodePath.join("board", "ThreadGatewayV1.ts");
  */
 const ALLOWED_UPSTREAM_IMPORTS = new Map([
   ["persistence/Errors.ts", "the SQL error type the board's own tables fail with"],
+  [
+    "orchestration-v2/ThreadManagementService.ts",
+    "named in the board MCP tools' dependencies, which McpToolAccess requires of every tool",
+  ],
 ]);
 
 /**
@@ -41,10 +45,6 @@ const ALLOWED_UPSTREAM_SQL = new Map([
   [
     NodePath.join("board", "boardDatabase.ts"),
     "moves pre-t3o-26 board tables and the board ledger out of upstream's file",
-  ],
-  [
-    NodePath.join("board", "upstreamLegibility.ts"),
-    "the instrument that checks upstream's file holds nothing upstream cannot read",
   ],
   [NodePath.join("board", "migrations"), "one-time copies of legacy board rows out of main"],
 ]);
@@ -74,7 +74,7 @@ const upstreamImports = (file: string): ReadonlyArray<string> => {
       SERVER_SRC,
       NodePath.resolve(NodePath.dirname(NodePath.join(SERVER_SRC, file)), specifier),
     );
-    if (/^(orchestration|persistence|provider)[\\/]/.test(target)) found.push(target);
+    if (/^(orchestration(-v2)?|persistence|provider)[\\/]/.test(target)) found.push(target);
   }
   return found;
 };
@@ -117,6 +117,11 @@ describe("the thread gateway boundary", () => {
   it("catches an offender — the instrument is not blind", () => {
     const gatewayImports = upstreamImports(GATEWAY_IMPLEMENTATION);
     assert.isTrue(gatewayImports.some((target) => target.startsWith("orchestration")));
-    assert.isAbove([...code(GATEWAY_IMPLEMENTATION).matchAll(UPSTREAM_SQL)].length, 0);
+    // The v2 gateway reads through upstream's services and runs no SQL of its own,
+    // so the SQL instrument is proved on a statement that names upstream's table.
+    assert.isAbove(
+      [..."SELECT * FROM orchestration_v2_projection_threads".matchAll(UPSTREAM_SQL)].length,
+      0,
+    );
   });
 });
