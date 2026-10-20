@@ -21,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import { it as effectIt } from "@effect/vitest";
 import { assert, describe, it } from "vite-plus/test";
 
 import { EventSinkStreamError } from "../orchestration-v2/EventSink.ts";
@@ -286,7 +287,7 @@ describe("boardThreadStateFromShell", () => {
 });
 
 describe("followStoredEvents", () => {
-  it("resubscribes after the last delivered event when a read fails", async () => {
+  effectIt.effect("resubscribes after the last delivered event when a read fails", () => {
     const event = (n: number) => ({ sequence: n }) as unknown as OrchestrationV2StoredEvent;
     const subscribedAfter: Array<number | undefined> = [];
     const sink = {
@@ -300,13 +301,13 @@ describe("followStoredEvents", () => {
           : Stream.make(event(13));
       },
     };
-    const sequences = await Effect.runPromise(
-      followStoredEvents(sink, Schedule.recurs(1)).pipe(
-        Stream.map((stored) => stored.sequence),
-        Stream.runCollect,
-      ),
+    return followStoredEvents(sink, Schedule.recurs(1)).pipe(
+      Stream.map((stored) => stored.sequence),
+      Stream.runCollect,
+      Effect.map((sequences) => {
+        assert.deepStrictEqual(Array.from(sequences), [11, 12, 13]);
+        assert.deepStrictEqual(subscribedAfter, [10, 12]);
+      }),
     );
-    assert.deepStrictEqual(Array.from(sequences), [11, 12, 13]);
-    assert.deepStrictEqual(subscribedAfter, [10, 12]);
   });
 });
