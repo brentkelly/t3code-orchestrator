@@ -26,7 +26,7 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 // T3o: per-project GitHub token overrides read `<stateDir>/gitenv` (t3o-34).
-import { initGitenv } from "../sourceControl/gitenv.ts";
+import { initGitenv } from "@t3tools/shared/gitenv";
 
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),

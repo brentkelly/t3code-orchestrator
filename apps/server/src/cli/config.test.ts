@@ -22,7 +22,7 @@ import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
-import { gitenvTokenEnv, resetGitenvForTesting } from "../sourceControl/gitenv.ts";
+import { gitenvTokenEnv, resetGitenvForTesting } from "@t3tools/shared/gitenv";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });

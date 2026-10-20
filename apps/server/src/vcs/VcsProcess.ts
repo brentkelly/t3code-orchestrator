@@ -20,7 +20,7 @@ import {
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
 // T3o: per-project GitHub token overrides for `gh` subprocesses (t3o-34).
-import { scrubGitenvTokens, withGitenvTokenEnv } from "../sourceControl/gitenv.ts";
+import { scrubGitenvTokens, withGitenvTokenEnv } from "@t3tools/shared/gitenv";
 
 export interface VcsProcessInput {
   readonly operation: string;

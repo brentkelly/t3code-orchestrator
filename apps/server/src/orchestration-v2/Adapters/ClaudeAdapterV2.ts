@@ -1,3 +1,5 @@
+// T3o: per-project GitHub token overrides for agent sessions (t3o-34).
+import { withGitenvTokenEnv } from "@t3tools/shared/gitenv";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
   dynamicToolTitle,
@@ -1183,7 +1185,10 @@ export function makeClaudeQueryOptions(input: {
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
-    ...(input.environment === undefined ? {} : { env: input.environment }),
+    // T3o: agent `gh` calls act as the matched project's identity (t3o-34).
+    ...(input.environment === undefined
+      ? {}
+      : { env: withGitenvTokenEnv(input.environment, input.cwd ?? undefined) ?? input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
       type: "preset" as const,

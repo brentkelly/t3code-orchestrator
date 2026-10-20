@@ -18,7 +18,7 @@ import * as Schema from "effect/Schema";
 
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 // T3o: per-project GitHub token overrides read `<stateDir>/gitenv` (t3o-34).
-import { initGitenv } from "./sourceControl/gitenv.ts";
+import { initGitenv } from "@t3tools/shared/gitenv";
 import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import packageJson from "../package.json" with { type: "json" };

@@ -45,7 +45,7 @@ import {
 } from "../git/remoteRefs.ts";
 import * as ServerConfig from "../config.ts";
 // T3o: per-project GitHub token overrides for git subprocesses (t3o-34).
-import { gitenvTokenEnv } from "../sourceControl/gitenv.ts";
+import { gitenvTokenEnv } from "@t3tools/shared/gitenv";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);

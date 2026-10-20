@@ -27,6 +27,8 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+// T3o: per-project GitHub token overrides for agent sessions (t3o-34).
+import { withGitenvTokenEnv } from "@t3tools/shared/gitenv";
 import { AgentScope, AgentScopeThreadId, RAISE_OOM_SCORE_LINE } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -1601,11 +1603,13 @@ export const make = (
             ELECTRON_RUN_AS_NODE: "1",
             T3_ACP_CGROUP_WRAPPER: "1",
           };
+    // T3o: agent `gh` calls act as the matched project's identity (t3o-34).
+    const tokenEnvironment = withGitenvTokenEnv(spawnEnvironment, options.spawn.cwd ?? options.cwd);
     const child = yield* spawner
       .spawn(
         ChildProcess.make(containedSpawnCommand.command, containedSpawnCommand.args, {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
-          ...(spawnEnvironment ? { env: spawnEnvironment } : {}),
+          ...(tokenEnvironment ? { env: tokenEnvironment } : {}),
           extendEnv: options.spawn.extendEnv ?? true,
           ...(options.ownDetachedProcessGroup === undefined
             ? {}

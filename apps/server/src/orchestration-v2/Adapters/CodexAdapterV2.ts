@@ -1,3 +1,5 @@
+// T3o: per-project GitHub token overrides for agent sessions (t3o-34).
+import { withGitenvTokenEnv } from "@t3tools/shared/gitenv";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -1551,7 +1553,8 @@ export const layerAppServerClientFactory: Layer.Layer<
             args: codexAppServerArgs(
               resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
             ),
-            env: environment,
+            // T3o: agent `gh` calls act as the matched project's identity (t3o-34).
+            env: withGitenvTokenEnv(environment, input.runtimePolicy.cwd ?? undefined) ?? environment,
             threadId: input.threadId,
           }).pipe(Effect.provideService(AgentScope, agentScope));
           const handle = yield* spawner.spawn(command).pipe(

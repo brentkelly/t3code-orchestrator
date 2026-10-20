@@ -11,6 +11,10 @@
       "types": "./src/authScopeOptions.ts",
       "import": "./src/authScopeOptions.ts"
     },
+    "./gitenv": {
+      "types": "./src/gitenv.ts",
+      "import": "./src/gitenv.ts"
+    },
     "./boardThreadState": {
       "types": "./src/boardThreadState.ts",
       "import": "./src/boardThreadState.ts"
