@@ -31,7 +31,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Duration from "effect/Duration";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -278,6 +280,48 @@ export const makeSignalReader = () => {
     }
   };
 };
+
+const FOLLOW_RETRY = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+);
+
+/**
+ * The engine's stored events from now on, for as long as the subscriber runs.
+ * A failed read (the log is read from SQLite during catch-up) resubscribes
+ * after the last event delivered rather than ending the stream, so a
+ * transient error neither drops nor repeats a signal.
+ */
+export const followStoredEvents = (
+  sink: Pick<EventSink.EventSinkV2["Service"], "stream" | "latestSequence">,
+  retrySchedule: Schedule.Schedule<unknown, unknown> = FOLLOW_RETRY,
+): Stream.Stream<OrchestrationV2StoredEvent> =>
+  Stream.suspend(() => {
+    let cursor: number | null = null;
+    const after = Effect.suspend(() =>
+      cursor === null ? sink.latestSequence() : Effect.succeed(cursor),
+    );
+    return Stream.unwrap(
+      Effect.map(after, (sequence) => {
+        cursor = sequence;
+        return sink.stream({ afterSequence: sequence });
+      }),
+    ).pipe(
+      Stream.tap((stored) =>
+        Effect.sync(() => {
+          cursor = stored.sequence;
+        }),
+      ),
+      Stream.tapError((error) =>
+        Effect.logWarning("board thread gateway: event stream failed; resubscribing", error),
+      ),
+      Stream.retry(retrySchedule),
+      Stream.catchCause((cause) =>
+        Stream.fromEffectDrain(Effect.logError("board thread gateway: signal stream ended", cause)),
+      ),
+    );
+  });
 
 const toTodoLogEntry = (stored: OrchestrationV2StoredEvent): TodoLogEntry => ({
   cursor: stored.sequence,
@@ -659,19 +703,13 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
         Effect.mapError(readError("project")),
       ),
 
-    observe: Stream.unwrap(
-      Effect.map(eventSink.latestSequence(), (head) => {
-        const read = makeSignalReader();
-        return eventSink.stream({ afterSequence: head }).pipe(
-          Stream.map(read),
-          Stream.filter((signal): signal is ThreadSignal => signal !== null),
-        );
-      }),
-    ).pipe(
-      Stream.catchCause((cause) =>
-        Stream.fromEffectDrain(Effect.logError("board thread gateway: signal stream ended", cause)),
-      ),
-    ),
+    observe: Stream.suspend(() => {
+      const read = makeSignalReader();
+      return followStoredEvents(eventSink).pipe(
+        Stream.map(read),
+        Stream.filter((signal): signal is ThreadSignal => signal !== null),
+      );
+    }),
 
     todoLogHead: eventSink.latestSequence().pipe(Effect.orElseSucceed(() => 0)),
     readTodoLog: (after, upTo) =>

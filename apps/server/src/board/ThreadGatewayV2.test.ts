@@ -18,9 +18,17 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import { assert, describe, it } from "vite-plus/test";
 
-import { boardThreadStateFromShell, makeSignalReader } from "./ThreadGatewayV2.ts";
+import { EventSinkStreamError } from "../orchestration-v2/EventSink.ts";
+import {
+  boardThreadStateFromShell,
+  followStoredEvents,
+  makeSignalReader,
+} from "./ThreadGatewayV2.ts";
 
 const threadId = ThreadId.make("thread-1");
 const t0 = DateTime.makeUnsafe("2026-10-20T00:00:00.000Z");
@@ -274,5 +282,31 @@ describe("boardThreadStateFromShell", () => {
       nowMs,
     );
     assert.include(asking, { alive: true, awaitingUserInput: true, autoSettleCandidate: false });
+  });
+});
+
+describe("followStoredEvents", () => {
+  it("resubscribes after the last delivered event when a read fails", async () => {
+    const event = (n: number) => ({ sequence: n }) as unknown as OrchestrationV2StoredEvent;
+    const subscribedAfter: Array<number | undefined> = [];
+    const sink = {
+      latestSequence: () => Effect.succeed(10),
+      stream: (input?: { readonly afterSequence?: number }) => {
+        subscribedAfter.push(input?.afterSequence);
+        return subscribedAfter.length === 1
+          ? Stream.make(event(11), event(12)).pipe(
+              Stream.concat(Stream.fail(new EventSinkStreamError({ afterSequence: 12 }))),
+            )
+          : Stream.make(event(13));
+      },
+    };
+    const sequences = await Effect.runPromise(
+      followStoredEvents(sink, Schedule.recurs(1)).pipe(
+        Stream.map((stored) => stored.sequence),
+        Stream.runCollect,
+      ),
+    );
+    assert.deepStrictEqual(Array.from(sequences), [11, 12, 13]);
+    assert.deepStrictEqual(subscribedAfter, [10, 12]);
   });
 });
