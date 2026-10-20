@@ -249,6 +249,7 @@ const THREAD_SIGNAL_TYPES: ReadonlySet<string> = new Set<ThreadSignal["type"]>([
   "turn-ended",
   "turn-start-failed",
   "turn-requested",
+  "limit-resumed",
   "interrupt-requested",
   "approval-responded",
   "input-requested",

@@ -205,6 +205,8 @@ export interface BoardTodoItem {
  * - `turn-start-failed` — a requested turn never started (t3o-30, D2).
  * - `turn-requested` — someone asked for a turn. `byBoard` is the board's own
  *   origin rule (`server:board-…` command ids): false is a human.
+ * - `limit-resumed` — the engine's usage-limit recovery resumed the thread
+ *   once its window reopened. Not a human, and not the board.
  * - `interrupt-requested` — someone pressed Stop.
  * - `approval-responded` — a human answered a permission prompt.
  * - `input-requested` / `input-resolved` — a structured question raised, and
@@ -228,6 +230,7 @@ export type ThreadSignal =
       readonly byBoard: boolean;
       readonly at: string;
     }
+  | { readonly type: "limit-resumed"; readonly threadId: ThreadId }
   | { readonly type: "interrupt-requested"; readonly threadId: ThreadId }
   | { readonly type: "approval-responded"; readonly threadId: ThreadId }
   | { readonly type: "input-requested"; readonly threadId: ThreadId }

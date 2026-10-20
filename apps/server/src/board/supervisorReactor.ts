@@ -3624,7 +3624,7 @@ const make = Effect.gen(function* () {
    * The usage-limit parks the BOARD wakes (T3O-59). A parked step whose thread
    * has v2's limit recovery armed with auto-resume is left to the engine: v2's
    * recovery worker resumes it once the window reopens, and that resume
-   * reaches the board as a turn request that un-parks the step
+   * reaches the board as a `limit-resumed` signal that un-parks the step
    * (`resumeParkedStep`). Waking it here as well would resume the thread twice.
    * A limit the provider named no reset time for is never armed, so the board's
    * own probe and resume still cover it.
@@ -8189,11 +8189,20 @@ const make = Effect.gen(function* () {
    */
   const resumeParkedStep = Effect.fn("board-supervisor-resumeParkedStep")(function* (
     threadId: ThreadId,
+    options: { readonly usageLimitOnly?: boolean } = {},
   ) {
     const board = yield* readBoard;
     const found = stepThreadCard(board, threadId);
     if (found === null) return false;
     if (!isBoardParkedStepStatus(found.state.status)) return false;
+    // The engine's limit resume speaks only for the limit it was holding: a
+    // step a human paused, or one waiting on a question, stays parked.
+    if (
+      options.usageLimitOnly === true &&
+      !(found.state.status === "stalled" && found.state.stalledReason === "usage-limit")
+    ) {
+      return false;
+    }
     if (found.card.archivedAt !== null) return false;
     // OBSERVED, not fire-and-forget: a refused resume must never restore a slot
     // that nothing will release — the same discipline `admitBuildCandidate`
@@ -8738,6 +8747,11 @@ const make = Effect.gen(function* () {
         // A human restarting a stalled step by hand (t3o-17, D3) — the board's own
         // turns land here too and no-op, since only a `stalled` step resumes.
         return handleTurnStartRequested(signal);
+      case "limit-resumed":
+        // v2's usage-limit recovery resumed a thread the board left to it
+        // (`boardWokenLimitParks`): wake the step it parked, and nothing else.
+        // Not a human turn, so it buys no free ending.
+        return resumeParkedStep(signal.threadId, { usageLimitOnly: true }).pipe(Effect.asVoid);
       case "interrupt-requested":
         // A human pressing Stop on a board-run step (T3O-23). The board's own
         // interrupts land here too and are filtered inside, off the sets that

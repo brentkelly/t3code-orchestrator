@@ -114,10 +114,7 @@ const loggedSince = (after: number) =>
 
 const signalsOf = (events: ReadonlyArray<OrchestrationV2StoredEvent>) => {
   const read = makeSignalReader();
-  return events.flatMap((event) => {
-    const signal = read(event);
-    return signal === null ? [] : [signal];
-  });
+  return events.flatMap((event) => read(event));
 };
 
 const head = Effect.flatMap(boardStackEngine, (engine) => engine.latestSequence);
@@ -289,6 +286,28 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
           threads.interrupt({ commandId: boardCommandId("interrupt-paused"), threadId: idle }),
         );
         assert.strictEqual(refusalTag(exit), "ThreadCommandRefusedError");
+      }),
+    );
+
+    it.effect("a human's Stop before the run started reads as a Stop, not a bare turn end", () =>
+      Effect.gen(function* () {
+        const threadId = yield* spawn("human-stop");
+        const threads = yield* ThreadGateway;
+        const engine = yield* boardStackEngine;
+        const runId = (yield* threads.threadState(threadId))!.activeTurnRef;
+        assert.isNotNull(runId);
+        const before = yield* head;
+        yield* engine.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("5d0c4f7a-2b1e-4c3d-8e9f-0a1b2c3d4e5f"),
+          threadId,
+          runId: RunId.make(runId!),
+        });
+        const types = signalsOf(yield* loggedSince(before)).map((signal) => signal.type);
+        assert.deepStrictEqual(
+          types.filter((type) => type === "interrupt-requested" || type === "turn-ended"),
+          ["interrupt-requested", "turn-ended"],
+        );
       }),
     );
 

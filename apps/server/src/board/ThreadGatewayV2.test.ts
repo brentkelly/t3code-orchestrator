@@ -25,6 +25,7 @@ import { it as effectIt } from "@effect/vitest";
 import { assert, describe, it } from "vite-plus/test";
 
 import { EventSinkStreamError } from "../orchestration-v2/EventSink.ts";
+import type { ThreadSignal } from "./ThreadGateway.ts";
 import {
   boardThreadStateFromShell,
   followStoredEvents,
@@ -46,29 +47,69 @@ const stored = (
     event: { type, id: EventId.make(`evt-${sequence}`), threadId, occurredAt: t0, payload },
   }) as unknown as OrchestrationV2StoredEvent;
 
-const run = (status: string, startedAt: DateTime.Utc | null = t0) => ({
+const run = (
+  status: string,
+  startedAt: DateTime.Utc | null = t0,
+  overrides: Record<string, unknown> = {},
+) => ({
   id: RunId.make("run-1"),
   threadId,
   status,
   requestedAt: t0,
   startedAt,
+  ...overrides,
 });
+
+/** A reader for events that carry at most one signal each. */
+const singleSignalReader = () => {
+  const read = makeSignalReader();
+  return (event: OrchestrationV2StoredEvent): ThreadSignal | null => {
+    const signals = read(event);
+    assert.isAtMost(signals.length, 1, JSON.stringify(signals));
+    return signals[0] ?? null;
+  };
+};
 
 describe("makeSignalReader", () => {
   it("tells a board turn from a human's by the command that asked for it", () => {
-    const read = makeSignalReader();
+    const read = singleSignalReader();
     assert.deepStrictEqual(
       read(stored("run.created", run("starting", null), "server:board-recover-turn:abc")),
       { type: "turn-requested", threadId, byBoard: true, at: "2026-10-20T00:00:00.000Z" },
     );
-    // A usage-limit resume is the engine acting for the user, not the board.
-    assert.include(read(stored("run.created", run("starting", null), "limit-resume:x")), {
-      byBoard: false,
-    });
+    assert.include(
+      read(stored("run.created", run("starting", null), "8c7f0f0e-6d2b-4a5e-9a1d-0f2b3c4d5e6f")),
+      { type: "turn-requested", byBoard: false },
+    );
+  });
+
+  it("reads the engine's limit resume as its own signal, not a human turn", () => {
+    assert.deepStrictEqual(
+      singleSignalReader()(stored("run.created", run("starting", null), "limit-resume:x:req")),
+      { type: "limit-resumed", threadId },
+    );
+  });
+
+  it("raises nothing for a run the engine started to carry on its own work", () => {
+    const read = singleSignalReader();
+    const wakes: ReadonlyArray<readonly [Record<string, unknown>, string | null]> = [
+      [{ workStartedAt: t0 }, "command:mailbox-accepted:effect-1"],
+      [{ restartContinuationOfRunId: RunId.make("run-0") }, "command:restart-continuation:run-0"],
+      [{ delegatedTaskId: "node-1" }, null],
+      [{}, "provider-continuation:msg-1"],
+      [{}, "server:pr-watch:thread-1:uuid"],
+      [{}, "command:steer-follow-up:effect-2"],
+    ];
+    for (const [overrides, commandId] of wakes) {
+      assert.isNull(
+        read(stored("run.created", run("starting", null, overrides), commandId)),
+        JSON.stringify([overrides, commandId]),
+      );
+    }
   });
 
   it("ends a turn once, at the provider's finish, not again at its checkpoint", () => {
-    const read = makeSignalReader();
+    const read = singleSignalReader();
     assert.isNull(read(stored("run.updated", run("running"))));
     assert.deepStrictEqual(read(stored("run.updated", run("waiting"))), {
       type: "turn-ended",
@@ -87,13 +128,13 @@ describe("makeSignalReader", () => {
       ["cancelled", "cancelled"],
       ["rolled_back", "cancelled"],
     ] as const) {
-      const signal = makeSignalReader()(stored("run.updated", run(status)));
+      const signal = singleSignalReader()(stored("run.updated", run(status)));
       assert.include(signal, { type: "turn-ended", outcome });
     }
   });
 
   it("reads a run that failed before it started as a turn that never began", () => {
-    assert.deepStrictEqual(makeSignalReader()(stored("run.updated", run("failed", null))), {
+    assert.deepStrictEqual(singleSignalReader()(stored("run.updated", run("failed", null))), {
       type: "turn-start-failed",
       threadId,
       detail: "The turn failed before it started.",
@@ -101,7 +142,7 @@ describe("makeSignalReader", () => {
   });
 
   it("raises a question once, and separates an answer from a cancellation", () => {
-    const read = makeSignalReader();
+    const read = singleSignalReader();
     const request = (id: string, status: string, answers?: object) => ({
       id: RuntimeRequestId.make(id),
       threadId,
@@ -126,7 +167,7 @@ describe("makeSignalReader", () => {
   });
 
   it("reads an answered permission prompt, and ignores an auth refresh", () => {
-    const read = makeSignalReader();
+    const read = singleSignalReader();
     const request = (kind: string, status: string) => ({
       id: RuntimeRequestId.make(`${kind}-${status}`),
       threadId,
@@ -142,8 +183,8 @@ describe("makeSignalReader", () => {
   });
 
   it("reads a Stop once, from the interrupt request the engine records", () => {
-    const read = makeSignalReader();
-    const item = { id: TurnItemId.make("item-1"), type: "run_interrupt_request" };
+    const read = singleSignalReader();
+    const item = { id: TurnItemId.make("item-1"), runId: null, type: "run_interrupt_request" };
     assert.deepStrictEqual(read(stored("turn-item.updated", item)), {
       type: "interrupt-requested",
       threadId,
@@ -156,8 +197,47 @@ describe("makeSignalReader", () => {
     );
   });
 
+  it("reads a human's Stop before the run started as a Stop, then the turn's end", () => {
+    const signals = makeSignalReader()(
+      stored("run.updated", run("interrupted", null), "8c7f0f0e-6d2b-4a5e-9a1d-0f2b3c4d5e6f"),
+    );
+    assert.deepStrictEqual(signals, [
+      { type: "interrupt-requested", threadId },
+      {
+        type: "turn-ended",
+        threadId,
+        turnRef: "run-1",
+        outcome: "interrupted",
+        errorMessage: null,
+      },
+    ]);
+    // The board's own interrupt is already tracked by the board.
+    assert.deepStrictEqual(
+      makeSignalReader()(
+        stored("run.updated", run("interrupted", null), "server:board-interrupt-paused:abc"),
+      ).map((signal) => signal.type),
+      ["turn-ended"],
+    );
+  });
+
+  it("does not repeat a Stop the engine already recorded as an interrupt request", () => {
+    const read = makeSignalReader();
+    const item = {
+      id: TurnItemId.make("item-1"),
+      runId: RunId.make("run-1"),
+      type: "run_interrupt_request",
+    };
+    assert.lengthOf(read(stored("turn-item.updated", item)), 1);
+    assert.deepStrictEqual(
+      read(
+        stored("run.updated", run("cancelled", null), "8c7f0f0e-6d2b-4a5e-9a1d-0f2b3c4d5e6f"),
+      ).map((signal) => signal.type),
+      ["turn-ended"],
+    );
+  });
+
   it("reads a session coming up", () => {
-    assert.deepStrictEqual(makeSignalReader()(stored("provider-session.attached", {})), {
+    assert.deepStrictEqual(singleSignalReader()(stored("provider-session.attached", {})), {
       type: "session-started",
       threadId,
     });

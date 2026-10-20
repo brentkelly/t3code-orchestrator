@@ -944,6 +944,55 @@ it.effect("a card parked on an unanswered question is never resumed by a lifting
   ),
 );
 
+it.effect(
+  "the engine's limit resume wakes only the usage-limit park, and buys no free ending",
+  () =>
+    withGovernor(
+      {
+        board: {
+          cards: [buildingCard("a", "a"), buildingCard("asked", "b")],
+          nextCardNumberByProject: {},
+        },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      },
+      (harness) =>
+        Effect.gen(function* () {
+          yield* harness.pumpDomain(movedToBuilding(buildingCard("asked", "b"), 1));
+          const askedThread = (yield* stepOf(harness, "asked"))?.threadId;
+          assert.ok(askedThread != null);
+          yield* Ref.update(
+            harness.shells,
+            (current) =>
+              new Map([
+                ...current,
+                [
+                  String(askedThread),
+                  fakeThreadState(String(askedThread), {
+                    sessionStatus: "idle",
+                    modelSelection: { instanceId: codex, model: "gpt-5-codex" },
+                    awaitingUserInput: true,
+                  }),
+                ],
+              ]),
+          );
+          yield* harness.pumpRuntime(turnCompleted(askedThread));
+          assert.strictEqual((yield* stepOf(harness, "asked"))?.status, "awaiting-input");
+
+          const thread = yield* stopCard(harness, "a", "a", 2, waitAt());
+          assert.strictEqual((yield* stepOf(harness, "a"))?.stalledReason, "usage-limit");
+
+          // v2 resumes both threads; only the limit park was the board's to wake.
+          yield* harness.pumpRuntime({ type: "limit-resumed", threadId: askedThread });
+          yield* harness.pumpRuntime({ type: "limit-resumed", threadId: thread });
+          assert.strictEqual((yield* stepOf(harness, "asked"))?.status, "awaiting-input");
+          const resumed = yield* stepOf(harness, "a");
+          assert.strictEqual(resumed?.status, "running");
+          // The engine's resume is not a human steering: no free ending.
+          assert.isNull(resumed?.humanTurnAt ?? null);
+        }),
+    ),
+);
+
 // ── Human-in-the-loop is out of scope entirely (D11) ──────────────────────
 
 it.effect("a human-in-the-loop step is never parked by a limit, and records no cooldown", () =>

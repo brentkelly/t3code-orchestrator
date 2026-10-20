@@ -181,6 +181,40 @@ export const todoSignal = (stored: OrchestrationV2StoredEvent): TodoSignal | nul
   return null;
 };
 
+/** Command-id prefixes v2 mints when it starts a run of its own accord to
+    carry on work already under way: background and steer wakes, restart
+    continuations, provider continuations and pull-request watch wakes. */
+const ENGINE_RUN_COMMAND_PREFIXES = [
+  "command:",
+  "provider-continuation:",
+  "server:pr-watch:",
+] as const;
+
+/**
+ * Who asked for a run, read from the command that created it and the run's own
+ * wake fields. `engine` is v2 carrying on work it already had (a wake, a
+ * restart continuation, a delegated task's result); `limit-resume` is its
+ * usage-limit recovery worker; `board` is a board-minted command; anything else
+ * is a human.
+ */
+export const runOrigin = (
+  commandId: CommandId | null,
+  run: OrchestrationV2Run,
+): "board" | "limit-resume" | "engine" | "human" => {
+  if (isBoardMintedCommandId(commandId)) return "board";
+  if (commandId?.startsWith("limit-resume:")) return "limit-resume";
+  if (
+    run.workStartedAt !== undefined ||
+    run.restartContinuationOfRunId !== undefined ||
+    run.delegatedTaskId !== undefined ||
+    run.delegatedCompletion !== undefined ||
+    ENGINE_RUN_COMMAND_PREFIXES.some((prefix) => commandId?.startsWith(prefix))
+  ) {
+    return "engine";
+  }
+  return "human";
+};
+
 /**
  * Turns one stored event into the supervisor's signals. Stateful only to
  * report each run end, interrupt request and question ONCE: v2 rewrites a run,
@@ -200,74 +234,103 @@ export const makeSignalReader = () => {
     }
     return true;
   };
+  const one = (signal: ThreadSignal | null): ReadonlyArray<ThreadSignal> =>
+    signal === null ? [] : [signal];
 
-  return (stored: OrchestrationV2StoredEvent): ThreadSignal | null => {
+  return (stored: OrchestrationV2StoredEvent): ReadonlyArray<ThreadSignal> => {
     const event = stored.event;
     switch (event.type) {
-      case "run.created":
-        // Every requested turn is a run. Its command says whose it was: a
-        // board-minted id is the board's own; anything else is a human, or the
-        // engine acting for one (a usage-limit resume).
-        return {
-          type: "turn-requested",
-          threadId: event.threadId,
-          byBoard: isBoardMintedCommandId(stored.commandId),
-          at: DateTime.formatIso(event.payload.requestedAt),
-        };
+      case "run.created": {
+        // Every requested turn is a run. Only a turn someone ASKED for is a
+        // request: v2 carrying on its own work is neither a human steering nor
+        // a reason to wake a parked step, and its limit resume is told apart so
+        // the board wakes only the usage-limit park it was holding.
+        const origin = runOrigin(stored.commandId, event.payload);
+        if (origin === "engine") return [];
+        if (origin === "limit-resume") return [{ type: "limit-resumed", threadId: event.threadId }];
+        return [
+          {
+            type: "turn-requested",
+            threadId: event.threadId,
+            byBoard: origin === "board",
+            at: DateTime.formatIso(event.payload.requestedAt),
+          },
+        ];
+      }
       case "run.updated": {
         const run = event.payload;
         const outcome = turnOutcomeOf(run.status);
-        if (outcome === null || !firstTime(`run:${run.id}`)) return null;
+        if (outcome === null || !firstTime(`run:${run.id}`)) return [];
         // A run that failed without ever starting is a turn that never began
         // (t3o-30, D2) — workspace preparation, or the provider refusing it.
         if (outcome === "failed" && run.startedAt === null) {
-          return {
-            type: "turn-start-failed",
-            threadId: event.threadId,
-            detail: "The turn failed before it started.",
-          };
+          return [
+            {
+              type: "turn-start-failed",
+              threadId: event.threadId,
+              detail: "The turn failed before it started.",
+            },
+          ];
         }
-        return {
+        const ended: ThreadSignal = {
           type: "turn-ended",
           threadId: event.threadId,
           turnRef: String(run.id),
           outcome,
           errorMessage: null,
         };
+        // v2 records no interrupt request for a run its provider never
+        // started, so a human's Stop during start-up arrives only as this end.
+        // Say it was a Stop first, as it would be for a running turn, or the
+        // board reads it as an unexplained ending and nudges the card on.
+        if (
+          (run.status === "interrupted" || run.status === "cancelled") &&
+          run.startedAt === null &&
+          stored.commandId !== null &&
+          runOrigin(stored.commandId, run) === "human" &&
+          firstTime(`interrupt-run:${run.id}`)
+        ) {
+          return [{ type: "interrupt-requested", threadId: event.threadId }, ended];
+        }
+        return [ended];
       }
-      case "turn-item.updated":
-        return event.payload.type === "run_interrupt_request" &&
-          firstTime(`interrupt:${event.payload.id}`)
-          ? { type: "interrupt-requested", threadId: event.threadId }
-          : null;
+      case "turn-item.updated": {
+        const item = event.payload;
+        if (item.type !== "run_interrupt_request" || !firstTime(`interrupt:${item.id}`)) return [];
+        // The run's end then needs no Stop of its own (below).
+        if (item.runId !== null) firstTime(`interrupt-run:${item.runId}`);
+        return [{ type: "interrupt-requested", threadId: event.threadId }];
+      }
       case "runtime-request.updated": {
         const request = event.payload;
-        if (request.kind === "auth_refresh") return null;
+        if (request.kind === "auth_refresh") return [];
         if (request.kind === "user_input") {
           if (request.status === "pending") {
             return firstTime(`input:${request.id}`)
-              ? { type: "input-requested", threadId: event.threadId }
-              : null;
+              ? [{ type: "input-requested", threadId: event.threadId }]
+              : [];
           }
           // Only an ANSWER resumes a parked step (t3o-34, D5): a question that
           // was cancelled or expired is still unanswered.
           return firstTime(`input-closed:${request.id}`)
-            ? {
-                type: "input-resolved",
-                threadId: event.threadId,
-                answered:
-                  request.status === "resolved" && Object.keys(request.answers ?? {}).length > 0,
-              }
-            : null;
+            ? [
+                {
+                  type: "input-resolved",
+                  threadId: event.threadId,
+                  answered:
+                    request.status === "resolved" && Object.keys(request.answers ?? {}).length > 0,
+                },
+              ]
+            : [];
         }
         return request.status === "resolved" && firstTime(`approval:${request.id}`)
-          ? { type: "approval-responded", threadId: event.threadId }
-          : null;
+          ? [{ type: "approval-responded", threadId: event.threadId }]
+          : [];
       }
       case "provider-session.attached":
-        return { type: "session-started", threadId: event.threadId };
+        return [{ type: "session-started", threadId: event.threadId }];
       default:
-        return todoSignal(stored);
+        return one(todoSignal(stored));
     }
   };
 };
@@ -698,8 +761,7 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
     observe: Stream.suspend(() => {
       const read = makeSignalReader();
       return followStoredEvents(eventSink).pipe(
-        Stream.map(read),
-        Stream.filter((signal): signal is ThreadSignal => signal !== null),
+        Stream.flatMap((stored) => Stream.fromIterable(read(stored))),
       );
     }),
 
