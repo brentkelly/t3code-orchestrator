@@ -12,12 +12,16 @@
  */
 import {
   CommandId,
+  EventId,
   isBoardCommand,
+  NodeId,
+  PlanId,
   ProviderDriverKind,
   ProviderInstanceId,
   type BoardCommand,
   type ModelSelection,
   type OrchestrationV2Command,
+  type OrchestrationV2DomainEvent,
   type ProjectId,
   type ProjectScript,
   type ProviderInteractionMode,
@@ -26,6 +30,7 @@ import {
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -173,9 +178,8 @@ export const boardStackEngine = Effect.gen(function* () {
 
   const dispatch = (command: StackCommand) =>
     Effect.gen(function* () {
-      if (isBoardCommand(command)) {
-        return yield* Effect.orDie(boardEngine.dispatch(command));
-      }
+      // A board refusal is a suite's to assert on; upstream's are defects here.
+      if (isBoardCommand(command)) return yield* boardEngine.dispatch(command);
       switch (command.type) {
         case "project.create": {
           yield* projects
@@ -220,14 +224,21 @@ export const boardStackEngine = Effect.gen(function* () {
     dispatch,
     /** The newest position in upstream's (v2) event log. */
     latestSequence: eventSink.latestSequence().pipe(Effect.orDie),
-    /** Upstream's stored events in `(after, upTo]`. Finite. */
-    readEvents: (after: number, upTo: number) =>
-      after >= upTo
-        ? Stream.empty
-        : eventSink.stream({ afterSequence: after }).pipe(
-            Stream.takeUntil((stored) => stored.sequence >= upTo),
-            Stream.orDie,
-          ),
+    /** Upstream's stored events in `(after, upTo]`, `upTo` defaulting to the
+        head when the stream opens. Finite. */
+    readEvents: (after: number, upTo?: number) =>
+      Stream.unwrap(
+        Effect.map(
+          upTo === undefined ? eventSink.latestSequence().pipe(Effect.orDie) : Effect.succeed(upTo),
+          (end) =>
+            after >= end
+              ? Stream.empty
+              : eventSink.stream({ afterSequence: after }).pipe(
+                  Stream.takeUntil((stored) => stored.sequence >= end),
+                  Stream.orDie,
+                ),
+        ),
+      ),
     /** Every board event in the board's own log, oldest first. Finite. */
     readBoardEvents: (afterSequence = 0) => boardLog.readFrom(afterSequence),
   };
@@ -274,3 +285,51 @@ export const drainBoardThreadTail = Effect.gen(function* () {
 /** A board-minted command id, as the supervisor mints them. */
 export const stackBoardCommandId = (tag: string, n: number) =>
   CommandId.make(`server:board-${tag}:00000000-0000-4000-8000-${String(n).padStart(12, "0")}`);
+
+const V2_PLAN_STEP_STATUS: Readonly<Record<string, "pending" | "running" | "completed">> = {
+  pending: "pending",
+  inProgress: "running",
+  completed: "completed",
+};
+
+/**
+ * What a provider writes when its agent updates its todo list: a `plan.updated`
+ * event, through the engine's own sink so it projects exactly as a provider's
+ * would. Steps take the board's (v1) status names; an unnamed step is dropped.
+ */
+export const writeStackPlan = (
+  threadId: ThreadId,
+  planId: string,
+  steps: ReadonlyArray<{ readonly step: string; readonly status?: string }>,
+  createdAt: string,
+) =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    yield* sink
+      .write({
+        events: [
+          {
+            type: "plan.updated",
+            id: EventId.make(`evt-plan-${planId}-${createdAt}`),
+            threadId,
+            occurredAt: DateTime.makeUnsafe(createdAt),
+            payload: {
+              id: PlanId.make(`plan-${planId}`),
+              threadId,
+              runId: null,
+              nodeId: NodeId.make(`node-plan-${planId}`),
+              status: "active",
+              kind: "todo_list",
+              steps: steps
+                .filter((entry) => entry.step.trim().length > 0)
+                .map((entry, index) => ({
+                  id: `${planId}-${index}`,
+                  text: entry.step,
+                  status: V2_PLAN_STEP_STATUS[entry.status ?? "pending"] ?? "pending",
+                })),
+            },
+          } as unknown as OrchestrationV2DomainEvent,
+        ],
+      })
+      .pipe(Effect.orDie);
+  });

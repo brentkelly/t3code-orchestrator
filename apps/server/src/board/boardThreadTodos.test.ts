@@ -15,7 +15,6 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -26,6 +25,7 @@ import {
   boardStackEngine,
   drainBoardThreadTail,
   makeBoardStackTestLayer,
+  writeStackPlan,
 } from "./boardStack.testkit.ts";
 import { ThreadGateway } from "./ThreadGateway.ts";
 
@@ -54,20 +54,6 @@ const fixtureFor = (tag: string): Fixture => ({
 
 let commandSeq = 0;
 const nextCommandId = () => CommandId.make(`cmd-live-${(commandSeq += 1)}`);
-
-const planActivity = (
-  id: string,
-  plan: ReadonlyArray<{ readonly step: string; readonly status: string }>,
-  createdAt: string,
-): OrchestrationThreadActivity => ({
-  id: EventId.make(id),
-  tone: "info",
-  kind: "turn.plan.updated",
-  summary: "Plan updated",
-  payload: { plan },
-  turnId: null,
-  createdAt,
-});
 
 const seed = Effect.fn("seed")(function* (tag: string) {
   const fixture = fixtureFor(tag);
@@ -124,14 +110,7 @@ const appendPlan = (
   createdAt: string,
 ) =>
   Effect.gen(function* () {
-    const engine = yield* boardStackEngine;
-    yield* engine.dispatch({
-      type: "thread.activity.append",
-      commandId: nextCommandId(),
-      threadId,
-      activity: planActivity(id, plan, createdAt),
-      createdAt,
-    });
+    yield* writeStackPlan(threadId, id, plan, createdAt);
     // The todo cache follows upstream's log on its own tail (T3O-56).
     yield* drainBoardThreadTail;
   });

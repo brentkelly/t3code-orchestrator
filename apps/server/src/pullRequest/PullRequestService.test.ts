@@ -2698,7 +2698,7 @@ it.effect(
           }),
         ],
         providers: [
-          fakeProvider("github", {
+          fakeProvider(SourceControlProviderKind.make("github"), {
             getChangeRequestSummary: (input) =>
               Effect.sync(() => {
                 seen.push(`${input.cwd} ${input.repository}`);

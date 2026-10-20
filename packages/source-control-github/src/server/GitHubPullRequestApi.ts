@@ -128,6 +128,12 @@ import {
   type GitHubReviewThreadPage,
   type GitHubViewerAccess,
 } from "./gitHubPullRequestJson.ts";
+// T3o (T3O-8): the core read's missing-scope fallback.
+import {
+  coreQueryForFields,
+  fillDroppedCoreFields,
+  readCoreWithScopeFallback,
+} from "./t3oGraphQlScopeFallback.ts";
 import type {
   ProviderChangeRequestSummary,
   ProviderListCursor,
@@ -1612,20 +1618,23 @@ export const make = Effect.gen(function* () {
     const { owner, name } = parseRepositorySelector(input.repository);
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
-        graphqlRead({
-          allowReserve,
-          cwd: input.cwd,
-          host: input.host,
-          operation: "getPullRequestDetail",
-          variables: {
-            owner,
-            name,
-            number: input.number,
-            headRef: `refs/pull/${input.number}/head`,
-          },
-          query: pullRequestCoreGraphQlQuery(input.host),
-          decode: decodePullRequestCoreJson,
-        }).pipe(
+        // T3o: a token refused team reviewers or checks reads again without them (T3O-8).
+        readCoreWithScopeFallback((fields) =>
+          graphqlRead({
+            allowReserve,
+            cwd: input.cwd,
+            host: input.host,
+            operation: "getPullRequestDetail",
+            variables: {
+              owner,
+              name,
+              number: input.number,
+              headRef: `refs/pull/${input.number}/head`,
+            },
+            query: coreQueryForFields(pullRequestCoreGraphQlQuery(input.host), fields),
+            decode: (raw) => decodePullRequestCoreJson(fillDroppedCoreFields(raw, fields)),
+          }),
+        ).pipe(
           // Past a hundred checks the first page would let the rest imply success, so the whole
           // rollup is walked instead.
           Effect.filterOrElse(

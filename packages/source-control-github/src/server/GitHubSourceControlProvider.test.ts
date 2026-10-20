@@ -171,7 +171,8 @@ describe("GitHubSourceControlProvider repository resolution", () => {
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
       assert.strictEqual(yield* gh.getDefaultBranch({ cwd: "/repo" }), "trunk");
-      assert.deepStrictEqual(paths, ["github.com repos/acme/web"]);
+      // T3o: origin, not gh's upstream preference (T3O-48).
+      assert.deepStrictEqual(paths, ["github.com repos/me/web"]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -472,7 +473,8 @@ describe("GitHubSourceControlProvider writes", () => {
         bodyFile,
       });
       assert.strictEqual(requests[0]!.method, "POST");
-      assert.strictEqual(requests[0]!.path, "repos/acme/web/pulls");
+      // T3o: a pull request opens on origin, not gh's upstream preference (T3O-48).
+      assert.strictEqual(requests[0]!.path, "repos/me/web/pulls");
       // A user's own write, so the background's reserve is not held against it.
       assert.strictEqual(requests[0]!.allowReserve, true);
       assert.deepStrictEqual(requests[0]!.body, {
@@ -1206,10 +1208,9 @@ it.effect.each([
         title: "PR",
         bodyFile,
       });
-      assert.deepStrictEqual(targets, [
-        `${host}/repos/${expected}`,
-        `${host}/repos/${expected}/pulls`,
-      ]);
+      // T3o: T3 Code acts on origin unless GH_REPO names another repository (T3O-48).
+      const target = envRepository === "" ? "me/web" : expected;
+      assert.deepStrictEqual(targets, [`${host}/repos/${target}`, `${host}/repos/${target}/pulls`]);
     }).pipe(
       Effect.provide(layer),
       Effect.provideService(HostProcess.Environment, { GH_REPO: envRepository }),

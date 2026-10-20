@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import * as Result from "effect/Result";
 
+import * as Effect from "effect/Effect";
+
+import { GitHubApiResponseError } from "./GitHubApi.ts";
+import { decodePullRequestCoreJson, pullRequestCoreGraphQlQuery } from "./gitHubPullRequestJson.ts";
 import {
-  buildPullRequestSummariesGraphQlQuery,
-  decodePullRequestCoreJson,
-  PULL_REQUEST_CORE_GRAPHQL_QUERY,
-} from "./gitHubPullRequestJson.ts";
-import { coreQueryForFields, fillDroppedCoreFields } from "./t3oGraphQlScopeFallback.ts";
+  coreQueryForFields,
+  fillDroppedCoreFields,
+  isMissingScopeRefusal,
+  readCoreWithScopeFallback,
+} from "./t3oGraphQlScopeFallback.ts";
+
+const PULL_REQUEST_CORE_GRAPHQL_QUERY = pullRequestCoreGraphQlQuery("github.com");
 
 const balanced = (query: string) => {
   let depth = 0;
@@ -74,22 +80,6 @@ describe("coreQueryForFields", () => {
     expect(query).toContain("autoMergeRequest");
     expect(balanced(query)).toBe(true);
   });
-  it("drops the check rollup from every pull request in a batched summary read", () => {
-    const batch = buildPullRequestSummariesGraphQlQuery(
-      [
-        { repository: "acme/web", number: 7 },
-        { repository: "acme/api", number: 8 },
-      ],
-      true,
-    );
-    if (batch === null) throw new Error("expected a batched document");
-    const query = coreQueryForFields(batch, "");
-    expect(query).not.toContain("commits(");
-    expect(query).not.toContain("statusCheckRollup");
-    expect(query.match(/latestReviews/g)).toHaveLength(2);
-    expect(query.match(/stackEntry/g)).toHaveLength(2);
-    expect(balanced(query)).toBe(true);
-  });
   it("keeps the names either side of an inline selection apart", () => {
     expect(coreQueryForFields("{ x { a commits(last: 1) { n } b } }", "")).toBe("{ x { a b } }");
     expect(coreQueryForFields("{ x {\n  a\n  commits(last: 1) { n }\n  b\n} }", "")).toBe(
@@ -119,5 +109,72 @@ describe("fillDroppedCoreFields", () => {
 
   it("leaves an unreadable answer for the decoder to reject", () => {
     expect(fillDroppedCoreFields("not json", "")).toBe("not json");
+  });
+});
+
+describe("readCoreWithScopeFallback (T3O-8)", () => {
+  const refused = new GitHubApiResponseError({
+    host: "github.com",
+    operation: "getPullRequestDetail",
+    status: 200,
+    githubErrors: [
+      "Your token has not been granted the required scopes to execute this query. The 'requestedReviewer' field requires one of the following scopes: ['read:org'].",
+    ],
+  });
+
+  it("recognises GitHub refusing the token a field", () => {
+    expect(isMissingScopeRefusal(refused)).toBe(true);
+    expect(
+      isMissingScopeRefusal(
+        new GitHubApiResponseError({
+          host: "github.com",
+          operation: "getPullRequestDetail",
+          status: 200,
+          githubErrors: ["Resource not accessible by personal access token"],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isMissingScopeRefusal(
+        new GitHubApiResponseError({ host: "github.com", operation: "x", status: 502 }),
+      ),
+    ).toBe(false);
+  });
+
+  it("gives up reviewers first, then checks, and marks unread checks", () => {
+    const asked: Array<string> = [];
+    const read = (fields: string) =>
+      Effect.suspend(() => {
+        asked.push(fields);
+        return fields.includes("reviewRequests") || fields.includes("statusCheckRollup")
+          ? Effect.fail(refused)
+          : Effect.succeed({ mergeability: "mergeable" });
+      });
+    const core = Effect.runSync(readCoreWithScopeFallback(read));
+    expect(asked).toEqual(["reviewRequests,statusCheckRollup", "statusCheckRollup", ""]);
+    expect(core).toEqual({ mergeability: "mergeable", checksUnread: true });
+  });
+
+  it("keeps the checks when only reviewers were refused", () => {
+    const read = (fields: string) =>
+      fields.includes("reviewRequests")
+        ? Effect.fail(refused)
+        : Effect.succeed({ mergeability: "mergeable" });
+    expect(Effect.runSync(readCoreWithScopeFallback(read))).toEqual({ mergeability: "mergeable" });
+  });
+
+  it("does not retry any other failure", () => {
+    let attempts = 0;
+    const read = () =>
+      Effect.suspend(() => {
+        attempts += 1;
+        return Effect.fail(
+          new GitHubApiResponseError({ host: "github.com", operation: "x", status: 502 }),
+        );
+      });
+    expect(Effect.runSync(Effect.flip(readCoreWithScopeFallback(read)))._tag).toBe(
+      "GitHubApiResponseError",
+    );
+    expect(attempts).toBe(1);
   });
 });

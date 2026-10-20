@@ -181,7 +181,7 @@ const makeHandlers = (scopes: ReadonlyArray<AuthenticatedSession["scopes"][numbe
     return yield* boardRpcHandlers({
       currentSession: session(scopes),
       boardSupervisor: supervisorStub,
-      origin: undefined,
+      clientOrigin: {},
     });
   });
 

@@ -10,6 +10,7 @@
  * expects back in, empty. The batched summary read uses the same removal on its aliased
  * document, where the check rollup's selection repeats once per pull request.
  */
+import * as Effect from "effect/Effect";
 
 /** The GraphQL selection each gated `gh --json` field name stands for in the core query. */
 const GATED_SELECTIONS: Readonly<
@@ -79,4 +80,43 @@ export const fillDroppedCoreFields = (raw: string, fields: string): string => {
   }
   // @effect-diagnostics-next-line preferSchemaOverJson:off
   return JSON.stringify(parsed);
+};
+
+/** The gated fields, in the order a refused read gives them up: team review requests first,
+    since nothing the board decides needs reviewers, while mergeability outranks checks. */
+const GATED_FIELDS = Object.keys(GATED_SELECTIONS);
+
+/**
+ * GitHub refusing the token one of the gated fields (T3O-8). A classic token without
+ * `read:org` is told it "has not been granted the required scopes"; a fine-grained one
+ * without the Checks permission that the resource is "not accessible".
+ */
+export const isMissingScopeRefusal = (error: { readonly _tag: string }): boolean =>
+  error._tag === "GitHubApiResponseError" &&
+  ((error as { readonly githubErrors?: ReadonlyArray<string> }).githubErrors ?? []).some(
+    (message) =>
+      /required scopes|not been granted|not accessible by|INSUFFICIENT_SCOPES/i.test(message),
+  );
+
+/**
+ * T3O-8, T3O-59: the pull request core read with the missing-scope fallback. `read` is handed
+ * the gated fields it may ask for (comma-separated) and must leave the others out of its
+ * document (`coreQueryForFields`) and fill them back empty on decode (`fillDroppedCoreFields`).
+ * Only a scope refusal is retried, once per gated field. A read that had to drop the check
+ * rollup is marked `checksUnread`: its empty checks mean "could not look", not "none".
+ */
+export const readCoreWithScopeFallback = <A extends object, E extends { readonly _tag: string }, R>(
+  read: (fields: string) => Effect.Effect<A, E, R>,
+): Effect.Effect<A & { readonly checksUnread?: true }, E, R> => {
+  const attempt = (
+    fields: ReadonlyArray<string>,
+  ): Effect.Effect<A & { readonly checksUnread?: true }, E, R> =>
+    read(fields.join(",")).pipe(
+      Effect.map((core) => (fields.includes("statusCheckRollup") ? core : { ...core, checksUnread: true as const })),
+      Effect.catchIf(
+        (error) => fields.length > 0 && isMissingScopeRefusal(error),
+        () => attempt(fields.slice(1)),
+      ),
+    );
+  return attempt(GATED_FIELDS);
 };

@@ -488,6 +488,62 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       }),
     );
 
+    // T3O-12: the timeout sweep's life sign moves with the agent's output, here
+    // a todo list rewritten deep in a turn that writes no prose.
+    it.effect("the last signal moves with the thread's activity", () =>
+      Effect.gen(function* () {
+        const threadId = yield* spawn("signal");
+        const threads = yield* ThreadGateway;
+        const before = yield* threads.lastSignalAt(threadId);
+        assert.isNotNull(before);
+        yield* providerWrites([
+          {
+            type: "plan.updated",
+            id: EventId.make("evt-contract-signal-plan"),
+            threadId,
+            occurredAt: at("2099-01-01T00:00:00.000Z"),
+            payload: {
+              id: PlanId.make("plan-contract-signal"),
+              threadId,
+              runId: null,
+              nodeId: NodeId.make("node-contract-signal"),
+              status: "active",
+              kind: "todo_list",
+              steps: [{ id: "s1", text: "Keep going", status: "running" }],
+            },
+          } as unknown as OrchestrationV2DomainEvent,
+        ]);
+        const after = yield* threads.lastSignalAt(threadId);
+        assert.isTrue(after! > before!, `${before} -> ${after}`);
+      }),
+    );
+
+    // T3O-18: a turn exists from the moment it is asked for, and is pending
+    // until it runs. Without this, the previous turn's completion parks a step
+    // whose human has already sent the next message.
+    it.effect("a requested turn is pending until it runs, and not once it is gone", () =>
+      Effect.gen(function* () {
+        const threadId = yield* createIdleThread("pending");
+        const threads = yield* ThreadGateway;
+        const engine = yield* boardStackEngine;
+        assert.isNull(yield* threads.pendingTurnStartAt(threadId));
+        yield* engine.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("cmd-contract-pending-turn"),
+          threadId,
+          messageId: MessageId.make("msg-contract-pending"),
+          text: "Next, please.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        assert.isNotNull(yield* threads.pendingTurnStartAt(threadId));
+        yield* threads.interrupt({ commandId: boardCommandId("interrupt-paused"), threadId });
+        assert.isNull(yield* threads.pendingTurnStartAt(threadId));
+      }),
+    );
+
     it.effect("a thread that is not limited has no recovery to arm", () =>
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("unlimited");

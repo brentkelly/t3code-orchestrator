@@ -34,8 +34,8 @@ import {
   projectBoardEvent,
   type BoardEvent,
   type BoardReadModel,
-  type BoardOrchestrationReadModel,
 } from "./projector.ts";
+import type { BoardOrchestrationReadModel } from "./decisionContext.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
