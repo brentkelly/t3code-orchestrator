@@ -27,7 +27,9 @@ type BoardSessionStatus = "starting" | "running" | "ready" | "error";
  * the live run's activity stands in for it. `waiting` is a run held on a
  * runtime request, which is still mid-turn for the board.
  */
-export function boardThreadSessionStatus(thread: BoardThreadShellFields): BoardSessionStatus | null {
+export function boardThreadSessionStatus(
+  thread: BoardThreadShellFields,
+): BoardSessionStatus | null {
   switch (thread.activityRunStatus) {
     case "preparing":
     case "starting":

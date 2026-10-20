@@ -36,6 +36,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import ChatView from "../components/ChatView";
+import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
 import { useThreadShell } from "../state/entities";
 import { BoardCardThreadAddMenu, type BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
@@ -65,7 +66,12 @@ function BoardCardChat({
     );
   }
   return (
-    <ChatView chrome="embedded" environmentId={environmentId} routeKind="server" threadId={threadId} />
+    <ChatView
+      chrome="embedded"
+      environmentId={environmentId}
+      routeKind="server"
+      threadId={threadId}
+    />
   );
 }
 
@@ -144,11 +150,7 @@ export function BoardCardThreadPane({
     const el = stripRef.current;
     if (el === null) return undefined;
     syncScrollAffordance();
-    const observer = new ResizeObserver(syncScrollAffordance);
-    observer.observe(el);
-    return () => {
-      observer.disconnect();
-    };
+    return observeResize(el, syncScrollAffordance);
   }, [syncScrollAffordance, threadLinks]);
   const scrollOlderIntoView = () => {
     stripRef.current?.scrollBy({ left: stripRef.current.clientWidth * 0.7, behavior: "smooth" });

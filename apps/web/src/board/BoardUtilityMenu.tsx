@@ -40,7 +40,7 @@ const GLASS = cn(
 );
 
 const TOGGLE =
-  "inline-flex h-[30px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&_svg]:size-4";
+  "inline-flex h-[30px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none [&_svg]:size-4";
 
 export function BoardUtilityMenu() {
   const collapsed = useBoardUiStore((state) => state.utilityMenuCollapsed);

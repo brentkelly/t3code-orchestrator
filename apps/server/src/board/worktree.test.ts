@@ -331,13 +331,11 @@ const decisionCases: ReadonlyArray<{
   },
 ];
 
-for (const testCase of decisionCases) {
-  it.effect(`reclaim decision: ${testCase.name}`, () =>
-    Effect.sync(() => {
-      assert.deepStrictEqual(boardCardWorktreeReclaimDecision(testCase.input), testCase.expected);
-    }),
-  );
-}
+it.effect.each(decisionCases)("reclaim decision: $name", (testCase) =>
+  Effect.sync(() => {
+    assert.deepStrictEqual(boardCardWorktreeReclaimDecision(testCase.input), testCase.expected);
+  }),
+);
 
 it.effect("parses changed paths, taking a rename's new name", () =>
   Effect.sync(() => {
@@ -559,13 +557,11 @@ const ghDefaultCases: ReadonlyArray<{
   },
 ];
 
-for (const testCase of ghDefaultCases) {
-  it.effect(`gh default decision: ${testCase.name}`, () =>
-    Effect.sync(() => {
-      assert.strictEqual(boardWorktreeGhDefaultDecision(testCase.input), testCase.expected);
-    }),
-  );
-}
+it.effect.each(ghDefaultCases)("gh default decision: $name", (testCase) =>
+  Effect.sync(() => {
+    assert.strictEqual(boardWorktreeGhDefaultDecision(testCase.input), testCase.expected);
+  }),
+);
 
 /** A config read that answers "" for an unset key rather than failing. */
 const configValue = (cwd: string, args: ReadonlyArray<string>) =>

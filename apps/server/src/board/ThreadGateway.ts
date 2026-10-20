@@ -310,7 +310,9 @@ export interface ThreadGatewayShape {
       reopens, whatever the user's global auto-resume setting (T3O-59). True
       when recovery is armed with auto-resume afterwards; false when the
       thread is not limited, or the provider named no reset time to wait for. */
-  readonly armLimitRecovery: (input: ThreadTargetInput) => Effect.Effect<boolean, ThreadCommandError>;
+  readonly armLimitRecovery: (
+    input: ThreadTargetInput,
+  ) => Effect.Effect<boolean, ThreadCommandError>;
 
   /** One thread, deleted ones included, or null when it never existed. */
   readonly threadState: (

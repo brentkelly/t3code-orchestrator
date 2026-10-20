@@ -18,7 +18,10 @@ import { UsageLimitDetector, UsageLimitDetectorLive } from "./UsageLimitDetector
 const threadId = ThreadId.make("thread-1");
 const NOW = Date.parse("2026-07-19T12:00:00.000Z");
 
-const classify = (usageLimit: BoardThreadUsageLimit | null, options: { readonly gone?: boolean } = {}) =>
+const classify = (
+  usageLimit: BoardThreadUsageLimit | null,
+  options: { readonly gone?: boolean } = {},
+) =>
   Effect.gen(function* () {
     const detector = yield* UsageLimitDetector;
     return yield* detector.classifyTurn({
@@ -37,7 +40,9 @@ const classify = (usageLimit: BoardThreadUsageLimit | null, options: { readonly 
               threadState: () =>
                 options.gone === true
                   ? Effect.succeed(null)
-                  : Effect.succeed(fakeThreadState("thread-1", { sessionStatus: "error", usageLimit })),
+                  : Effect.succeed(
+                      fakeThreadState("thread-1", { sessionStatus: "error", usageLimit }),
+                    ),
             }),
           ),
         ),
@@ -45,21 +50,23 @@ const classify = (usageLimit: BoardThreadUsageLimit | null, options: { readonly 
     ),
   );
 
-it.effect("a run that failed on a usage limit is a strict wait until the reset, plus the margin", () =>
-  Effect.gen(function* () {
-    const match = yield* classify({
-      resetAt: "2026-07-19T15:00:00.000Z",
-      message: "You've hit your usage limit.",
-      resumeArmed: false,
-    });
-    assert.deepStrictEqual(match, {
-      kind: "wait",
-      confidence: "strict",
-      resumeAt: "2026-07-19T15:01:00.000Z",
-      reason: "You've hit your usage limit.",
-      ruleId: "orchestration-v2-usage-limit",
-    });
-  }),
+it.effect(
+  "a run that failed on a usage limit is a strict wait until the reset, plus the margin",
+  () =>
+    Effect.gen(function* () {
+      const match = yield* classify({
+        resetAt: "2026-07-19T15:00:00.000Z",
+        message: "You've hit your usage limit.",
+        resumeArmed: false,
+      });
+      assert.deepStrictEqual(match, {
+        kind: "wait",
+        confidence: "strict",
+        resumeAt: "2026-07-19T15:01:00.000Z",
+        reason: "You've hit your usage limit.",
+        ruleId: "orchestration-v2-usage-limit",
+      });
+    }),
 );
 
 it.effect("a limit with no reset time still parks the card, on the board's own blind poll", () =>

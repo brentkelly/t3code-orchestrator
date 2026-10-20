@@ -1188,7 +1188,9 @@ export function makeClaudeQueryOptions(input: {
     // T3o: agent `gh` calls act as the matched project's identity (t3o-34).
     ...(input.environment === undefined
       ? {}
-      : { env: withGitenvTokenEnv(input.environment, input.cwd ?? undefined) ?? input.environment }),
+      : {
+          env: withGitenvTokenEnv(input.environment, input.cwd ?? undefined) ?? input.environment,
+        }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
       type: "preset" as const,

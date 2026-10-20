@@ -348,7 +348,11 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("auto-settled");
         const threads = yield* ThreadGateway;
-        yield* threads.settle({ commandId: boardCommandId("release-thread"), threadId, auto: true });
+        yield* threads.settle({
+          commandId: boardCommandId("release-thread"),
+          threadId,
+          auto: true,
+        });
         assert.isTrue((yield* threads.threadState(threadId))!.settlementDecided);
       }),
     );

@@ -12,7 +12,11 @@ import type { GitHubRepositoryLocator } from "./gitHubRepositoryResolution.ts";
  * same remote a plain `git push` uses; without one, upstream's selection stands.
  */
 export function t3oOriginRepository(
-  remotes: ReadonlyArray<{ readonly name: string; readonly url: string; readonly host: string | null }>,
+  remotes: ReadonlyArray<{
+    readonly name: string;
+    readonly url: string;
+    readonly host: string | null;
+  }>,
   host: string,
 ): GitHubRepositoryLocator | null {
   const origin = remotes.find((remote) => remote.name === "origin");

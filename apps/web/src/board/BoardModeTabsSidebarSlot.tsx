@@ -14,6 +14,7 @@
  * does **not** depend on whether the tabs are inside it — no feedback loop, so
  * no flapping mid-drag.
  */
+import { observeResize } from "../lib/observeResize";
 import { useLayoutEffect, useRef, useState } from "react";
 import { useLocation } from "@tanstack/react-router";
 
@@ -38,13 +39,11 @@ export function BoardModeTabsSidebarSlot() {
     if (wrapper === null) return;
     // `contentRect` rather than a layout read, so the measurement rides the
     // observer's own frame instead of forcing a synchronous reflow.
-    const observer = new ResizeObserver(([entry]) => {
+    setAvailableWidth(wrapper.getBoundingClientRect().width);
+    return observeResize(wrapper, ([entry]) => {
       if (entry === undefined) return;
       setAvailableWidth(entry.contentRect.width);
     });
-    observer.observe(wrapper);
-    setAvailableWidth(wrapper.getBoundingClientRect().width);
-    return () => observer.disconnect();
   }, []);
 
   const hosting = shouldSidebarHostModeTabs({

@@ -397,46 +397,44 @@ describe("merging a card with a linked pull request", () => {
       checksUnread: false,
     }) satisfies BoardMergeState;
 
-  for (const [label, mergeState] of [
+  it.effect.each([
     ["conflicts", refusedFor({ blockedReason: "conflict", failed: 0 })],
     ["fails its checks", refusedFor({ blockedReason: null, failed: 1 })],
-  ] as const) {
-    it.effect(`starts no fix agent when a linked PR on another branch ${label}`, () =>
-      withGovernor(
-        {
-          board: {
-            nextCardNumberByProject: {},
-            cards: [
-              {
-                ...reviewCard({ stage: String(BOARD_SEED_STAGE_IDS.merge) }),
-                pullRequest: linkedRecord(),
-              },
-            ],
-          },
-          settings: settings(),
-          pullRequestByNumber: layerPr,
-          mergeFailure: "the host refused",
-          mergeState,
+  ] as const)("starts no fix agent when a linked PR on another branch %s", ([label, mergeState]) =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [
+            {
+              ...reviewCard({ stage: String(BOARD_SEED_STAGE_IDS.merge) }),
+              pullRequest: linkedRecord(),
+            },
+          ],
         },
-        (h) =>
-          Effect.gen(function* () {
-            const result = yield* h.reactor.mergePullRequest(reviewCard().id);
-            assert.equal(result.outcome, "refused");
-            assert.include(
-              result.outcome === "refused" ? result.detail : "",
-              "The pull request is on stack/layer-2, not this card's branch",
-            );
-            // The fix agent would work the card's own worktree, not stack/layer-2.
-            assert.deepEqual(
-              (yield* h.commands).filter(
-                (command) => command.type === "board.card.start-stage-thread",
-              ),
-              [],
-            );
-          }),
-      ),
-    );
-  }
+        settings: settings(),
+        pullRequestByNumber: layerPr,
+        mergeFailure: "the host refused",
+        mergeState,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const result = yield* h.reactor.mergePullRequest(reviewCard().id);
+          assert.equal(result.outcome, "refused");
+          assert.include(
+            result.outcome === "refused" ? result.detail : "",
+            "The pull request is on stack/layer-2, not this card's branch",
+          );
+          // The fix agent would work the card's own worktree, not stack/layer-2.
+          assert.deepEqual(
+            (yield* h.commands).filter(
+              (command) => command.type === "board.card.start-stage-thread",
+            ),
+            [],
+          );
+        }),
+    ),
+  );
 });
 
 describe("the run prompt names a linked pull request", () => {

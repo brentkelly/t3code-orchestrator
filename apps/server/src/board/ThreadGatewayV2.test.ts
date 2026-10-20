@@ -141,7 +141,9 @@ describe("makeSignalReader", () => {
     });
     assert.isNull(read(stored("turn-item.updated", item)));
     assert.isNull(
-      read(stored("turn-item.updated", { id: TurnItemId.make("item-2"), type: "assistant_message" })),
+      read(
+        stored("turn-item.updated", { id: TurnItemId.make("item-2"), type: "assistant_message" }),
+      ),
     );
   });
 

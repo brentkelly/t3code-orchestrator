@@ -1,3 +1,4 @@
+import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
 import * as Result from "effect/Result";
 
@@ -141,7 +142,7 @@ describe("readCoreWithScopeFallback (T3O-8)", () => {
     ).toBe(false);
   });
 
-  it("gives up reviewers first, then checks, and marks unread checks", () => {
+  effectIt.effect("gives up reviewers first, then checks, and marks unread checks", () => {
     const asked: Array<string> = [];
     const read = (fields: string) =>
       Effect.suspend(() => {
@@ -150,20 +151,25 @@ describe("readCoreWithScopeFallback (T3O-8)", () => {
           ? Effect.fail(refused)
           : Effect.succeed({ mergeability: "mergeable" });
       });
-    const core = Effect.runSync(readCoreWithScopeFallback(read));
-    expect(asked).toEqual(["reviewRequests,statusCheckRollup", "statusCheckRollup", ""]);
-    expect(core).toEqual({ mergeability: "mergeable", checksUnread: true });
+    return readCoreWithScopeFallback(read).pipe(
+      Effect.map((core) => {
+        expect(asked).toEqual(["reviewRequests,statusCheckRollup", "statusCheckRollup", ""]);
+        expect(core).toEqual({ mergeability: "mergeable", checksUnread: true });
+      }),
+    );
   });
 
-  it("keeps the checks when only reviewers were refused", () => {
+  effectIt.effect("keeps the checks when only reviewers were refused", () => {
     const read = (fields: string) =>
       fields.includes("reviewRequests")
         ? Effect.fail(refused)
         : Effect.succeed({ mergeability: "mergeable" });
-    expect(Effect.runSync(readCoreWithScopeFallback(read))).toEqual({ mergeability: "mergeable" });
+    return readCoreWithScopeFallback(read).pipe(
+      Effect.map((core) => expect(core).toEqual({ mergeability: "mergeable" })),
+    );
   });
 
-  it("does not retry any other failure", () => {
+  effectIt.effect("does not retry any other failure", () => {
     let attempts = 0;
     const read = () =>
       Effect.suspend(() => {
@@ -172,9 +178,11 @@ describe("readCoreWithScopeFallback (T3O-8)", () => {
           new GitHubApiResponseError({ host: "github.com", operation: "x", status: 502 }),
         );
       });
-    expect(Effect.runSync(Effect.flip(readCoreWithScopeFallback(read)))._tag).toBe(
-      "GitHubApiResponseError",
+    return Effect.flip(readCoreWithScopeFallback(read)).pipe(
+      Effect.map((error) => {
+        expect(error._tag).toBe("GitHubApiResponseError");
+        expect(attempts).toBe(1);
+      }),
     );
-    expect(attempts).toBe(1);
   });
 });

@@ -614,7 +614,9 @@ function EnvironmentBoard({
     (threadId: ThreadId) => {
       const shell = threadShellsById.get(threadId);
       if (shell === undefined) return undefined;
-      const { threadState, awaitingInput } = deriveBoardCardThreadState(boardThreadStateSource(shell));
+      const { threadState, awaitingInput } = deriveBoardCardThreadState(
+        boardThreadStateSource(shell),
+      );
       return {
         awaitingInput,
         running: threadState === "working",

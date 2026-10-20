@@ -488,30 +488,28 @@ describe("BoardPullRequestGateway.markReady (T3O-12)", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  for (const [title, expected] of [
+  it.effect.each([
     ["WIP: Add drafts", "Add drafts"],
     ["[WIP] Add drafts", "Add drafts"],
     ["wip:Add drafts", "Add drafts"],
-  ] as const) {
-    it.effect(`readies a Forgejo draft by taking the marker off "${title}"`, () => {
-      const { calls, layer } = makeGateway({
-        detail: detail({
-          provider: SourceControlProviderKind.make("forgejo"),
-          isDraft: true,
-          title,
-          capabilities: capabilities(["merge", "close", "reopen", "update-branch"]),
-        }),
-      });
-      return Effect.gen(function* () {
-        const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
-        const result = yield* gateway.markReady({ projectId: PROJECT, number: 110 });
-
-        assert.strictEqual(result, "readied");
-        assert.include(calls, `update:brentkelly/t3code-orchestrator:110:title=${expected}`);
-        assert.isFalse(calls.some((call) => call.startsWith("runAction")));
-      }).pipe(Effect.provide(layer));
+  ] as const)('readies a Forgejo draft by taking the marker off "%s"', ([title, expected]) => {
+    const { calls, layer } = makeGateway({
+      detail: detail({
+        provider: SourceControlProviderKind.make("forgejo"),
+        isDraft: true,
+        title,
+        capabilities: capabilities(["merge", "close", "reopen", "update-branch"]),
+      }),
     });
-  }
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      const result = yield* gateway.markReady({ projectId: PROJECT, number: 110 });
+
+      assert.strictEqual(result, "readied");
+      assert.include(calls, `update:brentkelly/t3code-orchestrator:110:title=${expected}`);
+      assert.isFalse(calls.some((call) => call.startsWith("runAction")));
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("refuses, as blocked, a draft this host has no way to ready", () => {
     const { layer } = makeGateway({

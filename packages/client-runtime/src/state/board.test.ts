@@ -810,9 +810,7 @@ describe("withBoardThreadFields", () => {
     // goes away rather than resting at false, matching the server's shell.
     const woken = withBoardThreadFields(
       snapshot({ cards: [{ ...linked, waitingOnBackground: true }] }),
-      [
-        threadShell({ pendingBackgroundTasks: [monitorTask], activityRunStatus: "running" }),
-      ],
+      [threadShell({ pendingBackgroundTasks: [monitorTask], activityRunStatus: "running" })],
     );
     expect(woken.cards[0]).not.toHaveProperty("waitingOnBackground");
   });

@@ -1554,7 +1554,8 @@ export const layerAppServerClientFactory: Layer.Layer<
               resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
             ),
             // T3o: agent `gh` calls act as the matched project's identity (t3o-34).
-            env: withGitenvTokenEnv(environment, input.runtimePolicy.cwd ?? undefined) ?? environment,
+            env:
+              withGitenvTokenEnv(environment, input.runtimePolicy.cwd ?? undefined) ?? environment,
             threadId: input.threadId,
           }).pipe(Effect.provideService(AgentScope, agentScope));
           const handle = yield* spawner.spawn(command).pipe(

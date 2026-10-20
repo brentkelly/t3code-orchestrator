@@ -153,8 +153,7 @@ const turnOutcomeOf = (status: OrchestrationV2Run["status"]): BoardTurnOutcome |
 };
 
 /** v2's plan step statuses in the board's todo vocabulary (v1's names). */
-const todoStatusOf = (status: string): string =>
-  status === "running" ? "inProgress" : status;
+const todoStatusOf = (status: string): string => (status === "running" ? "inProgress" : status);
 
 /** The todo signal one stored event carries, if any. */
 export const todoSignal = (stored: OrchestrationV2StoredEvent): TodoSignal | null => {
@@ -334,16 +333,17 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
         ? Effect.fail(refused(command, threadId, `thread ${threadId} does not exist`))
         : Effect.succeed(shell),
     ).pipe(
-      Effect.catchTag("ThreadReadError", (error) =>
-        Effect.fail(
-          new ThreadCommandFailedError({
-            command,
-            threadId,
-            detail: error.detail,
-            cause: error,
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        ThreadReadError: (error) =>
+          Effect.fail(
+            new ThreadCommandFailedError({
+              command,
+              threadId,
+              detail: error.detail,
+              cause: error,
+            }),
+          ),
+      }),
     );
 
   /** A deleted thread drops out of the shell read; its row still says it existed. */
@@ -498,7 +498,11 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
             if (shell.activeRunId !== null || shell.status === "queued") {
               return yield* refused("thread.settle", input.threadId, "the thread is still running");
             }
-            yield* run({ type: "thread.settle", commandId: input.commandId, threadId: input.threadId });
+            yield* run({
+              type: "thread.settle",
+              commandId: input.commandId,
+              threadId: input.threadId,
+            });
           }),
     delete: (input) =>
       run({ type: "thread.delete", commandId: input.commandId, threadId: input.threadId }),

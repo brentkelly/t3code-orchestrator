@@ -27,7 +27,10 @@ describe("Claude query options and the gitenv file", () => {
 
   const options = (cwd: string | null) =>
     makeClaudeQueryOptions({
-      modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-sonnet-4-6" },
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-4-6",
+      },
       nativeThreadId: "native-1",
       resume: false,
       cwd,

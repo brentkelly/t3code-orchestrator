@@ -185,32 +185,31 @@ function makeBoardRpcHandlers(
      */
     [BOARD_WS_METHODS.dispatchCommand]: (command: BoardClientCommand) =>
       authorized(
-          BOARD_WS_METHODS.dispatchCommand,
-          services.stampActor(command).pipe(
-            Effect.andThen(
-              boardEngine.dispatch(
-                command,
-                hasClientOrigin(deps.clientOrigin) ? { origin: deps.clientOrigin } : undefined,
-              ),
-            ),
-            Effect.mapError(
-              (cause) => new BoardDispatchCommandError({ message: cause.message, cause }),
+        BOARD_WS_METHODS.dispatchCommand,
+        services.stampActor(command).pipe(
+          Effect.andThen(
+            boardEngine.dispatch(
+              command,
+              hasClientOrigin(deps.clientOrigin) ? { origin: deps.clientOrigin } : undefined,
             ),
           ),
+          Effect.mapError(
+            (cause) => new BoardDispatchCommandError({ message: cause.message, cause }),
+          ),
         ),
+      ),
 
     /** The archive page's cards (t3o-13), read when the page opens. */
     [BOARD_WS_METHODS.getArchivedCards]: (_input: Record<string, never>) =>
       authorized(
-          BOARD_WS_METHODS.getArchivedCards,
-          boardQueries.boardArchivedCards().pipe(
-            Effect.map((cards) => ({ cards })),
-            Effect.mapError(
-              (cause) =>
-                new BoardSnapshotError({ message: "Failed to load archived cards.", cause }),
-            ),
+        BOARD_WS_METHODS.getArchivedCards,
+        boardQueries.boardArchivedCards().pipe(
+          Effect.map((cards) => ({ cards })),
+          Effect.mapError(
+            (cause) => new BoardSnapshotError({ message: "Failed to load archived cards.", cause }),
           ),
         ),
+      ),
 
     /**
      * Re-resolve the card's pull request from the forge.
@@ -231,12 +230,12 @@ function makeBoardRpcHandlers(
      */
     [BOARD_WS_METHODS.refreshCardPullRequest]: (input: BoardRefreshCardPullRequestInput) =>
       authorized(
-          BOARD_WS_METHODS.refreshCardPullRequest,
-          deps.boardSupervisor.refreshPullRequest(
-            input.cardId,
-            input.force === true ? { force: true } : undefined,
-          ),
+        BOARD_WS_METHODS.refreshCardPullRequest,
+        deps.boardSupervisor.refreshPullRequest(
+          input.cardId,
+          input.force === true ? { force: true } : undefined,
         ),
+      ),
 
     /**
      * "No PR linked · Link one" on the card detail (T3O-18). The input is sent
@@ -246,14 +245,14 @@ function makeBoardRpcHandlers(
     [BOARD_WS_METHODS.linkCardPullRequest]: (input: BoardLinkCardPullRequestInput) => {
       const target = parseCardPullRequestText(input.target);
       return authorized(
-          BOARD_WS_METHODS.linkCardPullRequest,
-          target === null
-            ? Effect.succeed({
-                outcome: "refused",
-                detail: `'${input.target}' names no pull request. Enter its URL or #number.`,
-              } as const)
-            : deps.boardSupervisor.linkPullRequest(input.cardId, target),
-        );
+        BOARD_WS_METHODS.linkCardPullRequest,
+        target === null
+          ? Effect.succeed({
+              outcome: "refused",
+              detail: `'${input.target}' names no pull request. Enter its URL or #number.`,
+            } as const)
+          : deps.boardSupervisor.linkPullRequest(input.cardId, target),
+      );
     },
 
     /**
@@ -271,9 +270,9 @@ function makeBoardRpcHandlers(
      */
     [BOARD_WS_METHODS.probeProviderLimit]: (input: BoardProviderLimitActionInput) =>
       authorized(
-          BOARD_WS_METHODS.probeProviderLimit,
-          deps.boardSupervisor.probeProviderLimit(input.providerInstanceId),
-        ),
+        BOARD_WS_METHODS.probeProviderLimit,
+        deps.boardSupervisor.probeProviderLimit(input.providerInstanceId),
+      ),
 
     /**
      * "Set resume time" on a provider that named none (T3O-22, D14) — a human
@@ -282,18 +281,18 @@ function makeBoardRpcHandlers(
      */
     [BOARD_WS_METHODS.setProviderLimitResumeAt]: (input: BoardProviderLimitResumeAtInput) =>
       authorized(
-          BOARD_WS_METHODS.setProviderLimitResumeAt,
-          deps.boardSupervisor.setProviderLimitResumeAt({
-            providerInstanceId: input.providerInstanceId,
-            resumeAt: input.resumeAt,
-          }),
-        ),
+        BOARD_WS_METHODS.setProviderLimitResumeAt,
+        deps.boardSupervisor.setProviderLimitResumeAt({
+          providerInstanceId: input.providerInstanceId,
+          resumeAt: input.resumeAt,
+        }),
+      ),
 
     [BOARD_WS_METHODS.mergeCardPullRequest]: (input: BoardCardPullRequestActionInput) =>
       authorized(
-          BOARD_WS_METHODS.mergeCardPullRequest,
-          deps.boardSupervisor.mergePullRequest(input.cardId),
-        ),
+        BOARD_WS_METHODS.mergeCardPullRequest,
+        deps.boardSupervisor.mergePullRequest(input.cardId),
+      ),
 
     /**
      * Open the card's pull request from Building and route it past Code review
@@ -304,9 +303,9 @@ function makeBoardRpcHandlers(
      */
     [BOARD_WS_METHODS.submitCardForMerge]: (input: BoardCardPullRequestActionInput) =>
       authorized(
-          BOARD_WS_METHODS.submitCardForMerge,
-          deps.boardSupervisor.submitForMerge(input.cardId),
-        ),
+        BOARD_WS_METHODS.submitCardForMerge,
+        deps.boardSupervisor.submitForMerge(input.cardId),
+      ),
 
     /**
      * Run one more review round on a settled loop (T3O-39, D6) — "Another
@@ -317,9 +316,9 @@ function makeBoardRpcHandlers(
      */
     [BOARD_WS_METHODS.requestReviewRound]: (input: BoardCardPullRequestActionInput) =>
       authorized(
-          BOARD_WS_METHODS.requestReviewRound,
-          deps.boardSupervisor.requestReviewRound(input.cardId),
-        ),
+        BOARD_WS_METHODS.requestReviewRound,
+        deps.boardSupervisor.requestReviewRound(input.cardId),
+      ),
 
     /**
      * "Remove worktree" on a finished card that kept one (T3O-52, D5). The
@@ -327,17 +326,17 @@ function makeBoardRpcHandlers(
      */
     [BOARD_WS_METHODS.removeCardWorktree]: (input: BoardCardPullRequestActionInput) =>
       authorized(
-          BOARD_WS_METHODS.removeCardWorktree,
-          deps.boardSupervisor.forceRemoveWorktree(input.cardId),
-        ),
+        BOARD_WS_METHODS.removeCardWorktree,
+        deps.boardSupervisor.forceRemoveWorktree(input.cardId),
+      ),
 
     /** "Check again" on a card that kept its worktree (T3O-52): operate, like
         removal, because a durable checkout is removed by it. */
     [BOARD_WS_METHODS.checkCardWorktree]: (input: BoardCardPullRequestActionInput) =>
       authorized(
-          BOARD_WS_METHODS.checkCardWorktree,
-          deps.boardSupervisor.checkWorktree(input.cardId),
-        ),
+        BOARD_WS_METHODS.checkCardWorktree,
+        deps.boardSupervisor.checkWorktree(input.cardId),
+      ),
 
     /**
      * Attach a pending upload to the card's brief (t3o-32, K2). Copy first,
@@ -347,84 +346,84 @@ function makeBoardRpcHandlers(
      */
     [BOARD_WS_METHODS.attachCardFile]: (input: BoardAttachCardFileInput) =>
       authorized(
-          BOARD_WS_METHODS.attachCardFile,
-          Effect.gen(function* () {
-            const config = yield* ServerConfig.ServerConfig;
-            const crypto = yield* Crypto.Crypto;
-            const detail = yield* readDetail(input.cardId).pipe(
+        BOARD_WS_METHODS.attachCardFile,
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const crypto = yield* Crypto.Crypto;
+          const detail = yield* readDetail(input.cardId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new BoardCardAttachmentError({
+                  code: "internal",
+                  message: cause.message,
+                  cause,
+                }),
+            ),
+          );
+          if (detail === null) {
+            return yield* new BoardCardAttachmentError({
+              code: "rejected",
+              message: `Card ${input.cardId} was not found.`,
+            });
+          }
+          const createdAt = DateTime.formatIso(yield* DateTime.now);
+          const attachment = yield* claimBoardCardAttachment({
+            stateDir: config.stateDir,
+            attachmentsDir: config.attachmentsDir,
+            card: detail.card,
+            pendingAttachmentId: input.pendingAttachmentId,
+            attachmentId: BoardCardAttachmentId.make(yield* crypto.randomUUIDv4()),
+            name: input.name,
+            type: input.type,
+            mimeType: input.mimeType,
+            sizeBytes: input.sizeBytes,
+            addedAt: createdAt,
+          }).pipe(
+            Effect.mapError((error) =>
+              error instanceof BoardAttachmentClaimError
+                ? new BoardCardAttachmentError({
+                    code: error.failure.reason,
+                    message: error.failure.message,
+                    ...("cause" in error.failure && error.failure.cause !== undefined
+                      ? { cause: error.failure.cause }
+                      : {}),
+                  })
+                : new BoardCardAttachmentError({
+                    code: "storage",
+                    message: `Failed to store '${input.name}'.`,
+                    cause: error,
+                  }),
+            ),
+          );
+          const uuid = yield* crypto.randomUUIDv4();
+          yield* boardEngine
+            .dispatch({
+              type: "board.card.attach",
+              commandId: CommandId.make(`server:board-attach:${uuid}`),
+              cardId: input.cardId,
+              attachment,
+              createdAt,
+            })
+            .pipe(
+              Effect.tapError(() =>
+                deleteBoardCardAttachmentFile({
+                  stateDir: config.stateDir,
+                  cardId: input.cardId,
+                  name: attachment.name,
+                }),
+              ),
               Effect.mapError(
                 (cause) =>
                   new BoardCardAttachmentError({
-                    code: "internal",
+                    code: "rejected",
                     message: cause.message,
                     cause,
                   }),
               ),
             );
-            if (detail === null) {
-              return yield* new BoardCardAttachmentError({
-                code: "rejected",
-                message: `Card ${input.cardId} was not found.`,
-              });
-            }
-            const createdAt = DateTime.formatIso(yield* DateTime.now);
-            const attachment = yield* claimBoardCardAttachment({
-              stateDir: config.stateDir,
-              attachmentsDir: config.attachmentsDir,
-              card: detail.card,
-              pendingAttachmentId: input.pendingAttachmentId,
-              attachmentId: BoardCardAttachmentId.make(yield* crypto.randomUUIDv4()),
-              name: input.name,
-              type: input.type,
-              mimeType: input.mimeType,
-              sizeBytes: input.sizeBytes,
-              addedAt: createdAt,
-            }).pipe(
-              Effect.mapError((error) =>
-                error instanceof BoardAttachmentClaimError
-                  ? new BoardCardAttachmentError({
-                      code: error.failure.reason,
-                      message: error.failure.message,
-                      ...("cause" in error.failure && error.failure.cause !== undefined
-                        ? { cause: error.failure.cause }
-                        : {}),
-                    })
-                  : new BoardCardAttachmentError({
-                      code: "storage",
-                      message: `Failed to store '${input.name}'.`,
-                      cause: error,
-                    }),
-              ),
-            );
-            const uuid = yield* crypto.randomUUIDv4();
-            yield* boardEngine
-              .dispatch({
-                type: "board.card.attach",
-                commandId: CommandId.make(`server:board-attach:${uuid}`),
-                cardId: input.cardId,
-                attachment,
-                createdAt,
-              })
-              .pipe(
-                Effect.tapError(() =>
-                  deleteBoardCardAttachmentFile({
-                    stateDir: config.stateDir,
-                    cardId: input.cardId,
-                    name: attachment.name,
-                  }),
-                ),
-                Effect.mapError(
-                  (cause) =>
-                    new BoardCardAttachmentError({
-                      code: "rejected",
-                      message: cause.message,
-                      cause,
-                    }),
-                ),
-              );
-            return attachment;
-          }).pipe(Effect.mapError(toAttachmentError)),
-        ),
+          return attachment;
+        }).pipe(Effect.mapError(toAttachmentError)),
+      ),
 
     /**
      * Drop a brief attachment (t3o-32): record first, then the file. A file
@@ -433,55 +432,55 @@ function makeBoardRpcHandlers(
      */
     [BOARD_WS_METHODS.detachCardFile]: (input: BoardDetachCardFileInput) =>
       authorized(
-          BOARD_WS_METHODS.detachCardFile,
-          Effect.gen(function* () {
-            const config = yield* ServerConfig.ServerConfig;
-            const crypto = yield* Crypto.Crypto;
-            const detail = yield* readDetail(input.cardId).pipe(
+        BOARD_WS_METHODS.detachCardFile,
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const crypto = yield* Crypto.Crypto;
+          const detail = yield* readDetail(input.cardId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new BoardCardAttachmentError({
+                  code: "internal",
+                  message: cause.message,
+                  cause,
+                }),
+            ),
+          );
+          const attachment = detail?.card.attachments.find(
+            (candidate) => candidate.id === input.attachmentId,
+          );
+          if (detail === null || attachment === undefined) {
+            return yield* new BoardCardAttachmentError({
+              code: "rejected",
+              message: `Attachment ${input.attachmentId} is not on card ${input.cardId}.`,
+            });
+          }
+          const uuid = yield* crypto.randomUUIDv4();
+          yield* boardEngine
+            .dispatch({
+              type: "board.card.detach",
+              commandId: CommandId.make(`server:board-detach:${uuid}`),
+              cardId: input.cardId,
+              attachmentId: input.attachmentId,
+              createdAt: DateTime.formatIso(yield* DateTime.now),
+            })
+            .pipe(
               Effect.mapError(
                 (cause) =>
                   new BoardCardAttachmentError({
-                    code: "internal",
+                    code: "rejected",
                     message: cause.message,
                     cause,
                   }),
               ),
             );
-            const attachment = detail?.card.attachments.find(
-              (candidate) => candidate.id === input.attachmentId,
-            );
-            if (detail === null || attachment === undefined) {
-              return yield* new BoardCardAttachmentError({
-                code: "rejected",
-                message: `Attachment ${input.attachmentId} is not on card ${input.cardId}.`,
-              });
-            }
-            const uuid = yield* crypto.randomUUIDv4();
-            yield* boardEngine
-              .dispatch({
-                type: "board.card.detach",
-                commandId: CommandId.make(`server:board-detach:${uuid}`),
-                cardId: input.cardId,
-                attachmentId: input.attachmentId,
-                createdAt: DateTime.formatIso(yield* DateTime.now),
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new BoardCardAttachmentError({
-                      code: "rejected",
-                      message: cause.message,
-                      cause,
-                    }),
-                ),
-              );
-            yield* deleteBoardCardAttachmentFile({
-              stateDir: config.stateDir,
-              cardId: input.cardId,
-              name: attachment.name,
-            });
-          }).pipe(Effect.mapError(toAttachmentError)),
-        ),
+          yield* deleteBoardCardAttachmentFile({
+            stateDir: config.stateDir,
+            cardId: input.cardId,
+            name: attachment.name,
+          });
+        }).pipe(Effect.mapError(toAttachmentError)),
+      ),
 
     /**
      * One streaming subscription per open card, mirroring

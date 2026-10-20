@@ -1481,8 +1481,9 @@ describe("merging a card's pull request", () => {
     ),
   );
 
-  for (const localMergeConflict of ["unresolvable", "unfetched"] as const) {
-    it.effect(`does NOT start a conflict fix when git could not look (${localMergeConflict})`, () =>
+  it.effect.each(["unresolvable", "unfetched"] as const)(
+    "does NOT start a conflict fix when git could not look (%s)",
+    (localMergeConflict) =>
       withGovernor(
         {
           board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
@@ -1505,8 +1506,7 @@ describe("merging a card's pull request", () => {
             assert.deepStrictEqual(started, []);
           }),
       ),
-    );
-  }
+  );
 
   it.effect("does NOT read a missing approval as a conflict", () =>
     withGovernor(

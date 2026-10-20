@@ -112,7 +112,9 @@ export const readCoreWithScopeFallback = <A extends object, E extends { readonly
     fields: ReadonlyArray<string>,
   ): Effect.Effect<A & { readonly checksUnread?: true }, E, R> =>
     read(fields.join(",")).pipe(
-      Effect.map((core) => (fields.includes("statusCheckRollup") ? core : { ...core, checksUnread: true as const })),
+      Effect.map((core) =>
+        fields.includes("statusCheckRollup") ? core : { ...core, checksUnread: true as const },
+      ),
       Effect.catchIf(
         (error) => fields.length > 0 && isMissingScopeRefusal(error),
         () => attempt(fields.slice(1)),

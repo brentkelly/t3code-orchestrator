@@ -33,10 +33,7 @@ describe("origin-first repository resolution", () => {
     });
     expect(
       resolve(
-        remotes(
-          ["origin", "git@gitlab.com:me/web.git"],
-          ["github", "git@github.com:acme/web.git"],
-        ),
+        remotes(["origin", "git@gitlab.com:me/web.git"], ["github", "git@github.com:acme/web.git"]),
       ),
     ).toEqual({ host: "github.com", owner: "acme", name: "web" });
   });
