@@ -1,31 +1,18 @@
 /**
- * T3o usage-limit detection seam (T3O-22, D17).
+ * T3o usage-limit detection seam (T3O-22, D17; T3O-59).
  *
- * The only impure part of detection, and thin by construction: it reads the
- * thread's last assistant message, binds the clock, the server's time zone and
- * the shipped catalogue, calls the pure algorithm, and returns the verdict.
- * Everything that could be a decision instead of a lookup lives in
- * `boardUsageLimitDetect.ts`.
+ * Since orchestration-v2 the provider adapters classify a failure themselves:
+ * a run that hit a usage limit fails with `class: "usage_limit"` and, when the
+ * provider said, the reset time. Detection is reading that off the thread —
+ * the board's own catalogue of provider refusal sentences is no longer
+ * consulted.
  *
- * A service rather than another function on the reactor, for three reasons:
- *
- * - `supervisorReactor.ts` is already five thousand lines. This keeps the
- *   message read, the time zone and the channel choice out of it; the reactor
- *   gains one call and acts on the verdict.
- * - Reactor tests can provide a STUB that returns a fixed verdict, so the
- *   behavioural suite drives `wait` / `exhausted` / `slow-down` / null directly
- *   instead of crafting provider prose and hoping the classifier agrees. Those
- *   tests are then testing the supervisor, which is what they are for.
- * - It is the established shape here — `BoardStepSlots`,
- *   `BoardPullRequestGateway` and `ProjectSetupScriptRunner` are all exactly
- *   this.
+ * Still a service rather than a function on the reactor: reactor tests provide
+ * a STUB that returns a fixed verdict, so the behavioural suite drives `wait` /
+ * `exhausted` / `slow-down` / null directly and tests the supervisor, which is
+ * what they are for.
  */
-import {
-  type BoardUsageLimitChannel,
-  type BoardUsageLimitMatch,
-  detectBoardUsageLimit,
-  type ThreadId,
-} from "@t3tools/contracts";
+import type { BoardUsageLimitMatch, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -33,16 +20,16 @@ import * as Layer from "effect/Layer";
 
 import { ThreadGateway } from "./ThreadGateway.ts";
 
+/** Added to a provider's reset time before anything is retried against it,
+    as the catalogue's matches always carried (D5). */
+const RESUME_MARGIN_MS = 60_000;
+
 export interface UsageLimitDetectorShape {
   /**
-   * Classify a turn that has just ended, or `null` when nothing in the
-   * catalogue matched.
-   *
-   * `turnErrorMessage` is the failed turn's own `errorMessage` when the adapter
-   * reported one. It is the STRONGER channel and is preferred over the last
-   * assistant message: Grok's refusal arrives that way with no assistant
-   * message present at all, and nobody quotes a sentence into a failed turn's
-   * error field.
+   * Classify a turn that has just ended: a `wait` when the thread's latest run
+   * failed on a usage limit, otherwise `null`. `turnErrorMessage`, `nowMs`
+   * and `since` are what the text catalogue needed; the v2 failure class needs
+   * none of them, and they stay so the stubbed suites keep their shape.
    */
   readonly classifyTurn: (input: {
     readonly threadId: ThreadId;
@@ -63,48 +50,34 @@ export class UsageLimitDetector extends Context.Service<
   UsageLimitDetectorShape
 >()("t3/board/UsageLimitDetector") {}
 
-/** The server's own zone, for a provider that quotes a bare clock time with no
-    zone beside it (`try again a 4:03AM`). A zone the message names always wins;
-    this is only the fallback. */
-export function serverTimeZone(): string {
-  try {
-    return new Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  } catch {
-    return "UTC";
-  }
-}
-
 const make = Effect.gen(function* () {
   const threads = yield* ThreadGateway;
 
   const classifyTurn: UsageLimitDetectorShape["classifyTurn"] = (input) =>
-    Effect.gen(function* () {
-      const timeZone = serverTimeZone();
-      // The failed turn's error field first: it is unambiguous, and on the Grok
-      // path it is the ONLY text there is.
-      if (input.turnErrorMessage !== null && input.turnErrorMessage.trim().length > 0) {
-        return classify(input.turnErrorMessage, "turn-error", input.nowMs, timeZone);
-      }
-      // Best-effort in the shape of `endedWithQuestion`: a read failure, or a
-      // thread with no assistant message at all, answers "no match", which
-      // leaves recovery exactly as it was before this feature existed.
-      const message = yield* threads
-        .latestAssistantMessage(input.threadId)
-        .pipe(Effect.catchCause(() => Effect.succeed(null)));
-      if (message === null) return null;
-      if (input.since !== null && !(message.createdAt > input.since)) return null;
-      return classify(message.text, "message", input.nowMs, timeZone);
-    });
+    threads.threadState(input.threadId).pipe(
+      Effect.map((state): BoardUsageLimitMatch | null => {
+        const limit = state?.usageLimit ?? null;
+        if (limit === null) return null;
+        const resetMs = limit.resetAt === null ? Number.NaN : Date.parse(limit.resetAt);
+        return {
+          kind: "wait",
+          confidence: "strict",
+          resumeAt: Number.isFinite(resetMs)
+            ? DateTime.formatIso(DateTime.makeUnsafe(resetMs + RESUME_MARGIN_MS))
+            : null,
+          reason:
+            limit.message !== null && limit.message.trim().length > 0
+              ? limit.message.trim()
+              : "The provider's usage limit was reached.",
+          ruleId: "orchestration-v2-usage-limit",
+        };
+      }),
+      // A read failure answers "no match", leaving recovery as it was.
+      Effect.orElseSucceed(() => null),
+    );
 
   return { classifyTurn } satisfies UsageLimitDetectorShape;
 });
-
-const classify = (
-  text: string,
-  channel: BoardUsageLimitChannel,
-  nowMs: number,
-  timeZone: string,
-): BoardUsageLimitMatch | null => detectBoardUsageLimit({ text, channel, nowMs, timeZone });
 
 export const UsageLimitDetectorLive = Layer.effect(UsageLimitDetector, make);
 

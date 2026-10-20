@@ -33,6 +33,7 @@ import {
   type BoardSessionStatus,
   type BoardThreadRecord,
   type BoardThreadState,
+  type BoardThreadUsageLimit,
   type ThreadGatewayShape,
   type ThreadSendInput,
   type ThreadSettleInput,
@@ -50,7 +51,8 @@ export type ThreadGatewayCall =
   | ({ readonly type: "thread.interrupt" } & ThreadTargetInput)
   | ({ readonly type: "thread.stop-session" } & ThreadTargetInput)
   | ({ readonly type: "thread.settle" } & ThreadSettleInput)
-  | ({ readonly type: "thread.delete" } & ThreadTargetInput);
+  | ({ readonly type: "thread.delete" } & ThreadTargetInput)
+  | ({ readonly type: "thread.arm-limit-recovery" } & ThreadTargetInput);
 
 /** The fields a fixture sets on a thread; everything derived is computed. */
 export interface FakeThreadInput {
@@ -65,6 +67,8 @@ export interface FakeThreadInput {
   readonly settlementDecided?: boolean;
   readonly worktreePath?: string | null;
   readonly modelSelection?: ModelSelection | null;
+  /** The latest run failed on a provider usage limit (T3O-59). */
+  readonly usageLimit?: BoardThreadUsageLimit | null;
 }
 
 const DEFAULT_PROJECT_ID = ProjectId.make("project-1");
@@ -75,7 +79,7 @@ const DEFAULT_MODEL_SELECTION: ModelSelection = {
 };
 
 /**
- * A thread state with the derived fields computed the way the v1 gateway
+ * A thread state with the derived fields computed the way the gateway
  * computes them, so a fixture states facts and never a contradiction.
  */
 export const fakeThreadState = (
@@ -115,6 +119,7 @@ export const fakeThreadState = (
     worktreePath: input.worktreePath ?? null,
     modelSelection:
       input.modelSelection === undefined ? DEFAULT_MODEL_SELECTION : input.modelSelection,
+    usageLimit: input.usageLimit ?? null,
   };
 };
 
@@ -274,6 +279,21 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
             settlementDecided: true,
           }));
         }),
+      // As the engine does: armed only for a limit that names its reset time.
+      armLimitRecovery: (input) =>
+        Effect.gen(function* () {
+          yield* record({ type: "thread.arm-limit-recovery", ...input });
+          const state = (yield* Ref.get(states)).get(String(input.threadId));
+          const limit = state?.usageLimit ?? null;
+          if (state === undefined || limit === null || limit.resetAt === null) return false;
+          yield* Ref.update(states, (current) =>
+            new Map(current).set(String(input.threadId), {
+              ...state,
+              usageLimit: { ...limit, resumeArmed: true },
+            }),
+          );
+          return true;
+        }),
       delete: (input) =>
         Effect.gen(function* () {
           yield* record({ type: "thread.delete", ...input });
@@ -380,6 +400,7 @@ export const inertThreadGateway = (
   stopSession: () => Effect.void,
   settle: () => Effect.void,
   delete: () => Effect.void,
+  armLimitRecovery: () => Effect.succeed(false),
   threadState: () => Effect.succeed(null),
   threadRecords: () => Effect.succeed(new Map()),
   threadsInWorktree: () => Effect.succeed([]),

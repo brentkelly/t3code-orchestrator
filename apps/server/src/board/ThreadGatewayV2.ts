@@ -381,6 +381,25 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
     // preparation — create, then start the first turn.
     spawn: (input) =>
       Effect.gen(function* () {
+        // v2 does not hold a thread to an existing project; the board does.
+        const project = yield* projectRows.get(input.projectId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ThreadCommandFailedError({
+                command: "thread.create",
+                threadId: input.threadId,
+                detail: describe(cause),
+                cause,
+              }),
+          ),
+        );
+        if (Option.isNone(project)) {
+          return yield* refused(
+            "thread.create",
+            input.threadId,
+            `project ${input.projectId} does not exist`,
+          );
+        }
         const inWorktree = input.branch !== null;
         yield* run({
           type: "thread.create",
@@ -579,17 +598,15 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
     // every message, turn item and run change the engine records.
     lastSignalAt: (threadId) =>
       shellOf(threadId).pipe(Effect.map((shell) => isoOrNull(shell?.updatedAt))),
-    // A turn requested but not yet running: still preparing or queued.
+    // A turn requested but not yet running: the latest run is still being
+    // prepared, queued behind another, or waiting for its provider to start.
     pendingTurnStartAt: (threadId) =>
       shellOf(threadId).pipe(
         Effect.map((shell) =>
           shell !== null &&
-          (shell.status === "preparing" || shell.status === "queued") &&
-          shell.activeRunId === null
+          (shell.status === "preparing" || shell.status === "queued" || shell.status === "starting")
             ? isoOrNull(shell.latestRunRequestedAt)
-            : shell !== null && shell.activityRunStatus === "preparing"
-              ? isoOrNull(shell.latestRunRequestedAt)
-              : null,
+            : null,
         ),
       ),
 

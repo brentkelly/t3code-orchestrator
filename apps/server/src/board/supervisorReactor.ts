@@ -3621,6 +3621,25 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * The usage-limit parks the BOARD wakes (T3O-59). A parked step whose thread
+   * has v2's limit recovery armed with auto-resume is left to the engine: v2's
+   * recovery worker resumes it once the window reopens, and that resume
+   * reaches the board as a turn request that un-parks the step
+   * (`resumeParkedStep`). Waking it here as well would resume the thread twice.
+   * A limit the provider named no reset time for is never armed, so the board's
+   * own probe and resume still cover it.
+   */
+  const boardWokenLimitParks = (board: BoardState, providerInstanceId: ProviderInstanceId) =>
+    Effect.filter(boardUsageLimitParkedSteps(board, providerInstanceId), (state) =>
+      state.threadId === null
+        ? Effect.succeed(true)
+        : threads.threadState(state.threadId).pipe(
+            Effect.map((thread) => thread?.usageLimit?.resumeArmed !== true),
+            Effect.orElseSucceed(() => true),
+          ),
+    );
+
+  /**
    * Lift a provider cooldown and put every card it was holding back to work
    * (D9).
    *
@@ -3643,7 +3662,7 @@ const make = Effect.gen(function* () {
     });
     if (!cleared) return;
     const board = yield* readBoard;
-    for (const parked of boardUsageLimitParkedSteps(board, providerInstanceId)) {
+    for (const parked of yield* boardWokenLimitParks(board, providerInstanceId)) {
       yield* startOrResumeCard(parked.cardId, { preserveBudget: true });
     }
   });
@@ -3954,6 +3973,19 @@ const make = Effect.gen(function* () {
         progressed: false,
         lastError: match.reason,
       });
+      // Hand the resume to v2 (T3O-59): its recovery worker resumes the thread
+      // when the window reopens, whatever the user's global auto-resume
+      // setting, and `boardWokenLimitParks` keeps the board from resuming it
+      // too. Best-effort: an unarmed park is still woken by the board's probe.
+      if (state.threadId !== null) {
+        yield* optional(
+          "thread.metadata.update",
+          threads.armLimitRecovery({
+            commandId: yield* commandId("limit-arm"),
+            threadId: state.threadId,
+          }),
+        );
+      }
       return true;
     },
   );
@@ -6976,10 +7008,12 @@ const make = Effect.gen(function* () {
       if (limit.kind !== "wait") continue;
       const dueMs = Date.parse(limit.until);
       if (Number.isFinite(dueMs) && nowMs < dueMs) continue;
-      const parked = boardUsageLimitParkedSteps(board, limit.providerInstanceId).filter((state) => {
-        const card = board.cards.find((candidate) => candidate.id === state.cardId);
-        return card !== undefined && card.archivedAt === null;
-      });
+      const parked = (yield* boardWokenLimitParks(board, limit.providerInstanceId)).filter(
+        (state) => {
+          const card = board.cards.find((candidate) => candidate.id === state.cardId);
+          return card !== undefined && card.archivedAt === null;
+        },
+      );
       if (parked.length === 0) {
         yield* clearProviderLimitAndResume(limit.providerInstanceId);
         continue;
