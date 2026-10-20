@@ -38,7 +38,8 @@ import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts
 import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 import { boardEngineDouble, boardServicesTestLayer } from "./boardServices.testkit.ts";
-import { projectBoardEvent, type BoardOrchestrationReadModel } from "./projector.ts";
+import { projectBoardEvent } from "./projector.ts";
+import type { BoardOrchestrationReadModel } from "./decisionContext.testkit.ts";
 import type { BoardThreadState } from "./ThreadGateway.ts";
 import {
   aliveThread,

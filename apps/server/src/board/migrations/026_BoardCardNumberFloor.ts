@@ -15,7 +15,7 @@
 // `board_cards` (nothing has been able to delete one until now), so an empty
 // table is already correct.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

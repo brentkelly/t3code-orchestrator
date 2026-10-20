@@ -6,12 +6,18 @@
  * `OrchestrationEvent` union knows nothing of them. Their envelope mirrors
  * upstream's event base fields, with the board's own aggregates.
  *
- * Its own file because it needs both `orchestration.ts` (the event metadata) and
- * `board.ts` (the members), and `orchestration.ts` already imports `board.ts`.
+ * Its own file so `board.ts` (the members) stays free of the envelope.
  */
 import * as Schema from "effect/Schema";
 
-import { CommandId, EventId, IsoDateTime, NonNegativeInt } from "./baseSchemas.ts";
+import { OrchestrationClientOrigin } from "./applicationEvent.ts";
+import {
+  CommandId,
+  EventId,
+  IsoDateTime,
+  NonNegativeInt,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import {
   BOARD_EVENT_TYPES,
   BoardCardId,
@@ -19,8 +25,24 @@ import {
   BoardStageId,
   makeBoardOrchestrationEvents,
 } from "./board.ts";
-import { OrchestrationEventMetadata } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+
+/**
+ * A board event's metadata. The board itself writes only `origin`; the other
+ * keys are the v1 orchestration event metadata's, kept so a row the board
+ * inherited from upstream's log (migration 044) still decodes after v1 went.
+ */
+export const BoardEventMetadata = Schema.Struct({
+  providerTurnId: Schema.optional(TrimmedNonEmptyString),
+  providerItemId: Schema.optional(TrimmedNonEmptyString),
+  adapterKey: Schema.optional(TrimmedNonEmptyString),
+  requestId: Schema.optional(TrimmedNonEmptyString),
+  ingestedAt: Schema.optional(IsoDateTime),
+  historyImport: Schema.optional(Schema.Boolean),
+  deferredTurn: Schema.optional(Schema.Boolean),
+  origin: Schema.optional(OrchestrationClientOrigin),
+});
+export type BoardEventMetadata = typeof BoardEventMetadata.Type;
 
 /** The board's aggregates: a card, a label, a stage, and a provider instance's
     cooldown (T3O-22) — which belongs to an account, not to any card. */
@@ -39,7 +61,7 @@ const BoardEventBaseFields = {
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
   correlationId: Schema.NullOr(CommandId),
-  metadata: OrchestrationEventMetadata,
+  metadata: BoardEventMetadata,
 } as const;
 
 export const BoardEvent = Schema.Union(makeBoardOrchestrationEvents(BoardEventBaseFields));

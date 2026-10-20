@@ -387,7 +387,7 @@ const makeBoardEventBase = Effect.fn("makeBoardEventBase")(function* (input: {
   readonly commandId: BoardCommand["commandId"];
 }) {
   const crypto = yield* Crypto.Crypto;
-  const eventId = yield* crypto.randomUUIDv4;
+  const eventId = yield* crypto.randomUUIDv4();
   return {
     eventId: EventId.make(eventId),
     aggregateKind: "card" as const,
@@ -627,7 +627,7 @@ const makeBoardLabelEventBase = Effect.fn("makeBoardLabelEventBase")(function* (
   readonly commandId: BoardCommand["commandId"];
 }) {
   const crypto = yield* Crypto.Crypto;
-  const eventId = yield* crypto.randomUUIDv4;
+  const eventId = yield* crypto.randomUUIDv4();
   return {
     eventId: EventId.make(eventId),
     aggregateKind: "label" as const,
@@ -649,7 +649,7 @@ const makeBoardProviderLimitEventBase = Effect.fn("makeBoardProviderLimitEventBa
     readonly commandId: BoardCommand["commandId"];
   }) {
     const crypto = yield* Crypto.Crypto;
-    const eventId = yield* crypto.randomUUIDv4;
+    const eventId = yield* crypto.randomUUIDv4();
     return {
       eventId: EventId.make(eventId),
       aggregateKind: "provider-limit" as const,
@@ -670,7 +670,7 @@ const makeBoardStageEventBase = Effect.fn("makeBoardStageEventBase")(function* (
   readonly commandId: BoardCommand["commandId"];
 }) {
   const crypto = yield* Crypto.Crypto;
-  const eventId = yield* crypto.randomUUIDv4;
+  const eventId = yield* crypto.randomUUIDv4();
   return {
     eventId: EventId.make(eventId),
     aggregateKind: "stage" as const,
@@ -2897,7 +2897,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       ];
       const childIdByPlan = new Map<BoardPlanId, BoardCardId>();
       for (const plan of plans) {
-        childIdByPlan.set(plan.planId, BoardCardId.make(yield* crypto.randomUUIDv4));
+        childIdByPlan.set(plan.planId, BoardCardId.make(yield* crypto.randomUUIDv4()));
       }
       const events: Array<PlannedBoardEvent> = [];
       const childCardIds: Array<BoardCardId> = [];

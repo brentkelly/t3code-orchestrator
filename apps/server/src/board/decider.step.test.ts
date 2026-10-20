@@ -15,7 +15,7 @@ import * as Effect from "effect/Effect";
 
 import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
-import type { BoardOrchestrationReadModel } from "./projector.ts";
+import type { BoardOrchestrationReadModel } from "./decisionContext.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");

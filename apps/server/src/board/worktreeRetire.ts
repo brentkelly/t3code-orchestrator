@@ -27,7 +27,7 @@ import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
 
 import { CommandId, GitCommandError, type ProjectScript } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { Platform as HostProcessPlatform } from "@t3tools/shared/HostProcess";
 import { projectScriptRuntimeEnv, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";

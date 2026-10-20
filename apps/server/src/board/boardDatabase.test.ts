@@ -7,7 +7,7 @@
  */
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
@@ -230,7 +230,9 @@ describe("board database", () => {
 
       const outcome = yield* relocateBoardSchema().pipe(
         Effect.as("relocated" as const),
-        Effect.catchTag("BoardRelocationConflictError", () => Effect.succeed("refused" as const)),
+        Effect.catchTags({
+          BoardRelocationConflictError: () => Effect.succeed("refused" as const),
+        }),
       );
       assert.strictEqual(outcome, "refused");
 
@@ -310,7 +312,9 @@ describe("board database", () => {
 
       const outcome = yield* relocateBoardSchema().pipe(
         Effect.as("relocated" as const),
-        Effect.catchTag("BoardRelocationConflictError", () => Effect.succeed("refused" as const)),
+        Effect.catchTags({
+          BoardRelocationConflictError: () => Effect.succeed("refused" as const),
+        }),
       );
       assert.strictEqual(outcome, "refused");
       // Both copies untouched.

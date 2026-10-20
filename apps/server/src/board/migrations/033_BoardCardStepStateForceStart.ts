@@ -18,7 +18,7 @@
 // History is NOT rewritten (D7): existing rows read 0, which already means "no
 // override was asked for", so no read-side shim is needed.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

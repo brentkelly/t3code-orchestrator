@@ -3,22 +3,13 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { BOARD_EVENT_TYPES, BoardClientCommand, BoardShellStreamItem } from "./board.ts";
 import { BoardEvent, BoardEventType } from "./boardEvent.ts";
-import {
-  ClientOrchestrationCommand,
-  OrchestrationCommand,
-  OrchestrationEvent,
-  OrchestrationEventType,
-  OrchestrationShellSnapshot,
-  OrchestrationShellStreamItem,
-} from "./orchestration.ts";
+import { OrchestrationV2Command, OrchestrationV2DomainEvent } from "./orchestrationV2.ts";
 
 const decodeBoardEvent = Schema.decodeUnknownExit(BoardEvent);
-const decodeOrchestrationEvent = Schema.decodeUnknownExit(OrchestrationEvent);
-const decodeClientCommand = Schema.decodeUnknownExit(ClientOrchestrationCommand);
 const decodeBoardClientCommand = Schema.decodeUnknownExit(BoardClientCommand);
-const decodeServerCommand = Schema.decodeUnknownExit(OrchestrationCommand);
-const decodeShellItem = Schema.decodeUnknownExit(OrchestrationShellStreamItem);
 const decodeBoardItem = Schema.decodeUnknownExit(BoardShellStreamItem);
+const decodeV2Command = Schema.decodeUnknownExit(OrchestrationV2Command);
+const decodeV2Event = Schema.decodeUnknownExit(OrchestrationV2DomainEvent);
 
 // T3O-56: board events and commands belong to the board's own engine, not to
 // upstream's orchestration unions. T3O-57: clients send board commands over
@@ -48,15 +39,19 @@ const cardCreated = {
 describe("board events (T3O-56)", () => {
   it("decode as board events and not as orchestration events", () => {
     expect(decodeBoardEvent(cardCreated)._tag).toBe("Success");
-    expect(decodeOrchestrationEvent(cardCreated)._tag).toBe("Failure");
+    expect(decodeV2Event(cardCreated)._tag).toBe("Failure");
   });
 
-  it("keep their own type registry, disjoint from upstream's", () => {
+  it("keep their own type registry", () => {
     expect([...BoardEventType.literals].toSorted()).toEqual([...BOARD_EVENT_TYPES].toSorted());
-    expect(OrchestrationEventType.literals.some((type) => type.startsWith("board."))).toBe(false);
   });
 
-  it("leave board commands off both upstream command unions, onto the board's own", () => {
+  it("decode metadata a v1-era row carried", () => {
+    const inherited = { ...cardCreated, metadata: { ingestedAt: "2026-01-01T00:00:00.000Z" } };
+    expect(decodeBoardEvent(inherited)._tag).toBe("Success");
+  });
+
+  it("leave board commands off upstream's command union, onto the board's own", () => {
     const move = {
       type: "board.card.move",
       commandId: "cmd-move",
@@ -65,8 +60,7 @@ describe("board events (T3O-56)", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
     };
     expect(decodeBoardClientCommand(move)._tag).toBe("Success");
-    expect(decodeClientCommand(move)._tag).toBe("Failure");
-    expect(decodeServerCommand(move)._tag).toBe("Failure");
+    expect(decodeV2Command(move)._tag).toBe("Failure");
   });
 });
 
@@ -84,13 +78,7 @@ describe("the board's own stream (T3O-57)", () => {
     },
   };
 
-  it("carries board deltas, which the orchestration shell stream no longer admits", () => {
+  it("carries board deltas", () => {
     expect(decodeBoardItem(labelUpserted)._tag).toBe("Success");
-    expect(decodeShellItem(labelUpserted)._tag).toBe("Failure");
-  });
-
-  it("leaves the orchestration shell snapshot with no board field", () => {
-    const fields = Object.keys(OrchestrationShellSnapshot.fields);
-    expect(fields.filter((field) => /card|board/i.test(field))).toEqual([]);
   });
 });

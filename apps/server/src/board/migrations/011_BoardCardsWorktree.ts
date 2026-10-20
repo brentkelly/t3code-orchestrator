@@ -8,7 +8,7 @@
 // pre-t3o-09 event log decodes each card's worktree to null, and a
 // pre-t3o-09 row rehydrates to null, so replay equals rehydration.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

@@ -177,9 +177,9 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         assert.deepStrictEqual(replayed.board, rehydrated.board);
         // And upstream's log carries no board event at all.
         const upstreamTypes = Array.from(yield* Stream.runCollect(engine.readEvents(0))).map(
-          (event) => event.type,
+          (stored) => stored.event.type as string,
         );
-        assert.deepStrictEqual(upstreamTypes, ["project.created"]);
+        assert.isFalse(upstreamTypes.some((type) => type.startsWith("board.")));
       }),
   );
 

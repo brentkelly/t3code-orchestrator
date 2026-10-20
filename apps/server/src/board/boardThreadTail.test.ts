@@ -18,10 +18,14 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { BoardQueries } from "./BoardQueries.ts";
-import { boardStackEngine, makeBoardStackTestLayerWithoutTail } from "./boardStack.testkit.ts";
+import {
+  boardStackEngine,
+  makeBoardStackTestLayerWithoutTail,
+  writeStackPlan,
+} from "./boardStack.testkit.ts";
 import {
   BOARD_THREAD_TAIL_PROJECTOR,
   BoardThreadTail,
@@ -80,24 +84,7 @@ const seedLinkedThread = (tag: string) =>
   });
 
 const appendPlan = (threadId: ThreadId, tag: string) =>
-  Effect.gen(function* () {
-    const engine = yield* boardStackEngine;
-    yield* engine.dispatch({
-      type: "thread.activity.append",
-      commandId: CommandId.make(`cmd-plan-${tag}`),
-      threadId,
-      activity: {
-        id: EventId.make(`activity-${tag}`),
-        tone: "info",
-        kind: "turn.plan.updated",
-        summary: "Plan updated",
-        payload: { plan: [{ step: "Only step", status: "inProgress" }] },
-        turnId: null,
-        createdAt: t0,
-      },
-      createdAt: t0,
-    });
-  });
+  writeStackPlan(threadId, tag, [{ step: "Only step", status: "inProgress" }], t0);
 
 /** Put the tail's cursor where a test wants it, before the tail starts. */
 const setCursor = (sequence: number) =>

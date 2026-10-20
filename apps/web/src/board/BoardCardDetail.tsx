@@ -8,6 +8,7 @@
  * Mounting this component IS the detail subscription — it exists only while a
  * card is selected, so the board at rest opens none.
  */
+import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import {
   BoardCardId,
   BoardLabelId,
@@ -440,7 +441,9 @@ export function BoardCardDetail({
     const threads = snapshot?.threads ?? [];
     return card.threadLinks.map((link) => {
       const thread = threads.find((candidate) => candidate.id === link.threadId);
-      const { threadState, awaitingInput } = deriveBoardCardThreadState(thread);
+      const { threadState, awaitingInput } = deriveBoardCardThreadState(
+        thread === undefined ? undefined : boardThreadStateSource(thread),
+      );
       return {
         threadId: link.threadId,
         role: link.role,

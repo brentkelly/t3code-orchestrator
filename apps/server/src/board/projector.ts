@@ -87,7 +87,6 @@ import {
   type BoardEvent,
   type ProjectId,
   type BoardShellStreamEvent,
-  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -100,17 +99,10 @@ export type { BoardEvent };
 export { isBoardEvent };
 
 /** The board-only read model the decider and in-memory projector run on
-    (T3O-56): the board slice, absent until the first board event. A full
-    `OrchestrationReadModel` still satisfies it structurally, which is what lets
-    the projector stay generic over whichever model a caller holds. */
+    (T3O-56): the board slice, absent until the first board event. */
 export interface BoardReadModel {
   readonly board?: BoardState | undefined;
 }
-
-/** Upstream's command read model with the board slice on it (T3O-57: the slice
-    is no longer part of upstream's schema) — the one view a supervisor pass
-    that reads both threads and cards decides from. */
-export type BoardOrchestrationReadModel = OrchestrationReadModel & BoardReadModel;
 
 const decodeBoardCardCreatedPayload = Schema.decodeUnknownEffect(BoardCardCreatedPayload);
 const decodeBoardCardMovedPayload = Schema.decodeUnknownEffect(BoardCardMovedPayload);

@@ -7,7 +7,7 @@
  * `BoardOrchestrationReadModel` derive the same context from it here, so a fixture
  * still says "this project exists" by putting the project in the model.
  */
-import type { ThreadId } from "@t3tools/contracts";
+import type { ProjectId, ThreadId } from "@t3tools/contracts";
 
 import {
   boardCommandNeedsProjects,
@@ -16,7 +16,30 @@ import {
   type BoardCommand,
   type BoardDecisionContext,
 } from "./decider.ts";
-import type { BoardOrchestrationReadModel } from "./projector.ts";
+import type { BoardReadModel } from "./projector.ts";
+
+/** A project, as a fixture states one. Extra fields are carried, not read. */
+export interface BoardTestProject {
+  readonly id: ProjectId;
+  readonly title: string;
+  readonly deletedAt: string | null;
+  readonly [field: string]: unknown;
+}
+
+/** A thread, as a fixture states one. Extra fields are carried, not read. */
+export interface BoardTestThread {
+  readonly id: ThreadId;
+  readonly deletedAt: string | null;
+  readonly [field: string]: unknown;
+}
+
+/** The board slice with the projects and threads a decision reads — the shape
+    suites hold a whole board world in since upstream's v1 read model went. */
+export type BoardOrchestrationReadModel = BoardReadModel & {
+  readonly projects: ReadonlyArray<BoardTestProject>;
+  readonly threads: ReadonlyArray<BoardTestThread>;
+  readonly [field: string]: unknown;
+};
 
 /** The context the engine would load for `command`, read off a full model. */
 export function boardDecisionContextFromModel(

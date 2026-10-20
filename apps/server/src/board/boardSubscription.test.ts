@@ -26,6 +26,7 @@ import {
   boardStackEngine,
   drainBoardThreadTail,
   makeBoardStackTestLayer,
+  writeStackPlan,
 } from "./boardStack.testkit.ts";
 import { boardStreamWindowDeltas, subscribeBoard } from "./boardSubscription.ts";
 import { makeBoardCard, NOW } from "./supervisorHarness.testkit.ts";
@@ -302,26 +303,15 @@ it.layer(makeBoardStackTestLayer("t3o-board-subscribe-test-"), { excludeTestServ
         const cursor = yield* engine.boardEngine.latestSequence;
 
         // The plan lands with no subscriber attached, and writes no board event.
-        yield* engine.dispatch({
-          type: "thread.activity.append",
-          commandId: CommandId.make("cmd-plan-d"),
-          threadId: thread,
-          activity: {
-            id: EventId.make("activity-plan-d"),
-            tone: "info",
-            kind: "turn.plan.updated",
-            summary: "Plan updated",
-            payload: {
-              plan: [
-                { step: "One", status: "completed" },
-                { step: "Two", status: "pending" },
-              ],
-            },
-            turnId: null,
-            createdAt: NOW,
-          },
-          createdAt: NOW,
-        });
+        yield* writeStackPlan(
+          thread,
+          "plan-d",
+          [
+            { step: "One", status: "completed" },
+            { step: "Two", status: "pending" },
+          ],
+          NOW,
+        );
         yield* drainBoardThreadTail;
         assert.strictEqual(yield* engine.boardEngine.latestSequence, cursor);
 

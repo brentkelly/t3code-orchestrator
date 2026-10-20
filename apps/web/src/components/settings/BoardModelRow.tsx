@@ -23,6 +23,7 @@ import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { sortProviderInstanceEntries } from "../../providerInstances";
 import { cn } from "../../lib/utils";
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import { ModelPickerContent } from "../chat/ModelPickerContent";
 import {
@@ -85,9 +86,6 @@ function ModelControlsMenu(props: {
       ultrathinkPromptControlled: false,
     });
     if (display.label.length > 0) labels.push(display.label);
-    if (display.speedIcon !== null) {
-      labels.push(display.speedIcon === "ultrafast" ? "Ultrafast" : "Fast");
-    }
   }
   if (props.runtimeMode !== undefined) {
     labels.push(runtimeModeConfig[props.runtimeMode].label);
@@ -189,6 +187,7 @@ export function ModelRow(props: {
   placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const environmentId = usePrimaryEnvironmentId();
   // With nothing picked the popup still needs an instance to open on: use the
   // first available one, with an empty model so no row reads as selected.
   const firstEntry = props.instanceEntries.find((entry) => entry.enabled && entry.isAvailable);
@@ -256,6 +255,7 @@ export function ModelRow(props: {
               padding="none"
             >
               <ModelPickerContent
+                environmentId={environmentId}
                 activeInstanceId={active.instanceId}
                 model={active.model}
                 lockedProvider={null}

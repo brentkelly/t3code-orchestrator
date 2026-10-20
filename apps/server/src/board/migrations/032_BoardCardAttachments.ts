@@ -8,7 +8,7 @@
 // key's leading column already serves the shell's COUNT and the detail's
 // per-card list, so there is no separate index.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

@@ -23,7 +23,6 @@ import {
   type BoardLabel,
   type BoardPlan,
   type BoardState,
-  type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
@@ -31,7 +30,10 @@ import * as Effect from "effect/Effect";
 
 import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
-import type { BoardOrchestrationReadModel } from "./projector.ts";
+import type {
+  BoardOrchestrationReadModel,
+  BoardTestThread as OrchestrationThread,
+} from "./decisionContext.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");

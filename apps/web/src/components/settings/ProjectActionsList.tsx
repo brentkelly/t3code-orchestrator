@@ -38,6 +38,11 @@ export function ProjectActionsList({
                 setup
               </span>
             ) : null}
+            {script.runOnSettle ? (
+              <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground">
+                on settle
+              </span>
+            ) : null}
             {/* T3o: T3O-23 — a remove script's badge, beside setup's. */}
             {script.runOnWorktreeRemove === true ? (
               <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-2xs font-normal text-muted-foreground">

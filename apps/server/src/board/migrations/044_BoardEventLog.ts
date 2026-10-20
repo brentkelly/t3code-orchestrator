@@ -26,7 +26,7 @@
 // no-op. The migrator runs it once; idempotence is what makes a torn first run
 // safe to retry.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** The pre-T3O-56 board projector's watermark, in MAIN sequences. */
 const LEGACY_BOARD_PROJECTOR = "projection.board-cards";

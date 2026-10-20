@@ -39,13 +39,14 @@ import {
   isBoardCardScheduleDue,
   type EnvironmentId,
   type BoardShellSnapshot,
-  type OrchestrationThreadShell,
+  type OrchestrationV2ThreadShell,
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
+import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import type * as Crypto from "effect/Crypto";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
@@ -145,7 +146,7 @@ export type {
   UpdateBoardLabelInput,
 };
 
-type ThreadShellLookup = (threadId: ThreadId) => OrchestrationThreadShell | undefined;
+type ThreadShellLookup = (threadId: ThreadId) => OrchestrationV2ThreadShell | undefined;
 
 /** Every live-linked thread id of a card (t3o-18, D7). `boardCardThreads` rides
     the shell snapshot with one entry per live link; a client that has not
@@ -175,7 +176,10 @@ function withDerivedThreadFields(
   threadById: ThreadShellLookup,
   cardThreads?: ReadonlyArray<BoardCardThreadShell> | undefined,
 ): BoardCardShell {
-  const threads = liveCardThreadIds(card, cardThreads).map(threadById);
+  const threads = liveCardThreadIds(card, cardThreads).map((threadId) => {
+    const thread = threadById(threadId);
+    return thread === undefined ? undefined : boardThreadStateSource(thread);
+  });
   const { threadState, awaitingInput, waitingOnBackground } = deriveBoardCardThreadState(threads);
   if (
     card.threadState === threadState &&
@@ -268,7 +272,7 @@ function pushColumn(
  */
 export function withBoardThreadFields(
   board: BoardShellSnapshot,
-  threads: ReadonlyArray<OrchestrationThreadShell>,
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): BoardShellSnapshot {
   if (board.cards.length === 0) return board;
   const threadsById = new Map(threads.map((thread) => [thread.id, thread]));

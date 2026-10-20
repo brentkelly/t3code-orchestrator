@@ -2,7 +2,7 @@
 // card owns this thread" a lookup and enforces one-thread-one-card at the
 // storage layer; the card_id index covers the other direction.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

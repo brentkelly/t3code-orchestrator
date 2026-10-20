@@ -16,7 +16,8 @@
  * paints, and only a genuinely fresh stop waits.
  */
 import { BOARD_ATTENTION_SETTLE_MS } from "@t3tools/contracts";
-import type { BoardCardShell, OrchestrationThreadShell, ThreadId } from "@t3tools/contracts";
+import type { BoardCardShell, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { useEffect, useMemo, useState } from "react";
 
 /**
@@ -33,13 +34,13 @@ export function deriveBoardThreadIdleSince(input: {
   readonly cards: ReadonlyArray<Pick<BoardCardShell, "cardId" | "activeThreadId">>;
   readonly threadOf: (
     threadId: ThreadId,
-  ) => Pick<OrchestrationThreadShell, "latestTurn"> | undefined;
+  ) => Pick<OrchestrationV2ThreadShell, "latestRunCompletedAt"> | undefined;
 }): ReadonlyMap<string, string> {
   const idleSince = new Map<string, string>();
   for (const card of input.cards) {
     if (card.activeThreadId === null) continue;
-    const completedAt = input.threadOf(card.activeThreadId)?.latestTurn?.completedAt;
-    if (completedAt != null) idleSince.set(String(card.cardId), completedAt);
+    const completedAt = input.threadOf(card.activeThreadId)?.latestRunCompletedAt;
+    if (completedAt != null) idleSince.set(String(card.cardId), DateTime.formatIso(completedAt));
   }
   return idleSince;
 }
@@ -77,7 +78,7 @@ export function useBoardAttentionSettle(input: {
   readonly cards: ReadonlyArray<Pick<BoardCardShell, "cardId" | "activeThreadId">>;
   readonly threadOf: (
     threadId: ThreadId,
-  ) => Pick<OrchestrationThreadShell, "latestTurn"> | undefined;
+  ) => Pick<OrchestrationV2ThreadShell, "latestRunCompletedAt"> | undefined;
 }): {
   readonly threadIdleSinceByCard: ReadonlyMap<string, string>;
   readonly now: number;

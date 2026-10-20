@@ -27,6 +27,7 @@ import * as Effect from "effect/Effect";
 import { boardDecidedEvents } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 import { BoardQueries } from "./BoardQueries.ts";
+import { ThreadGateway } from "./ThreadGateway.ts";
 import {
   boardStackEngine,
   boardStackSnapshotQuery,
@@ -185,6 +186,11 @@ it.layer(makeTestLayer("t3o-board-project-2b-"))(
 
         const snapshotQuery = yield* boardStackSnapshotQuery;
         const rehydrated = yield* snapshotQuery.getCommandReadModel();
+        const projects = (yield* (yield* ThreadGateway).projects()).map((project) => ({
+          id: project.id,
+          title: project.title,
+          deletedAt: project.deleted ? createdAt : null,
+        }));
         const decision = yield* decideBoardCommandOnModel({
           command: {
             type: "board.card.create",
@@ -195,7 +201,7 @@ it.layer(makeTestLayer("t3o-board-project-2b-"))(
             keyPrefix: "AL",
             createdAt,
           },
-          readModel: rehydrated,
+          readModel: { ...rehydrated, projects, threads: [] },
         });
         const created = boardDecidedEvents(decision)[0]!;
         assert.strictEqual(created.type, "board.card-created");

@@ -79,7 +79,7 @@ const commandMetadata = (input: { readonly commandId?: CommandId; readonly creat
     commandId:
       input.commandId === undefined
         ? Effect.flatMap(Crypto.Crypto, (crypto) =>
-            crypto.randomUUIDv4.pipe(Effect.orDie, Effect.map(CommandId.make)),
+            crypto.randomUUIDv4().pipe(Effect.orDie, Effect.map(CommandId.make)),
           )
         : Effect.succeed(input.commandId),
     createdAt:

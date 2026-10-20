@@ -17,7 +17,8 @@ import {
   type BoardCardShell,
   type BoardLabel,
   type BoardShellSnapshot,
-  type OrchestrationThreadShell,
+  type OrchestrationV2ThreadShell,
+  RuntimeRequestId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -35,6 +36,7 @@ import {
   type BoardStageColumns,
   withBoardThreadFields,
 } from "./board.ts";
+import { v2Now, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 /** A fixed clock for the queue derivation (T3O-19): the schedule filter needs
@@ -82,27 +84,12 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
 const cardShell = (id: string, overrides?: Partial<BoardCard>): BoardCardShell =>
   boardCardShellFromCard(fullCard(id, overrides));
 
-const threadShell = (overrides?: Partial<OrchestrationThreadShell>): OrchestrationThreadShell => ({
+const threadShell = (
+  overrides?: Partial<OrchestrationV2ThreadShell>,
+): OrchestrationV2ThreadShell => ({
+  ...v2ThreadShell,
   id: threadId,
   projectId,
-  title: "Thread",
-  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
-  runtimeMode: "full-access",
-  interactionMode: "default",
-  branch: null,
-  worktreePath: null,
-  pullRequests: [],
-  latestTurn: null,
-  createdAt: NOW,
-  updatedAt: NOW,
-  archivedAt: null,
-  settledOverride: null,
-  settledAt: null,
-  latestUserMessageAt: null,
-  hasPendingApprovals: false,
-  hasPendingUserInput: false,
-  hasActionableProposedPlan: false,
-  session: null,
   ...overrides,
 });
 
@@ -788,6 +775,13 @@ describe("board shell reducer", () => {
 });
 
 describe("withBoardThreadFields", () => {
+  const userInputRequest = {
+    id: RuntimeRequestId.make("request-1"),
+    kind: "user_input" as const,
+    createdAt: v2Now,
+  };
+  const monitorTask = { taskId: "monitor-1", kind: "monitor" as const };
+
   const linked = cardShell("card-1", {
     threadLinks: [{ threadId, role: "build", linkedAt: NOW, tombstonedAt: null }],
   });
@@ -800,7 +794,7 @@ describe("withBoardThreadFields", () => {
     expect(linked.threadState).toBe("none");
 
     const next = withBoardThreadFields(snapshot({ cards: [linked] }), [
-      threadShell({ hasPendingUserInput: true }),
+      threadShell({ pendingRuntimeRequest: userInputRequest }),
     ]);
     expect(next.cards[0]?.threadState).toBe("waiting");
     expect(next.cards[0]?.awaitingInput).toBe(true);
@@ -808,7 +802,7 @@ describe("withBoardThreadFields", () => {
 
   it("derives the background wait both ways (T3O-20)", () => {
     const waiting = withBoardThreadFields(snapshot({ cards: [linked] }), [
-      threadShell({ backgroundLiveness: "monitoring" }),
+      threadShell({ pendingBackgroundTasks: [monitorTask] }),
     ]);
     expect(waiting.cards[0]?.waitingOnBackground).toBe(true);
 
@@ -816,19 +810,16 @@ describe("withBoardThreadFields", () => {
     // goes away rather than resting at false, matching the server's shell.
     const woken = withBoardThreadFields(
       snapshot({ cards: [{ ...linked, waitingOnBackground: true }] }),
-      [
-        threadShell({
-          backgroundLiveness: "monitoring",
-          session: { status: "running" } as OrchestrationThreadShell["session"],
-        }),
-      ],
+      [threadShell({ pendingBackgroundTasks: [monitorTask], activityRunStatus: "running" })],
     );
     expect(woken.cards[0]).not.toHaveProperty("waitingOnBackground");
   });
 
   it("leaves a card with no live link at rest, and the board itself untouched", () => {
     const board = snapshot({ cards: [cardShell("card-1")] });
-    const next = withBoardThreadFields(board, [threadShell({ hasPendingUserInput: true })]);
+    const next = withBoardThreadFields(board, [
+      threadShell({ pendingRuntimeRequest: userInputRequest }),
+    ]);
     expect(next).toBe(board);
     expect(next.cards[0]?.threadState).toBe("none");
   });

@@ -17,7 +17,7 @@
 // is no third state to represent. A card is armed or it is not, and a NULL
 // would only invite a reader to invent a meaning for it.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

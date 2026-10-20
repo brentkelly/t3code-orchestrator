@@ -140,9 +140,13 @@ const orphanThread = ThreadId.make("thread-orphan");
 
 const scopeFor = (threadId: ThreadId): McpInvocationScope => ({
   environmentId: EnvironmentId.make("env-1"),
-  threadId,
-  providerSessionId: "sess-1",
-  providerInstanceId: ProviderInstanceId.make("codex"),
+  requestNamespace: "sess-1",
+  thread: {
+    threadId,
+    providerSessionId: "sess-1",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+  },
+  client: undefined,
   capabilities: new Set(["board"]),
   issuedAt: 0,
 });

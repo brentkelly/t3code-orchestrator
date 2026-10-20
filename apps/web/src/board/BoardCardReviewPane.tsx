@@ -633,7 +633,7 @@ function PlannedRoundSettings({
   const settings = usePrimarySettings();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">

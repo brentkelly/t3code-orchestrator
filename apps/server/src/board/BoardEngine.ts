@@ -34,7 +34,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../persistence/Errors.ts";
 import { BoardQueries } from "./BoardQueries.ts";
