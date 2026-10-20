@@ -6,11 +6,11 @@
  * tables and their indexes sitting in `main`, with rows in them.
  */
 import { assert, describe, it } from "@effect/vitest";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -108,12 +108,18 @@ describe("board database", () => {
     }).pipe(
       Effect.provide(
         Layer.unwrap(
-          Effect.map(
-            Effect.sync(() => mkdtempSync(join(tmpdir(), "t3o-board-pragmas-"))),
-            (dir) => NodeSqliteClient.layer({ filename: join(dir, "statev2.sqlite") }),
-          ),
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const dir = yield* fileSystem.makeTempDirectoryScoped({
+              prefix: "t3o-board-pragmas-",
+            });
+            return NodeSqliteClient.layer({ filename: path.join(dir, "statev2.sqlite") });
+          }),
         ),
       ),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
     ),
   );
 

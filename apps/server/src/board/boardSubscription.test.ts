@@ -8,7 +8,6 @@
 import {
   BoardCardId,
   CommandId,
-  EventId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
