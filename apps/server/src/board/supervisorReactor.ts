@@ -8971,8 +8971,8 @@ const make = Effect.gen(function* () {
           event.type !== "board.card-step-force-start-requested" &&
           // A step going back to the build queue (T3O-23). Emitted by every
           // recovery too, which is a handful of events an hour at most — far
-          // below the volume that made `thread.activity-appended` need its own
-          // pre-filter above.
+          // below the volume that made thread activity need filtering at the
+          // gateway (`ThreadGatewayV1.observe`).
           event.type !== "board.card-step-recovered" &&
           event.type !== "board.card-archived" &&
           event.type !== "board.card-deleted" &&

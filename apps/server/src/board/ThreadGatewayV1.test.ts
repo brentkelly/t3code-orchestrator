@@ -1,17 +1,31 @@
 /**
  * How the v1 gateway reads a thread shell into the board's `BoardThreadState`
  * (T3O-58). These rules used to live in the supervisor; they moved with the
- * shell, so they are pinned here.
+ * shell, so they are pinned here. Also the spawn compensation the contract
+ * suite cannot reach on a real stack.
  */
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  CommandId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationCommand,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { boardThreadStateFromShell } from "./ThreadGatewayV1.ts";
+import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
+import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
+import { boardThreadStateFromShell, makeThreadGatewayV1 } from "./ThreadGatewayV1.ts";
 
 const NOW = "2026-01-01T00:10:00.000Z";
 
@@ -110,4 +124,74 @@ describe("boardThreadStateFromShell", () => {
     assert.isTrue(state.archived);
     assert.isFalse(state.autoSettleCandidate);
   });
+});
+
+/** A spawn on an engine that creates the thread and refuses its first turn —
+    which the real v1 stack cannot produce without a provider. */
+const spawnAgainstRefusingEngine = Effect.gen(function* () {
+  const dispatched: Array<OrchestrationCommand> = [];
+  const engine = Layer.mock(OrchestrationEngineService)({
+    dispatch: (command) => {
+      dispatched.push(command);
+      return command.type === "thread.turn.start"
+        ? Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "the provider refused the turn",
+            }),
+          )
+        : Effect.succeed({ sequence: dispatched.length });
+    },
+  });
+  const exit = yield* Effect.gen(function* () {
+    const threads = yield* makeThreadGatewayV1;
+    return yield* Effect.exit(
+      threads.spawn({
+        commandId: CommandId.make("server:board-spawn-thread:1"),
+        threadId: ThreadId.make("thread-refused"),
+        projectId: ProjectId.make("project-1"),
+        title: "Refused",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "board/refused",
+        worktreePath: "/tmp/wt/refused",
+        text: "Do the work.",
+        attachments: [],
+      }),
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        engine,
+        Layer.mock(ProjectionSnapshotQuery)({}),
+        Layer.mock(ProviderService)({}),
+        // Never queried: a spawn only dispatches.
+        Layer.succeed(SqlClient.SqlClient, {} as never),
+        NodeServices.layer,
+      ),
+    ),
+  );
+  return { exit, dispatched };
+});
+
+describe("ThreadGatewayV1 spawn", () => {
+  it.effect("a refused first turn deletes the thread it created and reports the refusal", () =>
+    Effect.gen(function* () {
+      const { exit, dispatched } = yield* spawnAgainstRefusingEngine;
+      assert.isTrue(Exit.isFailure(exit));
+      const error = Exit.isFailure(exit)
+        ? Option.getOrNull(Cause.findErrorOption(exit.cause))
+        : null;
+      assert.strictEqual(error?._tag, "ThreadCommandRefusedError");
+      assert.deepStrictEqual(
+        dispatched.map((command) => [command.type, command.commandId]),
+        [
+          ["thread.create", "server:board-spawn-thread:1"],
+          ["thread.turn.start", "server:board-spawn-thread:1:turn"],
+          ["thread.delete", "server:board-spawn-thread:1:cleanup"],
+        ],
+      );
+    }),
+  );
 });

@@ -117,10 +117,7 @@ export interface BoardThreadState {
 
 /** What `threadState` answers for a deleted thread: nothing about it is live
     any more, so every live fact reads as its resting value. */
-export const deletedThreadState = (
-  threadId: ThreadId,
-  projectId: ProjectId,
-): BoardThreadState => ({
+export const deletedThreadState = (threadId: ThreadId, projectId: ProjectId): BoardThreadState => ({
   threadId,
   projectId,
   deleted: true,
