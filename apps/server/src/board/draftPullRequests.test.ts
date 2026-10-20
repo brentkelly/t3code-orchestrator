@@ -324,7 +324,7 @@ it.effect("a ready that keeps failing writes one merge-refused row, not one per 
 
 const spawnedPrompts = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.flatMap((command) =>
-    command.type === "thread.turn.start" ? [command.message.text] : [],
+    command.type === "thread.spawn" || command.type === "thread.send" ? [command.text] : [],
   );
 
 it.effect("tells the build step to open any pull request as a draft, only when on", () =>

@@ -44,6 +44,7 @@ import {
   type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import { fakeThreadState } from "./threadGateway.testkit.ts";
 import type { BoardMergeState } from "./boardMergeState.ts";
 
 const openPr: VcsStatusChangeRequest = {
@@ -1203,10 +1204,16 @@ describe("merging a card's pull request", () => {
           // Refused for the failing check, then accepted after the fix.
           mergeOutcomes: ["the host refused", null],
           mergeState: refusal({ failed: 1 }),
-          initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
+          initialShells: new Map([
+            ["thread-1", fakeThreadState("thread-1", { sessionStatus: "none" })],
+          ]),
         },
         (h) =>
           Effect.gen(function* () {
+            // Boot reconcile first. It is queued at start and runs lazily, so left
+            // behind the completion pumped below it would read that completion as a
+            // step that finished while the server was down, and settle it itself.
+            yield* h.reactor.drain;
             assert.equal((yield* h.reactor.mergePullRequest(card.id)).outcome, "checks-fix");
             yield* Ref.update(h.model, (model) => ({
               ...model,
@@ -1233,10 +1240,16 @@ describe("merging a card's pull request", () => {
           pullRequest: openPr,
           mergeFailure: "the host refused",
           mergeState: refusal({ failed: 1 }),
-          initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
+          initialShells: new Map([
+            ["thread-1", fakeThreadState("thread-1", { sessionStatus: "none" })],
+          ]),
         },
         (h) =>
           Effect.gen(function* () {
+            // Boot reconcile first. It is queued at start and runs lazily, so left
+            // behind the completion pumped below it would read that completion as a
+            // step that finished while the server was down, and settle it itself.
+            yield* h.reactor.drain;
             const startedFixes = Effect.map(
               h.commands,
               (commands) =>
@@ -1388,7 +1401,9 @@ describe("merging a card's pull request", () => {
           pullRequest: openPr,
           mergeFailure: "the host refused",
           mergeState: refusal({ blockedReason: "conflict" }),
-          initialShells: new Map([["thread-human", { id: "thread-human" } as never]]),
+          initialShells: new Map([
+            ["thread-human", fakeThreadState("thread-human", { sessionStatus: "none" })],
+          ]),
         },
         (h) =>
           Effect.gen(function* () {
@@ -1528,7 +1543,9 @@ describe("merging a card's pull request", () => {
         },
         settings: settings(),
         pullRequest: openPr,
-        initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
+        initialShells: new Map([
+          ["thread-1", fakeThreadState("thread-1", { sessionStatus: "none" })],
+        ]),
       },
       (h) =>
         Effect.gen(function* () {
@@ -1680,10 +1697,16 @@ describe("merging a card's pull request", () => {
           pullRequest: openPr,
           mergeFailure: "the host refused",
           mergeState: refusal({ blockedReason: "conflict" }),
-          initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
+          initialShells: new Map([
+            ["thread-1", fakeThreadState("thread-1", { sessionStatus: "none" })],
+          ]),
         },
         (h) =>
           Effect.gen(function* () {
+            // Boot reconcile first. It is queued at start and runs lazily, so left
+            // behind the completion pumped below it would read that completion as a
+            // step that finished while the server was down, and settle it itself.
+            yield* h.reactor.drain;
             // Arm the card the only way a human can: a Merge click that
             // conflicts.
             const clicked = yield* h.reactor.mergePullRequest(card.id);

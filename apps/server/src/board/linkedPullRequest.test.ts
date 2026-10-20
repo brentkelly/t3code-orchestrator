@@ -441,8 +441,8 @@ describe("merging a card with a linked pull request", () => {
 
 describe("the run prompt names a linked pull request", () => {
   const turnText = (commands: ReadonlyArray<HarnessCommand>) => {
-    const turn = commands.find((command) => command.type === "thread.turn.start");
-    return turn?.type === "thread.turn.start" ? turn.message.text : "";
+    const spawn = commands.find((command) => command.type === "thread.spawn");
+    return spawn?.type === "thread.spawn" ? spawn.text : "";
   };
 
   // The card's worktree is board/<key>, not the linked head, and the shipped

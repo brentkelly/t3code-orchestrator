@@ -21,7 +21,6 @@ import {
   BoardStageId,
   type BoardCard,
   type BoardCardStepState,
-  type OrchestrationEvent,
 } from "@t3tools/contracts";
 
 import {
@@ -34,18 +33,19 @@ import {
   stepCompleted,
   stepStatus,
   withGovernor,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const cardId = BoardCardId.make("card-1");
 
 /** A card edit — the event the re-plan tail hangs off. Any field will do; the
     tail never looks at which one changed, which is the point. */
-const cardUpdated = (card: BoardCard, sequence: number): OrchestrationEvent =>
+const cardUpdated = (card: BoardCard, sequence: number): HarnessEvent =>
   ({
     type: "board.card-updated",
     sequence,
     payload: { cardId: card.id, card },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** A settled-but-unsuccessful step left on a card at an auto-executing stage —
     what `handleCardMoved` stamps on an outgoing step it abandons. */

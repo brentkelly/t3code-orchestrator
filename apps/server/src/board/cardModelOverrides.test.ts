@@ -24,12 +24,12 @@ import {
   ProviderInstanceId,
   type BoardCard,
   type BoardCardStageModelOverride,
-  type OrchestrationEvent,
 } from "@t3tools/contracts";
 
 import {
   NOW,
   codexStep,
+  type HarnessEvent,
   makeBoardCard,
   readyWorktree,
   settingsWith,
@@ -42,12 +42,12 @@ const reviewStage = String(BOARD_SEED_STAGE_IDS.review);
 
 /** The on-demand kickoff signal, the cheapest way to drive one real spawn
     through `beginStageRun` without standing up a whole stage transition. */
-const stageThreadRequested = (card: BoardCard): OrchestrationEvent =>
+const stageThreadRequested = (card: BoardCard): HarnessEvent =>
   ({
     type: "board.card-stage-thread-requested",
     sequence: 1,
     payload: { cardId: card.id, stage: card.stage },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 const opus: BoardCardStageModelOverride = {
   instanceId: ProviderInstanceId.make("anthropic"),
@@ -268,7 +268,7 @@ describe("per-card model overrides reach the spawn (t3o-29)", () => {
               type: "board.card-stage-thread-requested",
               sequence: 1,
               payload: { cardId: card.id, stage: card.stage },
-            } as unknown as OrchestrationEvent);
+            } as unknown as HarnessEvent);
             const steps = (yield* h.commands).filter(
               (command) => command.type === "board.card.select-step",
             );

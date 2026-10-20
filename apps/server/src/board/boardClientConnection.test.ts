@@ -24,7 +24,6 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { BoardEngine, type BoardEngineShape } from "./BoardEngine.ts";
 import { BoardQueries } from "./BoardQueries.ts";
@@ -33,6 +32,8 @@ import { BoardCommandInvariantError } from "./errors.ts";
 import { inertBoardQueries } from "./boardServices.testkit.ts";
 import { boardClientConnection } from "./rpc.ts";
 import { makeBoardCard, NOW } from "./supervisorHarness.testkit.ts";
+import { ThreadGateway } from "./ThreadGateway.ts";
+import { inertThreadGateway } from "./threadGateway.testkit.ts";
 
 const cardId = BoardCardId.make("card-1");
 const linkedThread = ThreadId.make("thread-linked");
@@ -95,12 +96,10 @@ const harness = Effect.gen(function* () {
       subscribeTodoChanges: PubSub.subscribe(todoChanges).pipe(Effect.map(Stream.fromSubscription)),
       drain: Effect.void,
     }),
+    Layer.succeed(ThreadGateway, inertThreadGateway()),
   );
 
   const connection = yield* boardClientConnection({
-    projectionSnapshotQuery: {
-      getProjectShellById: () => Effect.succeed({ _tag: "None" }),
-    } as unknown as ProjectionSnapshotQueryShape,
     git: {} as GitVcsDriver["Service"],
     origin: undefined,
   }).pipe(Effect.provide(layer));

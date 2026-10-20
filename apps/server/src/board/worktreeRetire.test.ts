@@ -3,7 +3,7 @@
  * T3o (T3O-23): retiring a worktree — stop its processes, run its remove
  * scripts, then remove it.
  *
- * The retirer is the real one; terminals, sessions, the read model, settings
+ * The retirer is the real one; terminals, the thread gateway, settings
  * and git are doubles (see `worktreeRetire.testkit.ts`). Remove scripts run as
  * real child processes in a real temporary worktree folder.
  */

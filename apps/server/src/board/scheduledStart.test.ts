@@ -30,6 +30,7 @@ import {
   cardScheduleUpdated,
   cardTitleUpdated,
   codexStep,
+  humanTurnStartRequested,
   makeBoardCard,
   movedToBuilding,
   readyWorktree,
@@ -147,7 +148,7 @@ it.effect(
             (candidate) => candidate.id === BoardCardId.make("held"),
           );
           assert.isNull(card?.worktree ?? null);
-          assert.notInclude(commandTypes(yield* commands), "thread.create");
+          assert.notInclude(commandTypes(yield* commands), "thread.spawn");
         }),
     ),
 );
@@ -334,7 +335,7 @@ it.effect("scheduling a running card stops the agent and gives its slot back", (
         assert.isNotNull(state?.threadId);
         assert.strictEqual(yield* slots.heldTotal, 0);
         // The agent is stopped, not merely marked stopped.
-        assert.include(commandTypes(yield* commands), "thread.turn.interrupt");
+        assert.include(commandTypes(yield* commands), "thread.interrupt");
       }),
   ),
 );
@@ -422,7 +423,7 @@ it.effect("a timed resume respawns when the paused step's thread is gone", () =>
       yield* pumpDomain(cardScheduleUpdated(scheduledCard({ id: "dead" }), FUTURE, 2));
       assert.strictEqual(stepStatus(yield* board, BoardCardId.make("dead")), "paused");
       const spawnsBeforeResume = commandTypes(yield* commands).filter(
-        (type) => type === "thread.create",
+        (type) => type === "thread.spawn",
       ).length;
 
       // No shell was ever seeded for the spawned thread, so it reads as gone —
@@ -441,7 +442,7 @@ it.effect("a timed resume respawns when the paused step's thread is gone", () =>
       assert.strictEqual(state?.status, "running");
       assert.notStrictEqual(state?.threadId, threadId);
       assert.isAbove(
-        commandTypes(yield* commands).filter((type) => type === "thread.create").length,
+        commandTypes(yield* commands).filter((type) => type === "thread.spawn").length,
         spawnsBeforeResume,
       );
     }),
@@ -516,11 +517,7 @@ it.effect("a manual resume clears the time, so the card is not re-paused later",
       // The human went back to the thread and typed. They have overtaken the
       // decision they made earlier, so the 9pm resume must not become a 9pm
       // re-pause of work they restarted at 3pm (D6).
-      yield* pumpDomain({
-        type: "thread.turn-start-requested",
-        sequence: 3,
-        payload: { threadId },
-      } as never);
+      yield* pumpDomain(humanTurnStartRequested(threadId, 3));
 
       const card = (yield* board).cards.find(
         (candidate) => candidate.id === BoardCardId.make("manual"),

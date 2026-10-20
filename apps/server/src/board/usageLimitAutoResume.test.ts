@@ -30,7 +30,6 @@ import {
   type BoardCard,
   type BoardCardStepState,
   type BoardUsageLimitMatch,
-  type OrchestrationCommand,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
@@ -53,6 +52,7 @@ import {
   withGovernor,
   type Harness,
 } from "./supervisorHarness.testkit.ts";
+import { fakeThreadState } from "./threadGateway.testkit.ts";
 
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claudeAgent");
@@ -107,7 +107,8 @@ const slowDown = (): BoardUsageLimitMatch => ({
   ruleId: "http.429",
 });
 
-/** Every turn the reactor sent into one thread, in order.
+/** Every turn the reactor sent into one thread, in order — the spawn's first
+    turn and every later send.
  *
  * The WORDS a resumed step is nudged with live nowhere on the card row, so this
  * is the only place a test can read them — and they are the whole point of the
@@ -116,12 +117,12 @@ const slowDown = (): BoardUsageLimitMatch => ({
 const turnTextsFor = (harness: Harness, threadId: ThreadId) =>
   harness.commands.pipe(
     Effect.map((commands) =>
-      commands
-        .filter(
-          (command): command is Extract<OrchestrationCommand, { type: "thread.turn.start" }> =>
-            command.type === "thread.turn.start" && command.threadId === threadId,
-        )
-        .map((command) => command.message.text),
+      commands.flatMap((command) =>
+        (command.type === "thread.spawn" || command.type === "thread.send") &&
+        command.threadId === threadId
+          ? [command.text]
+          : [],
+      ),
     ),
   );
 
@@ -225,7 +226,14 @@ it.effect("a refusal that ends with a monitor still live parks on the cooldown, 
           const shell = current.get(String(threadId))!;
           return new Map([
             ...current,
-            [String(threadId), { ...shell, backgroundLiveness: "monitoring" as const }],
+            [
+              String(threadId),
+              fakeThreadState(String(threadId), {
+                sessionStatus: shell.sessionStatus,
+                modelSelection: shell.modelSelection,
+                backgroundWork: "monitoring",
+              }),
+            ],
           ]);
         });
         yield* endTurn(harness, threadId, waitAt());
@@ -911,10 +919,11 @@ it.effect("a card parked on an unanswered question is never resumed by a lifting
               ...current,
               [
                 String(askedThread),
-                {
-                  ...idleThreadShell(String(askedThread), codex),
-                  hasPendingUserInput: true,
-                } as never,
+                fakeThreadState(String(askedThread), {
+                  sessionStatus: "idle",
+                  modelSelection: { instanceId: codex, model: "gpt-5-codex" },
+                  awaitingUserInput: true,
+                }),
               ],
             ]),
         );

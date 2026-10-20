@@ -27,6 +27,7 @@ import {
   drainBoardThreadTail,
   makeBoardStackTestLayer,
 } from "./boardStack.testkit.ts";
+import { ThreadGateway } from "./ThreadGateway.ts";
 
 const makeLayer = makeBoardStackTestLayer;
 
@@ -335,8 +336,12 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
       });
       yield* drainBoardThreadTail;
       // Whatever the live path did, the sweep is the backstop for the case where
-      // the delete landed while the server was down.
-      yield* methods.boardSweepThreadTodos();
+      // the delete landed while the server was down. The live set is the v1
+      // gateway's own answer, as the supervisor's boot sweep reads it.
+      const threads = yield* ThreadGateway;
+      const liveThreadIds = yield* threads.listLiveThreadIds();
+      assert.notInclude(liveThreadIds, linkedThread);
+      yield* methods.boardSweepThreadTodos(liveThreadIds);
       assert.isNull(yield* methods.boardThreadTodo(linkedThread));
     }),
   );

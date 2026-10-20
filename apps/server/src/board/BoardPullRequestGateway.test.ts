@@ -22,9 +22,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import type {
-  OrchestrationProjectShell,
   ProjectId,
   PullRequestDetail,
   PullRequestInvalidateInput,
@@ -35,10 +33,11 @@ import { PullRequestOperationError, PullRequestUnavailableError } from "@t3tools
 
 import * as BoardPullRequestGateway from "./BoardPullRequestGateway.ts";
 import * as GitManager from "../git/GitManager.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { ThreadGateway, type BoardProjectDetail } from "./ThreadGateway.ts";
+import { inertThreadGateway } from "./threadGateway.testkit.ts";
 
 /** How upstream reports a host that was asked and said no: the placeholder
     `VcsProcessExitError` leaves behind once the subprocess's stderr is
@@ -58,15 +57,17 @@ function hostRefusal(reason: PullRequestProviderError["reason"] = "failed") {
 
 const PROJECT = "project-1" as ProjectId;
 
-function project(repository: string | null): OrchestrationProjectShell {
+function project(repository: string | null): BoardProjectDetail {
   return {
     id: PROJECT,
     title: "T3o",
     workspaceRoot: "/repo",
-    ...(repository === null
-      ? {}
-      : {
-          repositoryIdentity: {
+    deleted: false,
+    scripts: [],
+    repositoryIdentity:
+      repository === null
+        ? null
+        : {
             canonicalKey: `github.com/${repository}`,
             locator: {
               source: "git-remote" as const,
@@ -76,11 +77,6 @@ function project(repository: string | null): OrchestrationProjectShell {
             provider: "github",
             displayName: repository,
           },
-        }),
-    defaultModelSelection: null,
-    scripts: [],
-    createdAt: "2026-07-01T00:00:00Z",
-    updatedAt: "2026-07-01T00:00:00Z",
   };
 }
 
@@ -155,20 +151,21 @@ function makeGateway(
               cwd === "/repo" && key === "remote.origin.url" ? (options.originUrl ?? null) : null,
             ),
         }),
-        Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-          getProjectShellById: (projectId) =>
-            Effect.succeed(
-              projectId === PROJECT
-                ? Option.some(
-                    project(
+        Layer.succeed(
+          ThreadGateway,
+          inertThreadGateway({
+            project: (projectId) =>
+              Effect.succeed(
+                projectId === PROJECT
+                  ? project(
                       options.repository === undefined
                         ? "brentkelly/t3code-orchestrator"
                         : options.repository,
-                    ),
-                  )
-                : Option.none(),
-            ),
-        }),
+                    )
+                  : null,
+              ),
+          }),
+        ),
         Layer.mock(PullRequestService.PullRequestService)({
           runAction: (input) =>
             Effect.suspend(() => {

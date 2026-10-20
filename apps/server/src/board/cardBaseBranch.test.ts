@@ -152,8 +152,8 @@ describe("provisioning honours the card's base branch (T3O-5, D2/D7)", () => {
 
 describe("the run prompt names the card's base branch (T3O-5, D9)", () => {
   const turnText = (commands: ReadonlyArray<HarnessCommand>) => {
-    const turn = commands.find((command) => command.type === "thread.turn.start");
-    return turn?.type === "thread.turn.start" ? turn.message.text : "";
+    const spawn = commands.find((command) => command.type === "thread.spawn");
+    return spawn?.type === "thread.spawn" ? spawn.text : "";
   };
 
   it.effect("AC10: a build step is told the branch it is working against", () =>

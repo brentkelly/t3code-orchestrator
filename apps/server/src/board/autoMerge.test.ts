@@ -47,6 +47,7 @@ import {
   type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import { fakeThreadState } from "./threadGateway.testkit.ts";
 
 /** Enough to clear the ladder's first rung (3 minutes) past its ±60s jitter,
     and not enough to reach the second. The rung is DELIVERED by the existing
@@ -404,7 +405,9 @@ it.effect("a failed required check starts ONE CI fix, then stops the ladder (T3O
         mergeFailure: "Required status check 'test' is failing.",
         mergeState: probe({ passed: 3, failed: 1 }),
       }),
-      initialShells: new Map([["thread-ci", { id: "thread-ci" } as never]]),
+      initialShells: new Map([
+        ["thread-ci", fakeThreadState("thread-ci", { sessionStatus: "none" })],
+      ]),
     },
     (h) =>
       Effect.gen(function* () {
@@ -455,10 +458,16 @@ it.effect("an UNARMED card's CI fix waits for the checks its push re-ran, then m
         mergeOutcomes: ["Required status check 'test' is failing.", "Checks pending.", null],
       }),
       mergeStateOf: () => checks,
-      initialShells: new Map([["thread-ci", { id: "thread-ci" } as never]]),
+      initialShells: new Map([
+        ["thread-ci", fakeThreadState("thread-ci", { sessionStatus: "none" })],
+      ]),
     },
     (h) =>
       Effect.gen(function* () {
+        // Boot reconcile first. It is queued at start and runs lazily, so left
+        // behind the completion pumped below it would read that completion as a
+        // step that finished while the server was down, and settle it itself.
+        yield* h.reactor.drain;
         // A human clicks Merge on a card nobody armed.
         assert.strictEqual(
           (yield* h.reactor.mergePullRequest(BoardCardId.make("card-one"))).outcome,

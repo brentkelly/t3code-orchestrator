@@ -155,13 +155,12 @@ it.effect("Continue runs the owed phase on a new thread, and the loop carries on
       assert.strictEqual(running?.stepId, "adjudicate@1");
       assert.strictEqual(running?.status, "running");
       assert.isNotNull(running?.threadId ?? null);
-      const created = (yield* commands).find((command) => command.type === "thread.create");
-      assert.isDefined(created, "a thread is spawned for the owed phase");
-      const turn = (yield* commands).find(
-        (command) => command.type === "thread.turn.start" && command.threadId === running?.threadId,
+      const created = (yield* commands).find(
+        (command) => command.type === "thread.spawn" && command.threadId === running?.threadId,
       );
+      assert.isDefined(created, "a thread is spawned for the owed phase");
       assert.include(
-        turn?.type === "thread.turn.start" ? turn.message.text : "",
+        created?.type === "thread.spawn" ? created.text : "",
         ADJUDICATE_PROMPT,
         "the new thread is given the phase's prompt",
       );

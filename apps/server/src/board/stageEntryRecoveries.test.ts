@@ -35,8 +35,6 @@ import {
   type BoardReviewFinding,
   type BoardSettings,
   type BoardState,
-  type OrchestrationEvent,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 
 import {
@@ -49,7 +47,9 @@ import {
   settingsWith,
   turnCompleted,
   withGovernor,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import type { BoardThreadState } from "./ThreadGateway.ts";
 
 const cardId = BoardCardId.make("card-1");
 
@@ -123,7 +123,7 @@ const phasePayload = (stepId: string): string => {
   });
 };
 
-const reviewPhaseCompleted = (stepId: string, sequence: number): OrchestrationEvent =>
+const reviewPhaseCompleted = (stepId: string, sequence: number): HarnessEvent =>
   ({
     type: "board.card-step-completed",
     sequence,
@@ -139,7 +139,7 @@ const reviewPhaseCompleted = (stepId: string, sequence: number): OrchestrationEv
         completedAt: NOW,
       },
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 const liveStepId = (board: BoardState) => boardCardStepState(board, cardId)?.stepId ?? null;
 const attemptOf = (board: BoardState) => boardCardStepState(board, cardId)?.attempt ?? -1;
@@ -153,8 +153,8 @@ const liveThread = (board: BoardState): ThreadId => {
 };
 
 const shellsFor = (
-  entries: ReadonlyArray<readonly [string, OrchestrationThreadShell]>,
-): ReadonlyMap<string, OrchestrationThreadShell> => new Map(entries);
+  entries: ReadonlyArray<readonly [string, BoardThreadState]>,
+): ReadonlyMap<string, BoardThreadState> => new Map(entries);
 
 it.effect("T3O-12: the review loop's PLANNED phases spend no recovery budget", () =>
   withGovernor(

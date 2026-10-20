@@ -29,7 +29,6 @@ import {
   type BoardCard,
   type BoardCardStepState,
   type BoardCardThreadLink,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -45,6 +44,7 @@ import {
   type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import type { BoardThreadState } from "./ThreadGateway.ts";
 
 const cardId = BoardCardId.make("card-1");
 const planning = String(BOARD_SEED_STAGE_IDS.planning);
@@ -130,7 +130,7 @@ const restartOutcome = (input: {
       thread between turns — because boot reconciliation reads it and would
       otherwise park or recover the seeded row before the restart under test
       arrives. Pass an alive one to keep a `running` step running. */
-  readonly shell?: OrchestrationThreadShell;
+  readonly shell?: BoardThreadState;
 }): Effect.Effect<RestartOutcome> =>
   Effect.gen(function* () {
     let outcome: RestartOutcome | null = null;
@@ -255,7 +255,7 @@ it.effect("restarts a step the supervisor still believes is running, and stops t
     // move's abandonment does.
     assert.isDefined(
       outcome.commands.find(
-        (command) => command.type === "thread.turn.interrupt" && command.threadId === oldThread,
+        (command) => command.type === "thread.interrupt" && command.threadId === oldThread,
       ),
       "the superseded turn is interrupted",
     );

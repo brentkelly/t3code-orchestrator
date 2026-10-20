@@ -31,6 +31,7 @@ import * as Ref from "effect/Ref";
 
 import {
   NOW,
+  aliveThreadShell,
   cardStage,
   codexStep,
   makeBoardCard,
@@ -98,16 +99,7 @@ const buildCompletion = {
 
 /** The shell of the build step's thread, so a seeded `running` step is not
     reconciled as dead the moment the reactor boots. */
-const liveBuildThread = new Map([
-  [
-    "thread-build",
-    {
-      id: ThreadId.make("thread-build"),
-      session: { activeTurnId: "turn-1" },
-      hasPendingUserInput: false,
-    } as never,
-  ],
-]);
+const liveBuildThread = new Map([["thread-build", aliveThreadShell("thread-build")]]);
 
 /** The board a held build card sits on: its build step recorded and settled, so
     boot reconcile starts nothing and the card is genuinely resting. */

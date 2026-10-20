@@ -2,7 +2,7 @@
  * How a supervised step gets its thread — the seam between the board and the
  * thread aggregate.
  *
- * The board dispatches straight into the orchestration engine. A
+ * The board once dispatched straight into the orchestration engine. A
  * `thread.turn.start` carrying `bootstrap.createThread` does NOT create a
  * thread there: that block is unpacked by the WebSocket dispatch path
  * (`dispatchBootstrapTurnStart` in ws.ts), so an engine dispatch is decided as
@@ -10,8 +10,11 @@
  * shipped exactly that, and every auto-executing stage silently admitted a step
  * as `running` against a thread that was never created: no thread appeared on
  * the card, and the phantom live step then made the "+ → restart" menu a no-op
- * (one step at a time). These tests pin both halves — the spawn creates its own
- * thread, and a spawn that fails leaves the card recoverable.
+ * (one step at a time). The board now spawns through the thread gateway
+ * (T3O-58), whose `spawn` is create-then-first-turn in one call; the fake
+ * gateway refuses a turn sent to a thread that was never created. These tests
+ * pin both halves — the spawn creates its own thread, and a spawn that fails
+ * leaves the card recoverable.
  */
 import {
   BoardCardId,
@@ -20,16 +23,17 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCardStepState,
-  type OrchestrationEvent,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
+import type { ThreadSignal } from "./ThreadGateway.ts";
+import { aliveThread } from "./threadGateway.testkit.ts";
 import {
   humanTurnStartRequested,
   buildingCard,
   cardMoved,
+  type HarnessEvent,
   codexStep,
   makeBoardCard,
   movedToBuilding,
@@ -72,19 +76,23 @@ it.effect("a card dropped into an auto-executing stage gets a thread of its own"
         const threadId = state?.threadId ?? null;
         assert.isNotNull(threadId, "the admitted step names the thread it runs on");
 
+        // One spawn creates the thread AND carries the step's prompt as its
+        // first turn; a bare `send` to the new thread would be the old bug — a
+        // turn against a thread nobody created.
         const dispatched = yield* commands;
-        const create = dispatched.find(
-          (command) => command.type === "thread.create" && command.threadId === threadId,
+        const spawn = dispatched.find(
+          (command) => command.type === "thread.spawn" && command.threadId === threadId,
         );
-        const turn = dispatched.find(
-          (command) => command.type === "thread.turn.start" && command.threadId === threadId,
+        assert.isDefined(spawn, "the step's thread is created with its first turn");
+        assert.isNotEmpty(
+          spawn?.type === "thread.spawn" ? spawn.text : "",
+          "the step's prompt is sent as the thread's first turn",
         );
-        assert.isDefined(create, "the step's thread is created before its first turn");
-        assert.isDefined(turn, "the step's prompt is sent as the thread's first turn");
-        assert.isBelow(
-          dispatched.indexOf(create!),
-          dispatched.indexOf(turn!),
-          "create precedes the turn",
+        assert.isUndefined(
+          dispatched.find(
+            (command) => command.type === "thread.send" && command.threadId === threadId,
+          ),
+          "the first turn is never sent separately from the create",
         );
         // The link is what puts the thread on the card in the UI, and it is
         // asserted through the read model rather than the dispatch log: a
@@ -276,7 +284,7 @@ it.effect("a card moved into Planning while a leftover step lingers still gets a
         assert.isDefined(
           (yield* commands).find(
             (command) =>
-              command.type === "thread.turn.interrupt" &&
+              command.type === "thread.interrupt" &&
               command.threadId === ThreadId.make("thread-dead-old"),
           ),
           "the abandoned leftover turn is interrupted",
@@ -331,13 +339,7 @@ it.effect("re-entering a stage with a stalled step of its own still restarts it"
 // which does not auto-execute) and spawned a fresh step there on the app's
 // fallback provider. `continueStage` now refuses a stage that does not
 // auto-execute.
-const aliveShell = (): OrchestrationThreadShell =>
-  ({
-    hasPendingUserInput: false,
-    session: { activeTurnId: "turn-live" },
-  }) as unknown as OrchestrationThreadShell;
-
-const planningCompletedFor = (threadId: ThreadId, sequence: number): OrchestrationEvent =>
+const planningCompletedFor = (threadId: ThreadId, sequence: number): HarnessEvent =>
   ({
     type: "board.card-step-completed",
     sequence,
@@ -353,7 +355,7 @@ const planningCompletedFor = (threadId: ThreadId, sequence: number): Orchestrati
         completedAt: NOW,
       },
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 it.effect("a step completing after the card left its stage does not spawn on the new stage", () =>
   withGovernor(
@@ -374,7 +376,7 @@ it.effect("a step completing after the card left its stage does not spawn on the
       },
       // A live shell so boot reconcile resume-watches the running step rather
       // than recovering it before the completion under test arrives.
-      initialShells: new Map([["thread-planning-live", aliveShell()]]),
+      initialShells: new Map([["thread-planning-live", aliveThread("thread-planning-live")]]),
       settings: settingsWith({
         building: [codexStep],
         planning: codexStep,
@@ -391,33 +393,21 @@ it.effect("a step completing after the card left its stage does not spawn on the
         assert.strictEqual(state?.stepId, String(BOARD_SEED_STAGE_IDS.planning));
         assert.strictEqual(state?.status, "succeeded");
         assert.isUndefined(
-          (yield* commands).find((command) => command.type === "thread.create"),
+          (yield* commands).find((command) => command.type === "thread.spawn"),
           "no thread is spawned on the manual Sprint stage",
         );
       }),
   ),
 );
 
-/** The thread activity the provider reactor appends when a requested turn never
-    starts (t3o-30, D2) — the CLI is missing, the session will not spawn. It is
-    the ONLY signal the board gets: no turn ran, so no turn completes. */
-const turnStartFailed = (threadId: ThreadId, detail: string, sequence: number) =>
-  ({
-    type: "thread.activity-appended",
-    sequence,
-    payload: {
-      threadId,
-      activity: {
-        id: `activity-${sequence}`,
-        tone: "error",
-        kind: "provider.turn.start.failed",
-        summary: "Provider turn start failed",
-        payload: { detail },
-        turnId: null,
-        createdAt: NOW,
-      },
-    },
-  }) as unknown as OrchestrationEvent;
+/** The signal the gateway raises when a requested turn never starts (t3o-30,
+    D2) — the CLI is missing, the session will not spawn. It is the ONLY signal
+    the board gets: no turn ran, so no turn completes. */
+const turnStartFailed = (threadId: ThreadId, detail: string, _sequence?: number): ThreadSignal => ({
+  type: "turn-start-failed",
+  threadId,
+  detail,
+});
 
 /** The shape a real spawn failure arrives in: the outer adapter error, a JS
     stack, then the root cause that actually names what to fix. */

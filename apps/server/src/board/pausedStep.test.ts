@@ -73,6 +73,14 @@ const startBuild = (h: Pick<Harness, "pumpDomain" | "board">, id: string, sequen
 const commandTypes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.map((command) => command.type);
 
+/** Every turn the board drove into a thread: a spawn's first turn, or a send
+    into a thread that already exists. */
+const turnsOf = (commands: ReadonlyArray<HarnessCommand>) =>
+  commands.filter(
+    (command): command is Extract<HarnessCommand, { type: "thread.spawn" | "thread.send" }> =>
+      command.type === "thread.spawn" || command.type === "thread.send",
+  );
+
 // ── Bug 1: the stop sticks ────────────────────────────────────────────────
 
 it.effect(
@@ -137,9 +145,7 @@ it.effect("pausing re-interrupts a turn the projection still shows as live", () 
       // Closes the ordering race against `recoverStep`: if `turn.completed` was
       // processed first, a fresh nudge turn is already running, and a step that
       // says `Paused` while an agent works is the lie this exists to prevent.
-      const interrupts = (yield* commands).filter(
-        (command) => command.type === "thread.turn.interrupt",
-      );
+      const interrupts = (yield* commands).filter((command) => command.type === "thread.interrupt");
       assert.strictEqual(interrupts.length, 1);
     }),
   ),
@@ -324,7 +330,7 @@ it.effect("Resume sends a paused step through the queue and nudges its EXISTING 
       assert.strictEqual(paused?.status, "paused");
 
       const spawnsBefore = commandTypes(yield* commands).filter(
-        (type) => type === "thread.create",
+        (type) => type === "thread.spawn",
       ).length;
 
       // The card's Resume button: back to `queued`, holding no slot, and the
@@ -340,14 +346,12 @@ it.effect("Resume sends a paused step through the queue and nudges its EXISTING 
       // list and half-finished work all live in the thread it already has.
       const after = yield* commands;
       assert.strictEqual(
-        commandTypes(after).filter((type) => type === "thread.create").length,
+        commandTypes(after).filter((type) => type === "thread.spawn").length,
         spawnsBefore,
       );
-      const turns = after.filter(
-        (command): command is Extract<HarnessCommand, { type: "thread.turn.start" }> =>
-          command.type === "thread.turn.start",
-      );
-      assert.strictEqual(turns.at(-1)?.message.text, BOARD_STEP_RESUME_NUDGE);
+      const turns = turnsOf(after);
+      assert.strictEqual(turns.at(-1)?.type, "thread.send");
+      assert.strictEqual(turns.at(-1)?.text, BOARD_STEP_RESUME_NUDGE);
     }),
   ),
 );
@@ -392,7 +396,7 @@ it.effect("Resume continues a paused PLANNING conversation rather than restartin
         const paused = boardCardStepState(yield* board, BoardCardId.make("plan"));
         assert.strictEqual(paused?.status, "paused");
         const spawnsBefore = commandTypes(yield* commands).filter(
-          (type) => type === "thread.create",
+          (type) => type === "thread.spawn",
         ).length;
 
         // Nothing withholds a plan step, so `queued` was unreachable before
@@ -404,7 +408,7 @@ it.effect("Resume continues a paused PLANNING conversation rather than restartin
         assert.strictEqual(resumed?.status, "running");
         assert.strictEqual(resumed?.threadId, threadId);
         assert.strictEqual(
-          commandTypes(yield* commands).filter((type) => type === "thread.create").length,
+          commandTypes(yield* commands).filter((type) => type === "thread.spawn").length,
           spawnsBefore,
         );
       }),
@@ -563,16 +567,14 @@ it.effect("the handover's card update does not put the paused agent back to work
     Effect.gen(function* () {
       const threadId = yield* startBuild({ pumpDomain, board }, "no-restart");
       yield* pumpDomain(turnInterruptRequested(threadId, 2));
-      const turnsBefore = commandTypes(yield* commands).filter(
-        (type) => type === "thread.turn.start",
-      ).length;
+      const turnsBefore = turnsOf(yield* commands).length;
 
       // The engine double applies a decided event to the read model without
       // feeding it back onto the domain stream, so the `board.card-updated`
       // the flip raises is replayed here — which is where the bug would be.
       // Before `handleCardUpdated` guarded its stance turn on `running`, this
       // sent "switching to human-in-the-loop" into the thread we had just
-      // stopped; that raised `thread.turn-start-requested`, which resumed the
+      // stopped; that raised a `turn-requested` signal, which resumed the
       // step and put the agent straight back to work against the human's Stop.
       const card = (yield* board).cards.find(
         (candidate) => candidate.id === BoardCardId.make("no-restart"),
@@ -581,10 +583,7 @@ it.effect("the handover's card update does not put the paused agent back to work
 
       const after = yield* board;
       assert.strictEqual(stepStatus(after, BoardCardId.make("no-restart")), "paused");
-      assert.strictEqual(
-        commandTypes(yield* commands).filter((type) => type === "thread.turn.start").length,
-        turnsBefore,
-      );
+      assert.strictEqual(turnsOf(yield* commands).length, turnsBefore);
       // The stance still lands on the row, so the step reads correctly whenever
       // a human does resume it.
       assert.strictEqual(
@@ -620,21 +619,20 @@ it.effect("switching the stance of a step parked on a question still puts it bac
         const card = (yield* board).cards.find(
           (candidate) => candidate.id === BoardCardId.make("question"),
         );
-        const turnsBefore = (yield* commands).filter(
-          (command) => command.type === "thread.turn.start",
-        ).length;
+        const turnsBefore = turnsOf(yield* commands).length;
         yield* pumpDomain(cardHumanInLoopUpdated(card!, false, 2));
 
         // The stance turn is what carries that answer into the thread, and in
-        // production `resumeParkedStep` reads its `thread.turn-start-requested`
+        // production `resumeParkedStep` reads its `turn-requested` signal
         // and puts the step back to running. Guarding the turn on `running`
         // rather than on `paused` would leave this step parked on its question
         // for good — the sweep does not recover an `awaiting-input` step.
-        const turns = (yield* commands).filter((command) => command.type === "thread.turn.start");
+        const turns = turnsOf(yield* commands);
         assert.strictEqual(turns.length, turnsBefore + 1);
         const stance = turns.at(-1)!;
+        assert.strictEqual(stance.type, "thread.send");
         assert.strictEqual(stance.threadId, running!.threadId!);
-        assert.include(stance.message.text, "Switching to unattended");
+        assert.include(stance.text, "Switching to unattended");
         assert.strictEqual(
           boardCardStepState(yield* board, BoardCardId.make("question"))?.humanInLoop,
           false,
@@ -740,9 +738,7 @@ it.effect("the stance override reaches a step outside the build stage (T3O-17)",
         const running = boardCardStepState(yield* board, BoardCardId.make("interview"));
         assert.strictEqual(running?.status, "running");
         assert.strictEqual(running?.humanInLoop, true);
-        const turnsBefore = commandTypes(yield* commands).filter(
-          (type) => type === "thread.turn.start",
-        ).length;
+        const turnsBefore = turnsOf(yield* commands).length;
 
         // The human takes their hands off the planning interview from the card
         // detail's toggle. `handleCardUpdated` used to read the override only
@@ -754,10 +750,11 @@ it.effect("the stance override reaches a step outside the build stage (T3O-17)",
         );
         yield* pumpDomain(cardHumanInLoopUpdated(card!, false, 2));
 
-        const turns = (yield* commands).filter((command) => command.type === "thread.turn.start");
+        const turns = turnsOf(yield* commands);
         assert.strictEqual(turns.length, turnsBefore + 1);
+        assert.strictEqual(turns.at(-1)!.type, "thread.send");
         assert.strictEqual(turns.at(-1)!.threadId, running!.threadId!);
-        assert.include(turns.at(-1)!.message.text, "Switching to unattended");
+        assert.include(turns.at(-1)!.text, "Switching to unattended");
         assert.strictEqual(
           boardCardStepState(yield* board, BoardCardId.make("interview"))?.humanInLoop,
           false,

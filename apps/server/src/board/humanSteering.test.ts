@@ -24,7 +24,6 @@ import {
   ThreadId,
   type BoardCardStepState,
   type BoardState,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -46,6 +45,7 @@ import {
   type Harness,
   type HarnessCommand,
 } from "./supervisorHarness.testkit.ts";
+import type { BoardThreadState } from "./ThreadGateway.ts";
 
 const codex = ProviderInstanceId.make("codex");
 
@@ -75,8 +75,10 @@ const stateOf = (board: BoardState, id: string) => boardCardStepState(board, Boa
 const commandTypes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.map((command) => command.type);
 
+/** Turns the board drove: a spawn's first turn, or a send into an existing
+    thread — a recovery can do either. */
 const turnStarts = (commands: ReadonlyArray<HarnessCommand>) =>
-  commandTypes(commands).filter((type) => type === "thread.turn.start").length;
+  commandTypes(commands).filter((type) => type === "thread.spawn" || type === "thread.send").length;
 
 // ── The steer is recorded ─────────────────────────────────────────────────
 
@@ -291,7 +293,7 @@ const sweepBoard = (step: BoardCardStepState): BoardState => ({
 
 /** A live shell for the step's thread, so boot reconcile resume-watches it
     rather than recovering it before the sweep under test runs. */
-const sweepShells = (): ReadonlyMap<string, OrchestrationThreadShell> =>
+const sweepShells = (): ReadonlyMap<string, BoardThreadState> =>
   new Map([[String(sweepThreadId), aliveThreadShell(String(sweepThreadId))]]);
 
 it.effect("the sweep does not nudge over a turn a human has already requested", () =>
