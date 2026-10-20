@@ -20,7 +20,8 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
-import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
+import { boardDecidedEvents } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 import {
   isKeptStepThread,
   isUnfinishedKeptInterview,
@@ -79,7 +80,7 @@ const setShell = (h: Harness, threadId: ThreadId, shell: ReturnType<typeof idleT
     `board_complete_step` call reaches the board. */
 const completePlanning = (h: Harness, threadId: ThreadId, sequence: number) =>
   Effect.gen(function* () {
-    const decided = yield* decideBoardCommand({
+    const decided = yield* decideBoardCommandOnModel({
       command: {
         type: "board.card.complete-step",
         commandId: CommandId.make(`cmd-complete-${sequence}`),

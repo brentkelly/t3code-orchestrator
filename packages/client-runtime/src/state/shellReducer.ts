@@ -15,6 +15,8 @@ export function applyShellStreamEvent(
   snapshot: OrchestrationShellSnapshot,
   event: OrchestrationShellStreamEvent,
 ): OrchestrationShellSnapshot {
+  // T3o: board deltas carry the board's own sequence, so they skip this guard (T3O-56).
+  if (isBoardShellStreamEvent(event)) return applyBoardShellStreamEvent(snapshot, event);
   if (event.sequence <= snapshot.snapshotSequence) return snapshot;
 
   switch (event.kind) {
@@ -43,8 +45,6 @@ export function applyShellStreamEvent(
         snapshotSequence: event.sequence,
       };
     default:
-      // T3o: card shell deltas are reduced in the board module.
-      if (isBoardShellStreamEvent(event)) return applyBoardShellStreamEvent(snapshot, event);
       return snapshot;
   }
 }

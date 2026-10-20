@@ -19,6 +19,7 @@ import type { ExecuteGitInput, ExecuteGitResult, GitVcsDriver } from "../vcs/Git
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { boardActivityActorFor, resetBoardActivityActors } from "./activityActors.ts";
 import { boardActorStamp } from "./rpc.ts";
+import { inertBoardQueries } from "./boardServices.testkit.ts";
 
 const cardId = BoardCardId.make("card-1");
 const alpha = ProjectId.make("project-alpha");
@@ -43,27 +44,19 @@ function fakeDeps(projectOf: { current: ProjectId }) {
       } satisfies ExecuteGitResult),
   } as unknown as GitVcsDriver["Service"];
 
-  const projectionSnapshotQuery = {
-    // The board method set the stamp probes for; only `boardCardDetail` is read.
+  // Only `boardCardDetail` is read: it is where the stamp learns the project.
+  const boardQueries = inertBoardQueries({
     boardCardDetail: () =>
       Effect.succeed({
         card: { projectId: projectOf.current },
       } as unknown as BoardCardDetail),
-    boardCardActivity: () => Effect.succeed([]),
-    boardCardBrief: () => Effect.succeed(null),
-    boardPlanBody: () => Effect.succeed(null),
-    boardCardThreads: () => Effect.succeed([]),
-    boardCardIdForThread: () => Effect.succeed(null),
-    boardThreadTodo: () => Effect.succeed(null),
-    boardLatestAssistantMessage: () => Effect.succeed(null),
-    boardThreadLastSignalAt: () => Effect.succeed(null),
-    boardThreadPendingTurnStartAt: () => Effect.succeed(null),
-    boardSweepThreadTodos: () => Effect.void,
+  });
+  const projectionSnapshotQuery = {
     getProjectShellById: (projectId: ProjectId) =>
       Effect.succeed(Option.some({ id: projectId, workspaceRoot: `/tmp/${projectId}` })),
   } as unknown as ProjectionSnapshotQueryShape;
 
-  return { git, projectionSnapshotQuery };
+  return { git, projectionSnapshotQuery, boardQueries };
 }
 
 const updateCommand = (commandId: string) =>

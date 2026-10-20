@@ -326,6 +326,15 @@ function preserveAbsentShellFields(
   };
 }
 
+/**
+ * Fold one board shell delta into the snapshot.
+ *
+ * Board deltas carry the BOARD's own sequence (T3O-56), not the shell's, so
+ * they are applied without the shell's sequence guard and never move
+ * `snapshotSequence` — mixing the two counters would drop thread deltas or
+ * board deltas wholesale. Every board delta is an idempotent upsert or removal,
+ * so a delta replayed after a snapshot that already holds it is harmless.
+ */
 export function applyBoardShellStreamEvent(
   snapshot: OrchestrationShellSnapshot,
   event: BoardShellStreamEvent,
@@ -406,7 +415,7 @@ export function applyBoardShellStreamEvent(
       const nextCards = cards.some((entry) => entry.cardId === card.cardId)
         ? Arr.map(cards, (entry) => (entry.cardId === card.cardId ? card : entry))
         : Arr.append(cards, card);
-      return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
+      return { ...snapshot, cards: nextCards };
     }
     case "card-queued": {
       // The one authoritative live flip of `queued` (t3o-11): the governor
@@ -421,7 +430,7 @@ export function applyBoardShellStreamEvent(
           ? { ...card, queued: event.queued, stepRunning: event.stepRunning }
           : card,
       );
-      return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
+      return { ...snapshot, cards: nextCards };
     }
     case "card-stalled": {
       // The authoritative live flip of `stalled` (t3o-17, D3): recovery gave up
@@ -498,7 +507,7 @@ export function applyBoardShellStreamEvent(
           ...(nextLimitedBy === undefined ? {} : { limitedByInstanceId: nextLimitedBy }),
         };
       });
-      return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
+      return { ...snapshot, cards: nextCards };
     }
     case "card-plans": {
       // The card's plan set was replaced (t3o-08) — the authoritative live
@@ -508,7 +517,7 @@ export function applyBoardShellStreamEvent(
           ? { ...card, planCount: event.planCount }
           : card,
       );
-      return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
+      return { ...snapshot, cards: nextCards };
     }
     case "card-review": {
       // A review phase completed (t3o-22, D7) — the authoritative live change
@@ -540,7 +549,7 @@ export function applyBoardShellStreamEvent(
               issuesDisputed: event.summary.issuesDisputed,
             };
       });
-      return { ...snapshot, cards: nextCards, snapshotSequence: event.sequence };
+      return { ...snapshot, cards: nextCards };
     }
     case "card-threads": {
       // The card's whole live link set, replaced wholesale (t3o-18, D3): the set
@@ -552,7 +561,6 @@ export function applyBoardShellStreamEvent(
       return {
         ...snapshot,
         boardCardThreads: [...others, ...event.threads],
-        snapshotSequence: event.sequence,
       };
     }
     case "card-removed":
@@ -564,7 +572,6 @@ export function applyBoardShellStreamEvent(
         boardCardThreads: (snapshot.boardCardThreads ?? []).filter(
           (entry) => entry.cardId !== event.cardId,
         ),
-        snapshotSequence: event.sequence,
       };
     case "label-upserted": {
       // Catalogue delta (t3o-06a): the whole board's label vocabulary rides
@@ -577,7 +584,7 @@ export function applyBoardShellStreamEvent(
             existing.labelId === event.label.labelId ? event.label : existing,
           )
         : Arr.append(labels, event.label);
-      return { ...snapshot, boardLabels: nextLabels, snapshotSequence: event.sequence };
+      return { ...snapshot, boardLabels: nextLabels };
     }
     case "stage-upserted": {
       // Stage aggregate delta (t3o-15): the whole stage list rides so the board
@@ -592,7 +599,7 @@ export function applyBoardShellStreamEvent(
             )
           : Arr.append(stages, event.stage)),
       ].sort(compareBoardStages);
-      return { ...snapshot, boardStages: nextStages, snapshotSequence: event.sequence };
+      return { ...snapshot, boardStages: nextStages };
     }
     case "card-provider-limit-upserted": {
       // The provider-cooldown slice (T3O-22, D14): one fact per provider
@@ -607,7 +614,7 @@ export function applyBoardShellStreamEvent(
             existing.providerInstanceId === event.limit.providerInstanceId ? event.limit : existing,
           )
         : Arr.append(limits, event.limit);
-      return { ...snapshot, boardProviderLimits: nextLimits, snapshotSequence: event.sequence };
+      return { ...snapshot, boardProviderLimits: nextLimits };
     }
     case "card-provider-limit-cleared":
       return {
@@ -616,14 +623,12 @@ export function applyBoardShellStreamEvent(
           snapshot.boardProviderLimits ?? [],
           (existing) => existing.providerInstanceId !== event.providerInstanceId,
         ),
-        snapshotSequence: event.sequence,
       };
     case "stage-removed": {
       const stages = snapshot.boardStages ?? [];
       return {
         ...snapshot,
         boardStages: Arr.filter(stages, (stage) => stage.stageId !== event.stageId),
-        snapshotSequence: event.sequence,
       };
     }
   }

@@ -14,46 +14,17 @@ import {
   ProviderInstanceId,
   type BoardCardDetailStreamItem,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
-import { ServerConfig } from "../config.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 import { boardRpcHandlers } from "./rpc.ts";
+import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 
-const makeBoardRpcTestLayer = (prefix: string) =>
-  Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
-    ),
-    OrchestrationProjectionSnapshotQueryLive,
-  ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
-  );
+const makeBoardRpcTestLayer = makeBoardStackTestLayer;
 
 const t0 = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-rpc");
@@ -68,7 +39,7 @@ const session = (scopes: ReadonlyArray<AuthenticatedSession["scopes"][number]>) 
   }) as AuthenticatedSession;
 
 const seedCard = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
+  const engine = yield* boardStackEngine;
   yield* engine.dispatch({
     type: "project.create",
     commandId: CommandId.make("cmd-rpc-project"),
@@ -191,12 +162,8 @@ const supervisorStub: SupervisorReactorShape = {
 
 const makeHandlers = (scopes: ReadonlyArray<AuthenticatedSession["scopes"][number]>) =>
   Effect.gen(function* () {
-    const orchestrationEngine = yield* OrchestrationEngineService;
-    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-    return boardRpcHandlers({
+    return yield* boardRpcHandlers({
       currentSession: session(scopes),
-      orchestrationEngine,
-      projectionSnapshotQuery,
       boardSupervisor: supervisorStub,
     });
   });
@@ -227,7 +194,7 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-test-"))("board.subscribeCard", (i
 
   it.effect("emits the full detail on subscribe and re-emits it on card change", () =>
     Effect.gen(function* () {
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       const handlers = yield* makeHandlers([AuthOrchestrationReadScope]);
 
       const collected = yield* Deferred.make<ReadonlyArray<BoardCardDetailStreamItem>>();

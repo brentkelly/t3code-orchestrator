@@ -15,45 +15,16 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationEvent,
+  type BoardEvent,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { createEmptyReadModel, projectEvent } from "../orchestration/projector.ts";
-import { ServerConfig } from "../config.ts";
+import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
+import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 
-const makeBoardDomainTestLayer = (prefix: string) =>
-  Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
-    ),
-    OrchestrationProjectionSnapshotQueryLive,
-  ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
-  );
+const makeBoardDomainTestLayer = makeBoardStackTestLayer;
 
 const t0 = "2026-01-01T00:00:00.000Z";
 const projectA = ProjectId.make("project-a");
@@ -96,8 +67,8 @@ const createCard = (input: {
 it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifecycle", (it) => {
   it.effect("runs a full card lifecycle and replays it identically from an empty read model", () =>
     Effect.gen(function* () {
-      const engine = yield* OrchestrationEngineService;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const engine = yield* boardStackEngine;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
 
       yield* engine.dispatch(createProject(projectA, "a"));
       yield* engine.dispatch(createProject(projectB, "b"));
@@ -254,8 +225,8 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
       // Replay every persisted event from a truly empty read model: the
       // board slice must equal the table-rehydrated one exactly.
       const rehydrated = yield* snapshotQuery.getCommandReadModel();
-      const events: OrchestrationEvent[] = Array.from(
-        yield* Stream.runCollect(engine.readEvents(0)),
+      const events: BoardEvent[] = Array.from(
+        yield* Stream.runCollect(engine.readBoardEvents()),
       );
       const boardEventTypes = events
         .filter((event) => event.type.startsWith("board."))
@@ -275,9 +246,9 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
         "board.card-reordered",
       ]);
 
-      let replayed = createEmptyReadModel(t0);
+      let replayed = ({} as BoardReadModel);
       for (const event of events) {
-        replayed = yield* projectEvent(replayed, event);
+        replayed = yield* projectBoardEvent(replayed, event);
       }
       assert.deepStrictEqual(replayed.board, rehydrated.board);
     }),
@@ -287,8 +258,8 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
 it.layer(makeBoardDomainTestLayer("t3o-board-delete-test-"))("board card delete", (it) => {
   it.effect("purges the card, rewrites the edges into it, and never re-issues its key", () =>
     Effect.gen(function* () {
-      const engine = yield* OrchestrationEngineService;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const engine = yield* boardStackEngine;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
 
       yield* engine.dispatch(createProject(projectA, "a"));
       yield* engine.dispatch(
@@ -397,16 +368,16 @@ it.layer(makeBoardDomainTestLayer("t3o-board-delete-test-"))("board card delete"
       // point of `board.card-deleted` carrying a removal the projector applies
       // rather than the projection quietly dropping rows.
       const rehydrated = yield* snapshotQuery.getCommandReadModel();
-      const events: OrchestrationEvent[] = Array.from(
-        yield* Stream.runCollect(engine.readEvents(0)),
+      const events: BoardEvent[] = Array.from(
+        yield* Stream.runCollect(engine.readBoardEvents()),
       );
       assert.include(
         events.map((event) => event.type),
         "board.card-deleted",
       );
-      let replayed = createEmptyReadModel(t0);
+      let replayed = ({} as BoardReadModel);
       for (const event of events) {
-        replayed = yield* projectEvent(replayed, event);
+        replayed = yield* projectBoardEvent(replayed, event);
       }
       assert.deepStrictEqual(replayed.board, rehydrated.board);
     }),
@@ -424,8 +395,8 @@ it.layer(makeBoardDomainTestLayer("t3o-board-base-branch-test-"))(
       // pin, clear, re-pin, then compare a from-empty replay against what the
       // rows rehydrate to.
       Effect.gen(function* () {
-        const engine = yield* OrchestrationEngineService;
-        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const engine = yield* boardStackEngine;
+        const snapshotQuery = yield* boardStackSnapshotQuery;
 
         yield* engine.dispatch(createProject(projectA, "a"));
         yield* engine.dispatch({
@@ -478,9 +449,9 @@ it.layer(makeBoardDomainTestLayer("t3o-board-base-branch-test-"))(
           "release/2.4",
         );
 
-        let replayed = createEmptyReadModel(t0);
-        for (const event of Array.from(yield* Stream.runCollect(engine.readEvents(0)))) {
-          replayed = yield* projectEvent(replayed, event);
+        let replayed = ({} as BoardReadModel);
+        for (const event of Array.from(yield* Stream.runCollect(engine.readBoardEvents()))) {
+          replayed = yield* projectBoardEvent(replayed, event);
         }
         assert.deepStrictEqual(replayed.board, rehydrated.board);
       }),

@@ -26,18 +26,9 @@
  * regression in return for a check that only changes answer across an upgrade.
  *
  * The upstream event-type set is derived by SUBTRACTING `BOARD_EVENT_TYPES` from
- * the union t3o ships, rather than being written out by hand, so a board event
- * type added later is excluded without anyone remembering to update this file.
- *
- * The derivation has one gap, and it is the dangerous direction: a type t3o adds
- * to `OrchestrationEventType` WITHOUT adding it to `BOARD_EVENT_TYPES` — a
- * t3o-invented `thread.*` type, say — is subtracted from nothing and counts as
- * upstream-legible. Rows for it would then be reported CLEAN while stock t3code
- * could not decode them. Nothing like that exists today (t3o adds no non-board
- * event type; every one of its 35 is `board.*`-namespaced), and the invariant to
- * hold is: anything t3o adds to `OrchestrationEventType` also goes in
- * `BOARD_EVENT_TYPES`. If that ever stops being true, this set needs a different
- * derivation.
+ * `OrchestrationEventType`. Since T3O-56 board events are not in that union at
+ * all — they live in the board's own log — so the subtraction removes nothing;
+ * it stays as the guard against a board type ever being spliced back in.
  *
  * The remaining gaps all err the safe way, toward over-reporting: a type upstream
  * adds appears here only after a rebase, and a board type retired from

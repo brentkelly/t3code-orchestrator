@@ -22,44 +22,13 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ServerConfig } from "../config.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import { boardSnapshotQueryMethodsOf } from "./projection.ts";
+import { BoardQueries } from "./BoardQueries.ts";
+import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 
-const makeLayer = (prefix: string) =>
-  Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
-    ),
-    OrchestrationProjectionSnapshotQueryLive,
-    ServerSettings.layerTest(),
-  ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
-  );
+const makeLayer = makeBoardStackTestLayer;
 
 const t0 = "2026-01-01T00:00:00.000Z";
 const at = (minute: number) => `2026-01-01T00:${String(minute).padStart(2, "0")}:00.000Z`;
@@ -74,7 +43,7 @@ const nextCommandId = () => CommandId.make(`cmd-pending-${(commandSeq += 1)}`);
     id from its tag and the project create is idempotent by its fixed id. */
 const seed = Effect.fn("seed")(function* (tag: string) {
   const threadId = ThreadId.make(`thread-${tag}`);
-  const engine = yield* OrchestrationEngineService;
+  const engine = yield* boardStackEngine;
   yield* engine.dispatch({
     type: "project.create",
     commandId: CommandId.make("cmd-project"),
@@ -104,7 +73,7 @@ const seed = Effect.fn("seed")(function* (tag: string) {
     `thread.turn-start-requested` and so writes the pending row. */
 const sendMessage = (threadId: ThreadId, messageId: string, createdAt: string) =>
   Effect.gen(function* () {
-    const engine = yield* OrchestrationEngineService;
+    const engine = yield* boardStackEngine;
     yield* engine.dispatch({
       type: "thread.turn.start",
       commandId: nextCommandId(),
@@ -125,7 +94,7 @@ const sendMessage = (threadId: ThreadId, messageId: string, createdAt: string) =
     pending row. */
 const startTurn = (threadId: ThreadId, turnId: string, createdAt: string) =>
   Effect.gen(function* () {
-    const engine = yield* OrchestrationEngineService;
+    const engine = yield* boardStackEngine;
     yield* engine.dispatch({
       type: "thread.session.set",
       commandId: nextCommandId(),
@@ -146,8 +115,8 @@ const startTurn = (threadId: ThreadId, turnId: string, createdAt: string) =>
 
 const pendingTurnStartAt = (threadId: ThreadId) =>
   Effect.gen(function* () {
-    const snapshotQuery = yield* ProjectionSnapshotQuery;
-    const methods = boardSnapshotQueryMethodsOf(snapshotQuery);
+    const snapshotQuery = yield* boardStackSnapshotQuery;
+    const methods = (yield* BoardQueries);
     assert.isNotNull(methods);
     return yield* methods!.boardThreadPendingTurnStartAt(threadId);
   });

@@ -44,7 +44,9 @@ import {
   BoardPullRequestGatewayError,
 } from "./BoardPullRequestGateway.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
-import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
+import { boardDecidedEvents } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
+import { boardEngineDouble, boardServicesTestLayer } from "./boardServices.testkit.ts";
 import { projectBoardEvent } from "./projector.ts";
 import { UsageLimitDetector } from "./UsageLimitDetector.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
@@ -208,7 +210,7 @@ function reconcileCommandObjects(input: {
     const foldBoardCommand = (command: OrchestrationCommand) =>
       isBoardCommand(command)
         ? Effect.gen(function* () {
-            const decided = yield* decideBoardCommand({
+            const decided = yield* decideBoardCommandOnModel({
               command,
               readModel: yield* Ref.get(model),
             }).pipe(
@@ -262,6 +264,12 @@ function reconcileCommandObjects(input: {
 
     const deps = Layer.mergeAll(
       Layer.succeed(OrchestrationEngineService, engineStub),
+      boardServicesTestLayer({
+        engine: boardEngineDouble({
+          dispatch: engineStub.dispatch,
+          board: Ref.get(model).pipe(Effect.map((current) => current.board)),
+        }),
+      }),
       Layer.succeed(ProjectionSnapshotQuery, snapshotStub),
       Layer.succeed(ProviderService, providerStub),
       Layer.succeed(ServerSettingsService, settingsStub),

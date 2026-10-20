@@ -20,45 +20,16 @@ import {
   type BoardCardShell,
   type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { boardSnapshotQueryMethodsOf } from "./projection.ts";
-import { ServerConfig } from "../config.ts";
+import { BoardQueries } from "./BoardQueries.ts";
+import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 
 /** One database per scenario. Commands are deduped by `commandId` and every
     scenario shares a seed, so a single database would let one scenario's
     archive silently satisfy the next one's dispatch. */
-const makeTestLayer = (prefix: string) =>
-  Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
-    ),
-    OrchestrationProjectionSnapshotQueryLive,
-  ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
-  );
+const makeTestLayer = makeBoardStackTestLayer;
 
 const createdAt = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-board");
@@ -85,7 +56,7 @@ const createProject = {
     (D11), so the dependent is moved there dependency-free and then edited to add
     the dependency — which re-derives its blocked flag in place. */
 const seedBoard = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
+  const engine = yield* boardStackEngine;
   yield* engine.dispatch(createProject);
   yield* engine.dispatch({
     type: "board.card.create",
@@ -144,7 +115,7 @@ it.layer(makeTestLayer("t3o-board-archive-1-"))("archiving a depended-on card", 
   it.effect("clears the dependents' blocked flag and keeps the dependency edge", () =>
     Effect.gen(function* () {
       const engine = yield* seedBoard;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
 
       const blocked = yield* snapshotQuery.getShellSnapshot();
       assert.strictEqual(
@@ -196,7 +167,7 @@ it.layer(makeTestLayer("t3o-board-archive-2-"))("moving past a released gate", (
         createdAt,
       });
 
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const shell = yield* snapshotQuery.getShellSnapshot();
       assert.strictEqual(
         cardsOf(shell).find((card) => card.cardId === dependentId)?.stage,
@@ -210,7 +181,7 @@ it.layer(makeTestLayer("t3o-board-archive-3-"))("restoring a depended-on card", 
   it.effect("re-blocks the dependent when the dependency is restored", () =>
     Effect.gen(function* () {
       const engine = yield* seedBoard;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       yield* engine.dispatch(archiveDependency);
 
       yield* engine.dispatch({
@@ -231,10 +202,10 @@ it.layer(makeTestLayer("t3o-board-archive-4-"))("card detail dependency refs", (
   it.effect("resolves an archived dependency on the card detail rather than dropping it", () =>
     Effect.gen(function* () {
       const engine = yield* seedBoard;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       yield* engine.dispatch(archiveDependency);
 
-      const board = boardSnapshotQueryMethodsOf(snapshotQuery);
+      const board = (yield* BoardQueries);
       assert.isNotNull(board);
       if (board === null) return;
 
@@ -265,7 +236,7 @@ it.layer(makeTestLayer("t3o-board-archive-5-"))("the archive page's card list", 
   it.effect("lists archived cards on the archive snapshot, and only there", () =>
     Effect.gen(function* () {
       const engine = yield* seedBoard;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       yield* engine.dispatch(archiveDependency);
 
       const archived = yield* snapshotQuery.getArchivedShellSnapshot();

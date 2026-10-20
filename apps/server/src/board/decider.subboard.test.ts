@@ -21,7 +21,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { boardDecidedEvents, decideBoardCommand, type BoardCommand } from "./decider.ts";
+import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -139,7 +140,7 @@ function makeReadModel(board: BoardState): OrchestrationReadModel {
 }
 
 const decideEvents = (command: BoardCommand, readModel: OrchestrationReadModel) =>
-  decideBoardCommand({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
+  decideBoardCommandOnModel({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
 
 const decideFail = (command: BoardCommand, readModel: OrchestrationReadModel) =>
   Effect.flip(decideEvents(command, readModel));

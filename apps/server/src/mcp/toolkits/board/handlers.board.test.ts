@@ -22,35 +22,24 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { OrchestrationCommandReceiptRepositoryLive } from "../../../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../../../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../../../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../../../project/RepositoryIdentityResolver.ts";
-import { OrchestrationEngineLive } from "../../../orchestration/Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "../../../orchestration/Layers/ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../../../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../../../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../../../orchestration/ThreadPlanProgress.ts";
-import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { createEmptyReadModel, projectEvent } from "../../../orchestration/projector.ts";
 import { ServerConfig } from "../../../config.ts";
-import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
-import { boardSnapshotQueryMethodsOf } from "../../../board/projection.ts";
+import { BoardQueries } from "../../../board/BoardQueries.ts";
 import {
   SupervisorReactor,
   type SupervisorReactorShape,
 } from "../../../board/supervisorReactor.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import { boardHandlers } from "./handlers.ts";
 import { BoardToolkit } from "./tools.ts";
+import { projectBoardEvent, type BoardReadModel } from "../../../board/projector.ts";
+import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "../../../board/boardStack.testkit.ts";
 
 /** The forge as these tests see it (T3O-18): #75, #76 and #77 exist, nothing
     else. #77 resolves but its link is then refused (`refusedLink`). */
@@ -82,7 +71,7 @@ const refusedLink = 77;
 const SupervisorLinkStub = Layer.effect(
   SupervisorReactor,
   Effect.gen(function* () {
-    const engine = yield* OrchestrationEngineService;
+    const engine = yield* boardStackEngine;
     let commands = 0;
     const resolve = (target: BoardCardPullRequestTarget) => {
       const number = target.number ?? Number(target.url?.split("/").at(-1));
@@ -131,24 +120,10 @@ const SupervisorLinkStub = Layer.effect(
 );
 
 const makeLayer = (prefix: string) =>
-  Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
-    ),
-    OrchestrationProjectionSnapshotQueryLive,
+  makeBoardStackTestLayer(prefix).pipe(
     // The create tool reads (and may assign) the project's key prefix from
     // board settings (D14) — an in-memory settings runtime is enough.
-    ServerSettings.layerTest(),
-  ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(ServerSettings.layerTest()),
     // On top, so the stub links through the same engine the handlers write to.
     (base) => SupervisorLinkStub.pipe(Layer.provideMerge(base)),
   );
@@ -174,7 +149,7 @@ const withScope = (threadId: ThreadId) =>
 /** Create a project, a card, a real thread, and link the thread to the card,
     so a handler call from `linkedThread` resolves `card-1`. */
 const seed = Effect.fn("seed")(function* () {
-  const engine = yield* OrchestrationEngineService;
+  const engine = yield* boardStackEngine;
   yield* engine.dispatch({
     type: "project.create",
     commandId: CommandId.make("cmd-project"),
@@ -229,7 +204,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   it.effect("lists the brief's attachments with absolute paths the agent can read (t3o-32)", () =>
     Effect.gen(function* () {
       yield* seed();
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       const config = yield* ServerConfig;
       yield* engine.dispatch({
         type: "board.card.attach",
@@ -299,7 +274,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       yield* seed();
       // Completions are validated against the card's LIVE step — select one,
       // as the reactor would, before the agent reports against it.
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       yield* engine.dispatch({
         type: "board.card.select-step",
         commandId: CommandId.make("cmd-select-step"),
@@ -354,7 +329,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   };
 
   const seedOwnCard = Effect.fn("seedOwnCard")(function* (suffix: string) {
-    const engine = yield* OrchestrationEngineService;
+    const engine = yield* boardStackEngine;
     const ownCard = BoardCardId.make(`card-${suffix}`);
     const ownThread = ThreadId.make(`thread-${suffix}`);
     // A project of its own too: card keys are allocated per project from a
@@ -414,7 +389,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     readonly suffix: string;
     readonly stepId?: string;
   }) {
-    const engine = yield* OrchestrationEngineService;
+    const engine = yield* boardStackEngine;
     yield* engine.dispatch({
       type: "board.card.select-step",
       commandId: CommandId.make(`cmd-select-${input.suffix}`),
@@ -452,7 +427,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     readonly suffix: string;
     readonly stepId?: string;
   }) {
-    const engine = yield* OrchestrationEngineService;
+    const engine = yield* boardStackEngine;
     yield* engine.dispatch({
       type: "board.card.settle-step",
       commandId: CommandId.make(`cmd-settle-${input.suffix}`),
@@ -531,7 +506,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     Effect.gen(function* () {
       yield* seed();
       const own = yield* seedOwnCard("kept");
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       const planner = ThreadId.make("thread-kept-planner");
       yield* engine.dispatch({
         type: "thread.create",
@@ -644,7 +619,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       // It owns no run, so it has nothing to complete. Adopted under `linked`,
       // as every client links: only the board links a thread under a stage, and
       // a planning link outliving its stage is a kept interview (T3O-19).
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       const sibling = ThreadId.make("thread-other-idle");
       yield* engine.dispatch({
         type: "thread.create",
@@ -687,7 +662,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       yield* seed();
       const own = yield* seedOwnCard("sibling-explicit");
       yield* startStep({ ...own, suffix: "sibling-explicit" });
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       const sibling = ThreadId.make("thread-other-explicit");
       yield* engine.dispatch({
         type: "thread.create",
@@ -807,7 +782,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       yield* startStep({ ...own, suffix: "build-legacy" });
       // What every pre-T3O-21 build left behind: a success with no payload,
       // written straight to the decider as the handler once did.
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       yield* engine.dispatch({
         type: "board.card.complete-step",
         commandId: CommandId.make("cmd-complete-build-legacy"),
@@ -969,7 +944,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       yield* seed();
       const own = yield* seedOwnCard("repair");
       yield* startStep({ ...own, suffix: "repair", stepId: "review@1" });
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       // The record CAA-5 was left holding — written straight to the engine,
       // because the handler now refuses to create one.
       yield* engine.dispatch({
@@ -1094,7 +1069,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       yield* boardHandlers
         .board_complete_step({ outcome: "failed", summary: "Could not finish" })
         .pipe(withScope(own.ownThread));
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       yield* engine.dispatch({
         type: "board.card.settle-step",
         commandId: CommandId.make("cmd-settle-reentry"),
@@ -1393,7 +1368,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const created = yield* boardHandlers
         .board_create_card({ projectId, title: "Newest", stage: BoardStageId.make("sprint") })
         .pipe(withScope(orphanThread));
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const model = yield* snapshotQuery.getCommandReadModel();
       const cards = model.board?.cards ?? [];
       const newCard = cards.find((candidate) => candidate.id === created.cardId);
@@ -1415,7 +1390,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         .board_move_card({ cardId, toStage: BoardStageId.make("sprint") })
         .pipe(withScope(orphanThread));
       assert.strictEqual(moved.stage, "sprint");
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const model = yield* snapshotQuery.getCommandReadModel();
       const cards = model.board?.cards ?? [];
       const movedCard = cards.find((candidate) => candidate.id === cardId);
@@ -1449,7 +1424,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       yield* boardHandlers
         .board_move_card({ cardId: mover.cardId, toStage: BoardStageId.make("planning") })
         .pipe(withScope(orphanThread));
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const model = yield* snapshotQuery.getCommandReadModel();
       const cards = model.board?.cards ?? [];
       const movedCard = cards.find((candidate) => candidate.id === mover.cardId);
@@ -1479,7 +1454,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         .board_move_card({ cardId: finishing.cardId, toStage: BoardStageId.make("done") })
         .pipe(withScope(orphanThread));
       assert.strictEqual(moved.stage, "done");
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const model = yield* snapshotQuery.getCommandReadModel();
       const cards = model.board?.cards ?? [];
       const movedCard = cards.find((candidate) => candidate.id === finishing.cardId);
@@ -1593,7 +1568,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   it.effect("board_create_card rejects an ambiguous project match by title and by folder", () =>
     Effect.gen(function* () {
       yield* seed();
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       const dupProject = (id: string, title: string, workspaceRoot: string, commandId: string) =>
         engine.dispatch({
           type: "project.create" as const,
@@ -1830,7 +1805,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
   it.effect("archive and delete surface the decider's 'plan cards still exist' rejection", () =>
     Effect.gen(function* () {
       const { ownCard, ownThread } = yield* seedOwnCard("lifecycle-children");
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       // Two plans = a split, so approving materialises the parent's children.
       yield* boardHandlers
         .board_propose_plans({
@@ -1896,12 +1871,12 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         .board_write_plan({ planId: boardPlanId(cardId, "a"), body: "rewritten" })
         .pipe(withScope(linkedThread));
 
-      const engine = yield* OrchestrationEngineService;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const engine = yield* boardStackEngine;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const rehydrated = yield* snapshotQuery.getCommandReadModel();
-      const events = Array.from(yield* Stream.runCollect(engine.readEvents(0)));
-      let replayed = createEmptyReadModel(t0);
-      for (const event of events) replayed = yield* projectEvent(replayed, event);
+      const events = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
+      let replayed = ({} as BoardReadModel);
+      for (const event of events) replayed = yield* projectBoardEvent(replayed, event);
       // Read-model step completions and plan metadata rehydrated from the
       // 908/909 tables must equal a from-empty replay of the event log.
       assert.deepStrictEqual(replayed.board, rehydrated.board);
@@ -1914,7 +1889,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
 // edits and nothing here can disturb the assertions above.
 it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edits", (it) => {
   const createCard = Effect.fn("createCard")(function* (id: string, brief?: string) {
-    const engine = yield* OrchestrationEngineService;
+    const engine = yield* boardStackEngine;
     const card = BoardCardId.make(id);
     yield* engine.dispatch({
       type: "board.card.create",
@@ -1935,7 +1910,7 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
     card: BoardCardId,
     brief: string,
   ) {
-    const engine = yield* OrchestrationEngineService;
+    const engine = yield* boardStackEngine;
     yield* engine.dispatch({
       type: "board.card.update",
       commandId: CommandId.make(`cmd-human-${id}`),
@@ -1946,7 +1921,7 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
   });
 
   const activityOf = Effect.fn("activityOf")(function* (card: BoardCardId) {
-    const board = boardSnapshotQueryMethodsOf(yield* ProjectionSnapshotQuery);
+    const board = (yield* BoardQueries);
     assert.isNotNull(board);
     return (yield* board!.boardCardActivity(card)).filter((entry) => entry.kind === "card-edited");
   });
@@ -1962,7 +1937,7 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
       yield* boardHandlers
         .board_update_card({ cardId: target, addDependsOn: [dependency] })
         .pipe(withScope(linkedThread));
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       yield* engine.dispatch({
         type: "board.plans.propose",
         commandId: CommandId.make("cmd-read-plans"),
@@ -2294,7 +2269,7 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
   it.effect("removing a dependency by a key another project shares removes the dependency", () =>
     Effect.gen(function* () {
       yield* seed();
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       // A second project with the same title allocates the same keys, so its
       // first card shares card-1's key; card-1 comes first in the board.
       const twin = ProjectId.make("project-twin");
@@ -2428,12 +2403,12 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
   it.effect("incremental edits replay identically from an empty read model", () =>
     Effect.gen(function* () {
       yield* seed();
-      const engine = yield* OrchestrationEngineService;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const engine = yield* boardStackEngine;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const rehydrated = yield* snapshotQuery.getCommandReadModel();
-      const events = Array.from(yield* Stream.runCollect(engine.readEvents(0)));
-      let replayed = createEmptyReadModel(t0);
-      for (const event of events) replayed = yield* projectEvent(replayed, event);
+      const events = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
+      let replayed = ({} as BoardReadModel);
+      for (const event of events) replayed = yield* projectBoardEvent(replayed, event);
       assert.deepStrictEqual(replayed.board, rehydrated.board);
     }),
   );
@@ -2447,7 +2422,7 @@ it.layer(makeLayer("t3o-board-mcp-link-pr-test-"))(
     const otherCard = BoardCardId.make("card-other");
     const seedOther = Effect.gen(function* () {
       yield* seed();
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       yield* engine.dispatch({
         type: "board.card.create",
         commandId: CommandId.make("cmd-card-other"),

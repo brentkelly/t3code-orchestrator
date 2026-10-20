@@ -60,10 +60,9 @@ layer("upstream legibility", (it) => {
       }
       assert.ok(UPSTREAM_EVENT_TYPES.has("thread.created"));
       assert.ok(UPSTREAM_EVENT_TYPES.has("project.created"));
-      assert.equal(
-        UPSTREAM_EVENT_TYPES.size,
-        OrchestrationEventType.literals.length - BOARD_EVENT_TYPES.length,
-      );
+      // Board events left upstream's union for the board's own log (T3O-56).
+      assert.ok(OrchestrationEventType.literals.every((type) => !type.startsWith("board.")));
+      assert.equal(UPSTREAM_EVENT_TYPES.size, OrchestrationEventType.literals.length);
       assert.deepEqual([...UPSTREAM_AGGREGATE_KINDS].sort(), ["project", "thread"]);
     }),
   );

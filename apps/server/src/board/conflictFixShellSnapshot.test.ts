@@ -26,43 +26,14 @@ import {
   type BoardCardShell,
   type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ServerConfig } from "../config.ts";
+import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 
 /** One database per scenario: commands are deduped by `commandId`, so a shared
     database would let one scenario's writes satisfy the next one's dispatch. */
-const makeTestLayer = (prefix: string) =>
-  Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
-    ),
-    OrchestrationProjectionSnapshotQueryLive,
-  ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provideMerge(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
-  );
+const makeTestLayer = makeBoardStackTestLayer;
 
 const createdAt = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-conflict");
@@ -87,7 +58,7 @@ const frozenConfig = {
     `BOARD_CONFLICT_STEP_LABEL`, a hand-opened merge conversation wears null. */
 const seedSelectedStep = (stepLabel: string | null) =>
   Effect.gen(function* () {
-    const engine = yield* OrchestrationEngineService;
+    const engine = yield* boardStackEngine;
     yield* engine.dispatch({
       type: "project.create",
       commandId: CommandId.make("cmd-project"),
@@ -125,7 +96,7 @@ const seedSelectedStep = (stepLabel: string | null) =>
 
 /** Admit the seeded step to running, the way the governor does. */
 const admit = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
+  const engine = yield* boardStackEngine;
   yield* engine.dispatch({
     type: "board.card.admit-step",
     commandId: CommandId.make("cmd-admit"),
@@ -141,7 +112,7 @@ const cardsOf = (snapshot: OrchestrationShellSnapshot): ReadonlyArray<BoardCardS
   snapshot.cards ?? [];
 
 const shellCard = Effect.gen(function* () {
-  const snapshotQuery = yield* ProjectionSnapshotQuery;
+  const snapshotQuery = yield* boardStackSnapshotQuery;
   const snapshot = yield* snapshotQuery.getShellSnapshot();
   return cardsOf(snapshot).find((card) => card.cardId === cardId);
 });

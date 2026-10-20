@@ -30,7 +30,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { boardDecidedEvents, decideBoardCommand, type BoardCommand } from "./decider.ts";
+import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -187,7 +188,7 @@ function makeReadModel(input: {
     re-flag for archive/unarchive per t3o-13 D5, an edge rewrite for delete) —
     while every other command decides exactly one. */
 const decideEvents = (command: BoardCommand, readModel: OrchestrationReadModel) =>
-  decideBoardCommand({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
+  decideBoardCommandOnModel({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
 
 /** The first (and, for every command but archive/unarchive/delete, only)
     decided event. */
@@ -376,7 +377,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         moveCommand({ cardId: "card-1", toStage: "planning" }),
         makeReadModel({ board }),
       );
-      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       assert.include(String(failure), "not adjacent");
 
       const dragged = yield* decide(
@@ -492,7 +493,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         moveCommand({ cardId: "card-1", toStage: "building" }),
         makeReadModel({ board }),
       );
-      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       assert.include(String(failure), 'CARD-7 "Ship the decider"');
 
       // A drag's override forces adjacency, never the dependency gate.
@@ -500,7 +501,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         moveCommand({ cardId: "card-1", toStage: "review", override: true }),
         makeReadModel({ board }),
       );
-      assert.strictEqual(overridden._tag, "OrchestrationCommandInvariantError");
+      assert.strictEqual(overridden._tag, "BoardCommandInvariantError");
 
       // An unknown dependency id counts as unmet and is still named.
       const orphanBoard: BoardState = {
@@ -583,7 +584,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         startStageThread,
         makeReadModel({ board: blockedIn("building") }),
       );
-      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       assert.include(String(failure), 'CARD-7 "Ship the decider"');
 
       // Before the build role unmet dependencies block nothing, so a planning
@@ -689,7 +690,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
   it.effect("t3o-22 D3: rejects a budget below a round already RUN", () =>
     Effect.gen(function* () {
       const failure = yield* decideFail(setRounds(1), reviewCardBoard({ completedRounds: 3 }));
-      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       assert.include(String(failure), "round 3 has already started");
     }),
   );
@@ -740,7 +741,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       // This clamp is what makes having no ceiling safe: without it one click
       // would book rounds nobody asked for.
       const failure = yield* decideFail(requestRound(9), reviewCardBoard({ completedRounds: 2 }));
-      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       assert.include(String(failure), "only round 3 can be requested next");
     }),
   );
@@ -855,7 +856,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         setModelOverrides({ [BoardStageId.make("stage-that-was-deleted")]: opusOverride }),
         reviewCardBoard({}),
       );
-      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       assert.include(String(failure), "does not exist on this board");
     }),
   );
@@ -977,7 +978,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           board: { cards: [makeCard({ id: "card-a" })], nextCardNumberByProject: {} },
         }),
       );
-      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       assert.include(String(failure), "card-a -> card-a");
       assert.include(String(failure), "cycle");
     }),
@@ -2871,7 +2872,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           stepCompletions: [recordedReview({ stepId: "review@1", payload: validReviewPayload })],
         }),
       );
-      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       assert.include(String(failure), "nothing to repair");
     }),
   );
@@ -2893,7 +2894,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           ],
         }),
       );
-      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       assert.include(String(failure), "not a success");
     }),
   );
@@ -2908,7 +2909,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           stepCompletions: [recordedReview({ stepId: "review@1" })],
         }),
       );
-      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       assert.include(String(failure), "no recorded completion");
     }),
   );
@@ -3070,7 +3071,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         ]),
         cardReadModel(),
       );
-      assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+      assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       assert.include(String(failure), "cycle");
       // The edge that closes the cycle is named.
       assert.include(String(failure), "->");

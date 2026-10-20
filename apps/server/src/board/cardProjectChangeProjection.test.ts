@@ -22,47 +22,19 @@ import {
   type BoardCardShell,
   type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
-import { boardSnapshotQueryMethodsOf } from "./projection.ts";
-import { ServerConfig } from "../config.ts";
+import { boardDecidedEvents } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
+import { BoardQueries } from "./BoardQueries.ts";
+import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 
 /** One database — and therefore one `it.layer` block — per scenario. Commands
     are deduped by `commandId` and every scenario shares a seed and a move
     command, so two scenarios in one layer would have the second one's dispatches
     silently satisfied by the first one's. */
-const makeTestLayer = (prefix: string) =>
-  Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
-    ),
-    OrchestrationProjectionSnapshotQueryLive,
-  ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
-  );
+const makeTestLayer = makeBoardStackTestLayer;
 
 const createdAt = "2026-01-01T00:00:00.000Z";
 const alpha = ProjectId.make("project-alpha");
@@ -88,7 +60,7 @@ const createProject = (projectId: ProjectId, title: string, commandId: string) =
     the one holding Alpha's HIGHEST number, which is the only shape that can
     regress the counter. */
 const seedBoard = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
+  const engine = yield* boardStackEngine;
   yield* engine.dispatch(createProject(alpha, "Alpha", "cmd-project-alpha"));
   yield* engine.dispatch(createProject(beta, "Beta", "cmd-project-beta"));
   yield* engine.dispatch({
@@ -128,7 +100,7 @@ it.layer(makeTestLayer("t3o-board-project-1-"))("moving a card to another projec
   it.effect("reissues the key and repoints the card, keeping its id and stage", () =>
     Effect.gen(function* () {
       const engine = yield* seedBoard;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
 
       const before = yield* snapshotQuery.getShellSnapshot();
       assert.strictEqual(cardsOf(before).find((card) => card.cardId === highCardId)?.key, "AL-2");
@@ -158,7 +130,7 @@ it.layer(makeTestLayer("t3o-board-project-1b-"))("a card carrying a base-branch 
       });
       yield* engine.dispatch(moveHighCardToBeta);
 
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const readModel = yield* snapshotQuery.getCommandReadModel();
       const card = readModel.board?.cards.find((candidate) => candidate.id === highCardId);
       // `release/2.0` almost certainly does not exist in Beta's repository and
@@ -175,7 +147,7 @@ it.layer(makeTestLayer("t3o-board-project-2-"))("the old project's card-number f
   it.effect("survives the highest-numbered card leaving the project", () =>
     Effect.gen(function* () {
       const engine = yield* seedBoard;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
 
       const before = yield* snapshotQuery.getCommandReadModel();
       assert.strictEqual(before.board?.nextCardNumberByProject[alpha], 3);
@@ -207,9 +179,9 @@ it.layer(makeTestLayer("t3o-board-project-2b-"))(
         const engine = yield* seedBoard;
         yield* engine.dispatch(moveHighCardToBeta);
 
-        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const snapshotQuery = yield* boardStackSnapshotQuery;
         const rehydrated = yield* snapshotQuery.getCommandReadModel();
-        const decision = yield* decideBoardCommand({
+        const decision = yield* decideBoardCommandOnModel({
           command: {
             type: "board.card.create",
             commandId: CommandId.make("cmd-create-next"),
@@ -244,8 +216,8 @@ it.layer(makeTestLayer("t3o-board-project-3-"))("the activity rail", (it) => {
       const engine = yield* seedBoard;
       yield* engine.dispatch(moveHighCardToBeta);
 
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
-      const board = boardSnapshotQueryMethodsOf(snapshotQuery);
+      const snapshotQuery = yield* boardStackSnapshotQuery;
+      const board = (yield* BoardQueries);
       assert.isNotNull(board);
       const activity: ReadonlyArray<BoardCardActivityEntry> =
         yield* board!.boardCardActivity(highCardId);
@@ -277,7 +249,7 @@ it.layer(makeTestLayer("t3o-board-project-4-"))("refusing a built card end to en
       assert.include(String(failure), "already been built");
 
       // And the refusal really is a refusal: nothing was reissued.
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const shell = yield* snapshotQuery.getShellSnapshot();
       assert.strictEqual(cardsOf(shell).find((card) => card.cardId === highCardId)?.key, "AL-2");
     }),

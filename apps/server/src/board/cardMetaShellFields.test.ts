@@ -25,45 +25,16 @@ import {
   type BoardCardShell,
   type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ServerConfig } from "../config.ts";
-import { boardSnapshotQueryMethodsOf } from "./projection.ts";
+import { BoardQueries } from "./BoardQueries.ts";
+import { boardStackEngine, boardStackSnapshotQuery, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 
 /** One database per scenario: commands are deduped by `commandId` and every
     scenario shares a seed, so a shared database would let one scenario's writes
     satisfy the next one's dispatch. */
-const makeTestLayer = (prefix: string) =>
-  Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
-    ),
-    OrchestrationProjectionSnapshotQueryLive,
-  ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
-  );
+const makeTestLayer = makeBoardStackTestLayer;
 
 const createdAt = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-board");
@@ -85,7 +56,7 @@ const createProject = {
 
 const seedCard = (brief?: string) =>
   Effect.gen(function* () {
-    const engine = yield* OrchestrationEngineService;
+    const engine = yield* boardStackEngine;
     yield* engine.dispatch(createProject);
     yield* engine.dispatch({
       type: "board.card.create",
@@ -104,7 +75,7 @@ const cardsOf = (snapshot: OrchestrationShellSnapshot): ReadonlyArray<BoardCardS
   snapshot.cards ?? [];
 
 const shellCard = Effect.gen(function* () {
-  const snapshotQuery = yield* ProjectionSnapshotQuery;
+  const snapshotQuery = yield* boardStackSnapshotQuery;
   const snapshot = yield* snapshotQuery.getShellSnapshot();
   return cardsOf(snapshot).find((card) => card.cardId === cardId);
 });
@@ -136,9 +107,9 @@ describe("boardBriefHasImage", () => {
 it.layer(makeTestLayer("t3o-card-meta-1-"))("brief image, snapshot vs delta", (it) => {
   it.effect("derives the same flag in SQL as the contracts helper does in JS", () =>
     Effect.gen(function* () {
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       yield* engine.dispatch(createProject);
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
 
       for (const [index, [brief, expected]] of IMAGE_FIXTURES.entries()) {
         const fixtureId = BoardCardId.make(`card-fixture-${index}`);
@@ -255,8 +226,8 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       // path lights the badge while the client stays connected and drops it on
       // every reload, because the snapshot is a separate SQL producer. The two
       // must agree — that is the whole point of this file.
-      const engine = yield* OrchestrationEngineService;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const engine = yield* boardStackEngine;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       yield* engine.dispatch(createProject);
       yield* engine.dispatch({
         type: "board.card.create",
@@ -337,8 +308,8 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
 
   it.effect("a title-only pull-request update writes the title without an is-open row", () =>
     Effect.gen(function* () {
-      const engine = yield* OrchestrationEngineService;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const engine = yield* boardStackEngine;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const titleCardId = BoardCardId.make("card-pr-title-only");
       yield* engine.dispatch(createProject);
       yield* engine.dispatch({
@@ -368,7 +339,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
         });
       yield* record("linked", null);
       yield* record("titled", "Summary tab");
-      const board = boardSnapshotQueryMethodsOf(snapshotQuery);
+      const board = (yield* BoardQueries);
       assert.isNotNull(board);
       const activity = yield* board!.boardCardActivity(titleCardId);
       const prRows = activity.filter(
@@ -388,8 +359,8 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
 
   it.effect("a merged pull request can gain a title without a second merged row", () =>
     Effect.gen(function* () {
-      const engine = yield* OrchestrationEngineService;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const engine = yield* boardStackEngine;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const mergedTitleCardId = BoardCardId.make("card-pr-merged-title");
       yield* engine.dispatch(createProject);
       yield* engine.dispatch({
@@ -420,7 +391,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       yield* record("linked", "open", null);
       yield* record("merged", "merged", null);
       yield* record("titled", "merged", "Summary tab");
-      const board = boardSnapshotQueryMethodsOf(snapshotQuery);
+      const board = (yield* BoardQueries);
       assert.isNotNull(board);
       const activity = yield* board!.boardCardActivity(mergedTitleCardId);
       const mergedRows = activity.filter((entry) => entry.kind === "card-pull-request-merged");
@@ -441,8 +412,8 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
     "carries the Draft tag on the SNAPSHOT and the delta alike, and drops it (T3O-12)",
     () =>
       Effect.gen(function* () {
-        const engine = yield* OrchestrationEngineService;
-        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const engine = yield* boardStackEngine;
+        const snapshotQuery = yield* boardStackSnapshotQuery;
         yield* engine.dispatch(createProject);
         yield* engine.dispatch({
           type: "board.card.create",
@@ -496,8 +467,8 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       // own. Both producers fall back to the newest retired round so the badge
       // does not blink out in between — and, more to the point, so the merged
       // pull request stays reachable from the card while the new work runs.
-      const engine = yield* OrchestrationEngineService;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const engine = yield* boardStackEngine;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       // Its own card id: the tests in this layer share one database, so
       // reusing `cardId` would collide with the card an earlier scenario made.
       const roundCardId = BoardCardId.make("card-second-round");
@@ -591,8 +562,8 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
       // the live pair agree on. Archived work is exactly when the PR number
       // matters most — it is how you find out what happened to a card someone
       // abandoned.
-      const engine = yield* OrchestrationEngineService;
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const engine = yield* boardStackEngine;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const archivedId = BoardCardId.make("card-archived-pr");
       yield* engine.dispatch(createProject);
       yield* engine.dispatch({
@@ -647,7 +618,7 @@ it.layer(makeTestLayer("t3o-card-meta-4-"))("sub-board parent, snapshot vs delta
       // keys on those same pips, an already-approved parent goes back to
       // wearing "Needs approval" with no approval left to give.
       const engine = yield* seedCard();
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       yield* engine.dispatch({
         type: "board.plans.propose",
         commandId: CommandId.make("cmd-split-propose"),
@@ -682,7 +653,7 @@ it.layer(makeTestLayer("t3o-card-meta-4-"))("sub-board parent, snapshot vs delta
       // The archive's own query and mapper, the third producer: restoring a
       // child has to put it back in its sub-board, not on the root board.
       const engine = yield* seedCard();
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const snapshotQuery = yield* boardStackSnapshotQuery;
       const childId = BoardCardId.make("card-archived-child");
       yield* engine.dispatch({
         type: "board.card.create",
@@ -714,7 +685,7 @@ it.layer(makeTestLayer("t3o-card-schedule-"))("scheduled start, column to shell 
 
   it.effect("survives the create → column → shell round trip and clears back to absent", () =>
     Effect.gen(function* () {
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       yield* engine.dispatch(createProject);
       yield* engine.dispatch({
         type: "board.card.create",
@@ -839,7 +810,7 @@ it.layer(makeTestLayer("t3o-card-auto-merge-"))(
         // the JS delta producer over the same aggregate. A disagreement here is
         // a pill that appears after an edit and vanishes on reconnect, which is
         // the whole reason this file exists.
-        const snapshotQuery = yield* ProjectionSnapshotQuery;
+        const snapshotQuery = yield* boardStackSnapshotQuery;
         const model = yield* snapshotQuery.getCommandReadModel();
         const aggregate = model.board?.cards.find((entry) => entry.id === cardId);
         assert.isDefined(aggregate);
@@ -874,7 +845,7 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
       () =>
         Effect.gen(function* () {
           const engine = yield* seedCard();
-          const snapshotQuery = yield* ProjectionSnapshotQuery;
+          const snapshotQuery = yield* boardStackSnapshotQuery;
           const quiet = yield* shellCard;
           assert.isFalse(quiet !== undefined && "worktreeReady" in quiet);
           assert.isFalse(quiet !== undefined && "worktreeKeptReason" in quiet);
@@ -959,7 +930,7 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
 
           // The rail: one `kept` row (a repeated refusal adds none — the decider
           // marks only a changed reason), and one forced `removed` row.
-          const board = boardSnapshotQueryMethodsOf(snapshotQuery);
+          const board = (yield* BoardQueries);
           assert.isNotNull(board);
           const activity = yield* board!.boardCardActivity(cardId);
           const keptRows = activity.filter((entry) => entry.kind === "card-worktree-kept");

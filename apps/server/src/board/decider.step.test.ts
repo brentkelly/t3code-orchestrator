@@ -14,7 +14,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
+import { boardDecidedEvents } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -114,7 +115,7 @@ const decide = (
   command: Parameters<typeof decideBoardCommand>[0]["command"],
   readModel: OrchestrationReadModel,
 ) =>
-  decideBoardCommand({ command, readModel }).pipe(
+  decideBoardCommandOnModel({ command, readModel }).pipe(
     Effect.map(boardDecidedEvents),
     Effect.map((events) => events[0]!),
     Effect.provide(NodeServices.layer),
@@ -1222,7 +1223,7 @@ it.effect("a check-in refuses a step that is no longer running (T3O-20)", () =>
       nextCardNumberByProject: {},
     });
     const error = yield* decideFail(checkIn(false), board);
-    assert.strictEqual(error._tag, "OrchestrationCommandInvariantError");
+    assert.strictEqual(error._tag, "BoardCommandInvariantError");
   }),
 );
 
@@ -1241,6 +1242,6 @@ it.effect("note-human-turn refuses a card with no live step (T3O-17)", () =>
       },
       board,
     );
-    assert.strictEqual(error._tag, "OrchestrationCommandInvariantError");
+    assert.strictEqual(error._tag, "BoardCommandInvariantError");
   }),
 );

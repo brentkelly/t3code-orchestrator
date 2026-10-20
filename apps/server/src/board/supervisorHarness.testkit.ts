@@ -32,6 +32,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
+  type BoardCommand,
   type BoardCardStepState,
   DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
   DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
@@ -46,6 +47,7 @@ import {
   type BoardState,
   type OrchestrationCommand,
   type OrchestrationEvent,
+  type BoardEvent,
   type OrchestrationReadModel,
   type OrchestrationThread,
   type OrchestrationThreadShell,
@@ -81,13 +83,20 @@ import {
   OrchestrationCommandInvariantError,
   OrchestrationThreadSettleBlockedError,
 } from "../orchestration/Errors.ts";
-import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
+import { boardDecidedEvents, type PlannedBoardEvent } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
+import { BoardEngine } from "./BoardEngine.ts";
+import { BoardQueries } from "./BoardQueries.ts";
 import { boardRepositoryOf } from "./boardRepository.ts";
 import { projectBoardEvent } from "./projector.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
 import { UsageLimitDetector, type UsageLimitDetectorShape } from "./UsageLimitDetector.ts";
 import type { WorktreeRetirer } from "./worktreeRetire.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
+
+/** What the reactor sees on its merged stream and sends to its two engines. */
+export type HarnessEvent = OrchestrationEvent | BoardEvent;
+export type HarnessCommand = OrchestrationCommand | BoardCommand;
 
 export const NOW = "2026-01-01T00:00:00.000Z";
 export const projectId = ProjectId.make("project-1");
@@ -262,7 +271,7 @@ export const buildingCard = (
     decider reads (existence, `deletedAt`) carry meaning; the rest is inert
     filler so the row satisfies `OrchestrationThread`. */
 const threadRow = (
-  command: Extract<OrchestrationCommand, { readonly type: "thread.create" }>,
+  command: Extract<HarnessCommand, { readonly type: "thread.create" }>,
 ): OrchestrationThread => ({
   id: command.threadId,
   projectId: command.projectId,
@@ -460,19 +469,19 @@ export type Harness = {
   readonly reactor: SupervisorReactor["Service"];
   readonly model: Ref.Ref<OrchestrationReadModel>;
   readonly shells: Ref.Ref<ReadonlyMap<string, OrchestrationThreadShell>>;
-  readonly pumpDomain: (event: OrchestrationEvent) => Effect.Effect<void>;
+  readonly pumpDomain: (event: HarnessEvent) => Effect.Effect<void>;
   readonly pumpRuntime: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
   readonly board: Effect.Effect<BoardState>;
   /** Every command the reactor dispatched, in order — including the non-board
       ones the engine double otherwise treats as no-ops, so a test can assert
       HOW a thread was spawned, not just that a step went running. */
-  readonly commands: Effect.Effect<ReadonlyArray<OrchestrationCommand>>;
+  readonly commands: Effect.Effect<ReadonlyArray<HarnessCommand>>;
   /** Every board event the double DECIDED, in order. `commands` records what
       the reactor asked for; this records what the decider accepted — the
       difference is a rejected command, which the reactor swallows into a log
       line. A test asserting an outcome the card state does not carry (a pure
       report, e.g. a pre-provision worktree failure) reads it here. */
-  readonly decided: Effect.Effect<ReadonlyArray<OrchestrationEvent>>;
+  readonly decided: Effect.Effect<ReadonlyArray<HarnessEvent>>;
   /** Every merge the reactor asked the forge for, in order. */
   readonly mergeAttempts: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** Every structured refusal probe the reactor made (T3O-38, D6). */
@@ -614,7 +623,7 @@ export function withGovernor(
         can both pass that read, so a test that needs their commands applied in
         a specific order holds the earlier dispatch here until the later one
         has landed. */
-    readonly onDispatch?: (command: OrchestrationCommand) => Effect.Effect<void>;
+    readonly onDispatch?: (command: HarnessCommand) => Effect.Effect<void>;
     /** What a merge attempt answers: `undefined` succeeds, a string is the
         forge's refusal detail (a conflict when it reads like one). */
     readonly mergeFailure?: string;
@@ -718,16 +727,16 @@ export function withGovernor(
       input.initialShells ?? new Map(),
     );
     const seq = yield* Ref.make(0);
-    const domainQueue = yield* Queue.unbounded<OrchestrationEvent>();
+    const domainQueue = yield* Queue.unbounded<HarnessEvent>();
     const runtimeQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
 
     // Apply a decided (planned) event to the model exactly as the projection
     // pipeline would, so `getCommandReadModel` reflects prior dispatches.
-    const decided = yield* Ref.make<ReadonlyArray<OrchestrationEvent>>([]);
-    const applyDecided = (planned: Omit<OrchestrationEvent, "sequence">) =>
+    const decided = yield* Ref.make<ReadonlyArray<HarnessEvent>>([]);
+    const applyDecided = (planned: PlannedBoardEvent) =>
       Effect.gen(function* () {
         const sequence = yield* Ref.updateAndGet(seq, (n) => n + 1);
-        const event = { ...planned, sequence } as OrchestrationEvent;
+        const event = { ...planned, sequence } as HarnessEvent;
         yield* Ref.update(decided, (current) => [...current, event]);
         if (isBoardEvent(event)) {
           const next = yield* projectBoardEvent(yield* Ref.get(model), event);
@@ -749,11 +758,11 @@ export function withGovernor(
     const threads = yield* Ref.make<ReadonlySet<string>>(
       new Set(input.initialShells === undefined ? [] : [...input.initialShells.keys()]),
     );
-    const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
+    const commands = yield* Ref.make<ReadonlyArray<HarnessCommand>>([]);
     // Threads the double actually SETTLED, as opposed to the settles the reactor
     // merely asked for (which land in `commands` either way).
     const settled = yield* Ref.make<ReadonlySet<string>>(new Set<string>());
-    const dispatchThreadCommand = (command: OrchestrationCommand) =>
+    const dispatchThreadCommand = (command: HarnessCommand) =>
       Effect.gen(function* () {
         if (command.type === "thread.create") {
           if (input.rejectThreadCreate === true) {
@@ -835,8 +844,7 @@ export function withGovernor(
         );
       });
 
-    const engineStub = {
-      dispatch: (command: OrchestrationCommand) =>
+    const dispatchAny = (command: HarnessCommand) =>
         (input.onDispatch?.(command) ?? Effect.void)
           .pipe(Effect.andThen(Ref.update(commands, (current) => [...current, command])))
           .pipe(
@@ -844,7 +852,7 @@ export function withGovernor(
               Effect.gen(function* () {
                 if (isBoardCommand(command)) {
                   const rm = yield* Ref.get(model);
-                  const decided = yield* decideBoardCommand({ command, readModel: rm });
+                  const decided = yield* decideBoardCommandOnModel({ command, readModel: rm });
                   yield* Effect.forEach(boardDecidedEvents(decided), applyDecided, {
                     discard: true,
                   });
@@ -854,10 +862,26 @@ export function withGovernor(
               }),
             ),
           )
-          .pipe(Effect.andThen(Ref.get(seq).pipe(Effect.map((sequence) => ({ sequence }))))),
+          .pipe(Effect.andThen(Ref.get(seq).pipe(Effect.map((sequence) => ({ sequence })))));
+
+    // One double answers both engines: the reactor routes board commands to the
+    // board engine and thread commands to upstream's, and the harness records
+    // and applies both in the one order they were sent.
+    const engineStub = {
+      dispatch: dispatchAny,
+      // Every pumped event — board and thread alike — arrives here; the board
+      // engine's live stream stays silent so nothing is delivered twice.
       streamDomainEvents: Stream.fromQueue(domainQueue),
       latestSequence: Ref.get(seq),
     } as unknown as OrchestrationEngineService["Service"];
+    const boardEngineStub = {
+      dispatch: dispatchAny,
+      getReadModel: Ref.get(model),
+      latestSequence: Ref.get(seq),
+      liveBoardEvents: Stream.never,
+      subscribeBoardEvents: Effect.succeed(Stream.never),
+      streamBoardEvents: () => Stream.never,
+    } as unknown as BoardEngine["Service"];
 
     const threadTodos = input.threadTodos ?? new Map();
     const threadMessages = input.threadMessages ?? new Map<string, string>();
@@ -907,9 +931,10 @@ export function withGovernor(
             return shell === undefined ? Option.none() : Option.some(shell);
           }),
         ),
-      // The board-owned method set (t3o-04/08/18): present so
-      // `boardSnapshotQueryMethodsOf` resolves the stub and the reactor's todo
-      // signal + boot sweep have something to call. `boardThreadTodo`,
+    } as unknown as ProjectionSnapshotQuery["Service"];
+
+    const boardQueriesStub = {
+      // The reactor's todo signal + boot sweep have something to call. `boardThreadTodo`,
       // `boardLatestAssistantMessage` and `boardThreadLastSignalAt` are
       // fixture-driven; the rest are inert.
       boardCardDetail: () => Effect.succeed(null),
@@ -946,7 +971,25 @@ export function withGovernor(
       boardThreadPendingTurnStartAt: (threadId: ThreadId) =>
         Effect.succeed(threadPendingTurnStarts.get(String(threadId)) ?? null),
       boardSweepThreadTodos: () => Effect.void,
-    } as unknown as ProjectionSnapshotQuery["Service"];
+      loadBoardState: () => Ref.get(model).pipe(Effect.map((current) => current.board ?? null)),
+      boardProjects: () =>
+        Ref.get(model).pipe(
+          Effect.map((current) =>
+            current.projects.map((project) => ({
+              id: project.id,
+              title: project.title,
+              deletedAt: project.deletedAt,
+            })),
+          ),
+        ),
+      boardThread: (threadId: ThreadId) =>
+        Ref.get(model).pipe(
+          Effect.map((current) => {
+            const thread = current.threads.find((candidate) => candidate.id === threadId);
+            return thread === undefined ? null : { deletedAt: thread.deletedAt };
+          }),
+        ),
+    } as unknown as BoardQueries["Service"];
 
     const providerStub = {
       streamEvents: Stream.fromQueue(runtimeQueue),
@@ -1262,6 +1305,8 @@ export function withGovernor(
     const deps = Layer.mergeAll(
       (input.worktreeRetirer ?? worktreeRetirerTestLayer()).pipe(Layer.provide(gitLayer)),
       Layer.succeed(OrchestrationEngineService, engineStub),
+      Layer.succeed(BoardEngine, boardEngineStub),
+      Layer.succeed(BoardQueries, boardQueriesStub),
       Layer.succeed(ProjectionSnapshotQuery, snapshotStub),
       Layer.succeed(ProviderService, providerStub),
       Layer.succeed(ServerSettingsService, settingsStub),
@@ -1295,7 +1340,7 @@ export function withGovernor(
         // and re-projecting a card-carrying trigger (move / archive) would
         // clobber the recipe snapshot the reactor stamped, whereas the reactor
         // reads those triggers from the event payload / the live model.
-        const projectExternal = (event: OrchestrationEvent) =>
+        const projectExternal = (event: HarnessEvent) =>
           isBoardEvent(event) &&
           (event.type === "board.card-step-completed" ||
             // Same reason (t3o-33): the override lands on the step row through
@@ -1371,7 +1416,7 @@ export const cardMoved = (
   fromStage: string,
   toStage: string,
   sequence: number,
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "board.card-moved",
     sequence,
@@ -1381,10 +1426,10 @@ export const cardMoved = (
       toStage: BoardStageId.make(toStage),
       card,
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** The "Begin build" gate (D18): Ready → Building carrying the provisioned card. */
-export const movedToBuilding = (card: BoardCard, sequence: number): OrchestrationEvent =>
+export const movedToBuilding = (card: BoardCard, sequence: number): HarnessEvent =>
   cardMoved(card, "ready", "building", sequence);
 
 export const stepCompleted = (
@@ -1397,7 +1442,7 @@ export const stepCompleted = (
       because the handler ignores a completion whose step is not the card's
       live one. */
   stepId: string = String(BOARD_SEED_STAGE_IDS.building),
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "board.card-step-completed",
     sequence,
@@ -1413,7 +1458,7 @@ export const stepCompleted = (
         completedAt: NOW,
       },
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** A human's force-start request as the decider emits it (t3o-33): the whole
     step row with the override set. The pump projects it into the model before
@@ -1422,28 +1467,28 @@ export const stepCompleted = (
 export const forceStartRequested = (
   state: BoardCardStepState,
   sequence: number,
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "board.card-step-force-start-requested",
     sequence,
     payload: { cardId: state.cardId, state: { ...state, forceStart: true } },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** A turn being INTERRUPTED on a thread (T3O-23) — what the Stop button emits,
     and the signal that parks a board-run step. The board's own interrupts emit
     exactly the same event, which is why the reactor filters them by thread. */
-export const turnInterruptRequested = (threadId: ThreadId, sequence: number): OrchestrationEvent =>
+export const turnInterruptRequested = (threadId: ThreadId, sequence: number): HarnessEvent =>
   ({
     type: "thread.turn-interrupt-requested",
     sequence,
     payload: { threadId, createdAt: NOW },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** A parked step sent back to the build queue (T3O-23) — the shape
     `board.card.requeue-step` decides, as it reaches the reactor's domain
     stream. Mirrors `forceStartRequested`: the client's own command is covered
     at the decider, and this is how its EVENT reaches a live reactor. */
-export const stepRequeued = (state: BoardCardStepState, sequence: number): OrchestrationEvent =>
+export const stepRequeued = (state: BoardCardStepState, sequence: number): HarnessEvent =>
   ({
     type: "board.card-step-recovered",
     sequence,
@@ -1458,7 +1503,7 @@ export const stepRequeued = (state: BoardCardStepState, sequence: number): Orche
         startedAt: null,
       },
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** A card edit as the decider emits it (T3O-19): the whole card, plus the
     key that says the edit TOUCHED the schedule. That key is what the reactor
@@ -1468,7 +1513,7 @@ export const cardScheduleUpdated = (
   card: BoardCard,
   scheduledStartAt: string | null,
   sequence: number,
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "board.card-updated",
     sequence,
@@ -1477,7 +1522,7 @@ export const cardScheduleUpdated = (
       card: { ...card, scheduledStartAt },
       scheduledStartAt,
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** A human flipping the card's human-in-the-loop toggle (t3o-15, D5/D6), and
     the shape the reactor's own Stop flip re-enters as (T3O-17). The engine
@@ -1487,7 +1532,7 @@ export const cardHumanInLoopUpdated = (
   card: BoardCard,
   humanInLoop: boolean | null,
   sequence: number,
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "board.card-updated",
     sequence,
@@ -1496,7 +1541,7 @@ export const cardHumanInLoopUpdated = (
       card: { ...card, humanInLoop },
       humanInLoop,
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** A HUMAN starting a turn on a thread — typing into the composer (T3O-17).
     The bare-UUID `commandId` is the whole point: it is how every client mints
@@ -1505,13 +1550,13 @@ export const humanTurnStartRequested = (
   threadId: ThreadId,
   sequence: number,
   at: string = NOW,
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "thread.turn-start-requested",
     sequence,
     commandId: "8c7f0f0e-6d2b-4a5e-9a1d-0f2b3c4d5e6f",
     payload: { threadId, createdAt: at },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** The BOARD's own nudge starting a turn (T3O-17, D2): `server:board-…`, the
     prefix `supervisorReactor`'s `commandId` helper mints. It must NOT read as a
@@ -1520,23 +1565,23 @@ export const boardTurnStartRequested = (
   threadId: ThreadId,
   sequence: number,
   at: string = NOW,
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "thread.turn-start-requested",
     sequence,
     commandId: "server:board-recover-step:8c7f0f0e-6d2b-4a5e-9a1d-0f2b3c4d5e6f",
     payload: { threadId, createdAt: at },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** An edit that leaves the schedule alone — a title change. The absent
     `scheduledStartAt` key is the whole point: it is what must stop an unrelated
     edit from resuming a card parked for another reason. */
-export const cardTitleUpdated = (card: BoardCard, sequence: number): OrchestrationEvent =>
+export const cardTitleUpdated = (card: BoardCard, sequence: number): HarnessEvent =>
   ({
     type: "board.card-updated",
     sequence,
     payload: { cardId: card.id, card: { ...card, title: `${card.title} (edited)` } },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** An edit that TOUCHED the auto-merge arm (T3O-38, D3). The marker key is
     what the reactor keys the fire-on-toggle on, so a helper that only set the
@@ -1545,19 +1590,19 @@ export const cardAutoMergeUpdated = (
   card: BoardCard,
   autoMerge: boolean,
   sequence: number,
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "board.card-updated",
     sequence,
     payload: { cardId: card.id, card: { ...card, autoMerge }, autoMerge },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
-export const cardArchived = (card: BoardCard, sequence: number): OrchestrationEvent =>
+export const cardArchived = (card: BoardCard, sequence: number): HarnessEvent =>
   ({
     type: "board.card-archived",
     sequence,
     payload: { cardId: card.id, archivedAt: NOW, card },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** A card DELETE. Unlike archive, the reactor cannot re-read anything — the
     card is gone by the time this arrives — so the payload has to carry the
@@ -1568,7 +1613,7 @@ export const cardDeleted = (
   card: BoardCard,
   sequence: number,
   stepState: BoardCardStepState | null,
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "board.card-deleted",
     sequence,
@@ -1579,7 +1624,7 @@ export const cardDeleted = (
       threadIds: card.threadLinks.map((link) => link.threadId),
       stepState,
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** A turn ending. `turnId` names the turn that ENDED — pass it whenever the
     fixture also gives the thread a shell, because that is the pair the turn-end

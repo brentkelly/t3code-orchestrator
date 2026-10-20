@@ -18,29 +18,19 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-
+import { BoardQueries } from "./BoardQueries.ts";
+import { inertBoardQueries } from "./boardServices.testkit.ts";
 import { UsageLimitDetector, UsageLimitDetectorLive } from "./UsageLimitDetector.ts";
 
 const threadId = ThreadId.make("thread-1");
 const NOW = Date.parse("2026-07-19T12:00:00.000Z");
 
-/** A snapshot query holding one assistant message, in the shape
-    `boardSnapshotQueryMethodsOf` recognises. */
+/** Board queries holding one assistant message. */
 const snapshotWith = (message: { readonly text: string; readonly createdAt: string } | null) =>
-  Layer.succeed(ProjectionSnapshotQuery, {
-    boardCardDetail: () => Effect.succeed(null),
-    boardCardActivity: () => Effect.succeed([]),
-    boardCardBrief: () => Effect.succeed(null),
-    boardPlanBody: () => Effect.succeed(null),
-    boardCardThreads: () => Effect.succeed([]),
-    boardCardIdForThread: () => Effect.succeed(null),
-    boardThreadTodo: () => Effect.succeed(null),
-    boardLatestAssistantMessage: () => Effect.succeed(message),
-    boardThreadLastSignalAt: () => Effect.succeed(null),
-    boardThreadPendingTurnStartAt: () => Effect.succeed(null),
-    boardSweepThreadTodos: () => Effect.succeed(0),
-  } as unknown as ProjectionSnapshotQuery["Service"]);
+  Layer.succeed(
+    BoardQueries,
+    inertBoardQueries({ boardLatestAssistantMessage: () => Effect.succeed(message) }),
+  );
 
 const classify = (input: {
   readonly message?: { readonly text: string; readonly createdAt: string } | null;
