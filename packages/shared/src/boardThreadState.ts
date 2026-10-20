@@ -22,10 +22,16 @@ export type BoardThreadShellFields = Pick<
 
 type BoardSessionStatus = "starting" | "running" | "ready" | "error";
 
+/** A runtime request a human can still answer: anything but an auth refresh. */
+const holdsAnswerableRequest = (thread: BoardThreadShellFields): boolean =>
+  thread.pendingRuntimeRequest != null && thread.pendingRuntimeRequest.kind !== "auth_refresh";
+
 /**
  * The session status the board reads. v2 has no per-thread session status;
- * the live run's activity stands in for it. `waiting` is a run held on a
- * runtime request, which is still mid-turn for the board.
+ * the live run's activity stands in for it. A `waiting` run has finished its
+ * provider turn and only awaits its checkpoint, so the board's turn has ended
+ * (the gateway signals it there); only a request it still holds keeps it
+ * mid-turn.
  */
 export function boardThreadSessionStatus(
   thread: BoardThreadShellFields,
@@ -35,8 +41,10 @@ export function boardThreadSessionStatus(
     case "starting":
       return "starting";
     case "running":
-    case "waiting":
       return "running";
+    case "waiting":
+      if (holdsAnswerableRequest(thread)) return "running";
+      break;
     default:
       break;
   }
@@ -52,7 +60,8 @@ export function boardThreadSessionStatus(
 export function boardThreadBackgroundLiveness(
   thread: BoardThreadShellFields,
 ): "working" | "monitoring" | null {
-  if (thread.activityRunStatus != null) return null;
+  const status = boardThreadSessionStatus(thread);
+  if (status === "running" || status === "starting") return null;
   const holding = (thread.pendingBackgroundTasks ?? []).filter((task) =>
     backgroundWorkHoldsCompletion([task]),
   );
@@ -65,8 +74,7 @@ export function boardThreadStateSource(thread: BoardThreadShellFields): BoardThr
   const status = boardThreadSessionStatus(thread);
   return {
     hasPendingUserInput: request?.kind === "user_input",
-    hasPendingApprovals:
-      request !== null && request.kind !== "user_input" && request.kind !== "auth_refresh",
+    hasPendingApprovals: holdsAnswerableRequest(thread) && request?.kind !== "user_input",
     session: status === null ? null : { status },
     backgroundLiveness: boardThreadBackgroundLiveness(thread),
   };

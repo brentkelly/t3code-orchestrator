@@ -25,7 +25,7 @@ import {
   type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
-import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
+import { boardThreadSessionStatus, boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -73,20 +73,11 @@ const BOARD_AUTHOR = { createdBy: "user", creationSource: "server" } as const;
 
 // ── Thread state ───────────────────────────────────────────────────────
 
-/** v2 has no per-thread session status; the live run's activity stands in. */
+/** The shared adapter's session status, in the gateway's vocabulary. */
 const sessionStatusOf = (shell: OrchestrationV2ThreadShell): BoardSessionStatus => {
-  switch (shell.activityRunStatus) {
-    case "preparing":
-    case "starting":
-      return "starting";
-    case "running":
-      return "running";
-    default:
-      break;
-  }
-  if (shell.status === "failed") return "error";
-  if (shell.latestRunId === null && shell.activeProviderThreadId === null) return "none";
-  return "idle";
+  const status = boardThreadSessionStatus(shell);
+  if (status === null) return "none";
+  return status === "ready" ? "idle" : status;
 };
 
 const isoOrNull = (value: DateTime.Utc | null | undefined): string | null =>

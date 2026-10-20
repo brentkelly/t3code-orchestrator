@@ -31,6 +31,20 @@ describe("boardThreadStateSource (T3O-59)", () => {
     ).toBe("waiting");
   });
 
+  it("reads a run awaiting only its checkpoint as a turn that has ended", () => {
+    expect(state({ activityRunStatus: "waiting" }).threadState).toBe("stopped");
+    expect(boardThreadStateSource({ ...idle, activityRunStatus: "waiting" }).session).toEqual({
+      status: "ready",
+    });
+    // Its delegated work still counts as background work.
+    expect(
+      state({
+        activityRunStatus: "waiting",
+        pendingBackgroundTasks: [{ taskId: "s", kind: "subagent" as const }],
+      }),
+    ).toMatchObject({ threadState: "working", waitingOnBackground: true });
+  });
+
   it("separates a question from a permission prompt", () => {
     const asking = state({
       activityRunStatus: "waiting",
