@@ -86,7 +86,8 @@ import {
   type BoardState,
   type BoardEvent,
   type ProjectId,
-  type OrchestrationShellStreamEvent,
+  type BoardShellStreamEvent,
+  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -108,6 +109,11 @@ export { isBoardEvent };
 export interface BoardReadModel {
   readonly board?: BoardState | undefined;
 }
+
+/** Upstream's command read model with the board slice on it (T3O-57: the slice
+    is no longer part of upstream's schema) — the one view a supervisor pass
+    that reads both threads and cards decides from. */
+export type BoardOrchestrationReadModel = OrchestrationReadModel & BoardReadModel;
 
 const decodeBoardCardCreatedPayload = Schema.decodeUnknownEffect(BoardCardCreatedPayload);
 const decodeBoardCardMovedPayload = Schema.decodeUnknownEffect(BoardCardMovedPayload);
@@ -928,7 +934,7 @@ export function projectBoardEvent<M extends BoardReadModel>(
  */
 export function boardShellStreamEvent(
   event: BoardEvent,
-): Option.Option<OrchestrationShellStreamEvent> {
+): Option.Option<BoardShellStreamEvent> {
   switch (event.type) {
     case "board.card-created":
       return Option.some({

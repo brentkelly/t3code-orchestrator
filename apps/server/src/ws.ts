@@ -103,9 +103,8 @@ import {
   cleanupFailedUploadedAttachments,
   normalizeDispatchCommand,
 } from "./orchestration/Normalizer.ts";
-// T3o: board RPC handlers and the client's board connection (board commands,
-// the board's shell deltas) live in the board module (t3o-04, T3O-56).
-import { boardClientConnection, boardRpcHandlers, isBoardCommand } from "./board/rpc.ts";
+// T3o: board RPC handlers live in the board module (t3o-04).
+import { boardRpcHandlers } from "./board/rpc.ts";
 import { SupervisorReactor } from "./board/supervisorReactor.ts";
 // T3o: T3O-23 — thread-delete worktree removal stops processes and runs remove scripts first.
 import { retireRemovedThreadWorktree, WorktreeRetirer } from "./board/worktreeRetire.ts";
@@ -573,13 +572,6 @@ const makeWsRpcLayer = (
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      // T3o (T3O-56): the board's side of this connection — board commands and
-      // the board's shell deltas — built once per socket.
-      const boardConnection = yield* boardClientConnection({
-        projectionSnapshotQuery,
-        git: yield* GitVcsDriver.GitVcsDriver,
-        origin: hasClientOrigin ? clientOrigin : undefined,
-      });
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2161,8 +2153,6 @@ const makeWsRpcLayer = (
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               yield* ProjectCloneTracker.rejectCommandsDuringClone(projectCloneTracker, command);
-              // T3o: board commands go to the board's own engine (T3O-56).
-              if (isBoardCommand(command)) return yield* boardConnection.dispatch(command);
               const normalizedCommand = yield* normalizeDispatchCommand(command);
               // Archive removes the thread from the client, so this transport
               // closes its session and terminals after the command lands.
@@ -2347,8 +2337,6 @@ const makeWsRpcLayer = (
                 ),
                 { startImmediately: true },
               );
-              // T3o: the board's shell deltas, attached before any snapshot read.
-              const boardShellDeltas = yield* boardConnection.shellDeltas;
               const coalesceRetainedInputs = (
                 items: ReadonlyArray<RetainedLiveItem<ShellLiveInput>>,
               ) =>
@@ -2377,27 +2365,20 @@ const makeWsRpcLayer = (
               // Offer the completion marker into the same queue as live events.
               // Anything buffered while snapshot/replay work was in flight is
               // therefore delivered before the client is told it is synchronized.
-              // T3o: board deltas merge into the live tail (T3O-56).
-              // TODO(board-subscription): they bypass liveBudget, so a stalled socket
-              // buffers them unbounded; low volume, and the board's own subscription
-              // replaces this merge.
-              const synchronizedThenLive = Stream.merge(
-                boardShellDeltas,
-                liveBudget.deliver(
-                  input.requestCompletionMarker === true
-                    ? Stream.concat(
-                        Stream.fromEffect(
-                          liveBudget.retain({ kind: "synchronized" as const }).pipe(
-                            Effect.flatMap((item) => Queue.offer(liveBuffer, item)),
-                            Effect.uninterruptible,
-                            Effect.andThen(Queue.takeAll(liveBuffer)),
-                            Effect.flatMap(coalesceRetainedInputs),
-                          ),
-                        ).pipe(Stream.flatMap((items) => Stream.fromIterable(items))),
-                        bufferedLiveStream,
-                      )
-                    : bufferedLiveStream,
-                ),
+              const synchronizedThenLive = liveBudget.deliver(
+                input.requestCompletionMarker === true
+                  ? Stream.concat(
+                      Stream.fromEffect(
+                        liveBudget.retain({ kind: "synchronized" as const }).pipe(
+                          Effect.flatMap((item) => Queue.offer(liveBuffer, item)),
+                          Effect.uninterruptible,
+                          Effect.andThen(Queue.takeAll(liveBuffer)),
+                          Effect.flatMap(coalesceRetainedInputs),
+                        ),
+                      ).pipe(Stream.flatMap((items) => Stream.fromIterable(items))),
+                      bufferedLiveStream,
+                    )
+                  : bufferedLiveStream,
               );
 
               // When the client already holds a shell snapshot (cached, or loaded
@@ -2421,12 +2402,7 @@ const makeWsRpcLayer = (
                     afterSequence,
                     headSequence,
                     SHELL_RESUME_MAX_GAP,
-                  )) ||
-                  // T3o: board deltas are not in this log, so a board resumes by snapshot.
-                  // TODO(board-subscription): this sends the FULL shell snapshot on every
-                  // resume once the board has history; drop it when the board has its own
-                  // subscription.
-                  (yield* boardConnection.shellNeedsSnapshot)
+                  ))
                 ) {
                   const snapshot = yield* loadSnapshot;
                   return Stream.concat(
@@ -4118,7 +4094,11 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "server" },
           ),
         // T3o: board RPC handlers register from the board module (t3o-04).
-        ...(yield* boardRpcHandlers({ currentSession, boardSupervisor })),
+        ...(yield* boardRpcHandlers({
+          currentSession,
+          boardSupervisor,
+          origin: hasClientOrigin ? clientOrigin : undefined,
+        })),
       });
     }),
   );

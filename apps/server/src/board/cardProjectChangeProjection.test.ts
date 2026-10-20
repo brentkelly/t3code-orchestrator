@@ -20,7 +20,6 @@ import {
   ProviderInstanceId,
   type BoardCardActivityEntry,
   type BoardCardShell,
-  type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -97,8 +96,9 @@ const moveHighCardToBeta = {
   createdAt,
 } as const;
 
-const cardsOf = (snapshot: OrchestrationShellSnapshot): ReadonlyArray<BoardCardShell> =>
-  snapshot.cards ?? [];
+const cardsOf = (snapshot: {
+  readonly cards: ReadonlyArray<BoardCardShell>;
+}): ReadonlyArray<BoardCardShell> => snapshot.cards;
 
 it.layer(makeTestLayer("t3o-board-project-1-"))("moving a card to another project", (it) => {
   it.effect("reissues the key and repoints the card, keeping its id and stage", () =>
@@ -106,12 +106,12 @@ it.layer(makeTestLayer("t3o-board-project-1-"))("moving a card to another projec
       const engine = yield* seedBoard;
       const snapshotQuery = yield* boardStackSnapshotQuery;
 
-      const before = yield* snapshotQuery.getShellSnapshot();
+      const before = yield* snapshotQuery.getBoardSnapshot();
       assert.strictEqual(cardsOf(before).find((card) => card.cardId === highCardId)?.key, "AL-2");
 
       yield* engine.dispatch(moveHighCardToBeta);
 
-      const after = yield* snapshotQuery.getShellSnapshot();
+      const after = yield* snapshotQuery.getBoardSnapshot();
       const moved = cardsOf(after).find((card) => card.cardId === highCardId);
       expect(moved).toMatchObject({ key: "BE-1", projectId: beta, stage: "backlog" });
       // The card that stayed is untouched — the move is not a renumbering of
@@ -204,7 +204,7 @@ it.layer(makeTestLayer("t3o-board-project-2b-"))(
         // again would put two cards' histories under one key.
         assert.strictEqual(created.payload.key, "AL-3");
 
-        const shell = yield* snapshotQuery.getShellSnapshot();
+        const shell = yield* snapshotQuery.getBoardSnapshot();
         assert.notInclude(
           cardsOf(shell).map((card) => card.key),
           "AL-2",
@@ -253,7 +253,7 @@ it.layer(makeTestLayer("t3o-board-project-4-"))("refusing a built card end to en
 
       // And the refusal really is a refusal: nothing was reissued.
       const snapshotQuery = yield* boardStackSnapshotQuery;
-      const shell = yield* snapshotQuery.getShellSnapshot();
+      const shell = yield* snapshotQuery.getBoardSnapshot();
       assert.strictEqual(cardsOf(shell).find((card) => card.cardId === highCardId)?.key, "AL-2");
     }),
   );

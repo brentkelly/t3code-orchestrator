@@ -17,7 +17,6 @@ import {
   type BoardState,
   type OrchestrationCommand,
   type OrchestrationEvent,
-  type OrchestrationReadModel,
   type OrchestrationThreadShell,
   type BoardEvent,
 } from "@t3tools/contracts";
@@ -47,7 +46,7 @@ import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts
 import { boardDecidedEvents } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 import { boardEngineDouble, boardServicesTestLayer } from "./boardServices.testkit.ts";
-import { projectBoardEvent } from "./projector.ts";
+import { projectBoardEvent, type BoardOrchestrationReadModel } from "./projector.ts";
 import { UsageLimitDetector } from "./UsageLimitDetector.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
 
@@ -135,7 +134,7 @@ const runningState: BoardCardStepState = {
   updatedAt: NOW,
 };
 
-function readModel(board: BoardState): OrchestrationReadModel {
+function readModel(board: BoardState): BoardOrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [

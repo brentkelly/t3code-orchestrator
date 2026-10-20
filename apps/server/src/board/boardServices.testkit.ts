@@ -19,6 +19,16 @@ import type { BoardQueriesShape } from "./projection.ts";
 
 export const inertBoardQueries = (overrides?: Partial<BoardQueriesShape>): BoardQueriesShape => ({
   loadBoardState: () => Effect.succeed(null),
+  boardShellSnapshot: () =>
+    Effect.succeed({
+      snapshotSequence: 0,
+      cards: [],
+      labels: [],
+      stages: [],
+      cardThreads: [],
+      providerLimits: [],
+    }),
+  boardArchivedCards: () => Effect.succeed([]),
   boardCardDetail: () => Effect.succeed(null),
   boardCardActivity: () => Effect.succeed([]),
   boardCardBrief: () => Effect.succeed(null),

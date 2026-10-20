@@ -17,7 +17,6 @@ import {
   CommandId,
   ProjectId,
   ProviderInstanceId,
-  type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -72,8 +71,8 @@ const seedProject = Effect.gen(function* () {
 
 const shellLimits = Effect.gen(function* () {
   const snapshotQuery = yield* boardStackSnapshotQuery;
-  const snapshot: OrchestrationShellSnapshot = yield* snapshotQuery.getShellSnapshot();
-  return snapshot.boardProviderLimits;
+  const snapshot = yield* snapshotQuery.getBoardSnapshot();
+  return snapshot.providerLimits;
 });
 
 describe("provider cooldowns on the shell SNAPSHOT (T3O-22, D14)", () => {

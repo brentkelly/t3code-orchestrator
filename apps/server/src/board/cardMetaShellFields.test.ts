@@ -23,7 +23,6 @@ import {
   ProjectId,
   ProviderInstanceId,
   type BoardCardShell,
-  type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -75,12 +74,13 @@ const seedCard = (brief?: string) =>
     return engine;
   });
 
-const cardsOf = (snapshot: OrchestrationShellSnapshot): ReadonlyArray<BoardCardShell> =>
-  snapshot.cards ?? [];
+const cardsOf = (snapshot: {
+  readonly cards: ReadonlyArray<BoardCardShell>;
+}): ReadonlyArray<BoardCardShell> => snapshot.cards;
 
 const shellCard = Effect.gen(function* () {
   const snapshotQuery = yield* boardStackSnapshotQuery;
-  const snapshot = yield* snapshotQuery.getShellSnapshot();
+  const snapshot = yield* snapshotQuery.getBoardSnapshot();
   return cardsOf(snapshot).find((card) => card.cardId === cardId);
 });
 
@@ -127,7 +127,7 @@ it.layer(makeTestLayer("t3o-card-meta-1-"))("brief image, snapshot vs delta", (i
           brief,
           createdAt,
         });
-        const snapshot = yield* snapshotQuery.getShellSnapshot();
+        const snapshot = yield* snapshotQuery.getBoardSnapshot();
         const card = cardsOf(snapshot).find((entry) => entry.cardId === fixtureId);
         assert.strictEqual(
           card?.briefHasImage,
@@ -243,7 +243,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
         createdAt,
       });
 
-      const shellCard = Effect.map(snapshotQuery.getShellSnapshot(), (snapshot) =>
+      const shellCard = Effect.map(snapshotQuery.getBoardSnapshot(), (snapshot) =>
         cardsOf(snapshot).find((entry) => entry.cardId === cardId),
       );
 
@@ -428,7 +428,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
           orderKey: "n",
           createdAt,
         });
-        const shellCard = Effect.map(snapshotQuery.getShellSnapshot(), (snapshot) =>
+        const shellCard = Effect.map(snapshotQuery.getBoardSnapshot(), (snapshot) =>
           cardsOf(snapshot).find((entry) => entry.cardId === draftCardId),
         );
         const deltaCard = Effect.map(snapshotQuery.getCommandReadModel(), (model) => {
@@ -486,7 +486,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
         orderKey: "m",
         createdAt,
       });
-      const shellCard = Effect.map(snapshotQuery.getShellSnapshot(), (snapshot) =>
+      const shellCard = Effect.map(snapshotQuery.getBoardSnapshot(), (snapshot) =>
         cardsOf(snapshot).find((entry) => entry.cardId === roundCardId),
       );
 
@@ -601,7 +601,7 @@ it.layer(makeTestLayer("t3o-card-meta-3-"))("pull request, snapshot vs delta", (
         createdAt,
       });
 
-      const archived = yield* snapshotQuery.getArchivedShellSnapshot();
+      const archived = yield* snapshotQuery.getArchivedBoardCards();
       const card = cardsOf(archived).find((entry) => entry.cardId === archivedId);
       assert.strictEqual(card?.prNumber, 512);
       assert.strictEqual(card?.hasPr, true);
@@ -642,7 +642,7 @@ it.layer(makeTestLayer("t3o-card-meta-4-"))("sub-board parent, snapshot vs delta
         createdAt,
       });
 
-      const cards = cardsOf(yield* snapshotQuery.getShellSnapshot());
+      const cards = cardsOf(yield* snapshotQuery.getBoardSnapshot());
       const children = cards.filter((entry) => entry.parentCardId === cardId);
       assert.strictEqual(children.length, 2, "both materialised children name their parent");
       // Omitted for a top-level card, which is what keeps a split-less board's
@@ -677,7 +677,7 @@ it.layer(makeTestLayer("t3o-card-meta-4-"))("sub-board parent, snapshot vs delta
         createdAt,
       });
 
-      const archived = cardsOf(yield* snapshotQuery.getArchivedShellSnapshot());
+      const archived = cardsOf(yield* snapshotQuery.getArchivedBoardCards());
       assert.strictEqual(archived.find((entry) => entry.cardId === childId)?.parentCardId, cardId);
     }),
   );
@@ -909,7 +909,7 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
             cardId,
             createdAt,
           });
-          const archived = cardsOf(yield* snapshotQuery.getArchivedShellSnapshot()).find(
+          const archived = cardsOf(yield* snapshotQuery.getArchivedBoardCards()).find(
             (entry) => entry.cardId === cardId,
           );
           assert.strictEqual(archived?.worktreeReady, true);
@@ -926,7 +926,7 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
             hookWarning: 'Remove script "park" exited with code 1',
             createdAt,
           });
-          const gone = cardsOf(yield* snapshotQuery.getArchivedShellSnapshot()).find(
+          const gone = cardsOf(yield* snapshotQuery.getArchivedBoardCards()).find(
             (entry) => entry.cardId === cardId,
           );
           assert.isFalse(gone !== undefined && "worktreeReady" in gone);

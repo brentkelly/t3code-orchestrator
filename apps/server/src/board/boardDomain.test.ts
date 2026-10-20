@@ -150,13 +150,12 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
         role: "planning",
         createdAt: t0,
       });
-      // The shell joins the live link against the snapshot's own thread
-      // shells (t3o-04): activeThreadId set, thread-derived state real.
-      const shellLinked = yield* snapshotQuery.getShellSnapshot();
+      // The board snapshot names the live link (t3o-04); the thread-derived
+      // state rests at "none", for the client to derive from its thread shells.
+      const shellLinked = yield* snapshotQuery.getBoardSnapshot();
       const cardOneShell = shellLinked.cards?.find((card) => card.cardId === cardOne);
       assert.strictEqual(cardOneShell?.activeThreadId, threadId);
-      // The thread exists but has no session and nothing pending.
-      assert.strictEqual(cardOneShell?.threadState, "stopped");
+      assert.strictEqual(cardOneShell?.threadState, "none");
       assert.strictEqual(cardOneShell?.awaitingInput, false);
       assert.strictEqual(cardOneShell?.dependencyCount, 1);
       assert.strictEqual(cardOneShell?.hasBrief, true);
@@ -184,14 +183,14 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
 
       // A tombstoned link is not an active thread: the shell falls back to
       // its resting thread state.
-      const shellUnlinked = yield* snapshotQuery.getShellSnapshot();
+      const shellUnlinked = yield* snapshotQuery.getBoardSnapshot();
       const cardOneUnlinked = shellUnlinked.cards?.find((card) => card.cardId === cardOne);
       assert.strictEqual(cardOneUnlinked?.activeThreadId, null);
       assert.strictEqual(cardOneUnlinked?.threadState, "none");
 
       // Archive round-trip: the card leaves and re-enters the shell
       // snapshot; the read model keeps it (archivedAt set) throughout.
-      const shellBefore = yield* snapshotQuery.getShellSnapshot();
+      const shellBefore = yield* snapshotQuery.getBoardSnapshot();
       assert.include(shellBefore.cards?.map((card) => card.cardId) ?? [], cardOne);
 
       yield* engine.dispatch({
@@ -200,7 +199,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
         cardId: cardOne,
         createdAt: t0,
       });
-      const shellArchived = yield* snapshotQuery.getShellSnapshot();
+      const shellArchived = yield* snapshotQuery.getBoardSnapshot();
       assert.notInclude(shellArchived.cards?.map((card) => card.cardId) ?? [], cardOne);
       const modelArchived = yield* snapshotQuery.getCommandReadModel();
       assert.strictEqual(
@@ -214,7 +213,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
         cardId: cardOne,
         createdAt: t0,
       });
-      const shellRestored = yield* snapshotQuery.getShellSnapshot();
+      const shellRestored = yield* snapshotQuery.getBoardSnapshot();
       assert.include(shellRestored.cards?.map((card) => card.cardId) ?? [], cardOne);
 
       // Reorder card-two for coverage of the last event type.
@@ -340,7 +339,7 @@ it.layer(makeBoardDomainTestLayer("t3o-board-delete-test-"))("board card delete"
         [cardTwo],
       );
       // Gone from the live board too.
-      const shell = yield* snapshotQuery.getShellSnapshot();
+      const shell = yield* snapshotQuery.getBoardSnapshot();
       assert.notInclude(shell.cards?.map((card) => card.cardId) ?? [], cardOne);
 
       // The deleted card was the only plan-holder, so the slice empties — and

@@ -4,10 +4,10 @@
  * The decider used to read projects and threads straight off upstream's
  * command read model. It now takes them as a loaded `BoardDecisionContext`,
  * which the engine reads from upstream's tables. Suites that hold a whole
- * `OrchestrationReadModel` derive the same context from it here, so a fixture
+ * `BoardOrchestrationReadModel` derive the same context from it here, so a fixture
  * still says "this project exists" by putting the project in the model.
  */
-import type { OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type { ThreadId } from "@t3tools/contracts";
 
 import {
   boardCommandNeedsProjects,
@@ -16,11 +16,12 @@ import {
   type BoardCommand,
   type BoardDecisionContext,
 } from "./decider.ts";
+import type { BoardOrchestrationReadModel } from "./projector.ts";
 
 /** The context the engine would load for `command`, read off a full model. */
 export function boardDecisionContextFromModel(
   command: BoardCommand,
-  model: Pick<OrchestrationReadModel, "projects" | "threads">,
+  model: Pick<BoardOrchestrationReadModel, "projects" | "threads">,
   extra?: { readonly brief?: string | null },
 ): BoardDecisionContext {
   const projects = boardCommandNeedsProjects(command)
@@ -38,7 +39,7 @@ export function boardDecisionContextFromModel(
   return { ...extra, ...projects, ...thread };
 }
 
-const findThread = (model: Pick<OrchestrationReadModel, "threads">, threadId: ThreadId) => {
+const findThread = (model: Pick<BoardOrchestrationReadModel, "threads">, threadId: ThreadId) => {
   const thread = model.threads.find((candidate) => candidate.id === threadId);
   return thread === undefined ? null : { deletedAt: thread.deletedAt };
 };
@@ -46,7 +47,7 @@ const findThread = (model: Pick<OrchestrationReadModel, "threads">, threadId: Th
 /** `decideBoardCommand` against a full model, the context derived from it. */
 export const decideBoardCommandOnModel = (input: {
   readonly command: BoardCommand;
-  readonly readModel: OrchestrationReadModel;
+  readonly readModel: BoardOrchestrationReadModel;
   readonly context?: { readonly brief?: string | null };
 }) =>
   decideBoardCommand({

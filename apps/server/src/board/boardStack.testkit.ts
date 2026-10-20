@@ -7,13 +7,13 @@
  * talk to. The engine facade routes a board command to the board engine and
  * anything else to upstream's, exactly as the server's transports do; the
  * snapshot facade puts the board engine's board slice back on the command read
- * model, so a suite asserting on threads and cards together reads one model.
+ * model, so a suite asserting on threads and cards together reads one model,
+ * and serves the board's own snapshot and archive page beside upstream's.
  */
 import {
   isBoardCommand,
   type BoardCommand,
   type OrchestrationCommand,
-  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -37,7 +37,7 @@ import type { OrchestrationDispatchError } from "../orchestration/Errors.ts";
 import { BoardEngine, BoardEngineLive } from "./BoardEngine.ts";
 import type { BoardDispatchError } from "./errors.ts";
 import { BoardQueries, BoardQueriesLive } from "./BoardQueries.ts";
-import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
+import { projectBoardEvent, type BoardReadModel, type BoardOrchestrationReadModel } from "./projector.ts";
 import { makeBoardEventStore } from "./boardEventStore.ts";
 import { BoardThreadTail } from "./boardThreadTail.ts";
 import { BoardRuntimeLive } from "./runtimeLayer.ts";
@@ -112,10 +112,15 @@ export const boardStackSnapshotQuery = Effect.gen(function* () {
     ...snapshotQuery,
     getCommandReadModel: () =>
       Effect.all([snapshotQuery.getCommandReadModel(), boardQueries.loadBoardState()]).pipe(
-        Effect.map(([model, board]): OrchestrationReadModel =>
+        Effect.map(([model, board]): BoardOrchestrationReadModel =>
           board === null ? model : { ...model, board },
         ),
       ),
+    /** What `board.subscribeBoard` opens with. */
+    getBoardSnapshot: () => boardQueries.boardShellSnapshot(),
+    /** What `board.getArchivedCards` answers. */
+    getArchivedBoardCards: () =>
+      boardQueries.boardArchivedCards().pipe(Effect.map((cards) => ({ cards }))),
   };
 });
 

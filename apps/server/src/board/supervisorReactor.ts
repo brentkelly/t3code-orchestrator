@@ -113,7 +113,6 @@ import {
   isBoardCommand,
   type OrchestrationCommand,
   type OrchestrationEvent,
-  type OrchestrationReadModel,
   type OrchestrationThreadShell,
   type ProviderRuntimeEvent,
   type TurnId,
@@ -201,6 +200,7 @@ import { stageExecutorForRole } from "./stageExecutor.ts";
 import { WorktreeRetirer } from "./worktreeRetire.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
+import type { BoardOrchestrationReadModel } from "./projector.ts";
 
 /** What a Merge click did, for the RPC to turn into a toast. */
 export type BoardMergeAttemptResult =
@@ -561,7 +561,7 @@ const make = Effect.gen(function* () {
     snapshotQuery.getCommandReadModel(),
     boardEngine.getReadModel,
   ]).pipe(
-    Effect.map(([model, board]): OrchestrationReadModel =>
+    Effect.map(([model, board]): BoardOrchestrationReadModel =>
       board.board === undefined ? model : { ...model, board: board.board },
     ),
   );
@@ -1037,7 +1037,7 @@ const make = Effect.gen(function* () {
     return card === undefined ? null : { card, state };
   };
 
-  const projectCwd = (board: OrchestrationReadModel, card: BoardCard): string | null => {
+  const projectCwd = (board: BoardOrchestrationReadModel, card: BoardCard): string | null => {
     const project = board.projects.find((entry) => entry.id === card.projectId);
     return project?.workspaceRoot ?? null;
   };
@@ -5090,7 +5090,7 @@ const make = Effect.gen(function* () {
    */
   const sweepOrphanWorktrees = Effect.fn("board-supervisor-sweepOrphanWorktrees")(function* (
     board: BoardState,
-    model: OrchestrationReadModel,
+    model: BoardOrchestrationReadModel,
     fetchedBases: Set<string>,
   ) {
     // Only checkouts under THIS server's worktrees directory are ours to
