@@ -191,13 +191,13 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 /** Mint a command id (server-dispatched board command, like ws.ts). Yields
     Crypto from context, so callers need only list it as a tool dependency. */
 const mintCommandId: Effect.Effect<CommandId, never, Crypto.Crypto> = Crypto.Crypto.pipe(
-  Effect.flatMap((crypto) => crypto.randomUUIDv4),
+  Effect.flatMap((crypto) => crypto.randomUUIDv4()),
   Effect.map((uuid) => CommandId.make(`mcp:board:${uuid}`)),
   Effect.orDie,
 );
 
 const mintUuid: Effect.Effect<string, never, Crypto.Crypto> = Crypto.Crypto.pipe(
-  Effect.flatMap((crypto) => crypto.randomUUIDv4),
+  Effect.flatMap((crypto) => crypto.randomUUIDv4()),
   Effect.orDie,
 );
 

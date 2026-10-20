@@ -409,7 +409,7 @@ function makeBoardRpcHandlers(
               attachmentsDir: config.attachmentsDir,
               card: detail.card,
               pendingAttachmentId: input.pendingAttachmentId,
-              attachmentId: BoardCardAttachmentId.make(yield* crypto.randomUUIDv4),
+              attachmentId: BoardCardAttachmentId.make(yield* crypto.randomUUIDv4()),
               name: input.name,
               type: input.type,
               mimeType: input.mimeType,
@@ -432,7 +432,7 @@ function makeBoardRpcHandlers(
                     }),
               ),
             );
-            const uuid = yield* crypto.randomUUIDv4;
+            const uuid = yield* crypto.randomUUIDv4();
             yield* boardEngine
               .dispatch({
                 type: "board.card.attach",
@@ -495,7 +495,7 @@ function makeBoardRpcHandlers(
                 message: `Attachment ${input.attachmentId} is not on card ${input.cardId}.`,
               });
             }
-            const uuid = yield* crypto.randomUUIDv4;
+            const uuid = yield* crypto.randomUUIDv4();
             yield* boardEngine
               .dispatch({
                 type: "board.card.detach",

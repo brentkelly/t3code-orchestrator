@@ -243,7 +243,7 @@ export const makeThreadGatewayV1 = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const path = yield* Path.Path;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-  const freshMessageId = crypto.randomUUIDv4.pipe(
+  const freshMessageId = crypto.randomUUIDv4().pipe(
     Effect.map((uuid) => MessageId.make(`msg-${uuid}`)),
     Effect.orDie,
   );

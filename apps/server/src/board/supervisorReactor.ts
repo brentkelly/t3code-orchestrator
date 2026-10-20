@@ -504,8 +504,8 @@ const make = Effect.gen(function* () {
   const serverActivation = yield* ServerActivation;
 
   const commandId = (tag: string) =>
-    crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:board-${tag}:${uuid}`)));
-  const freshThreadId = crypto.randomUUIDv4.pipe(
+    crypto.randomUUIDv4().pipe(Effect.map((uuid) => CommandId.make(`server:board-${tag}:${uuid}`)));
+  const freshThreadId = crypto.randomUUIDv4().pipe(
     Effect.map((uuid) => ThreadId.make(`thread-${uuid}`)),
   );
 

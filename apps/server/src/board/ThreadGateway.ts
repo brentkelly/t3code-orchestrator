@@ -7,11 +7,11 @@
  * what the BOARD needs, in board vocabulary, not around the thread engine
  * behind it.
  *
- * `ThreadGatewayV1` is the only implementation today, and the only board module
- * allowed to import upstream's orchestration, persistence or provider code
- * (`threadGatewayBoundary.test.ts` holds that line). Swapping the thread engine
- * means writing another implementation and re-running
- * `ThreadGatewayV1.contract.test.ts` against it — not touching the supervisor.
+ * `ThreadGatewayV2` (orchestration-v2, T3O-59) is the only implementation, and
+ * the only board module allowed to import upstream's orchestration, persistence
+ * or provider code (`threadGatewayBoundary.test.ts` holds that line). Swapping
+ * the thread engine means writing another implementation and re-running
+ * `ThreadGatewayV2.contract.test.ts` against it — not touching the supervisor.
  */
 import type {
   ChatAttachment,
@@ -113,6 +113,20 @@ export interface BoardThreadState {
   readonly autoSettleCandidate: boolean;
   readonly worktreePath: string | null;
   readonly modelSelection: ModelSelection | null;
+  /** The latest run failed on a provider usage limit (T3O-59), or null. */
+  readonly usageLimit: BoardThreadUsageLimit | null;
+}
+
+/** A thread whose latest run hit a provider usage limit. */
+export interface BoardThreadUsageLimit {
+  /** When the provider says the window reopens, or null when it did not say. */
+  readonly resetAt: string | null;
+  /** The provider's own failure text, when it gave one. */
+  readonly message: string | null;
+  /** The engine itself will resume this thread when the window reopens: its
+      limit recovery is armed, with auto-resume, for this very failure. A step
+      on such a thread is not dead and the board does not resume it. */
+  readonly resumeArmed: boolean;
 }
 
 /** What `threadState` answers for a deleted thread: nothing about it is live
@@ -133,6 +147,7 @@ export const deletedThreadState = (threadId: ThreadId, projectId: ProjectId): Bo
   autoSettleCandidate: false,
   worktreePath: null,
   modelSelection: null,
+  usageLimit: null,
 });
 
 /** The cheap per-thread facts the release sweep pre-filters on (t3o-13). */
@@ -250,6 +265,8 @@ export interface ThreadSpawnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  /** Null runs the thread in the project root with no worktree of its own
+      (planning, D6); otherwise the thread runs in `worktreePath` on it. */
   readonly branch: string | null;
   readonly worktreePath: string;
   readonly text: string;
@@ -289,6 +306,11 @@ export interface ThreadGatewayShape {
   readonly stopSession: (input: ThreadTargetInput) => Effect.Effect<void, ThreadCommandError>;
   readonly settle: (input: ThreadSettleInput) => Effect.Effect<void, ThreadCommandError>;
   readonly delete: (input: ThreadTargetInput) => Effect.Effect<void, ThreadCommandError>;
+  /** Have the engine resume this thread itself once its usage-limit window
+      reopens, whatever the user's global auto-resume setting (T3O-59). True
+      when recovery is armed with auto-resume afterwards; false when the
+      thread is not limited, or the provider named no reset time to wait for. */
+  readonly armLimitRecovery: (input: ThreadTargetInput) => Effect.Effect<boolean, ThreadCommandError>;
 
   /** One thread, deleted ones included, or null when it never existed. */
   readonly threadState: (
