@@ -8,6 +8,7 @@
 import {
   CommandId,
   EventId,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -35,6 +36,7 @@ import {
 } from "./ThreadGatewayV2.ts";
 
 const threadId = ThreadId.make("thread-1");
+const messageId = MessageId.make("message-1");
 const t0 = DateTime.makeUnsafe("2026-10-20T00:00:00.000Z");
 
 let sequence = 0;
@@ -59,8 +61,28 @@ const run = (
   status,
   requestedAt: t0,
   startedAt,
+  userMessageId: messageId,
   ...overrides,
 });
+
+type MessageAuthor = { readonly createdBy: string; readonly creationSource: string };
+
+const CLIENT_COMMAND_ID = "8c7f0f0e-6d2b-4a5e-9a1d-0f2b3c4d5e6f";
+const HUMAN_MESSAGE = { createdBy: "user", creationSource: "web" } as const;
+const BOARD_MESSAGE = { createdBy: "user", creationSource: "server" } as const;
+
+/** A run v2 created, then its message, as one command commits them. */
+const requestRun = (
+  commandId: string | null,
+  author: MessageAuthor,
+  overrides: Record<string, unknown> = {},
+): ReadonlyArray<ThreadSignal> => {
+  const read = makeSignalReader();
+  return [
+    ...read(stored("run.created", run("starting", null, overrides), commandId)),
+    ...read(stored("message.updated", { ...author, id: messageId, role: "user" }, commandId)),
+  ];
+};
 
 /** A reader for events that carry at most one signal each. */
 const singleSignalReader = () => {
@@ -73,41 +95,72 @@ const singleSignalReader = () => {
 };
 
 describe("makeSignalReader", () => {
-  it("tells a board turn from a human's by the command that asked for it", () => {
-    const read = singleSignalReader();
-    assert.deepStrictEqual(
-      read(stored("run.created", run("starting", null), "server:board-recover-turn:abc")),
+  it("tells a board turn from a human's by the command and the message's author", () => {
+    assert.deepStrictEqual(requestRun("server:board-recover-turn:abc", BOARD_MESSAGE), [
       { type: "turn-requested", threadId, byBoard: true, at: "2026-10-20T00:00:00.000Z" },
-    );
-    assert.include(
-      read(stored("run.created", run("starting", null), "8c7f0f0e-6d2b-4a5e-9a1d-0f2b3c4d5e6f")),
-      { type: "turn-requested", byBoard: false },
-    );
+    ]);
+    assert.deepStrictEqual(requestRun(CLIENT_COMMAND_ID, HUMAN_MESSAGE), [
+      { type: "turn-requested", threadId, byBoard: false, at: "2026-10-20T00:00:00.000Z" },
+    ]);
+  });
+
+  it("reads a human's steer that became a follow-up run as a human turn", () => {
+    // EffectWorker re-dispatches the steer under its own command id, carrying
+    // the human's authorship over.
+    assert.include(requestRun("command:steer-follow-up:effect-2", HUMAN_MESSAGE)[0], {
+      type: "turn-requested",
+      byBoard: false,
+    });
+    // The board's own steer coming back as a follow-up is not a human's.
+    assert.deepStrictEqual(requestRun("command:steer-follow-up:effect-3", BOARD_MESSAGE), []);
   });
 
   it("reads the engine's limit resume as its own signal, not a human turn", () => {
-    assert.deepStrictEqual(
-      singleSignalReader()(stored("run.created", run("starting", null), "limit-resume:x:req")),
+    assert.deepStrictEqual(requestRun("limit-resume:x:req", BOARD_MESSAGE), [
       { type: "limit-resumed", threadId },
-    );
+    ]);
   });
 
   it("raises nothing for a run the engine started to carry on its own work", () => {
-    const read = singleSignalReader();
-    const wakes: ReadonlyArray<readonly [Record<string, unknown>, string | null]> = [
-      [{ workStartedAt: t0 }, "command:mailbox-accepted:effect-1"],
-      [{ restartContinuationOfRunId: RunId.make("run-0") }, "command:restart-continuation:run-0"],
-      [{ delegatedTaskId: "node-1" }, null],
-      [{}, "provider-continuation:msg-1"],
-      [{}, "server:pr-watch:thread-1:uuid"],
-      [{}, "command:steer-follow-up:effect-2"],
+    const wakes: ReadonlyArray<readonly [Record<string, unknown>, string | null, MessageAuthor]> = [
+      [{ workStartedAt: t0 }, "command:mailbox-accepted:effect-1", HUMAN_MESSAGE],
+      [
+        { restartContinuationOfRunId: RunId.make("run-0") },
+        "command:restart-continuation:run-0",
+        { createdBy: "agent", creationSource: "server" },
+      ],
+      [{ delegatedTaskId: "node-1" }, null, HUMAN_MESSAGE],
+      [{}, "provider-continuation:msg-1", { createdBy: "system", creationSource: "provider" }],
+      [{}, "server:pr-watch:thread-1:uuid", { createdBy: "system", creationSource: "server" }],
+      // A delegated task's question to its parent, queued behind the active
+      // run: no wake fields until it starts, so only its author tells.
+      [{}, "server:delegated-task-question:key", { createdBy: "agent", creationSource: "server" }],
     ];
-    for (const [overrides, commandId] of wakes) {
-      assert.isNull(
-        read(stored("run.created", run("starting", null, overrides), commandId)),
-        JSON.stringify([overrides, commandId]),
+    for (const [overrides, commandId, author] of wakes) {
+      assert.deepStrictEqual(
+        requestRun(commandId, author, overrides),
+        [],
+        JSON.stringify([overrides, commandId, author]),
       );
     }
+  });
+
+  it("waits for the run's own message, not any message on the thread", () => {
+    const read = makeSignalReader();
+    assert.deepStrictEqual(
+      read(stored("run.created", run("starting", null), CLIENT_COMMAND_ID)),
+      [],
+    );
+    assert.deepStrictEqual(
+      read(stored("message.updated", { ...HUMAN_MESSAGE, id: MessageId.make("message-other") })),
+      [],
+    );
+    assert.lengthOf(read(stored("message.updated", { ...HUMAN_MESSAGE, id: messageId })), 1);
+    // A later update of the same message is not a second request.
+    assert.deepStrictEqual(
+      read(stored("message.updated", { ...HUMAN_MESSAGE, id: messageId })),
+      [],
+    );
   });
 
   it("ends a turn once, at the provider's finish, not again at its checkpoint", () => {
@@ -237,6 +290,14 @@ describe("makeSignalReader", () => {
         stored("run.updated", run("interrupted", null), "server:board-interrupt-paused:abc"),
       ).map((signal) => signal.type),
       ["turn-ended"],
+    );
+    // Whose run it was doesn't matter, only who pressed Stop: a human stopping
+    // an engine wake before it started is still a human's Stop.
+    assert.deepStrictEqual(
+      makeSignalReader()(
+        stored("run.updated", run("cancelled", null, { workStartedAt: t0 }), CLIENT_COMMAND_ID),
+      ).map((signal) => signal.type),
+      ["interrupt-requested", "turn-ended"],
     );
   });
 

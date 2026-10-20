@@ -19,6 +19,7 @@ import {
   isThreadAwaitingPermission,
   MessageId,
   type OrchestrationV2Command,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2InternalCommand,
   type OrchestrationV2Run,
   type OrchestrationV2StoredEvent,
@@ -181,34 +182,45 @@ export const todoSignal = (stored: OrchestrationV2StoredEvent): TodoSignal | nul
   return null;
 };
 
-/** Command-id prefixes v2 mints when it starts a run of its own accord to
-    carry on work already under way: background and steer wakes, restart
-    continuations, provider continuations and pull-request watch wakes. */
-const ENGINE_RUN_COMMAND_PREFIXES = [
+/** Command-id prefixes the server mints for commands no person issued: v2's
+    own (`command:`, `provider-continuation:`, `limit-resume:`), and every
+    `server:` reactor, the board's included. A client's command id is a bare
+    UUID. */
+const SERVER_COMMAND_PREFIXES = [
   "command:",
   "provider-continuation:",
-  "server:pr-watch:",
+  "limit-resume:",
+  "server:",
 ] as const;
 
+/** Whether a person issued this command from a client, read from its id alone. */
+const isHumanCommandId = (commandId: CommandId | null): boolean =>
+  commandId !== null && !SERVER_COMMAND_PREFIXES.some((prefix) => commandId.startsWith(prefix));
+
 /**
- * Who asked for a run, read from the command that created it and the run's own
- * wake fields. `engine` is v2 carrying on work it already had (a wake, a
- * restart continuation, a delegated task's result); `limit-resume` is its
- * usage-limit recovery worker; `board` is a board-minted command; anything else
- * is a human.
+ * Who asked for a run, read from the command that created it, the run's own
+ * wake fields and the author of the message it carries. `board` is a
+ * board-minted command; `limit-resume` is v2's usage-limit recovery worker;
+ * `human` is a message a person sent from a client; anything else is `engine`:
+ * v2 carrying on work it already had (a wake, a restart continuation, a
+ * delegated task's result or question, the follow-up a steer becomes).
  */
 export const runOrigin = (
   commandId: CommandId | null,
   run: OrchestrationV2Run,
+  message: Pick<OrchestrationV2ConversationMessage, "createdBy" | "creationSource">,
 ): "board" | "limit-resume" | "engine" | "human" => {
   if (isBoardMintedCommandId(commandId)) return "board";
   if (commandId?.startsWith("limit-resume:")) return "limit-resume";
+  // The board's own messages are `user` from `server` too (BOARD_AUTHOR), so a
+  // board turn re-dispatched as a steer follow-up is not mistaken for a human's.
   if (
+    message.createdBy !== "user" ||
+    message.creationSource === "server" ||
     run.workStartedAt !== undefined ||
     run.restartContinuationOfRunId !== undefined ||
     run.delegatedTaskId !== undefined ||
-    run.delegatedCompletion !== undefined ||
-    ENGINE_RUN_COMMAND_PREFIXES.some((prefix) => commandId?.startsWith(prefix))
+    run.delegatedCompletion !== undefined
   ) {
     return "engine";
   }
@@ -241,6 +253,12 @@ export const makeSignalReader = () => {
   // that arrives only this way (Grok's quota sentence) is what the board's
   // usage-limit classifier reads off the turn end.
   const failures = new Map<string, string>();
+  // Runs nobody on the board asked for, by their message, until that message
+  // says who wrote it (`run.created` above).
+  const awaitingMessage = new Map<
+    string,
+    { readonly run: OrchestrationV2Run; readonly commandId: CommandId | null }
+  >();
   const noteFailure = (runId: string, message: string) => {
     failures.delete(runId);
     failures.set(runId, message);
@@ -257,16 +275,43 @@ export const makeSignalReader = () => {
         // Every requested turn is a run. Only a turn someone ASKED for is a
         // request: v2 carrying on its own work is neither a human steering nor
         // a reason to wake a parked step, and its limit resume is told apart so
-        // the board wakes only the usage-limit park it was holding.
-        const origin = runOrigin(stored.commandId, event.payload);
-        if (origin === "engine") return [];
-        if (origin === "limit-resume") return [{ type: "limit-resumed", threadId: event.threadId }];
+        // the board wakes only the usage-limit park it was holding. Who wrote
+        // the run's message decides the rest; v2 commits that message right
+        // after the run, in the same command, so the run waits for it.
+        const run = event.payload;
+        if (isBoardMintedCommandId(stored.commandId)) {
+          return [
+            {
+              type: "turn-requested",
+              threadId: event.threadId,
+              byBoard: true,
+              at: DateTime.formatIso(run.requestedAt),
+            },
+          ];
+        }
+        if (stored.commandId?.startsWith("limit-resume:")) {
+          return [{ type: "limit-resumed", threadId: event.threadId }];
+        }
+        awaitingMessage.delete(String(run.userMessageId));
+        awaitingMessage.set(String(run.userMessageId), { run, commandId: stored.commandId });
+        if (awaitingMessage.size > SEEN_LIMIT) {
+          const oldest = awaitingMessage.keys().next().value;
+          if (oldest !== undefined) awaitingMessage.delete(oldest);
+        }
+        return [];
+      }
+      case "message.updated": {
+        const message = event.payload;
+        const pending = awaitingMessage.get(String(message.id));
+        if (pending === undefined) return [];
+        awaitingMessage.delete(String(message.id));
+        if (runOrigin(pending.commandId, pending.run, message) !== "human") return [];
         return [
           {
             type: "turn-requested",
             threadId: event.threadId,
-            byBoard: origin === "board",
-            at: DateTime.formatIso(event.payload.requestedAt),
+            byBoard: false,
+            at: DateTime.formatIso(pending.run.requestedAt),
           },
         ];
       }
@@ -295,14 +340,14 @@ export const makeSignalReader = () => {
           errorMessage: outcome === "failed" ? failure : null,
         };
         // v2 records no interrupt request for a run its provider never
-        // started, so a human's Stop during start-up arrives only as this end.
+        // started, so a human's Stop during start-up arrives only as this end,
+        // under the Stop's own command id.
         // Say it was a Stop first, as it would be for a running turn, or the
         // board reads it as an unexplained ending and nudges the card on.
         if (
           (run.status === "interrupted" || run.status === "cancelled") &&
           run.startedAt === null &&
-          stored.commandId !== null &&
-          runOrigin(stored.commandId, run) === "human" &&
+          isHumanCommandId(stored.commandId) &&
           firstTime(`interrupt-run:${run.id}`)
         ) {
           return [{ type: "interrupt-requested", threadId: event.threadId }, ended];
