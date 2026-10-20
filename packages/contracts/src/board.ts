@@ -8,19 +8,17 @@
  * `orchestration.ts` imports this module to append board members to its
  * unions, so an import in the other direction would be a module cycle.
  *
- * The upstream seams in `orchestration.ts` are spreads of two registries at
- * the bottom of this file: `BOARD_CLIENT_COMMANDS` (on the wire union, until
- * the board has its own dispatch RPC) and `BOARD_SHELL_STREAM_EVENTS`. Board
- * events and the full `BoardCommand` union are the board's own (T3O-56): the
- * events are built in `boardEvent.ts` from `makeBoardOrchestrationEvents`.
- * Adding a board command or event grows the registries here and touches no
+ * The board rides none of upstream's orchestration unions (T3O-57): board
+ * commands arrive on `board.dispatchCommand`, board state and its deltas on
+ * `board.subscribeBoard`, each with the board's own sequence. Board events and
+ * the full `BoardCommand` union are the board's own (T3O-56): the events are
+ * built in `boardEvent.ts` from `makeBoardOrchestrationEvents`. Adding a board
+ * command, event or delta grows the registries here and touches no
  * upstream-owned file.
  *
  * The `board.` prefix rule is load-bearing: every board command and event
- * `type` starts with `board.`, and every board shell delta `kind` starts with
- * `card-`. The type guards below key on those prefixes; the server routes a
- * command off `orchestration.dispatchCommand` to the board engine by it, so a
- * board command named without the prefix would reach upstream's engine.
+ * `type` starts with `board.`, and every board RPC method too. Board deltas
+ * keep their `card-` / `label-` / `stage-` kinds.
  *
  * Event payload shape: `board.card-created` is flat (its walking-skeleton
  * form is already persisted in real event logs, so new fields carry decoding
@@ -6889,13 +6887,15 @@ export const BOARD_INTERNAL_COMMANDS = [
 
 /**
  * Every board command, as the board's own engine decodes and decides them
- * (T3O-56). Board commands are not orchestration commands: the client still
- * sends its share through `orchestration.dispatchCommand` (they ride the wire
- * union `ClientOrchestrationCommand`), and the server routes them to the board
- * engine before anything upstream sees them.
+ * (T3O-56). Board commands are not orchestration commands: the client sends
+ * its share through `board.dispatchCommand` (T3O-57).
  */
 export const BoardCommand = Schema.Union([...BOARD_CLIENT_COMMANDS, ...BOARD_INTERNAL_COMMANDS]);
 export type BoardCommand = typeof BoardCommand.Type;
+
+/** The board commands a client may send (`board.dispatchCommand`). */
+export const BoardClientCommand = Schema.Union(BOARD_CLIENT_COMMANDS);
+export type BoardClientCommand = typeof BoardClientCommand.Type;
 
 export const BOARD_EVENT_TYPES = [
   "board.card-created",
@@ -6962,6 +6962,66 @@ export const BOARD_SHELL_STREAM_EVENTS = [
   BoardProviderLimitUpsertedShellEvent,
   BoardProviderLimitClearedShellEvent,
 ] as const;
+
+/** One board delta on `board.subscribeBoard`, stamped with the BOARD's sequence. */
+export const BoardShellStreamEvent = Schema.Union(BOARD_SHELL_STREAM_EVENTS);
+export type BoardShellStreamEvent = typeof BoardShellStreamEvent.Type;
+
+/**
+ * The board's bounded summary (t3o-26 D4/D7): what every board client holds.
+ * Heavy card detail rides `board.subscribeCard` for the one open card, and
+ * archived cards ride `board.getArchivedCards` when the archive is opened.
+ *
+ * `snapshotSequence` is the board log's sequence the snapshot is at least as
+ * new as. Every delta is an idempotent upsert or removal, so a delta replayed
+ * over a snapshot that already holds it changes nothing.
+ *
+ * Card thread fields (`threadState`, `awaitingInput`, `waitingOnBackground`)
+ * rest at their "none" value here: the client derives them from the thread
+ * shells it already holds, so a thread starting or stopping needs no board
+ * delta.
+ */
+export const BoardShellSnapshot = Schema.Struct({
+  snapshotSequence: NonNegativeInt,
+  /** Live (non-archived) cards. */
+  cards: Schema.Array(BoardCardShell),
+  /** The label catalogue (t3o-06a), tombstones included. */
+  labels: Schema.Array(BoardLabel),
+  /** The user-defined stage list (t3o-15), in canonical order. */
+  stages: Schema.Array(BoardStageDefinition),
+  /** Live card→thread links and their cached todo summaries (t3o-18, D3). */
+  cardThreads: Schema.Array(BoardCardThreadShell),
+  /** Provider cooldowns (T3O-22, D14); empty on most boards. */
+  providerLimits: Schema.Array(BoardProviderLimit),
+});
+export type BoardShellSnapshot = typeof BoardShellSnapshot.Type;
+
+/** `board.subscribeBoard` stream items: a snapshot, or one delta. */
+export const BoardShellStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("snapshot"),
+    snapshot: BoardShellSnapshot,
+  }),
+  ...BOARD_SHELL_STREAM_EVENTS,
+]);
+export type BoardShellStreamItem = typeof BoardShellStreamItem.Type;
+
+export const BoardSubscribeBoardInput = Schema.Struct({
+  /**
+   * The `snapshotSequence` the client already holds, after applying deltas.
+   * Inside a bounded gap the server replays the board events after it, then
+   * goes live; otherwise (or with no cursor) it sends a full snapshot first.
+   */
+  afterSequence: Schema.optionalKey(NonNegativeInt),
+});
+export type BoardSubscribeBoardInput = typeof BoardSubscribeBoardInput.Type;
+
+/** The archive page's cards (t3o-13, D7): read when the page opens, newest
+    archive first. Never part of the live board. */
+export const BoardArchivedCards = Schema.Struct({
+  cards: Schema.Array(BoardCardShell),
+});
+export type BoardArchivedCards = typeof BoardArchivedCards.Type;
 
 /**
  * Board members of the `OrchestrationEvent` union. The event base fields are
@@ -7227,6 +7287,12 @@ type _FactoryCoversRegistry = _AssertExtends<BoardEventTypeFromRegistry, BoardEv
 // server-side `boardRpcHandlers` factory — zero upstream files.
 
 export const BOARD_WS_METHODS = {
+  /** The board's bounded summary, then its live deltas (T3O-57). */
+  subscribeBoard: "board.subscribeBoard",
+  /** A client board command, decided by the board's own engine (T3O-57). */
+  dispatchCommand: "board.dispatchCommand",
+  /** Archived cards, for the archive page (t3o-13). */
+  getArchivedCards: "board.getArchivedCards",
   subscribeCard: "board.subscribeCard",
   /** Re-resolve a card's pull request from the forge. Two of the refresh
       triggers are client-side moments (the card detail opening, the View PR
@@ -7288,7 +7354,9 @@ export const BOARD_WS_METHODS = {
  * future board RPC streams; a future *unary* board RPC needs nothing — the
  * upstream union derives unary tags by exclusion.
  */
-export type BoardSubscriptionRpcTag = (typeof BOARD_WS_METHODS)["subscribeCard"];
+export type BoardSubscriptionRpcTag =
+  | (typeof BOARD_WS_METHODS)["subscribeBoard"]
+  | (typeof BOARD_WS_METHODS)["subscribeCard"];
 
 /** Both PR actions take just the card — the environment is implicit in the
     connection, exactly as it is for `board.subscribeCard`. */
@@ -7687,6 +7755,24 @@ export class BoardSubscribeCardError extends Schema.TaggedError<BoardSubscribeCa
   },
 ) {}
 
+/** The board summary (snapshot, replay or archive page) could not be read. */
+export class BoardSnapshotError extends Schema.TaggedError<BoardSnapshotError>()(
+  "BoardSnapshotError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+/** A client board command was refused or could not be stored. */
+export class BoardDispatchCommandError extends Schema.TaggedError<BoardDispatchCommandError>()(
+  "BoardDispatchCommandError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 /** What the client sends to attach: the pending upload it already made
     through `attachments.createUploadUrl`, plus the metadata it holds. */
 export const BoardAttachCardFileInput = Schema.Struct({
@@ -7733,6 +7819,22 @@ export const BoardProviderLimitResumeAtInput = Schema.Struct({
 export type BoardProviderLimitResumeAtInput = typeof BoardProviderLimitResumeAtInput.Type;
 
 export const BOARD_RPCS = [
+  Rpc.make(BOARD_WS_METHODS.subscribeBoard, {
+    payload: BoardSubscribeBoardInput,
+    success: BoardShellStreamItem,
+    error: Schema.Union([BoardSnapshotError, EnvironmentAuthorizationError]),
+    stream: true,
+  }),
+  Rpc.make(BOARD_WS_METHODS.dispatchCommand, {
+    payload: BoardClientCommand,
+    success: Schema.Struct({ sequence: NonNegativeInt }),
+    error: Schema.Union([BoardDispatchCommandError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WS_METHODS.getArchivedCards, {
+    payload: Schema.Struct({}),
+    success: BoardArchivedCards,
+    error: Schema.Union([BoardSnapshotError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WS_METHODS.subscribeCard, {
     payload: BoardSubscribeCardInput,
     success: BoardCardDetailStreamItem,
@@ -7804,6 +7906,12 @@ export const BOARD_RPCS = [
  * a security-scoped spec.
  */
 export const BOARD_RPC_SCOPES = {
+  // The board's summary and archive are reads, at the thread-shell tier.
+  [BOARD_WS_METHODS.subscribeBoard]: AuthOrchestrationReadScope,
+  [BOARD_WS_METHODS.getArchivedCards]: AuthOrchestrationReadScope,
+  // Every client board command is a board write, at the same tier as
+  // `orchestration.dispatchCommand`, which carried them before.
+  [BOARD_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.subscribeCard]: AuthOrchestrationReadScope,
   // A refresh only re-reads forge state onto the card, so it sits at the same
   // read tier as the subscription it exists to keep current.

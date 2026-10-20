@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "@effect/vitest";
 
-import { BOARD_CLIENT_COMMANDS, BOARD_EVENT_TYPES } from "./board.ts";
+import { BOARD_EVENT_TYPES, BoardClientCommand } from "./board.ts";
 import { BoardEvent, BoardEventType } from "./boardEvent.ts";
 import {
   ClientOrchestrationCommand,
@@ -13,11 +13,12 @@ import {
 const decodeBoardEvent = Schema.decodeUnknownExit(BoardEvent);
 const decodeOrchestrationEvent = Schema.decodeUnknownExit(OrchestrationEvent);
 const decodeClientCommand = Schema.decodeUnknownExit(ClientOrchestrationCommand);
+const decodeBoardClientCommand = Schema.decodeUnknownExit(BoardClientCommand);
 const decodeServerCommand = Schema.decodeUnknownExit(OrchestrationCommand);
 
 // T3O-56: board events and commands belong to the board's own engine, not to
-// upstream's orchestration unions — except that clients still SEND board
-// commands over `orchestration.dispatchCommand`, so the wire union keeps them.
+// upstream's orchestration unions. T3O-57: clients send board commands over
+// `board.dispatchCommand`, so upstream's wire union carries none either.
 const cardCreated = {
   sequence: 1,
   eventId: "evt-1",
@@ -51,7 +52,7 @@ describe("board events (T3O-56)", () => {
     expect(OrchestrationEventType.literals.some((type) => type.startsWith("board."))).toBe(false);
   });
 
-  it("leave board commands off the server-side command union but on the wire", () => {
+  it("leave board commands off both upstream command unions, onto the board's own", () => {
     const move = {
       type: "board.card.move",
       commandId: "cmd-move",
@@ -59,8 +60,8 @@ describe("board events (T3O-56)", () => {
       toStage: "sprint",
       createdAt: "2026-01-01T00:00:00.000Z",
     };
-    expect(decodeClientCommand(move)._tag).toBe("Success");
+    expect(decodeBoardClientCommand(move)._tag).toBe("Success");
+    expect(decodeClientCommand(move)._tag).toBe("Failure");
     expect(decodeServerCommand(move)._tag).toBe("Failure");
-    expect(BOARD_CLIENT_COMMANDS.length).toBeGreaterThan(0);
   });
 });

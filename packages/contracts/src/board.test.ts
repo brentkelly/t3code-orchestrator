@@ -83,15 +83,15 @@ import {
   type BoardCard,
   type BoardPlan,
   type BoardState,
+  BoardShellSnapshot,
 } from "./board.ts";
 import type { BoardCardAutoMergeHold, BoardCardWorktree } from "./board.ts";
-import { OrchestrationShellSnapshot } from "./orchestration.ts";
 import { ProjectId, ThreadId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 const encodeShell = Schema.encodeUnknownSync(BoardCardShell);
 const decodeShell = Schema.decodeUnknownSync(BoardCardShell);
-const encodeSnapshot = Schema.encodeUnknownSync(OrchestrationShellSnapshot);
+const encodeSnapshot = Schema.encodeUnknownSync(BoardShellSnapshot);
 
 const utf8Bytes = (value: unknown): number =>
   new TextEncoder().encode(JSON.stringify(value)).length;
@@ -231,14 +231,15 @@ const typicalCard = (index: number): BoardCard => ({
   updatedAt: "2026-01-01T00:00:00.000Z",
 });
 
-const snapshotWithCards = (count: number): typeof OrchestrationShellSnapshot.Type => ({
+const snapshotWithCards = (count: number): BoardShellSnapshot => ({
   snapshotSequence: count,
-  projects: [],
-  threads: [],
   cards: Array.from({ length: count }, (_, index) =>
     boardCardShellFromCard(typicalCard(index + 1)),
   ),
-  updatedAt: "2026-01-01T00:00:00.000Z",
+  labels: [],
+  stages: [],
+  cardThreads: [],
+  providerLimits: [],
 });
 
 describe("BoardCardShell payload discipline", () => {
@@ -336,7 +337,7 @@ describe("BoardCardShell payload discipline", () => {
     expect(gaveUp.autoMergeGaveUp).toBe(true);
   });
 
-  it("grows the shell snapshot linearly and modestly with card count", () => {
+  it("grows the board snapshot linearly and modestly with card count", () => {
     const bytesAt10 = utf8Bytes(encodeSnapshot(snapshotWithCards(10)));
     const bytesAt1000 = utf8Bytes(encodeSnapshot(snapshotWithCards(1000)));
 
