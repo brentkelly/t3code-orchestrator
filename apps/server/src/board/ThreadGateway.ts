@@ -251,8 +251,9 @@ export interface ThreadTargetInput {
 }
 
 export interface ThreadSettleInput extends ThreadTargetInput {
-  /** The automatic settle: refuses a thread already settled or one a human
-      explicitly un-settled, so a repeating sweep stays quiet. */
+  /** The automatic settle: re-checks `autoSettleCandidate` itself and refuses
+      a thread that is not one, or that changed between that check and the
+      settle, so a repeating sweep stays quiet and never settles stale state. */
   readonly auto: boolean;
 }
 

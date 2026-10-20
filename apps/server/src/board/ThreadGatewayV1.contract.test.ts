@@ -287,6 +287,44 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       }),
     );
 
+    // The candidacy the caller read is re-checked at dispatch, so a thread that
+    // stopped being a candidate since — here, snoozed — is refused even though
+    // the engine's own decider would accept a settle.
+    it.effect("an automatic settle refuses a thread that is no longer a candidate", () =>
+      Effect.gen(function* () {
+        yield* ensureProject;
+        const threadId = ThreadId.make("thread-contract-snoozed");
+        const engine = yield* boardStackEngine;
+        yield* engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-contract-snoozed"),
+          threadId,
+          projectId,
+          title: "Snoozed",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: t0,
+        });
+        const threads = yield* ThreadGateway;
+        assert.isTrue((yield* threads.threadState(threadId))!.autoSettleCandidate);
+        yield* engine.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("cmd-contract-snooze"),
+          threadId,
+          snoozedUntil: "2999-01-01T00:00:00.000Z",
+        });
+
+        const exit = yield* Effect.exit(
+          threads.settle({ commandId: boardCommandId("release-thread"), threadId, auto: true }),
+        );
+        assert.strictEqual(refusalTag(exit), "ThreadCommandRefusedError");
+        assert.isFalse((yield* threads.threadRecords([threadId])).get(threadId)!.settlementDecided);
+      }),
+    );
+
     it.effect("a deleted thread reads as deleted, drops out of the live set, and is logged", () =>
       Effect.gen(function* () {
         const threadId = yield* spawn("deleted");

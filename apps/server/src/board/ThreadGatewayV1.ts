@@ -441,15 +441,41 @@ export const makeThreadGatewayV1 = Effect.gen(function* () {
           createdAt: yield* nowIso,
         });
       }),
+    // The automatic settle re-reads candidacy itself, against a projection
+    // sequence captured BEFORE that read: the engine refuses the command when
+    // the thread logged any event after it, so a thread that changed between
+    // the check and the dispatch is never settled — the same guard upstream's
+    // own inactivity sweep relies on.
     settle: (input) =>
       input.auto
         ? Effect.gen(function* () {
+            const commandFailed = (cause: unknown) =>
+              new ThreadCommandFailedError({
+                command: "thread.auto-settle",
+                threadId: input.threadId,
+                detail: cause instanceof Error ? cause.message : String(cause),
+                cause,
+              });
+            const { snapshotSequence } = yield* snapshotQuery
+              .getSnapshotSequence()
+              .pipe(Effect.mapError(commandFailed));
+            const shell = yield* snapshotQuery
+              .getThreadShellById(input.threadId)
+              .pipe(Effect.mapError(commandFailed));
+            const settledAt = yield* nowIso;
+            if (Option.isNone(shell) || !isAutoSettlementCandidate(shell.value, settledAt)) {
+              return yield* new ThreadCommandRefusedError({
+                command: "thread.auto-settle",
+                threadId: input.threadId,
+                detail: `thread ${input.threadId} is not a candidate for automatic settlement`,
+              });
+            }
             yield* run({
               type: "thread.auto-settle",
               commandId: input.commandId,
               threadId: input.threadId,
-              snapshotSequence: yield* engine.latestSequence,
-              settledAt: yield* nowIso,
+              snapshotSequence,
+              settledAt,
             });
           })
         : run({ type: "thread.settle", commandId: input.commandId, threadId: input.threadId }),
