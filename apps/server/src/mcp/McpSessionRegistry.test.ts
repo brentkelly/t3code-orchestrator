@@ -49,7 +49,8 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
     const resolved = yield* registry.resolve(token);
     expect(resolved?.thread.threadId).toBe(threadId);
     expect(resolved?.capabilities).toEqual(
-      new Set(["preview", "orchestration", "worktree", "pull-requests"]),
+      // T3o: every thread session also carries the board capability (t3o-08, D3).
+      new Set(["preview", "orchestration", "worktree", "pull-requests", "board"]),
     );
 
     yield* registry.revokeThread(threadId);
