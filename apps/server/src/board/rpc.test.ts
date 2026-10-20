@@ -9,6 +9,7 @@ import {
   AuthOrchestrationReadScope,
   AuthSessionId,
   BoardCardId,
+  BoardStageId,
   CommandId,
   ProjectId,
   ProviderInstanceId,
@@ -17,14 +18,29 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 import { boardRpcHandlers } from "./rpc.ts";
+import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 
-const makeBoardRpcTestLayer = makeBoardStackTestLayer;
+/** The human-actor stamp asks git for the project's `user.name`. */
+const gitStub = Layer.succeed(GitVcsDriver, {
+  execute: () =>
+    Effect.succeed({
+      exitCode: 0,
+      stdout: "Rpc Tester\n",
+      stderr: "",
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    }),
+} as unknown as GitVcsDriver["Service"]);
+
+const makeBoardRpcTestLayer = (prefix: string) =>
+  makeBoardStackTestLayer(prefix).pipe(Layer.provideMerge(gitStub));
 
 const t0 = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-rpc");
@@ -165,6 +181,7 @@ const makeHandlers = (scopes: ReadonlyArray<AuthenticatedSession["scopes"][numbe
     return yield* boardRpcHandlers({
       currentSession: session(scopes),
       boardSupervisor: supervisorStub,
+      origin: undefined,
     });
   });
 
@@ -398,6 +415,104 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-link-pr-test-"))(
         });
         assert.strictEqual(outcome.outcome, "refused");
         assert.deepStrictEqual(supervisorCalls.link, []);
+      }),
+    );
+  },
+);
+
+it.layer(makeBoardRpcTestLayer("t3o-board-rpc-dispatch-test-"))(
+  "board.dispatchCommand (T3O-57)",
+  (it) => {
+    const move = (commandId: string) =>
+      ({
+        type: "board.card.move",
+        commandId: CommandId.make(commandId),
+        cardId,
+        toStage: BoardStageId.make("sprint"),
+        createdAt: t0,
+      }) as const;
+
+    it.effect("rejects a session with only the read scope, before the engine sees it", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        const engine = yield* boardStackEngine;
+        const before = yield* engine.boardEngine.latestSequence;
+        const handlers = yield* makeHandlers([AuthOrchestrationReadScope]);
+        const failure = yield* Effect.flip(handlers["board.dispatchCommand"](move("cmd-denied")));
+        assert.strictEqual(failure._tag, "EnvironmentAuthorizationError");
+        assert.strictEqual(yield* engine.boardEngine.latestSequence, before);
+      }),
+    );
+
+    it.effect("decides the command on the board engine and stamps the human actor", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        const engine = yield* boardStackEngine;
+        const handlers = yield* makeHandlers([
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+        ]);
+        const result = yield* handlers["board.dispatchCommand"](move("cmd-move-sprint"));
+        assert.strictEqual(result.sequence, yield* engine.boardEngine.latestSequence);
+        const model = yield* engine.boardEngine.getReadModel;
+        assert.strictEqual(model.board?.cards.find((card) => card.id === cardId)?.stage, "sprint");
+        const detail = Stream.runHead(handlers["board.subscribeCard"]({ cardId })).pipe(
+          Effect.scoped,
+        );
+        const activity = (yield* detail).pipe((item) =>
+          item._tag === "Some" ? item.value.detail.activity : [],
+        );
+        assert.isTrue(activity.some((entry) => entry.actor.name === "Rpc Tester"));
+      }),
+    );
+
+    it.effect("returns a refusal in the decider's own words", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        const handlers = yield* makeHandlers([AuthOrchestrationOperateScope]);
+        const failure = yield* Effect.flip(
+          handlers["board.dispatchCommand"]({
+            ...move("cmd-move-missing"),
+            cardId: BoardCardId.make("card-missing"),
+          }),
+        );
+        assert.strictEqual(failure._tag, "BoardDispatchCommandError");
+        assert.include(failure.message, "card-missing");
+      }),
+    );
+  },
+);
+
+it.layer(makeBoardRpcTestLayer("t3o-board-rpc-archived-test-"))(
+  "board.getArchivedCards (T3O-57)",
+  (it) => {
+    it.effect("lists an archived card, which the live board no longer carries", () =>
+      Effect.gen(function* () {
+        yield* seedCard;
+        const handlers = yield* makeHandlers([
+          AuthOrchestrationReadScope,
+          AuthOrchestrationOperateScope,
+        ]);
+        assert.deepStrictEqual((yield* handlers["board.getArchivedCards"]({})).cards, []);
+        yield* handlers["board.dispatchCommand"]({
+          type: "board.card.archive",
+          commandId: CommandId.make("cmd-archive"),
+          cardId,
+          createdAt: t0,
+        });
+        const archived = yield* handlers["board.getArchivedCards"]({});
+        assert.deepStrictEqual(
+          archived.cards.map((card) => card.cardId),
+          [cardId],
+        );
+      }),
+    );
+
+    it.effect("rejects a session without the read scope", () =>
+      Effect.gen(function* () {
+        const handlers = yield* makeHandlers([]);
+        const failure = yield* Effect.flip(handlers["board.getArchivedCards"]({}));
+        assert.strictEqual(failure._tag, "EnvironmentAuthorizationError");
       }),
     );
   },

@@ -155,7 +155,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
 
         // Shell snapshot carries the bounded card shell to every connecting
         // client — never the full aggregate (t3o-04, D7).
-        const shell = yield* snapshotQuery.getShellSnapshot();
+        const shell = yield* snapshotQuery.getBoardSnapshot();
         assert.deepStrictEqual(shell.cards, [expectedCardShell]);
 
         // Replaying the board's own log from a truly empty read model must land
@@ -463,11 +463,11 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
       const rehydratedCard = rehydrated.board?.cards.find((card) => card.id === "card-labelled");
       assert.deepStrictEqual(rehydratedCard?.labels, [BOARD_SEED_LABEL_IDS.feature]);
 
-      const shell = yield* snapshotQuery.getShellSnapshot();
+      const shell = yield* snapshotQuery.getBoardSnapshot();
       const shellCard = shell.cards?.find((card) => card.cardId === "card-labelled");
       assert.deepStrictEqual(shellCard?.labelIds, [BOARD_SEED_LABEL_IDS.feature]);
       // The catalogue rides the shell once, as a top-level array.
-      assert.isTrue((shell.boardLabels?.length ?? 0) >= 3);
+      assert.isTrue((shell.labels?.length ?? 0) >= 3);
 
       const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
       let replayed = {} as BoardReadModel;
@@ -635,11 +635,11 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-empty-test-"))(
         assert.strictEqual(rehydrated.board, undefined);
         assert.deepStrictEqual(rehydrated.board, replayed.board);
 
-        // And the shell snapshot carries no empty `cards` array (payload
-        // discipline — nothing board-shaped reaches the client until a card
-        // exists).
+        // And the orchestration shell carries nothing board-shaped at all: the
+        // board rides its own subscription (T3O-57).
         const shell = yield* snapshotQuery.getShellSnapshot();
-        assert.strictEqual(shell.cards, undefined);
+        assert.isFalse("cards" in shell);
+        assert.isFalse("boardLabels" in shell);
       }),
     );
   },

@@ -86,7 +86,8 @@ import {
   type BoardState,
   type BoardEvent,
   type ProjectId,
-  type OrchestrationShellStreamEvent,
+  type BoardShellStreamEvent,
+  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -108,6 +109,11 @@ export { isBoardEvent };
 export interface BoardReadModel {
   readonly board?: BoardState | undefined;
 }
+
+/** Upstream's command read model with the board slice on it (T3O-57: the slice
+    is no longer part of upstream's schema) — the one view a supervisor pass
+    that reads both threads and cards decides from. */
+export type BoardOrchestrationReadModel = OrchestrationReadModel & BoardReadModel;
 
 const decodeBoardCardCreatedPayload = Schema.decodeUnknownEffect(BoardCardCreatedPayload);
 const decodeBoardCardMovedPayload = Schema.decodeUnknownEffect(BoardCardMovedPayload);
@@ -923,12 +929,10 @@ export function projectBoardEvent<M extends BoardReadModel>(
  * Deltas carry the bounded `BoardCardShell` (t3o-04), built purely from the
  * event's own card. This mapping has no thread shells at hand, so the
  * shell's thread-derived fields leave here at their "none" resting state
- * and the client reducer re-derives them from `activeThreadId` against the
- * thread shells it already holds — see `boardCardShellFromCard`.
+ * and the client's board views derive them against the thread shells it
+ * already holds (`withBoardThreadFields`) — see `boardCardShellFromCard`.
  */
-export function boardShellStreamEvent(
-  event: BoardEvent,
-): Option.Option<OrchestrationShellStreamEvent> {
+export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShellStreamEvent> {
   switch (event.type) {
     case "board.card-created":
       return Option.some({

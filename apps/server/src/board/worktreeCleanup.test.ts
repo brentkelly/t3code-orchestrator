@@ -22,7 +22,6 @@ import {
   BOARD_SEED_STAGE_IDS,
   type BoardCard,
   type BoardCardPullRequest,
-  type OrchestrationReadModel,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -37,6 +36,7 @@ import {
   type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import type { BoardOrchestrationReadModel } from "./projector.ts";
 
 const settings = (reclaimWorktreeOnDone = true) =>
   settingsWith({ building: [codexStep], globalMaxConcurrent: 4, reclaimWorktreeOnDone });
@@ -84,7 +84,7 @@ const ownWorktrees = () => {
 
 /** Change one card in the read model, as a concurrent command would. */
 const editCard = (
-  model: Ref.Ref<OrchestrationReadModel>,
+  model: Ref.Ref<BoardOrchestrationReadModel>,
   cardId: string,
   edit: (card: BoardCard) => BoardCard,
 ) =>

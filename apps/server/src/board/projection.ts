@@ -11,9 +11,8 @@
  * `makeBoardQueries` is the board's read side, served by the `BoardQueries`
  * service.
  *
- * `boardSnapshotQueryMethods` wraps upstream's shell snapshot queries at their
- * assembly point, so the shell snapshot carries the board's shell slices until
- * the board has its own subscription (t3o-26 D4).
+ * `loadBoardShellSnapshot` assembles the board's bounded summary for
+ * `board.subscribeBoard` (t3o-26 D4, T3O-57).
  */
 import {
   BoardCardStepAwaitingReason,
@@ -69,14 +68,14 @@ import {
   type BoardPlanWithBody,
   type BoardState,
   type OrchestrationEvent,
-  type OrchestrationShellSnapshot,
+  type BoardCardShell,
+  type BoardShellSnapshot,
   IsoDateTime,
   ProjectId,
   ThreadId,
   RuntimeMode,
   type ProviderOptionSelections,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -86,8 +85,8 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../persistence/Errors.ts";
 import { boardActivityActorFor } from "./activityActors.ts";
 import { makeBoardUpstreamReads } from "./boardUpstreamReads.ts";
+import { makeBoardEventStore } from "./boardEventStore.ts";
 import type { BoardProjectRef, BoardThreadRef } from "./decider.ts";
-import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   boardCardFromCreatedPayload,
   compareBoardCards,
@@ -3269,18 +3268,14 @@ function compareBoardCardShellRows(
 }
 
 /**
- * Bounded `BoardCardShell`s ride the shell snapshot (t3o-04, D7): a narrow
- * SQL projection of the live (non-archived) cards, joined in JS against the
- * snapshot's own thread shells for the thread-derived fields — the thread
- * data is already in the snapshot being enriched, so no thread SQL is
- * needed. Archived cards leave the shell (D15) but stay in the table and
- * the read model, so unarchive can bring them back.
+ * Bounded `BoardCardShell`s for the board snapshot (t3o-04, D7): a narrow SQL
+ * projection of the live (non-archived) cards. Archived cards leave it (D15)
+ * but stay in the table and the read model, so unarchive can bring them back.
  */
-export function withBoardShellCards(
+function boardShellCards(
   queries: BoardCardQueries,
-  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
-): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
-  const shellRows = Effect.all([
+): Effect.Effect<ReadonlyArray<BoardCardShell>, ProjectionRepositoryError> {
+  return Effect.all([
     queries.listBoardCardShellRows(),
     queries.listLiveBoardCardThreadLinkRows(),
     queries.listBoardCardLabelRows(),
@@ -3288,10 +3283,9 @@ export function withBoardShellCards(
     // `queued` when its live step is holding for a slot. One row per card
     // (D4), so a small map keyed by card id.
     queries.listBoardCardStepStateRows(),
-  ]).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shell:query")));
-  return Effect.all([snapshot, shellRows]).pipe(
-    Effect.map(([shell, [cardRows, linkRows, cardLabelRows, stepStateRows]]) => {
-      if (cardRows.length === 0) return shell;
+  ]).pipe(
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shell:query")),
+    Effect.map(([cardRows, linkRows, cardLabelRows, stepStateRows]) => {
       const linksByCard = new Map<BoardCardId, BoardCardThreadLink[]>();
       for (const row of linkRows) {
         const links = linksByCard.get(row.cardId) ?? [];
@@ -3370,17 +3364,11 @@ export function withBoardShellCards(
         if (isBoardConflictFixLive(row)) conflictFixByCard.add(row.cardId);
         if (isBoardChecksFixLive(row)) checksFixByCard.add(row.cardId);
       }
-      const threadsById = new Map(shell.threads.map((thread) => [thread.id, thread]));
-      const cards = [...cardRows].sort(compareBoardCardShellRows).map((row) => {
+      return [...cardRows].sort(compareBoardCardShellRows).map((row) => {
         const links = linksByCard.get(row.cardId) ?? [];
         const activeThreadId = activeBoardCardThreadId(links);
-        // The badge aggregates across EVERY live-linked thread (t3o-18, D7), not
-        // just the most recently linked one: a card whose OLDER thread awaits
-        // input showed no "Input needed" badge at all before this, and a card
-        // with work running in a non-active thread looked dead.
-        const liveThreads = links
-          .filter((link) => link.tombstonedAt === null)
-          .map((link) => threadsById.get(link.threadId));
+        // Thread-derived fields rest at "none": the client derives them from
+        // the thread shells it holds, across every live-linked thread (t3o-18).
         return makeBoardCardShell({
           cardId: row.cardId,
           key: row.key,
@@ -3425,62 +3413,45 @@ export function withBoardShellCards(
           ...(stallByCard.get(row.cardId) ?? {}),
           stepConflictFix: conflictFixByCard.has(row.cardId),
           stepChecksFix: checksFixByCard.has(row.cardId),
-          thread: liveThreads,
         });
       });
-      return { ...shell, cards };
     }),
   );
 }
 
-/**
- * Live card→thread links and their cached todo summaries ride the shell
- * snapshot as their OWN array (t3o-18, D3), following the `boardLabels`
- * precedent — never denormalised onto `BoardCardShell`, whose 1280-byte budget
- * and scalars-only test are left untouched and unamended.
- *
- * Attached only when there is something to attach, exactly like the label
- * catalogue: a board with no linked threads pays nothing.
- */
-export function withBoardCardThreads(
+/** Live card→thread links and their cached todo summaries (t3o-18, D3): their
+    own array, never denormalised onto `BoardCardShell`, whose 1280-byte budget
+    is left untouched. */
+function boardShellCardThreads(
   queries: BoardCardQueries,
-  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
-): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
-  const rows = queries
-    .listBoardCardThreadShellRows()
-    .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellCardThreads:query")));
-  return Effect.all([snapshot, rows]).pipe(
-    Effect.map(([shell, threadRows]) => {
-      if (threadRows.length === 0) return shell;
-      return { ...shell, boardCardThreads: threadRows.map(toBoardCardThreadShell) };
-    }),
+): Effect.Effect<ReadonlyArray<BoardCardThreadShell>, ProjectionRepositoryError> {
+  return queries.listBoardCardThreadShellRows().pipe(
+    Effect.map((rows) => rows.map(toBoardCardThreadShell)),
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellCardThreads:query")),
   );
 }
 
 /**
- * The archive page's card list (t3o-13, D7), riding the same
- * `getArchivedShellSnapshot` the archived-threads panel already reads — the
- * archive is a page you open, not state every client carries, so it stays off
- * the live snapshot and the delta stream exactly as D15 requires.
+ * The archive page's card list (t3o-13, D7), served by `board.getArchivedCards`
+ * — the archive is a page you open, not state every client carries, so it
+ * stays off the live snapshot and the delta stream exactly as D15 requires.
  *
  * Newest archive first: the card you just archived by mistake is the one you
  * came to restore. Thread state is left at its resting value — an archived
  * card's threads are not what the archive list is for, and asking for them
  * would cost a query per page open.
  */
-export function withBoardArchivedShellCards(
+function boardArchivedShellCards(
   queries: BoardCardQueries,
-  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
-): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
-  const shellRows = Effect.all([
+): Effect.Effect<ReadonlyArray<BoardCardShell>, ProjectionRepositoryError> {
+  return Effect.all([
     queries.listArchivedBoardCardShellRows(),
     queries.listBoardCardLabelRows(),
-  ]).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.archivedShell:query")));
-  return Effect.all([snapshot, shellRows]).pipe(
-    Effect.map(([shell, [cardRows, cardLabelRows]]) => {
-      if (cardRows.length === 0) return shell;
+  ]).pipe(
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.archivedShell:query")),
+    Effect.map(([cardRows, cardLabelRows]) => {
       const labelsByCard = groupCardLabels(cardLabelRows);
-      const cards = [...cardRows]
+      return [...cardRows]
         .sort(
           (left, right) =>
             (right.archivedAt ?? "").localeCompare(left.archivedAt ?? "") ||
@@ -3513,30 +3484,23 @@ export function withBoardArchivedShellCards(
             activeThreadId: null,
           }),
         );
-      return { ...shell, cards };
     }),
   );
 }
 
 /**
- * The label catalogue rides the shell snapshot ONCE (t3o-06a): N labels for
- * the whole board, never denormalised per card. Includes tombstoned labels so
- * a client can render a retired-label chip muted; the picker filters them.
- * Sorted canonically for a stable picker order. Attached whenever the
- * catalogue has any rows — post-migration it always has the seeds — so even an
- * empty board's shell carries the vocabulary the picker needs.
+ * The label catalogue rides the board snapshot ONCE (t3o-06a): N labels for the
+ * whole board, never denormalised per card. Includes tombstoned labels so a
+ * client can render a retired-label chip muted; the picker filters them.
+ * Sorted canonically for a stable picker order.
  */
-export function withBoardShellLabels(
+function boardShellLabels(
   queries: BoardCardQueries,
-  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
-): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
-  const labelRows = queries
-    .listBoardLabelRows()
-    .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellLabels:query")));
-  return Effect.all([snapshot, labelRows]).pipe(
-    Effect.map(([shell, rows]) => {
-      if (rows.length === 0) return shell;
-      const boardLabels = rows
+): Effect.Effect<ReadonlyArray<BoardLabel>, ProjectionRepositoryError> {
+  return queries.listBoardLabelRows().pipe(
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellLabels:query")),
+    Effect.map((rows) =>
+      rows
         .map((row) => ({
           labelId: row.labelId,
           name: row.name,
@@ -3545,58 +3509,37 @@ export function withBoardShellLabels(
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
         }))
-        .sort(compareBoardLabels);
-      return { ...shell, boardLabels };
-    }),
+        .sort(compareBoardLabels),
+    ),
   );
 }
 
 /**
- * Provider cooldowns ride the shell snapshot ONCE (T3O-22, D14), on the
- * `boardLabels` precedent — one fact per provider ACCOUNT, never denormalised
- * onto the cards that share it.
+ * Provider cooldowns ride the board snapshot ONCE (T3O-22, D14) — one fact per
+ * provider ACCOUNT, never denormalised onto the cards that share it.
  *
- * The snapshot is the ONLY producer a reconnecting client has: the
- * `card-provider-limit-upserted` delta keeps a live client honest, but a
- * cooldown is a multi-hour fact and the client that reloads in the middle of one
- * replays no delta at all. Without this the pill, the popover, the waiting list
- * and both of its buttons would be invisible for essentially the whole life of
- * every limit. Attached only when something is limited, which on the
- * overwhelming majority of boards is never — absent, not `[]`, like every other
- * conditional slice here.
+ * The snapshot is the ONLY producer a reconnecting client has: a cooldown is a
+ * multi-hour fact, and the client that reloads in the middle of one replays no
+ * delta at all.
  */
-export function withBoardShellProviderLimits(
+function boardShellProviderLimits(
   queries: BoardCardQueries,
-  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
-): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
-  const limitRows = queries
-    .listBoardProviderLimitRows()
-    .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellProviderLimits:query")));
-  return Effect.all([snapshot, limitRows]).pipe(
-    Effect.map(([shell, rows]) => {
-      if (rows.length === 0) return shell;
-      const boardProviderLimits = rows
-        .map(rowToBoardProviderLimit)
-        .sort(compareBoardProviderLimits);
-      return { ...shell, boardProviderLimits };
-    }),
+): Effect.Effect<ReadonlyArray<BoardProviderLimit>, ProjectionRepositoryError> {
+  return queries.listBoardProviderLimitRows().pipe(
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellProviderLimits:query")),
+    Effect.map((rows) => rows.map(rowToBoardProviderLimit).sort(compareBoardProviderLimits)),
   );
 }
 
-/** Enrich the shell snapshot with the user-defined stage list (t3o-15) so the
-    board reads column order and labels from it (D13). Always present (stages
-    are seeded), so — unlike labels — this is not conditional on non-empty. */
-export function withBoardShellStages(
+/** The user-defined stage list (t3o-15), so the board reads column order and
+    labels from it (D13). */
+function boardShellStages(
   queries: BoardCardQueries,
-  snapshot: Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>,
-): Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError> {
-  const stageRows = queries
-    .listBoardStageRows()
-    .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellStages:query")));
-  return Effect.all([snapshot, stageRows]).pipe(
-    Effect.map(([shell, rows]) => {
-      if (rows.length === 0) return shell;
-      const boardStages = rows
+): Effect.Effect<ReadonlyArray<BoardStageDefinition>, ProjectionRepositoryError> {
+  return queries.listBoardStageRows().pipe(
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellStages:query")),
+    Effect.map((rows) =>
+      rows
         .map((row): BoardStageDefinition => ({
           stageId: row.stageId,
           label: row.label,
@@ -3605,10 +3548,34 @@ export function withBoardShellStages(
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
         }))
-        .sort(compareBoardStages);
-      return { ...shell, boardStages };
-    }),
+        .sort(compareBoardStages),
+    ),
   );
+}
+
+/**
+ * The board's bounded summary for `board.subscribeBoard` (t3o-26 D4, T3O-57).
+ *
+ * The log head is read FIRST, so the tables read after it are at least as new
+ * as `snapshotSequence`. Deltas after it that the tables already hold are
+ * replayed over them harmlessly: every board delta is an idempotent upsert or
+ * removal.
+ */
+export function loadBoardShellSnapshot(
+  queries: BoardCardQueries,
+  latestSequence: Effect.Effect<number, ProjectionRepositoryError>,
+): Effect.Effect<BoardShellSnapshot, ProjectionRepositoryError> {
+  return Effect.gen(function* () {
+    const snapshotSequence = yield* latestSequence;
+    const [cards, labels, stages, cardThreads, providerLimits] = yield* Effect.all([
+      boardShellCards(queries),
+      boardShellLabels(queries),
+      boardShellStages(queries),
+      boardShellCardThreads(queries),
+      boardShellProviderLimits(queries),
+    ]);
+    return { snapshotSequence, cards, labels, stages, cardThreads, providerLimits };
+  });
 }
 
 /**
@@ -3779,6 +3746,13 @@ export interface BoardQueriesShape {
   /** The board slice rehydrated from the board tables, or null for a board
       no event has ever touched — what the board engine boots from. */
   readonly loadBoardState: () => Effect.Effect<BoardState | null, ProjectionRepositoryError>;
+  /** The board's bounded summary for `board.subscribeBoard` (T3O-57). */
+  readonly boardShellSnapshot: () => Effect.Effect<BoardShellSnapshot, ProjectionRepositoryError>;
+  /** Archived card shells for the archive page (t3o-13), newest archive first. */
+  readonly boardArchivedCards: () => Effect.Effect<
+    ReadonlyArray<BoardCardShell>,
+    ProjectionRepositoryError
+  >;
   /** Full detail for `board.subscribeCard`; null when the card does not exist. */
   readonly boardCardDetail: (
     cardId: BoardCardId,
@@ -3801,6 +3775,13 @@ export interface BoardQueriesShape {
   readonly boardCardThreads: (
     cardId: BoardCardId,
   ) => Effect.Effect<ReadonlyArray<BoardCardThreadShell>, ProjectionRepositoryError>;
+  /** Every card's live links + cached todo summaries — the snapshot's
+      `cardThreads` slice, which a resume-by-replay re-sends because todo
+      changes are not in the board log. */
+  readonly boardAllCardThreads: () => Effect.Effect<
+    ReadonlyArray<BoardCardThreadShell>,
+    ProjectionRepositoryError
+  >;
   /** The card a live-linked thread belongs to, or null — how a thread-shaped
       shell refetch finds the card whose `card-threads` delta it must emit. */
   readonly boardCardIdForThread: (
@@ -3873,8 +3854,11 @@ export interface BoardThreadTodoState {
 export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
   const queries = makeBoardCardQueries(sql);
   const upstream = makeBoardUpstreamReads(sql);
+  const eventStore = makeBoardEventStore(sql);
   return {
     loadBoardState: () => loadBoardState(queries),
+    boardShellSnapshot: () => loadBoardShellSnapshot(queries, eventStore.latestSequence),
+    boardArchivedCards: () => boardArchivedShellCards(queries),
     // Board-only detail reader for board.subscribeCard (t3o-04).
     boardCardDetail: makeBoardCardDetailLoader(queries),
     // Board-only readers for the MCP context / plan tools (t3o-08).
@@ -3895,6 +3879,7 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
         Effect.map((rows) => rows.map(toBoardCardThreadShell)),
         Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardThreads:query")),
       ),
+    boardAllCardThreads: () => boardShellCardThreads(queries),
     boardCardIdForThread: (threadId) =>
       queries
         .findBoardCardIdForLiveThread(threadId)
@@ -3922,82 +3907,5 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
     boardSweepThreadTodos: upstream.sweepOrphanThreadTodos,
     boardProjects: upstream.listProjects,
     boardThread: upstream.findThread,
-  };
-}
-
-/**
- * Board-wrapped snapshot query methods, spread over the base methods in the
- * upstream ProjectionSnapshotQuery's returned object literal. Bounded card
- * shells, the label and stage catalogues, provider cooldowns and the card's
- * thread todos ride the shell snapshot until the board has its own
- * subscription (t3o-26 D4).
- */
-export function boardSnapshotQueryMethods(
-  sql: SqlClient.SqlClient,
-  base: Pick<ProjectionSnapshotQueryShape, "getShellSnapshot" | "getArchivedShellSnapshot">,
-  // Typed Partial deliberately: the spread in the upstream object literal sits
-  // after the base methods, and TS rejects a spread that *definitely* rewrites
-  // an earlier key (TS2783).
-): Partial<ProjectionSnapshotQueryShape> {
-  // Compiled once here — every reader below closes over the same query set.
-  const queries = makeBoardCardQueries(sql);
-  // Failure isolation: these wrap queries every consumer runs (subscribeShell,
-  // HTTP snapshot), so a board SQL failure must not take the Threads view down
-  // for thread-only users — log loudly and serve the unenriched base snapshot.
-  const isolated = <A, E>(
-    label: string,
-    enriched: Effect.Effect<A, E>,
-    fallback: Effect.Effect<A, E>,
-  ): Effect.Effect<A, E> =>
-    enriched.pipe(
-      Effect.catchCause((cause) =>
-        Effect.logError(`board snapshot enrichment failed; serving base ${label}`, {
-          cause: Cause.pretty(cause),
-        }).pipe(Effect.flatMap(() => fallback)),
-      ),
-    );
-  return {
-    // Bounded card shells + the label catalogue ride the shell snapshot
-    // (D2/D7; catalogue once, t3o-06a).
-    // Options pass through: upstream's background sweeps read only unsettled
-    // threads (`unsettledOnly`, v0.0.45), and dropping it here would turn every
-    // sweep back into a full read (T3O-54).
-    getShellSnapshot: (options) =>
-      isolated(
-        "shell snapshot",
-        // t3o-18: the card->thread + todo array is the outermost enricher, so a
-        // failure serving it still degrades to the base snapshot like every other.
-        withBoardCardThreads(
-          queries,
-          withBoardShellStages(
-            queries,
-            withBoardShellLabels(
-              queries,
-              // T3O-22: the cooldown slice, so a client reconnecting mid-limit
-              // sees the pill it would otherwise only learn about from a delta
-              // it was not connected for.
-              withBoardShellProviderLimits(
-                queries,
-                withBoardShellCards(queries, base.getShellSnapshot(options)),
-              ),
-            ),
-          ),
-        ),
-        base.getShellSnapshot(options),
-      ),
-    // Archived cards ride the archive page's snapshot (t3o-13, D7), with the
-    // catalogue so their label chips render like any other card's.
-    getArchivedShellSnapshot: () =>
-      isolated(
-        "archived shell snapshot",
-        withBoardShellStages(
-          queries,
-          withBoardShellLabels(
-            queries,
-            withBoardArchivedShellCards(queries, base.getArchivedShellSnapshot()),
-          ),
-        ),
-        base.getArchivedShellSnapshot(),
-      ),
   };
 }

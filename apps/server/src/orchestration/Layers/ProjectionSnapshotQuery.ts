@@ -70,8 +70,6 @@ import {
 import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
-// T3o: board snapshot enrichment lives in the board module.
-import { boardSnapshotQueryMethods } from "../../board/projection.ts";
 import {
   ProjectionSnapshotQuery,
   type ProjectionEventReplayStats,
@@ -3863,8 +3861,6 @@ pending_approval_requests AS (
     getTurnStartMessage,
     getThreadDetailById,
     getThreadDetailSnapshot,
-    // T3o: board shell slices ride the shell snapshot — board module wraps what it needs.
-    ...boardSnapshotQueryMethods(sql, { getShellSnapshot, getArchivedShellSnapshot }),
   } satisfies ProjectionSnapshotQueryShape;
 });
 

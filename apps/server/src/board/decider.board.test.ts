@@ -23,7 +23,6 @@ import {
   type BoardLabel,
   type BoardPlan,
   type BoardState,
-  type OrchestrationReadModel,
   type OrchestrationThread,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -32,6 +31,7 @@ import * as Effect from "effect/Effect";
 
 import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
+import type { BoardOrchestrationReadModel } from "./projector.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -152,7 +152,7 @@ function makeThread(input: {
 function makeReadModel(input: {
   readonly board?: BoardState;
   readonly threads?: ReadonlyArray<OrchestrationThread>;
-}): OrchestrationReadModel {
+}): BoardOrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [
@@ -187,15 +187,15 @@ function makeReadModel(input: {
     several — the card's own, plus one per affected dependent (a `blocked`
     re-flag for archive/unarchive per t3o-13 D5, an edge rewrite for delete) —
     while every other command decides exactly one. */
-const decideEvents = (command: BoardCommand, readModel: OrchestrationReadModel) =>
+const decideEvents = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
   decideBoardCommandOnModel({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
 
 /** The first (and, for every command but archive/unarchive/delete, only)
     decided event. */
-const decide = (command: BoardCommand, readModel: OrchestrationReadModel) =>
+const decide = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
   decideEvents(command, readModel).pipe(Effect.map((events) => events[0]!));
 
-const decideFail = (command: BoardCommand, readModel: OrchestrationReadModel) =>
+const decideFail = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
   Effect.flip(decide(command, readModel));
 
 const createCommand = (input: {
@@ -610,7 +610,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     readonly overrides?: BoardCard["reviewOverrides"];
     readonly completedRounds?: number;
     readonly liveStepId?: string;
-  }): OrchestrationReadModel =>
+  }): BoardOrchestrationReadModel =>
     makeReadModel({
       board: {
         cards: [

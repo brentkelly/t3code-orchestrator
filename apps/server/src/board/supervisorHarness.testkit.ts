@@ -48,7 +48,6 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type BoardEvent,
-  type OrchestrationReadModel,
   type OrchestrationThread,
   type OrchestrationThreadShell,
   type ProviderRuntimeEvent,
@@ -88,7 +87,7 @@ import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 import { BoardEngine } from "./BoardEngine.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import { boardRepositoryOf } from "./boardRepository.ts";
-import { projectBoardEvent } from "./projector.ts";
+import { projectBoardEvent, type BoardOrchestrationReadModel } from "./projector.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
 import { UsageLimitDetector, type UsageLimitDetectorShape } from "./UsageLimitDetector.ts";
 import type { WorktreeRetirer } from "./worktreeRetire.ts";
@@ -320,7 +319,7 @@ const seededThreadRow = (threadId: string, shell: OrchestrationThreadShell): Orc
     session: shell.session ?? null,
   }) as unknown as OrchestrationThread;
 
-export const readModel = (board: BoardState): OrchestrationReadModel => ({
+export const readModel = (board: BoardState): BoardOrchestrationReadModel => ({
   snapshotSequence: 0,
   projects: [
     {
@@ -467,7 +466,7 @@ export const settingsWith = (input: {
 export type Harness = {
   readonly slots: BoardStepSlots["Service"];
   readonly reactor: SupervisorReactor["Service"];
-  readonly model: Ref.Ref<OrchestrationReadModel>;
+  readonly model: Ref.Ref<BoardOrchestrationReadModel>;
   readonly shells: Ref.Ref<ReadonlyMap<string, OrchestrationThreadShell>>;
   readonly pumpDomain: (event: HarnessEvent) => Effect.Effect<void>;
   readonly pumpRuntime: (event: ProviderRuntimeEvent) => Effect.Effect<void>;
@@ -675,7 +674,7 @@ export function withGovernor(
         window in which the board can change under a reclaim already decided
         on. Gets the read model to change it. */
     readonly duringDurabilityProbe?: (
-      model: Ref.Ref<OrchestrationReadModel>,
+      model: Ref.Ref<BoardOrchestrationReadModel>,
     ) => Effect.Effect<void>;
     /** The cached todo state per thread id (t3o-18): the reactor reads
         `advancedAt` for the stall-reset / timeout-liveness signal. Absent
@@ -717,7 +716,7 @@ export function withGovernor(
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
   return Effect.gen(function* () {
-    const model = yield* Ref.make<OrchestrationReadModel>({
+    const model = yield* Ref.make<BoardOrchestrationReadModel>({
       ...readModel(input.board),
       threads: [...(input.initialShells ?? new Map()).entries()].map(([threadId, shell]) =>
         seededThreadRow(threadId, shell),
@@ -942,6 +941,7 @@ export function withGovernor(
       boardCardBrief: () => Effect.succeed(null),
       boardPlanBody: () => Effect.succeed(null),
       boardCardThreads: () => Effect.succeed([]),
+      boardAllCardThreads: () => Effect.succeed([]),
       boardCardIdForThread: () => Effect.succeed(null),
       boardThreadTodo: (threadId: ThreadId) => {
         const todo = threadTodos.get(String(threadId));
