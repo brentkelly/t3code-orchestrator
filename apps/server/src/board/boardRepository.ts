@@ -19,7 +19,7 @@
 import {
   pullRequestHostOf,
   type RepositoryIdentity,
-  type SourceControlProviderKind,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
@@ -83,7 +83,7 @@ export function boardRepositoryOf(
       ? (identity.provider as SourceControlProviderKind | undefined)
       : undefined) ??
     detectSourceControlProviderFromGitRemoteUrl(url)?.kind ??
-    "unknown";
+    SourceControlProviderKind.make("unknown");
   const segments = originKey
     .split("/")
     .slice(1)

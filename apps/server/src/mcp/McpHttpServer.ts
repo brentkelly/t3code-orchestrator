@@ -21,8 +21,9 @@ import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-// T3o: board toolkit registration seam (t3o-08, D3).
-import { BoardToolkitRegistrationLive } from "./toolkits/board/registration.ts";
+// T3o: the board toolkit and its declared handlers (t3o-08, D3).
+import { BoardToolkitHandlersLive } from "./toolkits/board/handlers.ts";
+import { BoardToolkit } from "./toolkits/board/tools.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -881,5 +882,5 @@ export const layer = Layer.mergeAll(
   layerDeviceToolkit,
   layerHtmlToolkit,
   // T3o: the board toolkit joins the stock toolkits on the same MCP server (D3).
-  BoardToolkitRegistrationLive,
+  toolkitRegistration(BoardToolkit, BoardToolkitHandlersLive),
 ).pipe(Layer.provideMerge(layerMcpTransport));

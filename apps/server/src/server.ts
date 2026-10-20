@@ -78,6 +78,8 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
+// T3o: the board's server layer (T3O-59).
+import { BoardServerLive } from "./board/serverLayer.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -587,6 +589,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // existed, or by a cleanup write that failed. See ProjectService.delete
   // for the normal (on-delete) path.
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
+  // T3o: the board — supervisor, engine, gateway and their kin (board/serverLayer.ts).
+  BoardServerLive.pipe(
+    Layer.provide(Layer.mergeAll(layerPullRequestService, ProjectionStoreV2.layer)),
+    Layer.provide(RuntimeLayer.layerEventSink),
+  ),
 ).pipe(
   // Core Services
   Layer.provideMerge(layerOrchestrationApplication),

@@ -7,11 +7,11 @@
  * registries (`BOARD_WS_METHODS` / `BOARD_RPCS` / `BOARD_RPC_SCOPES`) and
  * touches zero upstream files.
  *
- * Authorization: upstream's `observeRpc*` wrappers only cover the handlers
- * written inline in ws.ts, so board handlers enforce their own scopes from
- * `BOARD_RPC_SCOPES` against the same authenticated session — identical
- * failure shape (`EnvironmentAuthorizationError`) to upstream's
- * `authorizeEffect`.
+ * Authorization: upstream's `RpcScopeAuthorization` middleware already checks
+ * `RPC_REQUIRED_SCOPES`, which spreads `BOARD_RPC_SCOPES`; the handlers keep
+ * their own check against the same session as a second line, with the same
+ * failure shape (`EnvironmentAuthorizationError`). Spans and request metrics
+ * come from upstream's `RpcInstrumentation` middleware.
  *
  * Writes go through the board's own engine and reads through `BoardQueries`
  * (T3O-56); nothing here touches upstream's orchestration engine. The board's
@@ -60,7 +60,6 @@ import {
   claimBoardCardAttachment,
   deleteBoardCardAttachmentFile,
 } from "./attachments.ts";
-import { observeRpcEffect, observeRpcStreamEffect } from "../observability/RpcInstrumentation.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import {
   BOARD_HUMAN_ACTOR_FALLBACK_NAME,
@@ -82,8 +81,12 @@ export interface BoardRpcHandlerDeps {
       gateway and the step machinery a conflict fix needs. */
   readonly boardSupervisor: SupervisorReactorShape;
   /** The connecting client, stamped on every board event its commands make. */
-  readonly origin: OrchestrationClientOrigin | undefined;
+  readonly clientOrigin: OrchestrationClientOrigin;
 }
+
+/** A client that said nothing about itself has no origin worth stamping. */
+const hasClientOrigin = (origin: OrchestrationClientOrigin): boolean =>
+  origin.surface !== undefined || origin.appVersion !== undefined;
 
 export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
   Effect.gen(function* () {
@@ -169,13 +172,11 @@ function makeBoardRpcHandlers(
      * see `boardSubscription.ts` for the resume rules.
      */
     [BOARD_WS_METHODS.subscribeBoard]: (input: BoardSubscribeBoardInput) =>
-      observeRpcStreamEffect(
-        BOARD_WS_METHODS.subscribeBoard,
+      Stream.unwrap(
         authorized(
           BOARD_WS_METHODS.subscribeBoard,
           subscribeBoard(input).pipe(Effect.provide(services.subscriptionContext)),
         ),
-        { "rpc.aggregate": "board" },
       ),
 
     /**
@@ -183,15 +184,13 @@ function makeBoardRpcHandlers(
      * RPC is the transport that knows a person is on the other end (t3o-18).
      */
     [BOARD_WS_METHODS.dispatchCommand]: (command: BoardClientCommand) =>
-      observeRpcEffect(
-        BOARD_WS_METHODS.dispatchCommand,
-        authorized(
+      authorized(
           BOARD_WS_METHODS.dispatchCommand,
           services.stampActor(command).pipe(
             Effect.andThen(
               boardEngine.dispatch(
                 command,
-                deps.origin === undefined ? undefined : { origin: deps.origin },
+                hasClientOrigin(deps.clientOrigin) ? { origin: deps.clientOrigin } : undefined,
               ),
             ),
             Effect.mapError(
@@ -199,14 +198,10 @@ function makeBoardRpcHandlers(
             ),
           ),
         ),
-        { "rpc.aggregate": "board" },
-      ),
 
     /** The archive page's cards (t3o-13), read when the page opens. */
     [BOARD_WS_METHODS.getArchivedCards]: (_input: Record<string, never>) =>
-      observeRpcEffect(
-        BOARD_WS_METHODS.getArchivedCards,
-        authorized(
+      authorized(
           BOARD_WS_METHODS.getArchivedCards,
           boardQueries.boardArchivedCards().pipe(
             Effect.map((cards) => ({ cards })),
@@ -216,8 +211,6 @@ function makeBoardRpcHandlers(
             ),
           ),
         ),
-        { "rpc.aggregate": "board" },
-      ),
 
     /**
      * Re-resolve the card's pull request from the forge.
@@ -237,16 +230,13 @@ function makeBoardRpcHandlers(
      * what this card was filed about.
      */
     [BOARD_WS_METHODS.refreshCardPullRequest]: (input: BoardRefreshCardPullRequestInput) =>
-      observeRpcEffect(
-        BOARD_WS_METHODS.refreshCardPullRequest,
-        authorized(
+      authorized(
           BOARD_WS_METHODS.refreshCardPullRequest,
           deps.boardSupervisor.refreshPullRequest(
             input.cardId,
             input.force === true ? { force: true } : undefined,
           ),
         ),
-      ),
 
     /**
      * "No PR linked · Link one" on the card detail (T3O-18). The input is sent
@@ -255,9 +245,7 @@ function makeBoardRpcHandlers(
      */
     [BOARD_WS_METHODS.linkCardPullRequest]: (input: BoardLinkCardPullRequestInput) => {
       const target = parseCardPullRequestText(input.target);
-      return observeRpcEffect(
-        BOARD_WS_METHODS.linkCardPullRequest,
-        authorized(
+      return authorized(
           BOARD_WS_METHODS.linkCardPullRequest,
           target === null
             ? Effect.succeed({
@@ -265,8 +253,7 @@ function makeBoardRpcHandlers(
                 detail: `'${input.target}' names no pull request. Enter its URL or #number.`,
               } as const)
             : deps.boardSupervisor.linkPullRequest(input.cardId, target),
-        ),
-      );
+        );
     },
 
     /**
@@ -283,13 +270,10 @@ function makeBoardRpcHandlers(
      * moment.
      */
     [BOARD_WS_METHODS.probeProviderLimit]: (input: BoardProviderLimitActionInput) =>
-      observeRpcEffect(
-        BOARD_WS_METHODS.probeProviderLimit,
-        authorized(
+      authorized(
           BOARD_WS_METHODS.probeProviderLimit,
           deps.boardSupervisor.probeProviderLimit(input.providerInstanceId),
         ),
-      ),
 
     /**
      * "Set resume time" on a provider that named none (T3O-22, D14) — a human
@@ -297,25 +281,19 @@ function makeBoardRpcHandlers(
      * poll does not. Null hands the schedule back to the poll.
      */
     [BOARD_WS_METHODS.setProviderLimitResumeAt]: (input: BoardProviderLimitResumeAtInput) =>
-      observeRpcEffect(
-        BOARD_WS_METHODS.setProviderLimitResumeAt,
-        authorized(
+      authorized(
           BOARD_WS_METHODS.setProviderLimitResumeAt,
           deps.boardSupervisor.setProviderLimitResumeAt({
             providerInstanceId: input.providerInstanceId,
             resumeAt: input.resumeAt,
           }),
         ),
-      ),
 
     [BOARD_WS_METHODS.mergeCardPullRequest]: (input: BoardCardPullRequestActionInput) =>
-      observeRpcEffect(
-        BOARD_WS_METHODS.mergeCardPullRequest,
-        authorized(
+      authorized(
           BOARD_WS_METHODS.mergeCardPullRequest,
           deps.boardSupervisor.mergePullRequest(input.cardId),
         ),
-      ),
 
     /**
      * Open the card's pull request from Building and route it past Code review
@@ -325,13 +303,10 @@ function makeBoardRpcHandlers(
      * and the caller renders each refusal differently.
      */
     [BOARD_WS_METHODS.submitCardForMerge]: (input: BoardCardPullRequestActionInput) =>
-      observeRpcEffect(
-        BOARD_WS_METHODS.submitCardForMerge,
-        authorized(
+      authorized(
           BOARD_WS_METHODS.submitCardForMerge,
           deps.boardSupervisor.submitForMerge(input.cardId),
         ),
-      ),
 
     /**
      * Run one more review round on a settled loop (T3O-39, D6) — "Another
@@ -341,37 +316,28 @@ function makeBoardRpcHandlers(
      * or the executor re-plans a converged loop and bounces it straight back.
      */
     [BOARD_WS_METHODS.requestReviewRound]: (input: BoardCardPullRequestActionInput) =>
-      observeRpcEffect(
-        BOARD_WS_METHODS.requestReviewRound,
-        authorized(
+      authorized(
           BOARD_WS_METHODS.requestReviewRound,
           deps.boardSupervisor.requestReviewRound(input.cardId),
         ),
-      ),
 
     /**
      * "Remove worktree" on a finished card that kept one (T3O-52, D5). The
      * human confirmed at a dialog naming what is lost; the branch survives.
      */
     [BOARD_WS_METHODS.removeCardWorktree]: (input: BoardCardPullRequestActionInput) =>
-      observeRpcEffect(
-        BOARD_WS_METHODS.removeCardWorktree,
-        authorized(
+      authorized(
           BOARD_WS_METHODS.removeCardWorktree,
           deps.boardSupervisor.forceRemoveWorktree(input.cardId),
         ),
-      ),
 
     /** "Check again" on a card that kept its worktree (T3O-52): operate, like
         removal, because a durable checkout is removed by it. */
     [BOARD_WS_METHODS.checkCardWorktree]: (input: BoardCardPullRequestActionInput) =>
-      observeRpcEffect(
-        BOARD_WS_METHODS.checkCardWorktree,
-        authorized(
+      authorized(
           BOARD_WS_METHODS.checkCardWorktree,
           deps.boardSupervisor.checkWorktree(input.cardId),
         ),
-      ),
 
     /**
      * Attach a pending upload to the card's brief (t3o-32, K2). Copy first,
@@ -380,9 +346,7 @@ function makeBoardRpcHandlers(
      * the copy again so disk and record never disagree.
      */
     [BOARD_WS_METHODS.attachCardFile]: (input: BoardAttachCardFileInput) =>
-      observeRpcEffect(
-        BOARD_WS_METHODS.attachCardFile,
-        authorized(
+      authorized(
           BOARD_WS_METHODS.attachCardFile,
           Effect.gen(function* () {
             const config = yield* ServerConfig.ServerConfig;
@@ -461,7 +425,6 @@ function makeBoardRpcHandlers(
             return attachment;
           }).pipe(Effect.mapError(toAttachmentError)),
         ),
-      ),
 
     /**
      * Drop a brief attachment (t3o-32): record first, then the file. A file
@@ -469,9 +432,7 @@ function makeBoardRpcHandlers(
      * is gone, which is what the user asked for.
      */
     [BOARD_WS_METHODS.detachCardFile]: (input: BoardDetachCardFileInput) =>
-      observeRpcEffect(
-        BOARD_WS_METHODS.detachCardFile,
-        authorized(
+      authorized(
           BOARD_WS_METHODS.detachCardFile,
           Effect.gen(function* () {
             const config = yield* ServerConfig.ServerConfig;
@@ -521,7 +482,6 @@ function makeBoardRpcHandlers(
             });
           }).pipe(Effect.mapError(toAttachmentError)),
         ),
-      ),
 
     /**
      * One streaming subscription per open card, mirroring
@@ -532,10 +492,7 @@ function makeBoardRpcHandlers(
      * grammar and needs no client-side merge.
      */
     [BOARD_WS_METHODS.subscribeCard]: (input: BoardSubscribeCardInput) =>
-      // Same metrics/tracing wrapper as the ws.ts inline handlers — board
-      // RPCs must not be dark spots in RPC observability.
-      observeRpcStreamEffect(
-        BOARD_WS_METHODS.subscribeCard,
+      Stream.unwrap(
         authorized(
           BOARD_WS_METHODS.subscribeCard,
           Effect.gen(function* () {
@@ -587,7 +544,6 @@ function makeBoardRpcHandlers(
             );
           }),
         ),
-        { "rpc.aggregate": "board" },
       ),
   };
 }

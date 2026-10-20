@@ -36,11 +36,11 @@ const layerSetup = Layer.effectDiscard(
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     // T3o: attach boards.sqlite and heal legacy board layouts BEFORE upstream
     // migrations run. See board/migrations/index.ts.
-    yield* initialiseBoardDatabase();
+    yield* initialiseBoardDatabase().pipe(Effect.orDie);
     yield* runMigrations();
     // T3o: board migrations are a separate lineage (own ledger table), run after
     // upstream so upstream tables exist first. See board/migrations/index.ts.
-    yield* runBoardMigrations();
+    yield* runBoardMigrations().pipe(Effect.orDie);
     // Without sqlite_stat1 the planner guesses at index selectivity. 0x10012
     // analyzes tables whose indexes lack stats or whose row count changed 10x,
     // under a temporary analysis_limit. Otherwise it only checks table sizes.

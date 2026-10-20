@@ -34,7 +34,7 @@ import type {
 } from "@t3tools/contracts";
 
 import * as GitManager from "../git/GitManager.ts";
-import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
+import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { boardMergeStateOf, type BoardMergeState } from "./boardMergeState.ts";

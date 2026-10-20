@@ -44,6 +44,8 @@ import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import { forkParked, forkParkedFiber } from "./serverActivation.ts";
+// T3o: the board supervisor's start (board/serverLayer.ts).
+import { startBoardSupervisor } from "./board/serverLayer.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -539,6 +541,8 @@ const make = (options?: StartupOptions) =>
         ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
       });
       yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
+      // T3o: start the board supervisor (t3o-10) once v2 recovery has settled the runs a restart killed.
+      yield* runStartupPhase("board.supervisor.start", startBoardSupervisor);
       // Runs after activation: the status check fetches every enabled project's
       // remote, and awaiting it here held command readiness for that long.
       yield* runStartupPhase(

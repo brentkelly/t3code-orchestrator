@@ -51,8 +51,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
-import type { McpInvocationScope } from "../../McpInvocationContext.ts";
+import type { McpThreadInvocationScope } from "../../McpInvocationContext.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   ThreadGateway,
   type BoardProject,
@@ -115,7 +116,7 @@ const dispatchError = (error: BoardDispatchError): BoardToolError =>
     : internalError(error);
 
 interface BoardToolDeps {
-  readonly scope: McpInvocationScope;
+  readonly scope: McpThreadInvocationScope;
   readonly boardEngine: BoardEngineShape;
   readonly threads: ThreadGatewayShape;
   readonly board: BoardQueriesShape;
@@ -126,7 +127,14 @@ interface BoardToolDeps {
 
 /** Resolve the services every board tool needs. */
 const boardToolDeps = Effect.gen(function* () {
-  const scope = yield* McpInvocationContext.McpInvocationContext;
+  // Every board tool acts for the calling thread's card (D3); `McpToolAccess`
+  // has already refused a caller that is not a T3 thread.
+  const scope = yield* McpInvocationContext.McpInvocationContext.pipe(
+    Effect.flatMap((current) => McpInvocationContext.requireThreadScope(current, "Board tools")),
+    Effect.mapError(
+      (failure) => new BoardToolError({ code: "rejected", message: failure.message }),
+    ),
+  );
   const boardEngine = yield* BoardEngine;
   const threads = yield* ThreadGateway;
   const board = yield* BoardQueries;
@@ -241,9 +249,9 @@ const linkCardPullRequest = (
     agent how to be adopted (D3: unlinked callers get more than a bare error). */
 const requireCallerCard = (
   board: BoardState,
-  scope: McpInvocationScope,
+  scope: McpThreadInvocationScope,
 ): Effect.Effect<BoardCard, BoardToolError> => {
-  const card = resolveBoardCardForThread(board, scope.threadId);
+  const card = resolveBoardCardForThread(board, scope.thread.threadId);
   return card === null
     ? Effect.fail(
         new BoardToolError({
@@ -290,11 +298,11 @@ const requireTargetCard = (
  */
 const refuseOwnCard = (
   board: BoardState,
-  scope: McpInvocationScope,
+  scope: McpThreadInvocationScope,
   card: BoardCard,
   consequence: string,
 ): Effect.Effect<void, BoardToolError> => {
-  const own = resolveBoardCardForThread(board, scope.threadId);
+  const own = resolveBoardCardForThread(board, scope.thread.threadId);
   if (own === null || own.id !== card.id) return Effect.void;
   return Effect.fail(
     new BoardToolError({
@@ -372,20 +380,20 @@ const refuseLiveWork = (
 const resolveCompletionStepId = (
   board: BoardState,
   card: BoardCard,
-  scope: McpInvocationScope,
+  scope: McpThreadInvocationScope,
   stepId: string | undefined,
 ): Effect.Effect<string, BoardToolError> => {
   const state = boardCardStepState(board, card.id);
   const live = state !== null && !isBoardTerminalStepStatus(state.status) ? state : null;
-  const kept = keptPlanningStepId(board, card, scope.threadId);
+  const kept = keptPlanningStepId(board, card, scope.thread.threadId);
   const ownCompletions = boardCardStepCompletions(board, card.id).filter(
-    (completion) => completion.threadId === scope.threadId,
+    (completion) => completion.threadId === scope.thread.threadId,
   );
 
   const candidate =
     stepId !== undefined
       ? stepId
-      : live !== null && live.threadId === scope.threadId
+      : live !== null && live.threadId === scope.thread.threadId
         ? live.stepId
         : (kept ?? ownCompletions[ownCompletions.length - 1]?.stepId);
 
@@ -409,7 +417,7 @@ const resolveCompletionStepId = (
     live !== null &&
     live.stepId === candidate &&
     live.threadId !== null &&
-    live.threadId !== scope.threadId
+    live.threadId !== scope.thread.threadId
   ) {
     return Effect.fail(
       new BoardToolError({
@@ -492,7 +500,7 @@ const resolveProjectId = (
   Effect.gen(function* () {
     if (input === undefined) {
       const thread = yield* deps.threads
-        .threadState(deps.scope.threadId)
+        .threadState(deps.scope.thread.threadId)
         .pipe(Effect.mapError(internalError));
       const owned = thread
         ? projects.find((project) => project.id === thread.projectId)
@@ -611,8 +619,8 @@ const dispatch = (
   stampBoardActivityActor(
     command.commandId,
     boardAgentActor({
-      providerInstanceId: deps.scope.providerInstanceId,
-      threadId: deps.scope.threadId,
+      providerInstanceId: deps.scope.thread.providerInstanceId,
+      threadId: deps.scope.thread.threadId,
     }),
   );
   return deps.boardEngine.dispatch(command).pipe(Effect.mapError(dispatchError));
@@ -706,7 +714,7 @@ export const boardHandlers = {
         !isBoardTerminalStepStatus(liveState.status);
       // The decider's matching rule for a planning thread kept past its stage
       // (T3O-19): it may still record its own abandoned step.
-      const keptMatch = isKeptStepThread(board, card, stepId, deps.scope.threadId);
+      const keptMatch = isKeptStepThread(board, card, stepId, deps.scope.thread.threadId);
       const supersedes =
         existing !== undefined && existing.outcome !== "succeeded" && (liveMatch || keptMatch);
       // The OTHER path where a retry is not a no-op: a `succeeded` record whose
@@ -805,7 +813,7 @@ export const boardHandlers = {
         outcome: input.outcome,
         summary: input.summary,
         payload,
-        threadId: deps.scope.threadId,
+        threadId: deps.scope.thread.threadId,
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps, command);
@@ -1243,4 +1251,25 @@ export const boardHandlers = {
     }),
 } satisfies Parameters<typeof BoardToolkit.toLayer>[0];
 
-export const BoardToolkitHandlersLive = BoardToolkit.toLayer(boardHandlers);
+/**
+ * Who may call each board tool (`McpToolAccess`, T3O-59). Every board tool acts
+ * for the calling thread's card (D3), so all of them need a T3 thread caller;
+ * the reads stop there, and the writes also need that thread's run to be live.
+ * Whether the thread is linked to a card is still the handler's question.
+ */
+export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
+  board_get_card_context: McpToolAccess.readsAsCaller(boardHandlers.board_get_card_context),
+  board_get_card: McpToolAccess.readsAsCaller(boardHandlers.board_get_card),
+  board_list_projects: McpToolAccess.readsAsCaller(boardHandlers.board_list_projects),
+  board_list_cards: McpToolAccess.readsAsCaller(boardHandlers.board_list_cards),
+  board_get_plan: McpToolAccess.readsAsCaller(boardHandlers.board_get_plan),
+  board_complete_step: McpToolAccess.writesWithCapability(boardHandlers.board_complete_step),
+  board_create_card: McpToolAccess.writesWithCapability(boardHandlers.board_create_card),
+  board_move_card: McpToolAccess.writesWithCapability(boardHandlers.board_move_card),
+  board_update_card: McpToolAccess.writesWithCapability(boardHandlers.board_update_card),
+  board_archive_card: McpToolAccess.writesWithCapability(boardHandlers.board_archive_card),
+  board_unarchive_card: McpToolAccess.writesWithCapability(boardHandlers.board_unarchive_card),
+  board_delete_card: McpToolAccess.writesWithCapability(boardHandlers.board_delete_card),
+  board_propose_plans: McpToolAccess.writesWithCapability(boardHandlers.board_propose_plans),
+  board_write_plan: McpToolAccess.writesWithCapability(boardHandlers.board_write_plan),
+});
