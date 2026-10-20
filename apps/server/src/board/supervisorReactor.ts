@@ -8284,9 +8284,13 @@ const make = Effect.gen(function* () {
     // AC 20). The cache is a projection with no event to un-apply, so a row can
     // outlive its link when a delete lands while the server is down; a single
     // set-difference DELETE at boot is the cheap, total answer. Best-effort — a
-    // sweep failure must never block reconciliation of live steps.
+    // sweep failure must never block reconciliation of live steps. The clock is
+    // read first so a thread born after the list was taken keeps its row.
+    const listedAt = yield* nowIso;
     yield* threads.listLiveThreadIds().pipe(
-      Effect.flatMap(boardQueries.boardSweepThreadTodos),
+      Effect.flatMap((liveThreadIds) =>
+        boardQueries.boardSweepThreadTodos(liveThreadIds, listedAt),
+      ),
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: thread-todo sweep failed", {
           cause: Cause.pretty(cause),

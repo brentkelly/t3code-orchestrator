@@ -3773,9 +3773,12 @@ export interface BoardQueriesShape {
   ) => Effect.Effect<BoardThreadTodoState | null, ProjectionRepositoryError>;
   /** Boot reconciliation sweep of orphaned todo rows (t3o-18, AC 20): drop
       every row whose link or card is gone, or whose thread is not among
-      `liveThreadIds` (the thread gateway's answer). */
+      `liveThreadIds` (the thread gateway's answer). `listedAt` is taken before
+      that list was read: a row written since belongs to a thread the list may
+      have missed, so the live-set test spares it. */
   readonly boardSweepThreadTodos: (
     liveThreadIds: ReadonlyArray<ThreadId>,
+    listedAt: string,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 }
 
@@ -3794,14 +3797,17 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
      on a reused id; sweeping at boot is the cheap, total answer. The live
      thread set arrives as one JSON array parameter. */
   const sweepOrphans = SqlSchema.void({
-    Request: Schema.String,
-    execute: (liveThreadIdsJson) => sql`
+    Request: Schema.Struct({ liveThreadIdsJson: Schema.String, listedAt: Schema.String }),
+    execute: ({ liveThreadIdsJson, listedAt }) => sql`
       DELETE FROM boards.board_thread_todos
       WHERE thread_id NOT IN (
               SELECT thread_id FROM boards.board_card_thread_links WHERE tombstoned_at IS NULL
             )
          OR card_id NOT IN (SELECT card_id FROM boards.board_cards WHERE archived_at IS NULL)
-         OR thread_id NOT IN (SELECT value FROM json_each(${liveThreadIdsJson}))
+         OR (
+              updated_at < ${listedAt}
+              AND thread_id NOT IN (SELECT value FROM json_each(${liveThreadIdsJson}))
+            )
     `,
   });
   return {
@@ -3847,8 +3853,8 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
         ),
         Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodo:query")),
       ),
-    boardSweepThreadTodos: (liveThreadIds) =>
-      sweepOrphans(JSON.stringify(liveThreadIds)).pipe(
+    boardSweepThreadTodos: (liveThreadIds, listedAt) =>
+      sweepOrphans({ liveThreadIdsJson: JSON.stringify(liveThreadIds), listedAt }).pipe(
         Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadTodoSweep:query")),
       ),
   };

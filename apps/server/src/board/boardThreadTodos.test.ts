@@ -341,7 +341,22 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
       const threads = yield* ThreadGateway;
       const liveThreadIds = yield* threads.listLiveThreadIds();
       assert.notInclude(liveThreadIds, linkedThread);
-      yield* methods.boardSweepThreadTodos(liveThreadIds);
+      yield* methods.boardSweepThreadTodos(liveThreadIds, at(30));
+      assert.isNull(yield* methods.boardThreadTodo(linkedThread));
+    }),
+  );
+
+  it.effect("AC 20: the boot sweep spares a row written after the live list was taken", () =>
+    Effect.gen(function* () {
+      const { linkedThread } = yield* seed("ac20b");
+      const methods = yield* boardMethods;
+      // The thread was born and posted its first plan between the clock read
+      // and the list read, so the list does not name it.
+      yield* appendPlan(linkedThread, "ac20b-1", [{ step: "Alpha", status: "pending" }], at(5));
+      yield* methods.boardSweepThreadTodos([], at(5));
+      assert.isNotNull(yield* methods.boardThreadTodo(linkedThread));
+      // A later boot, whose list really does omit it, still drops it.
+      yield* methods.boardSweepThreadTodos([], at(6));
       assert.isNull(yield* methods.boardThreadTodo(linkedThread));
     }),
   );
