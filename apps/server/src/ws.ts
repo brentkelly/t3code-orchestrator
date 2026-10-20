@@ -103,18 +103,9 @@ import {
   cleanupFailedUploadedAttachments,
   normalizeDispatchCommand,
 } from "./orchestration/Normalizer.ts";
-// T3o: which shell events may collapse into which is a rule of its own now that
-// board deltas are built from the event payload (t3o-18, D3).
-import {
-  coalesceShellWindow,
-  toShellWindowEvent,
-  type ShellWindowEvent,
-} from "./orchestration/shellCoalesce.ts";
-// T3o: board events map to card shell deltas in the board module.
-import { boardShellStreamEvent, isBoardEvent } from "./board/projector.ts";
-// T3o: board RPC handlers live in the board module (t3o-04); the actor stamp and
-// the card-threads shell delta live beside them (t3o-18, D3/D11).
-import { boardActorStamp, boardCardThreadsShellEvents, boardRpcHandlers } from "./board/rpc.ts";
+// T3o: board RPC handlers and the client's board connection (board commands,
+// the board's shell deltas) live in the board module (t3o-04, T3O-56).
+import { boardClientConnection, boardRpcHandlers, isBoardCommand } from "./board/rpc.ts";
 import { SupervisorReactor } from "./board/supervisorReactor.ts";
 // T3o: T3O-23 — thread-delete worktree removal stops processes and runs remove scripts first.
 import { retireRemovedThreadWorktree, WorktreeRetirer } from "./board/worktreeRetire.ts";
@@ -582,15 +573,13 @@ const makeWsRpcLayer = (
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      // T3o (t3o-18, D3/D11): the human actor stamp for board commands, and the
-      // card-threads shell deltas board-linked threads imply. Both are built once
-      // per connection so their caches (project git name, board method handles)
-      // live as long as the socket.
-      const boardStampActor = boardActorStamp({
+      // T3o (T3O-56): the board's side of this connection — board commands and
+      // the board's shell deltas — built once per socket.
+      const boardConnection = yield* boardClientConnection({
         projectionSnapshotQuery,
         git: yield* GitVcsDriver.GitVcsDriver,
+        origin: hasClientOrigin ? clientOrigin : undefined,
       });
-      const boardCardThreadsDeltas = boardCardThreadsShellEvents({ projectionSnapshotQuery });
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const deviceService = yield* DeviceService.DeviceService;
@@ -867,25 +856,19 @@ const makeWsRpcLayer = (
             });
       };
 
-      /**
-       * T3o: the shell deltas one domain event implies. An ARRAY rather than a
-       * single Option because t3o-18 (D3) adds a second, orthogonal delta: a thread
-       * event both refreshes that thread's shell AND carries its card's todo
-       * summaries, and neither may swallow the other.
-       */
-      const toShellStreamEvents = (
-        event: ShellEvent,
-      ): Effect.Effect<ReadonlyArray<OrchestrationShellStreamEvent>, never, never> =>
-        Effect.gen(function* () {
-          const primary = yield* toShellStreamEvent(event);
-          const cardThreads = yield* boardCardThreadsDeltas(event);
-          return Option.isSome(primary) ? [primary.value, ...cardThreads] : cardThreads;
-        });
       // Shell updates refetch the aggregate. Message and tool bodies are not needed.
-      // T3o: board deltas are built from the payload, so a board event stays whole
-      // — see `toShellWindowEvent`, which slims everything else as upstream does.
-      const toShellEvent = toShellWindowEvent;
-      type ShellEvent = ShellWindowEvent;
+      const toShellEvent = ({
+        type,
+        aggregateKind,
+        aggregateId,
+        sequence,
+      }: OrchestrationEvent) => ({
+        type,
+        aggregateKind,
+        aggregateId,
+        sequence,
+      });
+      type ShellEvent = ReturnType<typeof toShellEvent>;
 
       const toShellStreamEvent = (
         event: ShellEvent,
@@ -910,9 +893,6 @@ const makeWsRpcLayer = (
           case "thread.unarchived":
             return threadUpsertOrRemove(ThreadId.make(event.aggregateId), event.sequence);
           default:
-            // T3o: board events become card shell deltas (before the thread
-            // aggregate check, which would otherwise swallow them).
-            if (isBoardEvent(event)) return Effect.succeed(boardShellStreamEvent(event));
             if (event.aggregateKind !== "thread") {
               return Effect.succeedNone;
             }
@@ -1011,30 +991,18 @@ const makeWsRpcLayer = (
           ),
         );
 
-      // Turn a batch of domain events into shell stream items, coalescing first.
-      // Collapsing is what keeps a burst of streaming `thread.message-sent`
-      // deltas from serializing the stream behind one DB read each, and keeps an
-      // unrelated `thread.created` in the same batch from queuing behind them.
-      // WHICH events may collapse into which is a rule of its own — see
-      // `coalesceShellWindow`; it is not simply "the last event per aggregate".
+      // Turn a batch of domain events into shell stream items, coalescing by
+      // aggregate first. `toShellStreamEvent` re-reads the *current* projected
+      // shell for an aggregate, so within a batch only the latest event per
+      // aggregate matters: a burst of streaming `thread.message-sent` deltas for
+      // one thread collapses into a single shell refetch, and an unrelated
+      // `thread.created` in the same batch is never stuck behind those DB reads.
       //
-      // Survivors come back in ascending sequence order, which is what the
-      // client's strictly-increasing guard (`sequence <= snapshotSequence` is
-      // dropped) requires of coalescing: no survivor is stranded behind one
-      // already applied. That guard is per ITEM, not per event, so two deltas
-      // mapped from ONE event share its sequence and the client keeps only the
-      // first — a known gap in the sibling `card-threads` delta, not something
-      // coalescing introduces. The refetch runs with bounded concurrency
-      // (order-preserving).
-      //
-      // TODO(shell-sibling-sequence): the `card-threads` sibling delta shares
-      // its primary's `sequence`, so the client's strict `<=` guard drops it
-      // and live card→thread link / todo updates only land on reconnect. This
-      // is pre-existing and every fix changes shell sequencing for every delta
-      // family, so it is deferred — full diagnosis and the review adjudication
-      // are on PR #36 (issues are disabled on this repo, hence the grep tag
-      // rather than a link). Fix: give siblings distinct monotonic sequences,
-      // or relax the client guard to allow equal-sequence siblings once.
+      // Input events arrive in ascending sequence; we keep the last (highest
+      // sequence) event per aggregate, then re-sort ascending before emitting so
+      // the client — which applies shell items strictly by increasing sequence
+      // and drops any `sequence <= snapshotSequence` — never skips a coalesced
+      // item. The refetch runs with bounded concurrency (order-preserving).
       const SHELL_REFETCH_CONCURRENCY = 8;
       const coalesceShellEvents = (
         events: ReadonlyArray<ShellEvent>,
@@ -1043,13 +1011,17 @@ const makeWsRpcLayer = (
           if (events.length === 0) {
             return [];
           }
-          // T3o: board events collapse per event type, not per aggregate — see
-          // `coalesceShellWindow`, which is upstream's `latestByAggregate` otherwise.
-          const survivors = coalesceShellWindow(events);
-          const shellEvents = yield* Effect.forEach(survivors, toShellStreamEvents, {
+          const latestByAggregate = new Map<string, ShellEvent>();
+          for (const event of events) {
+            latestByAggregate.set(`${event.aggregateKind}:${event.aggregateId}`, event);
+          }
+          const survivors = Array.from(latestByAggregate.values()).sort(
+            (left, right) => left.sequence - right.sequence,
+          );
+          const shellEvents = yield* Effect.forEach(survivors, toShellStreamEvent, {
             concurrency: SHELL_REFETCH_CONCURRENCY,
           });
-          return shellEvents.flat();
+          return shellEvents.flatMap((option) => (Option.isSome(option) ? [option.value] : []));
         });
 
       // Small time/size window over which to coalesce shell events. The window
@@ -2189,12 +2161,9 @@ const makeWsRpcLayer = (
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               yield* ProjectCloneTracker.rejectCommandsDuringClone(projectCloneTracker, command);
+              // T3o: board commands go to the board's own engine (T3O-56).
+              if (isBoardCommand(command)) return yield* boardConnection.dispatch(command);
               const normalizedCommand = yield* normalizeDispatchCommand(command);
-              // T3o (t3o-18, D11): this RPC is the transport that knows a person
-              // is on the other end, so it is where the human actor is stamped —
-              // no command schema changes, and no other caller can claim to be
-              // one. A non-board command is left alone.
-              yield* boardStampActor(normalizedCommand);
               // Archive removes the thread from the client, so this transport
               // closes its session and terminals after the command lands.
               // Settlement cleanup is driven by thread.settled events in the
@@ -2378,6 +2347,8 @@ const makeWsRpcLayer = (
                 ),
                 { startImmediately: true },
               );
+              // T3o: the board's shell deltas, attached before any snapshot read.
+              const boardShellDeltas = yield* boardConnection.shellDeltas;
               const coalesceRetainedInputs = (
                 items: ReadonlyArray<RetainedLiveItem<ShellLiveInput>>,
               ) =>
@@ -2406,7 +2377,8 @@ const makeWsRpcLayer = (
               // Offer the completion marker into the same queue as live events.
               // Anything buffered while snapshot/replay work was in flight is
               // therefore delivered before the client is told it is synchronized.
-              const synchronizedThenLive = liveBudget.deliver(
+              // T3o: board deltas merge into the live tail (T3O-56).
+              const synchronizedThenLive = Stream.merge(boardShellDeltas, liveBudget.deliver(
                 input.requestCompletionMarker === true
                   ? Stream.concat(
                       Stream.fromEffect(
@@ -2420,7 +2392,7 @@ const makeWsRpcLayer = (
                       bufferedLiveStream,
                     )
                   : bufferedLiveStream,
-              );
+              ));
 
               // When the client already holds a shell snapshot (cached, or loaded
               // over HTTP) it passes that snapshot's sequence, and we resume by
@@ -2443,7 +2415,9 @@ const makeWsRpcLayer = (
                     afterSequence,
                     headSequence,
                     SHELL_RESUME_MAX_GAP,
-                  ))
+                  )) ||
+                  // T3o: board deltas are not in this log, so a board resumes by snapshot.
+                  (yield* boardConnection.shellNeedsSnapshot)
                 ) {
                   const snapshot = yield* loadSnapshot;
                   return Stream.concat(
@@ -4135,12 +4109,7 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "server" },
           ),
         // T3o: board RPC handlers register from the board module (t3o-04).
-        ...boardRpcHandlers({
-          currentSession,
-          orchestrationEngine,
-          projectionSnapshotQuery,
-          boardSupervisor,
-        }),
+        ...(yield* boardRpcHandlers({ currentSession, boardSupervisor })),
       });
     }),
   );

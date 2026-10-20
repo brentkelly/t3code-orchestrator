@@ -109,6 +109,9 @@ import {
   type BoardStageExecution,
   type BoardStageRole,
   type BoardState,
+  type BoardEvent,
+  isBoardCommand,
+  type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationThreadShell,
@@ -139,7 +142,11 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts";
-import { boardSnapshotQueryMethodsOf } from "./projection.ts";
+import { BoardEngine } from "./BoardEngine.ts";
+import type { BoardDispatchError } from "./errors.ts";
+import type { OrchestrationDispatchError } from "../orchestration/Errors.ts";
+import { BoardQueries } from "./BoardQueries.ts";
+import type { BoardCommand } from "./decider.ts";
 import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
 import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
 import { pullMergedBaseBranch } from "./baseBranchSync.ts";
@@ -402,7 +409,7 @@ export class SupervisorReactor extends Context.Service<SupervisorReactor, Superv
 ) {}
 
 type SupervisorInput =
-  | { readonly source: "domain"; readonly event: OrchestrationEvent }
+  | { readonly source: "domain"; readonly event: OrchestrationEvent | BoardEvent }
   | { readonly source: "runtime"; readonly event: ProviderRuntimeEvent }
   // Boot reconcile, run THROUGH the worker so it is serialised before the live
   // events it causes (the subscriptions attach first — see `start`).
@@ -515,6 +522,8 @@ function settledReviewPhase(
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const engine = yield* OrchestrationEngineService;
+  const boardEngine = yield* BoardEngine;
+  const boardQueries = yield* BoardQueries;
   const snapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const serverSettings = yield* ServerSettingsService;
@@ -542,14 +551,28 @@ const make = Effect.gen(function* () {
     Effect.map((uuid) => MessageId.make(`msg-${uuid}`)),
   );
 
-  const readBoard = snapshotQuery
-    .getCommandReadModel()
-    .pipe(
-      Effect.map((model: OrchestrationReadModel): BoardState => model.board ?? EMPTY_BOARD_STATE),
-    );
+  const readBoard = boardEngine.getReadModel.pipe(
+    Effect.map((model): BoardState => model.board ?? EMPTY_BOARD_STATE),
+  );
 
-  const dispatch = (command: Parameters<typeof engine.dispatch>[0]) =>
-    engine.dispatch(command).pipe(
+  /** Upstream's command read model with the board engine's board slice on it —
+      the one view a pass that reads both threads and cards decides from. */
+  const readModel = Effect.all([snapshotQuery.getCommandReadModel(), boardEngine.getReadModel]).pipe(
+    Effect.map(
+      ([model, board]): OrchestrationReadModel =>
+        board.board === undefined ? model : { ...model, board: board.board },
+    ),
+  );
+
+  /** Board commands go to the board's engine, thread commands to upstream's. */
+  type SupervisorCommand = OrchestrationCommand | BoardCommand;
+  const dispatchAny = (
+    command: SupervisorCommand,
+  ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchError | BoardDispatchError> =>
+    isBoardCommand(command) ? boardEngine.dispatch(command) : engine.dispatch(command);
+
+  const dispatch = (command: SupervisorCommand) =>
+    dispatchAny(command).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor dispatch failed", {
           commandType: (command as { readonly type?: string }).type,
@@ -584,14 +607,15 @@ const make = Effect.gen(function* () {
    *
    *  Returns whether the command LANDED, so a caller that is retrying until it
    *  does (again, the release sweep) can stop asking. */
-  const dispatchOptional = (command: Parameters<typeof engine.dispatch>[0]) =>
-    engine.dispatch(command).pipe(
+  const dispatchOptional = (command: SupervisorCommand) =>
+    dispatchAny(command).pipe(
       Effect.as(true),
       Effect.catchCause((cause) => {
         const refusal = Cause.findErrorOption(cause).pipe(
           Option.filter(
             (error) =>
               error._tag === "OrchestrationCommandInvariantError" ||
+              error._tag === "BoardCommandInvariantError" ||
               error._tag === "OrchestrationThreadSettleBlockedError",
           ),
           Option.getOrUndefined,
@@ -623,13 +647,17 @@ const make = Effect.gen(function* () {
    *  fault, not the decider answering, and is logged like any other dispatch —
    *  the card must not display an infrastructure hiccup as though a rule had
    *  refused it. */
-  const dispatchRefusal = (command: Parameters<typeof engine.dispatch>[0]) =>
-    engine.dispatch(command).pipe(
+  const dispatchRefusal = (command: SupervisorCommand) =>
+    dispatchAny(command).pipe(
       Effect.as<string | null>(null),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
         const refusal = Cause.findErrorOption(cause).pipe(
-          Option.filter((error) => error._tag === "OrchestrationCommandInvariantError"),
+          Option.filter(
+            (error) =>
+              error._tag === "OrchestrationCommandInvariantError" ||
+              error._tag === "BoardCommandInvariantError",
+          ),
           Option.getOrUndefined,
         );
         return refusal === undefined
@@ -645,8 +673,8 @@ const make = Effect.gen(function* () {
       helper above swallows a rejection, which is right for best-effort writes
       and wrong for the two commands a spawn is built from: a thread that was
       never created must not be recorded as the step's running thread. */
-  const dispatchLanded = (command: Parameters<typeof engine.dispatch>[0]) =>
-    engine.dispatch(command).pipe(
+  const dispatchLanded = (command: SupervisorCommand) =>
+    dispatchAny(command).pipe(
       Effect.as(true),
       Effect.catchCause((cause) =>
         // An interrupt-only cause is a teardown, not a rejection: the command's
@@ -707,7 +735,6 @@ const make = Effect.gen(function* () {
   // noise: a ticked todo names the specific item finished, where a prose note
   // asserted only that the model still had tokens to spend. It is also durable
   // rather than in-memory, so a restart no longer costs an un-reset stall.
-  const boardQueries = boardSnapshotQueryMethodsOf(snapshotQuery);
   // Threads spawned for a step whose admit was then rejected (see
   // admitBuildCandidate): their turn must be stopped, but an interrupt fired
   // milliseconds after spawn races provider session startup and no-ops. The
@@ -765,7 +792,7 @@ const make = Effect.gen(function* () {
    *     is why it runs second: after (1), on a steady board, there are none.
    */
   const releaseFinishedThreads = Effect.gen(function* () {
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const board = model.board ?? EMPTY_BOARD_STATE;
     const threads = new Map(model.threads.map((thread) => [String(thread.id), thread]));
     const now = yield* nowIso;
@@ -855,7 +882,7 @@ const make = Effect.gen(function* () {
   const threadTodoState = Effect.fn("board-supervisor-threadTodoState")(function* (
     threadId: ThreadId | null,
   ) {
-    if (threadId === null || boardQueries === null) return null;
+    if (threadId === null) return null;
     return yield* boardQueries
       .boardThreadTodo(threadId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
@@ -874,7 +901,7 @@ const make = Effect.gen(function* () {
   const threadLastSignalAt = Effect.fn("board-supervisor-threadLastSignalAt")(function* (
     threadId: ThreadId | null,
   ) {
-    if (threadId === null || boardQueries === null) return null;
+    if (threadId === null) return null;
     return yield* boardQueries
       .boardThreadLastSignalAt(threadId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
@@ -910,7 +937,7 @@ const make = Effect.gen(function* () {
   const supersededByPendingTurn = Effect.fn("board-supervisor-supersededByPendingTurn")(function* (
     state: BoardCardStepState,
   ) {
-    if (state.threadId === null || boardQueries === null) return false;
+    if (state.threadId === null) return false;
     const floor = state.lastNudgeAt ?? state.startedAt;
     if (floor === null) return false;
     const requestedAt = yield* boardQueries
@@ -985,7 +1012,7 @@ const make = Effect.gen(function* () {
     state: Pick<BoardCardStepState, "threadId" | "lastNudgeAt" | "startedAt">,
   ) {
     const threadId = state.threadId;
-    if (threadId === null || boardQueries === null) return false;
+    if (threadId === null) return false;
     const message = yield* boardQueries
       .boardLatestAssistantMessage(threadId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
@@ -1220,7 +1247,7 @@ const make = Effect.gen(function* () {
     }
     const stuck = (reason: string) =>
       failWorktree(card, reason).pipe(Effect.as<WorktreeOutcome>({ kind: "stuck", reason }));
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     // Every pre-flight failure below reports through `fail-worktree` rather
     // than a server-side log: the card is the only place the human is looking,
@@ -1320,7 +1347,7 @@ const make = Effect.gen(function* () {
     // Observe the provision dispatch: a rejected command (e.g. the worktree is
     // not in a provisionable state) must abort BEFORE the git effect, or the
     // tree lands on disk untracked while `record-worktree` is then rejected too.
-    const provisionAccepted = yield* engine
+    const provisionAccepted = yield* boardEngine
       .dispatch({
         type: "board.card.provision-worktree",
         commandId: yield* commandId("provision-worktree"),
@@ -1681,7 +1708,7 @@ const make = Effect.gen(function* () {
     const recorded = card.worktree?.baseRefName ?? null;
     if (recorded !== null) return recorded;
     if (card.baseBranch !== null) return card.baseBranch;
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) return null;
     const { defaultBranch } = yield* resolveDefaultBranch(cwd);
@@ -1863,7 +1890,7 @@ const make = Effect.gen(function* () {
     // false and the settle path can never release the slot just acquired — a
     // permanent under-capacity leak. Release it here and unlink the orphaned
     // thread instead.
-    const admitLanded = yield* engine
+    const admitLanded = yield* boardEngine
       .dispatch({
         type: "board.card.admit-step",
         commandId: yield* commandId("admit-step"),
@@ -1922,7 +1949,7 @@ const make = Effect.gen(function* () {
     // the step queued for the next pass.
     const resumed = yield* resumeExistingStepThread({ card, state });
     if (resumed !== "no-thread") return;
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) {
       // Same wedge as a refused spawn, so the same exit: left `pending`, the
@@ -2110,7 +2137,7 @@ const make = Effect.gen(function* () {
   const measureBaseTip = Effect.fn("board-supervisor-measureBaseTip")(function* (card: BoardCard) {
     const baseRefName = card.worktree?.baseRefName ?? null;
     if (baseRefName === null) return null;
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) return null;
     const tip = yield* git
@@ -2189,7 +2216,7 @@ const make = Effect.gen(function* () {
       const needsDefault = card.parentCardId === null && card.baseBranch === null;
       const defaultBranch = needsDefault
         ? yield* Effect.gen(function* () {
-            const model = yield* snapshotQuery.getCommandReadModel();
+            const model = yield* readModel;
             const cwd = projectCwd(model, card);
             if (cwd === null) return null;
             const resolved = yield* resolveDefaultBranch(cwd);
@@ -4134,7 +4161,7 @@ const make = Effect.gen(function* () {
     const gone = yield* threadGone(input.state.threadId);
     const canRespawn = yield* Effect.gen(function* () {
       if (input.state.mode === "build") return input.card.worktree?.path != null;
-      const model = yield* snapshotQuery.getCommandReadModel();
+      const model = yield* readModel;
       return projectCwd(model, input.card) !== null;
     });
     if (gone && !canRespawn) {
@@ -4351,7 +4378,7 @@ const make = Effect.gen(function* () {
         return boardRefreshOutcomeOf(held);
       }
 
-      const model = yield* snapshotQuery.getCommandReadModel();
+      const model = yield* readModel;
       const cwd = worktree.path ?? projectCwd(model, card);
       if (cwd === null) return { outcome: "no-branch" } as const;
 
@@ -4673,7 +4700,7 @@ const make = Effect.gen(function* () {
     const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
     if (!isBoardMergeStageExecution(exec) || !exec.deleteBranchOnDone) return;
 
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) return;
 
@@ -4782,7 +4809,7 @@ const make = Effect.gen(function* () {
   ) {
     const worktree = card.worktree;
     if (worktree === null || worktree.status !== "ready" || worktree.path === null) return null;
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) {
       // A failure, not a quiet skip: the card IS finished, and Check again
@@ -5165,7 +5192,7 @@ const make = Effect.gen(function* () {
   }) {
     const settings = yield* boardSettings;
     const board = yield* readBoard;
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const fetchedBases = new Set<string>();
     for (const card of board.cards) {
       // T3o (T3O-18): a linked pull request settles its card whether or not
@@ -5352,7 +5379,7 @@ const make = Effect.gen(function* () {
     const finished =
       card.archivedAt !== null || (stage !== null && effectiveBoardStageRole(stage) === "done");
     if (!finished) return { outcome: "not-finished" } as const;
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) {
       // The card does hold a worktree; it is the project that cannot be found.
@@ -5696,7 +5723,7 @@ const make = Effect.gen(function* () {
       };
     }
 
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     // T3o (T3O-47): the PROJECT's checkout, not the card's worktree. The merge
     // is a forge operation addressed by `{ projectId, repository }`, and
     // `PullRequestService` runs the host's CLI in the project's own workspace
@@ -6518,7 +6545,7 @@ const make = Effect.gen(function* () {
   );
 
   const handleStepCompleted = Effect.fn("board-supervisor-handleStepCompleted")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-step-completed" }>,
+    event: Extract<BoardEvent, { type: "board.card-step-completed" }>,
   ) {
     const completion = event.payload.completion;
     const board = yield* readBoard;
@@ -7345,7 +7372,7 @@ const make = Effect.gen(function* () {
   // (`card.humanInLoop` non-null and different from the frozen stance) reacts,
   // so an unrelated card edit never flips a run.
   const handleCardUpdated = Effect.fn("board-supervisor-handleCardUpdated")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-updated" }>,
+    event: Extract<BoardEvent, { type: "board.card-updated" }>,
   ) {
     // A schedule edit acts FIRST and on its own terms (T3O-19, D3): it is the
     // one edit that must reach a card with no live step row at all, and the one
@@ -7448,7 +7475,7 @@ const make = Effect.gen(function* () {
   });
 
   const handleArchived = Effect.fn("board-supervisor-handleArchived")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-archived" }>,
+    event: Extract<BoardEvent, { type: "board.card-archived" }>,
   ) {
     const board = yield* readBoard;
     // Reap the settle marker whether or not the card is still readable: an
@@ -7512,7 +7539,7 @@ const make = Effect.gen(function* () {
    * by hand, never retried.
    */
   const handleCardDeleted = Effect.fn("board-supervisor-handleCardDeleted")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-deleted" }>,
+    event: Extract<BoardEvent, { type: "board.card-deleted" }>,
   ) {
     const card = event.payload.card;
     // Per-card in-memory bookkeeping outlives the card unless it is reaped
@@ -7550,7 +7577,7 @@ const make = Effect.gen(function* () {
 
     const worktree = card.worktree;
     if (worktree !== null) {
-      const model = yield* snapshotQuery.getCommandReadModel();
+      const model = yield* readModel;
       const cwd = projectCwd(model, card);
       if (cwd !== null) {
         // T3O-23: retiring runs the remove scripts, which can take minutes, so
@@ -7620,7 +7647,7 @@ const make = Effect.gen(function* () {
     type Failure = { readonly reason: string; readonly transient: boolean } | null;
     const fail = (reason: string, transient = false) =>
       failWorktree(card, reason).pipe(Effect.as<Failure>({ reason, transient }));
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) {
       return yield* fail("The card's project has no workspace folder on this server.");
@@ -7736,7 +7763,7 @@ const make = Effect.gen(function* () {
   });
 
   const handlePlansApproved = Effect.fn("board-supervisor-handlePlansApproved")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.plans-approved" }>,
+    event: Extract<BoardEvent, { type: "board.plans-approved" }>,
   ) {
     yield* ensureIntegrationBranch(event.payload.card);
     // Approval normally leaves the parent short of build (t3o-28, D1), and the
@@ -7752,7 +7779,7 @@ const make = Effect.gen(function* () {
   // A card was created (D10): if it landed in an auto-executing stage, kick off
   // exactly as a drag would. The created payload is flat, so re-read the card.
   const handleCardCreated = Effect.fn("board-supervisor-handleCardCreated")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-created" }>,
+    event: Extract<BoardEvent, { type: "board.card-created" }>,
   ) {
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
@@ -7786,7 +7813,7 @@ const make = Effect.gen(function* () {
    * a human ADOPTED links with role `linked` and is left alone.
    */
   const handleCardProjectChanged = Effect.fn("board-supervisor-handleCardProjectChanged")(
-    function* (event: Extract<OrchestrationEvent, { type: "board.card-project-changed" }>) {
+    function* (event: Extract<BoardEvent, { type: "board.card-project-changed" }>) {
       const card = event.payload.card;
       const board = yield* readBoard;
       const existing = boardCardStepState(board, card.id);
@@ -7857,7 +7884,7 @@ const make = Effect.gen(function* () {
   // first (releasing any slot and unlinking its thread), then kick off the
   // destination stage on a fresh read so its own guards see a clean card.
   const handleCardMoved = Effect.fn("board-supervisor-handleCardMoved")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-moved" }>,
+    event: Extract<BoardEvent, { type: "board.card-moved" }>,
   ) {
     // The destination stage and the current link set both come from the event
     // payload, not a board re-read: the card carries its post-move stage here,
@@ -8092,7 +8119,7 @@ const make = Effect.gen(function* () {
 
   // On-demand kickoff request (D7): start a thread for the card's current stage.
   const handleStageThreadRequested = Effect.fn("board-supervisor-handleStageThreadRequested")(
-    function* (event: Extract<OrchestrationEvent, { type: "board.card-stage-thread-requested" }>) {
+    function* (event: Extract<BoardEvent, { type: "board.card-stage-thread-requested" }>) {
       const board = yield* readBoard;
       const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
       if (card === undefined) return;
@@ -8369,15 +8396,13 @@ const make = Effect.gen(function* () {
     // outlive its link when a delete lands while the server is down; a single
     // set-difference DELETE at boot is the cheap, total answer. Best-effort — a
     // sweep failure must never block reconciliation of live steps.
-    if (boardQueries !== null) {
-      yield* boardQueries.boardSweepThreadTodos().pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("board supervisor: thread-todo sweep failed", {
-            cause: Cause.pretty(cause),
-          }),
-        ),
-      );
-    }
+    yield* boardQueries.boardSweepThreadTodos().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: thread-todo sweep failed", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
     const board = yield* readBoard;
     // Cards whose step reconcile settles as succeeded: `continueStage` may
     // auto-advance them, and the `board.card-moved` that publishes goes into a
@@ -8729,7 +8754,7 @@ const make = Effect.gen(function* () {
   const stampPermissionAnswered = (threadId: ThreadId) =>
     nowIso.pipe(Effect.map((now) => void permissionHeldAt.set(String(threadId), now)));
 
-  const processDomainEvent = (event: OrchestrationEvent) => {
+  const processDomainEvent = (event: OrchestrationEvent | BoardEvent) => {
     switch (event.type) {
       case "board.card-moved":
         // Generic auto-kickoff (D7): a card landing in ANY stage may start a run
@@ -9043,7 +9068,8 @@ const make = Effect.gen(function* () {
     // streams, so live events enqueue behind the reconcile item in the one
     // sequential worker.
     yield* forkParked(
-      Stream.runForEach(engine.streamDomainEvents, (event) => {
+      // Thread events from upstream's engine, board events from the board's.
+      Stream.runForEach(Stream.merge(engine.streamDomainEvents, boardEngine.liveBoardEvents), (event) => {
         // Thread activity is by far the highest-volume event on this stream, and
         // the board cares about exactly one kind of it (t3o-30, D2), so it is
         // filtered HERE rather than in `processDomainEvent` — the worker never

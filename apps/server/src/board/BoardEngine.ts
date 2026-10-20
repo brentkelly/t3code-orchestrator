@@ -24,7 +24,6 @@
 import {
   type CommandId,
   type OrchestrationClientOrigin,
-  type OrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -42,7 +41,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../persistence/Errors.ts";
 import { BoardQueries } from "./BoardQueries.ts";
-import { makeBoardEventStore, type PlannedBoardEvent } from "./boardEventStore.ts";
+import { makeBoardEventStore } from "./boardEventStore.ts";
 import {
   boardCommandAggregateRef,
   boardCommandNeedsBrief,
@@ -52,6 +51,7 @@ import {
   decideBoardCommand,
   type BoardCommand,
   type BoardDecisionContext,
+  type PlannedBoardEvent,
 } from "./decider.ts";
 import {
   BoardCommandIdConflictError,
@@ -101,15 +101,6 @@ interface CommandEnvelope {
   readonly command: BoardCommand;
   readonly origin: OrchestrationClientOrigin | undefined;
   readonly result: Deferred.Deferred<{ readonly sequence: number }, BoardDispatchError>;
-}
-
-/**
- * Whether a command is a board command. Takes the full orchestration command
- * union because that is what every transport still decodes until the board has
- * its own dispatch RPC.
- */
-export function isBoardDispatchCommand(command: OrchestrationCommand): command is BoardCommand {
-  return command.type.startsWith("board.");
 }
 
 /** The state a board command is decided against beyond the board itself. */

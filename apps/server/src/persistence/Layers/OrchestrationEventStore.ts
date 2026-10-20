@@ -1,8 +1,4 @@
 import {
-  // T3o: card + label + stage aggregate ids (D9 / t3o-06a / t3o-15).
-  BoardCardId,
-  BoardLabelId,
-  BoardStageId,
   CommandId,
   // T3o: shared command-id origin rule (T3O-17, D2).
   commandIdOrigin,
@@ -15,7 +11,6 @@ import {
   OrchestrationEventMetadata,
   OrchestrationEventType,
   ProjectId,
-  ProviderInstanceId,
   ProjectIconOverride,
   ThreadId,
 } from "@t3tools/contracts";
@@ -65,17 +60,7 @@ const EventMetadataFromJsonString = Schema.fromJsonString(OrchestrationEventMeta
 const AppendEventRequestSchema = Schema.Struct({
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  // T3o: BoardCardId appended for card-aggregate event streams (D9);
-  // BoardLabelId for the label aggregate (t3o-06a); ProviderInstanceId for the
-  // provider-cooldown aggregate (T3O-22). Frozen widening.
-  streamId: Schema.Union([
-    ProjectId,
-    ThreadId,
-    BoardCardId,
-    BoardLabelId,
-    BoardStageId,
-    ProviderInstanceId,
-  ]),
+  streamId: Schema.Union([ProjectId, ThreadId]),
   type: OrchestrationEventType,
   causationEventId: Schema.NullOr(EventId),
   correlationId: Schema.NullOr(CommandId),
@@ -177,10 +162,9 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
 /**
  * Decode one read row, or skip it.
  *
- * A `board.*` type this build does not know is one t3o RETIRED: its rows are
- * still on disk (the log is append-only and permanent), nothing can interpret
- * them, and board state is a projection that rebuilds fine without them.
- * Skipping keeps replay alive; the warning keeps the skip visible.
+ * T3o: every `board.*` row is skipped. Board events moved to the board's own
+ * log (T3O-56); the rows written here before that are left in place so an older
+ * build can still be rolled back to, and nothing on this log interprets them.
  *
  * Every other unknown type stays fatal, deliberately. An unrecognised `thread.*`
  * means this build is reading a log written by a NEWER one, where dropping
@@ -193,7 +177,7 @@ const decodeReadRow = (
 ): Effect.Effect<OrchestrationEvent | undefined, OrchestrationEventStoreError> => {
   if (!KNOWN_EVENT_TYPES.has(row.type) && row.type.startsWith(BOARD_EVENT_TYPE_PREFIX)) {
     return Effect.as(
-      Effect.logWarning("Skipping retired board event type during replay").pipe(
+      Effect.logDebug("Skipping a board event left in the orchestration log").pipe(
         Effect.annotateLogs({
           eventType: row.type,
           sequence: row.sequence,

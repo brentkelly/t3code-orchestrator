@@ -43,7 +43,8 @@ import * as Path from "effect/Path";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
+import { BoardEngine } from "../../../board/BoardEngine.ts";
+import { BoardQueries } from "../../../board/BoardQueries.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -68,14 +69,16 @@ export class BoardToolError extends Schema.TaggedError<BoardToolError>()("BoardT
   message: TrimmedNonEmptyString,
 }) {}
 
-// The board tools all resolve the same services: the calling scope, the engine
-// (to dispatch), the board-wrapped snapshot query (to read), crypto (to mint
+// The board tools all resolve the same services: the calling scope, the board
+// engine (to dispatch and read the board), the board queries (bodies, activity,
+// todos), upstream's snapshot query (projects and threads), crypto (to mint
 // command/entity ids) and board settings (the per-project key prefix, D14 —
 // an agent-created card must land in the same key namespace as a human's).
 // Declared uniformly, mirroring the preview toolkit.
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
-  OrchestrationEngineService,
+  BoardEngine,
+  BoardQueries,
   ProjectionSnapshotQuery,
   Crypto.Crypto,
   ServerSettings.ServerSettingsService,

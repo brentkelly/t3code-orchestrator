@@ -2278,7 +2278,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
    * back to the system actor.
    */
   const recordActivity = (input: {
-    readonly event: OrchestrationEvent;
+    readonly event: BoardEvent;
     readonly cardId: BoardCardId;
     readonly kind: BoardCardActivityEntry["kind"];
     readonly payload: BoardCardActivityPayload;

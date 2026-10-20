@@ -95,6 +95,7 @@ import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReacto
 import { SupervisorReactorLive } from "./board/supervisorReactor.ts";
 import { BoardStepSlotsLive } from "./board/BoardStepSlots.ts";
 import { UsageLimitDetectorLive } from "./board/UsageLimitDetector.ts";
+import { BoardRuntimeLive } from "./board/runtimeLayer.ts";
 import { layer as BoardPullRequestGatewayLive } from "./board/BoardPullRequestGateway.ts";
 import { WorktreeRetirerLive } from "./board/worktreeRetire.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
@@ -284,6 +285,8 @@ const ReactorLayerLive = Layer.empty.pipe(
       Layer.provide(UsageLimitDetectorLive),
     ),
   ),
+  // T3o: the board's own engine, queries and upstream tail (T3O-56).
+  Layer.provideMerge(BoardRuntimeLive),
   Layer.provideMerge(PullRequestSyncReactor.layer),
   Layer.provideMerge(ThreadPullRequestReactor.layer),
   Layer.provideMerge(AgentAwarenessRelay.layer.pipe(Layer.provide(ServerSecretStore.layer))),

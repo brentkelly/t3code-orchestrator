@@ -84,7 +84,7 @@ import {
   type BoardStageDefinition,
   type BoardStepCompletion,
   type BoardState,
-  type OrchestrationEvent,
+  type BoardEvent,
   type ProjectId,
   type OrchestrationShellStreamEvent,
 } from "@t3tools/contracts";
@@ -97,7 +97,7 @@ import {
   type OrchestrationProjectorDecodeError,
 } from "../orchestration/Errors.ts";
 
-export type BoardEvent = Extract<OrchestrationEvent, { type: `board.${string}` }>;
+export type { BoardEvent };
 
 export { isBoardEvent };
 

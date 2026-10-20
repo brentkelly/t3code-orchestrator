@@ -97,7 +97,7 @@ import {
   type BoardState,
   type BoardStepCompletion,
   type BoardCommand,
-  type OrchestrationEvent,
+  type BoardEvent,
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -154,7 +154,7 @@ export { isBoardCommand };
 // `Omit` over the union flattens `type` and `payload` into independent
 // unions and callers could no longer narrow payloads by event type.
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
-type PlannedOrchestrationEvent = DistributiveOmit<OrchestrationEvent, "sequence">;
+export type PlannedBoardEvent = DistributiveOmit<BoardEvent, "sequence">;
 
 /**
  * What one board command decides. Almost every command decides a single
@@ -163,14 +163,14 @@ type PlannedOrchestrationEvent = DistributiveOmit<OrchestrationEvent, "sequence"
  * D5), and delete decides a list for the same reason plus the edge rewrites
  * a permanent removal forces. The engine accepts either.
  */
-export type BoardDecision = PlannedOrchestrationEvent | ReadonlyArray<PlannedOrchestrationEvent>;
+export type BoardDecision = PlannedBoardEvent | ReadonlyArray<PlannedBoardEvent>;
 
 /** A decision as the list the engine appends — the single-event case is a
     list of one. Discriminated on `type`, which every event has and no array
     does: `Array.isArray` narrows to `any[]` and leaks `any` into the result. */
 export function boardDecidedEvents(
   decided: BoardDecision,
-): ReadonlyArray<PlannedOrchestrationEvent> {
+): ReadonlyArray<PlannedBoardEvent> {
   return "type" in decided ? [decided] : decided;
 }
 
@@ -421,14 +421,14 @@ const boardDependentBlockedEvents = Effect.fn("boardDependentBlockedEvents")(fun
   readonly command: BoardCardCommand;
   readonly changed: BoardCard;
 }): Effect.fn.Return<
-  ReadonlyArray<PlannedOrchestrationEvent>,
+  ReadonlyArray<PlannedBoardEvent>,
   PlatformError.PlatformError,
   Crypto.Crypto
 > {
   const cards = input.board.cards.map((card) =>
     card.id === input.changed.id ? input.changed : card,
   );
-  const events: PlannedOrchestrationEvent[] = [];
+  const events: PlannedBoardEvent[] = [];
   for (const dependent of cards) {
     if (dependent.id === input.changed.id) continue;
     if (dependent.archivedAt !== null) continue;
@@ -1557,7 +1557,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           : {}),
         updatedAt: command.createdAt,
       };
-      const moved: PlannedOrchestrationEvent = {
+      const moved: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -2028,7 +2028,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // Dependencies survive the archive (D1) — nothing rewrites `dependsOn`
       // — but they stop gating, so dependents that were waiting on this card
       // unblock in the same commit.
-      const archived: PlannedOrchestrationEvent = {
+      const archived: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -2067,7 +2067,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       };
       // Restoring re-arms the gate the archive released (D1/D5): dependents
       // that this card blocks again are re-flagged alongside it.
-      const unarchived: PlannedOrchestrationEvent = {
+      const unarchived: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -2108,7 +2108,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // computed against the board WITHOUT it — the same list the projector
       // and a from-empty replay will see.
       const remaining = board.cards.filter((candidate) => candidate.id !== command.cardId);
-      const deleted: PlannedOrchestrationEvent = {
+      const deleted: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -2130,7 +2130,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // deleted one can never come back, and `unmetBoardCardDependencies`
       // counts an unresolvable id as unmet forever, so leaving the edge would
       // block every dependent permanently with no card left to unblock them.
-      const edited: Array<PlannedOrchestrationEvent> = [];
+      const edited: Array<PlannedBoardEvent> = [];
       for (const dependent of remaining) {
         if (!dependent.dependsOn.includes(command.cardId)) continue;
         const dependsOn = dependent.dependsOn.filter((id) => id !== command.cardId);
@@ -2907,7 +2907,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       for (const plan of plans) {
         childIdByPlan.set(plan.planId, BoardCardId.make(yield* crypto.randomUUIDv4));
       }
-      const events: Array<PlannedOrchestrationEvent> = [];
+      const events: Array<PlannedBoardEvent> = [];
       const childCardIds: Array<BoardCardId> = [];
       for (const plan of plans) {
         const childId = childIdByPlan.get(plan.planId)!;

@@ -9,14 +9,13 @@
  * its own transaction.
  */
 import {
+  BoardEvent,
+  BoardEventType,
   CommandId,
   commandIdOrigin,
   EventId,
   IsoDateTime,
-  isBoardEvent,
   NonNegativeInt,
-  OrchestrationEvent,
-  OrchestrationEventType,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -30,14 +29,8 @@ import {
   toPersistenceSqlError,
   type ProjectionRepositoryError,
 } from "../persistence/Errors.ts";
-import type { BoardEvent } from "./projector.ts";
 
-/** A board event before the log gives it a sequence. */
-export type PlannedBoardEvent = BoardEvent extends infer E
-  ? E extends BoardEvent
-    ? Omit<E, "sequence">
-    : never
-  : never;
+import type { PlannedBoardEvent } from "./decider.ts";
 
 /** One command receipt: proof a command id was handled, and how. */
 export interface BoardCommandReceipt {
@@ -50,7 +43,7 @@ export interface BoardCommandReceipt {
   readonly error: string | null;
 }
 
-const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
+const decodeEvent = Schema.decodeUnknownEffect(BoardEvent);
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 
 /**
@@ -59,9 +52,7 @@ const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
  * board state is rebuilt from the board tables rather than from replay — so it
  * is skipped, loudly, instead of failing the page it sits in.
  */
-const KNOWN_BOARD_EVENT_TYPES: ReadonlySet<string> = new Set<string>(
-  OrchestrationEventType.literals.filter((type) => type.startsWith("board.")),
-);
+const KNOWN_BOARD_EVENT_TYPES: ReadonlySet<string> = new Set<string>(BoardEventType.literals);
 
 const BoardEventRow = Schema.Struct({
   sequence: NonNegativeInt,
@@ -121,14 +112,7 @@ const decodeRow = (row: BoardEventRow): Effect.Effect<BoardEvent | undefined, Pr
       undefined,
     );
   }
-  return decodeEvent(row).pipe(
-    Effect.flatMap((event) =>
-      isBoardEvent(event)
-        ? Effect.succeed(event)
-        : Effect.die(new Error(`Non-board event '${event.type}' in the board log.`)),
-    ),
-    Effect.mapError(toPersistenceDecodeError("BoardEventStore.decodeRow")),
-  );
+  return decodeEvent(row).pipe(Effect.mapError(toPersistenceDecodeError("BoardEventStore.decodeRow")));
 };
 
 export function makeBoardEventStore(sql: SqlClient.SqlClient) {
