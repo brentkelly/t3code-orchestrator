@@ -122,3 +122,15 @@ export const readCoreWithScopeFallback = <A extends object, E extends { readonly
     );
   return attempt(GATED_FIELDS);
 };
+
+/**
+ * T3O-54, T3O-59: the pull request summary read with the check rollup's missing-scope fallback.
+ * The summary document asks for each head's rollup, once per aliased pull request, so a token
+ * without the Checks permission is refused the whole batch, and then every per-entry read, on
+ * each sync tick. A scope refusal reads again without the rollup (`coreQueryForFields`), whose
+ * absence the summary decoder reads as checks unknown.
+ */
+export const readSummariesWithScopeFallback = <A, E extends { readonly _tag: string }, R>(
+  read: (fields: string) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  read("statusCheckRollup").pipe(Effect.catchIf(isMissingScopeRefusal, () => read("")));

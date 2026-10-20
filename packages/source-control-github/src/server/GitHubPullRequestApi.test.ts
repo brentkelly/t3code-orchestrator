@@ -785,6 +785,53 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  // T3o (T3O-54): a token without the Checks permission still reads the batch, minus the rollup.
+  it.effect("reads the batch again without the check rollup when the token is refused it", () =>
+    Effect.gen(function* () {
+      const node = {
+        number: 7,
+        title: "Pull request 7",
+        url: "https://github.com/acme/web/pull/7",
+        author: { login: "octocat" },
+        baseRefName: "main",
+        headRefName: "feat/7",
+        state: "OPEN",
+        isDraft: false,
+        mergeable: "CONFLICTING",
+        reviewDecision: null,
+        updatedAt: "2026-08-24T12:34:56.000Z",
+      };
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GitHubApi.GitHubApiResponseError({
+              host: "github.com",
+              operation: "getPullRequestSummary",
+              status: 200,
+              githubErrors: ["Resource not accessible by personal access token"],
+            }),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(output(encodeJson({ data: { s0: { pullRequest: node } } }))),
+        );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const read = yield* cli
+        .getPullRequestSummary({ cwd: "/w", repository: "acme/web", host: "github.com", number: 7 })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const summary = yield* Fiber.join(read);
+
+      assert.strictEqual(summary.mergeability, "conflicting");
+      assert.isNull(summary.checksState);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      expect(queryAt(0)).toContain("statusCheckRollup");
+      expect(queryAt(1)).not.toContain("statusCheckRollup");
+      expect(queryAt(1)).toContain("s0: repository(");
+    }),
+  );
+
   it.effect("fingerprints watched pull requests on one host in one read", () =>
     Effect.gen(function* () {
       const node = (comments: number) => ({

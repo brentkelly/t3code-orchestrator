@@ -128,11 +128,12 @@ import {
   type GitHubReviewThreadPage,
   type GitHubViewerAccess,
 } from "./gitHubPullRequestJson.ts";
-// T3o (T3O-8): the core read's missing-scope fallback.
+// T3o (T3O-8, T3O-54): the core and summary reads' missing-scope fallback.
 import {
   coreQueryForFields,
   fillDroppedCoreFields,
   readCoreWithScopeFallback,
+  readSummariesWithScopeFallback,
 } from "./t3oGraphQlScopeFallback.ts";
 import type {
   ProviderChangeRequestSummary,
@@ -1813,14 +1814,20 @@ export const make = Effect.gen(function* () {
   /** One pull request's summary, through the same aliased query the batch uses. */
   const viewPullRequestSummary = (input: PullRequestSummaryRead) => {
     const { owner, name } = parseRepositorySelector(input.repository);
-    return graphqlRead({
-      cwd: input.cwd,
-      host: input.host,
-      operation: "getPullRequestSummary",
-      variables: { owner, name, number: input.number },
-      query: pullRequestSummaryGraphQlQuery(input.host === "github.com"),
-      decode: decodePullRequestSummariesJson,
-    }).pipe(
+    // T3o: a token refused the check rollup reads again without it (T3O-54).
+    return readSummariesWithScopeFallback((fields) =>
+      graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getPullRequestSummary",
+        variables: { owner, name, number: input.number },
+        query: coreQueryForFields(
+          pullRequestSummaryGraphQlQuery(input.host === "github.com"),
+          fields,
+        ),
+        decode: decodePullRequestSummariesJson,
+      }),
+    ).pipe(
       Effect.flatMap((summaries) => {
         const summary = summaries.get(0);
         return summary === undefined
@@ -1864,13 +1871,17 @@ export const make = Effect.gen(function* () {
       const batched =
         document === null
           ? Effect.succeed(new Map<number, GitHubPullRequestSummary>())
-          : graphqlRead({
-              cwd: first.request.cwd,
-              host: first.request.host,
-              operation: "getPullRequestSummary",
-              ...document,
-              decode: decodePullRequestSummariesJson,
-            });
+          : // T3o: a token refused the check rollup reads again without it (T3O-54).
+            readSummariesWithScopeFallback((fields) =>
+              graphqlRead({
+                cwd: first.request.cwd,
+                host: first.request.host,
+                operation: "getPullRequestSummary",
+                variables: document.variables,
+                query: coreQueryForFields(document.query, fields),
+                decode: decodePullRequestSummariesJson,
+              }),
+            );
       return batched.pipe(
         // A GraphQL error anywhere fails the whole document — one repository gone or out of
         // reach — so a batch that could not be read leaves every entry to its own read. A paused
