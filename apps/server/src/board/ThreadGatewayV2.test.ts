@@ -135,6 +135,9 @@ describe("makeSignalReader", () => {
       // A delegated task's question to its parent, queued behind the active
       // run: no wake fields until it starts, so only its author tells.
       [{}, "server:delegated-task-question:key", { createdBy: "agent", creationSource: "server" }],
+      // v2's run for a human's answer to an async question: the human's own
+      // command id, but `input-resolved` is the signal that un-parks the step.
+      [{}, CLIENT_COMMAND_ID, { createdBy: "user", creationSource: "server" }],
     ];
     for (const [overrides, commandId, author] of wakes) {
       assert.deepStrictEqual(

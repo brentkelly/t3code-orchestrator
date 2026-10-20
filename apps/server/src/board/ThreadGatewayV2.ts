@@ -212,8 +212,12 @@ export const runOrigin = (
 ): "board" | "limit-resume" | "engine" | "human" => {
   if (isBoardMintedCommandId(commandId)) return "board";
   if (commandId?.startsWith("limit-resume:")) return "limit-resume";
-  // The board's own messages are `user` from `server` too (BOARD_AUTHOR), so a
-  // board turn re-dispatched as a steer follow-up is not mistaken for a human's.
+  // `user` from `server` is never a person typing: it is the board's own
+  // message (BOARD_AUTHOR), so a board turn re-dispatched as a steer follow-up
+  // is not mistaken for a human's, or v2's async-answer run (Orchestrator's
+  // `async-answer:` message), which carries a human's answer under their own
+  // command id but is the engine carrying on: `input-resolved` already
+  // un-parked the step, so it must not also read as a human turn.
   if (
     message.createdBy !== "user" ||
     message.creationSource === "server" ||
