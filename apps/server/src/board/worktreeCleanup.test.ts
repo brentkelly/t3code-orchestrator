@@ -36,7 +36,7 @@ import {
   type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
-import type { BoardOrchestrationReadModel } from "./projector.ts";
+import type { BoardReadModel } from "./projector.ts";
 
 const settings = (reclaimWorktreeOnDone = true) =>
   settingsWith({ building: [codexStep], globalMaxConcurrent: 4, reclaimWorktreeOnDone });
@@ -84,14 +84,14 @@ const ownWorktrees = () => {
 
 /** Change one card in the read model, as a concurrent command would. */
 const editCard = (
-  model: Ref.Ref<BoardOrchestrationReadModel>,
+  model: Ref.Ref<BoardReadModel>,
   cardId: string,
   edit: (card: BoardCard) => BoardCard,
 ) =>
   Ref.update(model, (current) => ({
     ...current,
     board:
-      current.board === undefined || current.board === null
+      current.board === undefined
         ? current.board
         : {
             ...current.board,

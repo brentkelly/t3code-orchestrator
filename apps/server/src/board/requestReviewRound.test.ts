@@ -20,7 +20,6 @@ import {
   type BoardCard,
   type BoardCardStepState,
   type BoardStageDefinition,
-  type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -33,6 +32,7 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const cardId = BoardCardId.make("card-1");
@@ -101,7 +101,7 @@ const settings = () => settingsWith({ building: [codexStep], globalMaxConcurrent
 
 /** The card-moved event the RPC's move produces once it streams back through
     the engine — the harness's double does not feed decided events back in. */
-const cardMovedBack = (moved: BoardCard, sequence: number): OrchestrationEvent =>
+const cardMovedBack = (moved: BoardCard, sequence: number): HarnessEvent =>
   ({
     type: "board.card-moved",
     sequence,
@@ -111,15 +111,15 @@ const cardMovedBack = (moved: BoardCard, sequence: number): OrchestrationEvent =
       fromStage: String(BOARD_SEED_STAGE_IDS.merge),
       toStage: String(BOARD_SEED_STAGE_IDS.review),
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** The card-updated event the override write produces, likewise. */
-const cardUpdated = (updated: BoardCard, sequence: number): OrchestrationEvent =>
+const cardUpdated = (updated: BoardCard, sequence: number): HarnessEvent =>
   ({
     type: "board.card-updated",
     sequence,
     payload: { cardId: updated.id, card: updated },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 const cardOf = (board: { readonly cards: ReadonlyArray<BoardCard> }): BoardCard =>
   board.cards.find((candidate) => candidate.id === cardId)!;

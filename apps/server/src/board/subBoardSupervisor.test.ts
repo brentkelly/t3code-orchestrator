@@ -40,6 +40,7 @@ import {
   type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import { fakeThreadState } from "./threadGateway.testkit.ts";
 
 /** A `board.card-created` event carrying the given card as its payload —
     enough for the reactor's `handleCardCreated`, which re-reads the card. */
@@ -1022,7 +1023,9 @@ it.effect("PIPELINE 2: a child's finished build auto-advances to review and it a
         nextCardNumberByProject: {},
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
-      initialShells: new Map([["thread-build-one", { id: "thread-build-one" } as never]]),
+      initialShells: new Map([
+        ["thread-build-one", fakeThreadState("thread-build-one", { sessionStatus: "none" })],
+      ]),
     },
     (h) =>
       Effect.gen(function* () {
@@ -1098,7 +1101,9 @@ it.effect("PIPELINE 3: a child's converged review auto-merges it through to Done
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
       pullRequest: openPr,
-      initialShells: new Map([["thread-review-one", { id: "thread-review-one" } as never]]),
+      initialShells: new Map([
+        ["thread-review-one", fakeThreadState("thread-review-one", { sessionStatus: "none" })],
+      ]),
     },
     (h) =>
       Effect.gen(function* () {
@@ -1352,10 +1357,16 @@ it.effect("a child's conflict fix succeeding merges even when the arm was LOST",
         },
         settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
         pullRequest: openPr,
-        initialShells: new Map([["thread-fix", { id: "thread-fix" } as never]]),
+        initialShells: new Map([
+          ["thread-fix", fakeThreadState("thread-fix", { sessionStatus: "none" })],
+        ]),
       },
       (h) =>
         Effect.gen(function* () {
+          // Boot reconcile first. It is queued at start and runs lazily, so left
+          // behind the completion pumped below it would read that completion as a
+          // step that finished while the server was down, and settle it itself.
+          yield* h.reactor.drain;
           yield* h.pumpDomain(mergeStepSucceeded(card.id, ThreadId.make("thread-fix"), 1));
           assert.deepStrictEqual(yield* h.mergeAttempts, [{ number: 284 }]);
           assert.strictEqual(cardStage(yield* h.board, card.id), DONE);

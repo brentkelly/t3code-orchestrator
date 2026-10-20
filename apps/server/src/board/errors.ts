@@ -6,9 +6,10 @@
  * orchestration-v2 port.
  */
 import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
 
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
-import type { OrchestrationProjectorDecodeError } from "../orchestration/Errors.ts";
+import type { ThreadReadError } from "./ThreadGateway.ts";
 
 /** The decider refused a board command — the board's "no". */
 export class BoardCommandInvariantError extends Schema.TaggedError<BoardCommandInvariantError>()(
@@ -56,9 +57,34 @@ export class BoardCommandIdConflictError extends Schema.TaggedError<BoardCommand
 
 export const isBoardCommandInvariantError = Schema.is(BoardCommandInvariantError);
 
+/** A board event payload that does not decode — a projector input the schema
+    rejects. */
+export class BoardProjectorDecodeError extends Schema.TaggedError<BoardProjectorDecodeError>()(
+  "BoardProjectorDecodeError",
+  {
+    eventType: Schema.String,
+    issue: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Board projector decode failed for ${this.eventType}: ${this.issue}`;
+  }
+}
+
+export function toBoardProjectorDecodeError(eventType: string) {
+  return (error: Schema.SchemaError): BoardProjectorDecodeError =>
+    new BoardProjectorDecodeError({
+      eventType,
+      issue: SchemaIssue.makeFormatterDefault()(error.issue),
+      cause: error,
+    });
+}
+
 export type BoardDispatchError =
   | BoardCommandInvariantError
   | BoardCommandPreviouslyRejectedError
   | BoardCommandIdConflictError
-  | OrchestrationProjectorDecodeError
-  | ProjectionRepositoryError;
+  | BoardProjectorDecodeError
+  | ProjectionRepositoryError
+  | ThreadReadError;

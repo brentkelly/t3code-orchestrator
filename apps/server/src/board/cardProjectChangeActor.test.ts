@@ -13,10 +13,8 @@
 import { BoardCardId, CommandId, ProjectId, type BoardCardDetail } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
 import type { ExecuteGitInput, ExecuteGitResult, GitVcsDriver } from "../vcs/GitVcsDriver.ts";
-import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { boardActivityActorFor, resetBoardActivityActors } from "./activityActors.ts";
 import { boardActorStamp } from "./rpc.ts";
 import { inertBoardQueries } from "./boardServices.testkit.ts";
@@ -51,12 +49,19 @@ function fakeDeps(projectOf: { current: ProjectId }) {
         card: { projectId: projectOf.current },
       } as unknown as BoardCardDetail),
   });
-  const projectionSnapshotQuery = {
-    getProjectShellById: (projectId: ProjectId) =>
-      Effect.succeed(Option.some({ id: projectId, workspaceRoot: `/tmp/${projectId}` })),
-  } as unknown as ProjectionSnapshotQueryShape;
+  const threads = {
+    project: (projectId: ProjectId) =>
+      Effect.succeed({
+        id: projectId,
+        title: String(projectId),
+        workspaceRoot: `/tmp/${projectId}`,
+        deleted: false,
+        scripts: [],
+        repositoryIdentity: null,
+      }),
+  };
 
-  return { git, projectionSnapshotQuery, boardQueries };
+  return { git, threads, boardQueries };
 }
 
 const updateCommand = (commandId: string) =>

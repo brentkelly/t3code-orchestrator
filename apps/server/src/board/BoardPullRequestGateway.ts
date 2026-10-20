@@ -25,7 +25,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type {
   ProjectId,
@@ -35,12 +34,12 @@ import type {
 } from "@t3tools/contracts";
 
 import * as GitManager from "../git/GitManager.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { boardMergeStateOf, type BoardMergeState } from "./boardMergeState.ts";
 import { boardRepositoryOf, type BoardRepository } from "./boardRepository.ts";
+import { ThreadGateway } from "./ThreadGateway.ts";
 
 /**
  * Where a refused merge was refused (T3O-47) — the one bit the board cannot
@@ -274,14 +273,14 @@ export const layer: Layer.Layer<
   | GitManager.GitManager
   | GitVcsDriver.GitVcsDriver
   | PullRequestService.PullRequestService
-  | ProjectionSnapshotQuery.ProjectionSnapshotQuery
+  | ThreadGateway
 > = Layer.effect(
   BoardPullRequestGateway,
   Effect.gen(function* () {
     const gitManager = yield* GitManager.GitManager;
     const git = yield* GitVcsDriver.GitVcsDriver;
     const pullRequests = yield* PullRequestService.PullRequestService;
-    const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    const threads = yield* ThreadGateway;
 
     const fail = (operation: string) => (error: unknown) =>
       Effect.fail(new BoardPullRequestGatewayError({ operation, detail: failureDetail(error) }));
@@ -294,11 +293,10 @@ export const layer: Layer.Layer<
      * act on, and saying so names the reason.
      */
     const repository = (projectId: ProjectId, operation = "repository") =>
-      projections.getProjectShellById(projectId).pipe(
+      threads.project(projectId).pipe(
         Effect.catch(fail(operation)),
-        Effect.flatMap((option) => {
-          const project = Option.getOrUndefined(option);
-          if (project === undefined) return Effect.succeed(null);
+        Effect.flatMap((project) => {
+          if (project === null) return Effect.succeed(null);
           return git.readConfigValue(project.workspaceRoot, "remote.origin.url").pipe(
             Effect.orElseSucceed(() => null),
             Effect.map((originUrl) => boardRepositoryOf(project.repositoryIdentity, originUrl)),

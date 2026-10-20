@@ -3,7 +3,7 @@
  * T3o (T3O-23): retiring a worktree — stop its processes, run its remove
  * scripts, then remove it.
  *
- * The retirer is the real one; terminals, sessions, the read model, settings
+ * The retirer is the real one; terminals, the thread gateway, settings
  * and git are doubles (see `worktreeRetire.testkit.ts`). Remove scripts run as
  * real child processes in a real temporary worktree folder.
  */
@@ -13,11 +13,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
-import {
-  GitCommandError,
-  type OrchestrationReadModel,
-  type ProjectScript,
-} from "@t3tools/contracts";
+import { GitCommandError, ProjectId, type ProjectScript } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -36,9 +32,21 @@ import {
   type WorktreeRetireInput,
   type WorktreeRetirerOptions,
 } from "./worktreeRetire.ts";
-import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
+import {
+  worktreeRetirerTestLayer,
+  type WorktreeRetirerTestThread,
+} from "./worktreeRetire.testkit.ts";
+import type { BoardProject } from "./ThreadGateway.ts";
 
-const projectId = "project-1";
+const projectId = ProjectId.make("project-1");
+
+const project = (workspaceRoot: string, scripts: ReadonlyArray<ProjectScript>): BoardProject => ({
+  id: projectId,
+  title: "Project 1",
+  workspaceRoot,
+  deleted: false,
+  scripts,
+});
 
 const makeDirs = () => {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-retire-test-"));
@@ -69,12 +77,11 @@ const thread = (
   worktreePath: string | null,
   session: "running" | "stopped" | null,
   deletedAt: string | null = null,
-) => ({
-  id,
-  projectId,
+): WorktreeRetirerTestThread => ({
+  threadId: id,
   worktreePath,
-  deletedAt,
-  session: session === null ? null : { threadId: id, status: session },
+  deleted: deletedAt !== null,
+  sessionLive: session === "running",
 });
 
 interface Fixture {
@@ -102,20 +109,9 @@ const withRetirer = <A, E>(
           events.push(`remove:${request.force === true ? "force" : "plain"}`);
         }),
     } as unknown as GitVcsDriver.GitVcsDriver["Service"];
-    const model = () =>
-      ({
-        threads: fixture.threads ?? [],
-        projects: [
-          {
-            id: projectId,
-            workspaceRoot: dirs.projectCwd,
-            deletedAt: null,
-            scripts: fixture.scripts ?? [],
-          },
-        ],
-      }) as unknown as Pick<OrchestrationReadModel, "threads" | "projects">;
     const layer = worktreeRetirerTestLayer({
-      model,
+      threads: () => fixture.threads ?? [],
+      projects: () => [project(dirs.projectCwd, fixture.scripts ?? [])],
       events,
       ...(fixture.survivors === undefined ? {} : { survivors: fixture.survivors }),
       ...(fixture.options === undefined ? {} : { options: fixture.options }),
@@ -194,25 +190,17 @@ describe("retireWorktree", () => {
       } as unknown as GitVcsDriver.GitVcsDriver["Service"];
       const layer = worktreeRetirerTestLayer({
         events,
-        model: () =>
-          ({
-            threads: [
-              thread("thread-live", dirs.worktreePath, "running"),
-              thread("thread-stopped", dirs.worktreePath, "stopped"),
-              thread("thread-deleted", dirs.worktreePath, "running", "2026-01-01T00:00:00.000Z"),
-              thread("thread-elsewhere", "/somewhere/else", "running"),
-            ],
-            projects: [
-              {
-                id: projectId,
-                workspaceRoot: dirs.projectCwd,
-                deletedAt: null,
-                scripts: [
-                  script("park", `echo hook >> "${marker}"`, { runOnWorktreeRemove: true }),
-                ],
-              },
-            ],
-          }) as unknown as Pick<OrchestrationReadModel, "threads" | "projects">,
+        threads: () => [
+          thread("thread-live", dirs.worktreePath, "running"),
+          thread("thread-stopped", dirs.worktreePath, "stopped"),
+          thread("thread-deleted", dirs.worktreePath, "running", "2026-01-01T00:00:00.000Z"),
+          thread("thread-elsewhere", "/somewhere/else", "running"),
+        ],
+        projects: () => [
+          project(dirs.projectCwd, [
+            script("park", `echo hook >> "${marker}"`, { runOnWorktreeRemove: true }),
+          ]),
+        ],
       }).pipe(Layer.provide(Layer.succeed(GitVcsDriver.GitVcsDriver, git)));
       const result = yield* Effect.gen(function* () {
         const retirer = yield* WorktreeRetirer;

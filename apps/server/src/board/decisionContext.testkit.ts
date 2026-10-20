@@ -29,7 +29,7 @@ export function boardDecisionContextFromModel(
         projects: model.projects.map((project) => ({
           id: project.id,
           title: project.title,
-          deletedAt: project.deletedAt,
+          deleted: project.deletedAt !== null,
         })),
       }
     : {};
@@ -41,7 +41,7 @@ export function boardDecisionContextFromModel(
 
 const findThread = (model: Pick<BoardOrchestrationReadModel, "threads">, threadId: ThreadId) => {
   const thread = model.threads.find((candidate) => candidate.id === threadId);
-  return thread === undefined ? null : { deletedAt: thread.deletedAt };
+  return thread === undefined ? null : { deleted: thread.deletedAt !== null };
 };
 
 /** `decideBoardCommand` against a full model, the context derived from it. */

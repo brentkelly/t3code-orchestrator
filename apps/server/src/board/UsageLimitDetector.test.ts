@@ -18,18 +18,18 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { BoardQueries } from "./BoardQueries.ts";
-import { inertBoardQueries } from "./boardServices.testkit.ts";
+import { ThreadGateway } from "./ThreadGateway.ts";
+import { inertThreadGateway } from "./threadGateway.testkit.ts";
 import { UsageLimitDetector, UsageLimitDetectorLive } from "./UsageLimitDetector.ts";
 
 const threadId = ThreadId.make("thread-1");
 const NOW = Date.parse("2026-07-19T12:00:00.000Z");
 
-/** Board queries holding one assistant message. */
+/** A thread gateway holding one assistant message. */
 const snapshotWith = (message: { readonly text: string; readonly createdAt: string } | null) =>
   Layer.succeed(
-    BoardQueries,
-    inertBoardQueries({ boardLatestAssistantMessage: () => Effect.succeed(message) }),
+    ThreadGateway,
+    inertThreadGateway({ latestAssistantMessage: () => Effect.succeed(message) }),
   );
 
 const classify = (input: {

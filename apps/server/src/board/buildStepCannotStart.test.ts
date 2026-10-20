@@ -49,7 +49,7 @@ const worktreeFailures = (events: ReadonlyArray<HarnessEvent>, cardId: string) =
   );
 
 const threadCreates = (commands: ReadonlyArray<HarnessCommand>) =>
-  commands.filter((command) => command.type === "thread.create");
+  commands.filter((command) => command.type === "thread.spawn");
 
 it.effect("a card in a repository with no commits parks stalled and says how to fix it", () =>
   withGovernor(

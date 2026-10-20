@@ -48,7 +48,6 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -62,10 +61,6 @@ import {
   deleteBoardCardAttachmentFile,
 } from "./attachments.ts";
 import { observeRpcEffect, observeRpcStreamEffect } from "../observability/RpcInstrumentation.ts";
-import {
-  ProjectionSnapshotQuery,
-  type ProjectionSnapshotQueryShape,
-} from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import {
   BOARD_HUMAN_ACTOR_FALLBACK_NAME,
@@ -77,6 +72,7 @@ import { BoardQueries } from "./BoardQueries.ts";
 import type { BoardQueriesShape } from "./projection.ts";
 import { subscribeBoard } from "./boardSubscription.ts";
 import { BoardThreadTail } from "./boardThreadTail.ts";
+import { ThreadGateway, type ThreadGatewayShape } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 
@@ -95,7 +91,7 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
     const boardQueries = yield* BoardQueries;
     // Built once per connection, so the actor-name caches live as long as it does.
     const stampActor = boardActorStamp({
-      projectionSnapshotQuery: yield* ProjectionSnapshotQuery,
+      threads: yield* ThreadGateway,
       boardQueries,
       git: yield* GitVcsDriver,
     });
@@ -618,7 +614,7 @@ function makeBoardRpcHandlers(
  * degrades to the fallback name; none can fail the dispatch.
  */
 export function boardActorStamp(deps: {
-  readonly projectionSnapshotQuery: ProjectionSnapshotQueryShape;
+  readonly threads: Pick<ThreadGatewayShape, "project">;
   readonly boardQueries: BoardQueriesShape;
   readonly git: GitVcsDriver["Service"];
 }): (command: BoardCommand) => Effect.Effect<void> {
@@ -653,10 +649,9 @@ export function boardActorStamp(deps: {
     }
     const cached = nameByProject.get(String(projectId));
     if (cached !== undefined) return cached;
-    const project = yield* deps.projectionSnapshotQuery.getProjectShellById(projectId).pipe(
-      Effect.map(Option.getOrUndefined),
-      Effect.catchCause(() => Effect.succeed(undefined)),
-    );
+    const project = yield* deps.threads
+      .project(projectId)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
     const workspaceRoot = project?.workspaceRoot;
     const resolved =
       workspaceRoot === undefined || workspaceRoot.length === 0

@@ -1,22 +1,18 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * T3o (T3O-23): the real `WorktreeRetirer` over stub collaborators, for tests.
  *
- * Terminals, sessions, the read model and settings are doubles; the removal is
+ * Terminals, the thread gateway and settings are doubles; the removal is
  * whatever `GitVcsDriver` the test provides, and the remove scripts are real
  * child processes. Every stop, check and removal is appended to `events`, so a
  * test can assert their order.
  */
-import {
-  DEFAULT_SERVER_SETTINGS,
-  type OrchestrationCommand,
-  type OrchestrationReadModel,
-  type ServerSettings,
-} from "@t3tools/contracts";
+import * as NodePath from "node:path";
+
+import { DEFAULT_SERVER_SETTINGS, ThreadId, type ServerSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import {
@@ -25,10 +21,22 @@ import {
   type WorktreeProcess,
   type WorktreeRetirerOptions,
 } from "./worktreeRetire.ts";
+import { ThreadGateway, type BoardProject } from "./ThreadGateway.ts";
+import { inertThreadGateway } from "./threadGateway.testkit.ts";
+
+/** A thread the retirer may find in the worktree it is retiring. */
+export interface WorktreeRetirerTestThread {
+  readonly threadId: string;
+  readonly worktreePath: string | null;
+  readonly deleted?: boolean;
+  /** A provider session that is not stopped. */
+  readonly sessionLive?: boolean;
+}
 
 export interface WorktreeRetirerTestInput {
   /** Threads and projects the retirer reads; empty when omitted. */
-  readonly model?: () => Pick<OrchestrationReadModel, "threads" | "projects">;
+  readonly threads?: () => ReadonlyArray<WorktreeRetirerTestThread>;
+  readonly projects?: () => ReadonlyArray<BoardProject>;
   readonly settings?: Partial<ServerSettings>;
   /** Survivors per check, consumed in order; the last answer repeats. None by default. */
   readonly survivors?: ReadonlyArray<ReadonlyArray<WorktreeProcess>>;
@@ -43,21 +51,25 @@ export const worktreeRetirerTestLayer = (input: WorktreeRetirerTestInput = {}) =
     close: (request: { readonly threadId: string }) =>
       Effect.sync(() => void events.push(`close-terminals:${request.threadId}`)),
   } as unknown as TerminalManager.TerminalManager["Service"];
-  const engine = {
-    dispatch: (command: OrchestrationCommand) =>
-      Effect.sync(() => {
-        events.push(
-          command.type === "thread.session.stop"
-            ? `stop-session:${command.threadId}`
-            : command.type,
-        );
-        return { sequence: 0 };
-      }),
-  } as unknown as OrchestrationEngineService["Service"];
-  const snapshot = {
-    getCommandReadModel: () =>
-      Effect.sync(() => ({ threads: [], projects: [], ...input.model?.() })),
-  } as unknown as ProjectionSnapshotQuery["Service"];
+  const threads = inertThreadGateway({
+    stopSession: (request) =>
+      Effect.sync(() => void events.push(`stop-session:${request.threadId}`)),
+    threadsInWorktree: (worktreePath) =>
+      Effect.sync(() =>
+        (input.threads?.() ?? [])
+          .filter(
+            (thread) =>
+              thread.worktreePath !== null &&
+              NodePath.resolve(thread.worktreePath) === NodePath.resolve(worktreePath),
+          )
+          .map((thread) => ({
+            threadId: ThreadId.make(thread.threadId),
+            deleted: thread.deleted ?? false,
+            sessionLive: thread.sessionLive ?? false,
+          })),
+      ),
+    projects: () => Effect.sync(() => input.projects?.() ?? []),
+  });
   const settings = {
     getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, ...input.settings }),
   } as unknown as ServerSettingsService["Service"];
@@ -79,8 +91,7 @@ export const worktreeRetirerTestLayer = (input: WorktreeRetirerTestInput = {}) =
     Layer.provide(
       Layer.mergeAll(
         Layer.succeed(TerminalManager.TerminalManager, terminals),
-        Layer.succeed(OrchestrationEngineService, engine),
-        Layer.succeed(ProjectionSnapshotQuery, snapshot),
+        Layer.succeed(ThreadGateway, threads),
         Layer.succeed(ServerSettingsService, settings),
       ),
     ),

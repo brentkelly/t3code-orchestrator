@@ -20,8 +20,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
-import { boardDecidedEvents } from "./decider.ts";
-import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
+import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
 import {
   isKeptStepThread,
   isUnfinishedKeptInterview,
@@ -30,6 +29,7 @@ import {
 } from "./planningThreadKeep.ts";
 import { projectBoardEvent } from "./projector.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
+import { fakeThreadState } from "./threadGateway.testkit.ts";
 import {
   aliveThreadShell,
   cardMoved,
@@ -80,7 +80,7 @@ const setShell = (h: Harness, threadId: ThreadId, shell: ReturnType<typeof idleT
     `board_complete_step` call reaches the board. */
 const completePlanning = (h: Harness, threadId: ThreadId, sequence: number) =>
   Effect.gen(function* () {
-    const decided = yield* decideBoardCommandOnModel({
+    const decided = yield* decideBoardCommand({
       command: {
         type: "board.card.complete-step",
         commandId: CommandId.make(`cmd-complete-${sequence}`),
@@ -121,7 +121,7 @@ const startPlanning = (h: Harness) =>
 const sprintCard = () => makeBoardCard({ id: "card-1", stage: "sprint", orderKey: "m" });
 
 const spawnedThreads = (commands: ReadonlyArray<{ readonly type: string }>) =>
-  commands.filter((command) => command.type === "thread.create").length;
+  commands.filter((command) => command.type === "thread.spawn").length;
 
 describe("leaving Planning before the plan is written", () => {
   it.effect("keeps the planning thread linked and lets its turn finish", () =>
@@ -141,7 +141,7 @@ describe("leaving Planning before the plan is written", () => {
         );
         assert.isUndefined(
           (yield* h.commands).find(
-            (command) => command.type === "thread.turn.interrupt" && command.threadId === threadId,
+            (command) => command.type === "thread.interrupt" && command.threadId === threadId,
           ),
         );
       }),
@@ -168,7 +168,7 @@ describe("leaving Planning before the plan is written", () => {
         const after = (yield* h.commands).slice(before.length);
         assert.strictEqual(spawnedThreads(after), 0, "no fresh interview thread");
         assert.isUndefined(
-          after.find((command) => command.type === "thread.turn.start"),
+          after.find((command) => command.type === "thread.send"),
           "the planning prompt is not sent again",
         );
         assert.deepStrictEqual(
@@ -235,10 +235,11 @@ describe("leaving Planning before the plan is written", () => {
       Effect.gen(function* () {
         const threadId = yield* startPlanning(h);
         yield* move(h, READY, 2);
-        yield* setShell(h, threadId, {
-          ...idleThreadShell(String(threadId)),
-          hasPendingUserInput: true,
-        });
+        yield* setShell(
+          h,
+          threadId,
+          fakeThreadState(String(threadId), { sessionStatus: "idle", awaitingUserInput: true }),
+        );
 
         yield* move(h, PLANNING, 3);
 

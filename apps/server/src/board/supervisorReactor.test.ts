@@ -1,38 +1,30 @@
 /**
  * Boot-reconciliation coverage for the supervisor reactor's effectful shell
  * (t3o-10). The pure decision logic is covered in supervisor.test.ts; here we
- * drive the exposed `reconcile` against stub services and assert the shell
- * wires each reconciliation decision to the right dispatched command — the
- * "restart the server mid-step" verification bullet.
+ * drive the exposed `reconcile` against stub services and a fake thread
+ * gateway, and assert the shell wires each reconciliation decision to the right
+ * board command or thread call — the "restart the server mid-step"
+ * verification bullet.
  */
 import {
   BoardCardId,
   BoardStageId,
   ProjectId,
   ProviderInstanceId,
-  isBoardCommand,
   ThreadId,
   type BoardCard,
   type BoardCardStepState,
   type BoardState,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
-  type OrchestrationThreadShell,
   type BoardEvent,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
-import * as Stream from "effect/Stream";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -43,10 +35,17 @@ import {
   BoardPullRequestGatewayError,
 } from "./BoardPullRequestGateway.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
-import { boardDecidedEvents } from "./decider.ts";
+import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 import { boardEngineDouble, boardServicesTestLayer } from "./boardServices.testkit.ts";
 import { projectBoardEvent, type BoardOrchestrationReadModel } from "./projector.ts";
+import type { BoardThreadState } from "./ThreadGateway.ts";
+import {
+  aliveThread,
+  failedThread,
+  makeFakeThreadGateway,
+  type ThreadGatewayCall,
+} from "./threadGateway.testkit.ts";
 import { UsageLimitDetector } from "./UsageLimitDetector.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
 
@@ -155,30 +154,22 @@ function readModel(board: BoardState): BoardOrchestrationReadModel {
   };
 }
 
-const aliveShell: OrchestrationThreadShell = {
-  id: ThreadId.make("thread-1"),
-  session: { status: "running", activeTurnId: "turn-1" },
-  hasPendingUserInput: false,
-} as unknown as OrchestrationThreadShell;
+const aliveShell: BoardThreadState = aliveThread("thread-1", { activeTurnRef: "turn-1" });
 
-/** The shape a server restart leaves behind (t3o-10): upstream has marked the
-    orphaned session `error`, and the id of the turn that died with the process
-    is still on the projection. */
-const restartOrphanShell: OrchestrationThreadShell = {
-  id: ThreadId.make("thread-1"),
-  session: {
-    status: "error",
-    activeTurnId: "turn-1",
-    lastError: "Provider session did not survive a server restart.",
-  },
-  hasPendingUserInput: false,
-} as unknown as OrchestrationThreadShell;
+/** The shape a server restart leaves behind (t3o-10): the orphaned session is
+    marked `error`, and the id of the turn that died with the process is still
+    on the thread. */
+const restartOrphanShell: BoardThreadState = failedThread("thread-1");
 
-/** Run `reconcile` against stub services and return the dispatched command
-    types. `threadShells` maps a thread id to its shell; an absent id is "gone". */
+/** What reconcile did: a board command dispatched, or a call on a thread. */
+type ReconcileCall = BoardCommand | ThreadGatewayCall;
+
+/** Run `reconcile` against stub services and return what it dispatched and
+    called, in order. `threadShells` maps a thread id to its live state; an
+    absent id is "gone". */
 function reconcileCommandObjects(input: {
   readonly board: BoardState;
-  readonly threadShells?: ReadonlyMap<string, OrchestrationThreadShell>;
+  readonly threadShells?: ReadonlyMap<string, BoardThreadState>;
   /** Provide a `ServerActivation` (t3o-10, D3) whose effect is this function,
       called with "everything dispatched so far". It runs exactly at the
       boundary the reconcile waits on, which is what makes "it read nothing
@@ -186,7 +177,7 @@ function reconcileCommandObjects(input: {
       default) leaves the reference at its `undefined` default, so reconcile
       waits for nothing — the shape every other test runs under. */
   readonly gateOnActivation?: (
-    dispatchedSoFar: Effect.Effect<ReadonlyArray<OrchestrationCommand>>,
+    dispatchedSoFar: Effect.Effect<ReadonlyArray<ReconcileCall>>,
   ) => Effect.Effect<void>;
   /** Follow the reconcile with the backoff rung it just set (T3O-22, D7).
       Recovery no longer nudges on the spot — it parks the step with a
@@ -195,10 +186,9 @@ function reconcileCommandObjects(input: {
       out. Absent leaves reconcile's own commands alone, which is what every
       test about what reconcile does NOT do wants. */
   readonly throughRetry?: boolean;
-}): Effect.Effect<ReadonlyArray<OrchestrationCommand>> {
-  const shells = input.threadShells ?? new Map<string, OrchestrationThreadShell>();
+}): Effect.Effect<ReadonlyArray<ReconcileCall>> {
   return Effect.gen(function* () {
-    const recorded = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
+    const recorded = yield* Ref.make<ReadonlyArray<ReconcileCall>>([]);
     // Ref-held rather than a frozen snapshot, and BOARD commands are folded back
     // into it through the real decider and projector (T3O-22). Reconcile's own
     // decisions used to be write-only here, which was fine while every recovery
@@ -206,47 +196,34 @@ function reconcileCommandObjects(input: {
     // the parked row, so a model that never changed would leave the sweep
     // reading a step that boot had already moved on from.
     const model = yield* Ref.make(readModel(input.board));
-    const foldBoardCommand = (command: OrchestrationCommand) =>
-      isBoardCommand(command)
-        ? Effect.gen(function* () {
-            const decided = yield* decideBoardCommandOnModel({
-              command,
-              readModel: yield* Ref.get(model),
-            }).pipe(
-              Effect.map(boardDecidedEvents),
-              Effect.orElseSucceed(() => []),
-            );
-            for (const planned of decided) {
-              const event = { ...planned, sequence: 0 } as BoardEvent;
-              const next = yield* projectBoardEvent(yield* Ref.get(model), event).pipe(
-                Effect.orDie,
-              );
-              yield* Ref.set(model, next);
-            }
-          })
-        : Effect.void;
+    const foldBoardCommand = (command: BoardCommand) =>
+      Effect.gen(function* () {
+        const decided = yield* decideBoardCommandOnModel({
+          command,
+          readModel: yield* Ref.get(model),
+        }).pipe(
+          Effect.map(boardDecidedEvents),
+          Effect.orElseSucceed(() => []),
+        );
+        for (const planned of decided) {
+          const event = { ...planned, sequence: 0 } as BoardEvent;
+          const next = yield* projectBoardEvent(yield* Ref.get(model), event).pipe(Effect.orDie);
+          yield* Ref.set(model, next);
+        }
+      });
 
-    const engineStub = {
-      dispatch: (command: OrchestrationCommand) =>
-        Ref.update(recorded, (all) => [...all, command]).pipe(
-          Effect.andThen(foldBoardCommand(command)),
-          Effect.as({ sequence: 0 }),
-        ),
-      streamDomainEvents: Stream.empty as Stream.Stream<OrchestrationEvent>,
-      latestSequence: Effect.succeed(0),
-    } as unknown as OrchestrationEngineService["Service"];
+    const dispatchBoard = (command: BoardCommand) =>
+      Ref.update(recorded, (all) => [...all, command]).pipe(
+        Effect.andThen(foldBoardCommand(command)),
+        Effect.as({ sequence: 0 }),
+      );
 
-    const snapshotStub = {
-      getCommandReadModel: () => Ref.get(model),
-      getThreadShellById: (threadId: ThreadId) => {
-        const shell = shells.get(String(threadId));
-        return Effect.succeed(shell === undefined ? Option.none() : Option.some(shell));
-      },
-    } as unknown as ProjectionSnapshotQuery["Service"];
-
-    const providerStub = {
-      streamEvents: Stream.empty,
-    } as unknown as ProviderService["Service"];
+    // The threads that exist at boot are exactly `threadShells`; every call on
+    // one is recorded alongside the board's commands, in order.
+    const threads = yield* makeFakeThreadGateway({
+      ...(input.threadShells === undefined ? {} : { threads: input.threadShells }),
+      onCall: (call) => Ref.update(recorded, (all) => [...all, call]),
+    });
 
     const settingsStub = {
       getSettings: Effect.succeed({ board: undefined }),
@@ -261,15 +238,13 @@ function reconcileCommandObjects(input: {
     } as unknown as ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
 
     const deps = Layer.mergeAll(
-      Layer.succeed(OrchestrationEngineService, engineStub),
       boardServicesTestLayer({
         engine: boardEngineDouble({
-          dispatch: engineStub.dispatch as never,
+          dispatch: dispatchBoard as never,
           board: Ref.get(model).pipe(Effect.map((current) => current.board)),
         }),
+        threads: threads.gateway,
       }),
-      Layer.succeed(ProjectionSnapshotQuery, snapshotStub),
-      Layer.succeed(ProviderService, providerStub),
       Layer.succeed(ServerSettingsService, settingsStub),
       Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub),
       worktreeRetirerTestLayer().pipe(
@@ -332,9 +307,9 @@ function reconcileCommandObjects(input: {
 
 function reconcileCommands(input: {
   readonly board: BoardState;
-  readonly threadShells?: ReadonlyMap<string, OrchestrationThreadShell>;
+  readonly threadShells?: ReadonlyMap<string, BoardThreadState>;
   readonly gateOnActivation?: (
-    dispatchedSoFar: Effect.Effect<ReadonlyArray<OrchestrationCommand>>,
+    dispatchedSoFar: Effect.Effect<ReadonlyArray<ReconcileCall>>,
   ) => Effect.Effect<void>;
   readonly throughRetry?: boolean;
 }): Effect.Effect<ReadonlyArray<string>> {
@@ -479,7 +454,8 @@ it.effect("boot: a running step whose thread is gone is recovered (respawned)", 
     // A gone thread is respawned, not nudged into the void — through the
     // governor when the backoff rung arrives (T3O-22, D7), which is also what
     // gets the step its slot back.
-    assert.include(types, "thread.turn.start");
+    assert.include(types, "thread.spawn");
+    assert.notInclude(types, "thread.send");
     assert.include(types, "board.card.link-thread");
   }),
 );
@@ -493,10 +469,10 @@ it.effect("respawn freezes the user-chosen access level, never forcing full-acce
       // no shell for thread-1 → gone → respawn once the backoff rung arrives
       throughRetry: true,
     });
-    const turnStart = commands.find((command) => command.type === "thread.turn.start");
-    assert.isDefined(turnStart);
-    assert.strictEqual((turnStart as { runtimeMode?: string }).runtimeMode, "auto");
-    assert.notStrictEqual((turnStart as { runtimeMode?: string }).runtimeMode, "full-access");
+    const spawn = commands.find((command) => command.type === "thread.spawn");
+    assert.isDefined(spawn);
+    assert.strictEqual((spawn as { runtimeMode?: string }).runtimeMode, "auto");
+    assert.notStrictEqual((spawn as { runtimeMode?: string }).runtimeMode, "full-access");
   }),
 );
 
@@ -519,7 +495,8 @@ it.effect("boot: a running step with a gone thread and no worktree does not burn
       // no shell → gone; no worktree → cannot respawn
     });
     assert.notInclude(types, "board.card.recover-step");
-    assert.notInclude(types, "thread.turn.start");
+    assert.notInclude(types, "thread.spawn");
+    assert.notInclude(types, "thread.send");
   }),
 );
 
@@ -547,7 +524,8 @@ it.effect(
       assert.notInclude(types, "board.card.request-input");
       assert.include(types, "board.card.recover-step");
       // ...and the agent is NOT driven (no turn), so recovery never loops.
-      assert.notInclude(types, "thread.turn.start");
+      assert.notInclude(types, "thread.spawn");
+      assert.notInclude(types, "thread.send");
     }),
 );
 
@@ -582,11 +560,11 @@ it.effect("boot: a step that completed while the server was down is settled and 
 // A server restart kills every provider session mid-turn. Upstream's
 // `reconcileProviderSessions` marks each orphaned session `error` — the
 // `Failed` the thread list shows — but the killed turn's id lingers on the
-// projection, so a liveness rule that reads `activeTurnId` alone sees a corpse
+// thread (`activeTurnRef`), so a liveness rule that reads `activeTurnId` alone sees a corpse
 // mid-turn and resume-watches it forever: slot held, card pulsing, nothing
 // running.
 
-it.effect("boot: a session upstream marked `error` is dead even with a stale activeTurnId", () =>
+it.effect("boot: a session upstream marked `error` is dead even with a stale activeTurnRef", () =>
   Effect.gen(function* () {
     const types = yield* reconcileCommands({
       board: { cards: [card], stepStates: [runningState], nextCardNumberByProject: {} },
@@ -594,11 +572,12 @@ it.effect("boot: a session upstream marked `error` is dead even with a stale act
       throughRetry: true,
     });
     assert.include(types, "board.card.recover-step");
-    // The shell still EXISTS, so recovery drives the thread it has rather than
+    // The thread still EXISTS, so recovery drives the thread it has rather than
     // respawning — which is upstream's own instruction on that error ("Send a
     // new message to continue"). It goes out when the backoff rung arrives
     // (T3O-22, D7) rather than on the spot.
-    assert.include(types, "thread.turn.start");
+    assert.include(types, "thread.send");
+    assert.notInclude(types, "thread.spawn");
   }),
 );
 

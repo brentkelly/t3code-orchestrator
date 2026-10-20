@@ -1,5 +1,5 @@
 /**
- * `boardThreadPendingTurnStartAt` (T3O-18): when a turn was asked for on a
+ * The thread gateway's `pendingTurnStartAt` (T3O-18): when a turn was asked for on a
  * thread and has not begun.
  *
  * The supervisor's blind spot, driven against the real engine and projection
@@ -25,7 +25,7 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { BoardQueries } from "./BoardQueries.ts";
+import { ThreadGateway } from "./ThreadGateway.ts";
 import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 
 const makeLayer = makeBoardStackTestLayer;
@@ -115,66 +115,68 @@ const startTurn = (threadId: ThreadId, turnId: string, createdAt: string) =>
 
 const pendingTurnStartAt = (threadId: ThreadId) =>
   Effect.gen(function* () {
-    const methods = yield* BoardQueries;
-    assert.isNotNull(methods);
-    return yield* methods!.boardThreadPendingTurnStartAt(threadId);
+    const threads = yield* ThreadGateway;
+    return yield* threads.pendingTurnStartAt(threadId);
   });
 
-it.layer(makeLayer("t3o-board-pending-turn-"))("boardThreadPendingTurnStartAt (T3O-18)", (it) => {
-  it.effect("a thread nobody has written to has nothing outstanding", () =>
-    Effect.gen(function* () {
-      const threadId = yield* seed("idle");
-      assert.isNull(yield* pendingTurnStartAt(threadId));
-    }),
-  );
+it.layer(makeLayer("t3o-board-pending-turn-"))(
+  "ThreadGatewayV1.pendingTurnStartAt (T3O-18)",
+  (it) => {
+    it.effect("a thread nobody has written to has nothing outstanding", () =>
+      Effect.gen(function* () {
+        const threadId = yield* seed("idle");
+        assert.isNull(yield* pendingTurnStartAt(threadId));
+      }),
+    );
 
-  it.effect("a message the provider has not picked up yet is outstanding", () =>
-    Effect.gen(function* () {
-      const threadId = yield* seed("sent");
-      yield* sendMessage(threadId, "msg-sent-1", at(5));
-      // The whole window: the turn is real, and it has no id for anything else
-      // to see it by.
-      assert.strictEqual(yield* pendingTurnStartAt(threadId), at(5));
-    }),
-  );
+    it.effect("a message the provider has not picked up yet is outstanding", () =>
+      Effect.gen(function* () {
+        const threadId = yield* seed("sent");
+        yield* sendMessage(threadId, "msg-sent-1", at(5));
+        // The whole window: the turn is real, and it has no id for anything else
+        // to see it by.
+        assert.strictEqual(yield* pendingTurnStartAt(threadId), at(5));
+      }),
+    );
 
-  it.effect("the turn starting clears it", () =>
-    Effect.gen(function* () {
-      const threadId = yield* seed("started");
-      yield* sendMessage(threadId, "msg-started-1", at(5));
-      assert.strictEqual(yield* pendingTurnStartAt(threadId), at(5));
+    it.effect("the turn starting clears it", () =>
+      Effect.gen(function* () {
+        const threadId = yield* seed("started");
+        yield* sendMessage(threadId, "msg-started-1", at(5));
+        assert.strictEqual(yield* pendingTurnStartAt(threadId), at(5));
 
-      yield* startTurn(threadId, "turn-started-1", at(6));
+        yield* startTurn(threadId, "turn-started-1", at(6));
 
-      // This is what stops the supervisor's guard wedging: once the turn is
-      // running, its own completion is nobody's leftover and parks normally.
-      assert.isNull(yield* pendingTurnStartAt(threadId));
-    }),
-  );
+        // This is what stops the supervisor's guard wedging: once the turn is
+        // running, its own completion is nobody's leftover and parks normally.
+        assert.isNull(yield* pendingTurnStartAt(threadId));
+      }),
+    );
 
-  it.effect("a second message while a turn runs is outstanding again", () =>
-    Effect.gen(function* () {
-      const threadId = yield* seed("queued");
-      yield* sendMessage(threadId, "msg-queued-1", at(5));
-      yield* startTurn(threadId, "turn-queued-1", at(6));
-      // The production shape: the human types the next message while the turn
-      // they are answering is still finishing.
-      yield* sendMessage(threadId, "msg-queued-2", at(9));
+    it.effect("a second message while a turn runs is outstanding again", () =>
+      Effect.gen(function* () {
+        const threadId = yield* seed("queued");
+        yield* sendMessage(threadId, "msg-queued-1", at(5));
+        yield* startTurn(threadId, "turn-queued-1", at(6));
+        // The production shape: the human types the next message while the turn
+        // they are answering is still finishing.
+        yield* sendMessage(threadId, "msg-queued-2", at(9));
 
-      assert.strictEqual(yield* pendingTurnStartAt(threadId), at(9));
-    }),
-  );
+        assert.strictEqual(yield* pendingTurnStartAt(threadId), at(9));
+      }),
+    );
 
-  it.effect("one thread's queued message is not another's", () =>
-    Effect.gen(function* () {
-      const waiting = yield* seed("waiting");
-      const quiet = yield* seed("quiet");
-      yield* sendMessage(waiting, "msg-waiting-1", at(5));
+    it.effect("one thread's queued message is not another's", () =>
+      Effect.gen(function* () {
+        const waiting = yield* seed("waiting");
+        const quiet = yield* seed("quiet");
+        yield* sendMessage(waiting, "msg-waiting-1", at(5));
 
-      assert.strictEqual(yield* pendingTurnStartAt(waiting), at(5));
-      // The scoping that matters: a step whose agent really has stopped must
-      // not be shielded by a sibling thread's queued message.
-      assert.isNull(yield* pendingTurnStartAt(quiet));
-    }),
-  );
-});
+        assert.strictEqual(yield* pendingTurnStartAt(waiting), at(5));
+        // The scoping that matters: a step whose agent really has stopped must
+        // not be shielded by a sibling thread's queued message.
+        assert.isNull(yield* pendingTurnStartAt(quiet));
+      }),
+    );
+  },
+);
