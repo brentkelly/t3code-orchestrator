@@ -309,6 +309,25 @@ export function makeBoardEventStore(sql: SqlClient.SqlClient) {
       Effect.mapError(toPersistenceSqlError("BoardEventStore.getReceipt:query")),
     );
 
+  /** Whether `commandId` appended any event on this aggregate. Receipts written
+      before T3O-56's fix (and every one migrated from v1) name the command's
+      LAST event, which for a multi-card command is a dependent card; this is
+      how a replay recognises them as the same command. */
+  const commandTouchedAggregate = (
+    commandId: CommandId,
+    aggregateKind: string,
+    aggregateId: string,
+  ) =>
+    sql<{ readonly n: number }>`
+      SELECT COUNT(*) AS n FROM boards.board_events
+      WHERE command_id = ${commandId}
+        AND aggregate_kind = ${aggregateKind}
+        AND stream_id = ${aggregateId}
+    `.pipe(
+      Effect.map((rows) => (rows[0]?.n ?? 0) > 0),
+      Effect.mapError(toPersistenceSqlError("BoardEventStore.commandTouchedAggregate:query")),
+    );
+
   const upsertReceipt = (receipt: BoardCommandReceipt) =>
     upsertReceiptRow(receipt).pipe(
       Effect.mapError(toPersistenceSqlError("BoardEventStore.upsertReceipt:query")),
@@ -330,6 +349,7 @@ export function makeBoardEventStore(sql: SqlClient.SqlClient) {
     readFrom,
     latestSequence,
     getReceipt,
+    commandTouchedAggregate,
     upsertReceipt,
     getWatermark,
     setWatermark,

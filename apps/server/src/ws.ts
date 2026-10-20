@@ -2378,6 +2378,9 @@ const makeWsRpcLayer = (
               // Anything buffered while snapshot/replay work was in flight is
               // therefore delivered before the client is told it is synchronized.
               // T3o: board deltas merge into the live tail (T3O-56).
+              // TODO(board-subscription): they bypass liveBudget, so a stalled socket
+              // buffers them unbounded; low volume, and the board's own subscription
+              // replaces this merge.
               const synchronizedThenLive = Stream.merge(
                 boardShellDeltas,
                 liveBudget.deliver(

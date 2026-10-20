@@ -691,10 +691,18 @@ export const boardClientConnection = (deps: {
     const shellDeltas = Effect.gen(function* () {
       const boardEvents = yield* boardEngine.subscribeBoardEvents;
       const todoChanges = yield* threadTail.subscribeTodoChanges;
+      // Merge the raw inputs, THEN refetch in one lane: `card-threads` is applied
+      // unguarded as a wholesale replacement, so two concurrent refetches could
+      // land out of order and leave the older link set on screen.
       return Stream.merge(
-        boardEvents.pipe(Stream.mapEffect(fromBoardEvent)),
-        todoChanges.pipe(Stream.mapEffect(fromTodoChange)),
-      ).pipe(Stream.flatMap((deltas) => Stream.fromIterable(deltas)));
+        boardEvents.pipe(Stream.map((event) => ({ kind: "board" as const, event }))),
+        todoChanges.pipe(Stream.map((threadId) => ({ kind: "todo" as const, threadId }))),
+      ).pipe(
+        Stream.mapEffect((input) =>
+          input.kind === "board" ? fromBoardEvent(input.event) : fromTodoChange(input.threadId),
+        ),
+        Stream.flatMap((deltas) => Stream.fromIterable(deltas)),
+      );
     });
 
     const shellNeedsSnapshot = Effect.map(boardEngine.latestSequence, (sequence) => sequence > 0);

@@ -169,11 +169,19 @@ export const makeBoardEngine = Effect.gen(function* () {
       const receipt = yield* store.getReceipt(command.commandId);
       if (receipt !== null) {
         // A receipt proves only that THIS command was handled. Replaying it for a
-        // command aimed elsewhere would report success for work never done.
-        if (
-          receipt.aggregateKind !== aggregate.aggregateKind ||
-          receipt.aggregateId !== aggregate.aggregateId
-        ) {
+        // command aimed elsewhere would report success for work never done. A
+        // legacy accepted receipt names the command's last event, which may be a
+        // dependent card, so it matches when the command's own aggregate was hit.
+        const sameAggregate =
+          (receipt.aggregateKind === aggregate.aggregateKind &&
+            receipt.aggregateId === aggregate.aggregateId) ||
+          (receipt.status === "accepted" &&
+            (yield* store.commandTouchedAggregate(
+              command.commandId,
+              aggregate.aggregateKind,
+              aggregate.aggregateId,
+            )));
+        if (!sameAggregate) {
           return yield* new BoardCommandIdConflictError({
             commandId: command.commandId,
             receiptAggregateKind: receipt.aggregateKind,
@@ -228,10 +236,12 @@ export const makeBoardEngine = Effect.gen(function* () {
               events.push(saved);
             }
             const last = events.at(-1)!;
+            // The receipt names the COMMAND's aggregate, not the last event's: a
+            // multi-card command (archive re-flagging a dependent) ends elsewhere.
             yield* store.upsertReceipt({
               commandId: command.commandId,
-              aggregateKind: last.aggregateKind,
-              aggregateId: last.aggregateId,
+              aggregateKind: aggregate.aggregateKind,
+              aggregateId: aggregate.aggregateId,
               acceptedAt: last.occurredAt,
               resultSequence: last.sequence,
               status: "accepted",

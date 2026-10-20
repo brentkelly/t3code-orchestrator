@@ -148,6 +148,45 @@ it.layer(makeBoardStackTestLayer("t3o-board-engine-"))("BoardEngine", (it) => {
     }),
   );
 
+  it.effect("replays a command whose last event landed on another card", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      const sql = yield* SqlClient.SqlClient;
+      yield* engine.dispatch(createProject("multi"));
+      yield* engine.dispatch(createCard("multi-1"));
+      yield* engine.dispatch(createCard("multi-2"));
+      yield* engine.dispatch({
+        ...moveCard("multi-2", 1, "building"),
+        override: true,
+      } as BoardCommand);
+      yield* engine.dispatch({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-depend-multi-2"),
+        cardId: BoardCardId.make("multi-2"),
+        dependsOn: [BoardCardId.make("multi-1")],
+        createdAt: t0,
+      } as BoardCommand);
+      // Archiving the dependency unblocks its dependent: two events, the last
+      // one on `multi-2`.
+      const archive: BoardCommand = {
+        type: "board.card.archive",
+        commandId: CommandId.make("cmd-archive-multi-1"),
+        cardId: BoardCardId.make("multi-1"),
+        createdAt: t0,
+      };
+      const before = yield* count(sql, "boards.board_events");
+      const first = yield* engine.dispatch(archive);
+      assert.strictEqual((yield* count(sql, "boards.board_events")) - before, 2);
+      assert.deepStrictEqual(yield* engine.dispatch(archive), first);
+
+      // A receipt written before the fix (or migrated from v1) names the last
+      // event's card; a retry still replays rather than reporting a conflict.
+      yield* sql`UPDATE boards.board_command_receipts SET aggregate_id = 'multi-2'
+        WHERE command_id = 'cmd-archive-multi-1'`;
+      assert.deepStrictEqual(yield* engine.dispatch(archive), first);
+    }),
+  );
+
   it.effect("records a refusal, and answers a retry with the same refusal", () =>
     Effect.gen(function* () {
       const engine = yield* boardStackEngine;
