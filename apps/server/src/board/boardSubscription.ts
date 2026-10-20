@@ -10,7 +10,8 @@
  *
  * - no cursor, a cursor ahead of the log, or a gap over `BOARD_RESUME_MAX_GAP`:
  *   a full `BoardShellSnapshot`, then the live tail;
- * - a cursor inside the gap: the board events after it, replayed from the log,
+ * - a cursor inside the gap: every card's live `card-threads` (todo changes are
+ *   not in the log), the board events after the cursor replayed from the log,
  *   then the live tail.
  *
  * Either way the tail is `BoardEngine.streamBoardEvents` from the cursor, which
@@ -23,6 +24,7 @@
 import {
   BoardSnapshotError,
   type BoardCardId,
+  type BoardCardThreadShell,
   type BoardShellStreamEvent,
   type BoardShellStreamItem,
   type BoardSubscribeBoardInput,
@@ -123,6 +125,31 @@ export const boardStreamWindowDeltas = (
 const toSnapshotError = (message: string) => (cause: unknown) =>
   new BoardSnapshotError({ message, cause });
 
+/** One `card-threads` delta per card with a live link, stamped with the board
+    head (the client applies `card-threads` unguarded). A card whose links were
+    all removed while the client was away is covered by the replayed unlink. */
+export const cardThreadsResync = (
+  queries: Pick<BoardQueriesShape, "boardAllCardThreads">,
+  sequence: number,
+): Effect.Effect<ReadonlyArray<BoardShellStreamItem>, BoardSnapshotError> =>
+  queries.boardAllCardThreads().pipe(
+    Effect.mapError(toSnapshotError("Failed to load the board's card threads.")),
+    Effect.map((rows) => {
+      const byCard = new Map<BoardCardId, BoardCardThreadShell[]>();
+      for (const row of rows) {
+        const threads = byCard.get(row.cardId);
+        if (threads === undefined) byCard.set(row.cardId, [row]);
+        else threads.push(row);
+      }
+      return Array.from(byCard, ([cardId, threads]): BoardShellStreamItem => ({
+        kind: "card-threads",
+        sequence,
+        cardId,
+        threads,
+      }));
+    }),
+  );
+
 /** One client's board stream. Requires a scope: the todo subscription lives as
     long as the stream does. `maxGap` exists for tests. */
 export const subscribeBoard = (
@@ -161,7 +188,12 @@ export const subscribeBoard = (
       const head = yield* engine.latestSequence;
       const maxGap = options?.maxGap ?? BOARD_RESUME_MAX_GAP;
       if (afterSequence <= head && head - afterSequence <= maxGap) {
-        return deltasAfter(afterSequence);
+        // Todo changes and thread deletions are not in the board log, so a
+        // replay alone leaves the client's `card-threads` as they were when it
+        // dropped. Re-send every card's link set first; the todo subscription
+        // is already attached, so nothing landing after this read is lost.
+        const resync = yield* cardThreadsResync(queries, head);
+        return Stream.concat(Stream.fromIterable(resync), deltasAfter(afterSequence));
       }
     }
 

@@ -8,8 +8,9 @@
  *
  * Every (re)subscription sends the cursor of the snapshot already held, so a
  * reconnect replays only the board events it missed — or, past the server's
- * gap bound or after the server's board was replaced, receives a fresh
- * snapshot. Nothing is persisted: the board waits for its first snapshot on a
+ * gap bound or with a cursor ahead of the server's log, receives a fresh
+ * snapshot. A replaced board whose log has already reached the cursor is not
+ * detected: the cursor carries no log identity. Nothing is persisted: the board waits for its first snapshot on a
  * cold start rather than painting a cached board it cannot vouch for.
  */
 import {

@@ -3775,6 +3775,13 @@ export interface BoardQueriesShape {
   readonly boardCardThreads: (
     cardId: BoardCardId,
   ) => Effect.Effect<ReadonlyArray<BoardCardThreadShell>, ProjectionRepositoryError>;
+  /** Every card's live links + cached todo summaries — the snapshot's
+      `cardThreads` slice, which a resume-by-replay re-sends because todo
+      changes are not in the board log. */
+  readonly boardAllCardThreads: () => Effect.Effect<
+    ReadonlyArray<BoardCardThreadShell>,
+    ProjectionRepositoryError
+  >;
   /** The card a live-linked thread belongs to, or null — how a thread-shaped
       shell refetch finds the card whose `card-threads` delta it must emit. */
   readonly boardCardIdForThread: (
@@ -3872,6 +3879,7 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
         Effect.map((rows) => rows.map(toBoardCardThreadShell)),
         Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardThreads:query")),
       ),
+    boardAllCardThreads: () => boardShellCardThreads(queries),
     boardCardIdForThread: (threadId) =>
       queries
         .findBoardCardIdForLiveThread(threadId)

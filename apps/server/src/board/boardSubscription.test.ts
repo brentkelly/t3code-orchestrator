@@ -8,6 +8,7 @@
 import {
   BoardCardId,
   CommandId,
+  EventId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -21,7 +22,11 @@ import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 
 import { inertBoardQueries } from "./boardServices.testkit.ts";
-import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
+import {
+  boardStackEngine,
+  drainBoardThreadTail,
+  makeBoardStackTestLayer,
+} from "./boardStack.testkit.ts";
 import { boardStreamWindowDeltas, subscribeBoard } from "./boardSubscription.ts";
 import { makeBoardCard, NOW } from "./supervisorHarness.testkit.ts";
 
@@ -261,6 +266,74 @@ it.layer(makeBoardStackTestLayer("t3o-board-subscribe-test-"), { excludeTestServ
         const head = yield* engine.boardEngine.latestSequence;
         const items = yield* collect({ afterSequence: head + 50 }, 1);
         assert.deepStrictEqual(kinds(items), ["snapshot"]);
+      }),
+    );
+
+    // Runs last: the shared database keeps this card's live link, which every
+    // later resume would re-send.
+    it.effect("resume re-sends card threads whose todos changed while disconnected", () =>
+      Effect.gen(function* () {
+        const engine = yield* boardStackEngine;
+        const resumedCard = BoardCardId.make("card-d");
+        const thread = ThreadId.make("thread-d");
+        yield* engine.dispatch(createProject);
+        yield* engine.dispatch(createCard("card-d"));
+        yield* engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-d"),
+          threadId: thread,
+          projectId,
+          title: "Thread d",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: NOW,
+        });
+        yield* engine.dispatch({
+          type: "board.card.link-thread",
+          commandId: CommandId.make("cmd-link-d"),
+          cardId: resumedCard,
+          threadId: thread,
+          role: "building",
+          createdAt: NOW,
+        });
+        const cursor = yield* engine.boardEngine.latestSequence;
+
+        // The plan lands with no subscriber attached, and writes no board event.
+        yield* engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-plan-d"),
+          threadId: thread,
+          activity: {
+            id: EventId.make("activity-plan-d"),
+            tone: "info",
+            kind: "turn.plan.updated",
+            summary: "Plan updated",
+            payload: {
+              plan: [
+                { step: "One", status: "completed" },
+                { step: "Two", status: "pending" },
+              ],
+            },
+            turnId: null,
+            createdAt: NOW,
+          },
+          createdAt: NOW,
+        });
+        yield* drainBoardThreadTail;
+        assert.strictEqual(yield* engine.boardEngine.latestSequence, cursor);
+
+        const items = yield* collect({ afterSequence: cursor }, 1);
+        const [resent] = items;
+        assert.strictEqual(resent?.kind, "card-threads");
+        assert.deepStrictEqual(
+          resent?.kind === "card-threads"
+            ? resent.threads.map((entry) => [entry.cardId, entry.todoDone, entry.todoTotal])
+            : [],
+          [[resumedCard, 1, 2]],
+        );
       }),
     );
   },
