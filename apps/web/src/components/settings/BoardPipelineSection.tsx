@@ -726,8 +726,8 @@ export function BoardPipelineSection() {
   };
 
   return (
-    <SettingsSection id="board-pipeline" title={anchor.title}>
-      <p className="max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
+    <SettingsSection id="board-pipeline" title={anchor.title} variant="plain">
+      <p className="mb-2 max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
         Each stage runs one agent, except code review, which runs a review loop. A card freezes its
         stage config the moment it enters the stage, so edits take effect the next time a card
         enters, never mid-flight.
@@ -737,7 +737,10 @@ export function BoardPipelineSection() {
           Connect an environment to add, rename, reorder, or delete stages.
         </p>
       ) : null}
-      <div id="board-default-model" className="mb-6 px-3 sm:px-4">
+      <div
+        id="board-default-model"
+        className="mx-3 mb-3 rounded-xl border border-border bg-card px-4 py-3 shadow-xs sm:mx-4"
+      >
         <ModelRow
           label="Default model"
           ariaLabel="Board default model"

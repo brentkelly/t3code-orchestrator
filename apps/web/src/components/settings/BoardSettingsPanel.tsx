@@ -84,10 +84,13 @@ export function BoardSettingsPanel() {
 type UpdateFn = ReturnType<typeof useUpdatePrimarySettings>;
 
 /** The prototype's bordered card list container, shared by every non-pipeline
-    section so the page reads as one system. */
-function CardListContainer(props: { children: React.ReactNode; className?: string }) {
+    section so the page reads as one system. Sections holding these use the
+    `plain` SettingsSection variant: the default `grouped` one draws a second
+    border around them. */
+function CardListContainer(props: { children: React.ReactNode; className?: string; id?: string }) {
   return (
     <div
+      id={props.id}
       className={cn(
         "mx-3 flex flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3 shadow-xs sm:mx-4",
         props.className,
@@ -126,8 +129,8 @@ function ProjectsSection({
 }) {
   const anchor = searchableSetting("board-projects");
   return (
-    <SettingsSection id="board-projects" title={anchor.title}>
-      <p className="max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
+    <SettingsSection id="board-projects" title={anchor.title} variant="plain">
+      <p className="mb-2 max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
         The prefix for each project's card keys (e.g. T3 → T3-42). Cards take their colour from the
         project's icon; open a project's settings to change it. The eye hides a project and its
         cards from the board without touching them.
@@ -270,7 +273,7 @@ function ConcurrencySection({
 }) {
   const anchor = searchableSetting("board-concurrency");
   return (
-    <SettingsSection id="board-concurrency" title={anchor.title}>
+    <SettingsSection id="board-concurrency" title={anchor.title} variant="plain">
       <CardListContainer>
         <CardRow
           label="Global limit"
@@ -336,8 +339,8 @@ function ConcurrencySection({
 function LifecycleSection({ board, update }: { board: BoardSettings; update: UpdateFn }) {
   const anchor = searchableSetting("board-reclaim-worktree-on-done");
   return (
-    <SettingsSection id="board-lifecycle" title="Lifecycle">
-      <div id="board-reclaim-worktree-on-done" className="px-3 sm:px-4">
+    <SettingsSection id="board-lifecycle" title="Lifecycle" variant="plain">
+      <CardListContainer id="board-reclaim-worktree-on-done">
         <CardRow
           label={anchor.title}
           description="Remove a card's git worktree as soon as it reaches Done, instead of waiting for it to be archived. A worktree holding uncommitted changes or unpushed commits is kept and flagged on the card. Archiving always reclaims either way."
@@ -353,7 +356,7 @@ function LifecycleSection({ board, update }: { board: BoardSettings; update: Upd
             />
           }
         />
-      </div>
+      </CardListContainer>
       <p className="px-3 text-xs text-muted-foreground/70 sm:px-4">
         Defaults: reclaim worktrees at Done {DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE ? "on" : "off"},
         global concurrency {DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT}.
