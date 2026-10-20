@@ -993,6 +993,46 @@ it.effect(
     ),
 );
 
+it.effect("a limit armed with the engine is resumed once, by the engine, never by the board", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("a", "a")], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        const thread = yield* startCard(harness, "a", "a", 1);
+        // The thread failed on a limit that names its reset time, so the park
+        // hands the resume to v2.
+        yield* Ref.update(harness.shells, (current) => {
+          const state = current.get(String(thread))!;
+          return new Map(current).set(String(thread), {
+            ...state,
+            usageLimit: { resetAt: RESETS_AT, message: waitAt().reason, resumeArmed: false },
+          });
+        });
+        yield* endTurn(harness, thread, waitAt());
+        assert.strictEqual((yield* stepOf(harness, "a"))?.stalledReason, "usage-limit");
+        const shells = yield* Ref.get(harness.shells);
+        assert.isTrue(shells.get(String(thread))?.usageLimit?.resumeArmed);
+        const sentBefore = (yield* turnTextsFor(harness, thread)).length;
+
+        // The window reopens: the board's probe leaves the armed park alone.
+        yield* TestClock.adjust(Duration.minutes(61));
+        yield* harness.reactor.fireProbes;
+        yield* harness.reactor.drain;
+        assert.strictEqual((yield* stepOf(harness, "a"))?.status, "stalled");
+        assert.lengthOf(yield* turnTextsFor(harness, thread), sentBefore);
+
+        // v2's resume wakes the step, and the board sends nothing of its own.
+        yield* harness.pumpRuntime({ type: "limit-resumed", threadId: thread });
+        yield* harness.reactor.drain;
+        assert.strictEqual((yield* stepOf(harness, "a"))?.status, "running");
+        assert.lengthOf(yield* turnTextsFor(harness, thread), sentBefore);
+      }),
+  ),
+);
+
 // ── Human-in-the-loop is out of scope entirely (D11) ──────────────────────
 
 it.effect("a human-in-the-loop step is never parked by a limit, and records no cooldown", () =>

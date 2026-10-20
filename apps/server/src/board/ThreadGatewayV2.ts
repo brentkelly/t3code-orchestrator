@@ -342,17 +342,18 @@ const FOLLOW_RETRY = Schedule.exponential("1 second").pipe(
 );
 
 /**
- * The engine's stored events from now on, for as long as the subscriber runs.
- * A failed read (the log is read from SQLite during catch-up) resubscribes
- * after the last event delivered rather than ending the stream, so a
- * transient error neither drops nor repeats a signal.
+ * The engine's stored events after `startAfter` (from now on when omitted), for
+ * as long as the subscriber runs. A failed read (the log is read from SQLite
+ * during catch-up) resubscribes after the last event delivered rather than
+ * ending the stream, so a transient error neither drops nor repeats a signal.
  */
 export const followStoredEvents = (
   sink: Pick<EventSink.EventSinkV2["Service"], "stream" | "latestSequence">,
   retrySchedule: Schedule.Schedule<unknown, unknown> = FOLLOW_RETRY,
+  startAfter: number | null = null,
 ): Stream.Stream<OrchestrationV2StoredEvent> =>
   Stream.suspend(() => {
-    let cursor: number | null = null;
+    let cursor: number | null = startAfter;
     const after = Effect.suspend(() =>
       cursor === null ? sink.latestSequence() : Effect.succeed(cursor),
     );
@@ -775,13 +776,11 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
             Stream.map(toTodoLogEntry),
             Stream.mapError(readError("readTodoLog")),
           ),
+    // Pinned at the head it reads now, so the caller's catch-up ends exactly
+    // where this begins; a failed read resubscribes from the last entry.
     subscribeTodoLog: Effect.map(
       eventSink.latestSequence().pipe(Effect.orElseSucceed(() => 0)),
-      (head) =>
-        eventSink.stream({ afterSequence: head }).pipe(
-          Stream.map(toTodoLogEntry),
-          Stream.catchCause(() => Stream.empty),
-        ),
+      (head) => followStoredEvents(eventSink, FOLLOW_RETRY, head).pipe(Stream.map(toTodoLogEntry)),
     ),
   };
   return gateway;

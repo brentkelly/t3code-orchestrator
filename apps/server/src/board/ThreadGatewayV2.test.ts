@@ -367,6 +367,30 @@ describe("boardThreadStateFromShell", () => {
 });
 
 describe("followStoredEvents", () => {
+  effectIt.effect("starts after a given cursor and resubscribes from the last event", () => {
+    const event = (n: number) => ({ sequence: n }) as unknown as OrchestrationV2StoredEvent;
+    const subscribedAfter: Array<number | undefined> = [];
+    const sink = {
+      latestSequence: () => Effect.succeed(99),
+      stream: (input?: { readonly afterSequence?: number }) => {
+        subscribedAfter.push(input?.afterSequence);
+        return subscribedAfter.length === 1
+          ? Stream.make(event(6)).pipe(
+              Stream.concat(Stream.fail(new EventSinkStreamError({ afterSequence: 6 }))),
+            )
+          : Stream.make(event(7));
+      },
+    };
+    return followStoredEvents(sink, Schedule.recurs(1), 5).pipe(
+      Stream.map((stored) => stored.sequence),
+      Stream.runCollect,
+      Effect.map((sequences) => {
+        assert.deepStrictEqual(Array.from(sequences), [6, 7]);
+        assert.deepStrictEqual(subscribedAfter, [5, 6]);
+      }),
+    );
+  });
+
   effectIt.effect("resubscribes after the last delivered event when a read fails", () => {
     const event = (n: number) => ({ sequence: n }) as unknown as OrchestrationV2StoredEvent;
     const subscribedAfter: Array<number | undefined> = [];

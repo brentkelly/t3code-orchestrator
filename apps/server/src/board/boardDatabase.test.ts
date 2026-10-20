@@ -6,7 +6,11 @@
  * tables and their indexes sitting in `main`, with rows in them.
  */
 import { assert, describe, it } from "@effect/vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -86,6 +90,31 @@ describe("board database", () => {
       const databases = yield* sql<{ readonly name: string }>`PRAGMA database_list`;
       assert.strictEqual(databases.filter((db) => db.name === "boards").length, 1);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("gives the board file main's WAL durability and size limit", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* attachBoardDatabase();
+      const [journal] = yield* sql<{ readonly journal_mode: string }>`PRAGMA boards.journal_mode`;
+      const [sync] = yield* sql<{ readonly synchronous: number }>`PRAGMA boards.synchronous`;
+      const [limit] = yield* sql<{
+        readonly journal_size_limit: number;
+      }>`PRAGMA boards.journal_size_limit`;
+      assert.strictEqual(journal?.journal_mode, "wal");
+      // 1 is NORMAL; an attached file otherwise starts at 2, FULL.
+      assert.strictEqual(sync?.synchronous, 1);
+      assert.strictEqual(limit?.journal_size_limit, 32 * 1024 * 1024);
+    }).pipe(
+      Effect.provide(
+        Layer.unwrap(
+          Effect.map(
+            Effect.sync(() => mkdtempSync(join(tmpdir(), "t3o-board-pragmas-"))),
+            (dir) => NodeSqliteClient.layer({ filename: join(dir, "statev2.sqlite") }),
+          ),
+        ),
+      ),
+    ),
   );
 
   it.effect("moves a legacy layout's tables, indexes, rows and ledger into the board file", () =>
