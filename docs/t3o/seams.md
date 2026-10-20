@@ -100,22 +100,29 @@ Corollaries:
 
 A core seam may contain **only** one of these four shapes:
 
-1. **A predicate delegation** — `if (isBoardCommand(command)) return yield* boardConnection.dispatch(command)`,
-   placed before upstream's own handling so upstream never sees the board's input.
-2. **A spread of a board-owned registry** — `...BOARD_CLIENT_COMMANDS,`,
-   `...BOARD_SHELL_STREAM_EVENTS,` etc., appended at a list/record tail. (Database migrations are
-   the exception — see the note below; they are no longer a seam in `Migrations.ts`.)
-3. **A single injected factory call** — `...boardSnapshotQueryMethods(sql, { … })`,
-   `...(yield* boardRpcHandlers({ … }))`.
+1. **A predicate delegation** — `if (input.resource._tag === "board-attachment") …`, placed
+   before upstream's own handling so upstream never sees the board's input.
+2. **A spread of a board-owned registry** — `...BOARD_RPCS,`, `...BOARD_RPC_SCOPES,` etc.,
+   appended at a list/record tail. (Database migrations are the exception — see the note below;
+   they are no longer a seam in `Migrations.ts`.)
+3. **A single injected factory call** — `...(yield* boardRpcHandlers({ … }))`.
 4. **A re-export** — `export * from "./board.ts"`.
 
 > **The board has its own engine (`T3O-56`).** Board commands are decided, logged and published by
 > `board/BoardEngine.ts` against `boards.board_events`, not by upstream's orchestration engine, so
 > the decider, projector, engine, projection-pipeline and receipt seams are gone, and board events
 > and commands are no longer members of `OrchestrationEvent` / `OrchestrationCommand`
-> (`contracts/boardEvent.ts`, `BoardCommand` in `board.ts`). Only the wire union
-> `ClientOrchestrationCommand` still carries board commands, until the board has its own dispatch
-> RPC. A seam that routes INTO upstream's command loop is no longer an option for new board work.
+> (`contracts/boardEvent.ts`, `BoardCommand` in `board.ts`). A seam that routes INTO upstream's
+> command loop is no longer an option for new board work.
+
+> **The board has its own client protocol (`T3O-57`).** Clients send board commands on
+> `board.dispatchCommand` and hold the board through `board.subscribeBoard`: a `BoardShellSnapshot`
+> (cards, labels, stages, card threads, provider limits) stamped with the board log's sequence,
+> then that log's deltas, resuming from the client's cursor like upstream's shell does
+> (`board/boardSubscription.ts`, client `state/boardSubscription.ts`). The orchestration shell
+> snapshot, its stream, `ClientOrchestrationCommand` and the client shell reducer carry nothing
+> board-shaped. Card thread state (`threadState`, `awaitingInput`, `waitingOnBackground`) is
+> derived on the client from the thread shells, so a thread changing needs no board delta.
 
 > **Database migrations are a separate lineage, not a seam.** Board migrations were originally
 > spread (`...BOARD_MIGRATIONS`) into upstream's `migrationEntries` and numbered from 900 to dodge
@@ -136,31 +143,18 @@ A core seam may contain **only** one of these four shapes:
 > labels. To add a board migration: drop `NNN_Name.ts` in `board/migrations/` and append it to
 > `BOARD_MIGRATIONS` in that dir's `index.ts`.
 
-Plus the frozen once-only edits recorded in the inventory (D9 aggregate-id union widenings, the two
-optional snapshot fields). Everything else — registries, factories, type guards, reducers, SQL —
+Plus the frozen once-only edits recorded in the inventory. Everything else — registries, factories, type guards, reducers, SQL —
 lives in board-owned files (`packages/contracts/src/board.ts`, `apps/server/src/board/*`,
 `packages/client-runtime/src/state/board.ts`). The consequence, and the test of this grammar:
 **adding a board command, event, projector, or migration touches zero upstream-owned files.**
 
 ### The `board.` prefix rule
 
-The predicates that make generic seams possible key on naming:
-
-- Every board command `type` starts with **`board.`** — it is how `ws.ts` routes a command off
-  `orchestration.dispatchCommand` to the board engine.
-- Every board event `type` starts with **`board.`**.
-- Every board shell-stream delta `kind` starts with **`card-`** or **`label-`**. Originally
-  `card-` only; **`t3o-06a` added the label catalogue delta (`label-upserted`)** — the non-card
-  board delta the original rule flagged ("revisit if non-card board deltas ever appear"). The delta
-  is _about a label, not a card_, so it takes the honest `label-` prefix, and
-  `isBoardShellStreamEvent` was widened to `startsWith("card-") || startsWith("label-")`. A future
-  board delta about neither adds its own prefix here and to that predicate — both are board-owned
-  (`board.ts`), so this stays a zero-core-line change.
-
-`isBoardCommand` / `isBoardEvent` / `isBoardShellStreamEvent` are type guards exported from
-`packages/contracts/src/board.ts` (server and clients both need them), implemented as
-`type.startsWith("board.")` etc. The convention is self-policing: a board command named without the
-prefix would be routed to upstream's engine, which no longer decodes it, and fails at the wire.
+- Every board command and event `type` starts with **`board.`**, and so does every board RPC
+  method. `isBoardCommand` / `isBoardEvent` (`packages/contracts/src/board.ts`) key on it: the
+  supervisor routes a command it dispatches to the board engine or upstream's by it.
+- Board deltas keep their **`card-`**, **`label-`** and **`stage-`** kinds, but they ride the
+  board's own stream (`T3O-57`), so nothing routes on those prefixes any more.
 
 ### Rules that ride alongside
 
@@ -348,8 +342,8 @@ resolution is regenerate, not hand-merge.
   ambiguous between the two.
 - **The `ws.ts` shell-coalescing seam and the per-database cursor batches are gone (`T3O-56`).**
   Both existed because board events rode upstream's event stream and projection pipeline. Board
-  deltas now come from the board engine and the board's tail of upstream's log, merged into the
-  shell's live tail as already-built deltas, so `ws.ts` coalesces exactly as upstream does and the
+  deltas now come from the board engine and the board's tail of upstream's log, on the board's own
+  `board.subscribeBoard` stream (`T3O-57`), so `ws.ts` coalesces exactly as upstream does and the
   pipeline commits upstream's cursors with upstream's own repository.
 - **A pinned GitHub credential outranks `gitenv`.** Upstream's `PinnedGitHubCredential` sets
   `GH_TOKEN` on the calls it verifies; `VcsProcess` now applies the per-project token only when the
@@ -571,6 +565,17 @@ dispatch route moved behind one board-owned `boardClientConnection`. Added: `ser
 board runtime layer), `server.test.ts` +1 (its mocks), `shell.ts` +2 (board deltas skip the shell's
 sequence guard). `shellCoalesce.ts` was fork-owned and is deleted.
 
+The board's own subscription (`T3O-57`): **171 markers across 72 upstream-owned files**, from 190
+across 74. `ProjectionSnapshotQuery.ts` and `shellReducer.ts` left the diff entirely (as did the
+`T3O-56` test in `shell-sync.test.ts`, which used the uncounted `T3o (T3O-N):` form).
+`contracts/orchestration.ts` 12 → 3: every board field on the shell snapshot and read model, the
+board delta and client-command spreads, and their import are gone; what stays is the `RuntimeMode`
+move and `runOnWorktreeRemove`. `ws.ts` 11 → 7: the client connection, the dispatch route and the
+three shell-stream seams went; the board's RPCs, including dispatch and subscription, come in
+through the one `boardRpcHandlers` spread. `client-runtime/state/shell.ts` 3 → 1 (only the
+re-export stays). The board's `BoardOrchestrationReadModel` (`board/projector.ts`) is the
+supervisor's threads-plus-cards view, now that `board` is off upstream's read model schema.
+
 For reference, the `v0.0.38` sync stood at 121 markers across 44 files. Counts recorded then that
 differ from their rows in the table below:
 `serverSettings.ts` 2 (indivisible settings keys), `GitHubCli.ts` 7 (board merge path),
@@ -702,108 +707,89 @@ Shapes marked **frozen** are once-only edits that never grow again; every other 
 predicate, spread, injected factory call, or re-export whose growth happens inside board-owned
 files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 
-| File                                                              | Spec         | Reason                                                                                    | Shape                                                                     |
-| ----------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `AGENTS.md`                                                       | `t3o-01`     | Fork status, branch topology, seam rules                                                  | Self-contained block at the top                                           |
-| `AGENTS.md`                                                       | `t3o-01`     | Rebase-target note (`t3o`, not `main`) in upstream's PR guidance                          | one-line edit (frozen)                                                    |
-| `AGENTS.md`                                                       | `t3o-01`     | PR-target rule (`t3o`, never `main`) in upstream's PR guidance                            | one-line edit (frozen)                                                    |
-| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts` | `t3o-02`     | Import board snapshot enrichment                                                          | one-line append (import)                                                  |
-| `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts` | `t3o-02a`    | Board shell slices wrap `getShellSnapshot` / `getArchivedShellSnapshot` (D2/D8)           | spread (factory call), after base methods                                 |
-| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`   | `T3O-56`     | Every `board.*` row left in the log (pre-`T3O-56` history) is skipped on read             | `decodeReadRow` tolerance (keep until the orchestration-v2 merge)         |
-| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts`   | `T3O-17`     | `inferActorKind` reads the shared command-id origin rule (`commandOrigin.ts`)             | import + one delegating call replacing two prefix tests                   |
-| `apps/server/src/persistence/Layers/Sqlite.ts`                    | ledger split | Legacy board-ledger reconcile before upstream migrations (`reconcileLegacyBoardLedger()`) | one-line append (delegating call)                                         |
-| `apps/server/src/persistence/Layers/Sqlite.ts`                    | ledger split | Board migration lineage runs after upstream's (`runBoardMigrations()`)                    | one-line append (delegating call)                                         |
-| `apps/web/src/components/ChatView.tsx`                            | `t3o-05`     | Import `BoardModeTabs`                                                                    | one-line append (import)                                                  |
-| `apps/web/src/components/ChatView.tsx`                            | `t3o-05`     | Threads/Board mode tabs before the breadcrumb (D1 shell tab)                              | one-line append (delegating element)                                      |
-| `apps/web/src/components/NoActiveThreadState.tsx`                 | `t3o-05`     | Import `BoardModeTabs`                                                                    | one-line append (import)                                                  |
-| `apps/web/src/components/NoActiveThreadState.tsx`                 | `t3o-05`     | Mode tabs in the no-thread top bar (Board entry must survive it)                          | one-line append (delegating element)                                      |
-| `apps/web/src/components/sidebar/SidebarChrome.tsx`               | `T3O-34`     | Import `BoardModeTabsSidebarSlot`                                                         | one-line append (import)                                                  |
-| `apps/web/src/components/sidebar/SidebarChrome.tsx`               | `T3O-34`     | Mode-tabs slot in the sidebar header (measures its own fit)                               | one-line append (delegating element)                                      |
-| `apps/web/src/routes/__root.tsx`                                  | `T3O-34`     | Import `redirectColdStartToBoard`                                                         | one-line append (import)                                                  |
-| `apps/web/src/routes/__root.tsx`                                  | `T3O-34`     | Cold start at `/` opens the board (D1); `/` stays threads home after                      | one-line append (delegating call, throws the redirect itself)             |
-| `apps/web/src/routes/pair.tsx`                                    | `T3O-34`     | Import `resolvePairExitTarget`                                                            | one-line append (import)                                                  |
-| `apps/web/src/routes/pair.tsx`                                    | `T3O-34`     | Already-paired client redirects to the board, not `/` (D2/D3)                             | one-line edit (delegating call in the existing `redirect`)                |
-| `apps/web/src/routes/pair.tsx`                                    | `T3O-34`     | Completed pairing navigates to the board, not `/` (D2/D3)                                 | one-line edit (delegating call in the existing `navigate`)                |
-| `packages/client-runtime/src/state/shell.ts`                      | `t3o-02`     | Export board client state through `state/shell`                                           | one-line append (re-export)                                               |
-| `packages/client-runtime/src/state/shell.ts`                      | `T3O-56`     | Import the board delta predicate                                                          | one-line append (import)                                                  |
-| `packages/client-runtime/src/state/shell.ts`                      | `T3O-56`     | A board delta applies whatever its sequence (it carries the board's own)                  | one-clause widening of the sequence guard                                 |
-| `packages/client-runtime/src/state/shellReducer.ts`               | `t3o-02`     | Import board reducer + predicate                                                          | one-line append (import)                                                  |
-| `packages/client-runtime/src/state/shellReducer.ts`               | `T3O-56`     | Board deltas reduce in the board module, before the shell sequence guard                  | predicate delegation ahead of the guard                                   |
-| `packages/contracts/src/index.ts`                                 | `t3o-02`     | Export `board.ts`                                                                         | one-line append (re-export)                                               |
-| `packages/contracts/src/orchestration.ts`                         | `t3o-02`     | Import board schema + registries                                                          | one-line append (import)                                                  |
-| `packages/contracts/src/orchestration.ts`                         | `t3o-02`     | `board` field on `OrchestrationReadModel` (optional)                                      | one-line append (frozen)                                                  |
-| `packages/contracts/src/orchestration.ts`                         | `t3o-02`     | `cards` field on `OrchestrationShellSnapshot` (optional)                                  | one-line append (frozen)                                                  |
-| `packages/contracts/src/orchestration.ts`                         | `t3o-06a`    | `boardLabels` field on `OrchestrationShellSnapshot` (catalogue once)                      | one-line append (frozen)                                                  |
-| `packages/contracts/src/orchestration.ts`                         | `t3o-18`     | `boardCardThreads` field on `OrchestrationShellSnapshot` (links + todos)                  | one-line append (frozen)                                                  |
-| `packages/contracts/src/orchestration.ts`                         | `t3o-02a`    | Card shell deltas in `OrchestrationShellStreamEvent` union                                | registry spread (`BOARD_SHELL_STREAM_EVENTS`)                             |
-| `packages/contracts/src/orchestration.ts`                         | `T3O-22`     | `boardProviderLimits` on `OrchestrationShellSnapshot` (one array, board-wide)             | one-line append (optional field)                                          |
-| `packages/contracts/src/orchestration.ts`                         | `t3o-02a`    | Board commands in `ClientOrchestrationCommand`                                            | registry spread (`BOARD_CLIENT_COMMANDS`)                                 |
-| `packages/contracts/src/rpc.ts`                                   | `t3o-04`     | Import board RPC registries                                                               | one-line append (import)                                                  |
-| `packages/contracts/src/rpc.ts`                                   | `t3o-04`     | Board methods join `WS_METHODS`                                                           | registry spread (`BOARD_WS_METHODS`)                                      |
-| `packages/contracts/src/rpc.ts`                                   | `t3o-04`     | Board RPCs join `WsRpcGroup` (`RpcGroup.make` is variadic)                                | registry spread (`BOARD_RPCS`)                                            |
-| `apps/server/src/auth/RpcAuthorization.ts`                        | `t3o-04`     | Import board RPC scope registry                                                           | one-line append (import)                                                  |
-| `apps/server/src/auth/RpcAuthorization.ts`                        | `t3o-04`     | Board scopes join `RPC_REQUIRED_SCOPES`                                                   | registry spread (`BOARD_RPC_SCOPES`)                                      |
-| `apps/server/src/ws.ts`                                           | `t3o-04`     | Import board RPC handler factory                                                          | one-line append (import)                                                  |
-| `apps/server/src/ws.ts`                                           | `t3o-04`     | Board RPC handlers join the `toLayer` handler record                                      | spread (injected factory call, `boardRpcHandlers(deps)`)                  |
-| `apps/server/src/ws.ts`                                           | `T3O-56`     | The client connection's board side (dispatch, shell deltas), built once per socket        | one service yield of a board-owned factory                                |
-| `apps/server/src/ws.ts`                                           | `T3O-56`     | Board commands on `dispatchCommand` go to the board engine                                | predicate delegation before normalisation                                 |
-| `apps/server/src/ws.ts`                                           | `T3O-56`     | The board's shell deltas attach before the snapshot read                                  | one-line yield of a board-owned stream                                    |
-| `apps/server/src/ws.ts`                                           | `T3O-56`     | Board deltas merge into the shell's live tail                                             | one `Stream.merge` around the live tail                                   |
-| `apps/server/src/ws.ts`                                           | `T3O-56`     | A shell resumes by snapshot once the board has history (its deltas are not in this log)   | one extra disjunct on the replay guard                                    |
-| `apps/server/src/ws.ts`                                           | `t3o-32`     | `board-attachment` asset resources mint like chat attachments                             | one-line predicate widening (frozen)                                      |
-| `packages/contracts/src/assets.ts`                                | `t3o-32`     | `board-attachment` member of `AssetResource` (card folder + filename)                     | union member (frozen)                                                     |
-| `apps/server/src/assets/AssetAccess.ts`                           | `t3o-32`     | Import the board attachment path resolver                                                 | one-line append (import)                                                  |
-| `apps/server/src/assets/AssetAccess.ts`                           | `t3o-32`     | `board-attachment` claims member (card folder + filename, download/mime)                  | union member (frozen)                                                     |
-| `apps/server/src/assets/AssetAccess.ts`                           | `t3o-32`     | `issueAssetUrl` mints a board attachment (same disposition rules as `attachment`)         | `case` delegating to the board resolver                                   |
-| `apps/server/src/assets/AssetAccess.ts`                           | `t3o-32`     | `resolveAsset` serves a board attachment from the card folder                             | predicate branch delegating to the board resolver                         |
-| `packages/client-runtime/src/rpc/client.ts`                       | `t3o-04`     | Import board subscription tag type                                                        | one-line append (type import)                                             |
-| `packages/client-runtime/src/rpc/client.ts`                       | `t3o-04`     | Board tags join `EnvironmentSubscriptionRpcTag`                                           | one-line union member (`BoardSubscriptionRpcTag`, grows in board.ts)      |
-| `packages/contracts/src/settings.ts`                              | `t3o-07`     | Import `BoardSettings` / `BoardSettingsPatch` from board.ts                               | one-line append (import)                                                  |
-| `packages/contracts/src/settings.ts`                              | `t3o-07`     | `board` field on `ServerSettings` (D10)                                                   | one-line append, single field (frozen; shape grows in `BoardSettings`)    |
-| `packages/contracts/src/settings.ts`                              | `t3o-07`     | `board` field on `ServerSettingsPatch` (D10)                                              | one-line append, single field (frozen; whole-map, merged by `deepMerge`)  |
-| `apps/web/src/components/settings/settingsSearch.ts`              | `t3o-07`     | Import `BOARD_SETTINGS_SEARCH_ITEMS` from board-owned registry                            | one-line append (import)                                                  |
-| `apps/web/src/components/settings/settingsSearch.ts`              | `t3o-07`     | `/settings/board` in `SettingsPath` union (single board page, D1)                         | one-line union member (frozen)                                            |
-| `apps/web/src/components/settings/settingsSearch.ts`              | `t3o-07`     | Board label in `SETTINGS_SECTION_LABELS` (`SETTINGS_NAV_ITEMS` derives)                   | one-line record entry (frozen)                                            |
-| `apps/web/src/components/settings/settingsSearch.ts`              | `t3o-07`     | Board search items join `SETTINGS_SEARCH_ITEMS`                                           | registry spread (`BOARD_SETTINGS_SEARCH_ITEMS`)                           |
-| `apps/web/src/components/settings/SettingsSidebarNav.tsx`         | `t3o-07`     | `LayoutGridIcon` import for the board nav icon                                            | one-line append (import)                                                  |
-| `apps/web/src/components/settings/SettingsSidebarNav.tsx`         | `t3o-07`     | Board icon in `SETTINGS_SECTION_ICONS`                                                    | one-line record entry (frozen)                                            |
-| `apps/server/src/mcp/McpInvocationContext.ts`                     | `t3o-08`     | `McpCapability` gains `"board"` (D3)                                                      | one-line edit (frozen)                                                    |
-| `apps/server/src/mcp/McpInvocationContext.ts`                     | `t3o-08`     | `requireMcpCapability` stays preview-scoped after the widening                            | one-line edit (frozen)                                                    |
-| `apps/server/src/mcp/McpSessionRegistry.ts`                       | `t3o-08`     | Granted capability set gains `"board"` (D3)                                               | one-line edit (frozen)                                                    |
-| `apps/server/src/mcp/McpHttpServer.ts`                            | `t3o-08`     | Import `BoardToolkitRegistrationLive`                                                     | one-line append (import)                                                  |
-| `apps/server/src/mcp/McpHttpServer.ts`                            | `t3o-08`     | Board toolkit joins the MCP server layer merge (D3)                                       | spread of a board-owned registration layer                                |
-| `apps/server/src/server.ts`                                       | `t3o-10`     | Import the supervisor reactor + its slots layer                                           | one-line append (import)                                                  |
-| `apps/server/src/server.ts`                                       | `t3o-10`     | Supervisor reactor joins `ReactorLayerLive`                                               | provideMerge of a board-owned reactor layer                               |
-| `apps/server/src/server.ts`                                       | `T3O-56`     | Import the board runtime layer                                                            | one-line append (import)                                                  |
-| `apps/server/src/server.ts`                                       | `T3O-56`     | The board engine, queries and upstream tail join `ReactorLayerLive`                       | provideMerge of a board-owned layer                                       |
-| `apps/server/src/serverRuntimeStartup.ts`                         | `t3o-10`     | Import the supervisor reactor tag                                                         | one-line append (import)                                                  |
-| `apps/server/src/serverRuntimeStartup.ts`                         | `t3o-10`     | Resolve the supervisor reactor in the startup effect                                      | one-line append (`yield*` the tag)                                        |
-| `apps/server/src/serverRuntimeStartup.ts`                         | `t3o-10`     | Start the supervisor reactor in the `reactors.start` phase                                | one-line append (start call)                                              |
-| `packages/contracts/src/pullRequest.ts`                           | `T3O-47`     | `headSha` on `PullRequestDetail`, for the auto-merge ladder's reset                       | one-line append, optional field                                           |
-| `apps/server/src/pullRequest/PullRequestProvider.ts`              | `T3O-47`     | `headSha` on `ProviderChangeRequestDetail`                                                | one-line append, optional field                                           |
-| `apps/server/src/pullRequest/PullRequestService.ts`               | `T3O-47`     | Carry `headSha` into the assembled detail                                                 | one-line append at an object tail                                         |
-| `apps/server/src/pullRequest/GitHubPullRequestCli.ts`             | `T3O-54`     | The GraphQL core detail read keeps the `T3O-8` missing-scope fallback                     | wrap in the fork's fallback + one import from a fork-owned helper         |
-| `apps/server/src/sourceControl/GitHubCli.ts`                      | `T3O-54`     | The batched head lookup takes the `T3O-48` origin `repository`                            | optional input + request field + pin + `--repo` on the `gh` fallback      |
-| `apps/server/src/cloud/serviceProtocol.ts`                        | `T3O-54`     | `SERVICE_LAUNCHER_PROTOCOL = 4` (upstream's 3 + multi-database snapshot)                  | constant + comment (re-check every sync)                                  |
-| `vite.config.ts`                                                  | `T3O-54`     | Design-token lint rules off for fork-owned web files                                      | one override block                                                        |
-| `apps/server/src/server.ts`                                       | `T3O-47`     | The board's PR gateway joins `RuntimeCoreDependenciesLive`                                | provideMerge of a board-owned layer                                       |
-| `apps/server/src/server.ts`                                       | `T3O-23`     | Import the worktree retirer layer                                                         | one-line append (import)                                                  |
-| `apps/server/src/server.ts`                                       | `T3O-23`     | The worktree retirer joins `RuntimeCoreDependenciesLive`                                  | provideMerge of a board-owned layer                                       |
-| `apps/server/src/ws.ts`                                           | `T3O-23`     | Import the worktree retirer and its thread-delete delegate                                | one-line append (import)                                                  |
-| `apps/server/src/ws.ts`                                           | `T3O-23`     | Resolve `WorktreeRetirer` for the RPC handlers                                            | one-line append (service yield)                                           |
-| `apps/server/src/ws.ts`                                           | `T3O-23`     | `vcsRemoveWorktree` retires (stop, remove scripts) before the stock removal               | one-line delegation (`retireRemovedThreadWorktree`), stock call passed in |
-| `apps/server/src/server.test.ts`                                  | `T3O-23`     | Pass-through `WorktreeRetirer` mock beside the supervisor mock                            | layer mock in an existing `mergeAll`                                      |
-| `apps/server/src/server.test.ts`                                  | `T3O-56`     | Quiet board engine, queries and tail mocks beside the supervisor mock                     | layer mocks in an existing `mergeAll`                                     |
-| `packages/contracts/src/t3ProjectFile.ts`                         | `T3O-23`     | `runOnWorktreeRemove` on a `t3.json` script                                               | one optional field                                                        |
-| `packages/contracts/src/orchestration.ts`                         | `T3O-23`     | `runOnWorktreeRemove` on a stored `ProjectScript`                                         | one optional field (frozen)                                               |
-| `apps/web/src/projectScripts.ts`                                  | `T3O-23`     | `runOnWorktreeRemove` input, stored only when set; never the primary script               | one field + one spread + predicate widening                               |
-| `apps/web/src/components/projectScriptEditor.tsx`                 | `T3O-23`     | Editor carries the flag (form state, hydrate, payload) and a switch                       | one line per form step + one switch                                       |
-| `apps/web/src/components/projectScriptEditor.tsx`                 | `T3O-23`     | `newProjectScriptInputFromFile`: one import mapping for both import paths                 | new exported function                                                     |
-| `apps/web/src/components/ProjectScriptsControl.tsx`               | `T3O-23`     | Import through `newProjectScriptInputFromFile`; `(teardown)` menu label                   | delegating call + label branch                                            |
-| `apps/web/src/components/settings/ProjectActionsSettings.tsx`     | `T3O-23`     | Import through `newProjectScriptInputFromFile`                                            | delegating call                                                           |
-| `apps/web/src/components/settings/ProjectActionsList.tsx`         | `T3O-23`     | `teardown` badge beside `setup`                                                           | one badge                                                                 |
-| `apps/mobile/src/features/terminal/terminalMenu.ts`               | `T3O-23`     | `(teardown)` menu label, mirroring `(setup)`                                              | one branch                                                                |
-| `apps/mobile/src/features/terminal/terminalMenu.test.ts`          | `T3O-23`     | Menu label test for setup and remove scripts                                              | appended `describe` + import                                              |
+| File                                                            | Spec         | Reason                                                                                    | Shape                                                                     |
+| --------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `AGENTS.md`                                                     | `t3o-01`     | Fork status, branch topology, seam rules                                                  | Self-contained block at the top                                           |
+| `AGENTS.md`                                                     | `t3o-01`     | Rebase-target note (`t3o`, not `main`) in upstream's PR guidance                          | one-line edit (frozen)                                                    |
+| `AGENTS.md`                                                     | `t3o-01`     | PR-target rule (`t3o`, never `main`) in upstream's PR guidance                            | one-line edit (frozen)                                                    |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts` | `T3O-56`     | Every `board.*` row left in the log (pre-`T3O-56` history) is skipped on read             | `decodeReadRow` tolerance (keep until the orchestration-v2 merge)         |
+| `apps/server/src/persistence/Layers/OrchestrationEventStore.ts` | `T3O-17`     | `inferActorKind` reads the shared command-id origin rule (`commandOrigin.ts`)             | import + one delegating call replacing two prefix tests                   |
+| `apps/server/src/persistence/Layers/Sqlite.ts`                  | ledger split | Legacy board-ledger reconcile before upstream migrations (`reconcileLegacyBoardLedger()`) | one-line append (delegating call)                                         |
+| `apps/server/src/persistence/Layers/Sqlite.ts`                  | ledger split | Board migration lineage runs after upstream's (`runBoardMigrations()`)                    | one-line append (delegating call)                                         |
+| `apps/web/src/components/ChatView.tsx`                          | `t3o-05`     | Import `BoardModeTabs`                                                                    | one-line append (import)                                                  |
+| `apps/web/src/components/ChatView.tsx`                          | `t3o-05`     | Threads/Board mode tabs before the breadcrumb (D1 shell tab)                              | one-line append (delegating element)                                      |
+| `apps/web/src/components/NoActiveThreadState.tsx`               | `t3o-05`     | Import `BoardModeTabs`                                                                    | one-line append (import)                                                  |
+| `apps/web/src/components/NoActiveThreadState.tsx`               | `t3o-05`     | Mode tabs in the no-thread top bar (Board entry must survive it)                          | one-line append (delegating element)                                      |
+| `apps/web/src/components/sidebar/SidebarChrome.tsx`             | `T3O-34`     | Import `BoardModeTabsSidebarSlot`                                                         | one-line append (import)                                                  |
+| `apps/web/src/components/sidebar/SidebarChrome.tsx`             | `T3O-34`     | Mode-tabs slot in the sidebar header (measures its own fit)                               | one-line append (delegating element)                                      |
+| `apps/web/src/routes/__root.tsx`                                | `T3O-34`     | Import `redirectColdStartToBoard`                                                         | one-line append (import)                                                  |
+| `apps/web/src/routes/__root.tsx`                                | `T3O-34`     | Cold start at `/` opens the board (D1); `/` stays threads home after                      | one-line append (delegating call, throws the redirect itself)             |
+| `apps/web/src/routes/pair.tsx`                                  | `T3O-34`     | Import `resolvePairExitTarget`                                                            | one-line append (import)                                                  |
+| `apps/web/src/routes/pair.tsx`                                  | `T3O-34`     | Already-paired client redirects to the board, not `/` (D2/D3)                             | one-line edit (delegating call in the existing `redirect`)                |
+| `apps/web/src/routes/pair.tsx`                                  | `T3O-34`     | Completed pairing navigates to the board, not `/` (D2/D3)                                 | one-line edit (delegating call in the existing `navigate`)                |
+| `packages/client-runtime/src/state/shell.ts`                    | `t3o-02`     | Export board client state through `state/shell`                                           | one-line append (re-export)                                               |
+| `packages/contracts/src/index.ts`                               | `t3o-02`     | Export `board.ts`                                                                         | one-line append (re-export)                                               |
+| `packages/contracts/src/rpc.ts`                                 | `t3o-04`     | Import board RPC registries                                                               | one-line append (import)                                                  |
+| `packages/contracts/src/rpc.ts`                                 | `t3o-04`     | Board methods join `WS_METHODS`                                                           | registry spread (`BOARD_WS_METHODS`)                                      |
+| `packages/contracts/src/rpc.ts`                                 | `t3o-04`     | Board RPCs join `WsRpcGroup` (`RpcGroup.make` is variadic)                                | registry spread (`BOARD_RPCS`)                                            |
+| `apps/server/src/auth/RpcAuthorization.ts`                      | `t3o-04`     | Import board RPC scope registry                                                           | one-line append (import)                                                  |
+| `apps/server/src/auth/RpcAuthorization.ts`                      | `t3o-04`     | Board scopes join `RPC_REQUIRED_SCOPES`                                                   | registry spread (`BOARD_RPC_SCOPES`)                                      |
+| `apps/server/src/ws.ts`                                         | `t3o-04`     | Import board RPC handler factory                                                          | one-line append (import)                                                  |
+| `apps/server/src/ws.ts`                                         | `t3o-04`     | Board RPC handlers join the `toLayer` handler record                                      | spread (injected factory call, `boardRpcHandlers(deps)`)                  |
+| `apps/server/src/ws.ts`                                         | `t3o-32`     | `board-attachment` asset resources mint like chat attachments                             | one-line predicate widening (frozen)                                      |
+| `packages/contracts/src/assets.ts`                              | `t3o-32`     | `board-attachment` member of `AssetResource` (card folder + filename)                     | union member (frozen)                                                     |
+| `apps/server/src/assets/AssetAccess.ts`                         | `t3o-32`     | Import the board attachment path resolver                                                 | one-line append (import)                                                  |
+| `apps/server/src/assets/AssetAccess.ts`                         | `t3o-32`     | `board-attachment` claims member (card folder + filename, download/mime)                  | union member (frozen)                                                     |
+| `apps/server/src/assets/AssetAccess.ts`                         | `t3o-32`     | `issueAssetUrl` mints a board attachment (same disposition rules as `attachment`)         | `case` delegating to the board resolver                                   |
+| `apps/server/src/assets/AssetAccess.ts`                         | `t3o-32`     | `resolveAsset` serves a board attachment from the card folder                             | predicate branch delegating to the board resolver                         |
+| `packages/client-runtime/src/rpc/client.ts`                     | `t3o-04`     | Import board subscription tag type                                                        | one-line append (type import)                                             |
+| `packages/client-runtime/src/rpc/client.ts`                     | `t3o-04`     | Board tags join `EnvironmentSubscriptionRpcTag`                                           | one-line union member (`BoardSubscriptionRpcTag`, grows in board.ts)      |
+| `packages/contracts/src/settings.ts`                            | `t3o-07`     | Import `BoardSettings` / `BoardSettingsPatch` from board.ts                               | one-line append (import)                                                  |
+| `packages/contracts/src/settings.ts`                            | `t3o-07`     | `board` field on `ServerSettings` (D10)                                                   | one-line append, single field (frozen; shape grows in `BoardSettings`)    |
+| `packages/contracts/src/settings.ts`                            | `t3o-07`     | `board` field on `ServerSettingsPatch` (D10)                                              | one-line append, single field (frozen; whole-map, merged by `deepMerge`)  |
+| `apps/web/src/components/settings/settingsSearch.ts`            | `t3o-07`     | Import `BOARD_SETTINGS_SEARCH_ITEMS` from board-owned registry                            | one-line append (import)                                                  |
+| `apps/web/src/components/settings/settingsSearch.ts`            | `t3o-07`     | `/settings/board` in `SettingsPath` union (single board page, D1)                         | one-line union member (frozen)                                            |
+| `apps/web/src/components/settings/settingsSearch.ts`            | `t3o-07`     | Board label in `SETTINGS_SECTION_LABELS` (`SETTINGS_NAV_ITEMS` derives)                   | one-line record entry (frozen)                                            |
+| `apps/web/src/components/settings/settingsSearch.ts`            | `t3o-07`     | Board search items join `SETTINGS_SEARCH_ITEMS`                                           | registry spread (`BOARD_SETTINGS_SEARCH_ITEMS`)                           |
+| `apps/web/src/components/settings/SettingsSidebarNav.tsx`       | `t3o-07`     | `LayoutGridIcon` import for the board nav icon                                            | one-line append (import)                                                  |
+| `apps/web/src/components/settings/SettingsSidebarNav.tsx`       | `t3o-07`     | Board icon in `SETTINGS_SECTION_ICONS`                                                    | one-line record entry (frozen)                                            |
+| `apps/server/src/mcp/McpInvocationContext.ts`                   | `t3o-08`     | `McpCapability` gains `"board"` (D3)                                                      | one-line edit (frozen)                                                    |
+| `apps/server/src/mcp/McpInvocationContext.ts`                   | `t3o-08`     | `requireMcpCapability` stays preview-scoped after the widening                            | one-line edit (frozen)                                                    |
+| `apps/server/src/mcp/McpSessionRegistry.ts`                     | `t3o-08`     | Granted capability set gains `"board"` (D3)                                               | one-line edit (frozen)                                                    |
+| `apps/server/src/mcp/McpHttpServer.ts`                          | `t3o-08`     | Import `BoardToolkitRegistrationLive`                                                     | one-line append (import)                                                  |
+| `apps/server/src/mcp/McpHttpServer.ts`                          | `t3o-08`     | Board toolkit joins the MCP server layer merge (D3)                                       | spread of a board-owned registration layer                                |
+| `apps/server/src/server.ts`                                     | `t3o-10`     | Import the supervisor reactor + its slots layer                                           | one-line append (import)                                                  |
+| `apps/server/src/server.ts`                                     | `t3o-10`     | Supervisor reactor joins `ReactorLayerLive`                                               | provideMerge of a board-owned reactor layer                               |
+| `apps/server/src/server.ts`                                     | `T3O-56`     | Import the board runtime layer                                                            | one-line append (import)                                                  |
+| `apps/server/src/server.ts`                                     | `T3O-56`     | The board engine, queries and upstream tail join `ReactorLayerLive`                       | provideMerge of a board-owned layer                                       |
+| `apps/server/src/serverRuntimeStartup.ts`                       | `t3o-10`     | Import the supervisor reactor tag                                                         | one-line append (import)                                                  |
+| `apps/server/src/serverRuntimeStartup.ts`                       | `t3o-10`     | Resolve the supervisor reactor in the startup effect                                      | one-line append (`yield*` the tag)                                        |
+| `apps/server/src/serverRuntimeStartup.ts`                       | `t3o-10`     | Start the supervisor reactor in the `reactors.start` phase                                | one-line append (start call)                                              |
+| `packages/contracts/src/pullRequest.ts`                         | `T3O-47`     | `headSha` on `PullRequestDetail`, for the auto-merge ladder's reset                       | one-line append, optional field                                           |
+| `apps/server/src/pullRequest/PullRequestProvider.ts`            | `T3O-47`     | `headSha` on `ProviderChangeRequestDetail`                                                | one-line append, optional field                                           |
+| `apps/server/src/pullRequest/PullRequestService.ts`             | `T3O-47`     | Carry `headSha` into the assembled detail                                                 | one-line append at an object tail                                         |
+| `apps/server/src/pullRequest/GitHubPullRequestCli.ts`           | `T3O-54`     | The GraphQL core detail read keeps the `T3O-8` missing-scope fallback                     | wrap in the fork's fallback + one import from a fork-owned helper         |
+| `apps/server/src/sourceControl/GitHubCli.ts`                    | `T3O-54`     | The batched head lookup takes the `T3O-48` origin `repository`                            | optional input + request field + pin + `--repo` on the `gh` fallback      |
+| `apps/server/src/cloud/serviceProtocol.ts`                      | `T3O-54`     | `SERVICE_LAUNCHER_PROTOCOL = 4` (upstream's 3 + multi-database snapshot)                  | constant + comment (re-check every sync)                                  |
+| `vite.config.ts`                                                | `T3O-54`     | Design-token lint rules off for fork-owned web files                                      | one override block                                                        |
+| `apps/server/src/server.ts`                                     | `T3O-47`     | The board's PR gateway joins `RuntimeCoreDependenciesLive`                                | provideMerge of a board-owned layer                                       |
+| `apps/server/src/server.ts`                                     | `T3O-23`     | Import the worktree retirer layer                                                         | one-line append (import)                                                  |
+| `apps/server/src/server.ts`                                     | `T3O-23`     | The worktree retirer joins `RuntimeCoreDependenciesLive`                                  | provideMerge of a board-owned layer                                       |
+| `apps/server/src/ws.ts`                                         | `T3O-23`     | Import the worktree retirer and its thread-delete delegate                                | one-line append (import)                                                  |
+| `apps/server/src/ws.ts`                                         | `T3O-23`     | Resolve `WorktreeRetirer` for the RPC handlers                                            | one-line append (service yield)                                           |
+| `apps/server/src/ws.ts`                                         | `T3O-23`     | `vcsRemoveWorktree` retires (stop, remove scripts) before the stock removal               | one-line delegation (`retireRemovedThreadWorktree`), stock call passed in |
+| `apps/server/src/server.test.ts`                                | `T3O-23`     | Pass-through `WorktreeRetirer` mock beside the supervisor mock                            | layer mock in an existing `mergeAll`                                      |
+| `apps/server/src/server.test.ts`                                | `T3O-56`     | Quiet board engine, queries and tail mocks beside the supervisor mock                     | layer mocks in an existing `mergeAll`                                     |
+| `packages/contracts/src/t3ProjectFile.ts`                       | `T3O-23`     | `runOnWorktreeRemove` on a `t3.json` script                                               | one optional field                                                        |
+| `packages/contracts/src/orchestration.ts`                       | `T3O-23`     | `runOnWorktreeRemove` on a stored `ProjectScript`                                         | one optional field (frozen)                                               |
+| `apps/web/src/projectScripts.ts`                                | `T3O-23`     | `runOnWorktreeRemove` input, stored only when set; never the primary script               | one field + one spread + predicate widening                               |
+| `apps/web/src/components/projectScriptEditor.tsx`               | `T3O-23`     | Editor carries the flag (form state, hydrate, payload) and a switch                       | one line per form step + one switch                                       |
+| `apps/web/src/components/projectScriptEditor.tsx`               | `T3O-23`     | `newProjectScriptInputFromFile`: one import mapping for both import paths                 | new exported function                                                     |
+| `apps/web/src/components/ProjectScriptsControl.tsx`             | `T3O-23`     | Import through `newProjectScriptInputFromFile`; `(teardown)` menu label                   | delegating call + label branch                                            |
+| `apps/web/src/components/settings/ProjectActionsSettings.tsx`   | `T3O-23`     | Import through `newProjectScriptInputFromFile`                                            | delegating call                                                           |
+| `apps/web/src/components/settings/ProjectActionsList.tsx`       | `T3O-23`     | `teardown` badge beside `setup`                                                           | one badge                                                                 |
+| `apps/mobile/src/features/terminal/terminalMenu.ts`             | `T3O-23`     | `(teardown)` menu label, mirroring `(setup)`                                              | one branch                                                                |
+| `apps/mobile/src/features/terminal/terminalMenu.test.ts`        | `T3O-23`     | Menu label test for setup and remove scripts                                              | appended `describe` + import                                              |
 
 Marker count after `t3o-02a`: **38 marker lines across 14 upstream code files**, plus `AGENTS.md`
 (5 marker lines: the fork block's open/end markers, the convention's own mention of the token, the

@@ -169,10 +169,10 @@ const retitle = (id: string, title: string) =>
   }) as const;
 
 /** Subscribe, run `act` while the stream is attached, and take `count` items. */
-const collect = (
+const collect = <E = never>(
   input: Parameters<typeof subscribeBoard>[0],
   count: number,
-  act: Effect.Effect<unknown, unknown, never> = Effect.void,
+  act: Effect.Effect<unknown, E> = Effect.void,
   options?: Parameters<typeof subscribeBoard>[1],
 ) =>
   Effect.scoped(

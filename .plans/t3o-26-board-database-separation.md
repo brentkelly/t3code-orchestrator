@@ -348,8 +348,8 @@ before assuming the gate runs.
 - [ ] AC6 — The board projector's write transaction touches exactly one database file.
 - [ ] AC7 — Board replay from an empty board read model reproduces board state identically, using
       only `boards.sqlite` plus the read-only upstream tail of D3.
-- [ ] AC8 — A board subscription resumes correctly from its own cursor across a disconnect, and
-      the orchestration shell stream carries no board deltas. (P3.)
+- [x] AC8 — A board subscription resumes correctly from its own cursor across a disconnect, and
+      the orchestration shell stream carries no board deltas. (P3, `T3O-57`.)
 - [ ] AC9 — Stock t3code loads a `settings.json` written by t3o without error. (P0/P4.)
 - [ ] AC10 — The upstream diff is net smaller than the 36-file / +691 baseline: no upstream file
       joins the diff that was not already in it, and `ProjectionPipeline.ts`,

@@ -71,10 +71,10 @@ atomicity), and a sidecar service (unreachable over T3 Connect, which only proxi
 (`boards.board_events`, own sequence), folds them into the `board_*` tables, writes its own command
 receipts and watermark, all in one transaction on one database file, and then publishes on its own
 stream. Ordering, idempotent retries and crash consistency are the board's, built the way upstream
-builds them. Remote access is still upstream's transport: clients send board commands through
-`orchestration.dispatchCommand` (the server routes them to the board engine before upstream sees
-them) and receive board deltas on `orchestration.subscribeShell`, until the board has its own
-subscription.
+builds them. Remote access is still upstream's transport, the same socket and auth, with the
+board's own RPCs on it (`T3O-57`): clients send board commands through `board.dispatchCommand` and
+hold the board through `board.subscribeBoard`, a snapshot and the board log's deltas resumed from the
+board's own sequence. The orchestration shell carries nothing board-shaped.
 
 **Why not upstream's engine, which is what this decision originally said.** Riding upstream's
 orchestration engine inherited all of the above for free, and `t3o-02` paid for it in 39 markers

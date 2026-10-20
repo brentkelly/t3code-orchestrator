@@ -929,8 +929,8 @@ export function projectBoardEvent<M extends BoardReadModel>(
  * Deltas carry the bounded `BoardCardShell` (t3o-04), built purely from the
  * event's own card. This mapping has no thread shells at hand, so the
  * shell's thread-derived fields leave here at their "none" resting state
- * and the client reducer re-derives them from `activeThreadId` against the
- * thread shells it already holds — see `boardCardShellFromCard`.
+ * and the client's board views derive them against the thread shells it
+ * already holds (`withBoardThreadFields`) — see `boardCardShellFromCard`.
  */
 export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShellStreamEvent> {
   switch (event.type) {

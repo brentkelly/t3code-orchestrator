@@ -9,6 +9,7 @@ import {
   AuthOrchestrationReadScope,
   AuthSessionId,
   BoardCardId,
+  BoardStageId,
   CommandId,
   ProjectId,
   ProviderInstanceId,
@@ -427,7 +428,7 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-dispatch-test-"))(
         type: "board.card.move",
         commandId: CommandId.make(commandId),
         cardId,
-        toStage: "sprint",
+        toStage: BoardStageId.make("sprint"),
         createdAt: t0,
       }) as const;
 
