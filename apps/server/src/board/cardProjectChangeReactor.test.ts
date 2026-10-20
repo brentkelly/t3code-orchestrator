@@ -22,8 +22,6 @@ import {
   type BoardCard,
   type BoardCardStepState,
   type BoardCardThreadLink,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -39,6 +37,8 @@ import {
   projectId,
   settingsWith,
   withGovernor,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const cardId = BoardCardId.make("card-1");
@@ -98,7 +98,7 @@ const planningStep = (input: {
 
 /** What the decider emits for `board.card.set-project`: the post-state card,
     plus the project and key it gave up. */
-const cardProjectChanged = (card: BoardCard, sequence: number): OrchestrationEvent =>
+const cardProjectChanged = (card: BoardCard, sequence: number): HarnessEvent =>
   ({
     type: "board.card-project-changed",
     sequence,
@@ -109,12 +109,12 @@ const cardProjectChanged = (card: BoardCard, sequence: number): OrchestrationEve
       previousCardNumber: 1,
       card,
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 interface MoveOutcome {
   readonly state: BoardCardStepState | null;
   readonly card: BoardCard;
-  readonly commands: ReadonlyArray<OrchestrationCommand>;
+  readonly commands: ReadonlyArray<HarnessCommand>;
   readonly settledThreads: ReadonlySet<string>;
 }
 

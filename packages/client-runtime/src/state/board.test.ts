@@ -121,7 +121,7 @@ describe("board shell reducer", () => {
       card: cardShell("card-1"),
     });
     expect(next.cards).toEqual([cardShell("card-1")]);
-    expect(next.snapshotSequence).toBe(2);
+    expect(next.snapshotSequence).toBe(1);
   });
 
   it("replaces an existing card on upsert", () => {
@@ -157,7 +157,7 @@ describe("board shell reducer", () => {
       stepRunning: false,
     });
     expect(queued.cards?.[0]?.queued).toBe(true);
-    expect(queued.snapshotSequence).toBe(2);
+    expect(queued.snapshotSequence).toBe(1);
     const cleared = applyShellStreamEvent(queued, {
       kind: "card-queued",
       sequence: 3,
@@ -229,7 +229,7 @@ describe("board shell reducer", () => {
       queued: false,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
-    expect(stalled.snapshotSequence).toBe(2);
+    expect(stalled.snapshotSequence).toBe(1);
     const cleared = applyShellStreamEvent(stalled, {
       kind: "card-stalled",
       sequence: 3,
@@ -772,14 +772,18 @@ describe("board shell reducer", () => {
     expect(reordered.cards?.[0]?.orderKey).toBe("z"); // new position honored
   });
 
-  it("drops stale card events by sequence", () => {
+  it("applies a board delta whatever its sequence, and never moves the shell's (T3O-56)", () => {
+    // Board deltas carry the BOARD's sequence, a different counter from the
+    // shell's: a board sequence below the shell's is not stale, and applying
+    // one must not drag the shell's cursor into the board's space.
     const current = snapshot({ snapshotSequence: 5, cards: [cardShell("card-1")] });
     const next = applyShellStreamEvent(current, {
       kind: "card-upserted",
       sequence: 4,
-      card: cardShell("card-1", { title: "Stale rename" }),
+      card: cardShell("card-1", { title: "Renamed" }),
     });
-    expect(next).toBe(current);
+    expect(next.cards?.[0]?.title).toBe("Renamed");
+    expect(next.snapshotSequence).toBe(5);
   });
 
   it("re-derives thread-derived fields from the snapshot's thread shells on upsert", () => {
@@ -854,7 +858,7 @@ describe("board label catalogue reducer (t3o-06a)", () => {
       label: label("label-1"),
     });
     expect(next.boardLabels).toEqual([label("label-1")]);
-    expect(next.snapshotSequence).toBe(2);
+    expect(next.snapshotSequence).toBe(1);
   });
 
   it("recolours an existing label in place — repainting cards without a card delta", () => {

@@ -20,7 +20,6 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCardStepState,
-  type OrchestrationEvent,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -44,11 +43,12 @@ import {
   userInputResolved,
   withGovernor,
   type Harness,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const planningCard = (id: string) => makeBoardCard({ id, stage: "planning", orderKey: "m" });
 
-const movedToPlanning = (id: string, sequence: number): OrchestrationEvent =>
+const movedToPlanning = (id: string, sequence: number): HarnessEvent =>
   cardMoved(planningCard(id), "sprint", "planning", sequence);
 
 /** The planning stage as it really runs: auto-executing and human-in-the-loop,

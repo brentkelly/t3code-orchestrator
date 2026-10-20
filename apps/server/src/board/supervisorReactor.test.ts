@@ -11,7 +11,6 @@ import {
   ProjectId,
   ProviderInstanceId,
   isBoardCommand,
-  isBoardEvent,
   ThreadId,
   type BoardCard,
   type BoardCardStepState,
@@ -20,6 +19,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationThreadShell,
+  type BoardEvent,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -44,7 +44,9 @@ import {
   BoardPullRequestGatewayError,
 } from "./BoardPullRequestGateway.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
-import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
+import { boardDecidedEvents } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
+import { boardEngineDouble, boardServicesTestLayer } from "./boardServices.testkit.ts";
 import { projectBoardEvent } from "./projector.ts";
 import { UsageLimitDetector } from "./UsageLimitDetector.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
@@ -208,7 +210,7 @@ function reconcileCommandObjects(input: {
     const foldBoardCommand = (command: OrchestrationCommand) =>
       isBoardCommand(command)
         ? Effect.gen(function* () {
-            const decided = yield* decideBoardCommand({
+            const decided = yield* decideBoardCommandOnModel({
               command,
               readModel: yield* Ref.get(model),
             }).pipe(
@@ -216,8 +218,7 @@ function reconcileCommandObjects(input: {
               Effect.orElseSucceed(() => []),
             );
             for (const planned of decided) {
-              const event = { ...planned, sequence: 0 } as OrchestrationEvent;
-              if (!isBoardEvent(event)) continue;
+              const event = { ...planned, sequence: 0 } as BoardEvent;
               const next = yield* projectBoardEvent(yield* Ref.get(model), event).pipe(
                 Effect.orDie,
               );
@@ -262,6 +263,12 @@ function reconcileCommandObjects(input: {
 
     const deps = Layer.mergeAll(
       Layer.succeed(OrchestrationEngineService, engineStub),
+      boardServicesTestLayer({
+        engine: boardEngineDouble({
+          dispatch: engineStub.dispatch as never,
+          board: Ref.get(model).pipe(Effect.map((current) => current.board)),
+        }),
+      }),
       Layer.succeed(ProjectionSnapshotQuery, snapshotStub),
       Layer.succeed(ProviderService, providerStub),
       Layer.succeed(ServerSettingsService, settingsStub),

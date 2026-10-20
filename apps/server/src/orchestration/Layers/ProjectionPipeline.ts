@@ -45,10 +45,7 @@ import {
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
-// T3o-26: board projector watermarks live in the board database, so a board
-// projector's writes and its watermark commit inside ONE file — SQLite drops
-// cross-database atomicity under WAL. Upstream projectors are unaffected.
-import { BoardAwareProjectionStateRepositoryLive } from "../../board/boardProjectionState.ts";
+import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadProposedPlans.ts";
@@ -66,8 +63,6 @@ import {
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
 } from "../../attachmentStore.ts";
-// T3o: board card persisted projection lives in the board module.
-import { BOARD_PROJECTOR_NAMES, makeBoardProjectors } from "../../board/projection.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
@@ -79,8 +74,6 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
-  // T3o: board projector names join the registry (grow in the board module).
-  ...BOARD_PROJECTOR_NAMES,
 } as const;
 
 type ProjectorName =
@@ -1994,8 +1987,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         name: ORCHESTRATION_PROJECTOR_NAMES.threads,
         apply: applyThreadsProjection,
       },
-      // T3o: board card persisted projection.
-      ...makeBoardProjectors(sql),
     ];
 
     const applyAttachmentSideEffects = Effect.fn("applyAttachmentSideEffects")(
@@ -2227,5 +2218,5 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),
-  Layer.provideMerge(BoardAwareProjectionStateRepositoryLive),
+  Layer.provideMerge(ProjectionStateRepositoryLive),
 );

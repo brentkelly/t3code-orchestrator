@@ -52,35 +52,56 @@ work. Attachments and logs are unchanged.
 
 ## Locked decisions
 
-### D1 — One connection, `ATTACH`, not a second client
+### D1 — `boards.sqlite` is attached today; the board's target is its own `SqlClient`
 
-`boards.sqlite` is `ATTACH`ed to the existing connection as schema `boards`. Not a second
-`SqlClient`, not a second connection pool.
+`boards.sqlite` is `ATTACH`ed to the existing connection as schema `boards`, and every board
+transaction confines its writes to `boards.*`, so it commits atomically under WAL. That is how P1
+shipped and how `T3O-56` left it.
 
-SQLite handles the locking, cross-schema reads stay one statement, and — critically — the board
-projector's transaction only ever *writes* one database. SQLite's caveat that multi-database
-transactions lose atomicity under WAL applies to transactions that modify more than one attached
-file; a transaction confined to `boards.*` tables is atomic regardless. That is why D2 moves the
-board event log across in the same step as the tables, and never leaves a half-split state
-running.
+**The target is a separate `SqlClient` on `boards.sqlite`, with no ATTACH.** Upstream's
+orchestration-v2 `NodeSqliteClient` routes `readOnly` reads to a worker connection that never sees
+an ATTACH, so a board read through it would find no board tables. With the board's own log
+(D2) nothing the board WRITES needs the other file, and every board transaction touches one file
+either way.
 
-`journal_mode` is per-database, so the `PRAGMA journal_mode = WAL` at `Sqlite.ts:38` must be
-issued for the attached database too. `foreign_keys` is per-connection and needs no change.
+Why `T3O-56` kept the ATTACH: the board still READS a few upstream tables — project and thread
+existence for the decider, a thread's last message, last signal and pending turn for the
+supervisor, live threads for the todo-cache sweep, and the D3 tail. Those reads, and only those, are
+isolated in `board/boardUpstreamReads.ts` (plus the tail in `board/boardThreadTail.ts`), and the
+`thread-gateway` card moves them behind a gateway. Once it has, the ATTACH goes and the board opens
+its own client. Until then the attach costs nothing: a transaction confined to `boards.*` is atomic
+regardless of what else the connection can see.
 
-**Validated empirically against `node:sqlite` (the runtime client), not just read off the docs:**
-attach works; the attached database's `journal_mode` really does default to `delete` and takes WAL
-on a qualified pragma; cross-schema JOINs work in one statement; an unqualified `board_cards`
-resolves to the attached copy when `main` has no such table; and a transaction confined to
-`boards.*` commits atomically under WAL.
+`journal_mode` is per-database, so the attach issues `PRAGMA boards.journal_mode = WAL`; an attached
+file otherwise starts in `delete` mode. This was validated against `node:sqlite`: attach works, the
+qualified pragma takes, cross-schema reads work in one statement, an unqualified `board_cards`
+resolves to the attached copy when `main` has none, and a transaction confined to `boards.*` commits
+atomically under WAL.
 
-### D2 — The board gets its own event log, with its own sequence
+### D2 — The board has its own engine and its own event log
 
-`boards.orchestration_events` (same DDL as upstream's, own `AUTOINCREMENT`), plus
-`boards.command_receipts` and `boards.projection_state`. Board commands append there; the board
-projector reads there and records its watermark there.
+Board commands are decided and logged by the board, not by upstream's orchestration engine
+(`board/BoardEngine.ts`, `T3O-56`; overview D2). The engine owns `boards.board_events` (upstream's
+event DDL, own `AUTOINCREMENT`), `boards.board_command_receipts`, and the board log projector's
+watermark in `boards.projection_state`. One dispatch is one transaction: append the events, fold
+them into the `board_*` tables, write the receipt and the watermark — every write in one file — then
+move the in-memory read model and publish, on the engine's single worker fiber, so subscribers see
+sequences in order and never an uncommitted event. The in-memory read model hydrates from the board
+tables at boot, not by replay, after folding in any logged event the watermark has not reached.
 
-The two logs have independent sequence counters and no defined interleaving between them. That is
-a genuine loss and D3 is what makes it survivable.
+The two logs have independent sequence counters and no defined interleaving. D3 is what makes that
+survivable.
+
+**History.** Board migration 044 copies every `board.*` row of `main.orchestration_events` into
+`boards.board_events` in sequence order, renumbered from 1, and every board-aggregate receipt with
+its result sequence renumbered into the board's space. It is idempotent. The source rows stay in
+`main`: v1 skips them on read (`decodeReadRow`), v2 ignores v1-version rows, and keeping them keeps a
+rollback to an older build possible. The old `projection.board-cards` watermark (in main
+sequences) splits into the board log projector's watermark and D3's tail cursor.
+
+Rejected: the original form of this decision, a second instance of upstream's own engine pointed at
+`boards.orchestration_events`. It needed upstream's engine and event store parameterised over a
+table and a domain (the old D8/D9), and orchestration-v2 has no such seam to parameterise.
 
 ### D3 — The board tails upstream's log read-only; the watermark lives in `boards.sqlite`
 

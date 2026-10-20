@@ -31,9 +31,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-
-import { boardSnapshotQueryMethodsOf } from "./projection.ts";
+import { BoardQueries } from "./BoardQueries.ts";
 
 export interface UsageLimitDetectorShape {
   /**
@@ -77,8 +75,7 @@ export function serverTimeZone(): string {
 }
 
 const make = Effect.gen(function* () {
-  const snapshotQuery = yield* ProjectionSnapshotQuery;
-  const boardQueries = boardSnapshotQueryMethodsOf(snapshotQuery);
+  const boardQueries = yield* BoardQueries;
 
   const classifyTurn: UsageLimitDetectorShape["classifyTurn"] = (input) =>
     Effect.gen(function* () {
@@ -88,7 +85,6 @@ const make = Effect.gen(function* () {
       if (input.turnErrorMessage !== null && input.turnErrorMessage.trim().length > 0) {
         return classify(input.turnErrorMessage, "turn-error", input.nowMs, timeZone);
       }
-      if (boardQueries === null) return null;
       // Best-effort in the shape of `endedWithQuestion`: a read failure, or a
       // thread with no assistant message at all, answers "no match", which
       // leaves recovery exactly as it was before this feature existed.

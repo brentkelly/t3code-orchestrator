@@ -14,8 +14,6 @@ import {
   BoardCardId,
   boardCardStepState,
   type BoardCard,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -28,6 +26,8 @@ import {
   settingsWith,
   stepRequeued,
   withGovernor,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const building = String(BOARD_SEED_STAGE_IDS.building);
@@ -42,13 +42,13 @@ const parent = card("pla-1");
 const child = card("pla-10", { parentCardId: BoardCardId.make("pla-1") });
 const childId = BoardCardId.make("pla-10");
 
-const worktreeFailures = (events: ReadonlyArray<OrchestrationEvent>, cardId: string) =>
+const worktreeFailures = (events: ReadonlyArray<HarnessEvent>, cardId: string) =>
   events.filter(
     (event) =>
       event.type === "board.card-worktree-failed" && String(event.payload.cardId) === cardId,
   );
 
-const threadCreates = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const threadCreates = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "thread.create");
 
 it.effect("a card in a repository with no commits parks stalled and says how to fix it", () =>

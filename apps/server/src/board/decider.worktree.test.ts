@@ -23,7 +23,8 @@ import { assert, describe } from "@effect/vitest";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { boardDecidedEvents, decideBoardCommand, type BoardCommand } from "./decider.ts";
+import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -140,7 +141,7 @@ const reclaim = (cardId: string, outcome: "removed" | "blocked", reason?: string
     the card's own, plus a `blocked` re-flag per affected dependent (t3o-13,
     D5) — while every other command decides exactly one. */
 const decideEvents = (command: BoardCommand, readModel: OrchestrationReadModel) =>
-  decideBoardCommand({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
+  decideBoardCommandOnModel({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
 
 /** The first (and, for every command but archive/unarchive, only) decided
     event. */

@@ -30,6 +30,7 @@ export * from "./pullRequest.ts";
 export * from "./orchestration.ts";
 // T3o: board schema.
 export * from "./board.ts";
+export * from "./boardEvent.ts";
 export * from "./boardEnvelope.ts";
 export * from "./boardStopSignal.ts";
 export * from "./boardUsageLimitCatalogue.ts";

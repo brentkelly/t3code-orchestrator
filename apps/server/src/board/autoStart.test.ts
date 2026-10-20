@@ -19,8 +19,6 @@ import {
   type BoardCard,
   type BoardPlan,
   type BoardState,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -37,6 +35,8 @@ import {
   stepStatus,
   withGovernor,
   type Harness,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 /**
@@ -50,7 +50,7 @@ import {
  * the one that moved, so the dependency really has to change under the reactor
  * while it runs.
  */
-const deliver = (h: Pick<Harness, "model" | "pumpDomain">, event: OrchestrationEvent) =>
+const deliver = (h: Pick<Harness, "model" | "pumpDomain">, event: HarnessEvent) =>
   Ref.get(h.model).pipe(
     // The harness's own event helpers build board events by assertion (they
     // carry only the fields a handler reads), so the projector's narrower
@@ -132,7 +132,7 @@ const stageOf = (board: BoardState, id: string): string | null =>
 const armOf = (board: BoardState, id: string): boolean | null =>
   board.cards.find((card) => card.id === BoardCardId.make(id))?.autoStart ?? null;
 
-const moveTypes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const moveTypes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.move");
 
 // ── The fire path ─────────────────────────────────────────────────────────

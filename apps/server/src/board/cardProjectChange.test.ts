@@ -19,7 +19,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { boardDecidedEvents, decideBoardCommand, type BoardCommand } from "./decider.ts";
+import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -126,7 +127,7 @@ const createCommand = (input: { readonly cardId: string; readonly projectId: Pro
   }) as const satisfies BoardCommand;
 
 const decide = (command: BoardCommand, readModel: OrchestrationReadModel) =>
-  decideBoardCommand({ command, readModel }).pipe(
+  decideBoardCommandOnModel({ command, readModel }).pipe(
     Effect.map((decision) => boardDecidedEvents(decision)[0]!),
   );
 
@@ -167,7 +168,7 @@ it.layer(NodeServices.layer)("board.card.set-project", (it) => {
           setProjectCommand({ cardId: "card-1", projectId: ProjectId.make("project-gone") }),
           makeReadModel({ cards: [movable], nextCardNumberByProject: {} }),
         );
-        assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+        assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       }),
     );
 

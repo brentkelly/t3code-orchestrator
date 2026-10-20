@@ -3863,12 +3863,8 @@ pending_approval_requests AS (
     getTurnStartMessage,
     getThreadDetailById,
     getThreadDetailSnapshot,
-    // T3o: board snapshot enrichment (D2/D8) — board module wraps what it needs.
-    ...boardSnapshotQueryMethods(sql, {
-      getCommandReadModel,
-      getShellSnapshot,
-      getArchivedShellSnapshot,
-    }),
+    // T3o: board shell slices ride the shell snapshot — board module wraps what it needs.
+    ...boardSnapshotQueryMethods(sql, { getShellSnapshot, getArchivedShellSnapshot }),
   } satisfies ProjectionSnapshotQueryShape;
 });
 

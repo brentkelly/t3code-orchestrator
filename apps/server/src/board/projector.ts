@@ -83,8 +83,8 @@ import {
   type BoardPlan,
   type BoardStageDefinition,
   type BoardStepCompletion,
-  type OrchestrationEvent,
-  type OrchestrationReadModel,
+  type BoardState,
+  type BoardEvent,
   type ProjectId,
   type OrchestrationShellStreamEvent,
 } from "@t3tools/contracts";
@@ -97,10 +97,17 @@ import {
   type OrchestrationProjectorDecodeError,
 } from "../orchestration/Errors.ts";
 
-export type BoardEvent = Extract<OrchestrationEvent, { type: `board.${string}` }>;
+export type { BoardEvent };
 
-// Re-exported so upstream seams import predicate + delegate on one line.
 export { isBoardEvent };
+
+/** The board-only read model the decider and in-memory projector run on
+    (T3O-56): the board slice, absent until the first board event. A full
+    `OrchestrationReadModel` still satisfies it structurally, which is what lets
+    the projector stay generic over whichever model a caller holds. */
+export interface BoardReadModel {
+  readonly board?: BoardState | undefined;
+}
 
 const decodeBoardCardCreatedPayload = Schema.decodeUnknownEffect(BoardCardCreatedPayload);
 const decodeBoardCardMovedPayload = Schema.decodeUnknownEffect(BoardCardMovedPayload);
@@ -276,7 +283,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
   };
 }
 
-function upsertCard(model: OrchestrationReadModel, card: BoardCard): OrchestrationReadModel {
+function upsertCard<M extends BoardReadModel>(model: M, card: BoardCard): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const cards = (
     board.cards.some((existing) => existing.id === card.id)
@@ -295,7 +302,7 @@ function upsertCard(model: OrchestrationReadModel, card: BoardCard): Orchestrati
  * human reference to either. Deleting the newest card in a project therefore
  * leaves a gap in the key sequence, which is the correct trade.
  */
-function removeCard(model: OrchestrationReadModel, cardId: BoardCardId): OrchestrationReadModel {
+function removeCard<M extends BoardReadModel>(model: M, cardId: BoardCardId): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   // The three per-card slices are stripped from the base and RE-ADDED only when
   // non-empty, so the result matches `loadBoardState`'s absent-vs-empty rule
@@ -334,7 +341,7 @@ function removeCard(model: OrchestrationReadModel, cardId: BoardCardId): Orchest
     rows, so replay and rehydration cannot diverge on catalogue order. Every
     label event (create/update/delete/undelete) carries the full post-change
     label, so this one path serves them all. */
-function upsertLabel(model: OrchestrationReadModel, label: BoardLabel): OrchestrationReadModel {
+function upsertLabel<M extends BoardReadModel>(model: M, label: BoardLabel): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const catalogue = boardLabelCatalogue(board);
   const labels = (
@@ -347,10 +354,7 @@ function upsertLabel(model: OrchestrationReadModel, label: BoardLabel): Orchestr
 
 /** Upsert a stage definition into the in-memory model (t3o-15), keeping the
     slice in canonical `compareBoardStages` order so replay equals rehydration. */
-function upsertStage(
-  model: OrchestrationReadModel,
-  stage: BoardStageDefinition,
-): OrchestrationReadModel {
+function upsertStage<M extends BoardReadModel>(model: M, stage: BoardStageDefinition): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const current = boardStages(board);
   const stages = (
@@ -362,10 +366,10 @@ function upsertStage(
 }
 
 /** Remove a stage definition from the in-memory model (t3o-15). */
-function removeStage(
-  model: OrchestrationReadModel,
+function removeStage<M extends BoardReadModel>(
+  model: M,
   stageId: BoardStageDefinition["stageId"],
-): OrchestrationReadModel {
+): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const stages = boardStages(board).filter((stage) => stage.stageId !== stageId);
   return { ...model, board: { ...board, stages } };
@@ -379,10 +383,10 @@ function removeStage(
     `board.card-project-changed` (T3O-33) — a card moving into a project draws
     from that project's counter exactly as a create does, so the two must not
     be able to hand out the same key. */
-function bumpNextCardNumber(
-  model: OrchestrationReadModel,
+function bumpNextCardNumber<M extends BoardReadModel>(
+  model: M,
   allocation: { readonly projectId: ProjectId; readonly cardNumber: number },
-): OrchestrationReadModel {
+): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const current = board.nextCardNumberByProject[allocation.projectId] ?? 1;
   return {
@@ -426,10 +430,10 @@ export function compareBoardPlans(left: BoardPlan, right: BoardPlan): number {
 
 /** Upsert a step completion by (cardId, stepId). Idempotent: a re-emitted
     completion (D4 retry) replaces the identical row, a no-op. */
-function upsertStepCompletion(
-  model: OrchestrationReadModel,
+function upsertStepCompletion<M extends BoardReadModel>(
+  model: M,
   completion: BoardStepCompletion,
-): OrchestrationReadModel {
+): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const current = board.stepCompletions ?? [];
   const exists = current.some(
@@ -497,10 +501,7 @@ export function compareBoardProviderLimits(
 /** Replace (or add) one provider cooldown (T3O-22). Keyed on the provider
     instance, kept in a stable order so a from-empty replay and a table
     rehydration produce the same array. */
-function upsertProviderLimit(
-  model: OrchestrationReadModel,
-  limit: BoardProviderLimit,
-): OrchestrationReadModel {
+function upsertProviderLimit<M extends BoardReadModel>(model: M, limit: BoardProviderLimit): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const current = board.providerLimits ?? [];
   const exists = current.some(
@@ -519,10 +520,10 @@ function upsertProviderLimit(
 /** Lift one provider cooldown. The slice is dropped entirely when the last one
     goes, so a board that has recovered decodes exactly as one that never hit a
     limit — the same absent-vs-empty rule every other board slice follows. */
-function clearProviderLimit(
-  model: OrchestrationReadModel,
+function clearProviderLimit<M extends BoardReadModel>(
+  model: M,
   providerInstanceId: ProviderInstanceId,
-): OrchestrationReadModel {
+): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const remaining = (board.providerLimits ?? []).filter(
     (existing) => existing.providerInstanceId !== providerInstanceId,
@@ -534,10 +535,7 @@ function clearProviderLimit(
   };
 }
 
-function upsertStepState(
-  model: OrchestrationReadModel,
-  state: BoardCardStepState,
-): OrchestrationReadModel {
+function upsertStepState<M extends BoardReadModel>(model: M, state: BoardCardStepState): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const current = board.stepStates ?? [];
   const exists = current.some((existing) => existing.cardId === state.cardId);
@@ -553,11 +551,11 @@ function upsertStepState(
     a card upsert because `board.plans-proposed` carries the card id and the
     plans, never the card — and a no-op for an unknown id, matching the plan
     slice's behaviour on the same event. */
-function setCardSplitRationale(
-  model: OrchestrationReadModel,
+function setCardSplitRationale<M extends BoardReadModel>(
+  model: M,
   cardId: BoardCardId,
   splitRationale: BoardCard["splitRationale"],
-): OrchestrationReadModel {
+): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   if (!board.cards.some((card) => card.id === cardId)) return model;
   return {
@@ -571,11 +569,11 @@ function setCardSplitRationale(
 
 /** Replace a card's whole plan set (board_propose_plans is a wholesale
     replace). Bodies are stripped — they live only in `board_plans`. */
-function replaceCardPlans(
-  model: OrchestrationReadModel,
+function replaceCardPlans<M extends BoardReadModel>(
+  model: M,
   cardId: BoardPlan["cardId"],
   plans: ReadonlyArray<BoardPlan>,
-): OrchestrationReadModel {
+): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const others = (board.plans ?? []).filter((plan) => plan.cardId !== cardId);
   const next = [...others, ...plans].toSorted(compareBoardPlans);
@@ -583,7 +581,7 @@ function replaceCardPlans(
 }
 
 /** Upsert one plan's metadata (board_write_plan bumps `updatedAt`). */
-function upsertPlan(model: OrchestrationReadModel, plan: BoardPlan): OrchestrationReadModel {
+function upsertPlan<M extends BoardReadModel>(model: M, plan: BoardPlan): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const current = board.plans ?? [];
   const plans = (
@@ -594,10 +592,10 @@ function upsertPlan(model: OrchestrationReadModel, plan: BoardPlan): Orchestrati
   return { ...model, board: { ...board, plans } };
 }
 
-export function projectBoardEvent(
-  model: OrchestrationReadModel,
+export function projectBoardEvent<M extends BoardReadModel>(
+  model: M,
   event: BoardEvent,
-): Effect.Effect<OrchestrationReadModel, OrchestrationProjectorDecodeError> {
+): Effect.Effect<M, OrchestrationProjectorDecodeError> {
   switch (event.type) {
     case "board.card-created":
       return decodeBoardCardCreatedPayload(event.payload).pipe(

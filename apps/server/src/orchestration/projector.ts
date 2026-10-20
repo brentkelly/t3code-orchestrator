@@ -26,8 +26,6 @@ import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
-// T3o: board event projection lives in the board module.
-import { isBoardEvent, projectBoardEvent } from "../board/projector.ts";
 import {
   MessageSentPayloadSchema,
   ProjectCreatedPayload,
@@ -1096,8 +1094,6 @@ export function projectEvent(
       );
 
     default:
-      // T3o: board events are projected in the board module.
-      if (isBoardEvent(event)) return projectBoardEvent(nextBase, event);
       return Effect.succeed(nextBase);
   }
 }

@@ -8,18 +8,19 @@
  * `orchestration.ts` imports this module to append board members to its
  * unions, so an import in the other direction would be a module cycle.
  *
- * The upstream seams in `orchestration.ts` are spreads of the registries at
- * the bottom of this file (`BOARD_CLIENT_COMMANDS`, `BOARD_EVENT_TYPES`,
- * `BOARD_SHELL_STREAM_EVENTS`) plus one injected-factory call
- * (`makeBoardOrchestrationEvents`). Adding a board command or event grows
- * those registries here and touches no upstream-owned file.
+ * The upstream seams in `orchestration.ts` are spreads of two registries at
+ * the bottom of this file: `BOARD_CLIENT_COMMANDS` (on the wire union, until
+ * the board has its own dispatch RPC) and `BOARD_SHELL_STREAM_EVENTS`. Board
+ * events and the full `BoardCommand` union are the board's own (T3O-56): the
+ * events are built in `boardEvent.ts` from `makeBoardOrchestrationEvents`.
+ * Adding a board command or event grows the registries here and touches no
+ * upstream-owned file.
  *
  * The `board.` prefix rule is load-bearing: every board command and event
  * `type` starts with `board.`, and every board shell delta `kind` starts with
- * `card-`. The type guards below key on those prefixes, and a board command
- * named without the prefix falls outside `Extract<..., { type:
- * \`board.${string}\` }>`, reaches upstream's `satisfies never`, and fails
- * the build.
+ * `card-`. The type guards below key on those prefixes; the server routes a
+ * command off `orchestration.dispatchCommand` to the board engine by it, so a
+ * board command named without the prefix would reach upstream's engine.
  *
  * Event payload shape: `board.card-created` is flat (its walking-skeleton
  * form is already persisted in real event logs, so new fields carry decoding
@@ -6885,6 +6886,16 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardAttachCommand,
   BoardCardDetachCommand,
 ] as const;
+
+/**
+ * Every board command, as the board's own engine decodes and decides them
+ * (T3O-56). Board commands are not orchestration commands: the client still
+ * sends its share through `orchestration.dispatchCommand` (they ride the wire
+ * union `ClientOrchestrationCommand`), and the server routes them to the board
+ * engine before anything upstream sees them.
+ */
+export const BoardCommand = Schema.Union([...BOARD_CLIENT_COMMANDS, ...BOARD_INTERNAL_COMMANDS]);
+export type BoardCommand = typeof BoardCommand.Type;
 
 export const BOARD_EVENT_TYPES = [
   "board.card-created",

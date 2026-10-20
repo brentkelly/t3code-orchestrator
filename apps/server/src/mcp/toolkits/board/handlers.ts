@@ -43,7 +43,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   type BoardState,
   unmetBoardCardDependencies,
-  type OrchestrationCommand,
+  type BoardCommand,
   type OrchestrationReadModel,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -54,17 +54,12 @@ import * as Path from "effect/Path";
 
 import type { McpInvocationScope } from "../../McpInvocationContext.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import type { OrchestrationDispatchError } from "../../../orchestration/Errors.ts";
-import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import type { ProjectionSnapshotQueryShape } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import {
-  boardSnapshotQueryMethodsOf,
-  type BoardSnapshotQueryMethods,
-} from "../../../board/projection.ts";
+import { BoardEngine, type BoardEngineShape } from "../../../board/BoardEngine.ts";
+import { BoardQueries } from "../../../board/BoardQueries.ts";
+import type { BoardDispatchError } from "../../../board/errors.ts";
+import type { BoardQueriesShape } from "../../../board/projection.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ServerConfig from "../../../config.ts";
 import { boardCardAttachmentManifest } from "../../../board/attachments.ts";
@@ -111,41 +106,33 @@ const internalError = (cause: { readonly message?: string }): BoardToolError =>
 /** Map a dispatch failure to an agent-facing tool error: an invariant
     rejection carries the decider's own actionable detail; anything else is an
     internal failure. */
-const dispatchError = (error: OrchestrationDispatchError): BoardToolError =>
-  error._tag === "OrchestrationCommandInvariantError" ||
-  error._tag === "OrchestrationCommandPreviouslyRejectedError"
+const dispatchError = (error: BoardDispatchError): BoardToolError =>
+  error._tag === "BoardCommandInvariantError" ||
+  error._tag === "BoardCommandPreviouslyRejectedError"
     ? new BoardToolError({ code: "rejected", message: nonEmpty(error.detail, "Command rejected.") })
     : internalError(error);
 
 interface BoardToolDeps {
   readonly scope: McpInvocationScope;
-  readonly engine: OrchestrationEngineShape;
+  readonly boardEngine: BoardEngineShape;
   readonly snapshotQuery: ProjectionSnapshotQueryShape;
-  readonly board: BoardSnapshotQueryMethods;
+  readonly board: BoardQueriesShape;
   /** For the brief-attachment manifest's absolute paths (t3o-32). */
   readonly stateDir: string;
   readonly path: Path.Path;
 }
 
-/** Resolve the services every board tool needs. `boardSnapshotQueryMethodsOf`
-    returns null only when the snapshot query was assembled without the board
-    factory (upstream test mocks); production always spreads it in. */
+/** Resolve the services every board tool needs. */
 const boardToolDeps = Effect.gen(function* () {
   const scope = yield* McpInvocationContext.McpInvocationContext;
-  const engine = yield* OrchestrationEngineService;
+  const boardEngine = yield* BoardEngine;
   const snapshotQuery = yield* ProjectionSnapshotQuery;
-  const board = boardSnapshotQueryMethodsOf(snapshotQuery);
-  if (board === null) {
-    return yield* new BoardToolError({
-      code: "internal",
-      message: "Board snapshot query methods are unavailable on this server.",
-    });
-  }
+  const board = yield* BoardQueries;
   const config = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
   return {
     scope,
-    engine,
+    boardEngine,
     snapshotQuery,
     board,
     stateDir: config.stateDir,
@@ -153,11 +140,8 @@ const boardToolDeps = Effect.gen(function* () {
   } satisfies BoardToolDeps;
 });
 
-const readBoardState = (deps: BoardToolDeps): Effect.Effect<BoardState, BoardToolError> =>
-  deps.snapshotQuery.getCommandReadModel().pipe(
-    Effect.map((model: OrchestrationReadModel) => model.board ?? EMPTY_BOARD_STATE),
-    Effect.mapError(internalError),
-  );
+const readBoardState = (deps: BoardToolDeps): Effect.Effect<BoardState> =>
+  deps.boardEngine.getReadModel.pipe(Effect.map((model) => model.board ?? EMPTY_BOARD_STATE));
 
 /**
  * The key prefix a new card should carry (D14). Board settings are the single
@@ -622,7 +606,7 @@ const describeDependencies = (board: BoardState, card: BoardCard) => {
  */
 const dispatch = (
   deps: BoardToolDeps,
-  command: OrchestrationCommand,
+  command: BoardCommand,
 ): Effect.Effect<{ readonly sequence: number }, BoardToolError> => {
   stampBoardActivityActor(
     command.commandId,
@@ -631,7 +615,7 @@ const dispatch = (
       threadId: deps.scope.threadId,
     }),
   );
-  return deps.engine.dispatch(command).pipe(Effect.mapError(dispatchError));
+  return deps.boardEngine.dispatch(command).pipe(Effect.mapError(dispatchError));
 };
 
 export const boardHandlers = {
@@ -943,7 +927,7 @@ export const boardHandlers = {
       // front with the live project list.
       const projectId = yield* resolveProjectId(model, deps.scope, input.projectId);
       const projectTitle = model.projects.find((project) => project.id === projectId)?.title ?? "";
-      const board = model.board ?? EMPTY_BOARD_STATE;
+      const board = yield* readBoardState(deps);
       const labels = yield* resolveLabelIds(board, input.labels ?? []);
       const stage = input.stage ?? BOARD_SEED_STAGE_IDS.backlog;
       // Pre-validate dependencies for the friendlier tool-shaped message; the

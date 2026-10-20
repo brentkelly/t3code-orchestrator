@@ -11,8 +11,6 @@ import {
   BoardCardId,
   boardCardStepState,
   type BoardCard,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -31,6 +29,8 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 import { WorktreeRetirer, type WorktreeRetireInput } from "./worktreeRetire.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
@@ -47,10 +47,10 @@ const doneCard = (overrides: Partial<Parameters<typeof makeBoardCard>[0]> = {}):
     ...overrides,
   });
 
-const reclaims = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const reclaims = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.flatMap((command) => (command.type === "board.card.reclaim-worktree" ? [command] : []));
 
-const reclaimedEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
+const reclaimedEvents = (events: ReadonlyArray<HarnessEvent>) =>
   events.flatMap((event) => (event.type === "board.card-worktree-reclaimed" ? [event] : []));
 
 const HOOK_WARNING = 'Remove script "park" exited with code 1';

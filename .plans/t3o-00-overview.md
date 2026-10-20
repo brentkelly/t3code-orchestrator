@@ -61,27 +61,33 @@ only *replace* web, not layer over it.
 **Decision:** board code lives in its own package; `apps/web` receives roughly four hook points (a
 route, a tab in the shell, a lazy import, a settings entry). Desktop inherits the board for free.
 
-### D2 — Board state is server-authoritative and event-sourced
+### D2 — Board state is server-authoritative and event-sourced, on the board's own engine
 
 Rejected alternatives: JSON files in the repo via `projects.writeFile` (no push, no ordering, no
 atomicity), and a sidecar service (unreachable over T3 Connect, which only proxies the T3 server).
 
-**Decision:** board commands and events join T3's own orchestration engine. Board commands ride the
-existing `orchestration.dispatchCommand`; board *shell* data rides the existing
-`orchestration.subscribeShell`. This inherits ordering, idempotent retries, crash consistency,
-replay, and the entire remote-connection story at no cost.
+**Decision:** the board is event-sourced in the T3 server, by its **own engine** —
+`board/BoardEngine.ts` (`T3O-56`). It decides board commands, appends their events to its own log
+(`boards.board_events`, own sequence), folds them into the `board_*` tables, writes its own command
+receipts and watermark, all in one transaction on one database file, and then publishes on its own
+stream. Ordering, idempotent retries and crash consistency are the board's, built the way upstream
+builds them. Remote access is still upstream's transport: clients send board commands through
+`orchestration.dispatchCommand` (the server routes them to the board engine before upstream sees
+them) and receive board deltas on `orchestration.subscribeShell`, until the board has its own
+subscription.
 
-**Seam size — measured, not estimated.** `t3o-02` landed **39 markers across 15 upstream files**.
-The original estimate of ~20 across ~8 was low: introducing a new *aggregate kind* (D9) means every
-`ProjectId | ThreadId` union in the persistence layer needs `BoardCardId` too — `OrchestrationEngine`,
-`OrchestrationEventStore`, `OrchestrationCommandReceipts` and `ProjectionSnapshotQuery` were all
-missed in planning. Every one is still a union append or a wrapped call; the *shape* held even though
-the count did not.
+**Why not upstream's engine, which is what this decision originally said.** Riding upstream's
+orchestration engine inherited all of the above for free, and `t3o-02` paid for it in 39 markers
+across 15 upstream files, because a new aggregate kind widens every `ProjectId | ThreadId` union in
+the persistence layer. The bet held for as long as upstream's engine had seams to delegate from.
+Upstream v0.1.0 replaced it with `orchestration-v2`, whose command and event unions, projection
+switch and receipts are closed — there is no extension point left to ride. A second engine owned by
+the board is the only design that survives the port, and it also takes the board's rows out of
+upstream's log (t3o-26) and the board's markers out of upstream's busiest files.
 
-**The bet is validated.** First upstream merge: 20 commits, 101 files, ~9.2k insertions → **one
-conflict**, in `Migrations.ts`, of the exact predicted form (upstream appends `039` where we append
-`900`; keep both, upstream first). All markers survived. ~1 minute to merge, ~4 to verify. The merge
-log in `docs/t3o/seams.md` is the running record — keep writing to it.
+Rejected: keeping the board on the v1 engine through the port by forking `orchestration-v2`'s
+unions. That re-creates the seam count of `t3o-02` inside code upstream is still actively
+reshaping.
 
 ### D3 — Agents write to the board over MCP, not files
 

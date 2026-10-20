@@ -46,8 +46,6 @@ import {
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
-// T3o: board command decisions live in the board module.
-import { type BoardDecisionContext, decideBoardCommand, isBoardCommand } from "../board/decider.ts";
 
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
@@ -214,13 +212,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   command,
   readModel,
   userInputActivity,
-  boardContext,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
   readonly userInputActivity?: OrchestrationThreadActivity;
-  // T3o: state the engine loaded for a board command (T3O-53).
-  readonly boardContext?: BoardDecisionContext;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -2220,14 +2215,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     default: {
-      // T3o: board commands are decided in the board module. The guard
-      // narrows, so upstream's `satisfies never` below stays exhaustive.
-      if (isBoardCommand(command))
-        return yield* decideBoardCommand({
-          command,
-          readModel,
-          ...(boardContext === undefined ? {} : { context: boardContext }),
-        });
       command satisfies never;
       const fallback = command as never as { type: string };
       return yield* new OrchestrationCommandInvariantError({

@@ -28,19 +28,13 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 // T3o: board schema (cards, command/event registries) lives in board.ts.
 import {
   BOARD_CLIENT_COMMANDS,
-  BOARD_EVENT_TYPES,
-  BOARD_INTERNAL_COMMANDS,
   BOARD_SHELL_STREAM_EVENTS,
-  BoardCardId,
   BoardCardShell,
   BoardCardThreadShell,
   BoardProviderLimit,
   BoardLabel,
-  BoardLabelId,
   BoardStageDefinition,
-  BoardStageId,
   BoardState,
-  makeBoardOrchestrationEvents,
 } from "./board.ts";
 import {
   PullRequestActor,
@@ -1499,8 +1493,6 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadConversationRevertCommand,
   ThreadSessionStopCommand,
-  // T3o: board commands ride orchestration.dispatchCommand (D2).
-  ...BOARD_CLIENT_COMMANDS,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -1535,7 +1527,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadConversationRevertCommand,
   ThreadSessionStopCommand,
-  // T3o: board commands ride orchestration.dispatchCommand (D2).
+  // T3o: board commands ride orchestration.dispatchCommand until the board has its
+  // own dispatch RPC; the server routes them to the board engine (T3O-56).
   ...BOARD_CLIENT_COMMANDS,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
@@ -1727,10 +1720,6 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTitleRefineCommand,
   ThreadPullRequestSyncCommand,
   ThreadPullRequestLinkSyncCommand,
-  // T3o: server-internal board commands (worktree lifecycle, t3o-09) join the
-  // internal command union — dispatched by the board's own services, never by
-  // a client.
-  ...BOARD_INTERNAL_COMMANDS,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1774,25 +1763,10 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
-  // T3o: board events join the orchestration event log.
-  ...BOARD_EVENT_TYPES,
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-// T3o: cards are a new aggregate (D9) — "card" appended to the literals;
-// "label" appended for the second board aggregate (t3o-06a); "stage" appended
-// for the user-defined stage aggregate (t3o-15). Frozen widening.
-// …and "provider-limit" for the provider-cooldown aggregate (T3O-22), which is
-// keyed on a provider INSTANCE rather than on any card: a usage limit belongs to
-// an account, and the cards it holds come and go underneath it.
-export const OrchestrationAggregateKind = Schema.Literals([
-  "project",
-  "thread",
-  "card",
-  "label",
-  "stage",
-  "provider-limit",
-]);
+export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -2101,19 +2075,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  // T3o: BoardCardId appended for card-aggregate events (D9); BoardLabelId for
-  // the label aggregate (t3o-06a); BoardStageId for the stage aggregate
-  // (t3o-15). Frozen widening — the aggregateId union tracks
-  // `OrchestrationAggregateKind` member-for-member.
-  // …and ProviderInstanceId for the provider-cooldown aggregate (T3O-22).
-  aggregateId: Schema.Union([
-    ProjectId,
-    ThreadId,
-    BoardCardId,
-    BoardLabelId,
-    BoardStageId,
-    ProviderInstanceId,
-  ]),
+  aggregateId: Schema.Union([ProjectId, ThreadId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -2287,8 +2249,6 @@ export const OrchestrationEvent = Schema.Union([
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
   }),
-  // T3o: board event members (base fields injected — board.ts cannot import them).
-  ...makeBoardOrchestrationEvents(EventBaseFields),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;
 

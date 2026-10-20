@@ -1,14 +1,8 @@
 import type {
-  // T3o: card + label + stage aggregate ids (D9 / t3o-06a / t3o-15), and the
-  // provider-cooldown aggregate's own id (T3O-22).
-  BoardCardId,
-  BoardLabelId,
-  BoardStageId,
   OrchestrationClientOrigin,
   OrchestrationEvent,
   OrchestrationReadModel,
   ProjectId,
-  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
@@ -47,10 +41,6 @@ import {
   type OrchestrationProjectorDecodeError,
 } from "../Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
-// T3o: board command aggregate refs live in the board module.
-import { boardCommandAggregateRef, isBoardCommand } from "../../board/decider.ts";
-// T3o: durable state a board command is decided against (T3O-53).
-import { loadBoardDecisionContext } from "../../board/decisionContext.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -72,18 +62,8 @@ interface CommandEnvelope {
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
-  // T3o: "card" kind + BoardCardId appended for card commands (D9), "label" +
-  // BoardLabelId for the label aggregate (t3o-06a), "stage" + BoardStageId for
-  // the stage aggregate (t3o-15), "provider-limit" + ProviderInstanceId for the
-  // provider-cooldown aggregate (T3O-22). Frozen widening.
-  readonly aggregateKind: "project" | "thread" | "card" | "label" | "stage" | "provider-limit";
-  readonly aggregateId:
-    | ProjectId
-    | ThreadId
-    | BoardCardId
-    | BoardLabelId
-    | BoardStageId
-    | ProviderInstanceId;
+  readonly aggregateKind: "project" | "thread";
+  readonly aggregateId: ProjectId | ThreadId;
 } {
   switch (command.type) {
     case "project.create":
@@ -94,8 +74,6 @@ function commandToAggregateRef(command: OrchestrationCommand): {
         aggregateId: command.projectId,
       };
     default:
-      // T3o: board commands aggregate on the card (ref built in the board module).
-      if (isBoardCommand(command)) return boardCommandAggregateRef(command);
       return {
         aggregateKind: "thread",
         aggregateId: command.threadId,
@@ -264,15 +242,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
-        // T3o: a board brief edit is decided against the stored brief (T3O-53).
-        const boardContext = yield* loadBoardDecisionContext(
-          envelope.command,
-          projectionSnapshotQuery,
-        );
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
-          ...(boardContext === undefined ? {} : { boardContext }), // T3o: T3O-53
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),

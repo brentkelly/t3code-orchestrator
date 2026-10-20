@@ -20,7 +20,6 @@ import {
   ThreadId,
   type BoardCardStepState,
   type BoardState,
-  type OrchestrationCommand,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -48,6 +47,7 @@ import {
   userInputRequested,
   withGovernor,
   type Harness,
+  type HarnessCommand,
 } from "./supervisorHarness.testkit.ts";
 
 const codex = ProviderInstanceId.make("codex");
@@ -70,7 +70,7 @@ const startBuild = (h: Pick<Harness, "pumpDomain" | "board">, id: string, sequen
     return state!.threadId!;
   });
 
-const commandTypes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const commandTypes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.map((command) => command.type);
 
 // ── Bug 1: the stop sticks ────────────────────────────────────────────────
@@ -344,7 +344,7 @@ it.effect("Resume sends a paused step through the queue and nudges its EXISTING 
         spawnsBefore,
       );
       const turns = after.filter(
-        (command): command is Extract<OrchestrationCommand, { type: "thread.turn.start" }> =>
+        (command): command is Extract<HarnessCommand, { type: "thread.turn.start" }> =>
           command.type === "thread.turn.start",
       );
       assert.strictEqual(turns.at(-1)?.message.text, BOARD_STEP_RESUME_NUDGE);

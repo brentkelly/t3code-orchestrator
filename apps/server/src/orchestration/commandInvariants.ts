@@ -48,21 +48,10 @@ export function requireProject(input: {
   if (project) {
     return Effect.succeed(project);
   }
-  // T3o: name the projects that DO exist (id — title): the caller reached here
-  // with a value that is not a live project id — often a title or folder name
-  // from an agent — and the live list is what it needs to correct the call.
-  // Bounded to the first 10 so the message cannot grow with the project count.
-  const live = input.readModel.projects.filter((candidate) => candidate.deletedAt === null);
-  const shown = live.slice(0, 10).map((candidate) => `${candidate.id} — ${candidate.title}`);
-  const available =
-    shown.length === 0
-      ? "(none)"
-      : shown.join("; ") +
-        (live.length > shown.length ? `; … and ${live.length - shown.length} more` : "");
   return Effect.fail(
     invariantError(
       input.command.type,
-      `Project '${input.projectId}' does not exist for command '${input.command.type}'. Available projects: ${available}.`,
+      `Project '${input.projectId}' does not exist for command '${input.command.type}'.`,
     ),
   );
 }

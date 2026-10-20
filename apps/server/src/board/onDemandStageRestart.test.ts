@@ -29,8 +29,6 @@ import {
   type BoardCard,
   type BoardCardStepState,
   type BoardCardThreadLink,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -44,6 +42,8 @@ import {
   makeBoardCard,
   settingsWith,
   withGovernor,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const cardId = BoardCardId.make("card-1");
@@ -98,12 +98,12 @@ const planningStep = (input: {
 
 /** What the `+` menu's restart row dispatches, once the decider has accepted
     it: the card and the stage it is standing in. */
-const stageThreadRequested = (sequence: number): OrchestrationEvent =>
+const stageThreadRequested = (sequence: number): HarnessEvent =>
   ({
     type: "board.card-stage-thread-requested",
     sequence,
     payload: { cardId, stageId: planning },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 const settings = () =>
   settingsWith({
@@ -119,7 +119,7 @@ const settings = () =>
 interface RestartOutcome {
   readonly state: BoardCardStepState | null;
   readonly card: BoardCard;
-  readonly commands: ReadonlyArray<OrchestrationCommand>;
+  readonly commands: ReadonlyArray<HarnessCommand>;
 }
 
 const restartOutcome = (input: {

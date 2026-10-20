@@ -9,18 +9,19 @@ import {
   boardCardStepCompletions,
   boardCardStepState,
   CommandId,
-  type OrchestrationEvent,
   ThreadId,
   type BoardCard,
   type BoardStageId,
   type BoardState,
+  type BoardEvent,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 
-import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
+import { boardDecidedEvents } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 import {
   isKeptStepThread,
   isUnfinishedKeptInterview,
@@ -79,7 +80,7 @@ const setShell = (h: Harness, threadId: ThreadId, shell: ReturnType<typeof idleT
     `board_complete_step` call reaches the board. */
 const completePlanning = (h: Harness, threadId: ThreadId, sequence: number) =>
   Effect.gen(function* () {
-    const decided = yield* decideBoardCommand({
+    const decided = yield* decideBoardCommandOnModel({
       command: {
         type: "board.card.complete-step",
         commandId: CommandId.make(`cmd-complete-${sequence}`),
@@ -94,11 +95,8 @@ const completePlanning = (h: Harness, threadId: ThreadId, sequence: number) =>
       readModel: yield* Ref.get(h.model),
     }).pipe(Effect.provide(NodeServices.layer), Effect.orDie);
     for (const planned of boardDecidedEvents(decided)) {
-      const event = { ...planned, sequence } as unknown as OrchestrationEvent;
-      const next = yield* projectBoardEvent(
-        yield* Ref.get(h.model),
-        event as Parameters<typeof projectBoardEvent>[1],
-      ).pipe(Effect.orDie);
+      const event = { ...planned, sequence } as BoardEvent;
+      const next = yield* projectBoardEvent(yield* Ref.get(h.model), event).pipe(Effect.orDie);
       yield* Ref.set(h.model, next);
       yield* h.pumpDomain(event);
     }
