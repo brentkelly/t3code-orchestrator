@@ -14,7 +14,6 @@ import {
   BOARD_SEED_STAGE_IDS,
   type BoardCard,
   type BoardCardPullRequest,
-  type OrchestrationCommand,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -25,6 +24,7 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type HarnessCommand,
 } from "./supervisorHarness.testkit.ts";
 import type { BoardMergeState } from "./boardMergeState.ts";
 
@@ -60,11 +60,11 @@ const linkedRecord = (overrides: Partial<BoardCardPullRequest> = {}): BoardCardP
   ...overrides,
 });
 
-const linkCommands = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const linkCommands = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.set-linked-pull-request");
 
 const branchCleanupNotes = (
-  commands: ReadonlyArray<OrchestrationCommand>,
+  commands: ReadonlyArray<HarnessCommand>,
   kind: "card-branch-deleted" | "card-branch-kept" = "card-branch-deleted",
 ) =>
   commands.filter((command) => command.type === "board.card.record-note" && command.kind === kind);
@@ -440,7 +440,7 @@ describe("merging a card with a linked pull request", () => {
 });
 
 describe("the run prompt names a linked pull request", () => {
-  const turnText = (commands: ReadonlyArray<OrchestrationCommand>) => {
+  const turnText = (commands: ReadonlyArray<HarnessCommand>) => {
     const turn = commands.find((command) => command.type === "thread.turn.start");
     return turn?.type === "thread.turn.start" ? turn.message.text : "";
   };

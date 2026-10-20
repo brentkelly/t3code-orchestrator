@@ -22,8 +22,6 @@ import {
   BOARD_SEED_STAGE_IDS,
   type BoardCard,
   type BoardCardPullRequest,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
   type OrchestrationReadModel,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
@@ -36,6 +34,8 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const settings = (reclaimWorktreeOnDone = true) =>
@@ -99,13 +99,13 @@ const editCard = (
           },
   }));
 
-const reclaims = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const reclaims = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.flatMap((command) => (command.type === "board.card.reclaim-worktree" ? [command] : []));
 
-const reclaimedEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
+const reclaimedEvents = (events: ReadonlyArray<HarnessEvent>) =>
   events.flatMap((event) => (event.type === "board.card-worktree-reclaimed" ? [event] : []));
 
-const branchCleanupNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const branchCleanupNotes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter(
     (command) =>
       command.type === "board.card.record-note" && command.kind === "card-branch-deleted",
@@ -552,7 +552,7 @@ describe("the cleanup sweep (D3/D4)", () => {
             type: "board.card-worktree-ready",
             sequence: 1,
             payload: { cardId: card.id, card },
-          } as unknown as OrchestrationEvent);
+          } as unknown as HarnessEvent);
           yield* h.reactor.drainWorktreeSweep;
           assert.isAbove((yield* h.gitInvocations).length, before);
         }),

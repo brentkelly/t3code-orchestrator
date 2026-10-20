@@ -33,7 +33,9 @@ import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers
 import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import type { OrchestrationDispatchError } from "../orchestration/Errors.ts";
 import { BoardEngine } from "./BoardEngine.ts";
+import type { BoardDispatchError } from "./errors.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
 import { makeBoardEventStore } from "./boardEventStore.ts";
@@ -73,8 +75,12 @@ export const boardStackEngine = Effect.gen(function* () {
   return {
     ...engine,
     boardEngine,
-    dispatch: (command: OrchestrationCommand | BoardCommand) =>
-      isBoardCommand(command) ? boardEngine.dispatch(command) : engine.dispatch(command),
+    dispatch: (
+      command: OrchestrationCommand | BoardCommand,
+    ): Effect.Effect<
+      { readonly sequence: number },
+      OrchestrationDispatchError | BoardDispatchError
+    > => (isBoardCommand(command) ? boardEngine.dispatch(command) : engine.dispatch(command)),
     /** Every board event in the board's own log, oldest first. Finite. */
     readBoardEvents: (afterSequence = 0) => boardLog.readFrom(afterSequence),
   };

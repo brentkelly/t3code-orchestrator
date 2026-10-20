@@ -19,7 +19,6 @@ import {
   ProviderInstanceId,
   type BoardCard,
   type BoardCardStepState,
-  type OrchestrationCommand,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -39,6 +38,7 @@ import {
   turnInterruptRequested,
   withGovernor,
   type Harness,
+  type HarnessCommand,
 } from "./supervisorHarness.testkit.ts";
 
 const codex = ProviderInstanceId.make("codex");
@@ -82,7 +82,7 @@ const FUTURE = "1970-01-01T01:00:00.000Z";
 /** One hour before it: decisively due, and the "a past time means now" case. */
 const PAST = "1969-12-31T23:00:00.000Z";
 
-const commandTypes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const commandTypes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.map((command) => command.type);
 
 /** A card mid-drag into Building, with the schedule the test wants. `worktree`

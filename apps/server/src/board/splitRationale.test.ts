@@ -17,7 +17,6 @@ import {
   CommandId,
   ProjectId,
   ProviderInstanceId,
-  type OrchestrationEvent,
   type BoardEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -174,7 +173,7 @@ it.layer(makeTestLayer("t3o-split-rationale-3-"))("a log written before migratio
               ),
             }
           : event,
-      ) as ReadonlyArray<OrchestrationEvent>;
+      ) as ReadonlyArray<BoardEvent>;
       assert.isTrue(
         legacy.some((event) => event.type === "board.plans-proposed"),
         "the log must actually hold the event this test strips",

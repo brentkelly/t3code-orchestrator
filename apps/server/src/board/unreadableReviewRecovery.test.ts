@@ -20,7 +20,6 @@ import {
   BOARD_SEED_STAGE_IDS,
   ProviderInstanceId,
   type BoardCardStepState,
-  type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -32,6 +31,7 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const cardId = BoardCardId.make("card-1");
@@ -94,7 +94,7 @@ const completionEvent = (input: {
   readonly payload: string | null;
   readonly repaired?: boolean;
   readonly sequence: number;
-}): OrchestrationEvent =>
+}): HarnessEvent =>
   ({
     type: "board.card-step-completed",
     sequence: input.sequence,
@@ -111,7 +111,7 @@ const completionEvent = (input: {
       },
       ...(input.repaired === undefined ? {} : { repaired: input.repaired }),
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 const deadlocked = {
   board: {
@@ -123,7 +123,7 @@ const deadlocked = {
   settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
 };
 
-const selectedStepIds = (events: ReadonlyArray<OrchestrationEvent>): ReadonlyArray<string> =>
+const selectedStepIds = (events: ReadonlyArray<HarnessEvent>): ReadonlyArray<string> =>
   events.flatMap((event) =>
     event.type === "board.card-step-selected" ? [event.payload.state.stepId] : [],
   );

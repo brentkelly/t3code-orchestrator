@@ -31,8 +31,6 @@ import {
   type BoardCard,
   type BoardCardId,
   type BoardCardStepState,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -43,6 +41,8 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 import type { BoardMergeState } from "./boardMergeState.ts";
 
@@ -128,14 +128,14 @@ const runningMergeStep = (cardId: BoardCardId): BoardCardStepState => ({
 });
 
 /** The on-demand kickoff signal a Merge-click conflict dispatches. */
-const stageThreadRequested = (card: BoardCard, sequence: number): OrchestrationEvent =>
+const stageThreadRequested = (card: BoardCard, sequence: number): HarnessEvent =>
   ({
     type: "board.card-stage-thread-requested",
     sequence,
     payload: { cardId: card.id, stage: card.stage },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
-const mergeStepCompleted = (cardId: BoardCardId, sequence: number): OrchestrationEvent =>
+const mergeStepCompleted = (cardId: BoardCardId, sequence: number): HarnessEvent =>
   ({
     type: "board.card-step-completed",
     sequence,
@@ -151,19 +151,19 @@ const mergeStepCompleted = (cardId: BoardCardId, sequence: number): Orchestratio
         completedAt: "2026-01-01T00:00:00.000Z",
       },
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
-const recordedPullRequests = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const recordedPullRequests = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.record-pull-request");
 
 /** The activity-rail notes branch cleanup reports — its only observable. */
-const branchCleanupNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const branchCleanupNotes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter(
     (command) =>
       command.type === "board.card.record-note" && command.kind === "card-branch-deleted",
   );
 
-const movesTo = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const movesTo = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.flatMap((command) =>
     command.type === "board.card.move" ? [String(command.toStage)] : [],
   );

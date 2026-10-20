@@ -25,8 +25,6 @@ import {
   type BoardCardAutoMergeHold,
   type BoardCardStepState,
   type BoardState,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -46,6 +44,8 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 /** Enough to clear the ladder's first rung (3 minutes) past its ±60s jitter,
@@ -180,7 +180,7 @@ const holdOf = (board: BoardState, id = "card-one"): BoardCardAutoMergeHold | nu
 const stageOf = (board: BoardState, id = "card-one"): string | null =>
   String(board.cards.find((card) => card.id === BoardCardId.make(id))?.stage ?? "") || null;
 
-const mergeRefusedNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const mergeRefusedNotes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter(
     (command) => command.type === "board.card.record-note" && command.kind === "card-merge-refused",
   );
@@ -378,7 +378,7 @@ const runningChecksFix = (): BoardCardStepState => ({
   startedAt: NOW,
 });
 
-const checksFixCompleted = (sequence: number): OrchestrationEvent =>
+const checksFixCompleted = (sequence: number): HarnessEvent =>
   ({
     type: "board.card-step-completed",
     sequence,
@@ -394,7 +394,7 @@ const checksFixCompleted = (sequence: number): OrchestrationEvent =>
         completedAt: NOW,
       },
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 it.effect("a failed required check starts ONE CI fix, then stops the ladder (T3O-12, D6)", () =>
   withGovernor(

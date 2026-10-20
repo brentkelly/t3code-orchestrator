@@ -22,7 +22,6 @@ import {
   BoardCardId,
   boardCardStepState,
   type BoardState,
-  type OrchestrationCommand,
   type OrchestrationThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -38,6 +37,7 @@ import {
   turnCompleted,
   withGovernor,
   type Harness,
+  type HarnessCommand,
 } from "./supervisorHarness.testkit.ts";
 
 const oneBuildCard = (id: string) => ({
@@ -82,7 +82,7 @@ const setShell = (
 
 const stateOf = (board: BoardState, id: string) => boardCardStepState(board, BoardCardId.make(id));
 
-const recoveries = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const recoveries = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.recover-step").length;
 
 it.effect("a turn that ends while subagents are working leaves the step running", () =>

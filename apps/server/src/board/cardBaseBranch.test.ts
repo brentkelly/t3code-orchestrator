@@ -19,8 +19,6 @@ import {
   reviewStepId,
   type BoardCard,
   type BoardCardStepState,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -35,6 +33,8 @@ import {
   settingsWith,
   stepCompleted,
   withGovernor,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const building = String(BOARD_SEED_STAGE_IDS.building);
@@ -59,10 +59,10 @@ const boardOf = (...cards: ReadonlyArray<BoardCard>) => ({
   nextCardNumberByProject: {},
 });
 
-const provisionCommands = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const provisionCommands = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.provision-worktree");
 
-const failureReasons = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const failureReasons = (commands: ReadonlyArray<HarnessCommand>) =>
   commands
     .filter((command) => command.type === "board.card.fail-worktree")
     .map((command) => command.error);
@@ -151,7 +151,7 @@ describe("provisioning honours the card's base branch (T3O-5, D2/D7)", () => {
 });
 
 describe("the run prompt names the card's base branch (T3O-5, D9)", () => {
-  const turnText = (commands: ReadonlyArray<OrchestrationCommand>) => {
+  const turnText = (commands: ReadonlyArray<HarnessCommand>) => {
     const turn = commands.find((command) => command.type === "thread.turn.start");
     return turn?.type === "thread.turn.start" ? turn.message.text : "";
   };
@@ -285,12 +285,12 @@ const plansApproved = (
   card: BoardCard,
   childCardIds: ReadonlyArray<BoardCardId>,
   sequence: number,
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "board.plans-approved",
     sequence,
     payload: { cardId: card.id, card, childCardIds, approvedAt: card.updatedAt },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
   const review = String(BOARD_SEED_STAGE_IDS.review);

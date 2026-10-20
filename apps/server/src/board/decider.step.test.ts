@@ -14,7 +14,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { boardDecidedEvents } from "./decider.ts";
+import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -112,7 +112,7 @@ const stepState = (
 });
 
 const decide = (
-  command: Parameters<typeof decideBoardCommand>[0]["command"],
+  command: BoardCommand,
   readModel: OrchestrationReadModel,
 ) =>
   decideBoardCommandOnModel({ command, readModel }).pipe(
@@ -122,7 +122,7 @@ const decide = (
   );
 
 const decideFail = (
-  command: Parameters<typeof decideBoardCommand>[0]["command"],
+  command: BoardCommand,
   readModel: OrchestrationReadModel,
 ) => Effect.flip(decide(command, readModel));
 

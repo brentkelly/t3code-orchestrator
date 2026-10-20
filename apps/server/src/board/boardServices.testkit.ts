@@ -40,7 +40,7 @@ export const boardEngineDouble = (input: {
   readonly board: Effect.Effect<BoardState | undefined>;
 }): BoardEngineShape =>
   ({
-    dispatch: input.dispatch as BoardEngineShape["dispatch"],
+    dispatch: input.dispatch as unknown as BoardEngineShape["dispatch"],
     getReadModel: Effect.map(input.board, (board) => (board === undefined ? {} : { board })),
     latestSequence: Effect.succeed(0),
     streamBoardEvents: () => Stream.never,

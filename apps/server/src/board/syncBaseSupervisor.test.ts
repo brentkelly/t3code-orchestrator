@@ -20,7 +20,6 @@ import {
   ProviderInstanceId,
   type BoardCard,
   type BoardCardStepState,
-  type OrchestrationEvent,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -38,6 +37,7 @@ import {
   settingsWith,
   stepStatus,
   withGovernor,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const parentId = BoardCardId.make("card-parent");
@@ -102,7 +102,7 @@ const convergedRound = {
 
 const settings = () => settingsWith({ building: [codexStep], globalMaxConcurrent: 3 });
 
-const staleBaseNotes = (events: ReadonlyArray<OrchestrationEvent>) =>
+const staleBaseNotes = (events: ReadonlyArray<HarnessEvent>) =>
   events.filter(
     (event) =>
       event.type === "board.card-note-recorded" &&

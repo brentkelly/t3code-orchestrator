@@ -167,6 +167,9 @@ import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import { SupervisorReactor } from "./board/supervisorReactor.ts";
 import { WorktreeRetirer } from "./board/worktreeRetire.ts";
+import { BoardEngine } from "./board/BoardEngine.ts";
+import { BoardQueries } from "./board/BoardQueries.ts";
+import { BoardThreadTail } from "./board/boardThreadTail.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -967,6 +970,16 @@ const buildAppUnderTest = (options?: {
           Layer.mock(SupervisorReactor)({
             refreshPullRequest: () => Effect.succeed({ outcome: "none" as const }),
             mergePullRequest: () => Effect.succeed({ outcome: "no-pull-request" as const }),
+          }),
+          // T3o: T3O-56 — the board's own engine, quiet: these tests send no
+          // board command, and the shell stream merges an empty board tail.
+          Layer.mock(BoardEngine)({
+            latestSequence: Effect.succeed(0),
+            subscribeBoardEvents: Effect.succeed(Stream.never),
+          }),
+          Layer.mock(BoardQueries)({}),
+          Layer.mock(BoardThreadTail)({
+            subscribeTodoChanges: Effect.succeed(Stream.never),
           }),
           // T3o: T3O-23 — retirement passes straight through to the stock removal.
           Layer.mock(WorktreeRetirer)({

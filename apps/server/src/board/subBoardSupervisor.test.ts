@@ -16,8 +16,6 @@ import {
   type BoardCardWorktree,
   type BoardCardStepState,
   type BoardSettings,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -39,11 +37,13 @@ import {
   stepCompleted,
   stepStatus,
   withGovernor,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 /** A `board.card-created` event carrying the given card as its payload —
     enough for the reactor's `handleCardCreated`, which re-reads the card. */
-const cardCreated = (card: BoardCard, sequence: number): OrchestrationEvent =>
+const cardCreated = (card: BoardCard, sequence: number): HarnessEvent =>
   ({
     type: "board.card-created",
     sequence,
@@ -62,7 +62,7 @@ const cardCreated = (card: BoardCard, sequence: number): OrchestrationEvent =>
       createdAt: card.createdAt,
       updatedAt: card.updatedAt,
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** A `board.plans-approved` event carrying the parent — the reactor's
     `handlePlansApproved` reads only `payload.card`. */
@@ -70,7 +70,7 @@ const plansApproved = (
   card: BoardCard,
   childCardIds: ReadonlyArray<BoardCardId>,
   sequence: number,
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "board.plans-approved",
     sequence,
@@ -80,7 +80,7 @@ const plansApproved = (
       childCardIds,
       approvedAt: card.updatedAt,
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 const parentId = BoardCardId.make("card-parent");
 
@@ -567,7 +567,7 @@ const childAtMerge = (id: string): BoardCard => ({
 });
 
 /** A child arriving at the merge stage off its review auto-advance. */
-const childReachedMerge = (id: string, sequence: number): OrchestrationEvent =>
+const childReachedMerge = (id: string, sequence: number): HarnessEvent =>
   cardMoved(childAtMerge(id), "review", MERGE, sequence);
 
 /** The same card shape with no parent: a top-level card at the merge stage. */
@@ -579,13 +579,13 @@ const soloAtMerge = (): BoardCard =>
     worktree: readyWorktree("card-solo"),
   });
 
-const mergeRefusedNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const mergeRefusedNotes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter(
     (command) => command.type === "board.card.record-note" && command.kind === "card-merge-refused",
   );
 
 /** Every auto-merge hold the reactor recorded (T3O-38, D4), in order. */
-const autoMergeHolds = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const autoMergeHolds = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.flatMap((command) =>
     command.type === "board.card.record-auto-merge-hold" ? [command.hold] : [],
   );
@@ -837,8 +837,8 @@ const REFEED_TYPES = new Set<string>([
 
 const drainBus = (
   h: {
-    readonly decided: Effect.Effect<ReadonlyArray<OrchestrationEvent>>;
-    readonly pumpDomain: (e: OrchestrationEvent) => Effect.Effect<void>;
+    readonly decided: Effect.Effect<ReadonlyArray<HarnessEvent>>;
+    readonly pumpDomain: (e: HarnessEvent) => Effect.Effect<void>;
   },
   fed: { value: number },
 ) =>
@@ -1058,7 +1058,7 @@ const runningReviewStep = (cardId: BoardCardId): BoardCardStepState => ({
 });
 
 /** A converged review completion (a round that ran with no blocking finding). */
-const convergedReviewCompleted = (cardId: BoardCardId, sequence: number): OrchestrationEvent =>
+const convergedReviewCompleted = (cardId: BoardCardId, sequence: number): HarnessEvent =>
   ({
     type: "board.card-step-completed",
     sequence,
@@ -1074,7 +1074,7 @@ const convergedReviewCompleted = (cardId: BoardCardId, sequence: number): Orches
         completedAt: "2026-01-01T00:00:00.000Z",
       },
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 it.effect("PIPELINE 3: a child's converged review auto-merges it through to Done", () =>
   withGovernor(
@@ -1128,12 +1128,12 @@ it.effect("PIPELINE 3: a child's converged review auto-merges it through to Done
 // merged pull request.
 
 /** The on-demand kickoff the stage-restart button dispatches. */
-const stageThreadRequested = (card: BoardCard, sequence: number): OrchestrationEvent =>
+const stageThreadRequested = (card: BoardCard, sequence: number): HarnessEvent =>
   ({
     type: "board.card-stage-thread-requested",
     sequence,
     payload: { cardId: card.id, stage: card.stage },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 /** A merge-stage step reporting success — the testkit's own `stepCompleted` is
     scoped to the building step id. */
@@ -1141,7 +1141,7 @@ const mergeStepSucceeded = (
   cardId: BoardCardId,
   threadId: ThreadId,
   sequence: number,
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "board.card-step-completed",
     sequence,
@@ -1157,9 +1157,9 @@ const mergeStepSucceeded = (
         completedAt: NOW,
       },
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
-const selectedSteps = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const selectedSteps = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.select-step") as ReadonlyArray<{
     readonly prompt: string;
     readonly humanInLoop: boolean;

@@ -11,7 +11,6 @@ import {
   ProjectId,
   ProviderInstanceId,
   isBoardCommand,
-  isBoardEvent,
   ThreadId,
   type BoardCard,
   type BoardCardStepState,
@@ -20,6 +19,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationThreadShell,
+  type BoardEvent,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -218,8 +218,7 @@ function reconcileCommandObjects(input: {
               Effect.orElseSucceed(() => []),
             );
             for (const planned of decided) {
-              const event = { ...planned, sequence: 0 } as OrchestrationEvent;
-              if (!isBoardEvent(event)) continue;
+              const event = { ...planned, sequence: 0 } as BoardEvent;
               const next = yield* projectBoardEvent(yield* Ref.get(model), event).pipe(
                 Effect.orDie,
               );
@@ -266,7 +265,7 @@ function reconcileCommandObjects(input: {
       Layer.succeed(OrchestrationEngineService, engineStub),
       boardServicesTestLayer({
         engine: boardEngineDouble({
-          dispatch: engineStub.dispatch,
+          dispatch: engineStub.dispatch as never,
           board: Ref.get(model).pipe(Effect.map((current) => current.board)),
         }),
       }),

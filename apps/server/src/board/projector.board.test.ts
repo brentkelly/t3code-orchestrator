@@ -30,7 +30,12 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { boardShellStreamEvent, projectBoardEvent, type BoardEvent } from "./projector.ts";
+import {
+  boardShellStreamEvent,
+  projectBoardEvent,
+  type BoardEvent,
+  type BoardReadModel,
+} from "./projector.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -664,7 +669,7 @@ describe("board projector", () => {
         type: "board.card-step-settled",
         payload: { cardId, state: { ...running, status: "succeeded", slotHeld: false } },
       };
-      const base = {
+      const base: BoardReadModel = {
         ...emptyModel(),
         board: { cards: [makeCard({})], labels: [], nextCardNumberByProject: {} },
       };

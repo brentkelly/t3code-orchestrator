@@ -16,7 +16,6 @@ import {
   BoardCardId,
   boardCardStepState,
   type BoardState,
-  type OrchestrationCommand,
   type OrchestrationThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -35,6 +34,7 @@ import {
   turnCompleted,
   withGovernor,
   type Harness,
+  type HarnessCommand,
 } from "./supervisorHarness.testkit.ts";
 
 const CARD = "waiting";
@@ -81,15 +81,15 @@ const setShell = (
 
 const stateOf = (board: BoardState) => boardCardStepState(board, BoardCardId.make(CARD));
 
-const turnTexts = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const turnTexts = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.flatMap((command) =>
     command.type === "thread.turn.start" ? [command.message.text] : [],
   );
-const checkInsOf = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const checkInsOf = (commands: ReadonlyArray<HarnessCommand>) =>
   turnTexts(commands).filter((text) => text.includes("scheduled check-in")).length;
-const stallNudgesOf = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const stallNudgesOf = (commands: ReadonlyArray<HarnessCommand>) =>
   turnTexts(commands).filter((text) => text.includes("without calling board_complete_step")).length;
-const recoveriesOf = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const recoveriesOf = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.recover-step").length;
 
 /** Start the card building and end its first turn with a monitor running. */

@@ -24,7 +24,6 @@ import {
   ThreadId,
   type BoardCardStepState,
   type BoardState,
-  type OrchestrationCommand,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -45,6 +44,7 @@ import {
   turnCompleted,
   withGovernor,
   type Harness,
+  type HarnessCommand,
 } from "./supervisorHarness.testkit.ts";
 
 const codex = ProviderInstanceId.make("codex");
@@ -72,10 +72,10 @@ const startBuild = (h: Pick<Harness, "pumpDomain" | "board">, id: string) =>
 
 const stateOf = (board: BoardState, id: string) => boardCardStepState(board, BoardCardId.make(id));
 
-const commandTypes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const commandTypes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.map((command) => command.type);
 
-const turnStarts = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const turnStarts = (commands: ReadonlyArray<HarnessCommand>) =>
   commandTypes(commands).filter((type) => type === "thread.turn.start").length;
 
 // ── The steer is recorded ─────────────────────────────────────────────────
