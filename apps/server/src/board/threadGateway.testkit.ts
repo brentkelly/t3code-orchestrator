@@ -26,6 +26,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import {
+  deletedThreadState,
   ThreadCommandRefusedError,
   ThreadGateway,
   type BoardAssistantMessage,
@@ -209,11 +210,16 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
     const refuse = (command: string, threadId: ThreadId, detail: string) =>
       Effect.fail(new ThreadCommandRefusedError({ command, threadId, detail }));
 
+    /** Present and not deleted — a thread a command can still target. */
     const exists = (threadId: ThreadId) =>
       Effect.all([Ref.get(records), Ref.get(states)]).pipe(
         Effect.map(
           ([currentRecords, currentStates]) =>
-            currentRecords.has(String(threadId)) || currentStates.has(String(threadId)),
+            !(
+              currentRecords.get(String(threadId))?.deleted ??
+              currentStates.get(String(threadId))?.deleted ??
+              true
+            ),
         ),
       );
 
@@ -270,11 +276,16 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
       delete: (input) =>
         Effect.gen(function* () {
           yield* record({ type: "thread.delete", ...input });
-          yield* Ref.update(records, (current) => {
-            const next = new Map(current);
-            next.delete(String(input.threadId));
-            return next;
-          });
+          // As the real engine does: the thread stays readable, as deleted.
+          const id = String(input.threadId);
+          const projectId =
+            (yield* Ref.get(records)).get(id)?.projectId ??
+            (yield* Ref.get(states)).get(id)?.projectId;
+          if (projectId === undefined) return;
+          yield* updateRecord(input.threadId, (current) => ({ ...current, deleted: true }));
+          yield* Ref.update(states, (current) =>
+            new Map(current).set(id, deletedThreadState(input.threadId, projectId)),
+          );
         }),
 
       threadState: (threadId) =>

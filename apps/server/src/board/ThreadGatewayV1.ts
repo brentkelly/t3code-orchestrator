@@ -45,6 +45,7 @@ import { ProviderService } from "../provider/Services/ProviderService.ts";
 import {
   ThreadCommandFailedError,
   ThreadCommandRefusedError,
+  deletedThreadState,
   ThreadGateway,
   ThreadReadError,
   type BoardSessionStatus,
@@ -510,23 +511,7 @@ export const makeThreadGatewayV1 = Effect.gen(function* () {
         // was deleted or never existed.
         const row = yield* findThreadRow(threadId);
         if (Option.isNone(row) || row.value.deletedAt === null) return null;
-        return {
-          threadId,
-          projectId: row.value.projectId,
-          deleted: true,
-          archived: false,
-          settlementDecided: false,
-          sessionStatus: "none",
-          activeTurnRef: null,
-          awaitingUserInput: false,
-          awaitingPermission: false,
-          backgroundWork: null,
-          alive: false,
-          waitingOnBackground: false,
-          autoSettleCandidate: false,
-          worktreePath: null,
-          modelSelection: null,
-        } satisfies BoardThreadState;
+        return deletedThreadState(threadId, row.value.projectId);
       }).pipe(Effect.mapError(readError("threadState"))),
     threadRecords: (threadIds) =>
       listThreadRecordRows(JSON.stringify(threadIds)).pipe(

@@ -115,6 +115,29 @@ export interface BoardThreadState {
   readonly modelSelection: ModelSelection | null;
 }
 
+/** What `threadState` answers for a deleted thread: nothing about it is live
+    any more, so every live fact reads as its resting value. */
+export const deletedThreadState = (
+  threadId: ThreadId,
+  projectId: ProjectId,
+): BoardThreadState => ({
+  threadId,
+  projectId,
+  deleted: true,
+  archived: false,
+  settlementDecided: false,
+  sessionStatus: "none",
+  activeTurnRef: null,
+  awaitingUserInput: false,
+  awaitingPermission: false,
+  backgroundWork: null,
+  alive: false,
+  waitingOnBackground: false,
+  autoSettleCandidate: false,
+  worktreePath: null,
+  modelSelection: null,
+});
+
 /** The cheap per-thread facts the release sweep pre-filters on (t3o-13). */
 export interface BoardThreadRecord {
   readonly threadId: ThreadId;
