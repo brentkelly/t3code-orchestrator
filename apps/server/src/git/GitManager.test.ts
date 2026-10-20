@@ -2491,11 +2491,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
-          failWith: new GitHubCli.GitHubCliUnavailableError({
-            command: "gh",
-            cwd: repoDir,
-            cause: new Error("rate limited"),
-          }),
+          failWith: "rate limited",
         },
       });
 

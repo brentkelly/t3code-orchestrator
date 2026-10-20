@@ -1407,7 +1407,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(reloaded.board.pipeline.building?.maxAttempts, 6);
       assert.equal(reloaded.board.concurrency.globalMaxConcurrent, 7);
       assert.equal(reloaded.board.lifecycle.reclaimWorktreeOnDone, false);
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
+    }).pipe(Effect.provide(layerServerSettings())),
   );
 
   // T3O-4 retired the per-project Board accent, but settings files written
@@ -1430,7 +1430,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         keyPrefix: "T3",
         hidden: true,
       });
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
+    }).pipe(Effect.provide(layerServerSettings())),
   );
 
   // t3o-30, D1. The board's default model is the pair every unset stage runs on,
@@ -1459,7 +1459,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       // delete one, so an omission would silently keep the old model.
       const cleared = yield* serverSettings.updateSettings({ board: { defaultModel: null } });
       assert.equal(cleared.board.defaultModel, null);
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
+    }).pipe(Effect.provide(layerServerSettings())),
   );
   it.effect("keeps the inline value on disk when secret migration fails", () => {
     const cause = new ServerSecretStore.SecretStorePersistError({

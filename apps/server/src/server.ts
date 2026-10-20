@@ -78,6 +78,11 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
+// T3o: the services `runServer`'s annotation names (T3O-59).
+import type * as Crypto from "effect/Crypto";
+import type * as FileSystem from "effect/FileSystem";
+import type * as Path from "effect/Path";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 // T3o: the board's server layer (T3O-59).
 import { BoardServerLive } from "./board/serverLayer.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
@@ -1127,4 +1132,14 @@ const layerMakeServer = Layer.unwrap(
 ).pipe(Layer.provide(ProcessRunner.layer));
 
 // The CLI supplies configuration.
-export const runServer = Layer.launch(layerMakeServer);
+// T3o: annotated so a caller reads this type instead of re-deriving it. With the board's RPCs
+// in the group, the CLI's own inference through the whole layer graph gives up as `any`.
+export const runServer: Effect.Effect<
+  never,
+  Layer.Error<typeof layerMakeServer>,
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | FileSystem.FileSystem
+  | Path.Path
+  | ServerConfig.ServerConfig
+> = Layer.launch(layerMakeServer);

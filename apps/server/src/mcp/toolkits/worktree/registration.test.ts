@@ -34,6 +34,11 @@ import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
+// T3o: the board toolkit's services.
+import { BoardEngine } from "../../../board/BoardEngine.ts";
+import { BoardQueries } from "../../../board/BoardQueries.ts";
+import { SupervisorReactor } from "../../../board/supervisorReactor.ts";
+import { ThreadGateway } from "../../../board/ThreadGateway.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -57,6 +62,11 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
+  // T3o: the board toolkit registers on the same server (t3o-08); unused here.
+  Layer.mock(BoardEngine)({}),
+  Layer.mock(BoardQueries)({}),
+  Layer.mock(SupervisorReactor)({}),
+  Layer.mock(ThreadGateway)({}),
 );
 
 const ToolsListPayload = Schema.fromJsonString(

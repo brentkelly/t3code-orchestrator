@@ -28,6 +28,8 @@ import * as ProjectService from "./project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { ServerActivation } from "./serverActivation.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+// T3o: the board supervisor startup seam.
+import { SupervisorReactor } from "./board/supervisorReactor.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -138,6 +140,8 @@ it.effect("parks automatic pull until activation without delaying command readin
           listShells: () => Effect.succeed(snapshot.projects),
         }),
         Layer.mock(ProjectService.ProjectService)({ snapshot: Effect.succeed(snapshot) }),
+        // T3o: startup starts the board supervisor (board/serverLayer.ts); not this test's subject.
+        Layer.mock(SupervisorReactor)({ start: () => Effect.void }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getShellSnapshot: () =>
             Effect.succeed({
