@@ -29,9 +29,6 @@ import {
   type BoardCard,
   type BoardCardStepState,
   type BoardCardThreadLink,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -44,7 +41,10 @@ import {
   makeBoardCard,
   settingsWith,
   withGovernor,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import type { BoardThreadState } from "./ThreadGateway.ts";
 
 const cardId = BoardCardId.make("card-1");
 const planning = String(BOARD_SEED_STAGE_IDS.planning);
@@ -98,12 +98,12 @@ const planningStep = (input: {
 
 /** What the `+` menu's restart row dispatches, once the decider has accepted
     it: the card and the stage it is standing in. */
-const stageThreadRequested = (sequence: number): OrchestrationEvent =>
+const stageThreadRequested = (sequence: number): HarnessEvent =>
   ({
     type: "board.card-stage-thread-requested",
     sequence,
     payload: { cardId, stageId: planning },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 const settings = () =>
   settingsWith({
@@ -119,7 +119,7 @@ const settings = () =>
 interface RestartOutcome {
   readonly state: BoardCardStepState | null;
   readonly card: BoardCard;
-  readonly commands: ReadonlyArray<OrchestrationCommand>;
+  readonly commands: ReadonlyArray<HarnessCommand>;
 }
 
 const restartOutcome = (input: {
@@ -130,7 +130,7 @@ const restartOutcome = (input: {
       thread between turns — because boot reconciliation reads it and would
       otherwise park or recover the seeded row before the restart under test
       arrives. Pass an alive one to keep a `running` step running. */
-  readonly shell?: OrchestrationThreadShell;
+  readonly shell?: BoardThreadState;
 }): Effect.Effect<RestartOutcome> =>
   Effect.gen(function* () {
     let outcome: RestartOutcome | null = null;
@@ -255,7 +255,7 @@ it.effect("restarts a step the supervisor still believes is running, and stops t
     // move's abandonment does.
     assert.isDefined(
       outcome.commands.find(
-        (command) => command.type === "thread.turn.interrupt" && command.threadId === oldThread,
+        (command) => command.type === "thread.interrupt" && command.threadId === oldThread,
       ),
       "the superseded turn is interrupted",
     );

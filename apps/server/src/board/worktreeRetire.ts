@@ -26,17 +26,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
 
-import {
-  CommandId,
-  GitCommandError,
-  type OrchestrationReadModel,
-  type ProjectScript,
-} from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { CommandId, GitCommandError, type ProjectScript } from "@t3tools/contracts";
+import { Platform as HostProcessPlatform } from "@t3tools/shared/HostProcess";
 import { projectScriptRuntimeEnv, resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -44,11 +38,10 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { ThreadGateway, type BoardProject, type BoardWorktreeThread } from "./ThreadGateway.ts";
 
 export type WorktreeRetireKind = "reclaim" | "forced";
 
@@ -352,8 +345,7 @@ export const worktreeRemoveScripts = (
 export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
   Effect.gen(function* () {
     const terminals = yield* TerminalManager.TerminalManager;
-    const engine = yield* OrchestrationEngineService;
-    const snapshotQuery = yield* ProjectionSnapshotQuery;
+    const threads = yield* ThreadGateway;
     const serverSettings = yield* ServerSettingsService;
     const git = yield* GitVcsDriver.GitVcsDriver;
     const findProcesses = options.findProcessesInDirectory ?? findProcessesInDirectory;
@@ -377,35 +369,28 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
     });
 
     const stopOwnProcesses = Effect.fn("worktreeRetire.stopOwnProcesses")(function* (
-      model: OrchestrationReadModel | null,
-      worktreePath: string,
+      inWorktree: ReadonlyArray<BoardWorktreeThread>,
     ) {
-      const threads = (model?.threads ?? []).filter(
-        (thread) => thread.worktreePath !== null && samePath(thread.worktreePath, worktreePath),
-      );
-      for (const thread of threads) {
-        yield* terminals.close({ threadId: thread.id, deleteHistory: false }).pipe(
+      for (const thread of inWorktree) {
+        yield* terminals.close({ threadId: thread.threadId, deleteHistory: false }).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("worktree retire: closing a thread's terminals failed", {
-              threadId: thread.id,
+              threadId: thread.threadId,
               cause: Cause.pretty(cause),
             }),
           ),
         );
         // A deleted thread's session is stopped by its deletion.
-        if (thread.deletedAt !== null) continue;
-        if (thread.session === null || thread.session.status === "stopped") continue;
-        yield* engine
-          .dispatch({
-            type: "thread.session.stop",
+        if (thread.deleted || !thread.sessionLive) continue;
+        yield* threads
+          .stopSession({
             commandId: CommandId.make(`server:worktree-retire-stop:${NodeCrypto.randomUUID()}`),
-            threadId: thread.id,
-            createdAt: DateTime.formatIso(yield* DateTime.now),
+            threadId: thread.threadId,
           })
           .pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("worktree retire: stopping a thread's session failed", {
-                threadId: thread.id,
+                threadId: thread.threadId,
                 cause: Cause.pretty(cause),
               }),
             ),
@@ -436,13 +421,13 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
     });
 
     const runHooks = Effect.fn("worktreeRetire.runHooks")(function* (
-      model: OrchestrationReadModel | null,
+      projects: ReadonlyArray<BoardProject>,
       input: WorktreeRetireInput,
     ) {
       const project =
-        model?.projects.find(
+        projects.find(
           (candidate) =>
-            candidate.deletedAt === null &&
+            !candidate.deleted &&
             (input.projectId !== undefined
               ? candidate.id === input.projectId
               : samePath(candidate.workspaceRoot, input.projectCwd)),
@@ -500,15 +485,18 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
       // Before anything is stopped, too: a card restarted since the caller
       // decided owns live sessions in this checkout.
       if (!(yield* stillWanted)) return null;
-      const model = yield* snapshotQuery.getCommandReadModel().pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("worktree retire: read model unreadable", {
-            worktreePath: input.worktreePath,
-            cause: Cause.pretty(cause),
-          }).pipe(Effect.as(null)),
-        ),
-      );
-      yield* stopOwnProcesses(model, input.worktreePath);
+      const unreadable = (cause: Cause.Cause<unknown>) =>
+        Effect.logWarning("worktree retire: threads and projects unreadable", {
+          worktreePath: input.worktreePath,
+          cause: Cause.pretty(cause),
+        });
+      const inWorktree = yield* threads
+        .threadsInWorktree(input.worktreePath)
+        .pipe(Effect.catchCause((cause) => unreadable(cause).pipe(Effect.as([]))));
+      const projects = yield* threads
+        .projects()
+        .pipe(Effect.catchCause((cause) => unreadable(cause).pipe(Effect.as([]))));
+      yield* stopOwnProcesses(inWorktree);
       const survivors = yield* settledSurvivors(input.worktreePath);
       if (survivors.length > 0) {
         if (input.kind === "reclaim") {
@@ -516,7 +504,7 @@ export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
         }
         yield* killSurvivors(input.worktreePath, survivors);
       }
-      const hookWarning = yield* runHooks(model, input);
+      const hookWarning = yield* runHooks(projects, input);
       // Stopping and the scripts take long enough for a person to drag the
       // card back out of Done. Its caches may have moved out; that only costs
       // a rebuild.

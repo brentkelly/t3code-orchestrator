@@ -13,13 +13,14 @@ import {
   ThreadId,
   type BoardCard,
   type BoardState,
-  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { boardDecidedEvents, decideBoardCommand, type BoardCommand } from "./decider.ts";
+import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
+import type { BoardOrchestrationReadModel } from "./decisionContext.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -69,7 +70,7 @@ function makeCard(
   };
 }
 
-function makeReadModel(board: BoardState): OrchestrationReadModel {
+function makeReadModel(board: BoardState): BoardOrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [
@@ -125,12 +126,12 @@ const createCommand = (input: { readonly cardId: string; readonly projectId: Pro
     createdAt: NOW,
   }) as const satisfies BoardCommand;
 
-const decide = (command: BoardCommand, readModel: OrchestrationReadModel) =>
-  decideBoardCommand({ command, readModel }).pipe(
+const decide = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
+  decideBoardCommandOnModel({ command, readModel }).pipe(
     Effect.map((decision) => boardDecidedEvents(decision)[0]!),
   );
 
-const decideFail = (command: BoardCommand, readModel: OrchestrationReadModel) =>
+const decideFail = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
   Effect.flip(decide(command, readModel));
 
 /** A card sitting in Ready, which is the state the whole feature is for. */
@@ -167,7 +168,7 @@ it.layer(NodeServices.layer)("board.card.set-project", (it) => {
           setProjectCommand({ cardId: "card-1", projectId: ProjectId.make("project-gone") }),
           makeReadModel({ cards: [movable], nextCardNumberByProject: {} }),
         );
-        assert.strictEqual(failure._tag, "OrchestrationCommandInvariantError");
+        assert.strictEqual(failure._tag, "BoardCommandInvariantError");
       }),
     );
 

@@ -33,6 +33,7 @@ import {
   BoardStepCompletion,
   BoardStepOutcome,
   BoardStepStatus,
+  OrchestratorMcpFailure,
   PositiveInt,
   ProjectId,
   TrimmedNonEmptyString,
@@ -40,11 +41,13 @@ import {
 import * as Schema from "effect/Schema";
 import * as Crypto from "effect/Crypto";
 import * as Path from "effect/Path";
-import { Tool, Toolkit } from "effect/unstable/ai";
+import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import { BoardEngine } from "../../../board/BoardEngine.ts";
+import { BoardQueries } from "../../../board/BoardQueries.ts";
+import { ThreadGateway } from "../../../board/ThreadGateway.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ServerConfig from "../../../config.ts";
 import { SupervisorReactor } from "../../../board/supervisorReactor.ts";
@@ -68,15 +71,25 @@ export class BoardToolError extends Schema.TaggedError<BoardToolError>()("BoardT
   message: TrimmedNonEmptyString,
 }) {}
 
-// The board tools all resolve the same services: the calling scope, the engine
-// (to dispatch), the board-wrapped snapshot query (to read), crypto (to mint
+/**
+ * What a board tool can fail with: its own error, or upstream's refusal of the
+ * caller (T3O-59) — a board tool needs a T3 thread caller (`McpToolAccess`).
+ */
+export const BoardToolFailure = Schema.Union([BoardToolError, OrchestratorMcpFailure]);
+
+// The board tools all resolve the same services: the calling scope, the board
+// engine (to dispatch and read the board), the board queries (bodies, activity,
+// todos), the thread gateway (projects and threads), crypto (to mint
 // command/entity ids) and board settings (the per-project key prefix, D14 —
 // an agent-created card must land in the same key namespace as a human's).
 // Declared uniformly, mirroring the preview toolkit.
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
-  OrchestrationEngineService,
-  ProjectionSnapshotQuery,
+  // `McpToolAccess` checks a writing caller's thread through it (T3O-59).
+  ThreadManagement.ThreadManagementService,
+  BoardEngine,
+  BoardQueries,
+  ThreadGateway,
   Crypto.Crypto,
   ServerSettings.ServerSettingsService,
   // The brief-attachment manifest (t3o-32) resolves absolute paths off the
@@ -256,7 +269,7 @@ export const BoardGetCardContextTool = Tool.make("board_get_card_context", {
     "Pull everything you need to work on your card: its title, brief, stage, dependency states, the work assigned right now, prior work and its outcomes, proposed plans, its recent activity, and the current todo list of every thread working on it. Activity is truncated to the most recent entries, so treat it as a tail, not the full history; the per-thread todo lists are how you pick up where you (or another thread on this card) left off. Call this first when you start work, and again whenever you need to re-orient. Your card is resolved from your thread — you never pass a card id. Fails if your thread is not linked to a card.",
   parameters: NoParameters,
   success: BoardCardContext,
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 })
   .annotate(Tool.Title, "Get board card context")
@@ -282,7 +295,7 @@ export const BoardCompleteStepTool = Tool.make("board_complete_step", {
         returned unchanged (an idempotent retry). */
     alreadyCompleted: Schema.Boolean,
   }),
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Complete board work");
 
@@ -314,7 +327,7 @@ export const BoardListCardsTool = Tool.make("board_list_cards", {
     includeArchived: Schema.optional(Schema.Boolean),
   }),
   success: Schema.Struct({ cards: Schema.Array(BoardCardListItem) }),
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 })
   .annotate(Tool.Title, "List board cards")
@@ -329,7 +342,7 @@ export const BoardGetCardTool = Tool.make("board_get_card", {
     card: TrimmedNonEmptyString,
   }),
   success: BoardCardReadResult,
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 })
   .annotate(Tool.Title, "Get board card")
@@ -341,7 +354,7 @@ export const BoardListProjectsTool = Tool.make("board_list_projects", {
     "List the projects on this server — each project's id, title, and workspace root. Call this to find the projectId to pass to board_create_card: the id is a UUID, NOT the title or folder name shown in the app, so never guess it from a name. Returns every non-deleted project.",
   parameters: NoParameters,
   success: Schema.Struct({ projects: Schema.Array(BoardProjectListItem) }),
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 })
   .annotate(Tool.Title, "List projects")
@@ -363,7 +376,7 @@ export const BoardCreateCardTool = Tool.make("board_create_card", {
     pullRequest: Schema.optional(BoardCardPullRequestTarget),
   }),
   success: Schema.Struct({ cardId: BoardCardId, key: TrimmedNonEmptyString }),
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Create board card");
 
@@ -376,7 +389,7 @@ export const BoardMoveCardTool = Tool.make("board_move_card", {
     override: Schema.optional(Schema.Boolean),
   }),
   success: Schema.Struct({ cardId: BoardCardId, stage: BoardStageId }),
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Move board card");
 
@@ -401,7 +414,7 @@ export const BoardUpdateCardTool = Tool.make("board_update_card", {
     pullRequest: Schema.optional(Schema.NullOr(BoardCardPullRequestTarget)),
   }),
   success: Schema.Struct({ cardId: BoardCardId }),
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Update board card");
 
@@ -421,7 +434,7 @@ export const BoardArchiveCardTool = Tool.make("board_archive_card", {
     "Archive a card — the reversible way to take it off the board. The card, its threads, its history and its dependency edges all survive; it leaves the columns, stops gating the cards that depend on it, and is still readable in the archive. Use it for cards that are done with, duplicated, or no longer wanted. Rejected on a card that is already archived, on a card whose plan cards are still unfinished (finish or archive those first), and on YOUR OWN card — archiving reclaims the worktree you are running in and unarchiving does not bring it back, so ask a human to do it from the app. Allowed on a card ANOTHER agent is working on — it is the softer route board_delete_card points at — but it is not free there: the in-flight step is settled as abandoned, so that agent's turn is orphaned, and the card's checkout is reclaimed unless it holds uncommitted or unpushed work. Wait for the step to settle if you are only tidying. Reverse it with board_unarchive_card; use board_delete_card only when nothing should survive.",
   parameters: Schema.Struct({ cardId: BoardCardId }),
   success: BoardCardWriteResult,
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Archive board card");
 
@@ -430,7 +443,7 @@ export const BoardUnarchiveCardTool = Tool.make("board_unarchive_card", {
     "Restore an archived card to its stage's column, re-arming the dependency edges pointing at it. Rejected on a card that is not archived. Find archived cards with board_list_cards.",
   parameters: Schema.Struct({ cardId: BoardCardId }),
   success: BoardCardWriteResult,
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Unarchive board card");
 
@@ -439,7 +452,7 @@ export const BoardDeleteCardTool = Tool.make("board_delete_card", {
     "Delete a card outright. IRREVERSIBLE and not what you want in most cases: the card leaves the board entirely, its rows are purged from every board table, the threads linked to it are deleted with their whole conversation, and its worktree and board/* branches are reclaimed — unmerged work on that branch is gone. Its key is never re-issued. Prefer board_archive_card, which is reversible and keeps all of that; delete only when a human asked for a card and its history to be destroyed, or for a card created in error. Rejected on a card whose plan cards still exist (delete those first), on a card with WORK IN FLIGHT — a step that has not settled means an agent is inside that worktree, so archive it or wait instead — and on YOUR OWN card — deleting the card you are working on would delete this thread and the worktree you are running in, so ask a human to do it from the app.",
   parameters: Schema.Struct({ cardId: BoardCardId }),
   success: BoardCardWriteResult,
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Delete board card");
 
@@ -460,7 +473,7 @@ export const BoardProposePlansTool = Tool.make("board_propose_plans", {
     splitRationale: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   }),
   success: Schema.Struct({ planIds: Schema.Array(BoardPlan.fields.planId) }),
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Propose board plans");
 
@@ -471,7 +484,7 @@ export const BoardGetPlanTool = Tool.make("board_get_plan", {
     planId: BoardPlan.fields.planId,
   }),
   success: Schema.Struct({ plan: BoardPlan, body: Schema.String }),
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 })
   .annotate(Tool.Title, "Get board plan")
@@ -486,7 +499,7 @@ export const BoardWritePlanTool = Tool.make("board_write_plan", {
     body: Schema.String,
   }),
   success: Schema.Struct({ planId: BoardPlan.fields.planId }),
-  failure: BoardToolError,
+  failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Write board plan");
 

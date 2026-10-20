@@ -2,37 +2,33 @@
  * T3o board RPC handlers (t3o-04).
  *
  * `boardRpcHandlers` is the injected factory the upstream ws.ts handler
- * object spreads (`...boardRpcHandlers({ currentSession, orchestrationEngine,
- * projectionSnapshotQuery }),`) — the same shape as
- * `boardSnapshotQueryMethods`. Adding a board RPC grows the returned record
- * here plus the contracts-side registries (`BOARD_WS_METHODS` / `BOARD_RPCS`
- * / `BOARD_RPC_SCOPES`) and touches zero upstream files.
+ * object spreads (`...(yield* boardRpcHandlers({ currentSession, boardSupervisor }))`).
+ * Adding a board RPC grows the returned record here plus the contracts-side
+ * registries (`BOARD_WS_METHODS` / `BOARD_RPCS` / `BOARD_RPC_SCOPES`) and
+ * touches zero upstream files.
  *
- * Authorization: upstream's `observeRpc*` wrappers only cover the handlers
- * written inline in ws.ts, so board handlers enforce their own scopes from
- * `BOARD_RPC_SCOPES` against the same authenticated session — identical
- * failure shape (`EnvironmentAuthorizationError`) to upstream's
- * `authorizeEffect`.
+ * Authorization: upstream's `RpcScopeAuthorization` middleware already checks
+ * `RPC_REQUIRED_SCOPES`, which spreads `BOARD_RPC_SCOPES`; the handlers keep
+ * their own check against the same session as a second line, with the same
+ * failure shape (`EnvironmentAuthorizationError`). Spans and request metrics
+ * come from upstream's `RpcInstrumentation` middleware.
  *
- * Database access goes through the board-only methods riding the
- * `ProjectionSnapshotQuery` record (`boardSnapshotQueryMethodsOf`): brief
- * bodies live only in `board_card_bodies` (D8), and the snapshot-query
- * assembly is the one place the board already holds the `SqlClient` without
- * adding a requirement to the ws layer.
+ * Writes go through the board's own engine and reads through `BoardQueries`
+ * (T3O-56); nothing here touches upstream's orchestration engine. The board's
+ * client state rides its own subscription and dispatch RPCs (T3O-57).
  */
 import {
   BOARD_RPC_SCOPES,
   BOARD_WS_METHODS,
+  BoardDispatchCommandError,
+  BoardSnapshotError,
   BoardSubscribeCardError,
   EnvironmentAuthorizationError,
-  isBoardCommand,
-  isBoardEvent,
   BoardCardAttachmentError,
   BoardCardAttachmentId,
   CommandId,
   type BoardAttachCardFileInput,
   type BoardDetachCardFileInput,
-  ThreadId,
   type BoardCardDetail,
   type BoardCardDetailStreamItem,
   type BoardCardId,
@@ -42,15 +38,16 @@ import {
   type BoardLinkCardPullRequestInput,
   type BoardProviderLimitActionInput,
   type BoardProviderLimitResumeAtInput,
+  type BoardClientCommand,
+  type BoardSubscribeBoardInput,
   type BoardSubscribeCardInput,
-  type OrchestrationCommand,
-  type OrchestrationShellStreamEvent,
+  type OrchestrationClientOrigin,
   type ProjectId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -63,29 +60,67 @@ import {
   claimBoardCardAttachment,
   deleteBoardCardAttachmentFile,
 } from "./attachments.ts";
-import { observeRpcEffect, observeRpcStreamEffect } from "../observability/RpcInstrumentation.ts";
-import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
-import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import type { ShellWindowEvent } from "../orchestration/shellCoalesce.ts";
-import type { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
+import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import {
   BOARD_HUMAN_ACTOR_FALLBACK_NAME,
   boardHumanActor,
   stampBoardActivityActor,
 } from "./activityActors.ts";
-import { boardSnapshotQueryMethodsOf } from "./projection.ts";
+import { BoardEngine, type BoardEngineShape } from "./BoardEngine.ts";
+import { BoardQueries } from "./BoardQueries.ts";
+import type { BoardQueriesShape } from "./projection.ts";
+import { subscribeBoard } from "./boardSubscription.ts";
+import { BoardThreadTail } from "./boardThreadTail.ts";
+import { ThreadGateway, type ThreadGatewayShape } from "./ThreadGateway.ts";
+import type { BoardCommand } from "./decider.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 
 export interface BoardRpcHandlerDeps {
   readonly currentSession: AuthenticatedSession;
-  readonly orchestrationEngine: OrchestrationEngineShape;
-  readonly projectionSnapshotQuery: ProjectionSnapshotQueryShape;
   /** The supervisor reactor performs the card→PR actions: it owns the forge
       gateway and the step machinery a conflict fix needs. */
   readonly boardSupervisor: SupervisorReactorShape;
+  /** The connecting client, stamped on every board event its commands make. */
+  readonly clientOrigin: OrchestrationClientOrigin;
 }
 
-export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
+/** A client that said nothing about itself has no origin worth stamping. */
+const hasClientOrigin = (origin: OrchestrationClientOrigin): boolean =>
+  origin.surface !== undefined || origin.appVersion !== undefined;
+
+export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
+  Effect.gen(function* () {
+    const boardEngine = yield* BoardEngine;
+    const boardQueries = yield* BoardQueries;
+    // Built once per connection, so the actor-name caches live as long as it does.
+    const stampActor = boardActorStamp({
+      threads: yield* ThreadGateway,
+      boardQueries,
+      git: yield* GitVcsDriver,
+    });
+    // The subscription's services, provided here so the handler's stream needs
+    // only the RPC scope.
+    const subscriptionContext = yield* Effect.context<
+      BoardEngine | BoardQueries | BoardThreadTail
+    >();
+    return makeBoardRpcHandlers(deps, {
+      boardEngine,
+      boardQueries,
+      stampActor,
+      subscriptionContext,
+    });
+  });
+
+function makeBoardRpcHandlers(
+  deps: BoardRpcHandlerDeps,
+  services: {
+    readonly boardEngine: BoardEngineShape;
+    readonly boardQueries: BoardQueriesShape;
+    readonly stampActor: (command: BoardCommand) => Effect.Effect<void>;
+    readonly subscriptionContext: Context.Context<BoardEngine | BoardQueries | BoardThreadTail>;
+  },
+) {
+  const { boardEngine, boardQueries } = services;
   const authorized = <A, E, R>(
     method: keyof typeof BOARD_RPC_SCOPES,
     effect: Effect.Effect<A, E, R>,
@@ -103,19 +138,8 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
 
   const readDetail = (
     cardId: BoardCardId,
-  ): Effect.Effect<BoardCardDetail | null, BoardSubscribeCardError> => {
-    const boardMethods = boardSnapshotQueryMethodsOf(deps.projectionSnapshotQuery);
-    if (boardMethods === null) {
-      // Only reachable when the snapshot query was built without the board
-      // factory (upstream tests mocking the service); production assembly
-      // always spreads it in.
-      return Effect.fail(
-        new BoardSubscribeCardError({
-          message: "Board snapshot query methods are unavailable on this server.",
-        }),
-      );
-    }
-    return boardMethods.boardCardDetail(cardId).pipe(
+  ): Effect.Effect<BoardCardDetail | null, BoardSubscribeCardError> =>
+    boardQueries.boardCardDetail(cardId).pipe(
       Effect.mapError(
         (cause) =>
           new BoardSubscribeCardError({
@@ -124,7 +148,6 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
           }),
       ),
     );
-  };
 
   /** The RPC promises `BoardCardAttachmentError` and nothing else: a storage
       failure the claim did not already name is reported as `internal`. */
@@ -145,6 +168,50 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
 
   return {
     /**
+     * The board's bounded summary, then its live deltas (t3o-26 D4, T3O-57) —
+     * see `boardSubscription.ts` for the resume rules.
+     */
+    [BOARD_WS_METHODS.subscribeBoard]: (input: BoardSubscribeBoardInput) =>
+      Stream.unwrap(
+        authorized(
+          BOARD_WS_METHODS.subscribeBoard,
+          subscribeBoard(input).pipe(Effect.provide(services.subscriptionContext)),
+        ),
+      ),
+
+    /**
+     * A client board command (T3O-57). The human actor is stamped first: this
+     * RPC is the transport that knows a person is on the other end (t3o-18).
+     */
+    [BOARD_WS_METHODS.dispatchCommand]: (command: BoardClientCommand) =>
+      authorized(
+        BOARD_WS_METHODS.dispatchCommand,
+        services.stampActor(command).pipe(
+          Effect.andThen(
+            boardEngine.dispatch(
+              command,
+              hasClientOrigin(deps.clientOrigin) ? { origin: deps.clientOrigin } : undefined,
+            ),
+          ),
+          Effect.mapError(
+            (cause) => new BoardDispatchCommandError({ message: cause.message, cause }),
+          ),
+        ),
+      ),
+
+    /** The archive page's cards (t3o-13), read when the page opens. */
+    [BOARD_WS_METHODS.getArchivedCards]: (_input: Record<string, never>) =>
+      authorized(
+        BOARD_WS_METHODS.getArchivedCards,
+        boardQueries.boardArchivedCards().pipe(
+          Effect.map((cards) => ({ cards })),
+          Effect.mapError(
+            (cause) => new BoardSnapshotError({ message: "Failed to load archived cards.", cause }),
+          ),
+        ),
+      ),
+
+    /**
      * Re-resolve the card's pull request from the forge.
      *
      * The refreshed link reaches the open card through the `subscribeCard`
@@ -162,14 +229,11 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
      * what this card was filed about.
      */
     [BOARD_WS_METHODS.refreshCardPullRequest]: (input: BoardRefreshCardPullRequestInput) =>
-      observeRpcEffect(
+      authorized(
         BOARD_WS_METHODS.refreshCardPullRequest,
-        authorized(
-          BOARD_WS_METHODS.refreshCardPullRequest,
-          deps.boardSupervisor.refreshPullRequest(
-            input.cardId,
-            input.force === true ? { force: true } : undefined,
-          ),
+        deps.boardSupervisor.refreshPullRequest(
+          input.cardId,
+          input.force === true ? { force: true } : undefined,
         ),
       ),
 
@@ -180,17 +244,14 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
      */
     [BOARD_WS_METHODS.linkCardPullRequest]: (input: BoardLinkCardPullRequestInput) => {
       const target = parseCardPullRequestText(input.target);
-      return observeRpcEffect(
+      return authorized(
         BOARD_WS_METHODS.linkCardPullRequest,
-        authorized(
-          BOARD_WS_METHODS.linkCardPullRequest,
-          target === null
-            ? Effect.succeed({
-                outcome: "refused",
-                detail: `'${input.target}' names no pull request. Enter its URL or #number.`,
-              } as const)
-            : deps.boardSupervisor.linkPullRequest(input.cardId, target),
-        ),
+        target === null
+          ? Effect.succeed({
+              outcome: "refused",
+              detail: `'${input.target}' names no pull request. Enter its URL or #number.`,
+            } as const)
+          : deps.boardSupervisor.linkPullRequest(input.cardId, target),
       );
     },
 
@@ -208,12 +269,9 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
      * moment.
      */
     [BOARD_WS_METHODS.probeProviderLimit]: (input: BoardProviderLimitActionInput) =>
-      observeRpcEffect(
+      authorized(
         BOARD_WS_METHODS.probeProviderLimit,
-        authorized(
-          BOARD_WS_METHODS.probeProviderLimit,
-          deps.boardSupervisor.probeProviderLimit(input.providerInstanceId),
-        ),
+        deps.boardSupervisor.probeProviderLimit(input.providerInstanceId),
       ),
 
     /**
@@ -222,24 +280,18 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
      * poll does not. Null hands the schedule back to the poll.
      */
     [BOARD_WS_METHODS.setProviderLimitResumeAt]: (input: BoardProviderLimitResumeAtInput) =>
-      observeRpcEffect(
+      authorized(
         BOARD_WS_METHODS.setProviderLimitResumeAt,
-        authorized(
-          BOARD_WS_METHODS.setProviderLimitResumeAt,
-          deps.boardSupervisor.setProviderLimitResumeAt({
-            providerInstanceId: input.providerInstanceId,
-            resumeAt: input.resumeAt,
-          }),
-        ),
+        deps.boardSupervisor.setProviderLimitResumeAt({
+          providerInstanceId: input.providerInstanceId,
+          resumeAt: input.resumeAt,
+        }),
       ),
 
     [BOARD_WS_METHODS.mergeCardPullRequest]: (input: BoardCardPullRequestActionInput) =>
-      observeRpcEffect(
+      authorized(
         BOARD_WS_METHODS.mergeCardPullRequest,
-        authorized(
-          BOARD_WS_METHODS.mergeCardPullRequest,
-          deps.boardSupervisor.mergePullRequest(input.cardId),
-        ),
+        deps.boardSupervisor.mergePullRequest(input.cardId),
       ),
 
     /**
@@ -250,12 +302,9 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
      * and the caller renders each refusal differently.
      */
     [BOARD_WS_METHODS.submitCardForMerge]: (input: BoardCardPullRequestActionInput) =>
-      observeRpcEffect(
+      authorized(
         BOARD_WS_METHODS.submitCardForMerge,
-        authorized(
-          BOARD_WS_METHODS.submitCardForMerge,
-          deps.boardSupervisor.submitForMerge(input.cardId),
-        ),
+        deps.boardSupervisor.submitForMerge(input.cardId),
       ),
 
     /**
@@ -266,12 +315,9 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
      * or the executor re-plans a converged loop and bounces it straight back.
      */
     [BOARD_WS_METHODS.requestReviewRound]: (input: BoardCardPullRequestActionInput) =>
-      observeRpcEffect(
+      authorized(
         BOARD_WS_METHODS.requestReviewRound,
-        authorized(
-          BOARD_WS_METHODS.requestReviewRound,
-          deps.boardSupervisor.requestReviewRound(input.cardId),
-        ),
+        deps.boardSupervisor.requestReviewRound(input.cardId),
       ),
 
     /**
@@ -279,23 +325,17 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
      * human confirmed at a dialog naming what is lost; the branch survives.
      */
     [BOARD_WS_METHODS.removeCardWorktree]: (input: BoardCardPullRequestActionInput) =>
-      observeRpcEffect(
+      authorized(
         BOARD_WS_METHODS.removeCardWorktree,
-        authorized(
-          BOARD_WS_METHODS.removeCardWorktree,
-          deps.boardSupervisor.forceRemoveWorktree(input.cardId),
-        ),
+        deps.boardSupervisor.forceRemoveWorktree(input.cardId),
       ),
 
     /** "Check again" on a card that kept its worktree (T3O-52): operate, like
         removal, because a durable checkout is removed by it. */
     [BOARD_WS_METHODS.checkCardWorktree]: (input: BoardCardPullRequestActionInput) =>
-      observeRpcEffect(
+      authorized(
         BOARD_WS_METHODS.checkCardWorktree,
-        authorized(
-          BOARD_WS_METHODS.checkCardWorktree,
-          deps.boardSupervisor.checkWorktree(input.cardId),
-        ),
+        deps.boardSupervisor.checkWorktree(input.cardId),
       ),
 
     /**
@@ -305,87 +345,84 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
      * the copy again so disk and record never disagree.
      */
     [BOARD_WS_METHODS.attachCardFile]: (input: BoardAttachCardFileInput) =>
-      observeRpcEffect(
+      authorized(
         BOARD_WS_METHODS.attachCardFile,
-        authorized(
-          BOARD_WS_METHODS.attachCardFile,
-          Effect.gen(function* () {
-            const config = yield* ServerConfig.ServerConfig;
-            const crypto = yield* Crypto.Crypto;
-            const detail = yield* readDetail(input.cardId).pipe(
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const crypto = yield* Crypto.Crypto;
+          const detail = yield* readDetail(input.cardId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new BoardCardAttachmentError({
+                  code: "internal",
+                  message: cause.message,
+                  cause,
+                }),
+            ),
+          );
+          if (detail === null) {
+            return yield* new BoardCardAttachmentError({
+              code: "rejected",
+              message: `Card ${input.cardId} was not found.`,
+            });
+          }
+          const createdAt = DateTime.formatIso(yield* DateTime.now);
+          const attachment = yield* claimBoardCardAttachment({
+            stateDir: config.stateDir,
+            attachmentsDir: config.attachmentsDir,
+            card: detail.card,
+            pendingAttachmentId: input.pendingAttachmentId,
+            attachmentId: BoardCardAttachmentId.make(yield* crypto.randomUUIDv4()),
+            name: input.name,
+            type: input.type,
+            mimeType: input.mimeType,
+            sizeBytes: input.sizeBytes,
+            addedAt: createdAt,
+          }).pipe(
+            Effect.mapError((error) =>
+              error instanceof BoardAttachmentClaimError
+                ? new BoardCardAttachmentError({
+                    code: error.failure.reason,
+                    message: error.failure.message,
+                    ...("cause" in error.failure && error.failure.cause !== undefined
+                      ? { cause: error.failure.cause }
+                      : {}),
+                  })
+                : new BoardCardAttachmentError({
+                    code: "storage",
+                    message: `Failed to store '${input.name}'.`,
+                    cause: error,
+                  }),
+            ),
+          );
+          const uuid = yield* crypto.randomUUIDv4();
+          yield* boardEngine
+            .dispatch({
+              type: "board.card.attach",
+              commandId: CommandId.make(`server:board-attach:${uuid}`),
+              cardId: input.cardId,
+              attachment,
+              createdAt,
+            })
+            .pipe(
+              Effect.tapError(() =>
+                deleteBoardCardAttachmentFile({
+                  stateDir: config.stateDir,
+                  cardId: input.cardId,
+                  name: attachment.name,
+                }),
+              ),
               Effect.mapError(
                 (cause) =>
                   new BoardCardAttachmentError({
-                    code: "internal",
+                    code: "rejected",
                     message: cause.message,
                     cause,
                   }),
               ),
             );
-            if (detail === null) {
-              return yield* new BoardCardAttachmentError({
-                code: "rejected",
-                message: `Card ${input.cardId} was not found.`,
-              });
-            }
-            const createdAt = DateTime.formatIso(yield* DateTime.now);
-            const attachment = yield* claimBoardCardAttachment({
-              stateDir: config.stateDir,
-              attachmentsDir: config.attachmentsDir,
-              card: detail.card,
-              pendingAttachmentId: input.pendingAttachmentId,
-              attachmentId: BoardCardAttachmentId.make(yield* crypto.randomUUIDv4),
-              name: input.name,
-              type: input.type,
-              mimeType: input.mimeType,
-              sizeBytes: input.sizeBytes,
-              addedAt: createdAt,
-            }).pipe(
-              Effect.mapError((error) =>
-                error instanceof BoardAttachmentClaimError
-                  ? new BoardCardAttachmentError({
-                      code: error.failure.reason,
-                      message: error.failure.message,
-                      ...("cause" in error.failure && error.failure.cause !== undefined
-                        ? { cause: error.failure.cause }
-                        : {}),
-                    })
-                  : new BoardCardAttachmentError({
-                      code: "storage",
-                      message: `Failed to store '${input.name}'.`,
-                      cause: error,
-                    }),
-              ),
-            );
-            const uuid = yield* crypto.randomUUIDv4;
-            yield* deps.orchestrationEngine
-              .dispatch({
-                type: "board.card.attach",
-                commandId: CommandId.make(`server:board-attach:${uuid}`),
-                cardId: input.cardId,
-                attachment,
-                createdAt,
-              })
-              .pipe(
-                Effect.tapError(() =>
-                  deleteBoardCardAttachmentFile({
-                    stateDir: config.stateDir,
-                    cardId: input.cardId,
-                    name: attachment.name,
-                  }),
-                ),
-                Effect.mapError(
-                  (cause) =>
-                    new BoardCardAttachmentError({
-                      code: "rejected",
-                      message: cause.message,
-                      cause,
-                    }),
-                ),
-              );
-            return attachment;
-          }).pipe(Effect.mapError(toAttachmentError)),
-        ),
+          return attachment;
+        }).pipe(Effect.mapError(toAttachmentError)),
       ),
 
     /**
@@ -394,58 +431,55 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
      * is gone, which is what the user asked for.
      */
     [BOARD_WS_METHODS.detachCardFile]: (input: BoardDetachCardFileInput) =>
-      observeRpcEffect(
+      authorized(
         BOARD_WS_METHODS.detachCardFile,
-        authorized(
-          BOARD_WS_METHODS.detachCardFile,
-          Effect.gen(function* () {
-            const config = yield* ServerConfig.ServerConfig;
-            const crypto = yield* Crypto.Crypto;
-            const detail = yield* readDetail(input.cardId).pipe(
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const crypto = yield* Crypto.Crypto;
+          const detail = yield* readDetail(input.cardId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new BoardCardAttachmentError({
+                  code: "internal",
+                  message: cause.message,
+                  cause,
+                }),
+            ),
+          );
+          const attachment = detail?.card.attachments.find(
+            (candidate) => candidate.id === input.attachmentId,
+          );
+          if (detail === null || attachment === undefined) {
+            return yield* new BoardCardAttachmentError({
+              code: "rejected",
+              message: `Attachment ${input.attachmentId} is not on card ${input.cardId}.`,
+            });
+          }
+          const uuid = yield* crypto.randomUUIDv4();
+          yield* boardEngine
+            .dispatch({
+              type: "board.card.detach",
+              commandId: CommandId.make(`server:board-detach:${uuid}`),
+              cardId: input.cardId,
+              attachmentId: input.attachmentId,
+              createdAt: DateTime.formatIso(yield* DateTime.now),
+            })
+            .pipe(
               Effect.mapError(
                 (cause) =>
                   new BoardCardAttachmentError({
-                    code: "internal",
+                    code: "rejected",
                     message: cause.message,
                     cause,
                   }),
               ),
             );
-            const attachment = detail?.card.attachments.find(
-              (candidate) => candidate.id === input.attachmentId,
-            );
-            if (detail === null || attachment === undefined) {
-              return yield* new BoardCardAttachmentError({
-                code: "rejected",
-                message: `Attachment ${input.attachmentId} is not on card ${input.cardId}.`,
-              });
-            }
-            const uuid = yield* crypto.randomUUIDv4;
-            yield* deps.orchestrationEngine
-              .dispatch({
-                type: "board.card.detach",
-                commandId: CommandId.make(`server:board-detach:${uuid}`),
-                cardId: input.cardId,
-                attachmentId: input.attachmentId,
-                createdAt: DateTime.formatIso(yield* DateTime.now),
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new BoardCardAttachmentError({
-                      code: "rejected",
-                      message: cause.message,
-                      cause,
-                    }),
-                ),
-              );
-            yield* deleteBoardCardAttachmentFile({
-              stateDir: config.stateDir,
-              cardId: input.cardId,
-              name: attachment.name,
-            });
-          }).pipe(Effect.mapError(toAttachmentError)),
-        ),
+          yield* deleteBoardCardAttachmentFile({
+            stateDir: config.stateDir,
+            cardId: input.cardId,
+            name: attachment.name,
+          });
+        }).pipe(Effect.mapError(toAttachmentError)),
       ),
 
     /**
@@ -457,10 +491,7 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
      * grammar and needs no client-side merge.
      */
     [BOARD_WS_METHODS.subscribeCard]: (input: BoardSubscribeCardInput) =>
-      // Same metrics/tracing wrapper as the ws.ts inline handlers — board
-      // RPCs must not be dark spots in RPC observability.
-      observeRpcStreamEffect(
-        BOARD_WS_METHODS.subscribeCard,
+      Stream.unwrap(
         authorized(
           BOARD_WS_METHODS.subscribeCard,
           Effect.gen(function* () {
@@ -474,16 +505,15 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
             // the stream emits one frame for the whole burst.
             const liveBuffer = yield* Queue.sliding<void>(1);
             yield* Effect.forkScoped(
-              deps.orchestrationEngine.streamDomainEvents.pipe(
-                // Wake on ANY board event, not only ones aggregated on the open
-                // card: the detail embeds resolved dependencies/dependents with
-                // live stage/archive state, and those change under events fired
-                // on OTHER aggregate ids (a dependency moving to Done, another
-                // card adopting this one into its dependsOn). One card's detail
-                // re-read per coalesced burst (the sliding buffer above) is the
-                // cost; a stale dependency chip until an unrelated local event
-                // was the alternative.
-                Stream.filter((event) => isBoardEvent(event)),
+              // Wake on ANY board event, not only ones aggregated on the open
+              // card: the detail embeds resolved dependencies/dependents with
+              // live stage/archive state, and those change under events fired
+              // on OTHER aggregate ids (a dependency moving to Done, another
+              // card adopting this one into its dependsOn). One card's detail
+              // re-read per coalesced burst (the sliding buffer above) is the
+              // cost; a stale dependency chip until an unrelated local event
+              // was the alternative.
+              boardEngine.liveBoardEvents.pipe(
                 Stream.runForEach(() => Queue.offer(liveBuffer, undefined)),
               ),
               { startImmediately: true },
@@ -513,7 +543,6 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
             );
           }),
         ),
-        { "rpc.aggregate": "board" },
       ),
   };
 }
@@ -521,12 +550,12 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
 // ── The human dispatch boundary (t3o-18, D11) ──────────────────────────
 
 /**
- * Stamp the HUMAN actor on a board command arriving over the web client's
- * `orchestration.dispatchCommand` RPC, so the Activity rail can say "brent moved
- * to Building" rather than attributing every drag to the system.
+ * Stamp the HUMAN actor on a board command arriving over `board.dispatchCommand`,
+ * so the Activity rail can say "brent moved to Building" rather than
+ * attributing every drag to the system.
  *
- * Called from ws.ts immediately before dispatch: that RPC is the transport that
- * knows a person is on the other end, and no other caller can claim to be one.
+ * Called immediately before dispatch: that RPC is the transport that knows a
+ * person is on the other end, and no other caller can claim to be one.
  * A non-board command, or one that names no card, is left alone.
  *
  * **The name** is the card's project git `user.name`, cached per project and
@@ -540,10 +569,10 @@ export function boardRpcHandlers(deps: BoardRpcHandlerDeps) {
  * degrades to the fallback name; none can fail the dispatch.
  */
 export function boardActorStamp(deps: {
-  readonly projectionSnapshotQuery: ProjectionSnapshotQueryShape;
+  readonly threads: Pick<ThreadGatewayShape, "project">;
+  readonly boardQueries: BoardQueriesShape;
   readonly git: GitVcsDriver["Service"];
-}): (command: OrchestrationCommand) => Effect.Effect<void> {
-  const boardMethods = boardSnapshotQueryMethodsOf(deps.projectionSnapshotQuery);
+}): (command: BoardCommand) => Effect.Effect<void> {
   const projectByCard = new Map<string, ProjectId>();
   const nameByProject = new Map<string, string>();
 
@@ -561,10 +590,9 @@ export function boardActorStamp(deps: {
       );
 
   const resolveName = Effect.fn("board-activity-actor-name")(function* (cardId: BoardCardId) {
-    if (boardMethods === null) return BOARD_HUMAN_ACTOR_FALLBACK_NAME;
     let projectId = projectByCard.get(String(cardId));
     if (projectId === undefined) {
-      const detail = yield* boardMethods
+      const detail = yield* deps.boardQueries
         .boardCardDetail(cardId)
         .pipe(Effect.catchCause(() => Effect.succeed(null)));
       if (detail === null) return BOARD_HUMAN_ACTOR_FALLBACK_NAME;
@@ -576,10 +604,9 @@ export function boardActorStamp(deps: {
     }
     const cached = nameByProject.get(String(projectId));
     if (cached !== undefined) return cached;
-    const project = yield* deps.projectionSnapshotQuery.getProjectShellById(projectId).pipe(
-      Effect.map(Option.getOrUndefined),
-      Effect.catchCause(() => Effect.succeed(undefined)),
-    );
+    const project = yield* deps.threads
+      .project(projectId)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
     const workspaceRoot = project?.workspaceRoot;
     const resolved =
       workspaceRoot === undefined || workspaceRoot.length === 0
@@ -592,7 +619,6 @@ export function boardActorStamp(deps: {
 
   return (command) =>
     Effect.gen(function* () {
-      if (!isBoardCommand(command)) return;
       const cardId = (command as { readonly cardId?: BoardCardId }).cardId;
       if (cardId === undefined) return;
       stampBoardActivityActor(command.commandId, boardHumanActor(yield* resolveName(cardId)));
@@ -604,89 +630,4 @@ export function boardActorStamp(deps: {
       // the next command on the card resolves against the new one.
       if (command.type === "board.card.set-project") projectByCard.delete(String(cardId));
     }).pipe(Effect.catchCause(() => Effect.void));
-}
-
-// ── The card-threads shell delta (t3o-18, D3) ──────────────────────────
-
-/**
- * The `card-threads` shell deltas an orchestration event implies, if any.
- *
- * Emitted from the SAME domain-event stream every other shell delta rides, with
- * the causing event's own `sequence`, so resume-by-sequence stays exact and a
- * client can never see a todo revision out of order with the card it belongs to.
- * Two triggers, and ONLY these two — the todo cache is the only thing the delta
- * carries, so a thread event that cannot have touched it emits nothing:
- *
- * - a `turn.plan.updated` activity append on a thread live-linked to a card
- *   (the only thread event the projector WRITES `board_thread_todos` on), so a
- *   burst of streaming message deltas on an active linked thread no longer
- *   triggers a per-event refetch of a list that did not change. The upstream
- *   coalescing window still collapses a burst of plan revisions to the latest;
- * - a `thread.deleted` on a live-linked thread, the one thread event the
- *   projector DROPS the cache row on (its link stays live until tombstoned, so
- *   no `board.card-thread-unlinked` fires for it) — without this the client's
- *   snapshot array keeps the dead thread's stale summary until an unrelated card
- *   event happens to refetch;
- * - a card's link set changing (`board.card-thread-linked` / `-unlinked`), since
- *   the set membership is what the delta carries.
- *
- * A card archive or delete needs none: `card-removed` already drops the card,
- * and the client drops its thread entries with it.
- *
- * Best-effort: every failure yields no delta rather than breaking the shell
- * stream, and the next snapshot repairs the view.
- */
-export function boardCardThreadsShellEvents(deps: {
-  readonly projectionSnapshotQuery: ProjectionSnapshotQueryShape;
-}): (event: ShellWindowEvent) => Effect.Effect<ReadonlyArray<OrchestrationShellStreamEvent>> {
-  const boardMethods = boardSnapshotQueryMethodsOf(deps.projectionSnapshotQuery);
-
-  const forCard = (cardId: BoardCardId, sequence: number) =>
-    boardMethods === null
-      ? Effect.succeed([] as ReadonlyArray<OrchestrationShellStreamEvent>)
-      : boardMethods.boardCardThreads(cardId).pipe(
-          Effect.map((threads): ReadonlyArray<OrchestrationShellStreamEvent> => [
-            { kind: "card-threads" as const, sequence, cardId, threads },
-          ]),
-          Effect.catchCause(() =>
-            Effect.succeed([] as ReadonlyArray<OrchestrationShellStreamEvent>),
-          ),
-        );
-
-  return (event) =>
-    Effect.gen(function* () {
-      if (boardMethods === null) return [];
-      if (
-        event.type === "board.card-thread-linked" ||
-        event.type === "board.card-thread-unlinked"
-      ) {
-        return yield* forCard(event.payload.cardId, event.sequence);
-      }
-      // A deleted thread's cache row was just dropped by the projector, but its
-      // link stays live until something tombstones it, so no
-      // `board.card-thread-unlinked` fires. Refetch the card to push the now
-      // todo-less link entry — otherwise the client keeps the dead thread's
-      // stale summary. (Resolves via the still-live link.)
-      if (event.type === "thread.deleted") {
-        const cardId = yield* boardMethods
-          .boardCardIdForThread(ThreadId.make(event.aggregateId))
-          .pipe(Effect.catchCause(() => Effect.succeed(null)));
-        return cardId === null ? [] : yield* forCard(cardId, event.sequence);
-      }
-      // Otherwise only a todo-changing thread event refetches. The projector
-      // WRITES `board_thread_todos` on exactly one thread event — a
-      // `turn.plan.updated` activity append — so every other thread event
-      // (message deltas, session status, non-plan activities) would carry an
-      // identical list and is skipped. This is the difference between one
-      // refetch per plan revision and one per streamed message chunk on a live
-      // linked thread. The shell window keeps that one fact of the payload
-      // (`todosChanged`) and drops the rest.
-      if (isBoardEvent(event) || !event.todosChanged) return [];
-      const cardId = yield* boardMethods
-        .boardCardIdForThread(ThreadId.make(event.aggregateId))
-        .pipe(Effect.catchCause(() => Effect.succeed(null)));
-      return cardId === null ? [] : yield* forCard(cardId, event.sequence);
-    }).pipe(
-      Effect.catchCause(() => Effect.succeed([] as ReadonlyArray<OrchestrationShellStreamEvent>)),
-    );
 }

@@ -8,7 +8,11 @@
  * something to wait for.
  */
 import { assert, describe, it } from "@effect/vitest";
-import type { PullRequestCheck, PullRequestDetail } from "@t3tools/contracts";
+import {
+  SourceControlProviderKind,
+  type PullRequestCheck,
+  type PullRequestDetail,
+} from "@t3tools/contracts";
 
 import {
   BOARD_MERGE_STATE_MAX_NAMED_CHECKS,
@@ -25,7 +29,7 @@ const check = (name: string, status: PullRequestCheck["status"]): PullRequestChe
 
 function detail(overrides: Partial<PullRequestDetail> = {}): PullRequestDetail {
   return {
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     capabilities: {} as PullRequestDetail["capabilities"],
     viewerPermissions: {} as PullRequestDetail["viewerPermissions"],
     projectId: "p" as PullRequestDetail["projectId"],

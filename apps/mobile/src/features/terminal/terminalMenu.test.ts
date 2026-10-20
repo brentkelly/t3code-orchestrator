@@ -12,7 +12,6 @@ import {
   buildTerminalMenuSessions,
   nextOpenTerminalId,
   previousLiveTerminalId,
-  projectScriptMenuLabel,
   resolveProjectScriptTerminalId,
   type TerminalMenuSession,
 } from "./terminalMenu";
@@ -130,6 +129,19 @@ describe("buildTerminalMenuSessions", () => {
 });
 
 describe("nextOpenTerminalId", () => {
+  it("allocates separate terminals on repeated visits without readable metadata", () => {
+    const first = nextOpenTerminalId({
+      listedTerminalIds: [],
+      uniqueSuffix: "783c91cc-a413-47c7-8312-c2a5a1f05e40",
+    });
+    const nextVisit = nextOpenTerminalId({
+      listedTerminalIds: [],
+      uniqueSuffix: "102315fc-ceef-45c4-b978-c4d4947d3c26",
+    });
+    expect(first).not.toBe(DEFAULT_TERMINAL_ID);
+    expect(nextVisit).not.toBe(first);
+  });
+
   it("matches nextTerminalId when not on a terminal route", () => {
     expect(nextOpenTerminalId({ listedTerminalIds: [] })).toBe(DEFAULT_TERMINAL_ID);
     expect(nextOpenTerminalId({ listedTerminalIds: [DEFAULT_TERMINAL_ID] })).toBe("term-2");
@@ -209,6 +221,16 @@ describe("previousLiveTerminalId", () => {
 });
 
 describe("resolveProjectScriptTerminalId", () => {
+  it("never targets an unseen default terminal when metadata is unavailable", () => {
+    const terminalId = resolveProjectScriptTerminalId({
+      existingTerminalIds: [],
+      hasRunningTerminal: false,
+      uniqueSuffix: "783c91cc-a413-47c7-8312-c2a5a1f05e40",
+    });
+    expect(terminalId).not.toBe(DEFAULT_TERMINAL_ID);
+    expect(getTerminalLabel(terminalId)).toBe("Terminal 1");
+  });
+
   it("reuses the default shell when no terminal is running", () => {
     expect(
       resolveProjectScriptTerminalId({
@@ -225,29 +247,5 @@ describe("resolveProjectScriptTerminalId", () => {
         hasRunningTerminal: true,
       }),
     ).toBe("term-3");
-  });
-});
-
-// T3o: T3O-23 — setup and remove scripts are both marked in the menu.
-describe("projectScriptMenuLabel", () => {
-  const script = {
-    id: "s",
-    name: "Park caches",
-    command: "./park.sh",
-    icon: "play" as const,
-    runOnWorktreeCreate: false,
-  };
-
-  it("marks setup and remove scripts", () => {
-    expect(projectScriptMenuLabel(script)).toBe("Park caches");
-    expect(projectScriptMenuLabel({ ...script, runOnWorktreeCreate: true })).toBe(
-      "Park caches (setup)",
-    );
-    expect(projectScriptMenuLabel({ ...script, runOnWorktreeRemove: true })).toBe(
-      "Park caches (teardown)",
-    );
-    expect(
-      projectScriptMenuLabel({ ...script, runOnWorktreeCreate: true, runOnWorktreeRemove: true }),
-    ).toBe("Park caches (setup, teardown)");
   });
 });

@@ -20,8 +20,6 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCardStepState,
-  type OrchestrationEvent,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
@@ -38,17 +36,19 @@ import {
   settingsWith,
   stepCompleted,
   turnCompleted,
-  turnStarted,
   userInputCancelled,
   userInputRequested,
   userInputResolved,
   withGovernor,
   type Harness,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import type { BoardThreadState } from "./ThreadGateway.ts";
+import { fakeThreadState } from "./threadGateway.testkit.ts";
 
 const planningCard = (id: string) => makeBoardCard({ id, stage: "planning", orderKey: "m" });
 
-const movedToPlanning = (id: string, sequence: number): OrchestrationEvent =>
+const movedToPlanning = (id: string, sequence: number): HarnessEvent =>
   cardMoved(planningCard(id), "sprint", "planning", sequence);
 
 /** The planning stage as it really runs: auto-executing and human-in-the-loop,
@@ -180,8 +180,8 @@ it.effect("leaves the step running while a DIFFERENT turn is live", () => {
 // answered, then typed the next message while the previous turn was still
 // finishing — so `turn.completed` for the OLD turn arrived after the step had
 // already been resumed, and parked it. Nothing un-parks it: the resume signal
-// (`thread.turn-start-requested`) had already fired and found a running step,
-// and `turn.started` is deliberately not a second one. The card then pulsed its
+// (the `turn-requested` signal) had already fired and found a running step,
+// and a turn starting is deliberately not a second one. The card then pulsed its
 // blue working dot beside "Needs a human" for the rest of the run.
 it.effect("leaves the step running when the human's next turn is already queued", () => {
   const messages = new Map<string, string>();
@@ -228,10 +228,12 @@ it.effect("parks the queued turn's OWN completion once it has run", () => {
           "running",
         );
 
-        // The queued turn starts, which claims the pending row…
+        // The queued turn starts, which claims the pending row. A turn
+        // starting carries no thread signal (the v1 gateway drops provider
+        // `turn.started`; its contract test proves it), so the claimed row is
+        // the whole of the start as the board sees it…
         pending.delete(String(threadId));
-        yield* pumpRuntime(turnStarted(threadId));
-        // …and ends with nothing for a human to answer.
+        // …and the turn ends with nothing for a human to answer.
         yield* pumpRuntime(turnCompleted(threadId));
 
         const parked = boardCardStepState(yield* board, BoardCardId.make("ran-it"));
@@ -403,23 +405,31 @@ it.effect("a second resume signal on an already-running step is a no-op", () => 
 // so acting on it would clear a card's badge with nobody having acted — and on a
 // stalled step it would zero `stallCount` and re-arm the sweep, quietly undoing
 // a t3o-17 escalation that is meant to stop until a human appears.
+//
+// Since T3O-58 that exclusion is structural: the thread gateway has no
+// turn-started signal at all, and `ThreadGatewayV1.contract.test.ts` proves the
+// v1 gateway drops provider `turn.started`. There is nothing left to pump, so
+// this holds the other half — a parked step stays parked with no human signal.
 it.effect("a synthetic turn.started does NOT un-park a step", () => {
   const messages = new Map<string, string>();
-  return withGovernor(planningBoard("synthetic", messages), ({ pumpDomain, pumpRuntime, board }) =>
-    Effect.gen(function* () {
-      const threadId = yield* startPlanning({ pumpDomain, board }, "synthetic");
-      yield* pumpRuntime(turnCompleted(threadId));
-      assert.strictEqual(
-        boardCardStepState(yield* board, BoardCardId.make("synthetic"))?.status,
-        "awaiting-input",
-      );
+  return withGovernor(
+    planningBoard("synthetic", messages),
+    ({ pumpDomain, pumpRuntime, board, reactor }) =>
+      Effect.gen(function* () {
+        const threadId = yield* startPlanning({ pumpDomain, board }, "synthetic");
+        yield* pumpRuntime(turnCompleted(threadId));
+        assert.strictEqual(
+          boardCardStepState(yield* board, BoardCardId.make("synthetic"))?.status,
+          "awaiting-input",
+        );
 
-      yield* pumpRuntime(turnStarted(threadId));
+        // (No `turn.started` to pump — see above.)
+        yield* reactor.drain;
 
-      const still = boardCardStepState(yield* board, BoardCardId.make("synthetic"));
-      assert.strictEqual(still?.status, "awaiting-input");
-      assert.strictEqual(still?.awaitingReason, "stopped");
-    }),
+        const still = boardCardStepState(yield* board, BoardCardId.make("synthetic"));
+        assert.strictEqual(still?.status, "awaiting-input");
+        assert.strictEqual(still?.awaitingReason, "stopped");
+      }),
   );
 });
 
@@ -567,14 +577,15 @@ const seededStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepState
 /** The thread the seeded step points at: it EXISTS — a human can open it and
     answer — but nothing is running in it and no structured question is pending.
     That gap between "present" and "alive" is where a parked step lives. */
-const idleShell = (): ReadonlyMap<string, OrchestrationThreadShell> =>
+const idleShell = (): ReadonlyMap<string, BoardThreadState> =>
   new Map([
     [
       String(RESTART_THREAD),
-      {
-        hasPendingUserInput: false,
-        session: { activeTurnId: null },
-      } as unknown as OrchestrationThreadShell,
+      fakeThreadState(String(RESTART_THREAD), {
+        sessionStatus: "idle",
+        activeTurnRef: null,
+        awaitingUserInput: false,
+      }),
     ],
   ]);
 
@@ -606,7 +617,11 @@ it.effect("boot reconcile parks a waiting human-in-the-loop step instead of nudg
       assert.strictEqual(parked?.stallCount, 0);
       // And nothing was said to the waiting agent. The nudge this replaces told
       // an agent mid-conversation with a human that its run was unattended.
-      assert.isUndefined((yield* commands).find((command) => command.type === "thread.turn.start"));
+      assert.isUndefined(
+        (yield* commands).find(
+          (command) => command.type === "thread.send" || command.type === "thread.spawn",
+        ),
+      );
     }),
   );
 });

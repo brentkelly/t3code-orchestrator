@@ -19,8 +19,6 @@ import {
   ThreadId,
   type BoardCardStepState,
   type BoardState,
-  type OrchestrationEvent,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -30,12 +28,13 @@ import * as TestClock from "effect/testing/TestClock";
 import {
   aliveThreadShell,
   codexStep,
-  failedThreadShell,
   makeBoardCard,
   readyWorktree,
   settingsWith,
   withGovernor,
 } from "./supervisorHarness.testkit.ts";
+import type { BoardThreadState, ThreadSignal } from "./ThreadGateway.ts";
+import { aliveThread, fakeThreadState } from "./threadGateway.testkit.ts";
 
 /** One day before the TestClock epoch: decisively past any sane timeout, and —
     read as a `startedAt` — decisively past the output-signal shield ceiling
@@ -92,7 +91,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
 
 /** A live shell for the step's thread, so boot reconcile resume-watches it
     instead of recovering it before the sweep under test ever runs. */
-const aliveShells = (): ReadonlyMap<string, OrchestrationThreadShell> =>
+const aliveShells = (): ReadonlyMap<string, BoardThreadState> =>
   new Map([[String(threadId), aliveThreadShell(String(threadId))]]);
 
 const boardWithStep = (step: BoardCardStepState): BoardState => ({
@@ -119,25 +118,19 @@ const threadSignalAt = (at: string) => new Map([[String(threadId), at]]);
 const attemptOf = (board: BoardState): number => boardCardStepState(board, cardId)?.attempt ?? -1;
 
 /** A human answering the step thread's permission prompt (T3O-16), as the
-    `thread.approval.respond` command's event reaches the reactor. */
-const approvalAnswered = (id: ThreadId, sequence: number): OrchestrationEvent =>
-  ({
-    type: "thread.approval-response-requested",
-    sequence,
-    payload: { threadId: id, requestId: "approval-1", decision: "accept", createdAt: FRESH },
-  }) as unknown as OrchestrationEvent;
+    thread gateway signals it to the reactor. */
+const approvalAnswered = (id: ThreadId): ThreadSignal => ({
+  type: "approval-responded",
+  threadId: id,
+});
+
+/** The step thread mid-turn with a permission prompt outstanding. */
+const heldShells = (): ReadonlyMap<string, BoardThreadState> =>
+  new Map([[String(threadId), aliveThread(String(threadId), { pendingApproval: true })]]);
 
 /** Hold or release a permission prompt on the step thread's live shell. */
-const holdPermission = (
-  shells: Ref.Ref<ReadonlyMap<string, OrchestrationThreadShell>>,
-  held: boolean,
-) =>
-  Ref.set(
-    shells,
-    new Map([
-      [String(threadId), { ...aliveThreadShell(String(threadId)), hasPendingApprovals: held }],
-    ]),
-  );
+const holdPermission = (shells: Ref.Ref<ReadonlyMap<string, BoardThreadState>>, held: boolean) =>
+  Ref.set(shells, held ? heldShells() : aliveShells());
 
 it.effect("recovers an overdue step with no life sign since the window opened", () =>
   withGovernor(
@@ -259,9 +252,7 @@ it.effect("T3O-16: a thread waiting on a permission prompt is never swept", () =
     {
       board: boardWithStep(runningStep()),
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
-      initialShells: new Map([
-        [String(threadId), { ...aliveThreadShell(String(threadId)), hasPendingApprovals: true }],
-      ]),
+      initialShells: heldShells(),
     },
     ({ reactor, board }) =>
       Effect.gen(function* () {
@@ -281,9 +272,7 @@ it.effect("T3O-16: the sweep after a long permission prompt is approved does not
     {
       board: boardWithStep(runningStep({ startedAt: OVERDUE, updatedAt: OVERDUE })),
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
-      initialShells: new Map([
-        [String(threadId), { ...aliveThreadShell(String(threadId)), hasPendingApprovals: true }],
-      ]),
+      initialShells: heldShells(),
     },
     ({ reactor, board, shells }) =>
       Effect.gen(function* () {
@@ -306,9 +295,7 @@ it.effect("T3O-16: a permission prompt approved late in the window does not nudg
     {
       board: boardWithStep(runningStep({ startedAt: OVERDUE, updatedAt: OVERDUE })),
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
-      initialShells: new Map([
-        [String(threadId), { ...aliveThreadShell(String(threadId)), hasPendingApprovals: true }],
-      ]),
+      initialShells: heldShells(),
     },
     ({ reactor, board, shells }) =>
       Effect.gen(function* () {
@@ -335,9 +322,7 @@ it.effect("T3O-16: a prompt answered before the step looked overdue does not nud
     {
       board: boardWithStep(runningStep({ startedAt: OVERDUE, updatedAt: OVERDUE })),
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
-      initialShells: new Map([
-        [String(threadId), { ...aliveThreadShell(String(threadId)), hasPendingApprovals: true }],
-      ]),
+      initialShells: heldShells(),
       threadTodos: todoAdvancedAt(FRESH),
     },
     ({ reactor, board, shells, pumpDomain }) =>
@@ -345,7 +330,7 @@ it.effect("T3O-16: a prompt answered before the step looked overdue does not nud
         yield* reactor.sweep; // held, but the fresh todo keeps the sweep away
         yield* TestClock.adjust("40 seconds");
         yield* Ref.set(shells, aliveShells());
-        yield* pumpDomain(approvalAnswered(threadId, 2));
+        yield* pumpDomain(approvalAnswered(threadId));
         yield* TestClock.adjust("30 seconds");
         yield* reactor.sweep;
         const after = yield* board;
@@ -398,7 +383,11 @@ it.effect("T3O-16: a dead session's lingering permission prompt does not exempt 
           new Map([
             [
               String(threadId),
-              { ...failedThreadShell(String(threadId)), hasPendingApprovals: true },
+              fakeThreadState(String(threadId), {
+                sessionStatus: "error",
+                activeTurnRef: "turn-killed",
+                pendingApproval: true,
+              }),
             ],
           ]),
         );
@@ -419,17 +408,15 @@ it.effect("T3O-16: a stopped session's orphaned permission prompt does not exemp
     },
     ({ reactor, board, shells }) =>
       Effect.gen(function* () {
-        const alive = aliveThreadShell(String(threadId));
         yield* Ref.set(
           shells,
           new Map([
             [
               String(threadId),
-              {
-                ...alive,
-                hasPendingApprovals: true,
-                session: { ...alive.session!, status: "stopped", activeTurnId: null },
-              },
+              fakeThreadState(String(threadId), {
+                sessionStatus: "stopped",
+                pendingApproval: true,
+              }),
             ],
           ]),
         );

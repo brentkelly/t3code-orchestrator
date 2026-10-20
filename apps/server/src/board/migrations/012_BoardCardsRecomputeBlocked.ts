@@ -14,7 +14,7 @@
 //
 // Idempotent by construction — running it twice writes the same values.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** Stages at Ready or beyond, where unmet dependencies block (D18). Inlined
     rather than imported: a migration must keep behaving the way it did the day

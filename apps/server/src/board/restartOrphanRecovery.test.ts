@@ -18,13 +18,13 @@ import {
   ThreadId,
   type BoardCardStepState,
   type BoardState,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
+import type { BoardThreadState } from "./ThreadGateway.ts";
 import {
   aliveThreadShell,
   codexStep,
@@ -89,7 +89,11 @@ const boardWithStep = (step: BoardCardStepState): BoardState => ({
   nextCardNumberByProject: {},
 });
 
-const shells = (shell: OrchestrationThreadShell) => new Map([[String(threadId), shell]]);
+const shells = (shell: BoardThreadState) => new Map([[String(threadId), shell]]);
+
+/** A turn driven into the thread — a fresh spawn's first turn or a nudge. */
+const drivesTurn = (command: { readonly type: string }) =>
+  command.type === "thread.spawn" || command.type === "thread.send";
 
 it.effect("boot: a step whose session upstream marked `error` is recovered, not watched", () =>
   withGovernor(
@@ -108,7 +112,7 @@ it.effect("boot: a step whose session upstream marked `error` is recovered, not 
   ),
 );
 
-it.effect("boot: a STALE activeTurnId does not keep an errored session alive", () =>
+it.effect("boot: a STALE activeTurnRef does not keep an errored session alive", () =>
   withGovernor(
     {
       board: boardWithStep(runningStep()),
@@ -162,7 +166,7 @@ it.effect("boot: a genuinely live thread is still left to resume watching", () =
         assert.isTrue(state?.slotHeld);
         assert.strictEqual(yield* slots.heldFor(codex), 1);
         assert.isFalse(
-          (yield* commands).some((command) => command.type === "thread.turn.start"),
+          (yield* commands).some(drivesTurn),
           "no turn is driven into a thread that is already mid-turn",
         );
       }),
@@ -184,7 +188,7 @@ it.effect("boot: an errored session with the ladder spent still stalls and frees
         assert.isFalse(state?.slotHeld);
         assert.strictEqual(yield* slots.heldFor(codex), 0);
         // Escalation parks the step for a human; it never drives the agent.
-        assert.isFalse((yield* commands).some((command) => command.type === "thread.turn.start"));
+        assert.isFalse((yield* commands).some(drivesTurn));
       }),
   ),
 );

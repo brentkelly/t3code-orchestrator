@@ -28,17 +28,17 @@ No eject script, no cleanup step, no decode failures.
 
 ## What already exists (so that none of it is rebuilt)
 
-| Thing | Where | Status |
-| --- | --- | --- |
-| Separate board migration lineage + ledger | `board/migrations/index.ts`, `t3o_sql_migrations` (030 and counting) | Done, retargeted in P1 |
-| Board tables carry **zero** foreign keys | all 30 board migrations | Done, nothing to sever |
-| Every board SQL `JOIN` is board↔board | `projection.ts:1378`, `:1399` | Done, untouched |
-| Retired `board.*` event types survive replay | `OrchestrationEventStore.ts` `decodeReadRow` | Done (P0) — rewritten after the original was lost to a shared-checkout overwrite |
-| Board events are namespaced `board.*` | `contracts/board.ts:4280` (35 types) | Done, the partition key |
-| Sub-boards, splits, plans panel, model overrides (t3o-23, 27-30) | board-owned modules only | Done, **zero** new upstream surface |
-| No t3o migrations in upstream's lineage | `persistence/Migrations/` | Done, upstream schema is pristine |
-| Board projector is already a separate module | `board/projection.ts`, spread at `ProjectionPipeline.ts:1642` | Done, unhooked in P2 |
-| Board commands already carry their own aggregate refs | `OrchestrationEngine.ts`, `boardCommandAggregateRef` | Done, retargeted in P2 |
+| Thing                                                            | Where                                                                | Status                                                                           |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Separate board migration lineage + ledger                        | `board/migrations/index.ts`, `t3o_sql_migrations` (030 and counting) | Done, retargeted in P1                                                           |
+| Board tables carry **zero** foreign keys                         | all 30 board migrations                                              | Done, nothing to sever                                                           |
+| Every board SQL `JOIN` is board↔board                            | `projection.ts:1378`, `:1399`                                        | Done, untouched                                                                  |
+| Retired `board.*` event types survive replay                     | `OrchestrationEventStore.ts` `decodeReadRow`                         | Done (P0) — rewritten after the original was lost to a shared-checkout overwrite |
+| Board events are namespaced `board.*`                            | `contracts/board.ts:4280` (35 types)                                 | Done, the partition key                                                          |
+| Sub-boards, splits, plans panel, model overrides (t3o-23, 27-30) | board-owned modules only                                             | Done, **zero** new upstream surface                                              |
+| No t3o migrations in upstream's lineage                          | `persistence/Migrations/`                                            | Done, upstream schema is pristine                                                |
+| Board projector is already a separate module                     | `board/projection.ts`, spread at `ProjectionPipeline.ts:1642`        | Done, unhooked in P2                                                             |
+| Board commands already carry their own aggregate refs            | `OrchestrationEngine.ts`, `boardCommandAggregateRef`                 | Done, retargeted in P2                                                           |
 
 ## Scope
 
@@ -52,47 +52,74 @@ work. Attachments and logs are unchanged.
 
 ## Locked decisions
 
-### D1 — One connection, `ATTACH`, not a second client
+### D1 — `boards.sqlite` is attached today; the board's target is its own `SqlClient`
 
-`boards.sqlite` is `ATTACH`ed to the existing connection as schema `boards`. Not a second
-`SqlClient`, not a second connection pool.
+`boards.sqlite` is `ATTACH`ed to the existing connection as schema `boards`, and every board
+transaction confines its writes to `boards.*`, so it commits atomically under WAL. That is how P1
+shipped and how `T3O-56` left it.
 
-SQLite handles the locking, cross-schema reads stay one statement, and — critically — the board
-projector's transaction only ever *writes* one database. SQLite's caveat that multi-database
-transactions lose atomicity under WAL applies to transactions that modify more than one attached
-file; a transaction confined to `boards.*` tables is atomic regardless. That is why D2 moves the
-board event log across in the same step as the tables, and never leaves a half-split state
-running.
+**The target is a separate `SqlClient` on `boards.sqlite`, with no ATTACH.** Upstream's
+orchestration-v2 `NodeSqliteClient` routes `readOnly` reads to a worker connection that never sees
+an ATTACH, so a board read through it would find no board tables. With the board's own log
+(D2) nothing the board WRITES needs the other file, and every board transaction touches one file
+either way.
 
-`journal_mode` is per-database, so the `PRAGMA journal_mode = WAL` at `Sqlite.ts:38` must be
-issued for the attached database too. `foreign_keys` is per-connection and needs no change.
+Why the ATTACH is still there: the board READS a few upstream tables — project and thread
+existence for the decider, a thread's last message, last signal and pending turn for the
+supervisor, live threads for the todo-cache sweep, and the D3 tail. Since `T3O-58` every one of
+those reads is behind the thread gateway (`board/ThreadGateway.ts`), and only its v1
+implementation (`board/ThreadGatewayV1.ts`) names an upstream table; no other board SQL does
+(`threadGatewayBoundary.test.ts`). What remains is the connection itself: the board and the v1
+gateway still share one client, and the one-time moves out of `main` (`relocateBoardSchema`,
+migration 044) read across it at boot. Giving the board its own client is a change to the
+migration runner, `Sqlite.ts`'s board hook and every suite that seeds board tables through the
+shared client, so it is its own card rather than part of the gateway's. Until then the attach costs
+nothing: a transaction confined to `boards.*` is atomic regardless of what else the connection can
+see.
 
-**Validated empirically against `node:sqlite` (the runtime client), not just read off the docs:**
-attach works; the attached database's `journal_mode` really does default to `delete` and takes WAL
-on a qualified pragma; cross-schema JOINs work in one statement; an unqualified `board_cards`
-resolves to the attached copy when `main` has no such table; and a transaction confined to
-`boards.*` commits atomically under WAL.
+`journal_mode` is per-database, so the attach issues `PRAGMA boards.journal_mode = WAL`; an attached
+file otherwise starts in `delete` mode. This was validated against `node:sqlite`: attach works, the
+qualified pragma takes, cross-schema reads work in one statement, an unqualified `board_cards`
+resolves to the attached copy when `main` has none, and a transaction confined to `boards.*` commits
+atomically under WAL.
 
-### D2 — The board gets its own event log, with its own sequence
+### D2 — The board has its own engine and its own event log
 
-`boards.orchestration_events` (same DDL as upstream's, own `AUTOINCREMENT`), plus
-`boards.command_receipts` and `boards.projection_state`. Board commands append there; the board
-projector reads there and records its watermark there.
+Board commands are decided and logged by the board, not by upstream's orchestration engine
+(`board/BoardEngine.ts`, `T3O-56`; overview D2). The engine owns `boards.board_events` (upstream's
+event DDL, own `AUTOINCREMENT`), `boards.board_command_receipts`, and the board log projector's
+watermark in `boards.projection_state`. One dispatch is one transaction: append the events, fold
+them into the `board_*` tables, write the receipt and the watermark — every write in one file — then
+move the in-memory read model and publish, on the engine's single worker fiber, so subscribers see
+sequences in order and never an uncommitted event. The in-memory read model hydrates from the board
+tables at boot, not by replay, after folding in any logged event the watermark has not reached.
 
-The two logs have independent sequence counters and no defined interleaving between them. That is
-a genuine loss and D3 is what makes it survivable.
+The two logs have independent sequence counters and no defined interleaving. D3 is what makes that
+survivable.
+
+**History.** Board migration 044 copies every `board.*` row of `main.orchestration_events` into
+`boards.board_events` in sequence order, renumbered from 1, and every board-aggregate receipt with
+its result sequence renumbered into the board's space. It is idempotent. The source rows stay in
+`main`: v1 skips them on read (`decodeReadRow`), v2 ignores v1-version rows, and keeping them keeps a
+rollback to an older build possible. The old `projection.board-cards` watermark (in main
+sequences) splits into the board log projector's watermark and D3's tail cursor.
+
+Rejected: the original form of this decision, a second instance of upstream's own engine pointed at
+`boards.orchestration_events`. It needed upstream's engine and event store parameterised over a
+table and a domain (the old D8/D9), and orchestration-v2 has no such seam to parameterise.
 
 ### D3 — The board tails upstream's log read-only; the watermark lives in `boards.sqlite`
 
-The board projector consumes exactly two upstream event types — `thread.activity-appended` and
-`thread.deleted` (`projection.ts:2077`, `:2089`) — and both feed only `board_thread_todos`, a
-cache with an existing boot orphan sweep (`projection.ts:1348`).
+The board projector consumes exactly two thread signals — `todos-changed` and `thread-deleted`,
+which the v1 thread gateway derives from `thread.activity-appended` and `thread.deleted` — and both
+feed only `board_thread_todos`, a cache with an existing boot orphan sweep. The tail
+(`board/boardThreadTail.ts`) reads them off the gateway's durable todo log (`T3O-58`).
 
 So the board keeps reading `main.orchestration_events`, filtered to those two types, with its
 cursor stored in `boards.projection_state` under a distinct projector name. Reading is not
 writing; the promise holds.
 
-Everything else the supervisor learns from thread events it *records as a board event* before it
+Everything else the supervisor learns from thread events it _records as a board event_ before it
 matters, so board replay needs the board log and nothing else. This is what makes two logs
 tractable at all, and it is the assumption most likely to be broken by future board work.
 **Re-verified against the sub-board, split, plans-panel and model-override work (t3o-23,
@@ -138,7 +165,7 @@ through upstream's engine and write ordinary thread events to `state.sqlite`. A 
 build has to create a thread.
 
 This is not a leak to be plugged — it is the product, and those threads are exactly what the user
-wants to keep when they leave. The promise is about *legibility*, not abstinence: everything t3o
+wants to keep when they leave. The promise is about _legibility_, not abstinence: everything t3o
 writes to `state.sqlite` is a row stock t3code already knows how to read.
 
 Say this plainly in the README. A promise stated precisely is worth more than a broader one that
@@ -171,16 +198,16 @@ client-runtime, settings) are board feature wiring or unrelated t3o work and are
 
 The plan must come out **net negative**. Where it does not, say why in review.
 
-| Upstream file | Now | After | Why |
-| --- | --- | --- | --- |
-| `OrchestrationEventStore.ts` | +84 -15 | net -~55 | -74 when `decodeReadRow` goes (end of P2), +~20 for the D8 parameterisation |
-| `ws.ts` | +76 -20 | -~30 | board deltas leave the shell stream (P3) |
-| `contracts/orchestration.ts` | +68 -11 | -~10 | board fields off the shell snapshot (P3) |
-| `ProjectionSnapshotQuery.ts` | +8 | -8 | the board snapshot wrapper goes with P3 |
-| `ProjectionPipeline.ts` | +6 | -6 | board projector spread deleted (P2) |
-| `OrchestrationEngine.ts` | +13 -2 | +1 | export `makeOrchestrationEngine` |
-| `Sqlite.ts` | +8 | +0 | see D8 |
-| `decider.ts`, `projector.ts`, `OrchestrationCommandReceipts.ts` | +17 -1 | unchanged | see D9 |
+| Upstream file                                                   | Now     | After     | Why                                                                         |
+| --------------------------------------------------------------- | ------- | --------- | --------------------------------------------------------------------------- |
+| `OrchestrationEventStore.ts`                                    | +84 -15 | net -~55  | -74 when `decodeReadRow` goes (end of P2), +~20 for the D8 parameterisation |
+| `ws.ts`                                                         | +76 -20 | -~30      | board deltas leave the shell stream (P3)                                    |
+| `contracts/orchestration.ts`                                    | +68 -11 | -~10      | board fields off the shell snapshot (P3)                                    |
+| `ProjectionSnapshotQuery.ts`                                    | +8      | -8        | the board snapshot wrapper goes with P3                                     |
+| `ProjectionPipeline.ts`                                         | +6      | -6        | board projector spread deleted (P2)                                         |
+| `OrchestrationEngine.ts`                                        | +13 -2  | +1        | export `makeOrchestrationEngine`                                            |
+| `Sqlite.ts`                                                     | +8      | +0        | see D8                                                                      |
+| `decider.ts`, `projector.ts`, `OrchestrationCommandReceipts.ts` | +17 -1  | unchanged | see D9                                                                      |
 
 ### D8 — No new upstream files, and no new lines in `Sqlite.ts`
 
@@ -189,7 +216,7 @@ the 37th upstream file for a path join — derive the board path in board code f
 that is already exposed.
 
 `Sqlite.ts` already calls two board-owned functions. The `ATTACH` and the per-database WAL pragma
-go *inside* those, so the upstream file's line count does not move.
+go _inside_ those, so the upstream file's line count does not move.
 
 For the board's own engine instance, `makeOrchestrationEngine` (`OrchestrationEngine.ts:353`) is
 module-private but already takes every dependency as an injected Effect service — export it and
@@ -218,12 +245,12 @@ risk of a plan that already touches the event log.
 But when it is revisited, the answer is to **inherit the machinery, not duplicate it** — and the
 churn data says that is a better trade than "splices are cheap":
 
-| File | Upstream commits (6mo) | t3o edit |
-| --- | --- | --- |
-| `decider.ts` | **30** | +5 guard |
-| `projector.ts` | **18** | +4 guard |
-| `OrchestrationEngine.ts` | 11 | +13 |
-| `OrchestrationEventStore.ts` | **2** | +84 |
+| File                         | Upstream commits (6mo) | t3o edit |
+| ---------------------------- | ---------------------- | -------- |
+| `decider.ts`                 | **30**                 | +5 guard |
+| `projector.ts`               | **18**                 | +4 guard |
+| `OrchestrationEngine.ts`     | 11                     | +13      |
+| `OrchestrationEventStore.ts` | **2**                  | +84      |
 
 `makeOrchestrationEngine` is 354 lines coupled to the domain at exactly four points, ten call sites
 total: `decideOrchestrationCommand` (2), `projectEvent` (4), `createEmptyReadModel` (2), and
@@ -268,7 +295,7 @@ Two implementation facts established up front:
   `"boards"."t3o_sql_migrations"` — the client splits on the dot rather than quoting one identifier
   containing it. So `Migrator.make({ table: "boards.t3o_sql_migrations" })` is safe. Worth pinning
   in a test: had it quoted the whole string, migrations would have silently created a table
-  *named* `boards.t3o_sql_migrations` in `main` and defeated the separation without erroring.
+  _named_ `boards.t3o_sql_migrations` in `main` and defeated the separation without erroring.
 - **The ledger must be COPIED to `boards`, never recreated there.** An existing database has its
   ledger in `main` at high-water mark 30. Create an empty ledger in `boards` and the Migrator sees
   mark 0 and replays the whole lineage — including migration 007, a one-time DATA backfill that
@@ -327,8 +354,8 @@ before assuming the gate runs.
 - [ ] AC6 — The board projector's write transaction touches exactly one database file.
 - [ ] AC7 — Board replay from an empty board read model reproduces board state identically, using
       only `boards.sqlite` plus the read-only upstream tail of D3.
-- [ ] AC8 — A board subscription resumes correctly from its own cursor across a disconnect, and
-      the orchestration shell stream carries no board deltas. (P3.)
+- [x] AC8 — A board subscription resumes correctly from its own cursor across a disconnect, and
+      the orchestration shell stream carries no board deltas. (P3, `T3O-57`.)
 - [ ] AC9 — Stock t3code loads a `settings.json` written by t3o without error. (P0/P4.)
 - [ ] AC10 — The upstream diff is net smaller than the 36-file / +691 baseline: no upstream file
       joins the diff that was not already in it, and `ProjectionPipeline.ts`,
@@ -336,18 +363,18 @@ before assuming the gate runs.
 
 ## Files
 
-| File | Change |
-| --- | --- |
-| `persistence/Layers/Sqlite.ts` | attach `boards.sqlite`, WAL pragma on it, ordering of the two lineages |
-| `board/migrations/index.ts` | lineage targets the `boards` schema; new move-migrations |
-| `board/projection.ts` | schema-qualify writes; `main.projection_threads` in the orphan sweep; upstream tail + its own watermark |
-| `orchestration/Layers/ProjectionPipeline.ts` | remove the board projector spread (`:1642`) — diff against upstream shrinks |
-| `board/` (new pipeline) | board projector pipeline over the board log |
-| `persistence/Layers/OrchestrationEventStore.ts` | parameterise over schema-qualified table + event schema (D8); `decodeReadRow` deleted at the end of P2 |
-| `orchestration/Layers/OrchestrationEngine.ts` | route board command append to the board store |
-| `ws.ts` | board deltas off the shell stream; board subscription (P3) |
-| `contracts/orchestration.ts` | `BoardState` / `cards` / `boardLabels` / `boardStages` / `boardCardThreads` off the shell snapshot (P3) |
-| `contracts/settings.ts`, `serverSettings.ts` | `board` key to its own file (P4) |
+| File                                            | Change                                                                                                  |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `persistence/Layers/Sqlite.ts`                  | attach `boards.sqlite`, WAL pragma on it, ordering of the two lineages                                  |
+| `board/migrations/index.ts`                     | lineage targets the `boards` schema; new move-migrations                                                |
+| `board/projection.ts`                           | schema-qualify writes; `main.projection_threads` in the orphan sweep; upstream tail + its own watermark |
+| `orchestration/Layers/ProjectionPipeline.ts`    | remove the board projector spread (`:1642`) — diff against upstream shrinks                             |
+| `board/` (new pipeline)                         | board projector pipeline over the board log                                                             |
+| `persistence/Layers/OrchestrationEventStore.ts` | parameterise over schema-qualified table + event schema (D8); `decodeReadRow` deleted at the end of P2  |
+| `orchestration/Layers/OrchestrationEngine.ts`   | route board command append to the board store                                                           |
+| `ws.ts`                                         | board deltas off the shell stream; board subscription (P3)                                              |
+| `contracts/orchestration.ts`                    | `BoardState` / `cards` / `boardLabels` / `boardStages` / `boardCardThreads` off the shell snapshot (P3) |
+| `contracts/settings.ts`, `serverSettings.ts`    | `board` key to its own file (P4)                                                                        |
 
 ## Open questions
 

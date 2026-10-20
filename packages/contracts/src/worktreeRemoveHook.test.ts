@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { BoardCardWorktreeReclaimedPayload, BoardCardActivityPayload } from "./board.ts";
-import { ProjectScript } from "./orchestration.ts";
+import { ProjectScript } from "./project.ts";
 import { T3ProjectFile } from "./t3ProjectFile.ts";
 
 const legacyCard = {

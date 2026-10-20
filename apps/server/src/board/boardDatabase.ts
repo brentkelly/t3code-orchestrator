@@ -31,7 +31,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** Schema name the board database is attached under. */
 export const BOARD_SCHEMA = "boards";
@@ -55,21 +55,35 @@ const quoted = (identifier: string): string => `"${identifier.replace(/"/g, '""'
 export class BoardRelocationConflictError extends Schema.TaggedError<BoardRelocationConflictError>()(
   "BoardRelocationConflictError",
   {
+    /** The main database's file name, from `PRAGMA database_list`. */
+    mainFile: Schema.String,
     mainTables: Schema.Array(Schema.String),
     boardTables: Schema.Array(Schema.String),
   },
 ) {
   override get message(): string {
+    const main = this.mainFile;
     return (
-      "Refusing to relocate the board schema: both state.sqlite and boards.sqlite hold board " +
-      "tables, and boards.sqlite is not a copy of state.sqlite. This happens after running an " +
-      "older build (which recreated the board tables in state.sqlite) and then upgrading again. " +
-      "Keep ONE copy: to keep the newer data in state.sqlite, delete boards.sqlite; to keep the " +
-      "older data in boards.sqlite, drop the board_* tables and t3o_sql_migrations from " +
-      "state.sqlite. Then start again."
+      `Refusing to relocate the board schema: both ${main} and boards.sqlite hold board ` +
+      `tables, and boards.sqlite is not a copy of ${main}. This happens after running an ` +
+      `older build (which recreated the board tables in ${main}) and then upgrading again. ` +
+      `Keep ONE copy: to keep the newer data in ${main}, delete boards.sqlite; to keep the ` +
+      `older data in boards.sqlite, drop the board_* tables and t3o_sql_migrations from ` +
+      `${main}. Then start again.`
     );
   }
 }
+
+/** The bare file name of `main`, for a message a human acts on. */
+const mainFileName = Effect.fn("mainFileName")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const databases = yield* sql<{ readonly name: string; readonly file: string }>`
+    PRAGMA database_list
+  `;
+  const file = databases.find((database) => database.name === "main")?.file ?? "";
+  const name = file.slice(Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\")) + 1);
+  return name === "" ? "the main database" : name;
+});
 
 /** Tables belonging to the board lineage, by name prefix and by exact name. */
 const BOARD_TABLE_PREFIX = "board_";
@@ -128,12 +142,18 @@ const ledgersIdentical = Effect.fn("ledgersIdentical")(function* () {
   );
 });
 
+/** The -wal size the board file is cut back to after a reset; `main`'s own
+    limit (`persistence/Sqlite.ts`), which the board must not import. */
+const BOARD_WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
+
 /**
  * Attach the board database, idempotently.
  *
- * `journal_mode` is PER-DATABASE: an attached file starts in `delete` mode
- * regardless of what `main` is set to, so WAL has to be asked for again by name.
- * (On `:memory:` it reports `memory` and the pragma is a no-op — harmless.)
+ * `journal_mode`, `synchronous` and `journal_size_limit` are PER-DATABASE: an
+ * attached file starts in `delete` mode with `synchronous = FULL` and an
+ * unbounded -wal regardless of what `main` is set to, so each has to be asked
+ * for again by name. (On `:memory:` the journal reports `memory` and the
+ * pragmas are no-ops — harmless.)
  */
 export const attachBoardDatabase = Effect.fn("attachBoardDatabase")(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -157,6 +177,11 @@ export const attachBoardDatabase = Effect.fn("attachBoardDatabase")(function* ()
   // below the default minimum level — so the unexpected case is a warning, not a
   // line nobody sees. ':memory:' reports `memory` and cannot take WAL at all,
   // which is expected rather than notable.
+  // As `main`: in WAL, NORMAL fsyncs only at checkpoints, so a board commit does
+  // not stall the event loop on a busy disk, and the -wal is cut back after a
+  // checkpoint rather than kept at its largest size.
+  yield* sql`PRAGMA boards.synchronous = NORMAL`;
+  yield* sql.unsafe(`PRAGMA boards.journal_size_limit = ${BOARD_WAL_SIZE_LIMIT_BYTES}`);
   const journalMode = journal[0]?.journal_mode ?? "unknown";
   const expected = target === ":memory:" ? "memory" : "wal";
   yield* journalMode === expected
@@ -238,6 +263,7 @@ export const relocateBoardSchema = Effect.fn("relocateBoardSchema")(function* ()
     const provenCopy = bothHaveLedger && (yield* ledgersIdentical());
     if (!provenCopy) {
       return yield* new BoardRelocationConflictError({
+        mainFile: yield* mainFileName(),
         mainTables: tables.map((table) => table.name),
         boardTables: existing.map((table) => table.name),
       });

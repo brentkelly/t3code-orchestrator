@@ -22,7 +22,7 @@
 // explicit about what it carries. Nothing references this table: no index, no
 // trigger, no foreign key.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 /** Every column of `board_card_step_state` as of migration 015, in the order
     the rebuilt table declares them. `stage_label` is excluded: it is new here,

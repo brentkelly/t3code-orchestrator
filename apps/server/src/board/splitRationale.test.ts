@@ -17,45 +17,20 @@ import {
   CommandId,
   ProjectId,
   ProviderInstanceId,
-  type OrchestrationEvent,
+  type BoardEvent,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { createEmptyReadModel, projectEvent } from "../orchestration/projector.ts";
-import { ServerConfig } from "../config.ts";
+import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
+import {
+  boardStackEngine,
+  boardStackSnapshotQuery,
+  makeBoardStackTestLayer,
+} from "./boardStack.testkit.ts";
 
-const makeTestLayer = (prefix: string) =>
-  Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
-    ),
-    OrchestrationProjectionSnapshotQueryLive,
-  ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
-  );
+const makeTestLayer = makeBoardStackTestLayer;
 
 const createdAt = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-split");
@@ -65,7 +40,7 @@ const WHY =
   "The migration and the pane land on separate branches and are worth reviewing one at a time.";
 
 const seedCard = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
+  const engine = yield* boardStackEngine;
   yield* engine.dispatch({
     type: "project.create",
     commandId: CommandId.make("cmd-project"),
@@ -100,18 +75,18 @@ const plan = (key: string, dependsOn: ReadonlyArray<string> = []) => ({
 
 /** The card as the tables hold it. */
 const rehydratedCard = Effect.gen(function* () {
-  const snapshotQuery = yield* ProjectionSnapshotQuery;
+  const snapshotQuery = yield* boardStackSnapshotQuery;
   const model = yield* snapshotQuery.getCommandReadModel();
   return model.board?.cards.find((card) => card.id === cardId);
 });
 
 /** The card a from-empty replay of the whole log arrives at. */
 const replayedCard = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
-  const events: OrchestrationEvent[] = Array.from(yield* Stream.runCollect(engine.readEvents(0)));
-  let replayed = createEmptyReadModel(createdAt);
+  const engine = yield* boardStackEngine;
+  const events = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
+  let replayed = {} as BoardReadModel;
   for (const event of events) {
-    replayed = yield* projectEvent(replayed, event);
+    replayed = yield* projectBoardEvent(replayed, event);
   }
   return replayed.board?.cards.find((card) => card.id === cardId);
 });
@@ -190,9 +165,7 @@ it.layer(makeTestLayer("t3o-split-rationale-3-"))("a log written before migratio
         splitRationale: null,
         createdAt,
       });
-      const events: OrchestrationEvent[] = Array.from(
-        yield* Stream.runCollect(engine.readEvents(0)),
-      );
+      const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
       const legacy = events.map((event) =>
         event.type === "board.plans-proposed"
           ? {
@@ -202,15 +175,15 @@ it.layer(makeTestLayer("t3o-split-rationale-3-"))("a log written before migratio
               ),
             }
           : event,
-      ) as ReadonlyArray<OrchestrationEvent>;
+      ) as ReadonlyArray<BoardEvent>;
       assert.isTrue(
         legacy.some((event) => event.type === "board.plans-proposed"),
         "the log must actually hold the event this test strips",
       );
 
-      let replayed = createEmptyReadModel(createdAt);
+      let replayed = {} as BoardReadModel;
       for (const event of legacy) {
-        replayed = yield* projectEvent(replayed, event);
+        replayed = yield* projectBoardEvent(replayed, event);
       }
       const card = replayed.board?.cards.find((entry) => entry.id === cardId);
       assert.strictEqual(card?.splitRationale, null);

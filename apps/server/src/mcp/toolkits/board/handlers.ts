@@ -43,8 +43,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   type BoardState,
   unmetBoardCardDependencies,
-  type OrchestrationCommand,
-  type OrchestrationReadModel,
+  type BoardCommand,
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -52,19 +51,18 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
-import type { McpInvocationScope } from "../../McpInvocationContext.ts";
+import type { McpThreadInvocationScope } from "../../McpInvocationContext.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import type { OrchestrationDispatchError } from "../../../orchestration/Errors.ts";
+import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "../../../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import type { ProjectionSnapshotQueryShape } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import {
-  boardSnapshotQueryMethodsOf,
-  type BoardSnapshotQueryMethods,
-} from "../../../board/projection.ts";
+  ThreadGateway,
+  type BoardProject,
+  type ThreadGatewayShape,
+} from "../../../board/ThreadGateway.ts";
+import { BoardEngine, type BoardEngineShape } from "../../../board/BoardEngine.ts";
+import { BoardQueries } from "../../../board/BoardQueries.ts";
+import type { BoardDispatchError } from "../../../board/errors.ts";
+import type { BoardQueriesShape } from "../../../board/projection.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ServerConfig from "../../../config.ts";
 import { boardCardAttachmentManifest } from "../../../board/attachments.ts";
@@ -111,53 +109,49 @@ const internalError = (cause: { readonly message?: string }): BoardToolError =>
 /** Map a dispatch failure to an agent-facing tool error: an invariant
     rejection carries the decider's own actionable detail; anything else is an
     internal failure. */
-const dispatchError = (error: OrchestrationDispatchError): BoardToolError =>
-  error._tag === "OrchestrationCommandInvariantError" ||
-  error._tag === "OrchestrationCommandPreviouslyRejectedError"
+const dispatchError = (error: BoardDispatchError): BoardToolError =>
+  error._tag === "BoardCommandInvariantError" ||
+  error._tag === "BoardCommandPreviouslyRejectedError"
     ? new BoardToolError({ code: "rejected", message: nonEmpty(error.detail, "Command rejected.") })
     : internalError(error);
 
 interface BoardToolDeps {
-  readonly scope: McpInvocationScope;
-  readonly engine: OrchestrationEngineShape;
-  readonly snapshotQuery: ProjectionSnapshotQueryShape;
-  readonly board: BoardSnapshotQueryMethods;
+  readonly scope: McpThreadInvocationScope;
+  readonly boardEngine: BoardEngineShape;
+  readonly threads: ThreadGatewayShape;
+  readonly board: BoardQueriesShape;
   /** For the brief-attachment manifest's absolute paths (t3o-32). */
   readonly stateDir: string;
   readonly path: Path.Path;
 }
 
-/** Resolve the services every board tool needs. `boardSnapshotQueryMethodsOf`
-    returns null only when the snapshot query was assembled without the board
-    factory (upstream test mocks); production always spreads it in. */
+/** Resolve the services every board tool needs. */
 const boardToolDeps = Effect.gen(function* () {
-  const scope = yield* McpInvocationContext.McpInvocationContext;
-  const engine = yield* OrchestrationEngineService;
-  const snapshotQuery = yield* ProjectionSnapshotQuery;
-  const board = boardSnapshotQueryMethodsOf(snapshotQuery);
-  if (board === null) {
-    return yield* new BoardToolError({
-      code: "internal",
-      message: "Board snapshot query methods are unavailable on this server.",
-    });
-  }
+  // Every board tool acts for the calling thread's card (D3); `McpToolAccess`
+  // has already refused a caller that is not a T3 thread.
+  const scope = yield* McpInvocationContext.McpInvocationContext.pipe(
+    Effect.flatMap((current) => McpInvocationContext.requireThreadScope(current, "Board tools")),
+    Effect.mapError(
+      (failure) => new BoardToolError({ code: "rejected", message: failure.message }),
+    ),
+  );
+  const boardEngine = yield* BoardEngine;
+  const threads = yield* ThreadGateway;
+  const board = yield* BoardQueries;
   const config = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
   return {
     scope,
-    engine,
-    snapshotQuery,
+    boardEngine,
+    threads,
     board,
     stateDir: config.stateDir,
     path,
   } satisfies BoardToolDeps;
 });
 
-const readBoardState = (deps: BoardToolDeps): Effect.Effect<BoardState, BoardToolError> =>
-  deps.snapshotQuery.getCommandReadModel().pipe(
-    Effect.map((model: OrchestrationReadModel) => model.board ?? EMPTY_BOARD_STATE),
-    Effect.mapError(internalError),
-  );
+const readBoardState = (deps: BoardToolDeps): Effect.Effect<BoardState> =>
+  deps.boardEngine.getReadModel.pipe(Effect.map((model) => model.board ?? EMPTY_BOARD_STATE));
 
 /**
  * The key prefix a new card should carry (D14). Board settings are the single
@@ -205,13 +199,13 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 /** Mint a command id (server-dispatched board command, like ws.ts). Yields
     Crypto from context, so callers need only list it as a tool dependency. */
 const mintCommandId: Effect.Effect<CommandId, never, Crypto.Crypto> = Crypto.Crypto.pipe(
-  Effect.flatMap((crypto) => crypto.randomUUIDv4),
+  Effect.flatMap((crypto) => crypto.randomUUIDv4()),
   Effect.map((uuid) => CommandId.make(`mcp:board:${uuid}`)),
   Effect.orDie,
 );
 
 const mintUuid: Effect.Effect<string, never, Crypto.Crypto> = Crypto.Crypto.pipe(
-  Effect.flatMap((crypto) => crypto.randomUUIDv4),
+  Effect.flatMap((crypto) => crypto.randomUUIDv4()),
   Effect.orDie,
 );
 
@@ -255,9 +249,9 @@ const linkCardPullRequest = (
     agent how to be adopted (D3: unlinked callers get more than a bare error). */
 const requireCallerCard = (
   board: BoardState,
-  scope: McpInvocationScope,
+  scope: McpThreadInvocationScope,
 ): Effect.Effect<BoardCard, BoardToolError> => {
-  const card = resolveBoardCardForThread(board, scope.threadId);
+  const card = resolveBoardCardForThread(board, scope.thread.threadId);
   return card === null
     ? Effect.fail(
         new BoardToolError({
@@ -304,11 +298,11 @@ const requireTargetCard = (
  */
 const refuseOwnCard = (
   board: BoardState,
-  scope: McpInvocationScope,
+  scope: McpThreadInvocationScope,
   card: BoardCard,
   consequence: string,
 ): Effect.Effect<void, BoardToolError> => {
-  const own = resolveBoardCardForThread(board, scope.threadId);
+  const own = resolveBoardCardForThread(board, scope.thread.threadId);
   if (own === null || own.id !== card.id) return Effect.void;
   return Effect.fail(
     new BoardToolError({
@@ -386,20 +380,20 @@ const refuseLiveWork = (
 const resolveCompletionStepId = (
   board: BoardState,
   card: BoardCard,
-  scope: McpInvocationScope,
+  scope: McpThreadInvocationScope,
   stepId: string | undefined,
 ): Effect.Effect<string, BoardToolError> => {
   const state = boardCardStepState(board, card.id);
   const live = state !== null && !isBoardTerminalStepStatus(state.status) ? state : null;
-  const kept = keptPlanningStepId(board, card, scope.threadId);
+  const kept = keptPlanningStepId(board, card, scope.thread.threadId);
   const ownCompletions = boardCardStepCompletions(board, card.id).filter(
-    (completion) => completion.threadId === scope.threadId,
+    (completion) => completion.threadId === scope.thread.threadId,
   );
 
   const candidate =
     stepId !== undefined
       ? stepId
-      : live !== null && live.threadId === scope.threadId
+      : live !== null && live.threadId === scope.thread.threadId
         ? live.stepId
         : (kept ?? ownCompletions[ownCompletions.length - 1]?.stepId);
 
@@ -423,7 +417,7 @@ const resolveCompletionStepId = (
     live !== null &&
     live.stepId === candidate &&
     live.threadId !== null &&
-    live.threadId !== scope.threadId
+    live.threadId !== scope.thread.threadId
   ) {
     return Effect.fail(
       new BoardToolError({
@@ -460,13 +454,12 @@ const resolveLabelIds = (
   return Effect.succeed(ids);
 };
 
-/** The non-deleted projects the caller can target, from the same command read
-    model the tools already query. */
+/** The non-deleted projects the caller can target. */
 const listProjects = (
   deps: BoardToolDeps,
-): Effect.Effect<ReadonlyArray<OrchestrationReadModel["projects"][number]>, BoardToolError> =>
-  deps.snapshotQuery.getCommandReadModel().pipe(
-    Effect.map((model) => model.projects.filter((project) => project.deletedAt === null)),
+): Effect.Effect<ReadonlyArray<BoardProject>, BoardToolError> =>
+  deps.threads.projects().pipe(
+    Effect.map((projects) => projects.filter((project) => !project.deleted)),
     Effect.mapError(internalError),
   );
 
@@ -481,15 +474,14 @@ const workspaceBasename = (value: string): string => {
 /** Available projects as `id — title`, the same "rejected with the live list"
     shape unknown labels use, so an agent that guessed wrong is handed the exact
     ids to retry with. */
-const formatProjectList = (
-  projects: ReadonlyArray<OrchestrationReadModel["projects"][number]>,
-): string => projects.map((project) => `${project.id} — ${project.title}`).join("; ") || "(none)";
+const formatProjectList = (projects: ReadonlyArray<BoardProject>): string =>
+  projects.map((project) => `${project.id} — ${project.title}`).join("; ") || "(none)";
 
 /**
  * Resolve the project a card should be created in (t3o: agents guess titles,
  * not ids). With no `projectId` the card lands in the calling thread's own
  * project — the common "cards for the project I'm in" case, resolved from the
- * read model via the scope's threadId (a thread's project never changes, so no
+ * scope's thread (a thread's project never changes, so no
  * value has to be baked into the credential). With a `projectId` it is matched
  * as an id first, then leniently against a project's title (case-insensitive)
  * or workspace-root folder name, so a value copied from the app's dropdown
@@ -497,19 +489,19 @@ const formatProjectList = (
  * rather than dispatched to fail deep in the decider with a bare "does not
  * exist".
  *
- * Pure over an already-fetched read model — board_create_card resolves it once
- * and reuses it for the board slice and the key prefix, so a single create does
- * not re-materialise the read model per lookup.
+ * Over an already-fetched project list — board_create_card reads it once and
+ * reuses it for the key-prefix title.
  */
 const resolveProjectId = (
-  model: OrchestrationReadModel,
-  scope: McpInvocationScope,
+  deps: BoardToolDeps,
+  projects: ReadonlyArray<BoardProject>,
   input: string | undefined,
 ): Effect.Effect<ProjectId, BoardToolError> =>
   Effect.gen(function* () {
-    const projects = model.projects.filter((project) => project.deletedAt === null);
     if (input === undefined) {
-      const thread = model.threads.find((candidate) => candidate.id === scope.threadId);
+      const thread = yield* deps.threads
+        .threadState(deps.scope.thread.threadId)
+        .pipe(Effect.mapError(internalError));
       const owned = thread
         ? projects.find((project) => project.id === thread.projectId)
         : undefined;
@@ -622,16 +614,16 @@ const describeDependencies = (board: BoardState, card: BoardCard) => {
  */
 const dispatch = (
   deps: BoardToolDeps,
-  command: OrchestrationCommand,
+  command: BoardCommand,
 ): Effect.Effect<{ readonly sequence: number }, BoardToolError> => {
   stampBoardActivityActor(
     command.commandId,
     boardAgentActor({
-      providerInstanceId: deps.scope.providerInstanceId,
-      threadId: deps.scope.threadId,
+      providerInstanceId: deps.scope.thread.providerInstanceId,
+      threadId: deps.scope.thread.threadId,
     }),
   );
-  return deps.engine.dispatch(command).pipe(Effect.mapError(dispatchError));
+  return deps.boardEngine.dispatch(command).pipe(Effect.mapError(dispatchError));
 };
 
 export const boardHandlers = {
@@ -722,7 +714,7 @@ export const boardHandlers = {
         !isBoardTerminalStepStatus(liveState.status);
       // The decider's matching rule for a planning thread kept past its stage
       // (T3O-19): it may still record its own abandoned step.
-      const keptMatch = isKeptStepThread(board, card, stepId, deps.scope.threadId);
+      const keptMatch = isKeptStepThread(board, card, stepId, deps.scope.thread.threadId);
       const supersedes =
         existing !== undefined && existing.outcome !== "succeeded" && (liveMatch || keptMatch);
       // The OTHER path where a retry is not a no-op: a `succeeded` record whose
@@ -821,7 +813,7 @@ export const boardHandlers = {
         outcome: input.outcome,
         summary: input.summary,
         payload,
-        threadId: deps.scope.threadId,
+        threadId: deps.scope.thread.threadId,
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps, command);
@@ -931,19 +923,16 @@ export const boardHandlers = {
   board_create_card: (input) =>
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
-      // One read model for the whole create: project resolution, the board
-      // slice, and the key-prefix title all read from it (the card's key is
-      // read back with a fresh model after the write).
-      const model = yield* deps.snapshotQuery
-        .getCommandReadModel()
-        .pipe(Effect.mapError(internalError));
+      // One project read for the whole create: project resolution and the
+      // key-prefix title both read from it.
+      const projects = yield* listProjects(deps);
       // Resolve the target project first (t3o: omitted → this thread's project;
       // a title or workspace folder → its id), so a card never dispatches
       // against a phantom project and an unresolvable target is rejected up
       // front with the live project list.
-      const projectId = yield* resolveProjectId(model, deps.scope, input.projectId);
-      const projectTitle = model.projects.find((project) => project.id === projectId)?.title ?? "";
-      const board = model.board ?? EMPTY_BOARD_STATE;
+      const projectId = yield* resolveProjectId(deps, projects, input.projectId);
+      const projectTitle = projects.find((project) => project.id === projectId)?.title ?? "";
+      const board = yield* readBoardState(deps);
       const labels = yield* resolveLabelIds(board, input.labels ?? []);
       const stage = input.stage ?? BOARD_SEED_STAGE_IDS.backlog;
       // Pre-validate dependencies for the friendlier tool-shaped message; the
@@ -1262,4 +1251,25 @@ export const boardHandlers = {
     }),
 } satisfies Parameters<typeof BoardToolkit.toLayer>[0];
 
-export const BoardToolkitHandlersLive = BoardToolkit.toLayer(boardHandlers);
+/**
+ * Who may call each board tool (`McpToolAccess`, T3O-59). Every board tool acts
+ * for the calling thread's card (D3), so all of them need a T3 thread caller;
+ * the reads stop there, and the writes also need that thread's run to be live.
+ * Whether the thread is linked to a card is still the handler's question.
+ */
+export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
+  board_get_card_context: McpToolAccess.readsAsCaller(boardHandlers.board_get_card_context),
+  board_get_card: McpToolAccess.readsAsCaller(boardHandlers.board_get_card),
+  board_list_projects: McpToolAccess.readsAsCaller(boardHandlers.board_list_projects),
+  board_list_cards: McpToolAccess.readsAsCaller(boardHandlers.board_list_cards),
+  board_get_plan: McpToolAccess.readsAsCaller(boardHandlers.board_get_plan),
+  board_complete_step: McpToolAccess.writesWithCapability(boardHandlers.board_complete_step),
+  board_create_card: McpToolAccess.writesWithCapability(boardHandlers.board_create_card),
+  board_move_card: McpToolAccess.writesWithCapability(boardHandlers.board_move_card),
+  board_update_card: McpToolAccess.writesWithCapability(boardHandlers.board_update_card),
+  board_archive_card: McpToolAccess.writesWithCapability(boardHandlers.board_archive_card),
+  board_unarchive_card: McpToolAccess.writesWithCapability(boardHandlers.board_unarchive_card),
+  board_delete_card: McpToolAccess.writesWithCapability(boardHandlers.board_delete_card),
+  board_propose_plans: McpToolAccess.writesWithCapability(boardHandlers.board_propose_plans),
+  board_write_plan: McpToolAccess.writesWithCapability(boardHandlers.board_write_plan),
+});

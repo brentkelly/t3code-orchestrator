@@ -22,23 +22,26 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import type {
-  OrchestrationProjectShell,
   ProjectId,
   PullRequestDetail,
   PullRequestInvalidateInput,
   PullRequestRef,
   PullRequestUpdateInput,
 } from "@t3tools/contracts";
-import { PullRequestOperationError, PullRequestUnavailableError } from "@t3tools/contracts";
+import {
+  PullRequestOperationError,
+  PullRequestUnavailableError,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
 
 import * as BoardPullRequestGateway from "./BoardPullRequestGateway.ts";
 import * as GitManager from "../git/GitManager.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { PullRequestProviderError } from "../pullRequest/PullRequestProvider.ts";
+import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { ThreadGateway, type BoardProjectDetail } from "./ThreadGateway.ts";
+import { inertThreadGateway } from "./threadGateway.testkit.ts";
 
 /** How upstream reports a host that was asked and said no: the placeholder
     `VcsProcessExitError` leaves behind once the subprocess's stderr is
@@ -48,7 +51,7 @@ function hostRefusal(reason: PullRequestProviderError["reason"] = "failed") {
     operation: "runAction",
     detail: "Process exited with a non-zero status.",
     cause: new PullRequestProviderError({
-      provider: "github",
+      provider: SourceControlProviderKind.make("github"),
       operation: "runAction",
       reason,
       detail: "Process exited with a non-zero status.",
@@ -58,35 +61,32 @@ function hostRefusal(reason: PullRequestProviderError["reason"] = "failed") {
 
 const PROJECT = "project-1" as ProjectId;
 
-function project(repository: string | null): OrchestrationProjectShell {
+function project(repository: string | null): BoardProjectDetail {
   return {
     id: PROJECT,
     title: "T3o",
     workspaceRoot: "/repo",
-    ...(repository === null
-      ? {}
-      : {
-          repositoryIdentity: {
+    deleted: false,
+    scripts: [],
+    repositoryIdentity:
+      repository === null
+        ? null
+        : {
             canonicalKey: `github.com/${repository}`,
             locator: {
               source: "git-remote" as const,
               remoteName: "origin",
               remoteUrl: `https://github.com/${repository}.git`,
             },
-            provider: "github",
+            provider: SourceControlProviderKind.make("github"),
             displayName: repository,
           },
-        }),
-    defaultModelSelection: null,
-    scripts: [],
-    createdAt: "2026-07-01T00:00:00Z",
-    updatedAt: "2026-07-01T00:00:00Z",
   };
 }
 
 function detail(overrides: Partial<PullRequestDetail> = {}): PullRequestDetail {
   return {
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     capabilities: {} as PullRequestDetail["capabilities"],
     viewerPermissions: {} as PullRequestDetail["viewerPermissions"],
     projectId: PROJECT,
@@ -155,20 +155,21 @@ function makeGateway(
               cwd === "/repo" && key === "remote.origin.url" ? (options.originUrl ?? null) : null,
             ),
         }),
-        Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-          getProjectShellById: (projectId) =>
-            Effect.succeed(
-              projectId === PROJECT
-                ? Option.some(
-                    project(
+        Layer.succeed(
+          ThreadGateway,
+          inertThreadGateway({
+            project: (projectId) =>
+              Effect.succeed(
+                projectId === PROJECT
+                  ? project(
                       options.repository === undefined
                         ? "brentkelly/t3code-orchestrator"
                         : options.repository,
-                    ),
-                  )
-                : Option.none(),
-            ),
-        }),
+                    )
+                  : null,
+              ),
+          }),
+        ),
         Layer.mock(PullRequestService.PullRequestService)({
           runAction: (input) =>
             Effect.suspend(() => {
@@ -364,7 +365,7 @@ describe("BoardPullRequestGateway.merge", () => {
     const { layer } = makeGateway({
       runActionError: new PullRequestUnavailableError({
         reason: "cli-unauthenticated",
-        provider: "github",
+        provider: SourceControlProviderKind.make("github"),
       }),
     });
     return Effect.gen(function* () {
@@ -374,7 +375,7 @@ describe("BoardPullRequestGateway.merge", () => {
       );
 
       assert.strictEqual(error.refusal, "unavailable");
-      assert.match(error.detail, /not authenticated/iu);
+      assert.match(error.detail, /no working credential/iu);
     }).pipe(Effect.provide(layer));
   });
 
@@ -487,30 +488,28 @@ describe("BoardPullRequestGateway.markReady (T3O-12)", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  for (const [title, expected] of [
+  it.effect.each([
     ["WIP: Add drafts", "Add drafts"],
     ["[WIP] Add drafts", "Add drafts"],
     ["wip:Add drafts", "Add drafts"],
-  ] as const) {
-    it.effect(`readies a Forgejo draft by taking the marker off "${title}"`, () => {
-      const { calls, layer } = makeGateway({
-        detail: detail({
-          provider: "forgejo",
-          isDraft: true,
-          title,
-          capabilities: capabilities(["merge", "close", "reopen", "update-branch"]),
-        }),
-      });
-      return Effect.gen(function* () {
-        const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
-        const result = yield* gateway.markReady({ projectId: PROJECT, number: 110 });
-
-        assert.strictEqual(result, "readied");
-        assert.include(calls, `update:brentkelly/t3code-orchestrator:110:title=${expected}`);
-        assert.isFalse(calls.some((call) => call.startsWith("runAction")));
-      }).pipe(Effect.provide(layer));
+  ] as const)('readies a Forgejo draft by taking the marker off "%s"', ([title, expected]) => {
+    const { calls, layer } = makeGateway({
+      detail: detail({
+        provider: SourceControlProviderKind.make("forgejo"),
+        isDraft: true,
+        title,
+        capabilities: capabilities(["merge", "close", "reopen", "update-branch"]),
+      }),
     });
-  }
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      const result = yield* gateway.markReady({ projectId: PROJECT, number: 110 });
+
+      assert.strictEqual(result, "readied");
+      assert.include(calls, `update:brentkelly/t3code-orchestrator:110:title=${expected}`);
+      assert.isFalse(calls.some((call) => call.startsWith("runAction")));
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("refuses, as blocked, a draft this host has no way to ready", () => {
     const { layer } = makeGateway({

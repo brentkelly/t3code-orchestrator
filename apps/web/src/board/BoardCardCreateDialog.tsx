@@ -25,6 +25,7 @@ import {
   isBoardDependencyInScope,
   isBoardStageAtOrAfterSubBoardFloor,
   resolveBoardStageExecution,
+  type BoardCardShell,
   type BoardStageDefinition,
   type BoardStageId,
   type BoardState,
@@ -50,7 +51,7 @@ import {
 } from "../components/ui/select";
 import { Textarea } from "../components/ui/textarea";
 import { cn, randomUUID } from "../lib/utils";
-import { boardEnvironment } from "../state/board";
+import { boardEnvironment, environmentBoard } from "../state/board";
 import { useEnvironment } from "../state/environments";
 import { environmentShell } from "../state/shell";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../hooks/useSettings";
@@ -91,6 +92,8 @@ import { projectAccent, projectIconColorOf } from "./projectAccent";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply. */
+const EMPTY_CARDS: ReadonlyArray<BoardCardShell> = [];
+
 function stageStateOf(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
   return { cards: [], stages, nextCardNumberByProject: {} };
 }
@@ -140,7 +143,8 @@ export function BoardCardCreateDialog({
   const undeleteLabel = useAtomCommand(boardEnvironment.undeleteLabel);
 
   const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
-  const allCards = snapshot?.cards ?? [];
+  const board = useAtomValue(environmentBoard.snapshotValueAtom(environmentId));
+  const allCards = board?.cards ?? EMPTY_CARDS;
 
   // Brief attachments (t3o-32, K6): staged as pending uploads while the user
   // types, claimed onto the card right after `board.card.create` returns.

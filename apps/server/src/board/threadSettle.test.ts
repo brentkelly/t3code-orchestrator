@@ -29,8 +29,6 @@ import {
   ThreadId,
   type BoardReviewFinding,
   type BoardSettings,
-  type OrchestrationEvent,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 
 import {
@@ -44,7 +42,10 @@ import {
   settingsWith,
   turnCompleted,
   withGovernor,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import type { BoardThreadState } from "./ThreadGateway.ts";
+import { fakeThreadState } from "./threadGateway.testkit.ts";
 
 // Review settings that auto-run the loop: the review stage entry auto-executes
 // its phases and auto-advances on convergence, on the same provider the build
@@ -82,7 +83,7 @@ const reviewPhaseCompleted = (
   stepId: string,
   findings: ReadonlyArray<BoardReviewFinding>,
   sequence: number,
-): OrchestrationEvent =>
+): HarnessEvent =>
   ({
     type: "board.card-step-completed",
     sequence,
@@ -98,7 +99,7 @@ const reviewPhaseCompleted = (
         completedAt: NOW,
       },
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 const link = (threadId: string, role: string) => ({
   threadId: ThreadId.make(threadId),
@@ -108,8 +109,8 @@ const link = (threadId: string, role: string) => ({
 });
 
 const shellsFor = (
-  entries: ReadonlyArray<readonly [string, OrchestrationThreadShell]>,
-): ReadonlyMap<string, OrchestrationThreadShell> => new Map(entries);
+  entries: ReadonlyArray<readonly [string, BoardThreadState]>,
+): ReadonlyMap<string, BoardThreadState> => new Map(entries);
 
 // ── The regression: a settle refused mid-turn is retried, not lost ───────────
 //
@@ -289,13 +290,7 @@ it.effect("a released thread with an unanswered approval is left alone", () =>
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
       initialShells: shellsFor([
-        [
-          "thread-build-1",
-          {
-            ...idleThreadShell("thread-build-1"),
-            hasPendingApprovals: true,
-          } as OrchestrationThreadShell,
-        ],
+        ["thread-build-1", fakeThreadState("thread-build-1", { pendingApproval: true })],
       ]),
     },
     ({ reactor, commands, settledThreads }) =>
@@ -303,7 +298,7 @@ it.effect("a released thread with an unanswered approval is left alone", () =>
         yield* reactor.releaseThreads;
         assert.ok(!(yield* settledThreads).has("thread-build-1"), "it was not settled");
         assert.deepStrictEqual(
-          (yield* commands).filter((command) => command.type === "thread.auto-settle"),
+          (yield* commands).filter((command) => command.type === "thread.settle"),
           [],
           "and no settle was even asked for, so no rejected receipt is written",
         );
@@ -335,7 +330,8 @@ it.effect("a settled thread is not settled again by the next sweep", () =>
             (dispatched) =>
               dispatched.filter(
                 (command) =>
-                  command.type === "thread.auto-settle" &&
+                  command.type === "thread.settle" &&
+                  command.auto &&
                   String(command.threadId) === "thread-build-1",
               ).length,
           ),

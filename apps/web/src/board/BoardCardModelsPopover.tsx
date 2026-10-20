@@ -107,7 +107,7 @@ export function BoardCardModelsPopover({
   const settings = usePrimarySettings();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );
   const getModelOptions = (active: ActiveModel): ModelOptionsByInstance =>
     getCustomModelOptionsByInstance(settings, serverProviders, active.instanceId, active.model);

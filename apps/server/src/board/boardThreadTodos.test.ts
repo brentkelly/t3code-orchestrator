@@ -15,47 +15,21 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ServerConfig } from "../config.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import { boardHumanActor, stampBoardActivityActor } from "./activityActors.ts";
-import { boardSnapshotQueryMethodsOf } from "./projection.ts";
+import { BoardQueries } from "./BoardQueries.ts";
+import {
+  boardStackEngine,
+  drainBoardThreadTail,
+  makeBoardStackTestLayer,
+  writeStackPlan,
+} from "./boardStack.testkit.ts";
+import { ThreadGateway } from "./ThreadGateway.ts";
 
-const makeLayer = (prefix: string) =>
-  Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
-    ),
-    OrchestrationProjectionSnapshotQueryLive,
-    ServerSettings.layerTest(),
-  ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
-  );
+const makeLayer = makeBoardStackTestLayer;
 
 const t0 = "2026-01-01T00:00:00.000Z";
 const at = (minute: number) => `2026-01-01T00:${String(minute).padStart(2, "0")}:00.000Z` as const;
@@ -81,23 +55,9 @@ const fixtureFor = (tag: string): Fixture => ({
 let commandSeq = 0;
 const nextCommandId = () => CommandId.make(`cmd-live-${(commandSeq += 1)}`);
 
-const planActivity = (
-  id: string,
-  plan: ReadonlyArray<{ readonly step: string; readonly status: string }>,
-  createdAt: string,
-): OrchestrationThreadActivity => ({
-  id: EventId.make(id),
-  tone: "info",
-  kind: "turn.plan.updated",
-  summary: "Plan updated",
-  payload: { plan },
-  turnId: null,
-  createdAt,
-});
-
 const seed = Effect.fn("seed")(function* (tag: string) {
   const fixture = fixtureFor(tag);
-  const engine = yield* OrchestrationEngineService;
+  const engine = yield* boardStackEngine;
   // Fixed command id: the second test's create is an idempotent no-op.
   yield* engine.dispatch({
     type: "project.create",
@@ -150,21 +110,13 @@ const appendPlan = (
   createdAt: string,
 ) =>
   Effect.gen(function* () {
-    const engine = yield* OrchestrationEngineService;
-    yield* engine.dispatch({
-      type: "thread.activity.append",
-      commandId: nextCommandId(),
-      threadId,
-      activity: planActivity(id, plan, createdAt),
-      createdAt,
-    });
+    yield* writeStackPlan(threadId, id, plan, createdAt);
+    // The todo cache follows upstream's log on its own tail (T3O-56).
+    yield* drainBoardThreadTail;
   });
 
 const boardMethods = Effect.gen(function* () {
-  const snapshotQuery = yield* ProjectionSnapshotQuery;
-  const methods = boardSnapshotQueryMethodsOf(snapshotQuery);
-  assert.isNotNull(methods);
-  return methods!;
+  return yield* BoardQueries;
 });
 
 const cardThreads = (cardId: BoardCardId) =>
@@ -316,7 +268,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
   it.effect("AC 19: unlinking the thread drops its cached list", () =>
     Effect.gen(function* () {
       const { cardId, linkedThread } = yield* seed("ac19a");
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       const methods = yield* boardMethods;
       yield* appendPlan(linkedThread, "ac19a-1", [{ step: "Alpha", status: "pending" }], at(1));
       assert.isNotNull(yield* methods.boardThreadTodo(linkedThread));
@@ -336,7 +288,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
   it.effect("AC 19: archiving the card drops every cached list on it", () =>
     Effect.gen(function* () {
       const { cardId, linkedThread } = yield* seed("ac19b");
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       const methods = yield* boardMethods;
       yield* appendPlan(linkedThread, "ac19b-1", [{ step: "Alpha", status: "pending" }], at(1));
       yield* engine.dispatch({
@@ -352,7 +304,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
   it.effect("AC 20: the boot sweep removes rows whose thread no longer exists", () =>
     Effect.gen(function* () {
       const { linkedThread } = yield* seed("ac20");
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       const methods = yield* boardMethods;
       yield* appendPlan(linkedThread, "ac20-1", [{ step: "Alpha", status: "pending" }], at(1));
 
@@ -361,9 +313,29 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
         commandId: nextCommandId(),
         threadId: linkedThread,
       });
+      yield* drainBoardThreadTail;
       // Whatever the live path did, the sweep is the backstop for the case where
-      // the delete landed while the server was down.
-      yield* methods.boardSweepThreadTodos();
+      // the delete landed while the server was down. The live set is the v1
+      // gateway's own answer, as the supervisor's boot sweep reads it.
+      const threads = yield* ThreadGateway;
+      const liveThreadIds = yield* threads.listLiveThreadIds();
+      assert.notInclude(liveThreadIds, linkedThread);
+      yield* methods.boardSweepThreadTodos(liveThreadIds, at(30));
+      assert.isNull(yield* methods.boardThreadTodo(linkedThread));
+    }),
+  );
+
+  it.effect("AC 20: the boot sweep spares a row written after the live list was taken", () =>
+    Effect.gen(function* () {
+      const { linkedThread } = yield* seed("ac20b");
+      const methods = yield* boardMethods;
+      // The thread was born and posted its first plan between the clock read
+      // and the list read, so the list does not name it.
+      yield* appendPlan(linkedThread, "ac20b-1", [{ step: "Alpha", status: "pending" }], at(5));
+      yield* methods.boardSweepThreadTodos([], at(5));
+      assert.isNotNull(yield* methods.boardThreadTodo(linkedThread));
+      // A later boot, whose list really does omit it, still drops it.
+      yield* methods.boardSweepThreadTodos([], at(6));
       assert.isNull(yield* methods.boardThreadTodo(linkedThread));
     }),
   );
@@ -371,7 +343,7 @@ it.layer(makeLayer("t3o-board-todos-"))("board thread todos (t3o-18)", (it) => {
   it.effect("AC 15/16: the rail records the curated kinds with the stamped actor", () =>
     Effect.gen(function* () {
       const { cardId } = yield* seed("ac15");
-      const engine = yield* OrchestrationEngineService;
+      const engine = yield* boardStackEngine;
       const methods = yield* boardMethods;
 
       // A human drag: the dispatch boundary stamps the actor first (D11).

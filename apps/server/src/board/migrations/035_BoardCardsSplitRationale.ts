@@ -13,7 +13,7 @@
 // Plain TEXT rather than JSON: it is one prose paragraph the human reads at the
 // gate, not a structure anything parses.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

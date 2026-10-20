@@ -15,7 +15,7 @@
 // build and review rows: two rows is a judgement about the UI, and keying the
 // COLUMN by role would put that judgement somewhere only a migration could undo.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

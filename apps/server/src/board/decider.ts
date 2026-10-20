@@ -96,16 +96,15 @@ import {
   type BoardStageId,
   type BoardState,
   type BoardStepCompletion,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
-  type OrchestrationReadModel,
+  type BoardCommand,
+  type BoardEvent,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 
-import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
-import { requireProject } from "../orchestration/commandInvariants.ts";
+import { BoardCommandInvariantError } from "./errors.ts";
 import {
   appendToBrief,
   boardBriefVersion,
@@ -115,8 +114,9 @@ import {
   replaceBriefSection,
 } from "./briefEdits.ts";
 import { isKeptStepThread } from "./planningThreadKeep.ts";
+import type { BoardReadModel } from "./projector.ts";
 
-export type BoardCommand = Extract<OrchestrationCommand, { type: `board.${string}` }>;
+export type { BoardCommand };
 
 /** Label commands (t3o-06a) aggregate on the label, not the card — they carry
     `labelId` instead of `cardId`. Keyed on the `board.label.` prefix. */
@@ -148,14 +148,13 @@ type BoardCardCommand = Exclude<
   BoardLabelCommand | BoardStageCommand | BoardProviderLimitCommand
 >;
 
-// Re-exported so upstream seams import predicate + delegate on one line.
 export { isBoardCommand };
 
 // Distributive so the planned event stays a discriminated union — a plain
 // `Omit` over the union flattens `type` and `payload` into independent
 // unions and callers could no longer narrow payloads by event type.
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
-type PlannedOrchestrationEvent = DistributiveOmit<OrchestrationEvent, "sequence">;
+export type PlannedBoardEvent = DistributiveOmit<BoardEvent, "sequence">;
 
 /**
  * What one board command decides. Almost every command decides a single
@@ -164,14 +163,12 @@ type PlannedOrchestrationEvent = DistributiveOmit<OrchestrationEvent, "sequence"
  * D5), and delete decides a list for the same reason plus the edge rewrites
  * a permanent removal forces. The engine accepts either.
  */
-export type BoardDecision = PlannedOrchestrationEvent | ReadonlyArray<PlannedOrchestrationEvent>;
+export type BoardDecision = PlannedBoardEvent | ReadonlyArray<PlannedBoardEvent>;
 
 /** A decision as the list the engine appends — the single-event case is a
     list of one. Discriminated on `type`, which every event has and no array
     does: `Array.isArray` narrows to `any[]` and leaks `any` into the result. */
-export function boardDecidedEvents(
-  decided: BoardDecision,
-): ReadonlyArray<PlannedOrchestrationEvent> {
+export function boardDecidedEvents(decided: BoardDecision): ReadonlyArray<PlannedBoardEvent> {
   return "type" in decided ? [decided] : decided;
 }
 
@@ -205,12 +202,12 @@ export function boardCommandAggregateRef(command: BoardCommand): {
 }
 
 const invariant = (command: BoardCommand, detail: string) =>
-  new OrchestrationCommandInvariantError({ commandType: command.type, detail });
+  new BoardCommandInvariantError({ commandType: command.type, detail });
 
 function requireBoardCard(input: {
   readonly board: BoardState;
   readonly command: BoardCardCommand;
-}): Effect.Effect<BoardCard, OrchestrationCommandInvariantError> {
+}): Effect.Effect<BoardCard, BoardCommandInvariantError> {
   const card = input.board.cards.find((candidate) => candidate.id === input.command.cardId);
   return card === undefined
     ? Effect.fail(invariant(input.command, `Card '${input.command.cardId}' does not exist.`))
@@ -220,7 +217,7 @@ function requireBoardCard(input: {
 function requireActiveBoardCard(input: {
   readonly board: BoardState;
   readonly command: BoardCardCommand;
-}): Effect.Effect<BoardCard, OrchestrationCommandInvariantError> {
+}): Effect.Effect<BoardCard, BoardCommandInvariantError> {
   return requireBoardCard(input).pipe(
     Effect.filterOrFail(
       (card) => card.archivedAt === null,
@@ -239,7 +236,7 @@ function requireLiveStepState(input: {
   readonly board: BoardState;
   readonly command: BoardCardCommand;
   readonly stepId: string;
-}): Effect.Effect<BoardCardStepState, OrchestrationCommandInvariantError> {
+}): Effect.Effect<BoardCardStepState, BoardCommandInvariantError> {
   const state = boardCardStepState(input.board, input.command.cardId);
   return state === null || state.stepId !== input.stepId
     ? Effect.fail(
@@ -390,7 +387,7 @@ const makeBoardEventBase = Effect.fn("makeBoardEventBase")(function* (input: {
   readonly commandId: BoardCommand["commandId"];
 }) {
   const crypto = yield* Crypto.Crypto;
-  const eventId = yield* crypto.randomUUIDv4;
+  const eventId = yield* crypto.randomUUIDv4();
   return {
     eventId: EventId.make(eventId),
     aggregateKind: "card" as const,
@@ -421,15 +418,11 @@ const boardDependentBlockedEvents = Effect.fn("boardDependentBlockedEvents")(fun
   readonly board: BoardState;
   readonly command: BoardCardCommand;
   readonly changed: BoardCard;
-}): Effect.fn.Return<
-  ReadonlyArray<PlannedOrchestrationEvent>,
-  PlatformError.PlatformError,
-  Crypto.Crypto
-> {
+}): Effect.fn.Return<ReadonlyArray<PlannedBoardEvent>, PlatformError.PlatformError, Crypto.Crypto> {
   const cards = input.board.cards.map((card) =>
     card.id === input.changed.id ? input.changed : card,
   );
-  const events: PlannedOrchestrationEvent[] = [];
+  const events: PlannedBoardEvent[] = [];
   for (const dependent of cards) {
     if (dependent.id === input.changed.id) continue;
     if (dependent.archivedAt !== null) continue;
@@ -634,7 +627,7 @@ const makeBoardLabelEventBase = Effect.fn("makeBoardLabelEventBase")(function* (
   readonly commandId: BoardCommand["commandId"];
 }) {
   const crypto = yield* Crypto.Crypto;
-  const eventId = yield* crypto.randomUUIDv4;
+  const eventId = yield* crypto.randomUUIDv4();
   return {
     eventId: EventId.make(eventId),
     aggregateKind: "label" as const,
@@ -656,7 +649,7 @@ const makeBoardProviderLimitEventBase = Effect.fn("makeBoardProviderLimitEventBa
     readonly commandId: BoardCommand["commandId"];
   }) {
     const crypto = yield* Crypto.Crypto;
-    const eventId = yield* crypto.randomUUIDv4;
+    const eventId = yield* crypto.randomUUIDv4();
     return {
       eventId: EventId.make(eventId),
       aggregateKind: "provider-limit" as const,
@@ -677,7 +670,7 @@ const makeBoardStageEventBase = Effect.fn("makeBoardStageEventBase")(function* (
   readonly commandId: BoardCommand["commandId"];
 }) {
   const crypto = yield* Crypto.Crypto;
-  const eventId = yield* crypto.randomUUIDv4;
+  const eventId = yield* crypto.randomUUIDv4();
   return {
     eventId: EventId.make(eventId),
     aggregateKind: "stage" as const,
@@ -727,7 +720,7 @@ function validateCardLabels(input: {
   readonly command: BoardCommand;
   readonly proposed: ReadonlyArray<BoardLabelId>;
   readonly existing: ReadonlyArray<BoardLabelId>;
-}): Effect.Effect<ReadonlyArray<BoardLabelId>, OrchestrationCommandInvariantError> {
+}): Effect.Effect<ReadonlyArray<BoardLabelId>, BoardCommandInvariantError> {
   const deduped = [...new Set(input.proposed)];
   if (deduped.length > BOARD_CARD_LABELS_MAX) {
     return Effect.fail(
@@ -798,16 +791,87 @@ function reviewSummaryAfter(input: {
  * another write. Absent for every other command.
  */
 export interface BoardDecisionContext {
-  /** The card's stored brief, or null when it has none. */
-  readonly brief: string | null;
+  /** The card's stored brief, or null when it has none. Loaded only when
+      `boardCommandNeedsBrief` holds. */
+  readonly brief?: string | null;
+  /** Every project the environment knows, for the existence check a command
+      naming a project makes (T3O-56). Loaded only when
+      `boardCommandNeedsProjects` holds. */
+  readonly projects?: ReadonlyArray<BoardProjectRef>;
+  /** The thread a link or unlink names, or null when it does not exist.
+      Loaded only when `boardCommandNeedsThread` holds. */
+  readonly thread?: BoardThreadRef | null;
+}
+
+/** What the decider needs to know about a project: that it exists, and enough
+    to name it back to a caller who got the id wrong. */
+export interface BoardProjectRef {
+  readonly id: ProjectId;
+  readonly title: string;
+  readonly deleted: boolean;
+}
+
+/** What the decider needs to know about a thread: whether it is deleted. */
+export interface BoardThreadRef {
+  readonly deleted: boolean;
+}
+
+/** Whether a command names a project the decider must check exists. */
+export function boardCommandNeedsProjects(
+  command: BoardCommand,
+): command is Extract<BoardCommand, { type: "board.card.create" | "board.card.set-project" }> {
+  return command.type === "board.card.create" || command.type === "board.card.set-project";
+}
+
+/** Whether a command names a thread the decider must check exists. */
+export function boardCommandNeedsThread(
+  command: BoardCommand,
+): command is Extract<
+  BoardCommand,
+  { type: "board.card.link-thread" | "board.card.unlink-thread" }
+> {
+  return command.type === "board.card.link-thread" || command.type === "board.card.unlink-thread";
+}
+
+/**
+ * The project a command names, or the refusal. The refusal lists the live
+ * projects (id — title): the caller reached here with a value that is not a
+ * live project id — often a title or folder name from an agent — and the live
+ * list is what it needs to correct the call. Bounded to the first 10 so the
+ * message cannot grow with the project count.
+ */
+function requireBoardProject(input: {
+  readonly command: BoardCommand;
+  readonly context: BoardDecisionContext | undefined;
+  readonly projectId: ProjectId;
+}): Effect.Effect<BoardProjectRef, BoardCommandInvariantError> {
+  const projects = input.context?.projects;
+  if (projects === undefined) {
+    return Effect.fail(
+      invariant(input.command, "The project list was not loaded for this command; retry it."),
+    );
+  }
+  const project = projects.find((candidate) => candidate.id === input.projectId);
+  if (project !== undefined) return Effect.succeed(project);
+  const live = projects.filter((candidate) => !candidate.deleted);
+  const shown = live.slice(0, 10).map((candidate) => `${candidate.id} — ${candidate.title}`);
+  const available =
+    shown.length === 0
+      ? "(none)"
+      : shown.join("; ") +
+        (live.length > shown.length ? `; … and ${live.length - shown.length} more` : "");
+  return Effect.fail(
+    invariant(
+      input.command,
+      `Project '${input.projectId}' does not exist for command '${input.command.type}'. Available projects: ${available}.`,
+    ),
+  );
 }
 
 /** Whether a command needs `BoardDecisionContext` loaded before it is decided
     (T3O-53): an update that edits the brief incrementally or guards it with a
     version. */
-export function boardCommandNeedsBrief(
-  command: OrchestrationCommand,
-): command is BoardCardUpdateCommand {
+export function boardCommandNeedsBrief(command: BoardCommand): command is BoardCardUpdateCommand {
   return (
     command.type === "board.card.update" &&
     (command.briefAppend !== undefined ||
@@ -862,7 +926,7 @@ const resolveCardUpdateEdits = Effect.fn("resolveCardUpdateEdits")(function* (in
   let brief: string | null | undefined = command.brief;
   let briefEdit: "appended" | "section-replaced" | undefined;
   if (boardCommandNeedsBrief(command)) {
-    if (input.context === undefined) {
+    if (input.context?.brief === undefined) {
       return yield* invariant(
         command,
         `The brief of card '${card.key}' was not loaded for this edit; retry the update.`,
@@ -997,8 +1061,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
   context,
 }: {
   readonly command: BoardCommand;
-  readonly readModel: OrchestrationReadModel;
-  /** Loaded by the engine when `boardCommandNeedsBrief` holds (T3O-53). */
+  readonly readModel: BoardReadModel;
+  /** Loaded by the engine before deciding: the brief (T3O-53), and the
+      project and thread lookups that used to ride the v1 read model (T3O-56). */
   readonly context?: BoardDecisionContext;
 }): Effect.fn.Return<
   // Archive and unarchive decide several events at once — the card's own,
@@ -1006,18 +1071,14 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
   // already appends an array inside one transaction, and each event carries
   // its own `aggregateId`, so a command may touch more than one card.
   BoardDecision,
-  OrchestrationCommandInvariantError | PlatformError.PlatformError,
+  BoardCommandInvariantError | PlatformError.PlatformError,
   Crypto.Crypto
 > {
   const board = readModel.board ?? EMPTY_BOARD_STATE;
 
   switch (command.type) {
     case "board.card.create": {
-      yield* requireProject({
-        readModel,
-        command,
-        projectId: command.projectId,
-      });
+      yield* requireBoardProject({ command, context, projectId: command.projectId });
       if (board.cards.some((card) => card.id === command.cardId)) {
         return yield* invariant(command, `Card '${command.cardId}' already exists.`);
       }
@@ -1178,7 +1239,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
     // card id), its labels, its brief and its dependencies all survive.
     case "board.card.set-project": {
       const card = yield* requireActiveBoardCard({ board, command });
-      yield* requireProject({ readModel, command, projectId: command.projectId });
+      yield* requireBoardProject({ command, context, projectId: command.projectId });
       // Refused rather than treated as a no-op: an accepted no-op would still
       // emit an event, and that event would reissue the key for nothing.
       if (command.projectId === card.projectId) {
@@ -1488,7 +1549,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           : {}),
         updatedAt: command.createdAt,
       };
-      const moved: PlannedOrchestrationEvent = {
+      const moved: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -1758,8 +1819,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
 
     case "board.card.link-thread": {
       const card = yield* requireActiveBoardCard({ board, command });
-      const thread = readModel.threads.find((candidate) => candidate.id === command.threadId);
-      if (thread === undefined || thread.deletedAt !== null) {
+      const thread = context?.thread;
+      if (thread === undefined || thread === null || thread.deleted) {
         return yield* invariant(
           command,
           `Thread '${command.threadId}' does not exist or is deleted and cannot be linked.`,
@@ -1829,8 +1890,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // (D9): a card whose triage thread was deleted must say so. Absent
       // counts as deleted — link-thread requires existence, so a linked
       // thread missing from the read model can only have been deleted.
-      const thread = readModel.threads.find((candidate) => candidate.id === command.threadId);
-      const threadDeleted = thread === undefined || thread.deletedAt !== null;
+      const thread = context?.thread;
+      const threadDeleted = thread === undefined || thread === null || thread.deleted;
       const tombstonedAt = threadDeleted ? command.createdAt : null;
       const nextCard: BoardCard = {
         ...card,
@@ -1959,7 +2020,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // Dependencies survive the archive (D1) — nothing rewrites `dependsOn`
       // — but they stop gating, so dependents that were waiting on this card
       // unblock in the same commit.
-      const archived: PlannedOrchestrationEvent = {
+      const archived: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -1998,7 +2059,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       };
       // Restoring re-arms the gate the archive released (D1/D5): dependents
       // that this card blocks again are re-flagged alongside it.
-      const unarchived: PlannedOrchestrationEvent = {
+      const unarchived: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -2039,7 +2100,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // computed against the board WITHOUT it — the same list the projector
       // and a from-empty replay will see.
       const remaining = board.cards.filter((candidate) => candidate.id !== command.cardId);
-      const deleted: PlannedOrchestrationEvent = {
+      const deleted: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -2061,7 +2122,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // deleted one can never come back, and `unmetBoardCardDependencies`
       // counts an unresolvable id as unmet forever, so leaving the edge would
       // block every dependent permanently with no card left to unblock them.
-      const edited: Array<PlannedOrchestrationEvent> = [];
+      const edited: Array<PlannedBoardEvent> = [];
       for (const dependent of remaining) {
         if (!dependent.dependsOn.includes(command.cardId)) continue;
         const dependsOn = dependent.dependsOn.filter((id) => id !== command.cardId);
@@ -2836,9 +2897,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       ];
       const childIdByPlan = new Map<BoardPlanId, BoardCardId>();
       for (const plan of plans) {
-        childIdByPlan.set(plan.planId, BoardCardId.make(yield* crypto.randomUUIDv4));
+        childIdByPlan.set(plan.planId, BoardCardId.make(yield* crypto.randomUUIDv4()));
       }
-      const events: Array<PlannedOrchestrationEvent> = [];
+      const events: Array<PlannedBoardEvent> = [];
       const childCardIds: Array<BoardCardId> = [];
       for (const plan of plans) {
         const childId = childIdByPlan.get(plan.planId)!;
@@ -4198,7 +4259,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // the generator fall through and return `undefined` in place of an
       // event.
       const fallback = command as never as { readonly type: string };
-      return yield* new OrchestrationCommandInvariantError({
+      return yield* new BoardCommandInvariantError({
         commandType: fallback.type,
         detail: `Unhandled board command type: ${fallback.type}`,
       });

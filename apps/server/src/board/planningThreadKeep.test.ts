@@ -9,11 +9,11 @@ import {
   boardCardStepCompletions,
   boardCardStepState,
   CommandId,
-  type OrchestrationEvent,
   ThreadId,
   type BoardCard,
   type BoardStageId,
   type BoardState,
+  type BoardEvent,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -29,6 +29,7 @@ import {
 } from "./planningThreadKeep.ts";
 import { projectBoardEvent } from "./projector.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
+import { fakeThreadState } from "./threadGateway.testkit.ts";
 import {
   aliveThreadShell,
   cardMoved,
@@ -94,11 +95,8 @@ const completePlanning = (h: Harness, threadId: ThreadId, sequence: number) =>
       readModel: yield* Ref.get(h.model),
     }).pipe(Effect.provide(NodeServices.layer), Effect.orDie);
     for (const planned of boardDecidedEvents(decided)) {
-      const event = { ...planned, sequence } as unknown as OrchestrationEvent;
-      const next = yield* projectBoardEvent(
-        yield* Ref.get(h.model),
-        event as Parameters<typeof projectBoardEvent>[1],
-      ).pipe(Effect.orDie);
+      const event = { ...planned, sequence } as BoardEvent;
+      const next = yield* projectBoardEvent(yield* Ref.get(h.model), event).pipe(Effect.orDie);
       yield* Ref.set(h.model, next);
       yield* h.pumpDomain(event);
     }
@@ -123,7 +121,7 @@ const startPlanning = (h: Harness) =>
 const sprintCard = () => makeBoardCard({ id: "card-1", stage: "sprint", orderKey: "m" });
 
 const spawnedThreads = (commands: ReadonlyArray<{ readonly type: string }>) =>
-  commands.filter((command) => command.type === "thread.create").length;
+  commands.filter((command) => command.type === "thread.spawn").length;
 
 describe("leaving Planning before the plan is written", () => {
   it.effect("keeps the planning thread linked and lets its turn finish", () =>
@@ -143,7 +141,7 @@ describe("leaving Planning before the plan is written", () => {
         );
         assert.isUndefined(
           (yield* h.commands).find(
-            (command) => command.type === "thread.turn.interrupt" && command.threadId === threadId,
+            (command) => command.type === "thread.interrupt" && command.threadId === threadId,
           ),
         );
       }),
@@ -170,7 +168,7 @@ describe("leaving Planning before the plan is written", () => {
         const after = (yield* h.commands).slice(before.length);
         assert.strictEqual(spawnedThreads(after), 0, "no fresh interview thread");
         assert.isUndefined(
-          after.find((command) => command.type === "thread.turn.start"),
+          after.find((command) => command.type === "thread.send"),
           "the planning prompt is not sent again",
         );
         assert.deepStrictEqual(
@@ -237,10 +235,11 @@ describe("leaving Planning before the plan is written", () => {
       Effect.gen(function* () {
         const threadId = yield* startPlanning(h);
         yield* move(h, READY, 2);
-        yield* setShell(h, threadId, {
-          ...idleThreadShell(String(threadId)),
-          hasPendingUserInput: true,
-        });
+        yield* setShell(
+          h,
+          threadId,
+          fakeThreadState(String(threadId), { sessionStatus: "idle", awaitingUserInput: true }),
+        );
 
         yield* move(h, PLANNING, 3);
 

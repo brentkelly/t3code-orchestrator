@@ -22,9 +22,6 @@ import {
   type BoardCard,
   type BoardCardStepState,
   type BoardCardThreadLink,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
-  type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -39,7 +36,10 @@ import {
   projectId,
   settingsWith,
   withGovernor,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import type { BoardThreadState } from "./ThreadGateway.ts";
 
 const cardId = BoardCardId.make("card-1");
 const planning = String(BOARD_SEED_STAGE_IDS.planning);
@@ -98,7 +98,7 @@ const planningStep = (input: {
 
 /** What the decider emits for `board.card.set-project`: the post-state card,
     plus the project and key it gave up. */
-const cardProjectChanged = (card: BoardCard, sequence: number): OrchestrationEvent =>
+const cardProjectChanged = (card: BoardCard, sequence: number): HarnessEvent =>
   ({
     type: "board.card-project-changed",
     sequence,
@@ -109,19 +109,19 @@ const cardProjectChanged = (card: BoardCard, sequence: number): OrchestrationEve
       previousCardNumber: 1,
       card,
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
 interface MoveOutcome {
   readonly state: BoardCardStepState | null;
   readonly card: BoardCard;
-  readonly commands: ReadonlyArray<OrchestrationCommand>;
+  readonly commands: ReadonlyArray<HarnessCommand>;
   readonly settledThreads: ReadonlySet<string>;
 }
 
 const moveOutcome = (input: {
   readonly card: BoardCard;
   readonly stepStates: ReadonlyArray<BoardCardStepState>;
-  readonly shells?: ReadonlyMap<string, OrchestrationThreadShell>;
+  readonly shells?: ReadonlyMap<string, BoardThreadState>;
 }): Effect.Effect<MoveOutcome> =>
   Effect.gen(function* () {
     let outcome: MoveOutcome | null = null;
@@ -181,7 +181,7 @@ it.effect("abandons the running planning agent and restarts the stage in the new
     // longer belongs to.
     assert.isDefined(
       outcome.commands.find(
-        (command) => command.type === "thread.turn.interrupt" && command.threadId === oldThread,
+        (command) => command.type === "thread.interrupt" && command.threadId === oldThread,
       ),
       "the abandoned turn is interrupted",
     );
@@ -195,10 +195,10 @@ it.effect("abandons the running planning agent and restarts the stage in the new
     // The new thread is spawned against the card's NEW project — the whole
     // point of the restart.
     const created = outcome.commands.find(
-      (command) => command.type === "thread.create" && command.threadId === outcome.state?.threadId,
+      (command) => command.type === "thread.spawn" && command.threadId === outcome.state?.threadId,
     );
     assert.isDefined(created);
-    if (created?.type === "thread.create") {
+    if (created?.type === "thread.spawn") {
       assert.strictEqual(created.projectId, otherProjectId);
     }
   }),
@@ -266,7 +266,7 @@ it.effect("leaves a thread the human adopted alone", () =>
     );
     assert.isUndefined(
       outcome.commands.find(
-        (command) => command.type === "thread.turn.interrupt" && command.threadId === adoptedThread,
+        (command) => command.type === "thread.interrupt" && command.threadId === adoptedThread,
       ),
       "the adopted thread's turn is not interrupted",
     );
@@ -286,7 +286,7 @@ it.effect("starts nothing for a card in a stage that does not auto-execute", () 
 
     assert.isNull(outcome.state, "no run row was selected");
     assert.isUndefined(
-      outcome.commands.find((command) => command.type === "thread.create"),
+      outcome.commands.find((command) => command.type === "thread.spawn"),
       "no thread was spawned",
     );
   }),

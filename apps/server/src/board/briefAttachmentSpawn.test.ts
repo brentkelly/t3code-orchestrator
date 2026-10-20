@@ -92,10 +92,13 @@ it.effect("a planning spawn carries the brief's images as pending uploads", () =
             cardMoved(cardWith("planning", [document, image]), "sprint", "planning", 1),
           );
           const dispatched = yield* commands;
-          const turn = dispatched.find((command) => command.type === "thread.turn.start");
-          assert.isDefined(turn, "the planning step's first turn was dispatched");
-          if (turn?.type !== "thread.turn.start") return;
-          const attachments = turn.message.attachments;
+          const spawn = dispatched.find((command) => command.type === "thread.spawn");
+          assert.isDefined(
+            spawn,
+            "the planning step's spawn (and so its first turn) was dispatched",
+          );
+          if (spawn?.type !== "thread.spawn") return;
+          const attachments = spawn.attachments;
           assert.strictEqual(attachments.length, 1, "images only, files stay on disk");
           const [only] = attachments;
           assert.strictEqual(only?.type, "image");
@@ -128,10 +131,10 @@ it.effect("a card with only non-image files spawns with no attachments", () =>
       ({ pumpDomain, commands }) =>
         Effect.gen(function* () {
           yield* pumpDomain(cardMoved(cardWith("planning", [document]), "sprint", "planning", 1));
-          const turn = (yield* commands).find((command) => command.type === "thread.turn.start");
-          assert.isDefined(turn);
-          if (turn?.type !== "thread.turn.start") return;
-          assert.deepStrictEqual(turn.message.attachments, []);
+          const spawn = (yield* commands).find((command) => command.type === "thread.spawn");
+          assert.isDefined(spawn);
+          if (spawn?.type !== "thread.spawn") return;
+          assert.deepStrictEqual(spawn.attachments, []);
         }),
     );
     NodeFS.rmSync(storage.baseDir, { recursive: true, force: true });

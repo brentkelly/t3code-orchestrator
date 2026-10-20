@@ -17,7 +17,6 @@ import {
   boardCardStepState,
   type BoardCardStepState,
   type BoardStepCompletion,
-  type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -31,6 +30,7 @@ import {
   settingsWith,
   stepRequeued,
   withGovernor,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const cardId = BoardCardId.make("card-1");
@@ -98,7 +98,7 @@ const throughTriage = [
   }),
 ];
 
-const adjudicated = (sequence: number): OrchestrationEvent =>
+const adjudicated = (sequence: number): HarnessEvent =>
   ({
     type: "board.card-step-completed",
     sequence,
@@ -108,16 +108,16 @@ const adjudicated = (sequence: number): OrchestrationEvent =>
         verdicts: [{ findingId: "R1-1", verdict: "fix-incomplete", note: "still panics" }],
       }),
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
-const stageThreadRequested = (sequence: number): OrchestrationEvent =>
+const stageThreadRequested = (sequence: number): HarnessEvent =>
   ({
     type: "board.card-stage-thread-requested",
     sequence,
     payload: { cardId, stageId: review },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
-const selectedStepIds = (events: ReadonlyArray<OrchestrationEvent>): ReadonlyArray<string> =>
+const selectedStepIds = (events: ReadonlyArray<HarnessEvent>): ReadonlyArray<string> =>
   events.flatMap((event) =>
     event.type === "board.card-step-selected" && event.payload.state.cardId === cardId
       ? [event.payload.state.stepId]
@@ -155,13 +155,12 @@ it.effect("Continue runs the owed phase on a new thread, and the loop carries on
       assert.strictEqual(running?.stepId, "adjudicate@1");
       assert.strictEqual(running?.status, "running");
       assert.isNotNull(running?.threadId ?? null);
-      const created = (yield* commands).find((command) => command.type === "thread.create");
-      assert.isDefined(created, "a thread is spawned for the owed phase");
-      const turn = (yield* commands).find(
-        (command) => command.type === "thread.turn.start" && command.threadId === running?.threadId,
+      const created = (yield* commands).find(
+        (command) => command.type === "thread.spawn" && command.threadId === running?.threadId,
       );
+      assert.isDefined(created, "a thread is spawned for the owed phase");
       assert.include(
-        turn?.type === "thread.turn.start" ? turn.message.text : "",
+        created?.type === "thread.spawn" ? created.text : "",
         ADJUDICATE_PROMPT,
         "the new thread is given the phase's prompt",
       );
@@ -183,7 +182,7 @@ it.effect("Restart supersedes the stalled phase with a fresh unattended run of i
       // without reporting the phase.
       const selected = (yield* decided).find(
         (event) => event.type === "board.card-step-selected",
-      ) as Extract<OrchestrationEvent, { type: "board.card-step-selected" }> | undefined;
+      ) as Extract<HarnessEvent, { type: "board.card-step-selected" }> | undefined;
       assert.strictEqual(selected?.payload.state.stepId, "adjudicate@1");
       assert.isFalse(selected?.payload.state.humanInLoop);
       assert.include(selected?.payload.state.prompt ?? "", "Adjudicate phase, round 1");

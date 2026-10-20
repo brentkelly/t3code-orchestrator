@@ -31,8 +31,6 @@ import {
   type BoardCard,
   type BoardCardId,
   type BoardCardStepState,
-  type OrchestrationCommand,
-  type OrchestrationEvent,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -43,7 +41,10 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type HarnessCommand,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+import { fakeThreadState } from "./threadGateway.testkit.ts";
 import type { BoardMergeState } from "./boardMergeState.ts";
 
 const openPr: VcsStatusChangeRequest = {
@@ -128,14 +129,14 @@ const runningMergeStep = (cardId: BoardCardId): BoardCardStepState => ({
 });
 
 /** The on-demand kickoff signal a Merge-click conflict dispatches. */
-const stageThreadRequested = (card: BoardCard, sequence: number): OrchestrationEvent =>
+const stageThreadRequested = (card: BoardCard, sequence: number): HarnessEvent =>
   ({
     type: "board.card-stage-thread-requested",
     sequence,
     payload: { cardId: card.id, stage: card.stage },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
-const mergeStepCompleted = (cardId: BoardCardId, sequence: number): OrchestrationEvent =>
+const mergeStepCompleted = (cardId: BoardCardId, sequence: number): HarnessEvent =>
   ({
     type: "board.card-step-completed",
     sequence,
@@ -151,19 +152,19 @@ const mergeStepCompleted = (cardId: BoardCardId, sequence: number): Orchestratio
         completedAt: "2026-01-01T00:00:00.000Z",
       },
     },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
-const recordedPullRequests = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const recordedPullRequests = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.record-pull-request");
 
 /** The activity-rail notes branch cleanup reports — its only observable. */
-const branchCleanupNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const branchCleanupNotes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter(
     (command) =>
       command.type === "board.card.record-note" && command.kind === "card-branch-deleted",
   );
 
-const movesTo = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const movesTo = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.flatMap((command) =>
     command.type === "board.card.move" ? [String(command.toStage)] : [],
   );
@@ -1203,10 +1204,16 @@ describe("merging a card's pull request", () => {
           // Refused for the failing check, then accepted after the fix.
           mergeOutcomes: ["the host refused", null],
           mergeState: refusal({ failed: 1 }),
-          initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
+          initialShells: new Map([
+            ["thread-1", fakeThreadState("thread-1", { sessionStatus: "none" })],
+          ]),
         },
         (h) =>
           Effect.gen(function* () {
+            // Boot reconcile first. It is queued at start and runs lazily, so left
+            // behind the completion pumped below it would read that completion as a
+            // step that finished while the server was down, and settle it itself.
+            yield* h.reactor.drain;
             assert.equal((yield* h.reactor.mergePullRequest(card.id)).outcome, "checks-fix");
             yield* Ref.update(h.model, (model) => ({
               ...model,
@@ -1233,10 +1240,16 @@ describe("merging a card's pull request", () => {
           pullRequest: openPr,
           mergeFailure: "the host refused",
           mergeState: refusal({ failed: 1 }),
-          initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
+          initialShells: new Map([
+            ["thread-1", fakeThreadState("thread-1", { sessionStatus: "none" })],
+          ]),
         },
         (h) =>
           Effect.gen(function* () {
+            // Boot reconcile first. It is queued at start and runs lazily, so left
+            // behind the completion pumped below it would read that completion as a
+            // step that finished while the server was down, and settle it itself.
+            yield* h.reactor.drain;
             const startedFixes = Effect.map(
               h.commands,
               (commands) =>
@@ -1388,7 +1401,9 @@ describe("merging a card's pull request", () => {
           pullRequest: openPr,
           mergeFailure: "the host refused",
           mergeState: refusal({ blockedReason: "conflict" }),
-          initialShells: new Map([["thread-human", { id: "thread-human" } as never]]),
+          initialShells: new Map([
+            ["thread-human", fakeThreadState("thread-human", { sessionStatus: "none" })],
+          ]),
         },
         (h) =>
           Effect.gen(function* () {
@@ -1466,8 +1481,9 @@ describe("merging a card's pull request", () => {
     ),
   );
 
-  for (const localMergeConflict of ["unresolvable", "unfetched"] as const) {
-    it.effect(`does NOT start a conflict fix when git could not look (${localMergeConflict})`, () =>
+  it.effect.each(["unresolvable", "unfetched"] as const)(
+    "does NOT start a conflict fix when git could not look (%s)",
+    (localMergeConflict) =>
       withGovernor(
         {
           board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
@@ -1490,8 +1506,7 @@ describe("merging a card's pull request", () => {
             assert.deepStrictEqual(started, []);
           }),
       ),
-    );
-  }
+  );
 
   it.effect("does NOT read a missing approval as a conflict", () =>
     withGovernor(
@@ -1528,7 +1543,9 @@ describe("merging a card's pull request", () => {
         },
         settings: settings(),
         pullRequest: openPr,
-        initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
+        initialShells: new Map([
+          ["thread-1", fakeThreadState("thread-1", { sessionStatus: "none" })],
+        ]),
       },
       (h) =>
         Effect.gen(function* () {
@@ -1680,10 +1697,16 @@ describe("merging a card's pull request", () => {
           pullRequest: openPr,
           mergeFailure: "the host refused",
           mergeState: refusal({ blockedReason: "conflict" }),
-          initialShells: new Map([["thread-1", { id: "thread-1" } as never]]),
+          initialShells: new Map([
+            ["thread-1", fakeThreadState("thread-1", { sessionStatus: "none" })],
+          ]),
         },
         (h) =>
           Effect.gen(function* () {
+            // Boot reconcile first. It is queued at start and runs lazily, so left
+            // behind the completion pumped below it would read that completion as a
+            // step that finished while the server was down, and settle it itself.
+            yield* h.reactor.drain;
             // Arm the card the only way a human can: a Merge click that
             // conflicts.
             const clicked = yield* h.reactor.mergePullRequest(card.id);

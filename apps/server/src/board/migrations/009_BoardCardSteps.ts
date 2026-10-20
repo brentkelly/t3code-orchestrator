@@ -6,7 +6,7 @@
 // (D8). `payload` is the agent's structured payload carried verbatim as a
 // JSON string, or NULL.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

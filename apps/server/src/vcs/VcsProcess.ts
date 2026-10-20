@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   type VcsError,
@@ -20,7 +20,7 @@ import {
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
 // T3o: per-project GitHub token overrides for `gh` subprocesses (t3o-34).
-import { scrubGitenvTokens, withGitenvTokenEnv } from "../sourceControl/gitenv.ts";
+import { scrubGitenvTokens, withGitenvTokenEnv } from "@t3tools/shared/gitenv";
 
 export interface VcsProcessInput {
   readonly operation: string;

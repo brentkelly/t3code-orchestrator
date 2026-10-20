@@ -36,9 +36,9 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import ChatView from "../components/ChatView";
+import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
-import { useThreadDetail, useThreadShell, useThreadStatus } from "../state/entities";
-import { resolveThreadSyncPhase } from "../threadSync";
+import { useThreadShell } from "../state/entities";
 import { BoardCardThreadAddMenu, type BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardThreadTodosStrip } from "./BoardCardThreadTodosStrip";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
@@ -57,13 +57,6 @@ function BoardCardChat({
 }) {
   const threadRef = scopeThreadRef(environmentId, threadId);
   const shell = useThreadShell(threadRef);
-  const detail = useThreadDetail(threadRef);
-  const status = useThreadStatus(threadRef);
-  const threadSyncPhase = resolveThreadSyncPhase({
-    detailExists: detail !== null,
-    shellExists: shell !== null,
-    status,
-  });
 
   if (shell === null) {
     return (
@@ -76,10 +69,8 @@ function BoardCardChat({
     <ChatView
       chrome="embedded"
       environmentId={environmentId}
-      reserveTitleBarControlInset={false}
       routeKind="server"
       threadId={threadId}
-      threadSyncPhase={threadSyncPhase}
     />
   );
 }
@@ -159,11 +150,7 @@ export function BoardCardThreadPane({
     const el = stripRef.current;
     if (el === null) return undefined;
     syncScrollAffordance();
-    const observer = new ResizeObserver(syncScrollAffordance);
-    observer.observe(el);
-    return () => {
-      observer.disconnect();
-    };
+    return observeResize(el, syncScrollAffordance);
   }, [syncScrollAffordance, threadLinks]);
   const scrollOlderIntoView = () => {
     stripRef.current?.scrollBy({ left: stripRef.current.clientWidth * 0.7, behavior: "smooth" });

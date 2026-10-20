@@ -20,7 +20,6 @@ import {
   ProviderInstanceId,
   type BoardCardStepState,
   type BoardStepCompletion,
-  type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -32,6 +31,7 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const cardId = BoardCardId.make("card-1");
@@ -131,14 +131,14 @@ const withReviewAutoExecute = (autoExecute: boolean) => {
   };
 };
 
-const repeatCompletion = (recorded: BoardStepCompletion): OrchestrationEvent =>
+const repeatCompletion = (recorded: BoardStepCompletion): HarnessEvent =>
   ({
     type: "board.card-step-completed",
     sequence: 2,
     payload: { cardId, completion: recorded },
-  }) as unknown as OrchestrationEvent;
+  }) as unknown as HarnessEvent;
 
-const selectedStepIds = (events: ReadonlyArray<OrchestrationEvent>): ReadonlyArray<string> =>
+const selectedStepIds = (events: ReadonlyArray<HarnessEvent>): ReadonlyArray<string> =>
   events.flatMap((event) =>
     event.type === "board.card-step-selected" && event.payload.state.cardId === cardId
       ? [event.payload.state.stepId]

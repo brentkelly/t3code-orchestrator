@@ -51,6 +51,7 @@ describe("buildT3ProjectFileJsonSchema", () => {
       "icon",
       "name",
       "previewUrl",
+      "runOnSettle",
       "runOnWorktreeCreate",
       // T3o: T3O-23 remove scripts.
       "runOnWorktreeRemove",

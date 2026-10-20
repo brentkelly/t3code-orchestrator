@@ -8,7 +8,7 @@
 // is 0/1 (SQLite has no boolean), tracked so a concurrency slot is released
 // exactly once at every terminal outcome, including a crash.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

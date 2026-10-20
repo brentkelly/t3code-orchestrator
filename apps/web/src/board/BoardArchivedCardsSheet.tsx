@@ -5,10 +5,9 @@
  * Restore action both existed, but nothing listed an archived card, so neither
  * was reachable. This sheet is that list.
  *
- * It reads the archive-page snapshot the archived-threads panel already uses,
- * which the board enriches with archived cards server-side — the archive is a
- * page you open, never state every client carries, so archived cards stay off
- * the live shell and the delta stream (D15).
+ * It reads `board.getArchivedCards` when it opens — the archive is a page you
+ * open, never state every client carries, so archived cards stay off the live
+ * board and its delta stream (D15).
  */
 import {
   boardCardWorktreeKeptReason,
@@ -20,7 +19,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { ArchiveRestoreIcon, HardDriveIcon, LayersIcon, Trash2Icon } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 
 import { Button } from "../components/ui/button";
 import { ScrollArea } from "../components/ui/scroll-area";
@@ -31,7 +30,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from "../components/ui/sheet";
-import { orchestrationEnvironment } from "../state/orchestration";
+import { boardEnvironment } from "../state/board";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { boardArchivedCardsInScope } from "./boardArchivedCards";
@@ -39,14 +38,14 @@ import { BoardDeleteConfirmDialog } from "./BoardDeleteConfirmDialog";
 import { boardStageLabel } from "./boardStages";
 import { BoardHint } from "./BoardHint";
 
-function archivedSnapshotAtom(environmentId: EnvironmentId) {
-  return orchestrationEnvironment.archivedShellSnapshot({ environmentId, input: {} });
+function archivedCardsAtom(environmentId: EnvironmentId) {
+  return boardEnvironment.archivedCardsAtom({ environmentId, input: {} });
 }
 
 /** Re-read the archive, so a card that just left it (restore) or just joined
     it (archive) is reflected on the next render. */
 export function refreshBoardArchivedCards(environmentId: EnvironmentId): void {
-  appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
+  appAtomRegistry.refresh(archivedCardsAtom(environmentId));
 }
 
 /**
@@ -86,8 +85,9 @@ function ArchivedCardList({
     refreshBoardArchivedCards(environmentId);
   }, [environmentId]);
 
-  const result = useAtomValue(archivedSnapshotAtom(environmentId));
+  const result = useAtomValue(archivedCardsAtom(environmentId));
   const snapshot = Option.getOrNull(AsyncResult.value(result));
+  const stages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
 
   const cards = useMemo(
     () => boardArchivedCardsInScope(snapshot?.cards ?? [], scopeProjectId),
@@ -168,7 +168,7 @@ function ArchivedCardList({
                 </BoardHint>
               ) : null}
               <span className="shrink-0 text-[11px] text-muted-foreground">
-                {boardStageLabel(snapshot?.boardStages ?? [], card.stage)}
+                {boardStageLabel(stages, card.stage)}
               </span>
               {card.archivedAt === null ? null : (
                 <span className="shrink-0 text-[11px] text-muted-foreground">

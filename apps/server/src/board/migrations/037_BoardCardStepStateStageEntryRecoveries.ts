@@ -13,7 +13,7 @@
 // currently wedged past the old ceiling stops being falsely escalated the
 // moment the server restarts.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

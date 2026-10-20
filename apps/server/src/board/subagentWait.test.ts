@@ -10,8 +10,8 @@
  * nudge interrupted the agent and made it end another turn, so the card climbed
  * the stall ladder while its subagents were doing the work.
  *
- * The thread already says when background work is running: the shell's
- * `backgroundLiveness` is what draws the composer's "N agents working" /
+ * The thread already says when background work is running: the thread state's
+ * `backgroundWork` is what draws the composer's "N agents working" /
  * "Monitoring" banner and the card's working dot. The turn-end handler reads
  * the same field, and since T3O-20 treats a monitor the same as subagents.
  *
@@ -22,8 +22,6 @@ import {
   BoardCardId,
   boardCardStepState,
   type BoardState,
-  type OrchestrationCommand,
-  type OrchestrationThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -38,7 +36,9 @@ import {
   turnCompleted,
   withGovernor,
   type Harness,
+  type HarnessCommand,
 } from "./supervisorHarness.testkit.ts";
+import { fakeThreadState } from "./threadGateway.testkit.ts";
 
 const oneBuildCard = (id: string) => ({
   board: { cards: [buildingCard(id, "m")], nextCardNumberByProject: {} },
@@ -56,33 +56,22 @@ const startBuild = (h: Pick<Harness, "pumpDomain" | "board">, id: string) =>
 
 /** The thread between turns: no turn live, with whatever background work the
     liveness registry reports. */
-const idleShell = (
-  threadId: ThreadId,
-  backgroundLiveness: "working" | "monitoring" | null,
-): OrchestrationThreadShell =>
-  ({
-    id: threadId,
-    hasPendingUserInput: false,
-    hasPendingApprovals: false,
-    archivedAt: null,
-    settledOverride: null,
-    session: { status: "ready", activeTurnId: null },
-    backgroundLiveness,
-  }) as unknown as OrchestrationThreadShell;
+const idleShell = (threadId: ThreadId, backgroundWork: "working" | "monitoring" | null) =>
+  fakeThreadState(String(threadId), { sessionStatus: "idle", backgroundWork });
 
 const setShell = (
   shells: Harness["shells"],
   threadId: ThreadId,
-  backgroundLiveness: "working" | "monitoring" | null,
+  backgroundWork: "working" | "monitoring" | null,
 ) =>
   Ref.update(
     shells,
-    (current) => new Map([...current, [String(threadId), idleShell(threadId, backgroundLiveness)]]),
+    (current) => new Map([...current, [String(threadId), idleShell(threadId, backgroundWork)]]),
   );
 
 const stateOf = (board: BoardState, id: string) => boardCardStepState(board, BoardCardId.make(id));
 
-const recoveries = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const recoveries = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.recover-step").length;
 
 it.effect("a turn that ends while subagents are working leaves the step running", () =>

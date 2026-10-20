@@ -14,7 +14,6 @@ import {
   BOARD_SEED_STAGE_IDS,
   type BoardCard,
   type BoardCardPullRequest,
-  type OrchestrationCommand,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
@@ -25,6 +24,7 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type HarnessCommand,
 } from "./supervisorHarness.testkit.ts";
 import type { BoardMergeState } from "./boardMergeState.ts";
 
@@ -60,11 +60,11 @@ const linkedRecord = (overrides: Partial<BoardCardPullRequest> = {}): BoardCardP
   ...overrides,
 });
 
-const linkCommands = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const linkCommands = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.set-linked-pull-request");
 
 const branchCleanupNotes = (
-  commands: ReadonlyArray<OrchestrationCommand>,
+  commands: ReadonlyArray<HarnessCommand>,
   kind: "card-branch-deleted" | "card-branch-kept" = "card-branch-deleted",
 ) =>
   commands.filter((command) => command.type === "board.card.record-note" && command.kind === kind);
@@ -397,52 +397,50 @@ describe("merging a card with a linked pull request", () => {
       checksUnread: false,
     }) satisfies BoardMergeState;
 
-  for (const [label, mergeState] of [
+  it.effect.each([
     ["conflicts", refusedFor({ blockedReason: "conflict", failed: 0 })],
     ["fails its checks", refusedFor({ blockedReason: null, failed: 1 })],
-  ] as const) {
-    it.effect(`starts no fix agent when a linked PR on another branch ${label}`, () =>
-      withGovernor(
-        {
-          board: {
-            nextCardNumberByProject: {},
-            cards: [
-              {
-                ...reviewCard({ stage: String(BOARD_SEED_STAGE_IDS.merge) }),
-                pullRequest: linkedRecord(),
-              },
-            ],
-          },
-          settings: settings(),
-          pullRequestByNumber: layerPr,
-          mergeFailure: "the host refused",
-          mergeState,
+  ] as const)("starts no fix agent when a linked PR on another branch %s", ([label, mergeState]) =>
+    withGovernor(
+      {
+        board: {
+          nextCardNumberByProject: {},
+          cards: [
+            {
+              ...reviewCard({ stage: String(BOARD_SEED_STAGE_IDS.merge) }),
+              pullRequest: linkedRecord(),
+            },
+          ],
         },
-        (h) =>
-          Effect.gen(function* () {
-            const result = yield* h.reactor.mergePullRequest(reviewCard().id);
-            assert.equal(result.outcome, "refused");
-            assert.include(
-              result.outcome === "refused" ? result.detail : "",
-              "The pull request is on stack/layer-2, not this card's branch",
-            );
-            // The fix agent would work the card's own worktree, not stack/layer-2.
-            assert.deepEqual(
-              (yield* h.commands).filter(
-                (command) => command.type === "board.card.start-stage-thread",
-              ),
-              [],
-            );
-          }),
-      ),
-    );
-  }
+        settings: settings(),
+        pullRequestByNumber: layerPr,
+        mergeFailure: "the host refused",
+        mergeState,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const result = yield* h.reactor.mergePullRequest(reviewCard().id);
+          assert.equal(result.outcome, "refused");
+          assert.include(
+            result.outcome === "refused" ? result.detail : "",
+            "The pull request is on stack/layer-2, not this card's branch",
+          );
+          // The fix agent would work the card's own worktree, not stack/layer-2.
+          assert.deepEqual(
+            (yield* h.commands).filter(
+              (command) => command.type === "board.card.start-stage-thread",
+            ),
+            [],
+          );
+        }),
+    ),
+  );
 });
 
 describe("the run prompt names a linked pull request", () => {
-  const turnText = (commands: ReadonlyArray<OrchestrationCommand>) => {
-    const turn = commands.find((command) => command.type === "thread.turn.start");
-    return turn?.type === "thread.turn.start" ? turn.message.text : "";
+  const turnText = (commands: ReadonlyArray<HarnessCommand>) => {
+    const spawn = commands.find((command) => command.type === "thread.spawn");
+    return spawn?.type === "thread.spawn" ? spawn.text : "";
   };
 
   // The card's worktree is board/<key>, not the linked head, and the shipped

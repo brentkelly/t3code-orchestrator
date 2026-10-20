@@ -61,7 +61,6 @@ import {
   type BoardCardStepStalledReason,
   type ProviderInstanceId,
   type BoardUsageLimitMatch,
-  type RuntimeTurnState,
   BOARD_SUBMIT_STEP_ID,
   BOARD_SUBMIT_STEP_LABEL,
   DEFAULT_BOARD_BUILD_STAGE_EXECUTION,
@@ -77,13 +76,8 @@ import {
   DEFAULT_BOARD_CHECKS_FIX_PROMPT,
   type BoardMergeFixKind,
   isBoardCardScheduleDue,
-  // T3o: tells the board's own nudge from a human's message (T3O-17, D2).
-  isBoardMintedCommandId,
   isBoardParkedStepStatus,
   isBoardTerminalStepStatus,
-  deriveBoardCardThreadState,
-  isThreadAwaitingPermission,
-  MessageId,
   effectiveBoardRuntimeMode,
   resolveBoardCardForThread,
   resolveBoardStageExecution,
@@ -109,11 +103,7 @@ import {
   type BoardStageExecution,
   type BoardStageRole,
   type BoardState,
-  type OrchestrationEvent,
-  type OrchestrationReadModel,
-  type OrchestrationThreadShell,
-  type ProviderRuntimeEvent,
-  type TurnId,
+  type BoardEvent,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -129,17 +119,23 @@ import * as Random from "effect/Random";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { isAutoSettlementCandidate } from "../orchestration/ThreadSettlementPolicy.ts";
-import { ProviderService } from "../provider/Services/ProviderService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts";
-import { boardSnapshotQueryMethodsOf } from "./projection.ts";
+import { BoardEngine } from "./BoardEngine.ts";
+import type { BoardDispatchError } from "./errors.ts";
+import { BoardQueries } from "./BoardQueries.ts";
+import {
+  ThreadGateway,
+  type BoardProject,
+  type BoardTurnOutcome,
+  type ThreadCommandError,
+  type ThreadSignal,
+} from "./ThreadGateway.ts";
+import type { BoardCommand } from "./decider.ts";
 import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
 import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
 import { pullMergedBaseBranch } from "./baseBranchSync.ts";
@@ -402,8 +398,8 @@ export class SupervisorReactor extends Context.Service<SupervisorReactor, Superv
 ) {}
 
 type SupervisorInput =
-  | { readonly source: "domain"; readonly event: OrchestrationEvent }
-  | { readonly source: "runtime"; readonly event: ProviderRuntimeEvent }
+  | { readonly source: "domain"; readonly event: BoardEvent }
+  | { readonly source: "thread"; readonly signal: ThreadSignal }
   // Boot reconcile, run THROUGH the worker so it is serialised before the live
   // events it causes (the subscriptions attach first — see `start`).
   | { readonly source: "reconcile" }
@@ -420,36 +416,10 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
     matters, short enough that it cannot bloat the log. */
 const MAX_AUTO_MERGE_REASON_LENGTH = 400;
 
-/** The `detail` string off a `provider.*.failed` activity payload, which the
-    activity schema types as `unknown` (t3o-30, D2). Anything else reads as an
-    empty detail rather than throwing — a malformed payload must not stop the
-    board from landing the step. */
-function providerFailureDetail(payload: unknown): string {
-  if (payload === null || typeof payload !== "object") return "";
-  const detail = (payload as { readonly detail?: unknown }).detail;
-  return typeof detail === "string" ? detail : "";
-}
-
-/** Whether a step's thread is still doing live work — an active turn or a
-    pending question a human can still answer. A present-but-idle thread (turn
-    ended, session reaped) is NOT alive for supervision purposes: its step
-    settled without completing, which is the death path.
- *
-    A session upstream marked `error` is dead whatever else the shell still says
-    (t3o-10, D1) — the same rule the thread list reads to show `Failed`
-    (`resolveSidebarThreadStatus`), so the supervisor, the card and the thread
-    list can never disagree about whether a thread is alive. This is the shape
-    a restart leaves behind: `reconcileProviderSessions` errors the orphaned
-    session, but the killed turn's id lingers on the projection, so measuring
-    liveness by `activeTurnId` alone reads a corpse as mid-turn and waits
-    forever for a `turn.completed` that died with the process. A pending
-    question cannot be answered in a dead session either, so `error` outranks
-    that too. */
-function threadIsAlive(shell: OrchestrationThreadShell): boolean {
-  if (shell.session?.status === "error") return false;
-  return (
-    shell.hasPendingUserInput || (shell.session !== null && shell.session.activeTurnId !== null)
-  );
+/** The board with the projects its cards live in (T3O-58). */
+interface BoardWorld {
+  readonly board: BoardState | undefined;
+  readonly projects: ReadonlyArray<BoardProject>;
 }
 
 /**
@@ -514,9 +484,9 @@ function settledReviewPhase(
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
-  const engine = yield* OrchestrationEngineService;
-  const snapshotQuery = yield* ProjectionSnapshotQuery;
-  const providerService = yield* ProviderService;
+  const boardEngine = yield* BoardEngine;
+  const boardQueries = yield* BoardQueries;
+  const threads = yield* ThreadGateway;
   const serverSettings = yield* ServerSettingsService;
   const slots = yield* BoardStepSlots;
   const usageLimits = yield* UsageLimitDetector;
@@ -534,29 +504,43 @@ const make = Effect.gen(function* () {
   const serverActivation = yield* ServerActivation;
 
   const commandId = (tag: string) =>
-    crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:board-${tag}:${uuid}`)));
-  const freshThreadId = crypto.randomUUIDv4.pipe(
-    Effect.map((uuid) => ThreadId.make(`thread-${uuid}`)),
-  );
-  const freshMessageId = crypto.randomUUIDv4.pipe(
-    Effect.map((uuid) => MessageId.make(`msg-${uuid}`)),
+    crypto.randomUUIDv4().pipe(Effect.map((uuid) => CommandId.make(`server:board-${tag}:${uuid}`)));
+  const freshThreadId = crypto
+    .randomUUIDv4()
+    .pipe(Effect.map((uuid) => ThreadId.make(`thread-${uuid}`)));
+
+  const readBoard = boardEngine.getReadModel.pipe(
+    Effect.map((model): BoardState => model.board ?? EMPTY_BOARD_STATE),
   );
 
-  const readBoard = snapshotQuery
-    .getCommandReadModel()
-    .pipe(
-      Effect.map((model: OrchestrationReadModel): BoardState => model.board ?? EMPTY_BOARD_STATE),
-    );
+  /** The board with every project beside it — the one view a pass that reads
+      both cards and project roots decides from. */
+  const readModel = Effect.all([threads.projects(), boardEngine.getReadModel]).pipe(
+    Effect.map(([projects, model]): BoardWorld => ({ projects, board: model.board })),
+  );
 
-  const dispatch = (command: Parameters<typeof engine.dispatch>[0]) =>
-    engine.dispatch(command).pipe(
+  /** A thread the board can still act on — present and not deleted — or
+      undefined. */
+  const liveThread = (threadId: ThreadId) =>
+    threads
+      .threadState(threadId)
+      .pipe(Effect.map((state) => (state === null || state.deleted ? undefined : state)));
+
+  const dispatchAny = (command: BoardCommand) => boardEngine.dispatch(command);
+
+  /** Log a failed command the caller treats as best-effort. */
+  const logged = <E>(commandType: string, effect: Effect.Effect<unknown, E>) =>
+    effect.pipe(
+      Effect.asVoid,
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor dispatch failed", {
-          commandType: (command as { readonly type?: string }).type,
+          commandType,
           cause: Cause.pretty(cause),
         }),
       ),
     );
+
+  const dispatch = (command: BoardCommand) => logged(command.type, dispatchAny(command));
 
   /** `dispatch`, but a REFUSAL is an expected answer rather than a fault.
    *
@@ -575,38 +559,43 @@ const make = Effect.gen(function* () {
    *  storage failure, a defect) is still a warning, because none of these call
    *  sites is speculating about THAT.
    *
-   *  Two tags count as a refusal. `OrchestrationCommandInvariantError` is the
-   *  general one. `OrchestrationThreadSettleBlockedError` is the settle guard
-   *  saying the thread is still busy, which for the release sweep (t3o-13) is
-   *  not merely expected but the NORMAL answer — an agent reports its step
+   *  Two tags count as a refusal: the board decider's
+   *  `BoardCommandInvariantError`, and the thread gateway's
+   *  `ThreadCommandRefusedError`. The latter includes the settle guard saying
+   *  the thread is still busy, which for the release sweep (t3o-13) is not
+   *  merely expected but the NORMAL answer — an agent reports its step
    *  complete from inside its own turn — so logging it at WARN would turn the
    *  healthy path into a stream of warnings about nothing.
    *
    *  Returns whether the command LANDED, so a caller that is retrying until it
    *  does (again, the release sweep) can stop asking. */
-  const dispatchOptional = (command: Parameters<typeof engine.dispatch>[0]) =>
-    engine.dispatch(command).pipe(
+  const optional = (
+    commandType: string,
+    effect: Effect.Effect<unknown, BoardDispatchError | ThreadCommandError>,
+  ) =>
+    effect.pipe(
       Effect.as(true),
       Effect.catchCause((cause) => {
         const refusal = Cause.findErrorOption(cause).pipe(
           Option.filter(
             (error) =>
-              error._tag === "OrchestrationCommandInvariantError" ||
-              error._tag === "OrchestrationThreadSettleBlockedError",
+              error._tag === "BoardCommandInvariantError" ||
+              error._tag === "ThreadCommandRefusedError",
           ),
           Option.getOrUndefined,
         );
         return refusal === undefined
           ? Effect.logWarning("board supervisor dispatch failed", {
-              commandType: (command as { readonly type?: string }).type,
+              commandType,
               cause: Cause.pretty(cause),
             }).pipe(Effect.as(false))
           : Effect.logDebug("board supervisor dispatch refused", {
-              commandType: (command as { readonly type?: string }).type,
-              detail: "detail" in refusal ? refusal.detail : refusal.message,
+              commandType,
+              detail: refusal.detail,
             }).pipe(Effect.as(false));
       }),
     );
+  const dispatchOptional = (command: BoardCommand) => optional(command.type, dispatchAny(command));
 
   /** `dispatch`, but the caller learns WHY the decider said no: the refusal's
       own sentence, or `null` when the command landed.
@@ -623,18 +612,18 @@ const make = Effect.gen(function* () {
    *  fault, not the decider answering, and is logged like any other dispatch —
    *  the card must not display an infrastructure hiccup as though a rule had
    *  refused it. */
-  const dispatchRefusal = (command: Parameters<typeof engine.dispatch>[0]) =>
-    engine.dispatch(command).pipe(
+  const dispatchRefusal = (command: BoardCommand) =>
+    dispatchAny(command).pipe(
       Effect.as<string | null>(null),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt;
         const refusal = Cause.findErrorOption(cause).pipe(
-          Option.filter((error) => error._tag === "OrchestrationCommandInvariantError"),
+          Option.filter((error) => error._tag === "BoardCommandInvariantError"),
           Option.getOrUndefined,
         );
         return refusal === undefined
           ? Effect.logWarning("board supervisor dispatch failed", {
-              commandType: (command as { readonly type?: string }).type,
+              commandType: command.type,
               cause: Cause.pretty(cause),
             }).pipe(Effect.as<string | null>(null))
           : Effect.succeed<string | null>(refusal.detail);
@@ -645,8 +634,8 @@ const make = Effect.gen(function* () {
       helper above swallows a rejection, which is right for best-effort writes
       and wrong for the two commands a spawn is built from: a thread that was
       never created must not be recorded as the step's running thread. */
-  const dispatchLanded = (command: Parameters<typeof engine.dispatch>[0]) =>
-    engine.dispatch(command).pipe(
+  const landed = <E>(commandType: string, effect: Effect.Effect<unknown, E>) =>
+    effect.pipe(
       Effect.as(true),
       Effect.catchCause((cause) =>
         // An interrupt-only cause is a teardown, not a rejection: the command's
@@ -657,11 +646,12 @@ const make = Effect.gen(function* () {
         Cause.hasInterruptsOnly(cause)
           ? Effect.interrupt
           : Effect.logWarning("board supervisor dispatch failed", {
-              commandType: (command as { readonly type?: string }).type,
+              commandType,
               cause: Cause.pretty(cause),
             }).pipe(Effect.as(false)),
       ),
     );
+  const dispatchLanded = (command: BoardCommand) => landed(command.type, dispatchAny(command));
 
   const boardSettings = serverSettings.getSettings.pipe(
     Effect.map((settings) => settings.board ?? DEFAULT_BOARD_SETTINGS),
@@ -707,7 +697,6 @@ const make = Effect.gen(function* () {
   // noise: a ticked todo names the specific item finished, where a prose note
   // asserted only that the model still had tokens to spend. It is also durable
   // rather than in-memory, so a restart no longer costs an un-reset stall.
-  const boardQueries = boardSnapshotQueryMethodsOf(snapshotQuery);
   // Threads spawned for a step whose admit was then rejected (see
   // admitBuildCandidate): their turn must be stopped, but an interrupt fired
   // milliseconds after spawn races provider session startup and no-ops. The
@@ -719,12 +708,10 @@ const make = Effect.gen(function* () {
   const interruptOrphan = Effect.fn("board-supervisor-interruptOrphan")(function* (
     threadId: ThreadId,
   ) {
-    yield* dispatch({
-      type: "thread.turn.interrupt",
-      commandId: yield* commandId("interrupt-orphan"),
-      threadId,
-      createdAt: yield* nowIso,
-    });
+    yield* logged(
+      "thread.interrupt",
+      threads.interrupt({ commandId: yield* commandId("interrupt-orphan"), threadId }),
+    );
   });
 
   // Threads the board unlinked while they were still alive — a leftover step a
@@ -757,47 +744,37 @@ const make = Effect.gen(function* () {
    * pass, forever. They are split by cost, because a mature board holds hundreds
    * of released threads and all but a handful are settled already:
    *
-   *  1. From the read model already in hand: gone, or its settlement already
-   *     decided. Free, and on a settled board it retires the entire set.
-   *  2. `isAutoSettlementCandidate` on the survivors' thread shells — the same
-   *     policy upstream's inactivity sweep gates on, so "can this be settled
-   *     automatically" has one definition. It costs a query per candidate, which
-   *     is why it runs second: after (1), on a steady board, there are none.
+   *  1. One batch read of the cheap facts: gone, or its settlement already
+   *     decided. On a settled board it retires the entire set.
+   *  2. The thread engine's own auto-settle policy (`autoSettleCandidate`) on
+   *     the survivors — the same policy upstream's inactivity sweep gates on,
+   *     so "can this be settled automatically" has one definition. It costs a
+   *     query per candidate, which is why it runs second: after (1), on a
+   *     steady board, there are none.
    */
   const releaseFinishedThreads = Effect.gen(function* () {
-    const model = yield* snapshotQuery.getCommandReadModel();
-    const board = model.board ?? EMPTY_BOARD_STATE;
-    const threads = new Map(model.threads.map((thread) => [String(thread.id), thread]));
-    const now = yield* nowIso;
-    for (const threadId of boardReleasedThreadIds(board, abandonedThreads)) {
-      const thread = threads.get(String(threadId));
-      if (
-        thread === undefined ||
-        thread.deletedAt !== null ||
-        thread.archivedAt !== null ||
-        thread.settledOverride !== null
-      ) {
+    const board = yield* readBoard;
+    const released = [...boardReleasedThreadIds(board, abandonedThreads)];
+    const records = released.length === 0 ? new Map() : yield* threads.threadRecords(released);
+    for (const threadId of released) {
+      const thread = records.get(threadId);
+      if (thread === undefined || thread.deleted || thread.archived || thread.settlementDecided) {
         // Nothing left to ask about — and an abandoned thread that reaches this
         // is finished business, so stop carrying it.
         abandonedThreads.delete(String(threadId));
         continue;
       }
-      const shell = yield* snapshotQuery
-        .getThreadShellById(threadId)
-        .pipe(Effect.map(Option.getOrUndefined));
+      const shell = yield* liveThread(threadId);
       // Busy is the common refusal, and it is why this is a sweep rather than a
       // single shot: the agent that just reported its step complete is still
       // mid-turn. An unanswered approval is the other one, and unlike busy it
       // can last for days — which is exactly the receipt-per-pass this avoids.
-      if (shell === undefined || !isAutoSettlementCandidate(shell, now)) continue;
-      const landed = yield* dispatchOptional({
-        type: "thread.auto-settle",
-        commandId: yield* commandId("release-thread"),
-        threadId,
-        snapshotSequence: model.snapshotSequence,
-        settledAt: now,
-      });
-      if (landed) abandonedThreads.delete(String(threadId));
+      if (shell === undefined || !shell.autoSettleCandidate) continue;
+      const settled = yield* optional(
+        "thread.settle",
+        threads.settle({ commandId: yield* commandId("release-thread"), threadId, auto: true }),
+      );
+      if (settled) abandonedThreads.delete(String(threadId));
     }
   }).pipe(
     // Total, like the timeout sweep it rides with: a read-model hiccup must not
@@ -855,7 +832,7 @@ const make = Effect.gen(function* () {
   const threadTodoState = Effect.fn("board-supervisor-threadTodoState")(function* (
     threadId: ThreadId | null,
   ) {
-    if (threadId === null || boardQueries === null) return null;
+    if (threadId === null) return null;
     return yield* boardQueries
       .boardThreadTodo(threadId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
@@ -874,9 +851,9 @@ const make = Effect.gen(function* () {
   const threadLastSignalAt = Effect.fn("board-supervisor-threadLastSignalAt")(function* (
     threadId: ThreadId | null,
   ) {
-    if (threadId === null || boardQueries === null) return null;
-    return yield* boardQueries
-      .boardThreadLastSignalAt(threadId)
+    if (threadId === null) return null;
+    return yield* threads
+      .lastSignalAt(threadId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
   });
 
@@ -910,11 +887,11 @@ const make = Effect.gen(function* () {
   const supersededByPendingTurn = Effect.fn("board-supervisor-supersededByPendingTurn")(function* (
     state: BoardCardStepState,
   ) {
-    if (state.threadId === null || boardQueries === null) return false;
+    if (state.threadId === null) return false;
     const floor = state.lastNudgeAt ?? state.startedAt;
     if (floor === null) return false;
-    const requestedAt = yield* boardQueries
-      .boardThreadPendingTurnStartAt(state.threadId)
+    const requestedAt = yield* threads
+      .pendingTurnStartAt(state.threadId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
     return requestedAt !== null && isAfter(requestedAt, floor);
   });
@@ -985,9 +962,9 @@ const make = Effect.gen(function* () {
     state: Pick<BoardCardStepState, "threadId" | "lastNudgeAt" | "startedAt">,
   ) {
     const threadId = state.threadId;
-    if (threadId === null || boardQueries === null) return false;
-    const message = yield* boardQueries
-      .boardLatestAssistantMessage(threadId)
+    if (threadId === null) return false;
+    const message = yield* threads
+      .latestAssistantMessage(threadId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
     if (message === null) return false;
     const since = state.lastNudgeAt ?? state.startedAt;
@@ -1006,7 +983,7 @@ const make = Effect.gen(function* () {
     return card === undefined ? null : { card, state };
   };
 
-  const projectCwd = (board: OrchestrationReadModel, card: BoardCard): string | null => {
+  const projectCwd = (board: BoardWorld, card: BoardCard): string | null => {
     const project = board.projects.find((entry) => entry.id === card.projectId);
     return project?.workspaceRoot ?? null;
   };
@@ -1060,21 +1037,17 @@ const make = Effect.gen(function* () {
         it for existing threads. */
     readonly runtimeMode: BoardCardStepState["runtimeMode"];
   }) {
-    const createdAt = yield* nowIso;
-    yield* dispatch({
-      type: "thread.turn.start",
-      commandId: yield* commandId("recover-turn"),
-      threadId: input.threadId,
-      message: {
-        messageId: yield* freshMessageId,
-        role: "user",
+    yield* logged(
+      "thread.send",
+      threads.send({
+        commandId: yield* commandId("recover-turn"),
+        threadId: input.threadId,
         text: input.text,
         attachments: [],
-      },
-      runtimeMode: input.runtimeMode,
-      interactionMode: "default",
-      createdAt,
-    });
+        runtimeMode: input.runtimeMode,
+        interactionMode: "default",
+      }),
+    );
   });
 
   /** Report a worktree failure onto the card, with the reason a human can act
@@ -1220,7 +1193,7 @@ const make = Effect.gen(function* () {
     }
     const stuck = (reason: string) =>
       failWorktree(card, reason).pipe(Effect.as<WorktreeOutcome>({ kind: "stuck", reason }));
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     // Every pre-flight failure below reports through `fail-worktree` rather
     // than a server-side log: the card is the only place the human is looking,
@@ -1320,7 +1293,7 @@ const make = Effect.gen(function* () {
     // Observe the provision dispatch: a rejected command (e.g. the worktree is
     // not in a provisionable state) must abort BEFORE the git effect, or the
     // tree lands on disk untracked while `record-worktree` is then rejected too.
-    const provisionAccepted = yield* engine
+    const provisionAccepted = yield* boardEngine
       .dispatch({
         type: "board.card.provision-worktree",
         commandId: yield* commandId("provision-worktree"),
@@ -1501,7 +1474,6 @@ const make = Effect.gen(function* () {
   }) {
     const { card, step } = input;
     const threadId = yield* freshThreadId;
-    const createdAt = yield* nowIso;
     // The agent authority is the USER's choice, frozen onto the run row at
     // stage entry (t3o-21) and read verbatim here — the board no longer forces
     // `full-access` on build-mode steps (a security defect). If the chosen
@@ -1517,55 +1489,30 @@ const make = Effect.gen(function* () {
         Effect.provideService(GitVcsDriver.GitVcsDriver, git),
       );
     }
-    // The thread is created with its OWN command first. `thread.turn.start`
-    // carries a `bootstrap.createThread` block, but that block is interpreted
-    // by the WebSocket dispatch path (`dispatchBootstrapTurnStart` in ws.ts),
-    // NOT by the engine — a server-side dispatch straight into the engine is
-    // decided as an ordinary turn start and rejected: "thread does not exist".
-    // The board dispatches in-process, so it creates the thread itself.
-    const created = yield* dispatchLanded({
-      type: "thread.create",
-      commandId: yield* commandId("spawn-thread"),
-      threadId,
-      projectId: card.projectId,
-      title: `${card.key} · ${boardRunLabel(step) ?? card.stage}`,
-      modelSelection: {
-        instanceId: step.providerInstanceId,
-        model: step.model,
-        ...(step.modelOptions === undefined ? {} : { options: step.modelOptions }),
-      },
-      runtimeMode,
-      interactionMode: "default",
-      branch: input.branch,
-      worktreePath: input.worktreePath,
-      createdAt,
-    });
-    if (!created) return null;
-    const started = yield* dispatchLanded({
-      type: "thread.turn.start",
-      commandId: yield* commandId("spawn-turn"),
-      threadId,
-      message: {
-        messageId: yield* freshMessageId,
-        role: "user",
+    // A spawn whose create or first turn is refused leaves no thread behind
+    // (the gateway deletes a thread whose first turn never started), so a
+    // failure here is simply "no thread".
+    const spawned = yield* landed(
+      "thread.spawn",
+      threads.spawn({
+        commandId: yield* commandId("spawn-thread"),
+        threadId,
+        projectId: card.projectId,
+        title: `${card.key} · ${boardRunLabel(step) ?? card.stage}`,
+        modelSelection: {
+          instanceId: step.providerInstanceId,
+          model: step.model,
+          ...(step.modelOptions === undefined ? {} : { options: step.modelOptions }),
+        },
+        runtimeMode,
+        interactionMode: "default",
+        branch: input.branch,
+        worktreePath: input.worktreePath,
         text: input.text,
         attachments: input.attachments,
-      },
-      runtimeMode,
-      interactionMode: "default",
-      createdAt,
-    });
-    if (!started) {
-      // The thread exists but will never run a turn. Delete it rather than
-      // leave an empty thread in the sidebar for a run that never started —
-      // the same cleanup the WS bootstrap path performs.
-      yield* dispatch({
-        type: "thread.delete",
-        commandId: yield* commandId("spawn-cleanup"),
-        threadId,
-      });
-      return null;
-    }
+      }),
+    );
+    if (!spawned) return null;
     yield* dispatch({
       type: "board.card.link-thread",
       commandId: yield* commandId("link-thread"),
@@ -1632,7 +1579,7 @@ const make = Effect.gen(function* () {
   const threadGone = (threadId: ThreadId | null) =>
     threadId === null
       ? Effect.succeed(true)
-      : snapshotQuery.getThreadShellById(threadId).pipe(Effect.map(Option.isNone));
+      : liveThread(threadId).pipe(Effect.map((state) => state === undefined));
 
   /** The prompt for a step's run, composed from the frozen run row (D12). The
       role keys the envelope's deliverable postamble segment; roles are seeded,
@@ -1681,7 +1628,7 @@ const make = Effect.gen(function* () {
     const recorded = card.worktree?.baseRefName ?? null;
     if (recorded !== null) return recorded;
     if (card.baseBranch !== null) return card.baseBranch;
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) return null;
     const { defaultBranch } = yield* resolveDefaultBranch(cwd);
@@ -1863,7 +1810,7 @@ const make = Effect.gen(function* () {
     // false and the settle path can never release the slot just acquired — a
     // permanent under-capacity leak. Release it here and unlink the orphaned
     // thread instead.
-    const admitLanded = yield* engine
+    const admitLanded = yield* boardEngine
       .dispatch({
         type: "board.card.admit-step",
         commandId: yield* commandId("admit-step"),
@@ -1922,7 +1869,7 @@ const make = Effect.gen(function* () {
     // the step queued for the next pass.
     const resumed = yield* resumeExistingStepThread({ card, state });
     if (resumed !== "no-thread") return;
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) {
       // Same wedge as a refused spawn, so the same exit: left `pending`, the
@@ -2110,7 +2057,7 @@ const make = Effect.gen(function* () {
   const measureBaseTip = Effect.fn("board-supervisor-measureBaseTip")(function* (card: BoardCard) {
     const baseRefName = card.worktree?.baseRefName ?? null;
     if (baseRefName === null) return null;
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) return null;
     const tip = yield* git
@@ -2189,7 +2136,7 @@ const make = Effect.gen(function* () {
       const needsDefault = card.parentCardId === null && card.baseBranch === null;
       const defaultBranch = needsDefault
         ? yield* Effect.gen(function* () {
-            const model = yield* snapshotQuery.getCommandReadModel();
+            const model = yield* readModel;
             const cwd = projectCwd(model, card);
             if (cwd === null) return null;
             const resolved = yield* resolveDefaultBranch(cwd);
@@ -3373,15 +3320,13 @@ const make = Effect.gen(function* () {
       });
       // Refused (the step moved on under us): the ordinary pass spawns for it.
       if (!admitted) return yield* schedule();
-      const shell = yield* snapshotQuery.getThreadShellById(threadId);
+      const shell = yield* liveThread(threadId);
       // A thread holding a structured question is alive but waiting on the
       // human, and no turn.completed comes until they answer: park it now, as
       // handleTurnCompleted would.
       const pendingQuestion =
-        Option.isSome(shell) &&
-        shell.value.hasPendingUserInput &&
-        shell.value.session?.status !== "error";
-      if (!pendingQuestion && Option.isSome(shell) && threadIsAlive(shell.value)) return;
+        shell !== undefined && shell.awaitingUserInput && shell.sessionStatus !== "error";
+      if (!pendingQuestion && shell !== undefined && shell.alive) return;
       const state = boardCardStepState(yield* readBoard, card.id);
       if (state === null || state.threadId !== threadId) return;
       if (pendingQuestion) return yield* parkStepForInput({ card, state, reason: "question" });
@@ -3428,16 +3373,12 @@ const make = Effect.gen(function* () {
     yield* releaseSlot(input.state);
     const threadId = input.state.threadId;
     if (threadId !== null) {
-      const shell = yield* snapshotQuery
-        .getThreadShellById(threadId)
-        .pipe(Effect.map(Option.getOrUndefined));
-      if (shell?.session?.activeTurnId != null) {
-        yield* dispatch({
-          type: "thread.turn.interrupt",
-          commandId: yield* commandId("interrupt-paused"),
-          threadId,
-          createdAt: yield* nowIso,
-        });
+      const shell = yield* liveThread(threadId);
+      if (shell?.activeTurnRef != null) {
+        yield* logged(
+          "thread.interrupt",
+          threads.interrupt({ commandId: yield* commandId("interrupt-paused"), threadId }),
+        );
       }
     }
     // Let the freed slot flow to the queue within a beat rather than at the next
@@ -3680,6 +3621,25 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * The usage-limit parks the BOARD wakes (T3O-59). A parked step whose thread
+   * has v2's limit recovery armed with auto-resume is left to the engine: v2's
+   * recovery worker resumes it once the window reopens, and that resume
+   * reaches the board as a `limit-resumed` signal that un-parks the step
+   * (`resumeParkedStep`). Waking it here as well would resume the thread twice.
+   * A limit the provider named no reset time for is never armed, so the board's
+   * own probe and resume still cover it.
+   */
+  const boardWokenLimitParks = (board: BoardState, providerInstanceId: ProviderInstanceId) =>
+    Effect.filter(boardUsageLimitParkedSteps(board, providerInstanceId), (state) =>
+      state.threadId === null
+        ? Effect.succeed(true)
+        : threads.threadState(state.threadId).pipe(
+            Effect.map((thread) => thread?.usageLimit?.resumeArmed !== true),
+            Effect.orElseSucceed(() => true),
+          ),
+    );
+
+  /**
    * Lift a provider cooldown and put every card it was holding back to work
    * (D9).
    *
@@ -3702,7 +3662,7 @@ const make = Effect.gen(function* () {
     });
     if (!cleared) return;
     const board = yield* readBoard;
-    for (const parked of boardUsageLimitParkedSteps(board, providerInstanceId)) {
+    for (const parked of yield* boardWokenLimitParks(board, providerInstanceId)) {
       yield* startOrResumeCard(parked.cardId, { preserveBudget: true });
     }
   });
@@ -4013,6 +3973,19 @@ const make = Effect.gen(function* () {
         progressed: false,
         lastError: match.reason,
       });
+      // Hand the resume to v2 (T3O-59): its recovery worker resumes the thread
+      // when the window reopens, whatever the user's global auto-resume
+      // setting, and `boardWokenLimitParks` keeps the board from resuming it
+      // too. Best-effort: an unarmed park is still woken by the board's probe.
+      if (state.threadId !== null) {
+        yield* optional(
+          "thread.metadata.update",
+          threads.armLimitRecovery({
+            commandId: yield* commandId("limit-arm"),
+            threadId: state.threadId,
+          }),
+        );
+      }
       return true;
     },
   );
@@ -4134,7 +4107,7 @@ const make = Effect.gen(function* () {
     const gone = yield* threadGone(input.state.threadId);
     const canRespawn = yield* Effect.gen(function* () {
       if (input.state.mode === "build") return input.card.worktree?.path != null;
-      const model = yield* snapshotQuery.getCommandReadModel();
+      const model = yield* readModel;
       return projectCwd(model, input.card) !== null;
     });
     if (gone && !canRespawn) {
@@ -4351,7 +4324,7 @@ const make = Effect.gen(function* () {
         return boardRefreshOutcomeOf(held);
       }
 
-      const model = yield* snapshotQuery.getCommandReadModel();
+      const model = yield* readModel;
       const cwd = worktree.path ?? projectCwd(model, card);
       if (cwd === null) return { outcome: "no-branch" } as const;
 
@@ -4673,7 +4646,7 @@ const make = Effect.gen(function* () {
     const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
     if (!isBoardMergeStageExecution(exec) || !exec.deleteBranchOnDone) return;
 
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) return;
 
@@ -4782,7 +4755,7 @@ const make = Effect.gen(function* () {
   ) {
     const worktree = card.worktree;
     if (worktree === null || worktree.status !== "ready" || worktree.path === null) return null;
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) {
       // A failure, not a quiet skip: the card IS finished, and Check again
@@ -5059,7 +5032,7 @@ const make = Effect.gen(function* () {
    */
   const sweepOrphanWorktrees = Effect.fn("board-supervisor-sweepOrphanWorktrees")(function* (
     board: BoardState,
-    model: OrchestrationReadModel,
+    model: BoardWorld,
     fetchedBases: Set<string>,
   ) {
     // Only checkouts under THIS server's worktrees directory are ours to
@@ -5165,7 +5138,7 @@ const make = Effect.gen(function* () {
   }) {
     const settings = yield* boardSettings;
     const board = yield* readBoard;
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const fetchedBases = new Set<string>();
     for (const card of board.cards) {
       // T3o (T3O-18): a linked pull request settles its card whether or not
@@ -5352,7 +5325,7 @@ const make = Effect.gen(function* () {
     const finished =
       card.archivedAt !== null || (stage !== null && effectiveBoardStageRole(stage) === "done");
     if (!finished) return { outcome: "not-finished" } as const;
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) {
       // The card does hold a worktree; it is the project that cannot be found.
@@ -5696,7 +5669,7 @@ const make = Effect.gen(function* () {
       };
     }
 
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     // T3o (T3O-47): the PROJECT's checkout, not the card's worktree. The merge
     // is a forge operation addressed by `{ projectId, repository }`, and
     // `PullRequestService` runs the host's CLI in the project's own workspace
@@ -6168,17 +6141,18 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     /** The turn that just ENDED, off the runtime event. Optional because the
         base event schema makes it optional and not every adapter stamps it. */
-    completedTurnId: TurnId | undefined,
+    completedTurnId: string | undefined,
     /** The failed turn's own error text (T3O-22, D4). Grok's quota refusal
-        arrives ONLY this way — `turn.completed` with `state: "failed"` and an
-        `errorMessage`, no assistant message anywhere — and the board dropped it
-        entirely before this. It is also the unambiguous channel: nobody quotes a
+        arrives ONLY this way — a failed run whose provider error (v2's `error`
+        turn item, carried onto the turn end by the gateway) is the only text,
+        no assistant message anywhere — and the board dropped it entirely
+        before this. It is also the unambiguous channel: nobody quotes a
         sentence into a failed turn's error field. */
     turnErrorMessage: string | null = null,
     /** How the turn ended (T3O-22, D9). Read by the loose-match tally clear
         alone — DETECTION below stays state-blind, because Grok's refusal
         arrives on a `failed` turn. */
-    turnState: RuntimeTurnState | undefined = undefined,
+    turnState: BoardTurnOutcome | undefined = undefined,
   ) {
     const found = stepThreadCard(board, threadId);
     if (found === null) return;
@@ -6193,9 +6167,7 @@ const make = Effect.gen(function* () {
       (entry) => entry.stepId === found.state.stepId && entry.outcome === "succeeded",
     );
     if (completed) return; // the completion handler owns this step
-    const shell = yield* snapshotQuery
-      .getThreadShellById(threadId)
-      .pipe(Effect.map(Option.getOrUndefined));
+    const shell = yield* liveThread(threadId);
     // Another turn is already live on the thread — typically the recovery
     // nudge `handleStepCompleted` sent for a `failed` completion moments
     // before this turn.completed arrived. The thread is not dead; the live
@@ -6232,7 +6204,7 @@ const make = Effect.gen(function* () {
     // bounded by the recovery ceiling (`maxInvocationsPerStageEntry` →
     // escalate, never loop), whose failure mode is asking a human one turn
     // early, not a stuck or corrupted card.
-    const liveTurnId = shell?.session?.activeTurnId ?? null;
+    const liveTurnId = shell?.activeTurnRef ?? null;
     const namedByAnotherTurn =
       liveTurnId !== null && (completedTurnId === undefined || liveTurnId !== completedTurnId);
     // The identity test above has one blind spot, and it is where this handler
@@ -6249,11 +6221,11 @@ const make = Effect.gen(function* () {
     // exactly the case that needs it.
     if (
       (namedByAnotherTurn || (yield* supersededByPendingTurn(found.state))) &&
-      !(shell?.hasPendingUserInput ?? false)
+      !(shell?.awaitingUserInput ?? false)
     ) {
       return;
     }
-    if (shell !== undefined && shell.hasPendingUserInput) {
+    if (shell !== undefined && shell.awaitingUserInput) {
       // A proper structured question — "Input needed", not a failure, no retry
       // consumed (D13). Move (or keep) the step on the human gate. A no-op when
       // it is already awaiting-input.
@@ -6286,7 +6258,7 @@ const make = Effect.gen(function* () {
     // awaiting input (its agent answered and started a job) is put back to
     // running first; a wait noted on a parked step would never be checked in
     // on, and the card would sit violet while its agent worked.
-    const backgroundLiveness = shell?.backgroundLiveness ?? null;
+    const backgroundLiveness = shell?.backgroundWork ?? null;
     if (
       backgroundLiveness !== null &&
       (backgroundLiveness === "working" || !found.state.humanInLoop)
@@ -6379,7 +6351,7 @@ const make = Effect.gen(function* () {
     found: { readonly card: BoardCard; readonly state: BoardCardStepState },
     threadId: ThreadId,
     turnErrorMessage: string | null,
-    turnState: RuntimeTurnState | undefined,
+    turnState: BoardTurnOutcome | undefined,
   ) {
     const match = yield* usageLimits.classifyTurn({
       threadId,
@@ -6434,13 +6406,13 @@ const make = Effect.gen(function* () {
    */
   const handleTurnEnded = Effect.fn("board-supervisor-handleTurnEnded")(function* (
     threadId: ThreadId,
-    completedTurnId: TurnId | undefined,
+    completedTurnId: string | undefined,
     turnErrorMessage: string | null = null,
     /** How the turn ended (T3O-22, D9). Read by the two "the provider answered"
         questions alone — the cooldown lift and the loose-match tally clear. The
         DETECTION path must stay state-blind, because Grok's refusal arrives on
         a `failed` turn. */
-    turnState: RuntimeTurnState | undefined = undefined,
+    turnState: BoardTurnOutcome | undefined = undefined,
   ) {
     const board = yield* readBoard;
     yield* handleTurnCompleted(board, threadId, completedTurnId, turnErrorMessage, turnState);
@@ -6489,16 +6461,14 @@ const make = Effect.gen(function* () {
       readonly board: BoardState;
       readonly threadId: ThreadId;
       readonly turnErrorMessage: string | null;
-      readonly turnState: RuntimeTurnState | undefined;
+      readonly turnState: BoardTurnOutcome | undefined;
     }) {
       if ((input.board.providerLimits ?? []).length === 0) return;
       // Absent is read as completed, exactly as the ingestion layer normalises
       // it (`normalizeRuntimeTurnState`), so an adapter that stamps no state
       // keeps the behaviour it had.
       if (input.turnState !== undefined && input.turnState !== "completed") return;
-      const shell = yield* snapshotQuery
-        .getThreadShellById(input.threadId)
-        .pipe(Effect.map(Option.getOrUndefined));
+      const shell = yield* liveThread(input.threadId);
       const providerInstanceId = shell?.modelSelection?.instanceId;
       if (providerInstanceId === undefined) return;
       const limit = boardProviderLimit(input.board, providerInstanceId);
@@ -6518,7 +6488,7 @@ const make = Effect.gen(function* () {
   );
 
   const handleStepCompleted = Effect.fn("board-supervisor-handleStepCompleted")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-step-completed" }>,
+    event: Extract<BoardEvent, { type: "board.card-step-completed" }>,
   ) {
     const completion = event.payload.completion;
     const board = yield* readBoard;
@@ -6541,11 +6511,14 @@ const make = Effect.gen(function* () {
         // thread still mid-turn (the agent repairing its own completion) is
         // refused by the settle guard and simply skipped.
         if (state.threadId !== null) {
-          yield* dispatchOptional({
-            type: "thread.settle",
-            commandId: yield* commandId("settle-repaired-phase"),
-            threadId: state.threadId,
-          });
+          yield* optional(
+            "thread.settle",
+            threads.settle({
+              commandId: yield* commandId("settle-repaired-phase"),
+              threadId: state.threadId,
+              auto: false,
+            }),
+          );
         }
         yield* replanSettledStage(card);
         return;
@@ -7036,10 +7009,12 @@ const make = Effect.gen(function* () {
       if (limit.kind !== "wait") continue;
       const dueMs = Date.parse(limit.until);
       if (Number.isFinite(dueMs) && nowMs < dueMs) continue;
-      const parked = boardUsageLimitParkedSteps(board, limit.providerInstanceId).filter((state) => {
-        const card = board.cards.find((candidate) => candidate.id === state.cardId);
-        return card !== undefined && card.archivedAt === null;
-      });
+      const parked = (yield* boardWokenLimitParks(board, limit.providerInstanceId)).filter(
+        (state) => {
+          const card = board.cards.find((candidate) => candidate.id === state.cardId);
+          return card !== undefined && card.archivedAt === null;
+        },
+      );
       if (parked.length === 0) {
         yield* clearProviderLimitAndResume(limit.providerInstanceId);
         continue;
@@ -7345,7 +7320,7 @@ const make = Effect.gen(function* () {
   // (`card.humanInLoop` non-null and different from the frozen stance) reacts,
   // so an unrelated card edit never flips a run.
   const handleCardUpdated = Effect.fn("board-supervisor-handleCardUpdated")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-updated" }>,
+    event: Extract<BoardEvent, { type: "board.card-updated" }>,
   ) {
     // A schedule edit acts FIRST and on its own terms (T3O-19, D3): it is the
     // one edit that must reach a card with no live step row at all, and the one
@@ -7448,7 +7423,7 @@ const make = Effect.gen(function* () {
   });
 
   const handleArchived = Effect.fn("board-supervisor-handleArchived")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-archived" }>,
+    event: Extract<BoardEvent, { type: "board.card-archived" }>,
   ) {
     const board = yield* readBoard;
     // Reap the settle marker whether or not the card is still readable: an
@@ -7512,7 +7487,7 @@ const make = Effect.gen(function* () {
    * by hand, never retried.
    */
   const handleCardDeleted = Effect.fn("board-supervisor-handleCardDeleted")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-deleted" }>,
+    event: Extract<BoardEvent, { type: "board.card-deleted" }>,
   ) {
     const card = event.payload.card;
     // Per-card in-memory bookkeeping outlives the card unless it is reaped
@@ -7531,11 +7506,10 @@ const make = Effect.gen(function* () {
     if (stepState !== null) yield* releaseSlot(stepState);
 
     for (const threadId of event.payload.threadIds) {
-      yield* dispatch({
-        type: "thread.delete",
-        commandId: yield* commandId("delete-card-thread"),
-        threadId,
-      });
+      yield* logged(
+        "thread.delete",
+        threads.delete({ commandId: yield* commandId("delete-card-thread"), threadId }),
+      );
     }
 
     // The brief's files go with the card (t3o-32, K1): board-owned storage,
@@ -7550,7 +7524,7 @@ const make = Effect.gen(function* () {
 
     const worktree = card.worktree;
     if (worktree !== null) {
-      const model = yield* snapshotQuery.getCommandReadModel();
+      const model = yield* readModel;
       const cwd = projectCwd(model, card);
       if (cwd !== null) {
         // T3O-23: retiring runs the remove scripts, which can take minutes, so
@@ -7620,7 +7594,7 @@ const make = Effect.gen(function* () {
     type Failure = { readonly reason: string; readonly transient: boolean } | null;
     const fail = (reason: string, transient = false) =>
       failWorktree(card, reason).pipe(Effect.as<Failure>({ reason, transient }));
-    const model = yield* snapshotQuery.getCommandReadModel();
+    const model = yield* readModel;
     const cwd = projectCwd(model, card);
     if (cwd === null) {
       return yield* fail("The card's project has no workspace folder on this server.");
@@ -7736,7 +7710,7 @@ const make = Effect.gen(function* () {
   });
 
   const handlePlansApproved = Effect.fn("board-supervisor-handlePlansApproved")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.plans-approved" }>,
+    event: Extract<BoardEvent, { type: "board.plans-approved" }>,
   ) {
     yield* ensureIntegrationBranch(event.payload.card);
     // Approval normally leaves the parent short of build (t3o-28, D1), and the
@@ -7752,7 +7726,7 @@ const make = Effect.gen(function* () {
   // A card was created (D10): if it landed in an auto-executing stage, kick off
   // exactly as a drag would. The created payload is flat, so re-read the card.
   const handleCardCreated = Effect.fn("board-supervisor-handleCardCreated")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-created" }>,
+    event: Extract<BoardEvent, { type: "board.card-created" }>,
   ) {
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
@@ -7786,7 +7760,7 @@ const make = Effect.gen(function* () {
    * a human ADOPTED links with role `linked` and is left alone.
    */
   const handleCardProjectChanged = Effect.fn("board-supervisor-handleCardProjectChanged")(
-    function* (event: Extract<OrchestrationEvent, { type: "board.card-project-changed" }>) {
+    function* (event: Extract<BoardEvent, { type: "board.card-project-changed" }>) {
       const card = event.payload.card;
       const board = yield* readBoard;
       const existing = boardCardStepState(board, card.id);
@@ -7857,7 +7831,7 @@ const make = Effect.gen(function* () {
   // first (releasing any slot and unlinking its thread), then kick off the
   // destination stage on a fresh read so its own guards see a clean card.
   const handleCardMoved = Effect.fn("board-supervisor-handleCardMoved")(function* (
-    event: Extract<OrchestrationEvent, { type: "board.card-moved" }>,
+    event: Extract<BoardEvent, { type: "board.card-moved" }>,
   ) {
     // The destination stage and the current link set both come from the event
     // payload, not a board re-read: the card carries its post-move stage here,
@@ -8092,7 +8066,7 @@ const make = Effect.gen(function* () {
 
   // On-demand kickoff request (D7): start a thread for the card's current stage.
   const handleStageThreadRequested = Effect.fn("board-supervisor-handleStageThreadRequested")(
-    function* (event: Extract<OrchestrationEvent, { type: "board.card-stage-thread-requested" }>) {
+    function* (event: Extract<BoardEvent, { type: "board.card-stage-thread-requested" }>) {
       const board = yield* readBoard;
       const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
       if (card === undefined) return;
@@ -8179,29 +8153,6 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Whether a `user-input.resolved` carries a real ANSWER, or is the same event
-   * a CANCELLATION emits (t3o-34, D5).
-   *
-   * Every adapter resolves its pending-input deferred on teardown and falls
-   * through to the same emit — `ClaudeAdapter`'s `settleAsAborted` succeeds the
-   * deferred with `{}` and only checks `aborted` AFTER the event goes out;
-   * Grok and OpenCode send `{}` on their non-answered branches too. So
-   * "resolved" alone means "no longer pending", which stopping a thread
-   * satisfies just as well as answering it.
-   *
-   * Resuming on that would be the hazard `turn.started` was dropped for, in a
-   * new place: a stopped thread would re-light the card's blue dot with nobody
-   * having answered anything, and on a `stalled` step it would zero
-   * `stallCount` and re-arm the sweep, undoing a t3o-17 escalation. An empty
-   * answer set is the one thing that separates the two, and it is the right
-   * reading either way — a cancelled question is still unanswered, so the card
-   * should keep saying so.
-   */
-  const isAnsweredUserInput = (
-    event: Extract<ProviderRuntimeEvent, { type: "user-input.resolved" }>,
-  ): boolean => Object.keys(event.payload.answers).length > 0;
-
-  /**
    * A parked step goes back to work (t3o-17 D3; t3o-34 D5). Exactly two signals
    * reach here, and the pair is deliberate:
    *
@@ -8239,11 +8190,20 @@ const make = Effect.gen(function* () {
    */
   const resumeParkedStep = Effect.fn("board-supervisor-resumeParkedStep")(function* (
     threadId: ThreadId,
+    options: { readonly usageLimitOnly?: boolean } = {},
   ) {
     const board = yield* readBoard;
     const found = stepThreadCard(board, threadId);
     if (found === null) return false;
     if (!isBoardParkedStepStatus(found.state.status)) return false;
+    // The engine's limit resume speaks only for the limit it was holding: a
+    // step a human paused, or one waiting on a question, stays parked.
+    if (
+      options.usageLimitOnly === true &&
+      !(found.state.status === "stalled" && found.state.stalledReason === "usage-limit")
+    ) {
+      return false;
+    }
     if (found.card.archivedAt !== null) return false;
     // OBSERVED, not fire-and-forget: a refused resume must never restore a slot
     // that nothing will release — the same discipline `admitBuildCandidate`
@@ -8297,14 +8257,14 @@ const make = Effect.gen(function* () {
    *    so there is nothing to suppress and recording would be noise per turn.
    */
   const noteHumanTurn = Effect.fn("board-supervisor-noteHumanTurn")(function* (
-    event: Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>,
+    signal: Extract<ThreadSignal, { type: "turn-requested" }>,
   ) {
     // The board mints `server:board-…`; a client mints a bare UUID (D2). A
     // nudge of our own must not buy itself a free ending, or the escalation
     // ceiling would never be reached.
-    if (isBoardMintedCommandId(event.commandId)) return;
+    if (signal.byBoard) return;
     const board = yield* readBoard;
-    const found = stepThreadCard(board, event.payload.threadId);
+    const found = stepThreadCard(board, signal.threadId);
     if (found === null || found.card.archivedAt !== null) return;
     if (found.state.status !== "running" || found.state.humanInLoop) return;
     yield* dispatchOptional({
@@ -8312,20 +8272,20 @@ const make = Effect.gen(function* () {
       commandId: yield* commandId("note-human-turn"),
       cardId: found.card.id,
       stepId: found.state.stepId,
-      at: event.payload.createdAt,
+      at: signal.at,
       createdAt: yield* nowIso,
     });
   });
 
   const handleTurnStartRequested = Effect.fn("board-supervisor-handleTurnStartRequested")(
-    function* (event: Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>) {
-      yield* resumeParkedStep(event.payload.threadId);
+    function* (signal: Extract<ThreadSignal, { type: "turn-requested" }>) {
+      yield* resumeParkedStep(signal.threadId);
       // AFTER the resume, deliberately: a human typing into a PAUSED step both
       // resumes it and steers it, and reading the step second is what lets the
       // one event do both. The `running` test in `noteHumanTurn` then passes
       // for a step this line has just put back to work, which is right — the
       // turn the human just sent is no more a stall than any other.
-      yield* noteHumanTurn(event);
+      yield* noteHumanTurn(signal);
     },
   );
 
@@ -8368,16 +8328,19 @@ const make = Effect.gen(function* () {
     // AC 20). The cache is a projection with no event to un-apply, so a row can
     // outlive its link when a delete lands while the server is down; a single
     // set-difference DELETE at boot is the cheap, total answer. Best-effort — a
-    // sweep failure must never block reconciliation of live steps.
-    if (boardQueries !== null) {
-      yield* boardQueries.boardSweepThreadTodos().pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("board supervisor: thread-todo sweep failed", {
-            cause: Cause.pretty(cause),
-          }),
-        ),
-      );
-    }
+    // sweep failure must never block reconciliation of live steps. The clock is
+    // read first so a thread born after the list was taken keeps its row.
+    const listedAt = yield* nowIso;
+    yield* threads.listLiveThreadIds().pipe(
+      Effect.flatMap((liveThreadIds) =>
+        boardQueries.boardSweepThreadTodos(liveThreadIds, listedAt),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: thread-todo sweep failed", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
     const board = yield* readBoard;
     // Cards whose step reconcile settles as succeeded: `continueStage` may
     // auto-advance them, and the `board.card-moved` that publishes goes into a
@@ -8409,13 +8372,8 @@ const make = Effect.gen(function* () {
       const hasSucceeded = boardCardStepCompletions(board, card.id).some(
         (entry) => entry.stepId === state.stepId && entry.outcome === "succeeded",
       );
-      const shell =
-        state.threadId === null
-          ? undefined
-          : yield* snapshotQuery
-              .getThreadShellById(state.threadId)
-              .pipe(Effect.map(Option.getOrUndefined));
-      const threadAlive = shell !== undefined && threadIsAlive(shell);
+      const shell = state.threadId === null ? undefined : yield* liveThread(state.threadId);
+      const threadAlive = shell !== undefined && shell.alive;
       const decision = reconcileStepDecision({
         status: state.status,
         threadAlive,
@@ -8612,14 +8570,7 @@ const make = Effect.gen(function* () {
   /** The thread's shell when it is between turns, needs no human and has
       background work — the same reading the card's "Waiting" label makes. */
   const threadWaitingOnBackground = (threadId: ThreadId) =>
-    snapshotQuery
-      .getThreadShellById(threadId)
-      .pipe(
-        Effect.map(
-          (shell) =>
-            Option.isSome(shell) && deriveBoardCardThreadState(shell.value).waitingOnBackground,
-        ),
-      );
+    liveThread(threadId).pipe(Effect.map((shell) => shell?.waitingOnBackground ?? false));
 
   /**
    * Supervise a step whose agent is waiting on its own background work
@@ -8653,11 +8604,11 @@ const make = Effect.gen(function* () {
       beginBackgroundWait(state.threadId, input.now);
       return true;
     }
-    const shell = Option.getOrUndefined(yield* snapshotQuery.getThreadShellById(state.threadId));
-    if (shell === undefined || !deriveBoardCardThreadState(shell).waitingOnBackground) {
+    const shell = yield* liveThread(state.threadId);
+    if (shell === undefined || !shell.waitingOnBackground) {
       // A live turn (a check-in being answered) is supervised the ordinary
       // way and keeps the wait; background work that is gone ends it.
-      if (shell === undefined || shell.backgroundLiveness == null) backgroundWaits.delete(key);
+      if (shell === undefined || shell.backgroundWork === null) backgroundWaits.delete(key);
       return false;
     }
     const card = board.cards.find((candidate) => candidate.id === state.cardId);
@@ -8723,13 +8674,11 @@ const make = Effect.gen(function* () {
     return true;
   });
   const threadAwaitingPermission = (threadId: ThreadId) =>
-    snapshotQuery
-      .getThreadShellById(threadId)
-      .pipe(Effect.map((shell) => Option.isSome(shell) && isThreadAwaitingPermission(shell.value)));
+    liveThread(threadId).pipe(Effect.map((shell) => shell?.awaitingPermission ?? false));
   const stampPermissionAnswered = (threadId: ThreadId) =>
     nowIso.pipe(Effect.map((now) => void permissionHeldAt.set(String(threadId), now)));
 
-  const processDomainEvent = (event: OrchestrationEvent) => {
+  const processDomainEvent = (event: BoardEvent) => {
     switch (event.type) {
       case "board.card-moved":
         // Generic auto-kickoff (D7): a card landing in ANY stage may start a run
@@ -8788,32 +8737,68 @@ const make = Effect.gen(function* () {
       case "board.plans-approved":
         // The split's integration branch (t3o-23, D5).
         return handlePlansApproved(event);
-      case "thread.turn-start-requested":
+      default:
+        return Effect.void;
+    }
+  };
+
+  const processThreadSignal = (signal: ThreadSignal) => {
+    switch (signal.type) {
+      case "turn-requested":
         // A human restarting a stalled step by hand (t3o-17, D3) — the board's own
         // turns land here too and no-op, since only a `stalled` step resumes.
-        return handleTurnStartRequested(event);
-      case "thread.turn-interrupt-requested":
+        return handleTurnStartRequested(signal);
+      case "limit-resumed":
+        // v2's usage-limit recovery resumed a thread the board left to it
+        // (`boardWokenLimitParks`): wake the step it parked, and nothing else.
+        // Not a human turn, so it buys no free ending.
+        return resumeParkedStep(signal.threadId, { usageLimitOnly: true }).pipe(Effect.asVoid);
+      case "interrupt-requested":
         // A human pressing Stop on a board-run step (T3O-23). The board's own
         // interrupts land here too and are filtered inside, off the sets that
         // already track them.
-        return pauseStepForHumanStop(event.payload.threadId);
-      case "thread.approval-response-requested":
+        return pauseStepForHumanStop(signal.threadId);
+      case "approval-responded":
         // A human answered a permission prompt (T3O-16): a life sign for the
         // timeout sweep, so the resumed agent is not nudged seconds into work.
-        return stampPermissionAnswered(event.payload.threadId);
-      case "thread.activity-appended":
-        // The other non-board event the supervisor listens to (t3o-30, D2): a
-        // step's turn failing to start at all. Everything else about a thread
-        // reaches the board through its own turn completion; this failure has no
-        // turn to complete, so without it the step holds a slot and renders a
-        // spinner until the timeout sweep eventually notices, `timeoutMs` later.
-        return event.payload.activity.kind === "provider.turn.start.failed"
-          ? failStepAtSpawn({
-              threadId: event.payload.threadId,
-              detail: providerFailureDetail(event.payload.activity.payload),
-            })
-          : Effect.void;
-      default:
+        return stampPermissionAnswered(signal.threadId);
+      case "turn-start-failed":
+        // A step's turn failing to start at all (t3o-30, D2). Everything else
+        // about a thread reaches the board through its own turn ending; this
+        // failure has no turn to end, so without it the step holds a slot and
+        // renders a spinner until the timeout sweep eventually notices,
+        // `timeoutMs` later.
+        return failStepAtSpawn({ threadId: signal.threadId, detail: signal.detail });
+      case "session-started":
+        // Only matters for an orphan: the session the spawn raced now exists —
+        // deliver the durable interrupt.
+        if (!orphanedThreads.delete(String(signal.threadId))) return Effect.void;
+        return interruptOrphan(signal.threadId);
+      case "turn-ended":
+        // An orphan whose turn ended needs no interrupt any more.
+        orphanedThreads.delete(String(signal.threadId));
+        // The ended turn's own id rides through: it is what lets the handler
+        // tell a thread read that has not caught up yet from a genuinely live
+        // second turn. The error text carries Grok's quota refusal (T3O-22, D4);
+        // the outcome tells a turn that answered from one that merely stopped
+        // (T3O-22, D9).
+        return handleTurnEnded(
+          signal.threadId,
+          signal.turnRef,
+          signal.errorMessage,
+          signal.outcome,
+        );
+      case "input-requested":
+        // An ordinary agent question (t3o-18, D13): fires for EVERY input
+        // request.
+        return handleInputRequested(signal.threadId);
+      case "input-resolved":
+        // A structured question being ANSWERED (t3o-34, D5) — the one way a
+        // parked step goes back to work that no turn request sees. A
+        // cancellation resolves the question too, and must not resume.
+        return signal.answered ? resumeParkedStep(signal.threadId) : Effect.void;
+      case "todos-changed":
+      case "thread-deleted":
         return Effect.void;
     }
   };
@@ -8946,43 +8931,8 @@ const make = Effect.gen(function* () {
     switch (input.source) {
       case "domain":
         return processDomainEvent(input.event);
-      case "runtime": {
-        const threadId = ThreadId.make(String(input.event.threadId));
-        if (input.event.type === "session.started") {
-          // Only enqueued for orphans (see `start`): the session the spawn
-          // raced now exists — deliver the durable interrupt.
-          if (!orphanedThreads.delete(String(threadId))) return Effect.void;
-          return interruptOrphan(threadId);
-        }
-        if (input.event.type === "turn.completed") {
-          // An orphan whose turn ended needs no interrupt any more.
-          orphanedThreads.delete(String(threadId));
-          // The ended turn's own id rides through: it is what lets the handler
-          // tell a projection that has not caught up yet from a genuinely live
-          // second turn.
-          return handleTurnEnded(
-            threadId,
-            input.event.turnId,
-            // Grok's quota refusal rides here and nowhere else (T3O-22, D4).
-            input.event.payload.errorMessage ?? null,
-            // How the turn ENDED, which is what tells a turn that answered from
-            // one that merely stopped (T3O-22, D9).
-            input.event.payload.state,
-          );
-        }
-        // An ordinary agent question (t3o-18, D13): re-sourced from the runtime
-        // event on the stream the reactor already consumes, so it fires for
-        // EVERY input request rather than only the ones a now-deleted board tool
-        // remembered to double-report.
-        if (input.event.type === "user-input.requested") return handleInputRequested(threadId);
-        // A structured question being ANSWERED (t3o-34, D5) — the one way a
-        // parked step goes back to work that no turn-start event sees. Only an
-        // actual ANSWER counts: see `isAnsweredUserInput`.
-        if (input.event.type === "user-input.resolved") {
-          return isAnsweredUserInput(input.event) ? resumeParkedStep(threadId) : Effect.void;
-        }
-        return Effect.void;
-      }
+      case "thread":
+        return processThreadSignal(input.signal);
       case "reconcile":
         return reconcile;
       case "timeout-sweep":
@@ -9026,7 +8976,12 @@ const make = Effect.gen(function* () {
           ? Effect.failCause(cause)
           : Effect.logWarning("board supervisor failed to process input", {
               source: input.source,
-              eventType: "event" in input ? input.event.type : input.source,
+              eventType:
+                input.source === "domain"
+                  ? input.event.type
+                  : input.source === "thread"
+                    ? input.signal.type
+                    : input.source,
               cause: Cause.pretty(cause),
             }),
       ),
@@ -9043,16 +8998,7 @@ const make = Effect.gen(function* () {
     // streams, so live events enqueue behind the reconcile item in the one
     // sequential worker.
     yield* forkParked(
-      Stream.runForEach(engine.streamDomainEvents, (event) => {
-        // Thread activity is by far the highest-volume event on this stream, and
-        // the board cares about exactly one kind of it (t3o-30, D2), so it is
-        // filtered HERE rather than in `processDomainEvent` — the worker never
-        // sees the tool calls, reasoning and output of every thread on the box.
-        if (event.type === "thread.activity-appended") {
-          return event.payload.activity.kind === "provider.turn.start.failed"
-            ? worker.enqueue({ source: "domain", event })
-            : Effect.void;
-        }
+      Stream.runForEach(boardEngine.liveBoardEvents, (event) => {
         // T3O-52 (D4): a worktree provisioned or cleaned up triggers a cleanup
         // pass. Straight to the single-flight sweep, not the worker: the pass
         // never touches step state, and it coalesces a burst into one run.
@@ -9063,13 +9009,6 @@ const make = Effect.gen(function* () {
           return requestWorktreeSweep();
         }
         if (
-          event.type !== "thread.turn-start-requested" &&
-          // A human stopping a board-run step (T3O-23). One event per Stop
-          // press, machine-wide — negligible beside what already crosses here.
-          event.type !== "thread.turn-interrupt-requested" &&
-          // A human answering a permission prompt (T3O-16): a life sign for the
-          // timeout sweep. One per answered prompt, negligible volume.
-          event.type !== "thread.approval-response-requested" &&
           event.type !== "board.card-moved" &&
           // T3O-33: a card changed project. Human-only and rare, and the whole
           // point is that the agent working the card in the OLD repository is
@@ -9085,8 +9024,8 @@ const make = Effect.gen(function* () {
           event.type !== "board.card-step-force-start-requested" &&
           // A step going back to the build queue (T3O-23). Emitted by every
           // recovery too, which is a handful of events an hour at most — far
-          // below the volume that made `thread.activity-appended` need its own
-          // pre-filter above.
+          // below the volume that made thread activity need filtering at the
+          // gateway (`ThreadGatewayV1.observe`).
           event.type !== "board.card-step-recovered" &&
           event.type !== "board.card-archived" &&
           event.type !== "board.card-deleted" &&
@@ -9097,26 +9036,18 @@ const make = Effect.gen(function* () {
         return worker.enqueue({ source: "domain", event });
       }),
     );
+    // Thread signals from the gateway. A session coming up matters only for a
+    // thread orphaned by a rejected admit — the durable delivery point for its
+    // turn interrupt — and the todo signals feed the todo cache, not this.
     yield* forkParked(
-      Stream.runForEach(providerService.streamEvents, (event) => {
-        if (event.type === "turn.completed") return worker.enqueue({ source: "runtime", event });
-        // `user-input.requested` rides the same stream (t3o-18, D13): one more
-        // case in an existing subscription, no new seam. It fires for every
-        // agent question, which is what re-parks a step on the gate.
-        if (event.type === "user-input.requested")
-          return worker.enqueue({ source: "runtime", event });
-        // `user-input.resolved` rides the same stream (t3o-34, D5): a structured
-        // question is raised from inside a RUNNING turn, so answering it starts
-        // no turn and emits no turn-start event anywhere. This is the only
-        // signal that sees a step un-parked that way.
-        if (event.type === "user-input.resolved")
-          return worker.enqueue({ source: "runtime", event });
-        // session.started matters only for a thread orphaned by a rejected
-        // admit — the durable delivery point for its turn interrupt.
-        if (event.type === "session.started" && orphanedThreads.has(String(event.threadId))) {
-          return worker.enqueue({ source: "runtime", event });
+      Stream.runForEach(threads.observe, (signal) => {
+        if (signal.type === "session-started" && !orphanedThreads.has(String(signal.threadId))) {
+          return Effect.void;
         }
-        return Effect.void;
+        if (signal.type === "todos-changed" || signal.type === "thread-deleted") {
+          return Effect.void;
+        }
+        return worker.enqueue({ source: "thread", signal });
       }),
     );
     // The server restarts mid-step: reconcile persisted step state, serialised

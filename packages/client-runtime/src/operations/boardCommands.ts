@@ -1,9 +1,8 @@
 /**
  * T3o board commands — client operations (t3o-03 commands, t3o-04 helpers).
  *
- * Board commands ride the existing `orchestration.dispatchCommand` RPC (D2),
- * so this module is plain composition over the stock RPC client: no new
- * methods, no new transport. Each helper mirrors the upstream
+ * Board commands ride the board's own `board.dispatchCommand` RPC (T3O-57),
+ * decided by the board's engine. Each helper mirrors the upstream
  * `operations/commands.ts` shape — caller supplies the domain fields,
  * `commandId` / `createdAt` are generated when absent.
  *
@@ -15,13 +14,12 @@
 import {
   BOARD_WS_METHODS,
   CommandId,
-  ORCHESTRATION_WS_METHODS,
   type BoardAttachCardFileInput,
   type BoardCardId,
   type BoardDetachCardFileInput,
   type BoardProviderLimitActionInput,
   type BoardProviderLimitResumeAtInput,
-  type ClientOrchestrationCommand,
+  type BoardClientCommand,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -35,8 +33,8 @@ import {
   request,
 } from "../rpc/client.ts";
 
-type CommandType = ClientOrchestrationCommand["type"];
-type CommandOf<T extends CommandType> = Extract<ClientOrchestrationCommand, { readonly type: T }>;
+type CommandType = BoardClientCommand["type"];
+type CommandOf<T extends CommandType> = Extract<BoardClientCommand, { readonly type: T }>;
 type CommandInput<T extends CommandType> = Omit<
   CommandOf<T>,
   "type" | "commandId" | "createdAt"
@@ -69,7 +67,7 @@ export type DeleteBoardStageInput = CommandInput<"board.stage.delete">;
 export type StartBoardStageThreadInput = CommandInput<"board.card.start-stage-thread">;
 export type ApproveBoardPlansInput = CommandInput<"board.plans.approve">;
 
-type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
+type DispatchTag = typeof BOARD_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
   EnvironmentRpcSuccess<DispatchTag>,
   EnvironmentRpcFailure<DispatchTag> | EnvironmentRpcUnavailableError,
@@ -81,7 +79,7 @@ const commandMetadata = (input: { readonly commandId?: CommandId; readonly creat
     commandId:
       input.commandId === undefined
         ? Effect.flatMap(Crypto.Crypto, (crypto) =>
-            crypto.randomUUIDv4.pipe(Effect.orDie, Effect.map(CommandId.make)),
+            crypto.randomUUIDv4().pipe(Effect.orDie, Effect.map(CommandId.make)),
           )
         : Effect.succeed(input.commandId),
     createdAt:
@@ -90,14 +88,14 @@ const commandMetadata = (input: { readonly commandId?: CommandId; readonly creat
         : Effect.succeed(input.createdAt),
   });
 
-function dispatch(command: ClientOrchestrationCommand) {
-  return request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
+function dispatch(command: BoardClientCommand) {
+  return request(BOARD_WS_METHODS.dispatchCommand, command);
 }
 
 /**
  * The two card→pull-request ACTIONS (t3o card↔PR spec). Unlike everything else
- * in this module these do not ride `orchestration.dispatchCommand`: they are
- * board RPCs, because each returns a result the caller renders — and because a
+ * in this module these are not board commands: they are their own board RPCs,
+ * because each returns a result the caller renders — and because a
  * refresh fires whenever a card is opened, which has no business writing to
  * the durable event log every time.
  */

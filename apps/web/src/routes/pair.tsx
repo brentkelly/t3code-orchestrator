@@ -1,4 +1,4 @@
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 
 // T3o: pairing lets go of the user on the board (T3O-34, D2).
 import { resolvePairExitTarget } from "../board/boardHomeRedirect";
@@ -31,8 +31,8 @@ export const Route = createFileRoute("/pair")({
 });
 
 function PairRouteView() {
+  const router = useRouter();
   const { authGateState } = Route.useRouteContext();
-  const navigate = useNavigate();
 
   if (!authGateState) {
     return null;
@@ -46,8 +46,12 @@ function PairRouteView() {
     <PairingRouteSurface
       auth={authGateState.auth}
       onAuthenticated={() => {
+        // Recreate the primary connection so its WebSocket and cached scopes
+        // use the newly issued cookie after re-pairing.
         // T3o: a completed pairing lands on the board.
-        void navigate({ to: resolvePairExitTarget(authGateState.status), replace: true });
+        router.history.replace(resolvePairExitTarget(authGateState.status));
+        router.history.flush();
+        window.location.reload();
       }}
       {...(authGateState.errorMessage ? { initialErrorMessage: authGateState.errorMessage } : {})}
     />

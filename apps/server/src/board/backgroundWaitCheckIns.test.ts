@@ -16,8 +16,6 @@ import {
   BoardCardId,
   boardCardStepState,
   type BoardState,
-  type OrchestrationCommand,
-  type OrchestrationThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
@@ -35,7 +33,9 @@ import {
   turnCompleted,
   withGovernor,
   type Harness,
+  type HarnessCommand,
 } from "./supervisorHarness.testkit.ts";
+import { fakeThreadState, type FakeThreadInput } from "./threadGateway.testkit.ts";
 
 const CARD = "waiting";
 
@@ -51,45 +51,36 @@ const fixture = (threadTodos?: Map<string, TodoRow>) => ({
     the liveness registry reports. */
 const shellOf = (
   threadId: ThreadId,
-  backgroundLiveness: "working" | "monitoring" | null,
-  sessionStatus: "ready" | "running" = "ready",
-): OrchestrationThreadShell =>
-  ({
-    id: threadId,
-    hasPendingUserInput: false,
-    hasPendingApprovals: false,
-    archivedAt: null,
-    settledOverride: null,
-    session: { status: sessionStatus, activeTurnId: null },
-    backgroundLiveness,
-  }) as unknown as OrchestrationThreadShell;
+  backgroundWork: "working" | "monitoring" | null,
+  sessionStatus: "idle" | "running" = "idle",
+  extra: FakeThreadInput = {},
+) => fakeThreadState(String(threadId), { sessionStatus, backgroundWork, ...extra });
 
 const setShell = (
   shells: Harness["shells"],
   threadId: ThreadId,
-  backgroundLiveness: "working" | "monitoring" | null,
-  sessionStatus: "ready" | "running" = "ready",
+  backgroundWork: "working" | "monitoring" | null,
+  sessionStatus: "idle" | "running" = "idle",
 ) =>
   Ref.update(
     shells,
     (current) =>
-      new Map([
-        ...current,
-        [String(threadId), shellOf(threadId, backgroundLiveness, sessionStatus)],
-      ]),
+      new Map([...current, [String(threadId), shellOf(threadId, backgroundWork, sessionStatus)]]),
   );
 
 const stateOf = (board: BoardState) => boardCardStepState(board, BoardCardId.make(CARD));
 
-const turnTexts = (commands: ReadonlyArray<OrchestrationCommand>) =>
+/** Every turn the board drove into a thread — the spawn's first turn and
+    every send after it. */
+const turnTexts = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.flatMap((command) =>
-    command.type === "thread.turn.start" ? [command.message.text] : [],
+    command.type === "thread.spawn" || command.type === "thread.send" ? [command.text] : [],
   );
-const checkInsOf = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const checkInsOf = (commands: ReadonlyArray<HarnessCommand>) =>
   turnTexts(commands).filter((text) => text.includes("scheduled check-in")).length;
-const stallNudgesOf = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const stallNudgesOf = (commands: ReadonlyArray<HarnessCommand>) =>
   turnTexts(commands).filter((text) => text.includes("without calling board_complete_step")).length;
-const recoveriesOf = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const recoveriesOf = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.recover-step").length;
 
 /** Start the card building and end its first turn with a monitor running. */
@@ -276,13 +267,7 @@ it.effect(
           (current) =>
             new Map([
               ...current,
-              [
-                String(threadId),
-                {
-                  ...shellOf(threadId, null),
-                  hasPendingUserInput: true,
-                } as OrchestrationThreadShell,
-              ],
+              [String(threadId), shellOf(threadId, null, "idle", { awaitingUserInput: true })],
             ]),
         );
         yield* h.pumpRuntime(turnCompleted(threadId));

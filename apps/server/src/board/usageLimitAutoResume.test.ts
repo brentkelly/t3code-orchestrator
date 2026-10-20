@@ -30,7 +30,6 @@ import {
   type BoardCard,
   type BoardCardStepState,
   type BoardUsageLimitMatch,
-  type OrchestrationCommand,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
@@ -53,6 +52,7 @@ import {
   withGovernor,
   type Harness,
 } from "./supervisorHarness.testkit.ts";
+import { fakeThreadState } from "./threadGateway.testkit.ts";
 
 const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claudeAgent");
@@ -107,7 +107,8 @@ const slowDown = (): BoardUsageLimitMatch => ({
   ruleId: "http.429",
 });
 
-/** Every turn the reactor sent into one thread, in order.
+/** Every turn the reactor sent into one thread, in order — the spawn's first
+    turn and every later send.
  *
  * The WORDS a resumed step is nudged with live nowhere on the card row, so this
  * is the only place a test can read them — and they are the whole point of the
@@ -116,12 +117,12 @@ const slowDown = (): BoardUsageLimitMatch => ({
 const turnTextsFor = (harness: Harness, threadId: ThreadId) =>
   harness.commands.pipe(
     Effect.map((commands) =>
-      commands
-        .filter(
-          (command): command is Extract<OrchestrationCommand, { type: "thread.turn.start" }> =>
-            command.type === "thread.turn.start" && command.threadId === threadId,
-        )
-        .map((command) => command.message.text),
+      commands.flatMap((command) =>
+        (command.type === "thread.spawn" || command.type === "thread.send") &&
+        command.threadId === threadId
+          ? [command.text]
+          : [],
+      ),
     ),
   );
 
@@ -225,7 +226,14 @@ it.effect("a refusal that ends with a monitor still live parks on the cooldown, 
           const shell = current.get(String(threadId))!;
           return new Map([
             ...current,
-            [String(threadId), { ...shell, backgroundLiveness: "monitoring" as const }],
+            [
+              String(threadId),
+              fakeThreadState(String(threadId), {
+                sessionStatus: shell.sessionStatus,
+                modelSelection: shell.modelSelection,
+                backgroundWork: "monitoring",
+              }),
+            ],
           ]);
         });
         yield* endTurn(harness, threadId, waitAt());
@@ -911,10 +919,11 @@ it.effect("a card parked on an unanswered question is never resumed by a lifting
               ...current,
               [
                 String(askedThread),
-                {
-                  ...idleThreadShell(String(askedThread), codex),
-                  hasPendingUserInput: true,
-                } as never,
+                fakeThreadState(String(askedThread), {
+                  sessionStatus: "idle",
+                  modelSelection: { instanceId: codex, model: "gpt-5-codex" },
+                  awaitingUserInput: true,
+                }),
               ],
             ]),
         );
@@ -931,6 +940,95 @@ it.effect("a card parked on an unanswered question is never resumed by a lifting
 
         // The prober can only ever be the usage-limit park.
         assert.strictEqual((yield* stepOf(harness, "asked"))?.status, "awaiting-input");
+      }),
+  ),
+);
+
+it.effect(
+  "the engine's limit resume wakes only the usage-limit park, and buys no free ending",
+  () =>
+    withGovernor(
+      {
+        board: {
+          cards: [buildingCard("a", "a"), buildingCard("asked", "b")],
+          nextCardNumberByProject: {},
+        },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+      },
+      (harness) =>
+        Effect.gen(function* () {
+          yield* harness.pumpDomain(movedToBuilding(buildingCard("asked", "b"), 1));
+          const askedThread = (yield* stepOf(harness, "asked"))?.threadId;
+          assert.ok(askedThread != null);
+          yield* Ref.update(
+            harness.shells,
+            (current) =>
+              new Map([
+                ...current,
+                [
+                  String(askedThread),
+                  fakeThreadState(String(askedThread), {
+                    sessionStatus: "idle",
+                    modelSelection: { instanceId: codex, model: "gpt-5-codex" },
+                    awaitingUserInput: true,
+                  }),
+                ],
+              ]),
+          );
+          yield* harness.pumpRuntime(turnCompleted(askedThread));
+          assert.strictEqual((yield* stepOf(harness, "asked"))?.status, "awaiting-input");
+
+          const thread = yield* stopCard(harness, "a", "a", 2, waitAt());
+          assert.strictEqual((yield* stepOf(harness, "a"))?.stalledReason, "usage-limit");
+
+          // v2 resumes both threads; only the limit park was the board's to wake.
+          yield* harness.pumpRuntime({ type: "limit-resumed", threadId: askedThread });
+          yield* harness.pumpRuntime({ type: "limit-resumed", threadId: thread });
+          assert.strictEqual((yield* stepOf(harness, "asked"))?.status, "awaiting-input");
+          const resumed = yield* stepOf(harness, "a");
+          assert.strictEqual(resumed?.status, "running");
+          // The engine's resume is not a human steering: no free ending.
+          assert.isNull(resumed?.humanTurnAt ?? null);
+        }),
+    ),
+);
+
+it.effect("a limit armed with the engine is resumed once, by the engine, never by the board", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("a", "a")], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    (harness) =>
+      Effect.gen(function* () {
+        const thread = yield* startCard(harness, "a", "a", 1);
+        // The thread failed on a limit that names its reset time, so the park
+        // hands the resume to v2.
+        yield* Ref.update(harness.shells, (current) => {
+          const state = current.get(String(thread))!;
+          return new Map(current).set(String(thread), {
+            ...state,
+            usageLimit: { resetAt: RESETS_AT, message: waitAt().reason, resumeArmed: false },
+          });
+        });
+        yield* endTurn(harness, thread, waitAt());
+        assert.strictEqual((yield* stepOf(harness, "a"))?.stalledReason, "usage-limit");
+        const shells = yield* Ref.get(harness.shells);
+        assert.isTrue(shells.get(String(thread))?.usageLimit?.resumeArmed);
+        const sentBefore = (yield* turnTextsFor(harness, thread)).length;
+
+        // The window reopens: the board's probe leaves the armed park alone.
+        yield* TestClock.adjust(Duration.minutes(61));
+        yield* harness.reactor.fireProbes;
+        yield* harness.reactor.drain;
+        assert.strictEqual((yield* stepOf(harness, "a"))?.status, "stalled");
+        assert.lengthOf(yield* turnTextsFor(harness, thread), sentBefore);
+
+        // v2's resume wakes the step, and the board sends nothing of its own.
+        yield* harness.pumpRuntime({ type: "limit-resumed", threadId: thread });
+        yield* harness.reactor.drain;
+        assert.strictEqual((yield* stepOf(harness, "a"))?.status, "running");
+        assert.lengthOf(yield* turnTextsFor(harness, thread), sentBefore);
       }),
   ),
 );

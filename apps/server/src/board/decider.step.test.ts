@@ -8,13 +8,14 @@ import {
   type BoardCard,
   type BoardCardStepState,
   type BoardState,
-  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { boardDecidedEvents, decideBoardCommand } from "./decider.ts";
+import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
+import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
+import type { BoardOrchestrationReadModel } from "./decisionContext.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-1");
@@ -73,7 +74,7 @@ function makeCard(overrides: Omit<Partial<BoardCard>, "id"> & { readonly id: str
   };
 }
 
-function makeReadModel(board: BoardState): OrchestrationReadModel {
+function makeReadModel(board: BoardState): BoardOrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [],
@@ -110,20 +111,15 @@ const stepState = (
   ...overrides,
 });
 
-const decide = (
-  command: Parameters<typeof decideBoardCommand>[0]["command"],
-  readModel: OrchestrationReadModel,
-) =>
-  decideBoardCommand({ command, readModel }).pipe(
+const decide = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
+  decideBoardCommandOnModel({ command, readModel }).pipe(
     Effect.map(boardDecidedEvents),
     Effect.map((events) => events[0]!),
     Effect.provide(NodeServices.layer),
   );
 
-const decideFail = (
-  command: Parameters<typeof decideBoardCommand>[0]["command"],
-  readModel: OrchestrationReadModel,
-) => Effect.flip(decide(command, readModel));
+const decideFail = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
+  Effect.flip(decide(command, readModel));
 
 it.effect("select-step records a pending step, freezing the stage's config onto the run row", () =>
   Effect.gen(function* () {
@@ -1222,7 +1218,7 @@ it.effect("a check-in refuses a step that is no longer running (T3O-20)", () =>
       nextCardNumberByProject: {},
     });
     const error = yield* decideFail(checkIn(false), board);
-    assert.strictEqual(error._tag, "OrchestrationCommandInvariantError");
+    assert.strictEqual(error._tag, "BoardCommandInvariantError");
   }),
 );
 
@@ -1241,6 +1237,6 @@ it.effect("note-human-turn refuses a card with no live step (T3O-17)", () =>
       },
       board,
     );
-    assert.strictEqual(error._tag, "OrchestrationCommandInvariantError");
+    assert.strictEqual(error._tag, "BoardCommandInvariantError");
   }),
 );

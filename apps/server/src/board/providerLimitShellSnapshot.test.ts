@@ -12,50 +12,19 @@
  * Run through the real seams (decider → event store → projection → snapshot
  * query), because that is where the two producers actually meet.
  */
-import {
-  BoardCardId,
-  CommandId,
-  ProjectId,
-  ProviderInstanceId,
-  type OrchestrationShellSnapshot,
-} from "@t3tools/contracts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
+import { BoardCardId, CommandId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
-import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
-import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ServerConfig } from "../config.ts";
+import {
+  boardStackEngine,
+  boardStackSnapshotQuery,
+  makeBoardStackTestLayer,
+} from "./boardStack.testkit.ts";
 
 /** One database per scenario: commands are deduped by `commandId`, so a shared
     database would let one scenario's writes satisfy the next one's dispatch. */
-const makeTestLayer = (prefix: string) =>
-  Layer.mergeAll(
-    OrchestrationEngineLive.pipe(
-      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
-    ),
-    OrchestrationProjectionSnapshotQueryLive,
-  ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provideMerge(SqlitePersistenceMemory),
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
-    Layer.provideMerge(NodeServices.layer),
-  );
+const makeTestLayer = makeBoardStackTestLayer;
 
 const createdAt = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-limit");
@@ -63,7 +32,7 @@ const cardId = BoardCardId.make("card-limit");
 const codex = ProviderInstanceId.make("codex");
 
 const seedProject = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
+  const engine = yield* boardStackEngine;
   yield* engine.dispatch({
     type: "project.create",
     commandId: CommandId.make("cmd-project"),
@@ -96,12 +65,12 @@ const seedProject = Effect.gen(function* () {
 });
 
 const shellLimits = Effect.gen(function* () {
-  const snapshotQuery = yield* ProjectionSnapshotQuery;
-  const snapshot: OrchestrationShellSnapshot = yield* snapshotQuery.getShellSnapshot();
-  return snapshot.boardProviderLimits;
+  const snapshotQuery = yield* boardStackSnapshotQuery;
+  const snapshot = yield* snapshotQuery.getBoardSnapshot();
+  return snapshot.providerLimits;
 });
 
-describe("provider cooldowns on the shell SNAPSHOT (T3O-22, D14)", () => {
+describe("provider cooldowns on the board SNAPSHOT (T3O-22, D14)", () => {
   it.layer(makeTestLayer("t3o-limit-snap-1-"))("a live cooldown", (it) => {
     it.effect("rides the snapshot, so a client reconnecting mid-limit still sees it", () =>
       Effect.gen(function* () {
@@ -123,7 +92,9 @@ describe("provider cooldowns on the shell SNAPSHOT (T3O-22, D14)", () => {
   });
 
   it.layer(makeTestLayer("t3o-limit-snap-2-"))("a cleared cooldown", (it) => {
-    it.effect("leaves the slice ABSENT rather than empty, like every other one", () =>
+    // The board snapshot carries every slice as an array (T3O-57): its own
+    // schema, so there is no older client to stay optional for.
+    it.effect("leaves the slice empty", () =>
       Effect.gen(function* () {
         const engine = yield* seedProject;
         yield* engine.dispatch({
@@ -133,7 +104,7 @@ describe("provider cooldowns on the shell SNAPSHOT (T3O-22, D14)", () => {
           createdAt,
         });
 
-        assert.strictEqual(yield* shellLimits, undefined);
+        assert.deepStrictEqual(yield* shellLimits, []);
       }),
     );
   });

@@ -13,7 +13,7 @@
 // History is NOT rewritten (D7): existing rows get NULL, which already means
 // "stopped for no recorded reason", so no read-side resolution shim is needed.
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

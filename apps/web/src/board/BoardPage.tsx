@@ -8,6 +8,7 @@
  * placement overlay reconciles against the shell stream. This file decides
  * *when* to dispatch, never *what number* to store.
  */
+import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import {
   BoardCardId,
   BOARD_SEED_STAGES,
@@ -62,7 +63,7 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { toastManager } from "../components/ui/toast";
 import { cn } from "../lib/utils";
 import { environmentShell } from "../state/shell";
-import { boardEnvironment } from "../state/board";
+import { boardEnvironment, environmentBoard } from "../state/board";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -613,7 +614,9 @@ function EnvironmentBoard({
     (threadId: ThreadId) => {
       const shell = threadShellsById.get(threadId);
       if (shell === undefined) return undefined;
-      const { threadState, awaitingInput } = deriveBoardCardThreadState(shell);
+      const { threadState, awaitingInput } = deriveBoardCardThreadState(
+        boardThreadStateSource(shell),
+      );
       return {
         awaitingInput,
         running: threadState === "working",
@@ -1116,7 +1119,7 @@ function EnvironmentBoard({
   // children lands on the root board with that card's sheet open; a card that
   // does not exist at all lands on the bare root board. Gated on the first
   // snapshot so an empty pre-connection board is never mistaken for either.
-  const snapshotArrived = Option.isSome(shellState.snapshot);
+  const snapshotArrived = useAtomValue(environmentBoard.snapshotValueAtom(environmentId)) !== null;
   useEffect(() => {
     if (scope.kind !== "sub-board" || !snapshotArrived) return;
     const entry = resolveSubBoardEntry(Object.values(liveColumns).flat(), scope.parentCardId);

@@ -16,13 +16,15 @@ import {
   type BoardCard,
   type BoardCardShell,
   type BoardLabel,
-  type OrchestrationShellSnapshot,
-  type OrchestrationThreadShell,
+  type BoardShellSnapshot,
+  type OrchestrationV2ThreadShell,
+  RuntimeRequestId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyBoardCardPlacements,
+  applyBoardShellStreamEvent,
   boardBuildQueue,
   boardRunningStepCount,
   planBoardQueueMoveToFront,
@@ -32,8 +34,9 @@ import {
   mergeBoardStageColumns,
   planBoardCardReorder,
   type BoardStageColumns,
+  withBoardThreadFields,
 } from "./board.ts";
-import { applyShellStreamEvent } from "./shellReducer.ts";
+import { v2Now, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 /** A fixed clock for the queue derivation (T3O-19): the schedule filter needs
@@ -81,51 +84,38 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
 const cardShell = (id: string, overrides?: Partial<BoardCard>): BoardCardShell =>
   boardCardShellFromCard(fullCard(id, overrides));
 
-const threadShell = (overrides?: Partial<OrchestrationThreadShell>): OrchestrationThreadShell => ({
+const threadShell = (
+  overrides?: Partial<OrchestrationV2ThreadShell>,
+): OrchestrationV2ThreadShell => ({
+  ...v2ThreadShell,
   id: threadId,
   projectId,
-  title: "Thread",
-  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
-  runtimeMode: "full-access",
-  interactionMode: "default",
-  branch: null,
-  worktreePath: null,
-  pullRequests: [],
-  latestTurn: null,
-  createdAt: NOW,
-  updatedAt: NOW,
-  archivedAt: null,
-  settledOverride: null,
-  settledAt: null,
-  latestUserMessageAt: null,
-  hasPendingApprovals: false,
-  hasPendingUserInput: false,
-  hasActionableProposedPlan: false,
-  session: null,
   ...overrides,
 });
 
-const snapshot = (input?: Partial<OrchestrationShellSnapshot>): OrchestrationShellSnapshot => ({
+const snapshot = (input?: Partial<BoardShellSnapshot>): BoardShellSnapshot => ({
   snapshotSequence: 1,
-  projects: [],
-  threads: [],
-  updatedAt: NOW,
+  cards: [],
+  labels: [],
+  stages: [],
+  cardThreads: [],
+  providerLimits: [],
   ...input,
 });
 
 describe("board shell reducer", () => {
-  it("appends a card to a snapshot that has no cards field yet", () => {
-    const next = applyShellStreamEvent(snapshot(), {
+  it("appends a card to an empty board", () => {
+    const next = applyBoardShellStreamEvent(snapshot(), {
       kind: "card-upserted",
       sequence: 2,
       card: cardShell("card-1"),
     });
     expect(next.cards).toEqual([cardShell("card-1")]);
-    expect(next.snapshotSequence).toBe(2);
+    expect(next.snapshotSequence).toBe(1);
   });
 
   it("replaces an existing card on upsert", () => {
-    const next = applyShellStreamEvent(snapshot({ cards: [cardShell("card-1")] }), {
+    const next = applyBoardShellStreamEvent(snapshot({ cards: [cardShell("card-1")] }), {
       kind: "card-upserted",
       sequence: 2,
       card: cardShell("card-1", { title: "Renamed" }),
@@ -134,7 +124,7 @@ describe("board shell reducer", () => {
   });
 
   it("removes a card", () => {
-    const next = applyShellStreamEvent(
+    const next = applyBoardShellStreamEvent(
       snapshot({ cards: [cardShell("card-1"), cardShell("card-2")] }),
       {
         kind: "card-removed",
@@ -149,7 +139,7 @@ describe("board shell reducer", () => {
     const held = snapshot({
       cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })],
     });
-    const queued = applyShellStreamEvent(held, {
+    const queued = applyBoardShellStreamEvent(held, {
       kind: "card-queued",
       sequence: 2,
       cardId: BoardCardId.make("card-1"),
@@ -157,8 +147,8 @@ describe("board shell reducer", () => {
       stepRunning: false,
     });
     expect(queued.cards?.[0]?.queued).toBe(true);
-    expect(queued.snapshotSequence).toBe(2);
-    const cleared = applyShellStreamEvent(queued, {
+    expect(queued.snapshotSequence).toBe(1);
+    const cleared = applyBoardShellStreamEvent(queued, {
       kind: "card-queued",
       sequence: 3,
       cardId: BoardCardId.make("card-1"),
@@ -175,7 +165,7 @@ describe("board shell reducer", () => {
     const held = snapshot({
       cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })],
     });
-    const running = applyShellStreamEvent(held, {
+    const running = applyBoardShellStreamEvent(held, {
       kind: "card-queued",
       sequence: 2,
       cardId: BoardCardId.make("card-1"),
@@ -183,7 +173,7 @@ describe("board shell reducer", () => {
       stepRunning: true,
     });
     expect(running.cards?.[0]?.stepRunning).toBe(true);
-    const heldAgain = applyShellStreamEvent(running, {
+    const heldAgain = applyBoardShellStreamEvent(running, {
       kind: "card-queued",
       sequence: 3,
       cardId: BoardCardId.make("card-1"),
@@ -194,7 +184,7 @@ describe("board shell reducer", () => {
   });
 
   it("a card-carrying upsert preserves stepRunning — a drag never blanks a working card's dot", () => {
-    const running = applyShellStreamEvent(
+    const running = applyBoardShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
       {
         kind: "card-queued",
@@ -205,7 +195,7 @@ describe("board shell reducer", () => {
       },
     );
     expect(running.cards?.[0]?.stepRunning).toBe(true);
-    const reordered = applyShellStreamEvent(running, {
+    const reordered = applyBoardShellStreamEvent(running, {
       kind: "card-upserted",
       sequence: 3,
       card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "z" }),
@@ -217,7 +207,7 @@ describe("board shell reducer", () => {
     const held = snapshot({
       cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })],
     });
-    const stalled = applyShellStreamEvent(held, {
+    const stalled = applyBoardShellStreamEvent(held, {
       kind: "card-stalled",
       sequence: 2,
       cardId: BoardCardId.make("card-1"),
@@ -229,8 +219,8 @@ describe("board shell reducer", () => {
       queued: false,
     });
     expect(stalled.cards?.[0]?.stalled).toBe(true);
-    expect(stalled.snapshotSequence).toBe(2);
-    const cleared = applyShellStreamEvent(stalled, {
+    expect(stalled.snapshotSequence).toBe(1);
+    const cleared = applyBoardShellStreamEvent(stalled, {
       kind: "card-stalled",
       sequence: 3,
       cardId: BoardCardId.make("card-1"),
@@ -249,7 +239,7 @@ describe("board shell reducer", () => {
     // A step whose slot was granted but whose spawn was refused escalates
     // straight from `queued` to `stalled`, and no later delta clears the queue
     // badge — it would otherwise hold a displayed queue position until reconnect.
-    const queued = applyShellStreamEvent(
+    const queued = applyBoardShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
       {
         kind: "card-queued",
@@ -260,7 +250,7 @@ describe("board shell reducer", () => {
       },
     );
     expect(queued.cards?.[0]?.queued).toBe(true);
-    const stalled = applyShellStreamEvent(queued, {
+    const stalled = applyBoardShellStreamEvent(queued, {
       kind: "card-stalled",
       sequence: 3,
       cardId: BoardCardId.make("card-1"),
@@ -280,7 +270,7 @@ describe("board shell reducer", () => {
     // abandoned when its card leaves the pipeline, failed before it ever ran —
     // without passing through the admission the badge used to wait on. Left
     // standing, a card sitting in Done reads `Queued — starts next`.
-    const queued = applyShellStreamEvent(
+    const queued = applyBoardShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
       {
         kind: "card-queued",
@@ -291,7 +281,7 @@ describe("board shell reducer", () => {
       },
     );
     expect(queued.cards?.[0]?.queued).toBe(true);
-    const settled = applyShellStreamEvent(queued, {
+    const settled = applyBoardShellStreamEvent(queued, {
       kind: "card-stalled",
       sequence: 3,
       cardId: BoardCardId.make("card-1"),
@@ -307,7 +297,7 @@ describe("board shell reducer", () => {
   });
 
   it("a card-carrying upsert preserves the stalled badge — a drag never blanks it (t3o-17)", () => {
-    const stalled = applyShellStreamEvent(
+    const stalled = applyBoardShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
       {
         kind: "card-stalled",
@@ -322,7 +312,7 @@ describe("board shell reducer", () => {
       },
     );
     expect(stalled.cards?.[0]?.stalled).toBe(true);
-    const reordered = applyShellStreamEvent(stalled, {
+    const reordered = applyBoardShellStreamEvent(stalled, {
       kind: "card-upserted",
       sequence: 3,
       card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "z" }),
@@ -331,7 +321,7 @@ describe("board shell reducer", () => {
   });
 
   it("carries the parked-on-a-human reason, and a drag never blanks it (t3o-34)", () => {
-    const parked = applyShellStreamEvent(
+    const parked = applyBoardShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.planning })] }),
       {
         kind: "card-stalled",
@@ -346,14 +336,14 @@ describe("board shell reducer", () => {
       },
     );
     expect(parked.cards?.[0]?.stepAwaiting).toBe("stopped");
-    const reordered = applyShellStreamEvent(parked, {
+    const reordered = applyBoardShellStreamEvent(parked, {
       kind: "card-upserted",
       sequence: 3,
       card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.planning, orderKey: "z" }),
     });
     expect(reordered.cards?.[0]?.stepAwaiting).toBe("stopped"); // preserved
     // …and the resume clears it on the same delta that re-lights the dot.
-    const resumed = applyShellStreamEvent(reordered, {
+    const resumed = applyBoardShellStreamEvent(reordered, {
       kind: "card-stalled",
       sequence: 4,
       cardId: BoardCardId.make("card-1"),
@@ -369,7 +359,7 @@ describe("board shell reducer", () => {
   });
 
   it("carries a human pause through a drag, and Resume raises the queue pill (T3O-23)", () => {
-    const paused = applyShellStreamEvent(
+    const paused = applyBoardShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
       {
         kind: "card-stalled",
@@ -384,7 +374,7 @@ describe("board shell reducer", () => {
       },
     );
     expect(paused.cards?.[0]?.stepAwaiting).toBe("paused");
-    const reordered = applyShellStreamEvent(paused, {
+    const reordered = applyBoardShellStreamEvent(paused, {
       kind: "card-upserted",
       sequence: 3,
       card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "z" }),
@@ -393,7 +383,7 @@ describe("board shell reducer", () => {
     // Resume sends the step back through the governor, so the ONE delta that
     // carries both clears the Paused chip and raises the queue pill together —
     // the card never shows both, and never neither.
-    const requeued = applyShellStreamEvent(reordered, {
+    const requeued = applyBoardShellStreamEvent(reordered, {
       kind: "card-stalled",
       sequence: 4,
       cardId: BoardCardId.make("card-1"),
@@ -410,7 +400,7 @@ describe("board shell reducer", () => {
   });
 
   it("carries the conflict-fix flag, and a drag never blanks it (T3O-9)", () => {
-    const fixing = applyShellStreamEvent(
+    const fixing = applyBoardShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.merge })] }),
       {
         kind: "card-stalled",
@@ -429,7 +419,7 @@ describe("board shell reducer", () => {
     expect(fixing.cards?.[0]?.stepConflictFix).toBe(true);
     // A card-carrying delta rests the flag at false, so the reducer has to
     // preserve it — otherwise renaming a card mid-fix clears the pill.
-    const renamed = applyShellStreamEvent(fixing, {
+    const renamed = applyBoardShellStreamEvent(fixing, {
       kind: "card-upserted",
       sequence: 3,
       card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.merge, title: "Renamed" }),
@@ -437,7 +427,7 @@ describe("board shell reducer", () => {
     expect(renamed.cards?.[0]?.stepConflictFix).toBe(true);
     expect(renamed.cards?.[0]?.title).toBe("Renamed");
     // …and the settle clears it on the same delta that raises `held`.
-    const settled = applyShellStreamEvent(renamed, {
+    const settled = applyBoardShellStreamEvent(renamed, {
       kind: "card-stalled",
       sequence: 4,
       cardId: BoardCardId.make("card-1"),
@@ -452,7 +442,7 @@ describe("board shell reducer", () => {
   });
 
   it("carries the CI-fix flag through a rename, and the settle drops the key (T3O-12)", () => {
-    const fixing = applyShellStreamEvent(
+    const fixing = applyBoardShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.merge })] }),
       {
         kind: "card-stalled",
@@ -468,13 +458,13 @@ describe("board shell reducer", () => {
       },
     );
     expect(fixing.cards?.[0]?.stepChecksFix).toBe(true);
-    const renamed = applyShellStreamEvent(fixing, {
+    const renamed = applyBoardShellStreamEvent(fixing, {
       kind: "card-upserted",
       sequence: 3,
       card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.merge, title: "Renamed" }),
     });
     expect(renamed.cards?.[0]?.stepChecksFix).toBe(true);
-    const settled = applyShellStreamEvent(renamed, {
+    const settled = applyBoardShellStreamEvent(renamed, {
       kind: "card-stalled",
       sequence: 4,
       cardId: BoardCardId.make("card-1"),
@@ -489,7 +479,7 @@ describe("board shell reducer", () => {
   });
 
   it("carries the usage-limit stall slice through a drag, and the resume clears it (T3O-22)", () => {
-    const parked = applyShellStreamEvent(
+    const parked = applyBoardShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
       {
         kind: "card-stalled",
@@ -512,7 +502,7 @@ describe("board shell reducer", () => {
     // riding with it the face's words revert to the gave-up phrasing and the
     // detail modal paints its red "stopped" banner over a card that is calmly
     // counting down to its own resume.
-    const reordered = applyShellStreamEvent(parked, {
+    const reordered = applyBoardShellStreamEvent(parked, {
       kind: "card-upserted",
       sequence: 3,
       card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "z" }),
@@ -523,7 +513,7 @@ describe("board shell reducer", () => {
     expect(reordered.cards?.[0]?.limitedByInstanceId).toBe("claudeAgent");
     // …and the window reopening still clears the whole slice, because
     // `card-stalled` deletes the keys rather than spreading over what is held.
-    const resumed = applyShellStreamEvent(reordered, {
+    const resumed = applyBoardShellStreamEvent(reordered, {
       kind: "card-stalled",
       sequence: 4,
       cardId: BoardCardId.make("card-1"),
@@ -542,7 +532,7 @@ describe("board shell reducer", () => {
 
   it("card-plans updates the footer's plan count and no-ops on an unheld card", () => {
     const held = snapshot({ cards: [cardShell("card-1")] });
-    const proposed = applyShellStreamEvent(held, {
+    const proposed = applyBoardShellStreamEvent(held, {
       kind: "card-plans",
       sequence: 2,
       cardId: BoardCardId.make("card-1"),
@@ -551,7 +541,7 @@ describe("board shell reducer", () => {
     expect(proposed.cards?.[0]?.planCount).toBe(3);
 
     // A re-proposal that shrinks the set has to bring the count down.
-    const shrunk = applyShellStreamEvent(proposed, {
+    const shrunk = applyBoardShellStreamEvent(proposed, {
       kind: "card-plans",
       sequence: 3,
       cardId: BoardCardId.make("card-1"),
@@ -559,7 +549,7 @@ describe("board shell reducer", () => {
     });
     expect(shrunk.cards?.[0]?.planCount).toBe(1);
 
-    const stranger = applyShellStreamEvent(held, {
+    const stranger = applyBoardShellStreamEvent(held, {
       kind: "card-plans",
       sequence: 4,
       cardId: BoardCardId.make("card-elsewhere"),
@@ -584,7 +574,7 @@ describe("board shell reducer", () => {
       issuesOpen: 2,
       issuesDisputed: 1,
     };
-    const reviewed = applyShellStreamEvent(held, {
+    const reviewed = applyBoardShellStreamEvent(held, {
       kind: "card-review",
       sequence: 2,
       cardId: BoardCardId.make("card-1"),
@@ -601,7 +591,7 @@ describe("board shell reducer", () => {
     expect(reviewed.cards?.[0]?.severityCritical).toBe(2);
     expect(reviewed.cards?.[0]?.issuesDisputed).toBe(1);
 
-    const cleared = applyShellStreamEvent(reviewed, {
+    const cleared = applyBoardShellStreamEvent(reviewed, {
       kind: "card-review",
       sequence: 3,
       cardId: BoardCardId.make("card-1"),
@@ -611,7 +601,7 @@ describe("board shell reducer", () => {
     expect(cleared.cards?.[0]?.roundCurrent).toBeUndefined();
     expect(cleared.cards?.[0]?.severityCritical).toBeUndefined();
 
-    const stranger = applyShellStreamEvent(held, {
+    const stranger = applyBoardShellStreamEvent(held, {
       kind: "card-review",
       sequence: 4,
       cardId: BoardCardId.make("card-elsewhere"),
@@ -625,7 +615,7 @@ describe("board shell reducer", () => {
     // rides the `card-upserted` delta — so the card face moves live rather
     // than waiting for the next step completion. When the slice is present it
     // must win over any previously-held one, not be preserved.
-    const first = applyShellStreamEvent(snapshot({ cards: [cardShell("card-1")] }), {
+    const first = applyBoardShellStreamEvent(snapshot({ cards: [cardShell("card-1")] }), {
       kind: "card-review",
       sequence: 2,
       cardId: BoardCardId.make("card-1"),
@@ -645,7 +635,7 @@ describe("board shell reducer", () => {
       },
     });
     // The upsert carries a NEW budget (the `+` edit raised it to 6).
-    const edited = applyShellStreamEvent(first, {
+    const edited = applyBoardShellStreamEvent(first, {
       kind: "card-upserted",
       sequence: 3,
       card: boardCardShellFromCard(fullCard("card-1"), undefined, {
@@ -676,7 +666,7 @@ describe("board shell reducer", () => {
     // is being used. `boardCardShellFromCard` (every card-carrying delta's
     // producer) cannot see the step-completion ledger, so it omits all ten
     // keys and the reducer must carry them.
-    const reviewed = applyShellStreamEvent(snapshot({ cards: [cardShell("card-1")] }), {
+    const reviewed = applyBoardShellStreamEvent(snapshot({ cards: [cardShell("card-1")] }), {
       kind: "card-review",
       sequence: 2,
       cardId: BoardCardId.make("card-1"),
@@ -696,7 +686,7 @@ describe("board shell reducer", () => {
       },
     });
 
-    const dragged = applyShellStreamEvent(reviewed, {
+    const dragged = applyBoardShellStreamEvent(reviewed, {
       kind: "card-upserted",
       sequence: 3,
       card: cardShell("card-1", { orderKey: "z" }),
@@ -717,7 +707,7 @@ describe("board shell reducer", () => {
     const known = snapshot({
       cards: [{ ...cardShell("card-1"), briefHasImage: true, planCount: 2 }],
     });
-    const dragged = applyShellStreamEvent(known, {
+    const dragged = applyBoardShellStreamEvent(known, {
       kind: "card-upserted",
       sequence: 2,
       card: cardShell("card-1", { orderKey: "z" }),
@@ -726,7 +716,7 @@ describe("board shell reducer", () => {
     expect(dragged.cards?.[0]?.planCount).toBe(2);
 
     // But a delta that DID see the brief is authoritative, `false` included.
-    const edited = applyShellStreamEvent(known, {
+    const edited = applyBoardShellStreamEvent(known, {
       kind: "card-upserted",
       sequence: 3,
       card: { ...cardShell("card-1"), briefHasImage: false },
@@ -737,7 +727,7 @@ describe("board shell reducer", () => {
 
   it("card-queued is a no-op for a card the client does not hold (t3o-11)", () => {
     const held = snapshot({ cards: [cardShell("card-1")] });
-    const next = applyShellStreamEvent(held, {
+    const next = applyBoardShellStreamEvent(held, {
       kind: "card-queued",
       sequence: 2,
       cardId: BoardCardId.make("card-missing"),
@@ -752,7 +742,7 @@ describe("board shell reducer", () => {
     // a card-carrying delta (here a reorder = drag) rests it at false. The
     // client must keep the last known queued value, like it re-derives
     // threadState, or reprioritising the queue would flicker the badge off.
-    const queued = applyShellStreamEvent(
+    const queued = applyBoardShellStreamEvent(
       snapshot({ cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })] }),
       {
         kind: "card-queued",
@@ -763,7 +753,7 @@ describe("board shell reducer", () => {
       },
     );
     expect(queued.cards?.[0]?.queued).toBe(true);
-    const reordered = applyShellStreamEvent(queued, {
+    const reordered = applyBoardShellStreamEvent(queued, {
       kind: "card-upserted",
       sequence: 3,
       card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "z" }),
@@ -772,67 +762,66 @@ describe("board shell reducer", () => {
     expect(reordered.cards?.[0]?.orderKey).toBe("z"); // new position honored
   });
 
-  it("drops stale card events by sequence", () => {
+  it("folds a delta whatever its sequence; the guard is applyBoardShellStreamItem's", () => {
     const current = snapshot({ snapshotSequence: 5, cards: [cardShell("card-1")] });
-    const next = applyShellStreamEvent(current, {
+    const next = applyBoardShellStreamEvent(current, {
       kind: "card-upserted",
       sequence: 4,
-      card: cardShell("card-1", { title: "Stale rename" }),
+      card: cardShell("card-1", { title: "Renamed" }),
     });
-    expect(next).toBe(current);
+    expect(next.cards?.[0]?.title).toBe("Renamed");
+    expect(next.snapshotSequence).toBe(5);
+  });
+});
+
+describe("withBoardThreadFields", () => {
+  const userInputRequest = {
+    id: RuntimeRequestId.make("request-1"),
+    kind: "user_input" as const,
+    createdAt: v2Now,
+  };
+  const monitorTask = { taskId: "monitor-1", kind: "monitor" as const };
+
+  const linked = cardShell("card-1", {
+    threadLinks: [{ threadId, role: "build", linkedAt: NOW, tombstonedAt: null }],
   });
 
-  it("re-derives thread-derived fields from the snapshot's thread shells on upsert", () => {
-    // Delta-carried shells leave threadState at "none" (the server-side
-    // mapping is a pure function of the board event); the reducer must
-    // re-derive from the linked thread the snapshot already holds.
-    const linked = cardShell("card-1", {
-      threadLinks: [{ threadId, role: "build", linkedAt: NOW, tombstonedAt: null }],
-    });
+  it("derives a card's thread fields from the thread shells the client holds", () => {
+    // The server leaves threadState at "none": the board stream carries no
+    // thread data, and a thread starting or stopping must move its card with
+    // no board delta at all.
     expect(linked.activeThreadId).toBe(threadId);
     expect(linked.threadState).toBe("none");
 
-    const next = applyShellStreamEvent(
-      snapshot({ threads: [threadShell({ hasPendingUserInput: true })] }),
-      { kind: "card-upserted", sequence: 2, card: linked },
-    );
-    expect(next.cards?.[0]?.threadState).toBe("waiting");
-    expect(next.cards?.[0]?.awaitingInput).toBe(true);
+    const next = withBoardThreadFields(snapshot({ cards: [linked] }), [
+      threadShell({ pendingRuntimeRequest: userInputRequest }),
+    ]);
+    expect(next.cards[0]?.threadState).toBe("waiting");
+    expect(next.cards[0]?.awaitingInput).toBe(true);
   });
 
-  it("re-derives the background wait both ways (T3O-20)", () => {
-    const linked = cardShell("card-1", {
-      threadLinks: [{ threadId, role: "build", linkedAt: NOW, tombstonedAt: null }],
-    });
-    const waiting = applyShellStreamEvent(
-      snapshot({ threads: [threadShell({ backgroundLiveness: "monitoring" })] }),
-      { kind: "card-upserted", sequence: 2, card: linked },
-    );
-    expect(waiting.cards?.[0]?.waitingOnBackground).toBe(true);
+  it("derives the background wait both ways (T3O-20)", () => {
+    const waiting = withBoardThreadFields(snapshot({ cards: [linked] }), [
+      threadShell({ pendingBackgroundTasks: [monitorTask] }),
+    ]);
+    expect(waiting.cards[0]?.waitingOnBackground).toBe(true);
 
     // The provider woke the agent: mid-turn is no longer a wait, and the key
     // goes away rather than resting at false, matching the server's shell.
-    const woken = applyShellStreamEvent(
-      snapshot({
-        threads: [
-          threadShell({
-            backgroundLiveness: "monitoring",
-            session: { status: "running" } as OrchestrationThreadShell["session"],
-          }),
-        ],
-      }),
-      { kind: "card-upserted", sequence: 2, card: { ...linked, waitingOnBackground: true } },
+    const woken = withBoardThreadFields(
+      snapshot({ cards: [{ ...linked, waitingOnBackground: true }] }),
+      [threadShell({ pendingBackgroundTasks: [monitorTask], activityRunStatus: "running" })],
     );
-    expect(woken.cards?.[0]).not.toHaveProperty("waitingOnBackground");
+    expect(woken.cards[0]).not.toHaveProperty("waitingOnBackground");
   });
 
-  it("leaves thread-derived fields at rest for a card with no live link", () => {
-    const next = applyShellStreamEvent(
-      snapshot({ threads: [threadShell({ hasPendingUserInput: true })] }),
-      { kind: "card-upserted", sequence: 2, card: cardShell("card-1") },
-    );
-    expect(next.cards?.[0]?.threadState).toBe("none");
-    expect(next.cards?.[0]?.awaitingInput).toBe(false);
+  it("leaves a card with no live link at rest, and the board itself untouched", () => {
+    const board = snapshot({ cards: [cardShell("card-1")] });
+    const next = withBoardThreadFields(board, [
+      threadShell({ pendingRuntimeRequest: userInputRequest }),
+    ]);
+    expect(next).toBe(board);
+    expect(next.cards[0]?.threadState).toBe("none");
   });
 });
 
@@ -847,35 +836,35 @@ const label = (id: string, overrides?: Partial<BoardLabel>): BoardLabel => ({
 });
 
 describe("board label catalogue reducer (t3o-06a)", () => {
-  it("appends a label to a snapshot with no catalogue yet", () => {
-    const next = applyShellStreamEvent(snapshot(), {
+  it("appends a label to an empty catalogue", () => {
+    const next = applyBoardShellStreamEvent(snapshot(), {
       kind: "label-upserted",
       sequence: 2,
       label: label("label-1"),
     });
-    expect(next.boardLabels).toEqual([label("label-1")]);
-    expect(next.snapshotSequence).toBe(2);
+    expect(next.labels).toEqual([label("label-1")]);
+    expect(next.snapshotSequence).toBe(1);
   });
 
   it("recolours an existing label in place — repainting cards without a card delta", () => {
     const cards = [cardShell("card-1", { labels: [BoardLabelId.make("label-1")] })];
-    const next = applyShellStreamEvent(
-      snapshot({ cards, boardLabels: [label("label-1"), label("label-2")] }),
+    const next = applyBoardShellStreamEvent(
+      snapshot({ cards, labels: [label("label-1"), label("label-2")] }),
       { kind: "label-upserted", sequence: 3, label: label("label-1", { colour: "#ef4444" }) },
     );
     // The catalogue changed; the card list is untouched (chips read colour by
     // id from the catalogue, so no per-card write is needed).
-    expect(next.boardLabels).toEqual([label("label-1", { colour: "#ef4444" }), label("label-2")]);
+    expect(next.labels).toEqual([label("label-1", { colour: "#ef4444" }), label("label-2")]);
     expect(next.cards).toBe(cards);
   });
 
   it("keeps a tombstoned label in the catalogue on delete", () => {
-    const next = applyShellStreamEvent(snapshot({ boardLabels: [label("label-1")] }), {
+    const next = applyBoardShellStreamEvent(snapshot({ labels: [label("label-1")] }), {
       kind: "label-upserted",
       sequence: 4,
       label: label("label-1", { deletedAt: NOW }),
     });
-    expect(next.boardLabels).toEqual([label("label-1", { deletedAt: NOW })]);
+    expect(next.labels).toEqual([label("label-1", { deletedAt: NOW })]);
   });
 });
 

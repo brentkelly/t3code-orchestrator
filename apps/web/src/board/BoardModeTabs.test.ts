@@ -221,13 +221,14 @@ describe("handleModeTabClick", () => {
     expect(click()).toEqual({ prevented: true, selected: 1 });
   });
 
-  for (const modifier of ["metaKey", "ctrlKey", "altKey", "shiftKey"] as const) {
-    it(`leaves a ${modifier} click to the browser`, () => {
+  it.each(["metaKey", "ctrlKey", "altKey", "shiftKey"] as const)(
+    "leaves a %s click to the browser",
+    (modifier) => {
       // Open in a new tab / new window / download. Calling preventDefault here
       // is exactly the reported bug.
       expect(click({ [modifier]: true })).toEqual({ prevented: false, selected: 0 });
-    });
-  }
+    },
+  );
 
   it("leaves a non-primary click to the browser", () => {
     // Middle click is the other open-in-new-tab gesture.

@@ -20,7 +20,6 @@ import {
   BOARD_SEED_STAGE_IDS,
   type BoardCard,
   type BoardCardPullRequest,
-  type OrchestrationCommand,
 } from "@t3tools/contracts";
 
 import type { BoardFoundPullRequest } from "./BoardPullRequestGateway.ts";
@@ -32,6 +31,7 @@ import {
   readyWorktree,
   settingsWith,
   withGovernor,
+  type HarnessCommand,
 } from "./supervisorHarness.testkit.ts";
 
 /** Months before the card (created at `NOW`) existed. */
@@ -88,12 +88,12 @@ const cardIn = (stage: string, pullRequest: BoardCardPullRequest | null = null):
 const inMerge = (pullRequest: BoardCardPullRequest | null = null) =>
   cardIn(String(BOARD_SEED_STAGE_IDS.merge), pullRequest);
 
-const recorded = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const recorded = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.flatMap((command) =>
     command.type === "board.card.record-pull-request" ? [command.pullRequest] : [],
   );
 
-const branchCleanupNotes = (commands: ReadonlyArray<OrchestrationCommand>) =>
+const branchCleanupNotes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter(
     (command) =>
       command.type === "board.card.record-note" && command.kind === "card-branch-deleted",

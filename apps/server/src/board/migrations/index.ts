@@ -12,9 +12,10 @@
  *
  * New board migrations: add `NNN_Name.ts` here and append it to BOARD_MIGRATIONS.
  */
-import * as Migrator from "effect/unstable/sql/Migrator";
+import * as Migrator from "effect/sql/Migrator";
+import { backupBoardDatabaseBeforeV2 } from "../boardPreV2Backup.ts";
 import * as Effect from "effect/Effect";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import { attachBoardDatabase, BOARD_SCHEMA, relocateBoardSchema } from "../boardDatabase.ts";
 
@@ -61,6 +62,8 @@ import Migration040 from "./040_BoardCardStepStateHumanTurn.ts";
 import Migration041 from "./041_BoardCardStepStateRetry.ts";
 import Migration042 from "./042_BoardProviderLimits.ts";
 import Migration043 from "./043_BoardCardsAutoMerge.ts";
+import Migration044 from "./044_BoardEventLog.ts";
+import Migration045 from "./045_BoardOrchestrationV2.ts";
 
 /** Ledger table for the board migration lineage, independent of upstream. */
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
@@ -133,6 +136,8 @@ export const BOARD_MIGRATIONS = [
   [41, "BoardCardStepStateRetry", Migration041],
   [42, "BoardProviderLimits", Migration042],
   [43, "BoardCardsAutoMerge", Migration043],
+  [44, "BoardEventLog", Migration044],
+  [45, "BoardOrchestrationV2", Migration045],
 ] as const;
 
 const boardLoader = Migrator.fromRecord(
@@ -233,6 +238,8 @@ export const reconcileLegacyBoardLedger = Effect.fn("reconcileLegacyBoardLedger"
  */
 export const initialiseBoardDatabase = Effect.fn("initialiseBoardDatabase")(function* () {
   yield* attachBoardDatabase();
+  // Before anything below writes to it (T3O-59).
+  yield* backupBoardDatabaseBeforeV2();
   yield* reconcileLegacyBoardLedger();
   yield* relocateBoardSchema();
 });
