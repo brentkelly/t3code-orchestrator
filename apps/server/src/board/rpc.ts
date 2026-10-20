@@ -101,8 +101,9 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
     });
     // The subscription's services, provided here so the handler's stream needs
     // only the RPC scope.
-    const subscriptionContext =
-      yield* Effect.context<BoardEngine | BoardQueries | BoardThreadTail>();
+    const subscriptionContext = yield* Effect.context<
+      BoardEngine | BoardQueries | BoardThreadTail
+    >();
     return makeBoardRpcHandlers(deps, {
       boardEngine,
       boardQueries,

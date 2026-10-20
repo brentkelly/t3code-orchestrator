@@ -1,8 +1,8 @@
 /**
  * T3o card detail modal — connected (t3o-06). Opens `board.subscribeCard` for
  * the one selected card (D7: the heavy detail streams here, never on the shell
- * that every column card renders from), reads the label catalogue and the
- * shell snapshot for dependency/thread resolution, and wires the board
+ * that every column card renders from), reads the label catalogue, the board
+ * and the shell snapshot for dependency/thread resolution, and wires the board
  * commands to the pure `BoardCardDetailView`.
  *
  * Mounting this component IS the detail subscription — it exists only while a
@@ -254,6 +254,8 @@ export function BoardCardDetail({
   const [removingWorktree, setRemovingWorktree] = useState(false);
 
   const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
+  // The board rides its own subscription (T3O-57), cards' thread state derived.
+  const board = useAtomValue(boardEnvironment.boardAtom(environmentId));
   // Refresh trigger: the card detail opening. One of the moments the answer
   // plausibly changed AND is about to be read — the Merge button's condition is
   // the card's PR state, so it should be current at the instant it becomes
@@ -306,7 +308,7 @@ export function BoardCardDetail({
       refuses it with a true sentence ("A thread is already open on this stage")
       instead of a false button state. */
   const conflictFix = useMemo(() => {
-    const shell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
+    const shell = (board?.cards ?? []).find((candidate) => candidate.cardId === cardId);
     if (shell === undefined) return null;
     return boardConflictFix({
       live: shell.stepConflictFix,
@@ -316,7 +318,7 @@ export function BoardCardDetail({
       // should not grow one for a tooltip.
       baseRef: detail?.card.pullRequest?.baseRef ?? null,
     });
-  }, [snapshot, cardId, detail]);
+  }, [board, cardId, detail]);
   /** Whether the card's step has SETTLED and left the card standing — the same
       `held` the card face reads for its "Needs a human" chip, ranked by
       `boardCardAttention` so the chip and the detail's forward button can never
@@ -331,23 +333,22 @@ export function BoardCardDetail({
       for attention, and an affordance that made you wait for it would only be
       the same lie told slowly. */
   const stepHeld = useMemo(() => {
-    const shell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
+    const shell = (board?.cards ?? []).find((candidate) => candidate.cardId === cardId);
     return shell !== undefined && boardCardAttention({ card: shell, stages })?.reason === "held";
-  }, [snapshot, cardId, stages]);
+  }, [board, cardId, stages]);
   /** Whether the card's live step has given up (t3o-17, D3) — the failure
       banner's gate and the reason a non-auto-executing stage still offers a
       restart (t3o-30, D3). */
   const stepStalled = useMemo(
-    () => (snapshot?.cards ?? []).find((shell) => shell.cardId === cardId)?.stalled === true,
-    [snapshot, cardId],
+    () => (board?.cards ?? []).find((shell) => shell.cardId === cardId)?.stalled === true,
+    [board, cardId],
   );
   /** Whether a human stopped the card's live step (T3O-23) — the paused
       banner's gate. Read off the same shell field the card face's neutral chip
       reads, so the board and the open modal cannot disagree about it. */
   const stepPausedByHuman = useMemo(
-    () =>
-      (snapshot?.cards ?? []).find((shell) => shell.cardId === cardId)?.stepAwaiting === "paused",
-    [snapshot, cardId],
+    () => (board?.cards ?? []).find((shell) => shell.cardId === cardId)?.stepAwaiting === "paused",
+    [board, cardId],
   );
 
   // Resolved server-side (t3o-13, D4): the shell snapshot drops archived
@@ -383,7 +384,7 @@ export function BoardCardDetail({
   // rule by refusal.
   const dependencyOptions = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
-    const shells = snapshot?.cards ?? [];
+    const shells = board?.cards ?? [];
     const projectById = new Map(
       (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
     );
@@ -411,16 +412,16 @@ export function BoardCardDetail({
               },
             }),
       }));
-  }, [card, snapshot]);
+  }, [board, card, snapshot]);
 
   // The child's parent, resolved for the sheet's "part of" chip (t3o-25). An
   // archived parent is off the live shell and its sub-board would redirect
   // straight back out — no chip rather than a dead door.
   const parentCard = useMemo(() => {
     if (card === null || card.parentCardId === null) return null;
-    const parent = (snapshot?.cards ?? []).find((shell) => shell.cardId === card.parentCardId);
+    const parent = (board?.cards ?? []).find((shell) => shell.cardId === card.parentCardId);
     return parent === undefined ? null : { cardId: String(parent.cardId), key: parent.key };
-  }, [card, snapshot]);
+  }, [board, card]);
 
   // THIS card's children, as shells (t3o-29, D1). The snapshot is unscoped —
   // a child is filtered out of the root board's COLUMNS by
@@ -431,8 +432,8 @@ export function BoardCardDetail({
   // `detail.children` instead.
   const childShells = useMemo(() => {
     if (card === null) return [];
-    return (snapshot?.cards ?? []).filter((shell) => shell.parentCardId === card.id);
-  }, [card, snapshot]);
+    return (board?.cards ?? []).filter((shell) => shell.parentCardId === card.id);
+  }, [board, card]);
 
   const threadLinks = useMemo<ReadonlyArray<BoardDetailThreadLink>>(() => {
     if (card === null) return [];
@@ -489,11 +490,11 @@ export function BoardCardDetail({
   const threadTodos = useMemo<ReadonlyMap<ThreadId, BoardCardThreadShell>>(
     () =>
       new Map(
-        (snapshot?.boardCardThreads ?? [])
+        (board?.cardThreads ?? [])
           .filter((entry) => entry.cardId === cardId)
           .map((entry) => [entry.threadId, entry]),
       ),
-    [snapshot, cardId],
+    [board, cardId],
   );
 
   const adoptableThreads = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
@@ -521,7 +522,7 @@ export function BoardCardDetail({
   //
   // The in-flight proxy for the `+` menu's restart affordance (t3o-14, D1)
   // reads this same shell, since the step-state read model is server-only.
-  const cardShell = (snapshot?.cards ?? []).find((candidate) => candidate.cardId === cardId);
+  const cardShell = (board?.cards ?? []).find((candidate) => candidate.cardId === cardId);
 
   // The card's place in the board-wide build queue (t3o-33). Derived from the
   // shells the modal already holds — every project, since the queue is global —
@@ -530,7 +531,7 @@ export function BoardCardDetail({
   //
   // Everything below is skipped for the overwhelmingly common case: the map is
   // empty unless something is actually queued.
-  const allShellCards = snapshot?.cards ?? EMPTY_SHELL_CARDS;
+  const allShellCards = board?.cards ?? EMPTY_SHELL_CARDS;
   // Same fallback the board uses: before the first snapshot the stage list is
   // empty, and ranking every queued card equally would print a position that is
   // wrong rather than absent.
@@ -639,7 +640,7 @@ export function BoardCardDetail({
           })),
           settings: boardSettings,
           currentProjectId: card.projectId,
-          cardKeys: snapshot?.cards ?? [],
+          cardKeys: board?.cards ?? [],
         })
       : [];
   // An ARCHIVED card gets the plain text row: it is off the board, the decider
@@ -945,7 +946,7 @@ export function BoardCardDetail({
     (!isBoardStageAtOrAfterBuild(stageState, card.stage) || card.stage === buildStage.stageId);
 
   const moveStage = (toStage: BoardStageId) => {
-    const targetColumn = (snapshot?.cards ?? []).filter((shell) => shell.stage === toStage);
+    const targetColumn = (board?.cards ?? []).filter((shell) => shell.stage === toStage);
     // Every column but Done takes the card at the bottom. Done takes it at
     // the top, and the server places it there (T3O-15) — this sends no key
     // at all rather than a second implementation of the same rule.

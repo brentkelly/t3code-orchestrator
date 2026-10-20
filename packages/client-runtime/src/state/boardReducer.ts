@@ -362,9 +362,7 @@ export function applyBoardShellStreamEvent(
       // The card's whole live link set, replaced wholesale (t3o-18, D3): the set
       // changes for three different reasons — a todo revision, a link, an unlink
       // — and a replace is idempotent under all three.
-      const others = snapshot.cardThreads.filter(
-        (entry) => entry.cardId !== event.cardId,
-      );
+      const others = snapshot.cardThreads.filter((entry) => entry.cardId !== event.cardId);
       return {
         ...snapshot,
         cardThreads: [...others, ...event.threads],
@@ -376,9 +374,7 @@ export function applyBoardShellStreamEvent(
         cards: Arr.filter(cards, (card) => card.cardId !== event.cardId),
         // A card that left the board takes its thread entries with it; leaving
         // them would leak an unbounded list across a long-lived session.
-        cardThreads: snapshot.cardThreads.filter(
-          (entry) => entry.cardId !== event.cardId,
-        ),
+        cardThreads: snapshot.cardThreads.filter((entry) => entry.cardId !== event.cardId),
       };
     case "label-upserted": {
       // Catalogue delta (t3o-06a): the whole board's label vocabulary rides

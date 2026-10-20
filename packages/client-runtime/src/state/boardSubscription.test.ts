@@ -167,9 +167,7 @@ describe("environment board subscription", () => {
         Stream.filter((snapshot) => snapshot?.snapshotSequence === 13),
         Stream.runHead,
       );
-      expect(Option.getOrThrow(resumed)?.labels.map((entry) => entry.name)).toEqual([
-        "Regression",
-      ]);
+      expect(Option.getOrThrow(resumed)?.labels.map((entry) => entry.name)).toEqual(["Regression"]);
       expect(inputs).toEqual([{}, { afterSequence: 12 }]);
     }).pipe(Effect.scoped),
   );

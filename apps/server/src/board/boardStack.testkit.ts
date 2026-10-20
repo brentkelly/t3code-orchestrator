@@ -10,11 +10,7 @@
  * model, so a suite asserting on threads and cards together reads one model,
  * and serves the board's own snapshot and archive page beside upstream's.
  */
-import {
-  isBoardCommand,
-  type BoardCommand,
-  type OrchestrationCommand,
-} from "@t3tools/contracts";
+import { isBoardCommand, type BoardCommand, type OrchestrationCommand } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -37,7 +33,11 @@ import type { OrchestrationDispatchError } from "../orchestration/Errors.ts";
 import { BoardEngine, BoardEngineLive } from "./BoardEngine.ts";
 import type { BoardDispatchError } from "./errors.ts";
 import { BoardQueries, BoardQueriesLive } from "./BoardQueries.ts";
-import { projectBoardEvent, type BoardReadModel, type BoardOrchestrationReadModel } from "./projector.ts";
+import {
+  projectBoardEvent,
+  type BoardReadModel,
+  type BoardOrchestrationReadModel,
+} from "./projector.ts";
 import { makeBoardEventStore } from "./boardEventStore.ts";
 import { BoardThreadTail } from "./boardThreadTail.ts";
 import { BoardRuntimeLive } from "./runtimeLayer.ts";

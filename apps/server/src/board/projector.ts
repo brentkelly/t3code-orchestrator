@@ -932,9 +932,7 @@ export function projectBoardEvent<M extends BoardReadModel>(
  * and the client reducer re-derives them from `activeThreadId` against the
  * thread shells it already holds — see `boardCardShellFromCard`.
  */
-export function boardShellStreamEvent(
-  event: BoardEvent,
-): Option.Option<BoardShellStreamEvent> {
+export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShellStreamEvent> {
   switch (event.type) {
     case "board.card-created":
       return Option.some({

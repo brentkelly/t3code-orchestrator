@@ -192,73 +192,76 @@ const kinds = (items: ReadonlyArray<BoardShellStreamItem>) => items.map((item) =
 it.layer(makeBoardStackTestLayer("t3o-board-subscribe-test-"), { excludeTestServices: true })(
   "subscribeBoard",
   (it) => {
-  it.effect("opens with a snapshot, then goes live with no gap", () =>
-    Effect.gen(function* () {
-      const engine = yield* boardStackEngine;
-      yield* engine.dispatch(createProject);
-      yield* engine.dispatch(createCard("card-a"));
-      const head = yield* engine.boardEngine.latestSequence;
+    it.effect("opens with a snapshot, then goes live with no gap", () =>
+      Effect.gen(function* () {
+        const engine = yield* boardStackEngine;
+        yield* engine.dispatch(createProject);
+        yield* engine.dispatch(createCard("card-a"));
+        const head = yield* engine.boardEngine.latestSequence;
 
-      const items = yield* collect(
-        {},
-        2,
-        engine.dispatch(retitle("card-a", "Renamed")).pipe(Effect.orDie),
-      );
-      assert.deepStrictEqual(kinds(items), ["snapshot", "card-upserted"]);
-      const [opening, live] = items;
-      assert.strictEqual(opening?.kind === "snapshot" && opening.snapshot.snapshotSequence, head);
-      assert.deepStrictEqual(
-        opening?.kind === "snapshot" ? opening.snapshot.cards.map((shell) => shell.cardId) : [],
-        [BoardCardId.make("card-a")],
-      );
-      // The stages are seeded, so even a fresh board names its columns.
-      assert.isTrue(opening?.kind === "snapshot" && opening.snapshot.stages.length > 0);
-      assert.strictEqual(live?.kind === "card-upserted" && live.sequence, head + 1);
-      assert.strictEqual(live?.kind === "card-upserted" && live.card.title, "Renamed");
-    }),
-  );
+        const items = yield* collect(
+          {},
+          2,
+          engine.dispatch(retitle("card-a", "Renamed")).pipe(Effect.orDie),
+        );
+        assert.deepStrictEqual(kinds(items), ["snapshot", "card-upserted"]);
+        const [opening, live] = items;
+        assert.strictEqual(opening?.kind === "snapshot" && opening.snapshot.snapshotSequence, head);
+        assert.deepStrictEqual(
+          opening?.kind === "snapshot" ? opening.snapshot.cards.map((shell) => shell.cardId) : [],
+          [BoardCardId.make("card-a")],
+        );
+        // The stages are seeded, so even a fresh board names its columns.
+        assert.isTrue(opening?.kind === "snapshot" && opening.snapshot.stages.length > 0);
+        assert.strictEqual(live?.kind === "card-upserted" && live.sequence, head + 1);
+        assert.strictEqual(live?.kind === "card-upserted" && live.card.title, "Renamed");
+      }),
+    );
 
-  it.effect("resumes from a cursor by replaying exactly the events it missed", () =>
-    Effect.gen(function* () {
-      const engine = yield* boardStackEngine;
-      yield* engine.dispatch(createProject);
-      yield* engine.dispatch(createCard("card-b"));
-      const cursor = yield* engine.boardEngine.latestSequence;
-      yield* engine.dispatch(retitle("card-b", "One"));
-      yield* engine.dispatch(retitle("card-b", "Two"));
+    it.effect("resumes from a cursor by replaying exactly the events it missed", () =>
+      Effect.gen(function* () {
+        const engine = yield* boardStackEngine;
+        yield* engine.dispatch(createProject);
+        yield* engine.dispatch(createCard("card-b"));
+        const cursor = yield* engine.boardEngine.latestSequence;
+        yield* engine.dispatch(retitle("card-b", "One"));
+        yield* engine.dispatch(retitle("card-b", "Two"));
 
-      const items = yield* collect({ afterSequence: cursor }, 2);
-      assert.deepStrictEqual(kinds(items), ["card-upserted", "card-upserted"]);
-      assert.deepStrictEqual(
-        items.map((item) => (item.kind === "snapshot" ? -1 : item.sequence)),
-        [cursor + 1, cursor + 2],
-      );
-    }),
-  );
+        const items = yield* collect({ afterSequence: cursor }, 2);
+        assert.deepStrictEqual(kinds(items), ["card-upserted", "card-upserted"]);
+        assert.deepStrictEqual(
+          items.map((item) => (item.kind === "snapshot" ? -1 : item.sequence)),
+          [cursor + 1, cursor + 2],
+        );
+      }),
+    );
 
-  it.effect("falls back to a snapshot when the gap is too large", () =>
-    Effect.gen(function* () {
-      const engine = yield* boardStackEngine;
-      yield* engine.dispatch(createProject);
-      yield* engine.dispatch(createCard("card-c"));
-      const cursor = yield* engine.boardEngine.latestSequence;
-      yield* engine.dispatch(retitle("card-c", "One"));
-      yield* engine.dispatch(retitle("card-c", "Two"));
-      const head = yield* engine.boardEngine.latestSequence;
+    it.effect("falls back to a snapshot when the gap is too large", () =>
+      Effect.gen(function* () {
+        const engine = yield* boardStackEngine;
+        yield* engine.dispatch(createProject);
+        yield* engine.dispatch(createCard("card-c"));
+        const cursor = yield* engine.boardEngine.latestSequence;
+        yield* engine.dispatch(retitle("card-c", "One"));
+        yield* engine.dispatch(retitle("card-c", "Two"));
+        const head = yield* engine.boardEngine.latestSequence;
 
-      const items = yield* collect({ afterSequence: cursor }, 1, Effect.void, { maxGap: 1 });
-      assert.deepStrictEqual(kinds(items), ["snapshot"]);
-      assert.strictEqual(items[0]?.kind === "snapshot" && items[0].snapshot.snapshotSequence, head);
-    }),
-  );
+        const items = yield* collect({ afterSequence: cursor }, 1, Effect.void, { maxGap: 1 });
+        assert.deepStrictEqual(kinds(items), ["snapshot"]);
+        assert.strictEqual(
+          items[0]?.kind === "snapshot" && items[0].snapshot.snapshotSequence,
+          head,
+        );
+      }),
+    );
 
-  it.effect("falls back to a snapshot for a cursor ahead of the board's log", () =>
-    Effect.gen(function* () {
-      const engine = yield* boardStackEngine;
-      const head = yield* engine.boardEngine.latestSequence;
-      const items = yield* collect({ afterSequence: head + 50 }, 1);
-      assert.deepStrictEqual(kinds(items), ["snapshot"]);
-    }),
-  );
+    it.effect("falls back to a snapshot for a cursor ahead of the board's log", () =>
+      Effect.gen(function* () {
+        const engine = yield* boardStackEngine;
+        const head = yield* engine.boardEngine.latestSequence;
+        const items = yield* collect({ afterSequence: head + 50 }, 1);
+        assert.deepStrictEqual(kinds(items), ["snapshot"]);
+      }),
+    );
   },
 );

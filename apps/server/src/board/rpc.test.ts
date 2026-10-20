@@ -454,10 +454,7 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-dispatch-test-"))(
         const result = yield* handlers["board.dispatchCommand"](move("cmd-move-sprint"));
         assert.strictEqual(result.sequence, yield* engine.boardEngine.latestSequence);
         const model = yield* engine.boardEngine.getReadModel;
-        assert.strictEqual(
-          model.board?.cards.find((card) => card.id === cardId)?.stage,
-          "sprint",
-        );
+        assert.strictEqual(model.board?.cards.find((card) => card.id === cardId)?.stage, "sprint");
         const detail = Stream.runHead(handlers["board.subscribeCard"]({ cardId })).pipe(
           Effect.scoped,
         );

@@ -28,36 +28,21 @@ import {
   type BoardProviderLimitResumeAtInput,
   compareBoardStages,
   deriveBoardCardThreadState,
-  isBoardShellStreamEvent,
   type BoardCardDetail,
   type BoardCardId,
-  type BoardCardPlansShellEvent,
-  type BoardCardReviewShellEvent,
-  type BoardCardQueuedShellEvent,
-  type BoardCardRemovedShellEvent,
   type BoardCardShell,
-  type BoardCardStalledShellEvent,
   type BoardCardThreadShell,
-  type BoardCardThreadsShellEvent,
-  type BoardCardUpsertedShellEvent,
   type BoardLabel,
-  type BoardLabelUpsertedShellEvent,
   type BoardProviderLimit,
   type BoardStageDefinition,
   type BoardStageId,
-  type BoardStageRemovedShellEvent,
   isBoardCardScheduleDue,
-  type BoardStageUpsertedShellEvent,
-  type BoardProviderLimitUpsertedShellEvent,
-  type BoardProviderLimitClearedShellEvent,
   type EnvironmentId,
   type BoardShellSnapshot,
-  type BoardShellStreamItem,
   type OrchestrationThreadShell,
   type ProjectId,
   type ThreadId,
 } from "@t3tools/contracts";
-import * as Arr from "effect/Array";
 import type * as Crypto from "effect/Crypto";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -604,9 +589,9 @@ export function createBoardEnvironmentAtoms<R, ER>(
       until the first snapshot. */
   const EMPTY_LABELS: ReadonlyArray<BoardLabel> = [];
   const labelCatalogueAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get) => get(options.boardSnapshotValueAtom(environmentId))?.labels ?? EMPTY_LABELS).pipe(
-      Atom.withLabel(`environment-board-labels:${environmentId}`),
-    ),
+    Atom.make(
+      (get) => get(options.boardSnapshotValueAtom(environmentId))?.labels ?? EMPTY_LABELS,
+    ).pipe(Atom.withLabel(`environment-board-labels:${environmentId}`)),
   );
 
   /** The board's user-defined stage list (t3o-15) in canonical order — the

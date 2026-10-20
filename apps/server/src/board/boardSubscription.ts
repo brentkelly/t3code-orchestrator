@@ -112,9 +112,7 @@ export const boardStreamWindowDeltas = (
     if (touchedCards.size === 0) return deltas;
     const sequence = yield* deps.latestSequence;
     for (const cardId of touchedCards) {
-      const threads = yield* deps.queries
-        .boardCardThreads(cardId)
-        .pipe(Effect.option);
+      const threads = yield* deps.queries.boardCardThreads(cardId).pipe(Effect.option);
       if (Option.isSome(threads)) {
         deltas.push({ kind: "card-threads", sequence, cardId, threads: threads.value });
       }
@@ -167,12 +165,10 @@ export const subscribeBoard = (
       }
     }
 
-    const snapshot = yield* queries
-      .boardShellSnapshot()
-      .pipe(
-        Effect.tapError((cause) => Effect.logError("board snapshot load failed", { cause })),
-        Effect.mapError(toSnapshotError("Failed to load the board snapshot.")),
-      );
+    const snapshot = yield* queries.boardShellSnapshot().pipe(
+      Effect.tapError((cause) => Effect.logError("board snapshot load failed", { cause })),
+      Effect.mapError(toSnapshotError("Failed to load the board snapshot.")),
+    );
     const opening: BoardShellStreamItem = { kind: "snapshot", snapshot };
     return Stream.concat(Stream.make(opening), deltasAfter(snapshot.snapshotSequence));
   });

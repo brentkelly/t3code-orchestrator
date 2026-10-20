@@ -6551,7 +6551,7 @@ export type BoardCardRemovedShellEvent = typeof BoardCardRemovedShellEvent.Type;
  * card-carrying deltas leave `queued` at its false rest value, this delta and
  * the snapshot are its authoritative source, and the client preserves the last
  * known value across card upserts. Its `kind` keeps the `card-` prefix, so it
- * routes through `isBoardShellStreamEvent` with zero core-seam change.
+ * rides `board.subscribeBoard` like every other board delta.
  */
 export const BoardCardQueuedShellEvent = Schema.Struct({
   kind: Schema.Literal("card-queued"),
@@ -6574,8 +6574,8 @@ export type BoardCardQueuedShellEvent = typeof BoardCardQueuedShellEvent.Type;
  * read-model slice a card-carrying event cannot see (the step events carry
  * `state`, not the card), so this delta and the snapshot are its authoritative
  * source and the client preserves the last known value across card upserts. Its
- * `kind` keeps the `card-` prefix, so it routes through `isBoardShellStreamEvent`
- * with zero core-seam change.
+ * `kind` keeps the `card-` prefix, so it rides `board.subscribeBoard`
+ * like every other board delta.
  */
 export const BoardCardStalledShellEvent = Schema.Struct({
   kind: Schema.Literal("card-stalled"),
@@ -6648,8 +6648,8 @@ export type BoardCardStalledShellEvent = typeof BoardCardStalledShellEvent.Type;
  * live in their own slice, which a card-carrying event cannot see. The plan
  * BODIES stay where they are (`board_plans`, read through
  * `board.subscribeCard`); only the count rides the column card. Its `kind`
- * keeps the `card-` prefix, so it routes through `isBoardShellStreamEvent`
- * with zero core-seam change.
+ * keeps the `card-` prefix, so it rides `board.subscribeBoard`
+ * like every other board delta.
  */
 export const BoardCardPlansShellEvent = Schema.Struct({
   kind: Schema.Literal("card-plans"),
@@ -6674,8 +6674,8 @@ export type BoardCardPlansShellEvent = typeof BoardCardPlansShellEvent.Type;
  * for the whole run, because the shell is only re-read on reconnect.
  *
  * `summary` is null for a card whose review history has been cleared. Its
- * `kind` keeps the `card-` prefix, so it routes through
- * `isBoardShellStreamEvent` with zero core-seam change.
+ * `kind` keeps the `card-` prefix, so it rides
+ * `board.subscribeBoard` like every other board delta.
  */
 export const BoardCardReviewShellEvent = Schema.Struct({
   kind: Schema.Literal("card-review"),
@@ -6694,8 +6694,8 @@ export type BoardCardReviewShellEvent = typeof BoardCardReviewShellEvent.Type;
  * all three; a card carries a handful of threads, so the payload stays tiny.
  * `boardCardThreads` on the shell snapshot is the same data at connect time.
  *
- * Its `kind` keeps the `card-` prefix, so it routes through
- * `isBoardShellStreamEvent` with zero core-seam change — and, like every other
+ * Its `kind` keeps the `card-` prefix, so it rides
+ * `board.subscribeBoard` like every other board delta — and, like every other
  * shell delta, it is emitted with the sequence of the domain event that caused
  * it, so resume-by-sequence stays exact.
  */
@@ -6717,8 +6717,7 @@ export type BoardCardThreadsShellEvent = typeof BoardCardThreadsShellEvent.Type;
  *
  * This is the non-card board delta t3o-02a's `card-`-prefix rule flagged
  * ("revisit if non-card board deltas ever appear"). Its `kind` starts with
- * `label-`, and `isBoardShellStreamEvent` is widened to admit that prefix; the
- * rule is updated in docs/t3o/seams.md.
+ * `label-`.
  */
 export const BoardLabelUpsertedShellEvent = Schema.Struct({
   kind: Schema.Literal("label-upserted"),
@@ -6731,7 +6730,7 @@ export type BoardLabelUpsertedShellEvent = typeof BoardLabelUpsertedShellEvent.T
  * Stage aggregate delta (t3o-15): a stage created, renamed or reordered. Carries
  * the whole `BoardStageDefinition`, so the board reads column order and labels
  * from the read model (D13) with no card deltas. Its `kind` starts with
- * `stage-`; `isBoardShellStreamEvent` admits that prefix too.
+ * `stage-`.
  */
 export const BoardStageUpsertedShellEvent = Schema.Struct({
   kind: Schema.Literal("stage-upserted"),
@@ -6775,7 +6774,7 @@ export const BoardProviderLimitClearedShellEvent = Schema.Struct({
 export type BoardProviderLimitClearedShellEvent = typeof BoardProviderLimitClearedShellEvent.Type;
 
 /**
- * Type guards for the `board.` / `card-` prefix rule. Generic over the input
+ * Type guards for the `board.` prefix rule. Generic over the input
  * union (rather than typed against `OrchestrationCommand` etc.) because this
  * file cannot import `orchestration.ts` — narrowing still resolves to the
  * board members of whatever union the caller holds, and the else-branch
@@ -6794,24 +6793,10 @@ export function isBoardEvent<Event extends { readonly type: string }>(
   return event.type.startsWith("board.");
 }
 
-export function isBoardShellStreamEvent<Event extends { readonly kind: string }>(
-  event: Event,
-): event is Extract<Event, { kind: `card-${string}` | `label-${string}` | `stage-${string}` }> {
-  // t3o-06a widened this beyond the original `card-` prefix: label catalogue
-  // deltas (`label-upserted`) are board shell deltas too; t3o-15 adds `stage-`
-  // for the stage aggregate. All three prefixes route to the board reducer /
-  // mapper; see docs/t3o/seams.md's prefix rule.
-  return (
-    event.kind.startsWith("card-") ||
-    event.kind.startsWith("label-") ||
-    event.kind.startsWith("stage-")
-  );
-}
-
 /**
- * Registries spread into upstream unions by `orchestration.ts`. These are the
- * only places a new board command/event/delta needs registering on the
- * contracts side.
+ * The board's registries: the client commands `board.dispatchCommand` takes and
+ * the deltas `board.subscribeBoard` carries. These are the only places a new
+ * board command/event/delta needs registering on the contracts side.
  */
 export const BOARD_CLIENT_COMMANDS = [
   BoardCardCreateCommand,
