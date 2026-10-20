@@ -245,6 +245,19 @@ const harnessProjects: ReadonlyArray<BoardProject> = [
 
 export const readModel = (board: BoardState): BoardReadModel => ({ board });
 
+const THREAD_SIGNAL_TYPES: ReadonlySet<string> = new Set<ThreadSignal["type"]>([
+  "turn-ended",
+  "turn-start-failed",
+  "turn-requested",
+  "interrupt-requested",
+  "approval-responded",
+  "input-requested",
+  "input-resolved",
+  "session-started",
+  "todos-changed",
+  "thread-deleted",
+]);
+
 /** Build a `BoardStageExecution` for the Building stage from a single test
     build step (t3o-15): Building auto-executes unattended in `build` mode and
     auto-advances to the next stage on success — the behaviour the governor /
@@ -1108,10 +1121,17 @@ export function withGovernor(
             : Effect.void;
         const isBoardEvent = (event: HarnessEvent): event is BoardEvent =>
           event.type.startsWith("board.");
+        // A fixture still shaped like a thread ENGINE event would reach the
+        // reactor as a signal it has no case for and wedge its worker, so the
+        // test would hang rather than fail. Refuse it here, by name.
         const deliver = (event: HarnessEvent) =>
           isBoardEvent(event)
             ? projectExternal(event).pipe(Effect.andThen(pump(Queue.offer(domainQueue, event))))
-            : pump(fake.emit(event));
+            : THREAD_SIGNAL_TYPES.has(event.type)
+              ? pump(fake.emit(event))
+              : Effect.die(
+                  new Error(`Not a board event or a thread signal: '${String(event.type)}'.`),
+                );
         yield* body({
           slots,
           reactor,
