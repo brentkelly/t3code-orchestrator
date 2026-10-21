@@ -4297,9 +4297,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
     // Keyed on the worker, never a card. What happens to cards placed on a
     // removed worker belongs to the removal fallback (D22), not here.
     case "board.worker.register": {
+      if (command.worker.id === BOARD_LOCAL_WORKER_ID) {
+        return yield* invariant(command, "The server hosting the board is already a worker.");
+      }
       const existing = (board.workers ?? []).find((worker) => worker.id === command.worker.id);
       if (command.mode === "add" && existing !== undefined) {
-        return yield* invariant(command, `'${existing.label}' is already a worker.`);
+        return yield* invariant(command, `${existing.label} is already a worker.`);
       }
       if (command.mode === "repair" && existing === undefined) {
         return yield* invariant(command, `Worker '${command.worker.id}' is not registered.`);
@@ -4320,6 +4323,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
     }
 
     case "board.worker.remove": {
+      // `local` is never a registry row, but an environment id is just a
+      // string: say why rather than "not registered".
+      if (command.workerId === BOARD_LOCAL_WORKER_ID) {
+        return yield* invariant(command, "The server hosting the board can't be removed.");
+      }
       const existing = (board.workers ?? []).find((worker) => worker.id === command.workerId);
       if (existing === undefined) {
         return yield* invariant(command, `Worker '${command.workerId}' is not registered.`);
@@ -4327,7 +4335,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       if ((board.defaultWorkerId ?? BOARD_LOCAL_WORKER_ID) === command.workerId) {
         return yield* invariant(
           command,
-          `'${existing.label}' is the default worker. Make another worker the default first.`,
+          `${existing.label} is the default worker. Make another worker the default first.`,
         );
       }
       return {
