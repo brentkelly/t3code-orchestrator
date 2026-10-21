@@ -317,7 +317,7 @@ export const makeWorkerConnections = Effect.gen(function* () {
       let failures = 0;
       let renewed = false;
       while (true) {
-        const outcome = yield* attempt(worker, renewed);
+        const outcome: AttemptOutcome = yield* attempt(worker, renewed);
         renewed = outcome._tag === "renewed";
         switch (outcome._tag) {
           case "renewed":

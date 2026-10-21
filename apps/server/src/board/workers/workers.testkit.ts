@@ -16,6 +16,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -144,9 +145,9 @@ export const makeFakeWorkers = Effect.sync(() => {
                 worker.sessionExpiry.has(accessToken)
                   ? {
                       ...worker.hello,
-                      sessionExpiresAt: new Date(
-                        worker.sessionExpiry.get(accessToken)!,
-                      ).toISOString(),
+                      sessionExpiresAt: DateTime.formatIso(
+                        DateTime.makeUnsafe(worker.sessionExpiry.get(accessToken)!),
+                      ),
                     }
                   : worker.hello,
               ),
