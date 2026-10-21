@@ -116,6 +116,7 @@ export const makeInProcessWorker = (options: { readonly relayTimeout?: Duration.
       relayHost,
       host,
       connections,
+      workerConfig,
       workerStateDir: workerConfig.stateDir,
     };
   });

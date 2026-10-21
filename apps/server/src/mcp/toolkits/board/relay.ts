@@ -103,7 +103,8 @@ export const relayable =
       if (central === null) return yield* handle(params);
 
       const schemas = schemasOf(name);
-      const encoded = yield* Schema.encodeUnknownEffect(schemas.parameters)(params).pipe(
+      // A tool without parameters is called with none.
+      const encoded = yield* Schema.encodeUnknownEffect(schemas.parameters)(params ?? {}).pipe(
         Effect.mapError(() => internal("Couldn't encode the call for the board.")),
       );
       const config = yield* ServerConfig.ServerConfig;
