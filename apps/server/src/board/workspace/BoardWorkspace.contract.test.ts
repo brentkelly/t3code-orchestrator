@@ -18,7 +18,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   AuthOrchestrationReadScope,
-  BoardWorkerGitError,
   EnvironmentId,
   ProjectId,
   type BoardWorkspacePullRequest,
@@ -34,7 +33,11 @@ import type { BoardPullRequestGateway } from "../BoardPullRequestGateway.ts";
 import { WorkerRpcError } from "../workers/WorkerTransport.ts";
 import { WorktreeRetirer } from "../worktreeRetire.ts";
 import { worktreeRetirerTestLayer } from "../worktreeRetire.testkit.ts";
-import { bindBoardWorkspace, type BoardWorkspace } from "./BoardWorkspace.ts";
+import {
+  bindBoardWorkspace,
+  type BoardWorkspace,
+  type BoardWorkspaceFailure,
+} from "./BoardWorkspace.ts";
 import { boardSession, makeInProcessWorker, remoteOver } from "./inProcessWorker.testkit.ts";
 import { makeRemoteBoardWorkspace } from "./RemoteBoardWorkspace.ts";
 import { makeBoardWorkspaces } from "./workspaceLayer.ts";
@@ -53,6 +56,10 @@ const TestLayer = worktreeRetirerTestLayer().pipe(
 );
 
 const projectId = ProjectId.make("project-repo");
+
+/** What a failed operation said. */
+const detailOf = (failure: BoardWorkspaceFailure) =>
+  failure._tag === "BoardWorkerGitError" ? failure.detail : failure.message;
 
 /** Fixed, so two fresh repositories built the same way hold the same commits. */
 const FIXED = {
@@ -539,10 +546,7 @@ describe("the worker side of the named operations (T3O-64)", () => {
       for (const worktreePath of [env.checkout, env.root, "/etc"]) {
         const refused = yield* Effect.flip(ws.pinGhDefault({ projectId, worktreePath }));
         assert.strictEqual(refused._tag, "BoardWorkerGitError");
-        assert.include(
-          (refused as BoardWorkerGitError).detail,
-          "not one of this project's worktrees",
-        );
+        assert.include(detailOf(refused), "not one of this project's worktrees");
       }
       // A registered worktree outside the worktrees directory is still the
       // project's own.
@@ -573,7 +577,7 @@ describe("the worker side of the named operations (T3O-64)", () => {
         ws.provisionWorktree({ projectId, branch: "board/t-1", baseRefName: "main" }),
       );
       assert.strictEqual(refused._tag, "BoardWorkerGitError");
-      assert.include((refused as BoardWorkerGitError).detail, "refused the board's session");
+      assert.include(detailOf(refused), "refused the board's session");
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
@@ -606,7 +610,7 @@ describe("the worker side of the named operations (T3O-64)", () => {
       });
       const refused = yield* Effect.flip(ws.resolveDefaultBranch({ projectId }));
       assert.strictEqual(refused._tag, "BoardWorkerGitError");
-      assert.include((refused as BoardWorkerGitError).detail, "too old");
+      assert.include(detailOf(refused), "too old");
     }),
   );
 });

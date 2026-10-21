@@ -126,7 +126,6 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts";
 import { BoardEngine } from "./BoardEngine.ts";
 import type { BoardDispatchError } from "./errors.ts";
@@ -139,23 +138,15 @@ import {
   type ThreadSignal,
 } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
-import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
 import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
-import { pullMergedBaseBranch } from "./baseBranchSync.ts";
 import {
   removeBoardCardAttachmentsDir,
   spawnPushesBriefImages,
   stageBoardCardImagesAsPending,
 } from "./attachments.ts";
-import { deleteCardBranch } from "./branchCleanup.ts";
 import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
-  provisionBoardCardWorktree,
-  forceRemoveBoardCardWorktree,
-  parseRegisteredWorktrees,
-  pinBoardWorktreeGhDefault,
-  reclaimBoardCardWorktree,
   resolveBoardCardBaseRef,
   runBoardCardWorktreeSetup,
 } from "./worktree.ts";
@@ -188,7 +179,6 @@ import {
   LOCAL_CONFLICT_MERGE_STATE,
   type BoardMergeState,
 } from "./boardMergeState.ts";
-import { probeLocalMergeConflict } from "./localMergeConflict.ts";
 import { stageExecutorForRole } from "./stageExecutor.ts";
 import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorkspace.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
@@ -5651,7 +5641,6 @@ const make = Effect.gen(function* () {
       };
     }
 
-    const model = yield* readModel;
     // T3o (T3O-47): the PROJECT's checkout, not the card's worktree. The merge
     // is a forge operation addressed by `{ projectId, repository }`, and
     // `PullRequestService` runs the host's CLI in the project's own workspace

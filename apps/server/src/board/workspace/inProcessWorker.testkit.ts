@@ -15,6 +15,8 @@ import {
   AuthSessionId,
   AuthSourceControlWriteScope,
   BOARD_WORKER_GIT_RPCS,
+  type BoardWorkerGitError,
+  type EnvironmentAuthorizationError,
   EnvironmentId,
   type BoardWorkerGitMethod,
 } from "@t3tools/contracts";
@@ -60,6 +62,9 @@ export interface InProcessWorker {
   readonly calls: Array<BoardWorkerGitMethod>;
   /** Flip to false to make the worker unreachable. */
   reachable: boolean;
+  /** Methods whose call the connection drops mid-way, as a worker going
+      offline during the operation would. */
+  readonly dropOn: Set<BoardWorkerGitMethod>;
 }
 
 export function makeInProcessWorker(
@@ -68,20 +73,26 @@ export function makeInProcessWorker(
 ): InProcessWorker {
   const handlers = boardWorkerGitRpcHandlers(session, workspaces) as unknown as Record<
     string,
-    (payload: unknown) => Effect.Effect<unknown, unknown>
+    (
+      payload: unknown,
+    ) => Effect.Effect<unknown, BoardWorkerGitError | EnvironmentAuthorizationError>
   >;
   const worker: InProcessWorker = {
     calls: [],
     reachable: true,
+    dropOn: new Set(),
     git: ((method: BoardWorkerGitMethod, payload: unknown) =>
       Effect.gen(function* () {
         const rpc = BOARD_WORKER_GIT_RPCS.find((candidate) => candidate._tag === method)!;
         worker.calls.push(method);
+        if (worker.dropOn.has(method)) {
+          return yield* new WorkerRpcError({ message: "The connection dropped." });
+        }
         const sent = yield* roundTrip(rpc.payloadSchema, payload);
         const answer = yield* Effect.exit(handlers[method]!(sent));
         if (answer._tag === "Failure") {
           const error = answer.cause.reasons.find((reason) => reason._tag === "Fail");
-          if (error === undefined) return yield* Effect.failCause(answer.cause as never);
+          if (error === undefined) return yield* Effect.die(answer.cause);
           const delivered = yield* roundTrip(rpc.errorSchema, error.error);
           return yield* new WorkerRpcError({ message: "refused", cause: delivered });
         }
