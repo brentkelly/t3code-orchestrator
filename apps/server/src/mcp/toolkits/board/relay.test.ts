@@ -45,7 +45,11 @@ import {
 } from "../../../board/ThreadGateway.ts";
 import { makeThreadGatewayRouter } from "../../../board/ThreadGatewayRouter.ts";
 import { aliveThread, makeFakeThreadGateway } from "../../../board/threadGateway.testkit.ts";
-import { BoardRelayStore, BoardRelayStoreLive } from "../../../board/workers/BoardRelayStore.ts";
+import {
+  BoardRelayStore,
+  BoardRelayStoreError,
+  BoardRelayStoreLive,
+} from "../../../board/workers/BoardRelayStore.ts";
 import {
   CENTRAL_ID,
   makeInProcessWorker,
@@ -559,6 +563,52 @@ describe("the board MCP relay", () => {
         // The same call, once the worker answers again, goes through.
         const after = yield* world.relayClient.answer(WORKER_ID, request);
         assert.strictEqual(after._tag, "success");
+      }),
+    ),
+  );
+
+  it.effect("a call whose recorded answer cannot be read is not run again", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const world = yield* setup();
+        const cardId = BoardCardId.make("card-unreadable");
+        const threadId = ThreadId.make("thread-unreadable");
+        yield* seedCard(world, { cardId, threadId }).pipe(Effect.provide(world.runtime));
+        const request: BoardMcpRelayRequest = {
+          callId: "relay:call-unreadable",
+          toolName: "board_create_card",
+          params: { title: "Unreadable" },
+          threadId,
+          providerSessionId: "sess-1",
+          providerInstanceId: CODEX,
+          stateDir: world.workerStateDir,
+        };
+        assert.strictEqual((yield* world.relayClient.answer(WORKER_ID, request))._tag, "success");
+
+        // The redelivery cannot read the store, so it cannot know the call ran.
+        const store = yield* BoardRelayStore;
+        const unreadable = yield* makeBoardMcpRelayClient.pipe(
+          Effect.provide(world.runtime),
+          Effect.provideService(BoardRelayStore, {
+            ...store,
+            relayCallOutcome: () =>
+              Effect.fail(
+                new BoardRelayStoreError({ operation: "relayCallOutcome", cause: "busy" }),
+              ),
+          }),
+        );
+        const redelivered = yield* unreadable.answer(WORKER_ID, request);
+        assert.strictEqual(
+          redelivered._tag === "failure" ? redelivered.code : redelivered._tag,
+          "board-unreachable",
+        );
+
+        const engine = yield* BoardEngine.pipe(Effect.provide(world.runtime));
+        const titles = ((yield* engine.getReadModel).board?.cards ?? []).map((card) => card.title);
+        assert.deepStrictEqual(
+          titles.filter((title) => title === "Unreadable"),
+          ["Unreadable"],
+        );
       }),
     ),
   );

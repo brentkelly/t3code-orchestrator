@@ -60,6 +60,7 @@ import {
   type BoardTurnOutcome,
   type ThreadGatewayShape,
   type ThreadSignal,
+  type ThreadSignalBatch,
   type TodoLogEntry,
   type TodoSignal,
 } from "./ThreadGateway.ts";
@@ -444,6 +445,36 @@ export const followStoredEvents = (
       Stream.retry(retrySchedule),
       Stream.catchCause((cause) =>
         Stream.fromEffectDrain(Effect.logError("board thread gateway: signal stream ended", cause)),
+      ),
+    );
+  });
+
+/** How far before a resume cursor `readSignalLog` starts reading, so the reader
+    holds the same memory it would have had at the cursor. Matches the reader's
+    own bound: nothing older than this is remembered anyway. */
+export const SIGNAL_READER_WARMUP_EVENTS = 4096;
+
+/**
+ * The signals after `afterSequence` (from now on when null), batched by the log
+ * position that produced them. The reader is stateful (a run's failure text, a
+ * run awaiting its message, the dedupe set), so a resume replays the events
+ * before the cursor through it with their signals discarded: a stream that
+ * drops between an error item and its run's end still reports the failure.
+ */
+export const readSignalLog = (
+  sink: Pick<EventSink.EventSinkV2["Service"], "stream" | "latestSequence">,
+  afterSequence: number | null,
+  retrySchedule: Schedule.Schedule<unknown, unknown> = FOLLOW_RETRY,
+): Stream.Stream<ThreadSignalBatch> =>
+  Stream.suspend(() => {
+    const read = makeSignalReader();
+    const startAfter =
+      afterSequence === null ? null : Math.max(0, afterSequence - SIGNAL_READER_WARMUP_EVENTS);
+    return followStoredEvents(sink, retrySchedule, startAfter).pipe(
+      Stream.map((stored) => ({ sequence: stored.sequence, signals: read(stored) })),
+      Stream.filter(
+        (batch) =>
+          batch.signals.length > 0 && (afterSequence === null || batch.sequence > afterSequence),
       ),
     );
   });
@@ -855,14 +886,7 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
         Stream.flatMap((stored) => Stream.fromIterable(read(stored))),
       );
     }),
-    signalLog: (afterSequence) =>
-      Stream.suspend(() => {
-        const read = makeSignalReader();
-        return followStoredEvents(eventSink, FOLLOW_RETRY, afterSequence).pipe(
-          Stream.map((stored) => ({ sequence: stored.sequence, signals: read(stored) })),
-          Stream.filter((batch) => batch.signals.length > 0),
-        );
-      }),
+    signalLog: (afterSequence) => readSignalLog(eventSink, afterSequence),
 
     todoLogHead: eventSink.latestSequence().pipe(Effect.orElseSucceed(() => 0)),
     readTodoLog: (after, upTo) =>

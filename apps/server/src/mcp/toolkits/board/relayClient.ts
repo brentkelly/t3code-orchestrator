@@ -15,6 +15,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
@@ -48,6 +49,17 @@ export class BoardMcpRelayClient extends Context.Service<
 
 const isTransient = (outcome: BoardMcpRelayOutcome) =>
   outcome._tag === "failure" && outcome.code === "board-unreachable";
+
+const STORE_UNREADABLE: BoardMcpRelayOutcome = {
+  _tag: "failure",
+  code: "board-unreachable",
+  message:
+    "The board could not check whether this call already ran. This is temporary: retry the same call in a minute.",
+};
+
+// A transient SQLite fault should not cost a call its recorded answer, which
+// is what stops a redelivery running it again.
+const RECORD_RETRY = { schedule: Schedule.exponential("50 millis"), times: 3 };
 
 export const makeBoardMcpRelayClient = Effect.gen(function* () {
   const connections = yield* WorkerConnections;
@@ -96,9 +108,11 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
       // redelivered on the next link waits on this same run. Its answer is
       // recorded before the claim is released, so a later redelivery finds it.
       yield* Effect.gen(function* () {
+        // A lookup that failed says nothing about whether the call already
+        // ran, so it is a transient answer rather than a reason to run it again.
         const recorded = yield* store
           .relayCallOutcome(request.callId)
-          .pipe(Effect.orElseSucceed(() => null));
+          .pipe(Effect.orElseSucceed(() => STORE_UNREADABLE));
         if (recorded !== null) return recorded;
         const outcome = yield* runRelayedBoardTool({
           workerId,
@@ -109,13 +123,12 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
         }).pipe(Effect.provide(context));
         // A transient refusal is not this call's answer: a retry may succeed.
         if (isTransient(outcome)) return outcome;
-        yield* store
-          .recordRelayCall(request.callId, workerId, outcome)
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("board relay: a call's answer was not recorded", { cause }),
-            ),
-          );
+        yield* store.recordRelayCall(request.callId, workerId, outcome).pipe(
+          Effect.retry(RECORD_RETRY),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board relay: a call's answer was not recorded", { cause }),
+          ),
+        );
         return outcome;
       }).pipe(
         Effect.ensuring(Effect.sync(() => inflight.delete(request.callId))),
