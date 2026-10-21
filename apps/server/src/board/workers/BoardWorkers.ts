@@ -12,7 +12,7 @@
  * - `setDefault`: only to an online worker, or back to `local`.
  * - `setupProject`: clone a board project's remote onto a worker, following
  *   the worker's own clone progress so it survives anyone leaving the page.
- * - `state` / `changes`: the `BoardWorkersState` every board client holds.
+ * - `state` / `states`: the `BoardWorkersState` every board client holds.
  */
 import {
   BOARD_LOCAL_WORKER_ID,
@@ -92,12 +92,9 @@ export interface BoardWorkersShape {
   }) => Effect.Effect<void>;
   /** The board's worker summary now. */
   readonly state: Effect.Effect<BoardWorkersState>;
-  /** The summary again after every runtime change — connection status,
-      snapshots, setups. Registry changes ride the board log. Each access
-      subscribes. */
-  readonly changes: Stream.Stream<BoardWorkersState>;
-  /** The summary now, then as `changes`, subscribed atomically with the
-      first read. */
+  /** The summary now, then again after every runtime change — connection
+      status, snapshots, setups — subscribed atomically with the first read.
+      Registry changes ride the board log. Each access subscribes. */
   readonly states: Stream.Stream<BoardWorkersState>;
 }
 
@@ -651,10 +648,6 @@ export const makeBoardWorkers = Effect.gen(function* () {
 
   // Registry events are in the board log, and the board subscription re-sends
   // the summary when it replays one; these are the changes the log never sees.
-  const changes: BoardWorkersShape["changes"] = Stream.merge(
-    connections.changes,
-    SubscriptionRef.changes(setups).pipe(Stream.drop(1)),
-  ).pipe(Stream.mapEffect(() => state));
   const states: BoardWorkersShape["states"] = Stream.merge(
     connections.states,
     SubscriptionRef.changes(setups),
@@ -671,7 +664,6 @@ export const makeBoardWorkers = Effect.gen(function* () {
     setupProject,
     dismissSetup,
     state,
-    changes,
     states,
   } satisfies BoardWorkersShape;
 });

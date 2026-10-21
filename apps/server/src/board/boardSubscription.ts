@@ -28,13 +28,14 @@ import {
   type BoardCardThreadShell,
   type BoardShellStreamEvent,
   type BoardShellStreamItem,
-  type BoardWorkersState,
+  BoardWorkersState,
   type BoardSubscribeBoardInput,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -148,6 +149,8 @@ export const boardStreamWindowDeltas = (
     return deltas;
   });
 
+const sameWorkersState = Schema.toEquivalence(BoardWorkersState);
+
 const toSnapshotError = (message: string) => (cause: unknown) =>
   new BoardSnapshotError({ message, cause });
 
@@ -200,10 +203,19 @@ export const subscribeBoard = (
       engine.latestSequence.pipe(
         Effect.map((sequence): BoardShellStreamItem => ({ kind: "workers", sequence, state })),
       );
-    const workerDeltas = workers.changes.pipe(Stream.mapEffect(workersItem));
+    // `states` opens with the summary as it is when the stream starts, so a
+    // change between the opening read and that subscription still reaches the
+    // client; anything equal to what the client already holds is not re-sent.
+    const workerDeltas = (sent: BoardWorkersState) =>
+      Stream.concat(Stream.make(sent), workers.states).pipe(
+        Stream.changesWith(sameWorkersState),
+        Stream.drop(1),
+        Stream.mapEffect(workersItem),
+      );
 
     const deltasAfter = (
       afterSequence: number,
+      sentWorkers: BoardWorkersState,
     ): Stream.Stream<BoardShellStreamItem, BoardSnapshotError> =>
       Stream.merge(
         engine
@@ -221,7 +233,7 @@ export const subscribeBoard = (
         ),
         Stream.flatMap((deltas) => Stream.fromIterable(deltas)),
         Stream.mapError(toSnapshotError("Failed to replay board events.")),
-        Stream.merge(workerDeltas),
+        Stream.merge(workerDeltas(sentWorkers)),
       );
 
     const afterSequence = input.afterSequence;
@@ -244,7 +256,7 @@ export const subscribeBoard = (
           : [yield* workersItem(workersNow)];
         return Stream.concat(
           Stream.fromIterable([...resync, ...workersResync]),
-          deltasAfter(afterSequence),
+          deltasAfter(afterSequence, workersNow),
         );
       }
     }
@@ -261,5 +273,8 @@ export const subscribeBoard = (
         ? snapshot
         : { ...snapshot, workers: workersState },
     };
-    return Stream.concat(Stream.make(opening), deltasAfter(snapshot.snapshotSequence));
+    return Stream.concat(
+      Stream.make(opening),
+      deltasAfter(snapshot.snapshotSequence, workersState),
+    );
   });

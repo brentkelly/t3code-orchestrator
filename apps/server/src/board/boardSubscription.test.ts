@@ -8,12 +8,15 @@
 import {
   BoardCardId,
   CommandId,
+  EMPTY_BOARD_WORKERS_STATE,
+  EnvironmentId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
   type BoardEvent,
   type BoardShellStreamItem,
+  type BoardWorkersState,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -29,6 +32,7 @@ import {
 } from "./boardStack.testkit.ts";
 import { boardStreamWindowDeltas, subscribeBoard } from "./boardSubscription.ts";
 import { makeBoardCard, NOW } from "./supervisorHarness.testkit.ts";
+import { BoardWorkers } from "./workers/BoardWorkers.ts";
 
 const cardId = BoardCardId.make("card-1");
 const linkedThread = ThreadId.make("thread-linked");
@@ -285,6 +289,48 @@ it.layer(makeBoardStackTestLayer("t3o-board-subscribe-test-"), { excludeTestServ
         const head = yield* engine.boardEngine.latestSequence;
         const items = yield* collect({ afterSequence: head + 50 }, 1);
         assert.deepStrictEqual(kinds(items), ["snapshot"]);
+      }),
+    );
+
+    it.effect("sends a worker change that lands between the opening read and going live", () =>
+      Effect.gen(function* () {
+        const engine = yield* boardStackEngine;
+        yield* engine.dispatch(createProject);
+        yield* engine.dispatch(createCard("card-w"));
+        const online: BoardWorkersState = {
+          ...EMPTY_BOARD_WORKERS_STATE,
+          workers: [
+            {
+              id: EnvironmentId.make("env-linux-box"),
+              label: "linux-box",
+              url: "http://linux-box:3773",
+              addedAt: NOW,
+              status: {
+                state: "online",
+                lastSeenAt: NOW,
+                t3oVersion: "0.0.45",
+                protocolVersion: 1,
+              },
+              snapshot: null,
+            },
+          ],
+        };
+        // The opening snapshot reads a local-only board; by the time the
+        // stream subscribes, a worker is online.
+        const items = yield* collect(
+          {},
+          2,
+          engine.dispatch(retitle("card-w", "Renamed")).pipe(Effect.orDie),
+        ).pipe(
+          Effect.provideService(BoardWorkers, {
+            ...(yield* BoardWorkers),
+            state: Effect.succeed(EMPTY_BOARD_WORKERS_STATE),
+            states: Stream.make(online, online),
+          }),
+        );
+        assert.deepStrictEqual(kinds(items), ["snapshot", "workers"]);
+        const [, workers] = items;
+        assert.deepStrictEqual(workers?.kind === "workers" ? workers.state : null, online);
       }),
     );
 
