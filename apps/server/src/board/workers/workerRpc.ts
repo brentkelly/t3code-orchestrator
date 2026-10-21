@@ -172,7 +172,10 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
       // session can only extend itself, never widen itself. The old one stays
       // valid until the caller gives it back. Only a board's own plain bearer
       // session may renew: a browser cookie or a DPoP-bound session would
-      // otherwise trade itself for an unbound token readable from script.
+      // otherwise trade itself for an unbound token readable from script. The
+      // label is advisory: a client names itself on /oauth/token, so any plain
+      // bearer client can pass it and outlive its TTL — but only with the
+      // subject and scopes it already holds.
       [BOARD_WORKER_WS_METHODS.renew]: (_input: Record<string, never>) =>
         authorized(
           BOARD_WORKER_WS_METHODS.renew,

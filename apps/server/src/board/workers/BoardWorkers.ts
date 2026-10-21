@@ -651,10 +651,23 @@ export const makeBoardWorkers = Effect.gen(function* () {
       const destinationPath =
         input.folder ?? cloneDestination(worker.snapshot?.projectsFolder ?? "~", remoteUrl);
       const startedAt = yield* nowIso;
+      const prior = (yield* SubscriptionRef.get(setups)).get(key);
+      // The id the worker knows this clone by is fixed before going over the
+      // network and kept through any failure, so a later Set up can find a
+      // clone the worker accepted after this call stopped waiting. A clone
+      // into a folder that already existed is never reused: retrying it would
+      // clear that folder.
+      const reusedId =
+        prior?.phase === "failed" &&
+        prior.destinationPath === destinationPath &&
+        prior.failure?.kind !== "folder-exists"
+          ? prior.workerProjectId
+          : null;
+      const workerProjectId = reusedId ?? ProjectId.make(yield* newUuid);
       const setup: BoardWorkerSetup = {
         projectId: project.id,
         workerId: worker.id,
-        workerProjectId: null,
+        workerProjectId,
         destinationPath,
         phase: "cloning",
         stage: null,
@@ -692,36 +705,26 @@ export const makeBoardWorkers = Effect.gen(function* () {
       });
 
       return yield* Effect.gen(function* () {
-        // A failed clone the worker still tracks is retried in place; anything
-        // else (a new folder, a folder that existed) starts a fresh clone.
-        const retryId =
-          previous?.phase === "failed" &&
-          previous.destinationPath === destinationPath &&
-          previous.failure?.kind !== "folder-exists" &&
-          previous.failure?.kind !== "worker-offline"
-            ? previous.workerProjectId
-            : null;
-        const startFresh = Effect.gen(function* () {
-          const projectId = ProjectId.make(yield* newUuid);
+        // A clone the worker is still running (or finished) is followed
+        // again; a failed one it still tracks is retried in place; one it has
+        // forgotten (a restart, say) is cloned afresh under the same id.
+        const start: Effect.Effect<void, WorkerRpcError> = Effect.gen(function* () {
+          if (reusedId !== null) {
+            const clones = yield* rpc.projectClones.pipe(Stream.runHead);
+            const clone = Option.getOrUndefined(clones)?.find(
+              (candidate) => candidate.projectId === reusedId,
+            );
+            if (clone?.phase === "running" || clone?.phase === "done") return;
+            if (yield* rpc.retryProjectClone(reusedId)) return;
+          }
           yield* rpc.startProjectClone({
-            projectId,
+            projectId: workerProjectId,
             title: project.title,
             createdAt: startedAt,
             destinationPath,
             remoteUrl,
           });
-          return projectId;
         });
-        // The worker may have forgotten the failed clone (a restart, say): then
-        // `applied` is false and it is cloned afresh instead.
-        const start: Effect.Effect<ProjectId, WorkerRpcError> =
-          retryId === null
-            ? startFresh
-            : rpc
-                .retryProjectClone(retryId)
-                .pipe(
-                  Effect.flatMap((applied) => (applied ? Effect.succeed(retryId) : startFresh)),
-                );
         const started = yield* start.pipe(
           Effect.timeoutOrElse({
             duration: SETUP_START_TIMEOUT,
@@ -745,8 +748,8 @@ export const makeBoardWorkers = Effect.gen(function* () {
           yield* putSetup(failedSetup);
           return failedSetup;
         }
-        const workerProjectId = started.success;
-        const cloning: BoardWorkerSetup = { ...setup, workerProjectId };
+        // A fresh object, so the abandon guard stops matching this claim.
+        const cloning: BoardWorkerSetup = { ...setup };
         yield* putSetup(cloning);
         yield* FiberMap.run(
           followers,

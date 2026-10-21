@@ -571,6 +571,46 @@ describe("BoardWorkers", () => {
       }),
     ));
 
+  test("a Set up abandoned after the worker accepted follows that clone next time", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { http, worker, connections, workers } = yield* setup;
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+
+        // The worker starts cloning, but its answer never reaches the board.
+        const accept = worker.startClone;
+        worker.startClone = (input) =>
+          reportClone(worker, input.projectId, {
+            phase: "running",
+            stage: "receiving",
+            percent: 10,
+          }).pipe(Effect.andThen(Effect.never));
+        const call = yield* workers
+          .setupProject({ projectId: PROJECT_ID, workerId: WORKER_ID })
+          .pipe(Effect.forkScoped);
+        yield* waitForSetup(workers, (setup) => setup.phase === "cloning");
+        yield* Fiber.interrupt(call);
+        yield* waitForSetup(workers, (setup) => setup.phase === "failed");
+        worker.startClone = accept;
+
+        // Set up again picks up the running clone rather than starting a
+        // second one into the same folder.
+        const [first] = worker.cloneStarts;
+        const again = yield* workers.setupProject({ projectId: PROJECT_ID, workerId: WORKER_ID });
+        assert.strictEqual(again.phase, "cloning");
+        assert.strictEqual(again.workerProjectId, first?.projectId);
+        assert.strictEqual(worker.cloneStarts.length, 1);
+        assert.deepStrictEqual(worker.cloneRetries, []);
+        yield* reportClone(worker, first!.projectId, {
+          phase: "done",
+          stage: "checkout",
+          percent: 100,
+        });
+        yield* waitForSetup(workers, (setup) => setup.phase === "done");
+      }),
+    ));
+
   test("a worker that never accepts the clone fails Set up instead of hanging", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -646,7 +686,7 @@ describe("BoardWorkers", () => {
         assert.deepStrictEqual(worker.cloneRetries, [first!.projectId]);
         const second = worker.cloneStarts[1];
         assert.isDefined(second);
-        assert.notStrictEqual(second?.projectId, first?.projectId);
+        assert.strictEqual(second?.projectId, first?.projectId);
         assert.strictEqual(retried.workerProjectId, second?.projectId);
 
         // Its progress is followed to the end.
