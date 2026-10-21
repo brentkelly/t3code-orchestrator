@@ -358,12 +358,19 @@ export const BOARD_WORKER_WS_METHODS = {
       Upstream refuses a session revoking itself over HTTP, so the worker does
       it on the board's behalf. */
   release: "boardWorker.release",
+  /** Issue the calling session's successor — same subject, scopes and label —
+      so the board's access outlives upstream's fixed session lifetime. The
+      caller gives the old session back with `release` once it holds the new
+      one. */
+  renew: "boardWorker.renew",
 } as const;
 
 export const BoardWorkerHello = Schema.Struct({
   protocolVersion: NonNegativeInt,
   environmentId: EnvironmentId,
   t3oVersion: TrimmedNonEmptyString,
+  /** When the calling session expires; null for one that never does. */
+  sessionExpiresAt: Schema.NullOr(IsoDateTime),
 });
 export type BoardWorkerHello = typeof BoardWorkerHello.Type;
 
@@ -385,6 +392,11 @@ export const BoardWorkerProviders = Schema.Struct({
   projectsFolder: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type BoardWorkerProviders = typeof BoardWorkerProviders.Type;
+
+export const BoardWorkerRenewal = Schema.Struct({
+  accessToken: TrimmedNonEmptyString,
+});
+export type BoardWorkerRenewal = typeof BoardWorkerRenewal.Type;
 
 export class BoardWorkerRequestError extends Schema.TaggedError<BoardWorkerRequestError>()(
   "BoardWorkerRequestError",
@@ -413,6 +425,11 @@ export const BOARD_WORKER_RPCS = [
   Rpc.make(BOARD_WORKER_WS_METHODS.release, {
     payload: Schema.Struct({}),
     success: Schema.Void,
+    error: Schema.Union([BoardWorkerRequestError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WORKER_WS_METHODS.renew, {
+    payload: Schema.Struct({}),
+    success: BoardWorkerRenewal,
     error: Schema.Union([BoardWorkerRequestError, EnvironmentAuthorizationError]),
   }),
 ] as const;
@@ -594,6 +611,8 @@ export const BOARD_WORKER_RPC_SCOPES = {
   // Revokes only the caller's own session, so it needs nothing more than the
   // session itself.
   [BOARD_WORKER_WS_METHODS.release]: AuthOrchestrationReadScope,
+  // Its successor carries exactly the caller's own scopes, never more.
+  [BOARD_WORKER_WS_METHODS.renew]: AuthOrchestrationReadScope,
   [BOARD_WORKERS_WS_METHODS.add]: AuthOrchestrationOperateScope,
   [BOARD_WORKERS_WS_METHODS.repair]: AuthOrchestrationOperateScope,
   [BOARD_WORKERS_WS_METHODS.remove]: AuthOrchestrationOperateScope,

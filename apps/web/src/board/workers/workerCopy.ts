@@ -106,7 +106,7 @@ export function addWorkerErrorCopy(input: {
     case "invalid-credential":
       return {
         title: "This link has expired or isn't valid",
-        body: "Pairing links work once and expire after 10 minutes. Run t3 pair on the worker again and paste the new link. It starts with https:// and contains /pair#.",
+        body: "Pairing links work once and expire after 5 minutes. Run t3 pair on the worker again and paste the new link. It starts with https:// and contains /pair#.",
       };
     case "incompatible":
       return {

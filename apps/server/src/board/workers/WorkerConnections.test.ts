@@ -16,7 +16,12 @@ import {
   workerSecretName,
   type WorkerConnectionsShape,
 } from "./WorkerConnections.ts";
-import { makeFakeWorkerLayer, helloFor, type FakeWorker } from "./workers.testkit.ts";
+import {
+  makeFakeWorkerLayer,
+  helloFor,
+  SESSION_LIFETIME_MS,
+  type FakeWorker,
+} from "./workers.testkit.ts";
 
 const WORKER_ID = EnvironmentId.make("env-linux-box");
 const URL = "http://linux-box:3773";
@@ -275,6 +280,49 @@ it.effect("a handshake that fails on the wire is offline, not incompatible", () 
       worker.helloFails = false;
       yield* TestClock.adjust("1 second");
       yield* waitFor(connections, "online");
+    }),
+  ),
+);
+
+it.effect("renews the board's session before it expires, and stays online throughout", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { kit, worker, connections } = yield* setup((worker) => {
+        worker.sessionExpiry.set("token-1", SESSION_LIFETIME_MS);
+      });
+      yield* connections.sync([registered]);
+      yield* waitFor(connections, "online");
+      const firstSeen = (yield* statusOf(connections))?.status.lastSeenAt;
+
+      const seen: Array<string | undefined> = [];
+      yield* connections.states.pipe(
+        Stream.runForEach((runtime) =>
+          Effect.sync(() => seen.push(runtime.get(WORKER_ID)?.status.state)),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+
+      // A week before the 30 days are up, the session is swapped for its successor.
+      yield* TestClock.adjust("23 days");
+      yield* connections.states.pipe(
+        Stream.filter((runtime) => runtime.get(WORKER_ID)?.status.lastSeenAt !== firstSeen),
+        Stream.runHead,
+      );
+      assert.deepStrictEqual(worker.renewedTokens, ["token-1"]);
+      assert.deepStrictEqual(worker.releasedTokens, ["token-1"]);
+      assert.deepStrictEqual(worker.dialedTokens, ["token-1", "token-1-renewed"]);
+      const stored = yield* kit.secrets.store.get(workerSecretName(WORKER_ID));
+      assert.strictEqual(
+        new TextDecoder().decode(stored._tag === "Some" ? stored.value : new Uint8Array()),
+        "token-1-renewed",
+      );
+      assert.isTrue(seen.every((state) => state === "online"));
+      assert.isTrue((yield* connections.get(WORKER_ID)) !== undefined);
+
+      // The successor is good for another 30 days, so nothing renews again soon.
+      yield* TestClock.adjust("1 day");
+      assert.deepStrictEqual(worker.renewedTokens, ["token-1"]);
     }),
   ),
 );

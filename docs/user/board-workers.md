@@ -28,7 +28,7 @@ pairing token on that machine, and the board server uses it to get its own acces
 If an environment says **Needs a pairing link**, your connection to it doesn't have admin access, so
 this device can't create a token there. In that case, and for a server this device isn't connected
 to at all, run `t3 pair` on the worker machine and paste the link it prints. Links work once and
-expire after 10 minutes.
+expire after 5 minutes.
 
 On the worker, the board then appears under **Settings → Connections → Clients** as
 **T3o board (_board server name_)**.
@@ -44,7 +44,8 @@ Changing it only affects cards that don't have a worktree yet.
 - **Offline** — the board server can't reach it. It keeps trying, and the worker comes back by
   itself when it's reachable again.
 - **Access revoked** — someone removed the board under Settings → Connections → Clients on that
-  machine, or the worker was reset. Use **Re-pair…** to give the board access again. The worker
+  machine, or the worker was reset. The board renews its own access while it runs, but if the board
+  server was off for most of a month its access has expired, and that shows here too. Use **Re-pair…** to give the board access again. The worker
   keeps its label and settings.
 - **Incompatible version** — update T3o on the worker.
 

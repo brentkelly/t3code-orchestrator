@@ -14,6 +14,11 @@
  * - a 401/403, a missing token, or a different server answering at the URL:
  *   `unauthorized`, NOT retried — only a re-pair (`restart`) recovers it.
  *
+ * Upstream sessions expire after a fixed lifetime and are never refreshed, so
+ * the loop renews the board's session `SESSION_RENEW_AHEAD` before it expires:
+ * `boardWorker.renew`, store the successor, `release` the old one, and redial
+ * quietly — the worker stays online throughout.
+ *
  * Later plans build on `get` (a typed client, or `WorkerUnavailable`) and on
  * `changes`.
  */
@@ -101,6 +106,25 @@ export function workerRedialDelay(failures: number): Duration.Duration {
   return Duration.seconds(Math.min(30, 2 ** Math.min(failures, 5)));
 }
 
+/** How long before the board's session on a worker expires that it is renewed.
+    A board server down for longer than the rest of the lifetime comes back to
+    an expired session, which only a re-pair recovers. */
+export const SESSION_RENEW_AHEAD = Duration.days(7);
+
+/** How long to hold a connection before renewing its session; null for a
+    session that never expires. */
+export function sessionRenewalDelay(
+  sessionExpiresAt: string | null,
+  nowMillis: number,
+): Duration.Duration | null {
+  if (sessionExpiresAt === null) return null;
+  const expiresAt = Date.parse(sessionExpiresAt);
+  if (Number.isNaN(expiresAt)) return null;
+  return Duration.millis(
+    Math.max(0, expiresAt - Duration.toMillis(SESSION_RENEW_AHEAD) - nowMillis),
+  );
+}
+
 /** A worker's providers and checkouts, read over its connection. */
 export const readWorkerSnapshot = (rpc: WorkerRpc) =>
   Effect.gen(function* () {
@@ -123,6 +147,7 @@ export const readWorkerSnapshot = (rpc: WorkerRpc) =>
 
 type AttemptOutcome =
   | { readonly _tag: "dropped" }
+  | { readonly _tag: "renewed" }
   | { readonly _tag: "unreachable" }
   | { readonly _tag: "incompatible"; readonly hello: BoardWorkerHello | null }
   | { readonly _tag: "unauthorized" };
@@ -173,11 +198,14 @@ export const makeWorkerConnections = Effect.gen(function* () {
   /** A redial of a worker already known to be offline or incompatible keeps
       that status until it answers: blue `connecting` is for a first dial, or
       one after a re-pair, not every retry in the background. */
-  const markDialing = (workerId: EnvironmentId) =>
+  const markDialing = (workerId: EnvironmentId, renewed: boolean) =>
     update(workerId, (entry) =>
       entry.status.state === "offline" || entry.status.state === "incompatible"
         ? entry
-        : { ...entry, link: null, status: { ...entry.status, state: "connecting" } },
+        : renewed
+          ? // A redial onto a renewed session: still online, just between links.
+            { ...entry, link: null }
+          : { ...entry, link: null, status: { ...entry.status, state: "connecting" } },
     );
 
   const persist = (workerId: EnvironmentId) =>
@@ -202,11 +230,42 @@ export const makeWorkerConnections = Effect.gen(function* () {
       Effect.catchCause(() => Effect.succeed(Option.none<string>())),
     );
 
-  /** One dial, held until the connection drops. */
-  const attempt = (worker: BoardWorker): Effect.Effect<AttemptOutcome> =>
+  /** Swap the board's session for its successor: store the new token, then
+      give the old one back. False when the worker didn't issue one, which
+      leaves the old token in place. */
+  const renewSession = (workerId: EnvironmentId, rpc: WorkerRpc) =>
+    Effect.gen(function* () {
+      const renewal = yield* rpc.renew;
+      yield* secrets.set(workerSecretName(workerId), encodeWorkerToken(renewal.accessToken));
+      // Unreturned, the old session only lingers until it expires.
+      yield* rpc.release.pipe(Effect.ignore);
+      return true;
+    }).pipe(Effect.catchCause(() => Effect.succeed(false)));
+
+  /** Hold an online link until it drops — or until its session is due for
+      renewal, when the link is let go for one on the successor. */
+  const hold = (worker: BoardWorker, link: WorkerLink, hello: BoardWorkerHello) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const delay = sessionRenewalDelay(hello.sessionExpiresAt, now.epochMilliseconds);
+      if (delay === null) {
+        yield* link.closed;
+        return { _tag: "dropped" } as const;
+      }
+      const due = yield* Effect.raceFirst(
+        link.closed.pipe(Effect.as(false)),
+        Effect.sleep(delay).pipe(Effect.as(true)),
+      );
+      if (due && (yield* renewSession(worker.id, link.rpc))) return { _tag: "renewed" } as const;
+      yield* link.closed;
+      return { _tag: "dropped" } as const;
+    });
+
+  /** One dial, held until the connection drops or its session is renewed. */
+  const attempt = (worker: BoardWorker, renewed: boolean): Effect.Effect<AttemptOutcome> =>
     Effect.scoped(
       Effect.gen(function* () {
-        yield* markDialing(worker.id);
+        yield* markDialing(worker.id, renewed);
         const token = yield* readToken(worker.id);
         if (Option.isNone(token)) return { _tag: "unauthorized" } as const;
         const connected = yield* transport
@@ -248,8 +307,7 @@ export const makeWorkerConnections = Effect.gen(function* () {
           },
         }));
         yield* persist(worker.id);
-        yield* link.closed;
-        return { _tag: "dropped" } as const;
+        return yield* hold(worker, link, hello);
       }),
     );
 
@@ -257,9 +315,15 @@ export const makeWorkerConnections = Effect.gen(function* () {
   const runWorker = (worker: BoardWorker) =>
     Effect.gen(function* () {
       let failures = 0;
+      let renewed = false;
       while (true) {
-        const outcome = yield* attempt(worker);
+        const outcome = yield* attempt(worker, renewed);
+        renewed = outcome._tag === "renewed";
         switch (outcome._tag) {
+          case "renewed":
+            // Straight back on, with the successor.
+            failures = 0;
+            continue;
           case "unauthorized":
             yield* setState(worker.id, "unauthorized");
             return;

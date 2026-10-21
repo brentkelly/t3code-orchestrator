@@ -15,6 +15,7 @@ import {
   type ProjectCloneStartResult,
   type ProjectId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -55,15 +56,26 @@ export interface FakeWorker {
   released: number;
   /** The session each release gave back. */
   readonly releasedTokens: Array<string>;
+  /** The session each renew was asked by, in order; its successor is
+      `<old>-renewed`. */
+  readonly renewedTokens: Array<string>;
+  /** When each session expires (epoch millis), by token; a token missing
+      here reports `hello.sessionExpiresAt` as scripted. Renewing issues a
+      successor that lives 30 days from then. */
+  readonly sessionExpiry: Map<string, number>;
   /** The open link's close signal, while one is open. */
   link: Deferred.Deferred<void> | null;
 }
+
+/** Upstream's fixed session lifetime. */
+export const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 
 export const helloFor = (environmentId: string, protocolVersion = BOARD_WORKER_PROTOCOL_VERSION) =>
   ({
     protocolVersion,
     environmentId: EnvironmentId.make(environmentId),
     t3oVersion: "0.0.45",
+    sessionExpiresAt: null,
   }) satisfies BoardWorkerHello;
 
 export const makeFakeWorkers = Effect.sync(() => {
@@ -94,6 +106,8 @@ export const makeFakeWorkers = Effect.sync(() => {
         retryApplied: true,
         released: 0,
         releasedTokens: [],
+        renewedTokens: [],
+        sessionExpiry: new Map(),
         link: null,
       };
       workers.set(url, worker);
@@ -123,7 +137,16 @@ export const makeFakeWorkers = Effect.sync(() => {
                   unsupported: true,
                 }),
               )
-            : Effect.succeed(worker.hello),
+            : Effect.succeed(
+                worker.sessionExpiry.has(accessToken)
+                  ? {
+                      ...worker.hello,
+                      sessionExpiresAt: new Date(
+                        worker.sessionExpiry.get(accessToken)!,
+                      ).toISOString(),
+                    }
+                  : worker.hello,
+              ),
       ),
       projects: Effect.sync(() => ({ projects: worker.projects })),
       providers: Effect.sync(() => ({
@@ -134,6 +157,14 @@ export const makeFakeWorkers = Effect.sync(() => {
         worker.released += 1;
         worker.releasedTokens.push(accessToken);
       }),
+      renew: Clock.currentTimeMillis.pipe(
+        Effect.map((now) => {
+          worker.renewedTokens.push(accessToken);
+          const successor = `${accessToken}-renewed`;
+          worker.sessionExpiry.set(successor, now + SESSION_LIFETIME_MS);
+          return { accessToken: successor };
+        }),
+      ),
       startProjectClone: (input) =>
         Effect.suspend(() => {
           worker.cloneStarts.push(input);

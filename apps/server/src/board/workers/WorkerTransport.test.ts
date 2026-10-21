@@ -33,10 +33,12 @@ const handlers = group.toLayer({
       protocolVersion: BOARD_WORKER_PROTOCOL_VERSION,
       environmentId: EnvironmentId.make("env-worker"),
       t3oVersion: "0.0.45",
+      sessionExpiresAt: null,
     }),
   "boardWorker.projects": () => Effect.succeed({ projects: [] }),
   "boardWorker.providers": () => Effect.succeed({ providers: [], projectsFolder: null }),
   "boardWorker.release": () => Effect.void,
+  "boardWorker.renew": () => Effect.succeed({ accessToken: "token-2" }),
 });
 
 /** An upstream server: the same socket, but no `boardWorker.hello`. */

@@ -43,7 +43,7 @@ const invalidCredential = (message?: string) =>
     code: "invalid-credential",
     message:
       message ??
-      "This link has expired or isn't valid. Pairing links work once and expire after 10 minutes.",
+      "This link has expired or isn't valid. Pairing links work once and expire after 5 minutes.",
   });
 
 const unreachable = (httpBaseUrl: string) =>

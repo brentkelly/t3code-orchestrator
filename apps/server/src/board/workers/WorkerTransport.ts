@@ -21,6 +21,7 @@ import {
   type BoardWorkerHello,
   type BoardWorkerProjects,
   type BoardWorkerProviders,
+  type BoardWorkerRenewal,
   type ProjectCloneListEvent,
   type ProjectCloneStartInput,
   type ProjectCloneStartResult,
@@ -63,6 +64,8 @@ export interface WorkerRpc {
   readonly providers: Effect.Effect<BoardWorkerProviders, WorkerRpcError>;
   /** Revoke the calling session on the worker (Remove). */
   readonly release: Effect.Effect<void, WorkerRpcError>;
+  /** A successor to the calling session, before it expires. */
+  readonly renew: Effect.Effect<BoardWorkerRenewal, WorkerRpcError>;
   readonly startProjectClone: (
     input: ProjectCloneStartInput,
   ) => Effect.Effect<ProjectCloneStartResult, WorkerRpcError>;
@@ -230,6 +233,10 @@ const connectWorker = ({
       release: call(
         client[BOARD_WORKER_WS_METHODS.release]({}),
         "The worker didn't release the board's session.",
+      ),
+      renew: call(
+        client[BOARD_WORKER_WS_METHODS.renew]({}),
+        "The worker didn't renew the board's session.",
       ),
       startProjectClone: (input) =>
         call(client[WS_METHODS.projectCloneStart](input), "The worker couldn't start the clone."),

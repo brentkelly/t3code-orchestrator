@@ -6,7 +6,7 @@
  *   thin call into the `BoardWorkers` service.
  * - `boardWorker.*` run on a WORKER for the central server that dialed it: the
  *   handshake, its checkouts, its providers, and giving the board's session
- *   back. Every T3o server answers them; whether it is anyone's worker is up
+ *   back, or renewing it. Every T3o server answers them; whether it is anyone's worker is up
  *   to the boards that paired with it.
  */
 import {
@@ -23,6 +23,7 @@ import {
   type BoardWorkersSetDefaultInput,
   type BoardWorkersSetupProjectInput,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import packageJson from "../../../package.json" with { type: "json" };
@@ -108,6 +109,10 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
               protocolVersion: BOARD_WORKER_PROTOCOL_VERSION,
               environmentId,
               t3oVersion: packageJson.version,
+              sessionExpiresAt:
+                currentSession.expiresAt === undefined
+                  ? null
+                  : DateTime.formatIso(currentSession.expiresAt),
             })),
           ),
         ),
@@ -161,6 +166,25 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
             Effect.forkDetach,
             Effect.asVoid,
           ),
+        ),
+      // The successor copies the caller's subject, scopes and label, so a
+      // session can only extend itself, never widen itself. The old one stays
+      // valid until the caller gives it back.
+      [BOARD_WORKER_WS_METHODS.renew]: (_input: Record<string, never>) =>
+        authorized(
+          BOARD_WORKER_WS_METHODS.renew,
+          Effect.gen(function* () {
+            const service = yield* auth;
+            const sessions = yield* service.listSessions();
+            const label = sessions.find((session) => session.sessionId === currentSession.sessionId)
+              ?.client.label;
+            const issued = yield* service.issueSession({
+              subject: currentSession.subject,
+              scopes: currentSession.scopes,
+              ...(label === undefined ? {} : { label }),
+            });
+            return { accessToken: issued.token };
+          }).pipe(Effect.mapError(requestError("Couldn't renew the board's session."))),
         ),
     };
   });
