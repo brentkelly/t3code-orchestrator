@@ -43,6 +43,7 @@ export function makeBoardWorkspaces(
   options: BoardWorkspacesOptions = {},
 ): BoardWorkspacesShape {
   const local = makeLocalBoardWorkspace(deps);
+  const forCentral = makeLocalBoardWorkspace(deps, "central");
   const { path: pathService } = deps;
 
   const localProject = (projectId: ProjectId) =>
@@ -105,6 +106,7 @@ export function makeBoardWorkspaces(
 
   return {
     local,
+    forCentral,
     ownsWorktreePath,
     forCard,
     localProject,

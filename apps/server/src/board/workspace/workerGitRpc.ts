@@ -5,7 +5,8 @@
  *
  * Every T3o server answers them, for the central server that dialed it, by
  * running its own `LocalBoardWorkspace`: the same code the central server runs
- * for a card of its own. Two checks stand between the call and git:
+ * for a card of its own, marking the checkouts it makes as the central board's
+ * so this server's own board never sweeps them. Two checks stand between the call and git:
  *
  * - the session holds the operation's scope (`BOARD_WORKER_GIT_RPC_SCOPES`);
  * - a path the caller names is one of the project's worktrees on THIS server,
@@ -87,7 +88,7 @@ export const boardWorkerGitRpcHandlers = (
       }
       return Effect.gen(function* () {
         yield* guardPaths(workspaces, op, input.projectId, pathsOf(input));
-        const run = workspaces.local[op] as (
+        const run = workspaces.forCentral[op] as (
           payload: unknown,
         ) => Effect.Effect<unknown, BoardWorkerGitError | { readonly _tag: "WorkerUnavailable" }>;
         return yield* run(input);

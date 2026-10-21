@@ -1282,6 +1282,19 @@ const make = Effect.gen(function* () {
    */
   const interruptedProvisions = new Set<string>();
 
+  /** Drop the entries whose card is gone or no longer provisioning — deleted,
+      archived, failed or reset since — so the set holds only live resumes. */
+  const forgetSettledProvisions = (board: BoardState) => {
+    const provisioning = new Set(
+      board.cards
+        .filter((card) => card.worktree?.status === "provisioning")
+        .map((card) => String(card.id)),
+    );
+    for (const id of interruptedProvisions) {
+      if (!provisioning.has(id)) interruptedProvisions.delete(id);
+    }
+  };
+
   /** The git half of a provision, once `provision-worktree` is recorded:
       create the worktree in the card's workspace, then `record-worktree`. */
   const provisionOnWorkspace = Effect.fn("board-supervisor-provisionOnWorkspace")(function* (
@@ -5093,6 +5106,7 @@ const make = Effect.gen(function* () {
   }) {
     const settings = yield* boardSettings;
     const board = yield* readBoard;
+    forgetSettledProvisions(board);
     const fetchedBases = new Set<string>();
     for (const card of board.cards) {
       // T3o (T3O-18): a linked pull request settles its card whether or not

@@ -231,6 +231,10 @@ export interface BoardWorkspacePlacement {
 export interface BoardWorkspacesShape {
   /** This server's own workspace. */
   readonly local: BoardWorkspace;
+  /** The same workspace as the central server that dialed this one sees it:
+      the checkouts it provisions are marked as the central board's, and its
+      orphan sweep lists only those (`BoardWorktreeOwner`). */
+  readonly forCentral: BoardWorkspace;
   /**
    * Whether `path` is one of `projectId`'s worktrees on this server: under its
    * worktrees directory, or registered with the checkout's git (never the

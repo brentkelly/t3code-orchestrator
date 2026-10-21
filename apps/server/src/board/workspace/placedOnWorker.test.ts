@@ -75,6 +75,9 @@ interface Placement {
 const placeCardOnWorker = (options: { readonly reachable?: boolean } = {}): Placement => {
   const workerGit: Array<ReadonlyArray<string>> = [];
   let worker: InProcessWorker | null = null;
+  // The stub's worktrees are not on disk; a real private git dir takes the
+  // central board's owner marker.
+  let privateGitDir: string | null = null;
   return {
     workerGit,
     worker: () => worker!,
@@ -83,7 +86,19 @@ const placeCardOnWorker = (options: { readonly reachable?: boolean } = {}): Plac
         ...local.git,
         execute: (input: Parameters<GitVcsDriver.GitVcsDriver["Service"]["execute"]>[0]) => {
           workerGit.push(input.args);
-          return local.git.execute(input);
+          const ran = local.git.execute(input);
+          if (input.args[0] !== "rev-parse" || input.args[1] !== "--absolute-git-dir") return ran;
+          return ran.pipe(
+            Effect.flatMap(() =>
+              privateGitDir !== null
+                ? Effect.succeed(privateGitDir)
+                : local.fileSystem.makeTempDirectory({ prefix: "t3o-worker-gitdir-" }).pipe(
+                    Effect.tap((dir) => Effect.sync(() => void (privateGitDir = dir))),
+                    Effect.orDie,
+                  ),
+            ),
+            Effect.map((dir) => ({ stdout: `${dir}\n`, stderr: "", exitCode: 0 })),
+          );
         },
       } as GitVcsDriver.GitVcsDriver["Service"];
       worker = makeInProcessWorker(

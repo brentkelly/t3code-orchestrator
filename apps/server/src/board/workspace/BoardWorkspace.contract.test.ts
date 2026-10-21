@@ -584,6 +584,40 @@ describe("the worker side of the named operations (T3O-64)", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
+  it.effect("a worker's own board and the central board each sweep only their own checkouts", () =>
+    Effect.gen(function* () {
+      const env = yield* makeEnv("owners");
+      const workspaces = yield* workspacesOver(env.checkout);
+      const central = remoteOver(makeInProcessWorker(workspaces));
+      // The worker runs a board of its own on the same repository, so both
+      // boards' checkouts share its worktrees directory.
+      const own = yield* workspaces.local.provisionWorktree({
+        projectId,
+        branch: "board/own-1",
+        baseRefName: "main",
+      });
+      const placed = yield* central.provisionWorktree({
+        projectId,
+        branch: "board/central-1",
+        baseRefName: "main",
+      });
+      const ownList = yield* workspaces.local.listBoardWorktrees({ projectId });
+      const centralList = yield* central.listBoardWorktrees({ projectId });
+      assert.deepStrictEqual(
+        ownList.worktrees.map((worktree) => worktree.branch),
+        ["board/own-1"],
+      );
+      assert.deepStrictEqual(
+        centralList.worktrees.map((worktree) => worktree.branch),
+        ["board/central-1"],
+      );
+      // The marker sits in git's private dir: the checkout stays clean.
+      const status = yield* git(placed.path, ["status", "--porcelain"]);
+      assert.strictEqual(status.trim(), "");
+      assert.notStrictEqual(own.path, placed.path);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
   it.effect("refuses an operation the session has no scope for", () =>
     Effect.gen(function* () {
       const env = yield* makeEnv("scope");

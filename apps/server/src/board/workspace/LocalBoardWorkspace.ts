@@ -55,6 +55,22 @@ export interface LocalBoardWorkspaceDeps {
   readonly worktreeRoots: Effect.Effect<ReadonlyArray<string>>;
 }
 
+/**
+ * Whose board a checkout under this server's worktrees directory belongs to.
+ * `self` is this server's own board; `central` is the central server that
+ * dialed this one as its worker (`workerGitRpc.ts`). A server can be both, on
+ * the same repository, so each orphan sweep must see only its own board's
+ * checkouts — the other board's cards are unknown to it, and every one of its
+ * clean, pushed checkouts would look like an orphan.
+ */
+export type BoardWorktreeOwner = "self" | "central";
+
+/** The marker a central board's checkout carries, in its private git dir
+    (`.git/worktrees/<name>/`): out of the working tree, so it never dirties
+    status, and removed with the worktree. A checkout without one is this
+    server's own board's, as every checkout before the marker was. */
+const CENTRAL_OWNER_MARKER = "t3o-board-owner";
+
 /** How long a staleness check waits on the remote before reading what it has. */
 const BASE_TIP_FETCH_TIMEOUT_MS = 15_000;
 
@@ -74,7 +90,10 @@ const forgeFailed = (operation: string) => (error: BoardPullRequestGatewayError)
     ...(error.refusal === undefined ? {} : { refusal: error.refusal }),
   });
 
-export function makeLocalBoardWorkspace(deps: LocalBoardWorkspaceDeps): BoardWorkspace {
+export function makeLocalBoardWorkspace(
+  deps: LocalBoardWorkspaceDeps,
+  owner: BoardWorktreeOwner = "self",
+): BoardWorkspace {
   const { git, pullRequests, retirer, fileSystem, path: pathService } = deps;
 
   const withGit = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -223,6 +242,43 @@ export function makeLocalBoardWorkspace(deps: LocalBoardWorkspaceDeps): BoardWor
       return { exists: yield* localExists() };
     });
 
+  /** The worktree's private git dir, or null when git cannot say. */
+  const privateGitDir = (worktreePath: string) =>
+    gitRef("boardCardWorktree.gitDir", worktreePath, ["rev-parse", "--absolute-git-dir"]).pipe(
+      Effect.map((dir) => (dir === "" ? null : dir)),
+    );
+
+  /** Whether the checkout carries the central board's marker. */
+  const isCentralOwned = (worktreePath: string) =>
+    privateGitDir(worktreePath).pipe(
+      Effect.flatMap((dir) =>
+        dir === null
+          ? Effect.succeed(false)
+          : fileSystem
+              .exists(pathService.join(dir, CENTRAL_OWNER_MARKER))
+              .pipe(Effect.orElseSucceed(() => false)),
+      ),
+    );
+
+  const markCentralOwned = (worktreePath: string) =>
+    Effect.gen(function* () {
+      const dir = yield* privateGitDir(worktreePath);
+      if (dir === null) {
+        return yield* new BoardWorkerGitError({
+          operation: "provisionWorktree",
+          detail: `${worktreePath} has no git directory to mark as the board's.`,
+        });
+      }
+      yield* fileSystem
+        .writeFileString(pathService.join(dir, CENTRAL_OWNER_MARKER), "central\n")
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new BoardWorkerGitError({ operation: "provisionWorktree", detail: error.message }),
+          ),
+        );
+    });
+
   const provisionWorktree: BoardWorkspace["provisionWorktree"] = ({
     projectId,
     branch,
@@ -231,6 +287,9 @@ export function makeLocalBoardWorkspace(deps: LocalBoardWorkspaceDeps): BoardWor
     rootOf("provisionWorktree", projectId).pipe(
       Effect.flatMap((projectCwd) =>
         withGit(provisionBoardCardWorktree({ projectCwd, branch, baseRefName })),
+      ),
+      Effect.tap((worktree) =>
+        owner === "central" ? markCentralOwned(worktree.path) : Effect.void,
       ),
       Effect.mapError((error) =>
         error._tag === "BoardWorkerGitError" ? error : gitFailed("provisionWorktree")(error),
@@ -538,8 +597,9 @@ export function makeLocalBoardWorkspace(deps: LocalBoardWorkspaceDeps): BoardWor
    * The `board/*` worktrees of the project registered under THIS server's
    * worktrees directory (T3O-52, D4) — the orphan sweep's candidates. Another
    * T3 environment on the same repository has its own board, and its
-   * checkouts are none of ours. The first block is the repository's own
-   * checkout, and a prunable one is already gone.
+   * checkouts are none of ours; nor, on a worker, are the checkouts of the
+   * other board sharing this directory (`BoardWorktreeOwner`). The first block
+   * is the repository's own checkout, and a prunable one is already gone.
    */
   const listBoardWorktrees: BoardWorkspace["listBoardWorktrees"] = ({ projectId }) =>
     Effect.gen(function* () {
@@ -561,6 +621,7 @@ export function makeLocalBoardWorkspace(deps: LocalBoardWorkspaceDeps): BoardWor
         if (registered.prunable) continue;
         const resolved = pathService.resolve(registered.path);
         if (!roots.some((root) => isWithinRoot(resolved, root))) continue;
+        if ((yield* isCentralOwned(registered.path)) !== (owner === "central")) continue;
         worktrees.push({ path: registered.path, branch: registered.branch });
       }
       return { worktrees };
