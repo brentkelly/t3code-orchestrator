@@ -70,7 +70,7 @@ const apply = (readModel: BoardOrchestrationReadModel, command: BoardCommand) =>
 
 const refusal = (readModel: BoardOrchestrationReadModel, command: BoardCommand) =>
   Effect.flip(decideBoardCommandOnModel({ command, readModel })).pipe(
-    Effect.map((error) => error.detail),
+    Effect.map((error) => ("detail" in error ? error.detail : error.message)),
   );
 
 it.layer(NodeServices.layer)("board worker registry", (it) => {

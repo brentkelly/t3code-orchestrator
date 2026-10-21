@@ -35,9 +35,8 @@ import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
-import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
 import {
@@ -65,6 +64,9 @@ export interface WorkerConnectionsShape {
   readonly get: (workerId: EnvironmentId) => Effect.Effect<WorkerRpc, WorkerUnavailable>;
   /** Every registered worker's status and last-known snapshot. */
   readonly current: Effect.Effect<ReadonlyMap<EnvironmentId, WorkerRuntime>>;
+  /** Every worker's runtime now, then again after each change. Each access
+      subscribes, atomically with reading the current value. */
+  readonly states: Stream.Stream<ReadonlyMap<EnvironmentId, WorkerRuntime>>;
   /** Ticks on every status or snapshot change. Each access subscribes. */
   readonly changes: Stream.Stream<void>;
   /** Match the running connections to the registry: dial new workers, drop
@@ -137,20 +139,16 @@ export const makeWorkerConnections = Effect.gen(function* () {
   const persisted = new Map<EnvironmentId, WorkerSnapshotRecord>(
     (yield* store.list).map((record) => [record.workerId, record]),
   );
-  const entries = yield* Ref.make(new Map<EnvironmentId, Entry>());
-  const pubsub = yield* PubSub.unbounded<void>();
+  const entries = yield* SubscriptionRef.make(new Map<EnvironmentId, Entry>());
   const fibers = yield* FiberMap.make<EnvironmentId>();
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
-  const publish = PubSub.publish(pubsub, undefined).pipe(Effect.asVoid);
-
   /** Update a registered worker's entry. A worker removed meanwhile stays gone. */
   const update = (workerId: EnvironmentId, f: (entry: Entry) => Entry) =>
-    Ref.modify(entries, (map) => {
+    SubscriptionRef.update(entries, (map) => {
       const entry = map.get(workerId);
-      if (entry === undefined) return [false, map] as const;
-      return [true, new Map(map).set(workerId, f(entry))] as const;
-    }).pipe(Effect.flatMap((changed) => (changed ? publish : Effect.void)));
+      return entry === undefined ? map : new Map(map).set(workerId, f(entry));
+    });
 
   const setState = (
     workerId: EnvironmentId,
@@ -164,7 +162,7 @@ export const makeWorkerConnections = Effect.gen(function* () {
     }));
 
   const persist = (workerId: EnvironmentId) =>
-    Ref.get(entries).pipe(
+    SubscriptionRef.get(entries).pipe(
       Effect.flatMap((map) => {
         const entry = map.get(workerId);
         return entry === undefined
@@ -273,7 +271,7 @@ export const makeWorkerConnections = Effect.gen(function* () {
 
   const sync: WorkerConnectionsShape["sync"] = (workers) =>
     Effect.gen(function* () {
-      const before = yield* Ref.get(entries);
+      const before = yield* SubscriptionRef.get(entries);
       const wanted = new Map(workers.map((worker) => [worker.id, worker]));
       for (const [workerId] of before) {
         if (wanted.has(workerId)) continue;
@@ -281,7 +279,7 @@ export const makeWorkerConnections = Effect.gen(function* () {
         yield* FiberMap.remove(fibers, workerId);
         persisted.delete(workerId);
         yield* store.remove(workerId);
-        yield* Ref.update(entries, (map) => {
+        yield* SubscriptionRef.update(entries, (map) => {
           const next = new Map(map);
           next.delete(workerId);
           return next;
@@ -291,13 +289,13 @@ export const makeWorkerConnections = Effect.gen(function* () {
         const existing = before.get(worker.id);
         if (existing !== undefined && existing.worker.url === worker.url) {
           if (existing.worker.label !== worker.label) {
-            yield* Ref.update(entries, (map) =>
+            yield* SubscriptionRef.update(entries, (map) =>
               new Map(map).set(worker.id, { ...existing, worker }),
             );
           }
           continue;
         }
-        yield* Ref.update(entries, (map) =>
+        yield* SubscriptionRef.update(entries, (map) =>
           new Map(map).set(worker.id, {
             worker,
             link: null,
@@ -307,11 +305,10 @@ export const makeWorkerConnections = Effect.gen(function* () {
         );
         yield* start(worker);
       }
-      yield* publish;
     });
 
   const restart: WorkerConnectionsShape["restart"] = (workerId) =>
-    Ref.get(entries).pipe(
+    SubscriptionRef.get(entries).pipe(
       Effect.flatMap((map) => {
         const entry = map.get(workerId);
         return entry === undefined ? Effect.void : start(entry.worker).pipe(Effect.asVoid);
@@ -319,7 +316,7 @@ export const makeWorkerConnections = Effect.gen(function* () {
     );
 
   const get: WorkerConnectionsShape["get"] = (workerId) =>
-    Ref.get(entries).pipe(
+    SubscriptionRef.get(entries).pipe(
       Effect.flatMap((map) => {
         const entry = map.get(workerId);
         if (entry?.link != null && entry.status.state === "online") {
@@ -373,20 +370,21 @@ export const makeWorkerConnections = Effect.gen(function* () {
       }));
     });
 
+  const runtimeOf = (map: ReadonlyMap<EnvironmentId, Entry>) =>
+    new Map(
+      [...map].map(([workerId, entry]): [EnvironmentId, WorkerRuntime] => [
+        workerId,
+        { status: entry.status, snapshot: entry.snapshot },
+      ]),
+    );
+  const states = SubscriptionRef.changes(entries).pipe(Stream.map(runtimeOf));
+
   return {
     get,
-    current: Ref.get(entries).pipe(
-      Effect.map(
-        (map) =>
-          new Map(
-            [...map].map(([workerId, entry]) => [
-              workerId,
-              { status: entry.status, snapshot: entry.snapshot },
-            ]),
-          ),
-      ),
-    ),
-    changes: Stream.fromPubSub(pubsub),
+    current: SubscriptionRef.get(entries).pipe(Effect.map(runtimeOf)),
+    states,
+    // The first item is the value now, which is not a change.
+    changes: states.pipe(Stream.drop(1), Stream.as(undefined)),
     sync,
     restart,
     refresh,
