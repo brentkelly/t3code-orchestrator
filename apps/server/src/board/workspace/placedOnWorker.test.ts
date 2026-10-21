@@ -76,7 +76,8 @@ const placeCardOnWorker = (options: { readonly reachable?: boolean } = {}): Plac
   const workerGit: Array<ReadonlyArray<string>> = [];
   let worker: InProcessWorker | null = null;
   // The stub's worktrees are not on disk; a real private git dir takes the
-  // central board's owner marker.
+  // central board's owner marker. The stub lists the card's checkout before it
+  // is provisioned, so the dir starts out marked: a retry adopts its own.
   let privateGitDir: string | null = null;
   return {
     workerGit,
@@ -93,6 +94,9 @@ const placeCardOnWorker = (options: { readonly reachable?: boolean } = {}): Plac
               privateGitDir !== null
                 ? Effect.succeed(privateGitDir)
                 : local.fileSystem.makeTempDirectory({ prefix: "t3o-worker-gitdir-" }).pipe(
+                    Effect.tap((dir) =>
+                      local.fileSystem.writeFileString(`${dir}/t3o-board-owner`, "central\n"),
+                    ),
                     Effect.tap((dir) => Effect.sync(() => void (privateGitDir = dir))),
                     Effect.orDie,
                   ),

@@ -34,6 +34,7 @@ import { probeLocalMergeConflict } from "../localMergeConflict.ts";
 import {
   goneBoardWorktreePath,
   parseRegisteredWorktrees,
+  parseWorktreePathForBranch,
   pinBoardWorktreeGhDefault,
   probeBoardWorktreeDurability,
   provisionBoardCardWorktree,
@@ -68,7 +69,10 @@ export type BoardWorktreeOwner = "self" | "central";
 /** The marker a central board's checkout carries, in its private git dir
     (`.git/worktrees/<name>/`): out of the working tree, so it never dirties
     status, and removed with the worktree. A checkout without one is this
-    server's own board's, as every checkout before the marker was. */
+    server's own board's, as every checkout before the marker was. It names no
+    central server: a worker serves one board (D19), and the central's session
+    on it changes on every re-pair, so tying the marker to it would orphan
+    every checkout a re-paired board had made. */
 const CENTRAL_OWNER_MARKER = "t3o-board-owner";
 
 /** How long a staleness check waits on the remote before reading what it has. */
@@ -248,15 +252,21 @@ export function makeLocalBoardWorkspace(
       Effect.map((dir) => (dir === "" ? null : dir)),
     );
 
-  /** Whether the checkout carries the central board's marker. */
-  const isCentralOwned = (worktreePath: string) =>
+  /**
+   * Which board the checkout belongs to, or null when that cannot be read.
+   * Unknown is never guessed as either: both orphan sweeps skip it and a
+   * provision will not adopt it, so a failed read can't hand one board's
+   * checkout to the other's reclaim.
+   */
+  const ownerOf = (worktreePath: string) =>
     privateGitDir(worktreePath).pipe(
       Effect.flatMap((dir) =>
         dir === null
-          ? Effect.succeed(false)
-          : fileSystem
-              .exists(pathService.join(dir, CENTRAL_OWNER_MARKER))
-              .pipe(Effect.orElseSucceed(() => false)),
+          ? Effect.succeed(null)
+          : fileSystem.exists(pathService.join(dir, CENTRAL_OWNER_MARKER)).pipe(
+              Effect.map((marked): BoardWorktreeOwner => (marked ? "central" : "self")),
+              Effect.orElseSucceed(() => null),
+            ),
       ),
     );
 
@@ -279,12 +289,35 @@ export function makeLocalBoardWorkspace(
         );
     });
 
+  /**
+   * Refuse to reuse a checkout of `branch` that belongs to the other board on
+   * this server (or whose owner cannot be read): both boards cut `board/<key>`
+   * branches, and adopting the other's checkout would hand it to this board's
+   * reclaim.
+   */
+  const refuseForeignCheckout = (cwd: string, branch: string) =>
+    Effect.gen(function* () {
+      const listed = yield* gitRef("boardCardWorktree.owner.list", cwd, [
+        "worktree",
+        "list",
+        "--porcelain",
+      ]);
+      const existing = parseWorktreePathForBranch(listed, branch);
+      if (existing === null) return;
+      if ((yield* ownerOf(existing)) === owner) return;
+      return yield* new BoardWorkerGitError({
+        operation: "provisionWorktree",
+        detail: `'${branch}' is already checked out at ${existing} by another board on this server.`,
+      });
+    });
+
   const provisionWorktree: BoardWorkspace["provisionWorktree"] = ({
     projectId,
     branch,
     baseRefName,
   }) =>
     rootOf("provisionWorktree", projectId).pipe(
+      Effect.tap((projectCwd) => refuseForeignCheckout(projectCwd, branch)),
       Effect.flatMap((projectCwd) =>
         withGit(provisionBoardCardWorktree({ projectCwd, branch, baseRefName })),
       ),
@@ -621,7 +654,7 @@ export function makeLocalBoardWorkspace(
         if (registered.prunable) continue;
         const resolved = pathService.resolve(registered.path);
         if (!roots.some((root) => isWithinRoot(resolved, root))) continue;
-        if ((yield* isCentralOwned(registered.path)) !== (owner === "central")) continue;
+        if ((yield* ownerOf(registered.path)) !== owner) continue;
         worktrees.push({ path: registered.path, branch: registered.branch });
       }
       return { worktrees };

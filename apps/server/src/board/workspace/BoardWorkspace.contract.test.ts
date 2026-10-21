@@ -618,6 +618,66 @@ describe("the worker side of the named operations (T3O-64)", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
+  it.effect("a checkout whose owner cannot be read is in neither board's sweep", () =>
+    Effect.gen(function* () {
+      const env = yield* makeEnv("owner-unknown");
+      const workspaces = yield* workspacesOver(env.checkout);
+      const central = remoteOver(makeInProcessWorker(workspaces));
+      const placed = yield* central.provisionWorktree({
+        projectId,
+        branch: "board/central-2",
+        baseRefName: "main",
+      });
+      // git can no longer resolve the checkout's private dir, so its marker
+      // is unreadable; it is still registered, so git lists it.
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.writeFileString(NodePath.join(placed.path, ".git"), "not a gitfile\n");
+      const ownList = yield* workspaces.local.listBoardWorktrees({ projectId });
+      const centralList = yield* central.listBoardWorktrees({ projectId });
+      assert.deepStrictEqual(ownList.worktrees, []);
+      assert.deepStrictEqual(centralList.worktrees, []);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("neither board adopts the other's checkout of the same branch", () =>
+    Effect.gen(function* () {
+      const env = yield* makeEnv("adopt");
+      const workspaces = yield* workspacesOver(env.checkout);
+      const central = remoteOver(makeInProcessWorker(workspaces));
+      yield* workspaces.local.provisionWorktree({
+        projectId,
+        branch: "board/same-1",
+        baseRefName: "main",
+      });
+      const byCentral = yield* Effect.flip(
+        central.provisionWorktree({ projectId, branch: "board/same-1", baseRefName: "main" }),
+      );
+      assert.strictEqual(byCentral._tag, "BoardWorkerGitError");
+      assert.include(detailOf(byCentral), "another board on this server");
+
+      yield* central.provisionWorktree({ projectId, branch: "board/same-2", baseRefName: "main" });
+      const bySelf = yield* Effect.flip(
+        workspaces.local.provisionWorktree({
+          projectId,
+          branch: "board/same-2",
+          baseRefName: "main",
+        }),
+      );
+      assert.include(detailOf(bySelf), "another board on this server");
+      // A board's own retry still reuses its checkout.
+      const again = yield* central.provisionWorktree({
+        projectId,
+        branch: "board/same-2",
+        baseRefName: "main",
+      });
+      const centralList = yield* central.listBoardWorktrees({ projectId });
+      assert.deepStrictEqual(
+        centralList.worktrees.map((worktree) => worktree.path),
+        [again.path],
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
   it.effect("refuses an operation the session has no scope for", () =>
     Effect.gen(function* () {
       const env = yield* makeEnv("scope");
