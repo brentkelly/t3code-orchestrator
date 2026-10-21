@@ -71,7 +71,7 @@ import {
   resolveWorkerTarget,
 } from "./workerCredential.ts";
 import { bootStatus } from "./WorkerSnapshotStore.ts";
-import { WorkerTransport, type WorkerRpc, type WorkerRpcError } from "./WorkerTransport.ts";
+import { WorkerRpcError, WorkerTransport, type WorkerRpc } from "./WorkerTransport.ts";
 
 export interface BoardWorkersShape {
   readonly add: (
@@ -105,6 +105,10 @@ export class BoardWorkers extends Context.Service<BoardWorkers, BoardWorkersShap
 
 /** How long Remove waits for the worker to give the session back. */
 const RELEASE_TIMEOUT = "5 seconds";
+
+/** How long Set up waits for the worker to accept the clone. Starting one
+    only checks the folder and spawns git, so this is generous. */
+const SETUP_START_TIMEOUT = "30 seconds";
 
 const setupKey = (workerId: EnvironmentId, projectId: ProjectId) => `${workerId}\u0000${projectId}`;
 
@@ -665,59 +669,87 @@ export const makeBoardWorkers = Effect.gen(function* () {
       );
       if (previous?.phase === "cloning") return previous;
 
-      // A failed clone the worker still tracks is retried in place; anything
-      // else (a new folder, a folder that existed) starts a fresh clone.
-      const retryId =
-        previous?.phase === "failed" &&
-        previous.destinationPath === destinationPath &&
-        previous.failure?.kind !== "folder-exists" &&
-        previous.failure?.kind !== "worker-offline"
-          ? previous.workerProjectId
-          : null;
-      const startFresh = Effect.gen(function* () {
-        const projectId = ProjectId.make(yield* newUuid);
-        yield* rpc.startProjectClone({
-          projectId,
-          title: project.title,
-          createdAt: startedAt,
-          destinationPath,
-          remoteUrl,
-        });
-        return projectId;
+      // Whatever ends this call before the worker's answer is recorded — the
+      // client going away, a defect — the claim must not outlive it as a
+      // spinner nothing will ever stop.
+      const abandonClaim = Effect.gen(function* () {
+        const endedAt = yield* nowIso;
+        const failure = failed(
+          worker.label,
+          "Set up stopped before the worker answered.",
+          "worker-offline",
+        );
+        yield* SubscriptionRef.update(setups, (map) =>
+          map.get(key) === setup
+            ? new Map(map).set(key, { ...setup, phase: "failed", endedAt, failure })
+            : map,
+        );
       });
-      // The worker may have forgotten the failed clone (a restart, say): then
-      // `applied` is false and it is cloned afresh instead.
-      const start: Effect.Effect<ProjectId, WorkerRpcError> =
-        retryId === null
-          ? startFresh
-          : rpc
-              .retryProjectClone(retryId)
-              .pipe(Effect.flatMap((applied) => (applied ? Effect.succeed(retryId) : startFresh)));
-      const started = yield* Effect.result(start);
-      if (started._tag === "Failure") {
-        const cause = started.failure.cause;
-        const detail =
-          typeof cause === "object" && cause !== null && "detail" in cause
-            ? String((cause as { readonly detail: unknown }).detail)
-            : started.failure.message;
-        const failedSetup: BoardWorkerSetup = {
-          ...setup,
-          phase: "failed",
-          endedAt: yield* nowIso,
-          failure: failed(worker.label, detail),
-        };
-        yield* putSetup(failedSetup);
-        return failedSetup;
-      }
-      const workerProjectId = started.success;
-      const cloning: BoardWorkerSetup = { ...setup, workerProjectId };
-      yield* putSetup(cloning);
-      yield* FiberMap.run(
-        followers,
-        key,
-        follow({ key, workerId: worker.id, workerLabel: worker.label, rpc, workerProjectId }),
-      );
-      return cloning;
+
+      return yield* Effect.gen(function* () {
+        // A failed clone the worker still tracks is retried in place; anything
+        // else (a new folder, a folder that existed) starts a fresh clone.
+        const retryId =
+          previous?.phase === "failed" &&
+          previous.destinationPath === destinationPath &&
+          previous.failure?.kind !== "folder-exists" &&
+          previous.failure?.kind !== "worker-offline"
+            ? previous.workerProjectId
+            : null;
+        const startFresh = Effect.gen(function* () {
+          const projectId = ProjectId.make(yield* newUuid);
+          yield* rpc.startProjectClone({
+            projectId,
+            title: project.title,
+            createdAt: startedAt,
+            destinationPath,
+            remoteUrl,
+          });
+          return projectId;
+        });
+        // The worker may have forgotten the failed clone (a restart, say): then
+        // `applied` is false and it is cloned afresh instead.
+        const start: Effect.Effect<ProjectId, WorkerRpcError> =
+          retryId === null
+            ? startFresh
+            : rpc
+                .retryProjectClone(retryId)
+                .pipe(
+                  Effect.flatMap((applied) => (applied ? Effect.succeed(retryId) : startFresh)),
+                );
+        const started = yield* start.pipe(
+          Effect.timeoutOrElse({
+            duration: SETUP_START_TIMEOUT,
+            orElse: () =>
+              Effect.fail(new WorkerRpcError({ message: `${worker.label} didn't answer.` })),
+          }),
+          Effect.result,
+        );
+        if (started._tag === "Failure") {
+          const cause = started.failure.cause;
+          const detail =
+            typeof cause === "object" && cause !== null && "detail" in cause
+              ? String((cause as { readonly detail: unknown }).detail)
+              : started.failure.message;
+          const failedSetup: BoardWorkerSetup = {
+            ...setup,
+            phase: "failed",
+            endedAt: yield* nowIso,
+            failure: failed(worker.label, detail),
+          };
+          yield* putSetup(failedSetup);
+          return failedSetup;
+        }
+        const workerProjectId = started.success;
+        const cloning: BoardWorkerSetup = { ...setup, workerProjectId };
+        yield* putSetup(cloning);
+        yield* FiberMap.run(
+          followers,
+          key,
+          follow({ key, workerId: worker.id, workerLabel: worker.label, rpc, workerProjectId }),
+        );
+        return cloning;
+      }).pipe(Effect.onExit(() => abandonClaim));
     });
 
   const dismissSetup: BoardWorkersShape["dismissSetup"] = ({ projectId, workerId }) =>

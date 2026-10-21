@@ -516,6 +516,56 @@ describe("BoardWorkers", () => {
       }),
     ));
 
+  test("a Set up interrupted before the worker answers leaves no stuck clone", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { http, worker, connections, workers } = yield* setup;
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+
+        // The worker never answers, and the client gives up on the call.
+        worker.startClone = () => Effect.never;
+        const call = yield* workers
+          .setupProject({ projectId: PROJECT_ID, workerId: WORKER_ID })
+          .pipe(Effect.forkScoped);
+        yield* waitForSetup(workers, (setup) => setup.phase === "cloning");
+        yield* Fiber.interrupt(call);
+        const left = yield* waitForSetup(workers, (setup) => setup.phase !== "cloning");
+        assert.strictEqual(left.phase, "failed");
+        assert.strictEqual(left.failure?.kind, "worker-offline");
+
+        // So a second Set up starts afresh instead of joining a dead one.
+        worker.startClone = (input) =>
+          Effect.succeed({
+            projectId: input.projectId,
+            cwd: input.destinationPath,
+            remoteUrl: input.remoteUrl ?? "",
+            repository: null,
+          });
+        const again = yield* workers.setupProject({ projectId: PROJECT_ID, workerId: WORKER_ID });
+        assert.strictEqual(again.phase, "cloning");
+        assert.isNotNull(again.workerProjectId);
+      }),
+    ));
+
+  test("a worker that never accepts the clone fails Set up instead of hanging", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { http, worker, connections, workers } = yield* setup;
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+
+        worker.startClone = () => Effect.never;
+        const call = yield* workers
+          .setupProject({ projectId: PROJECT_ID, workerId: WORKER_ID })
+          .pipe(Effect.forkScoped);
+        yield* waitForSetup(workers, (setup) => setup.phase === "cloning");
+        yield* TestClock.adjust("30 seconds");
+        const result = yield* Fiber.join(call);
+        assert.strictEqual(result.phase, "failed");
+      }),
+    ));
+
   test("classifies a failed clone and keeps its log", () =>
     Effect.scoped(
       Effect.gen(function* () {
