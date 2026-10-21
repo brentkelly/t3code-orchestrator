@@ -48,6 +48,14 @@ import {
   BoardCardStepCheckedInPayload,
   BoardProviderLimitRecordedPayload,
   BoardProviderLimitClearedPayload,
+  BoardDefaultWorkerSetPayload,
+  BoardWorkerRegisteredPayload,
+  BoardWorkerRemovedPayload,
+  BOARD_LOCAL_WORKER_ID,
+  compareBoardWorkers,
+  type BoardWorker,
+  type BoardWorkerId,
+  type EnvironmentId,
   BoardCardStageThreadRequestedPayload,
   BoardCardUpdatedPayload,
   boardBriefHasImage,
@@ -185,6 +193,9 @@ const decodeBoardProviderLimitRecordedPayload = Schema.decodeUnknownEffect(
 const decodeBoardProviderLimitClearedPayload = Schema.decodeUnknownEffect(
   BoardProviderLimitClearedPayload,
 );
+const decodeBoardWorkerRegisteredPayload = Schema.decodeUnknownEffect(BoardWorkerRegisteredPayload);
+const decodeBoardWorkerRemovedPayload = Schema.decodeUnknownEffect(BoardWorkerRemovedPayload);
+const decodeBoardDefaultWorkerSetPayload = Schema.decodeUnknownEffect(BoardDefaultWorkerSetPayload);
 
 // Canonical card order: (createdAt, id), needed because createdAt is
 // client-supplied, so dispatch order ≠ createdAt order in general. Compared
@@ -527,6 +538,37 @@ function clearProviderLimit<M extends BoardReadModel>(
   return {
     ...model,
     board: remaining.length === 0 ? rest : { ...board, providerLimits: remaining },
+  };
+}
+
+/** Add or replace one registered worker (T3O-62), in `compareBoardWorkers`
+    order on both sides of replay-equals-rehydration. */
+function upsertWorker<M extends BoardReadModel>(model: M, worker: BoardWorker): M {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const workers = [
+    ...(board.workers ?? []).filter((existing) => existing.id !== worker.id),
+    worker,
+  ].toSorted(compareBoardWorkers);
+  return { ...model, board: { ...board, workers } };
+}
+
+/** Drop one worker. The slice goes when the last one does, so a board whose
+    workers were all removed decodes exactly as one that never had any. */
+function removeWorker<M extends BoardReadModel>(model: M, workerId: EnvironmentId): M {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const remaining = (board.workers ?? []).filter((existing) => existing.id !== workerId);
+  const { workers: _dropped, ...rest } = board;
+  return { ...model, board: remaining.length === 0 ? rest : { ...board, workers: remaining } };
+}
+
+/** Record the default worker. `local` is the absent default, so choosing it
+    again drops the field rather than storing the value that absence means. */
+function setDefaultWorker<M extends BoardReadModel>(model: M, workerId: BoardWorkerId): M {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const { defaultWorkerId: _dropped, ...rest } = board;
+  return {
+    ...model,
+    board: workerId === BOARD_LOCAL_WORKER_ID ? rest : { ...board, defaultWorkerId: workerId },
   };
 }
 
@@ -906,6 +948,25 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => clearProviderLimit(model, payload.providerInstanceId)),
       );
 
+    // T3o (T3O-62): the worker registry. Touches no card.
+    case "board.worker-registered":
+      return decodeBoardWorkerRegisteredPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertWorker(model, payload.worker)),
+      );
+
+    case "board.worker-removed":
+      return decodeBoardWorkerRemovedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => removeWorker(model, payload.workerId)),
+      );
+
+    case "board.default-worker-set":
+      return decodeBoardDefaultWorkerSetPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => setDefaultWorker(model, payload.workerId)),
+      );
+
     default: {
       event satisfies never;
       // Runtime backstop for an undecoded event: leave the model unchanged.
@@ -1214,6 +1275,14 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
         sequence: event.sequence,
         providerInstanceId: event.payload.providerInstanceId,
       });
+
+    // T3o (T3O-62): the worker summary mixes registry facts with runtime
+    // connection status, so it is not a pure function of one event. The board
+    // subscription re-sends the whole `workers` state instead.
+    case "board.worker-registered":
+    case "board.worker-removed":
+    case "board.default-worker-set":
+      return Option.none();
 
     case "board.card-step-paused":
       // A human stopped the step (T3O-23) — the fourth step transition that is

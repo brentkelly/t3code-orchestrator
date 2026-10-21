@@ -74,6 +74,8 @@ import { BoardThreadTail } from "./boardThreadTail.ts";
 import { ThreadGateway, type ThreadGatewayShape } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
+import { BoardWorkers } from "./workers/BoardWorkers.ts";
+import { boardWorkerRpcHandlers } from "./workers/workerRpc.ts";
 
 export interface BoardRpcHandlerDeps {
   readonly currentSession: AuthenticatedSession;
@@ -101,14 +103,18 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
     // The subscription's services, provided here so the handler's stream needs
     // only the RPC scope.
     const subscriptionContext = yield* Effect.context<
-      BoardEngine | BoardQueries | BoardThreadTail
+      BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
     >();
-    return makeBoardRpcHandlers(deps, {
-      boardEngine,
-      boardQueries,
-      stampActor,
-      subscriptionContext,
-    });
+    return {
+      ...makeBoardRpcHandlers(deps, {
+        boardEngine,
+        boardQueries,
+        stampActor,
+        subscriptionContext,
+      }),
+      // T3O-62: worker management, and the worker side's handshake.
+      ...(yield* boardWorkerRpcHandlers(deps.currentSession)),
+    };
   });
 
 function makeBoardRpcHandlers(
@@ -117,7 +123,9 @@ function makeBoardRpcHandlers(
     readonly boardEngine: BoardEngineShape;
     readonly boardQueries: BoardQueriesShape;
     readonly stampActor: (command: BoardCommand) => Effect.Effect<void>;
-    readonly subscriptionContext: Context.Context<BoardEngine | BoardQueries | BoardThreadTail>;
+    readonly subscriptionContext: Context.Context<
+      BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
+    >;
   },
 ) {
   const { boardEngine, boardQueries } = services;

@@ -135,6 +135,9 @@ export function applyBoardShellStreamItem(
   if (item.kind === "snapshot") return item.snapshot;
   if (snapshot === null) return null;
   if (item.kind === "card-threads") return applyBoardShellStreamEvent(snapshot, item);
+  // T3O-62: the worker summary carries runtime status the board log never
+  // sees, so its sequence is only the board head: a fresh read, unguarded.
+  if (item.kind === "workers") return applyBoardShellStreamEvent(snapshot, item);
   if (item.sequence <= snapshot.snapshotSequence) return snapshot;
   return { ...applyBoardShellStreamEvent(snapshot, item), snapshotSequence: item.sequence };
 }
@@ -427,6 +430,9 @@ export function applyBoardShellStreamEvent(
           (existing) => existing.providerInstanceId !== event.providerInstanceId,
         ),
       };
+    case "workers":
+      // The whole worker summary, replaced wholesale (T3O-62).
+      return { ...snapshot, workers: event.state };
     case "stage-removed": {
       const stages = snapshot.stages;
       return {

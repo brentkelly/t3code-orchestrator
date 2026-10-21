@@ -32,6 +32,15 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     targetId: "board-pipeline",
   },
   { id: "board-concurrency", title: "Board concurrency", to: "/settings/board" },
+  // T3O-62: the distributed board.
+  { id: "board-workers", title: "Workers", to: "/settings/board" },
+  {
+    id: "board-default-worker",
+    title: "Default worker",
+    to: "/settings/board",
+    targetId: "board-workers",
+  },
+  { id: "board-project-checkouts", title: "Project checkouts", to: "/settings/board" },
   {
     id: "board-reclaim-worktree-on-done",
     title: 'Reclaim worktrees at "Done"',

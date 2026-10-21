@@ -26,6 +26,7 @@ import {
   makeBoardOrchestrationEvents,
 } from "./board.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { BoardWorkerId } from "./boardWorkers.ts";
 
 /**
  * A board event's metadata. The board itself writes only `origin`; the other
@@ -46,7 +47,14 @@ export type BoardEventMetadata = typeof BoardEventMetadata.Type;
 
 /** The board's aggregates: a card, a label, a stage, and a provider instance's
     cooldown (T3O-22) — which belongs to an account, not to any card. */
-export const BoardAggregateKind = Schema.Literals(["card", "label", "stage", "provider-limit"]);
+export const BoardAggregateKind = Schema.Literals([
+  "card",
+  "label",
+  "stage",
+  "provider-limit",
+  // T3O-62: a registered worker, and the board's default-worker choice.
+  "worker",
+]);
 export type BoardAggregateKind = typeof BoardAggregateKind.Type;
 
 export const BoardEventType = Schema.Literals(BOARD_EVENT_TYPES);
@@ -56,7 +64,13 @@ const BoardEventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: BoardAggregateKind,
-  aggregateId: Schema.Union([BoardCardId, BoardLabelId, BoardStageId, ProviderInstanceId]),
+  aggregateId: Schema.Union([
+    BoardCardId,
+    BoardLabelId,
+    BoardStageId,
+    ProviderInstanceId,
+    BoardWorkerId,
+  ]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
