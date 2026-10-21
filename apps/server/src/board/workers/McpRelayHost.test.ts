@@ -18,7 +18,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeMcpRelayHost, type McpRelayCall } from "./McpRelayHost.ts";
+import { makeMcpRelayHost, RETRY_GRACE_TIMEOUTS, type McpRelayCall } from "./McpRelayHost.ts";
 
 const CENTRAL = EnvironmentId.make("env-central");
 const TIMEOUT = Duration.seconds(60);
@@ -68,7 +68,25 @@ describe("McpRelayHost", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("a timed-out call nobody retries is dropped after one more timeout", () =>
+  it.effect("a retry that comes a full timeout later still rejoins the call", () =>
+    Effect.gen(function* () {
+      const { host, sent } = yield* listening;
+
+      const first = yield* Effect.forkChild(host.forward(CENTRAL, call({ title: "Follow-up" })));
+      const request = yield* Queue.take(sent);
+      yield* TestClock.adjust(TIMEOUT);
+      yield* Effect.flip(Fiber.join(first));
+
+      // The agent was told to retry in a minute, and takes a little longer.
+      yield* TestClock.adjust(Duration.sum(TIMEOUT, Duration.seconds(5)));
+      const retry = yield* Effect.forkChild(host.forward(CENTRAL, call({ title: "Follow-up" })));
+      yield* host.respond({ callId: request.callId, outcome: created });
+      assert.deepStrictEqual(yield* Fiber.join(retry), created);
+      assert.isTrue(Option.isNone(yield* Queue.poll(sent)));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a timed-out call nobody retries is dropped after its grace period", () =>
     Effect.gen(function* () {
       const { host, sent } = yield* listening;
 
@@ -76,7 +94,7 @@ describe("McpRelayHost", () => {
       yield* Queue.take(sent);
       yield* TestClock.adjust(TIMEOUT);
       yield* Effect.flip(Fiber.join(first));
-      yield* TestClock.adjust(TIMEOUT);
+      yield* TestClock.adjust(Duration.times(TIMEOUT, RETRY_GRACE_TIMEOUTS));
 
       // A board that connects now is sent only what is still waiting.
       const later = yield* Queue.unbounded<BoardMcpRelayRequest>();

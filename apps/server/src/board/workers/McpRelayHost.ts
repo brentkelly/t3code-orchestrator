@@ -60,6 +60,10 @@ export class McpRelayHost extends Context.Service<McpRelayHost, McpRelayHostShap
   "t3/board/workers/McpRelayHost",
 ) {}
 
+/** How many timeouts a timed-out call waits for the agent's retry before it
+    is dropped. */
+export const RETRY_GRACE_TIMEOUTS = 10;
+
 interface Pending {
   readonly central: EnvironmentId;
   readonly request: BoardMcpRelayRequest;
@@ -82,7 +86,9 @@ export const makeMcpRelayHost = (
     // Per thread, the call whose wait last timed out. It stays pending, so it
     // is still redelivered and its answer still lands; an agent retrying the
     // very same call joins it instead of running it again under a new id.
-    // An agent that never retries leaves it for one more timeout, no longer.
+    // An agent that never retries leaves it for `RETRY_GRACE_TIMEOUTS`
+    // timeouts: well past the "retry in a minute" the agent is told, so a
+    // retry that follows that advice, however slowly, still joins it.
     const timedOut = new Map<string, { readonly fingerprint: string; readonly callId: string }>();
     const fingerprintOf = (central: EnvironmentId, call: McpRelayCall) =>
       JSON.stringify([central, call.providerSessionId, call.toolName, call.params]);
@@ -128,7 +134,9 @@ export const makeMcpRelayHost = (
           return outcome.value;
         }
         timedOut.set(call.threadId, { fingerprint, callId });
-        yield* Effect.sleep(timeout).pipe(
+        yield* Effect.sleep(
+          Duration.times(Duration.fromInputUnsafe(timeout), RETRY_GRACE_TIMEOUTS),
+        ).pipe(
           Effect.andThen(
             Effect.sync(() => {
               if (timedOut.get(call.threadId)?.callId !== callId) return;
