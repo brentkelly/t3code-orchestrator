@@ -232,3 +232,33 @@ it.effect("removing a worker from the registry stops dialing it and forgets its 
     }),
   ),
 );
+
+it.effect("redials an offline worker quietly: it stays offline, never blue connecting", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { worker, connections } = yield* setup((worker) => {
+        worker.mode = "unreachable";
+      });
+      yield* connections.sync([registered]);
+      yield* waitFor(connections, "offline");
+
+      const seen: Array<string | undefined> = [];
+      yield* connections.states.pipe(
+        Stream.runForEach((runtime) =>
+          Effect.sync(() => seen.push(runtime.get(WORKER_ID)?.status.state)),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      // Several redials, all still unreachable.
+      yield* TestClock.adjust("2 minutes");
+      assert.deepStrictEqual(seen, ["offline"]);
+
+      // Back: straight from offline to online.
+      worker.mode = "ok";
+      yield* TestClock.adjust("30 seconds");
+      yield* waitFor(connections, "online");
+      assert.deepStrictEqual(seen, ["offline", "online"]);
+    }),
+  ),
+);

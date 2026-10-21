@@ -143,23 +143,41 @@ export const makeWorkerConnections = Effect.gen(function* () {
   const fibers = yield* FiberMap.make<EnvironmentId>();
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
-  /** Update a registered worker's entry. A worker removed meanwhile stays gone. */
+  /** Update a registered worker's entry. A worker removed meanwhile stays
+      gone, and an entry `f` hands back unchanged is not published. */
   const update = (workerId: EnvironmentId, f: (entry: Entry) => Entry) =>
-    SubscriptionRef.update(entries, (map) => {
+    SubscriptionRef.updateSome(entries, (map) => {
       const entry = map.get(workerId);
-      return entry === undefined ? map : new Map(map).set(workerId, f(entry));
+      if (entry === undefined) return Option.none();
+      const next = f(entry);
+      return next === entry ? Option.none() : Option.some(new Map(map).set(workerId, next));
     });
 
   const setState = (
     workerId: EnvironmentId,
     state: BoardWorkerConnectionState,
-    patch?: Partial<BoardWorkerStatus>,
+    patch: Partial<BoardWorkerStatus> = {},
   ) =>
-    update(workerId, (entry) => ({
-      ...entry,
-      link: state === "online" ? entry.link : null,
-      status: { ...entry.status, ...patch, state },
-    }));
+    update(workerId, (entry) => {
+      const link = state === "online" ? entry.link : null;
+      const status = { ...entry.status, ...patch, state };
+      const unchanged =
+        link === entry.link &&
+        (Object.keys(status) as Array<keyof BoardWorkerStatus>).every(
+          (key) => status[key] === entry.status[key],
+        );
+      return unchanged ? entry : { ...entry, link, status };
+    });
+
+  /** A redial of a worker already known to be offline or incompatible keeps
+      that status until it answers: blue `connecting` is for a first dial, or
+      one after a re-pair, not every retry in the background. */
+  const markDialing = (workerId: EnvironmentId) =>
+    update(workerId, (entry) =>
+      entry.status.state === "offline" || entry.status.state === "incompatible"
+        ? entry
+        : { ...entry, link: null, status: { ...entry.status, state: "connecting" } },
+    );
 
   const persist = (workerId: EnvironmentId) =>
     SubscriptionRef.get(entries).pipe(
@@ -187,7 +205,7 @@ export const makeWorkerConnections = Effect.gen(function* () {
   const attempt = (worker: BoardWorker): Effect.Effect<AttemptOutcome> =>
     Effect.scoped(
       Effect.gen(function* () {
-        yield* setState(worker.id, "connecting");
+        yield* markDialing(worker.id);
         const token = yield* readToken(worker.id);
         if (Option.isNone(token)) return { _tag: "unauthorized" } as const;
         const connected = yield* transport
