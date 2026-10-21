@@ -636,6 +636,15 @@ describe("the worker side of the named operations (T3O-64)", () => {
       const centralList = yield* central.listBoardWorktrees({ projectId });
       assert.deepStrictEqual(ownList.worktrees, []);
       assert.deepStrictEqual(centralList.worktrees, []);
+      // Nor will either board adopt it, and the refusal says why.
+      const refused = yield* Effect.flip(
+        workspaces.local.provisionWorktree({
+          projectId,
+          branch: "board/central-2",
+          baseRefName: "main",
+        }),
+      );
+      assert.include(detailOf(refused), "cannot say which board owns it");
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
@@ -675,6 +684,28 @@ describe("the worker side of the named operations (T3O-64)", () => {
         centralList.worktrees.map((worktree) => worktree.path),
         [again.path],
       );
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("a checkout whose folder is gone is re-provisioned, not refused", () =>
+    Effect.gen(function* () {
+      const env = yield* makeEnv("gone-reprovision");
+      const workspaces = yield* workspacesOver(env.checkout);
+      const first = yield* workspaces.local.provisionWorktree({
+        projectId,
+        branch: "board/gone-1",
+        baseRefName: "main",
+      });
+      // The folder vanishes; git still lists it, as prunable.
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* fileSystem.remove(first.path, { recursive: true });
+      const again = yield* workspaces.local.provisionWorktree({
+        projectId,
+        branch: "board/gone-1",
+        baseRefName: "main",
+      });
+      assert.isTrue(yield* fileSystem.exists(again.path));
+      assert.strictEqual(again.branch, "board/gone-1");
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 

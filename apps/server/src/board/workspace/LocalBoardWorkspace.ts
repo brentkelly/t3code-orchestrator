@@ -34,7 +34,6 @@ import { probeLocalMergeConflict } from "../localMergeConflict.ts";
 import {
   goneBoardWorktreePath,
   parseRegisteredWorktrees,
-  parseWorktreePathForBranch,
   pinBoardWorktreeGhDefault,
   probeBoardWorktreeDurability,
   provisionBoardCardWorktree,
@@ -294,6 +293,10 @@ export function makeLocalBoardWorkspace(
    * this server (or whose owner cannot be read): both boards cut `board/<key>`
    * branches, and adopting the other's checkout would hand it to this board's
    * reclaim.
+   *
+   * A registration whose folder is gone has no owner to read and holds no
+   * work, so it is dropped instead: provisioning then attaches a fresh
+   * checkout to the branch, rather than refusing every retry.
    */
   const refuseForeignCheckout = (cwd: string, branch: string) =>
     Effect.gen(function* () {
@@ -302,12 +305,21 @@ export function makeLocalBoardWorkspace(
         "list",
         "--porcelain",
       ]);
-      const existing = parseWorktreePathForBranch(listed, branch);
-      if (existing === null) return;
-      if ((yield* ownerOf(existing)) === owner) return;
+      const existing = parseRegisteredWorktrees(listed).find((entry) => entry.branch === branch);
+      if (existing === undefined) return;
+      if (existing.prunable) {
+        return yield* git
+          .removeWorktree({ cwd, path: existing.path, force: true })
+          .pipe(Effect.mapError(gitFailed("provisionWorktree")));
+      }
+      const existingOwner = yield* ownerOf(existing.path);
+      if (existingOwner === owner) return;
       return yield* new BoardWorkerGitError({
         operation: "provisionWorktree",
-        detail: `'${branch}' is already checked out at ${existing} by another board on this server.`,
+        detail:
+          existingOwner === null
+            ? `'${branch}' is already checked out at ${existing.path}, and git cannot say which board owns it.`
+            : `'${branch}' is already checked out at ${existing.path} by another board on this server.`,
       });
     });
 
