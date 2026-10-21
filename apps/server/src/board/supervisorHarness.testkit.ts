@@ -74,6 +74,9 @@ import { BoardQueries } from "./BoardQueries.ts";
 import { boardRepositoryOf } from "./boardRepository.ts";
 import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
+import { BoardWorkspaces, type BoardWorkspacesShape } from "./workspace/BoardWorkspace.ts";
+import type { LocalBoardWorkspaceDeps } from "./workspace/LocalBoardWorkspace.ts";
+import { localBoardWorkspaceDeps, makeBoardWorkspaces } from "./workspace/workspaceLayer.ts";
 import { UsageLimitDetector, type UsageLimitDetectorShape } from "./UsageLimitDetector.ts";
 import type { WorktreeRetirer } from "./worktreeRetire.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
@@ -616,6 +619,9 @@ export function withGovernor(
         the real one with nothing running and no remove scripts, so it only
         removes — what every fixture written before it expects. */
     readonly worktreeRetirer?: Layer.Layer<WorktreeRetirer, never, GitVcsDriver.GitVcsDriver>;
+    /** Where cards' git runs (T3O-64), built from this harness's own local
+        workspace services. By default every card is local. */
+    readonly workspaces?: (local: LocalBoardWorkspaceDeps) => BoardWorkspacesShape;
   },
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
@@ -1164,7 +1170,25 @@ export function withGovernor(
           gitInvocations: Effect.sync(() => [...gitInvocationLog]),
           setUsageVerdict: (threadId, verdict) => void usageVerdicts.set(threadId, verdict),
         });
-      }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provideMerge(deps)))),
+      }).pipe(
+        Effect.provide(
+          SupervisorReactorLive.pipe(
+            Layer.provideMerge(
+              Layer.effect(
+                BoardWorkspaces,
+                localBoardWorkspaceDeps.pipe(
+                  Effect.map((local) =>
+                    input.workspaces === undefined
+                      ? makeBoardWorkspaces(local)
+                      : input.workspaces(local),
+                  ),
+                ),
+              ),
+            ),
+            Layer.provideMerge(deps),
+          ),
+        ),
+      ),
     );
   }).pipe(Effect.provide(NodeServices.layer));
 }

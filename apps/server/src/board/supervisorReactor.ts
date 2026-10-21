@@ -89,6 +89,9 @@ import {
   ThreadId,
   type ChatAttachment,
   type BoardCard,
+  BOARD_LOCAL_WORKER_ID,
+  type BoardWorkerGitError,
+  type BoardWorkspaceIntegrationBranch,
   type BoardCardId,
   type BoardCheckCardWorktreeResult,
   type BoardCardPullRequest,
@@ -187,7 +190,7 @@ import {
 } from "./boardMergeState.ts";
 import { probeLocalMergeConflict } from "./localMergeConflict.ts";
 import { stageExecutorForRole } from "./stageExecutor.ts";
-import { WorktreeRetirer } from "./worktreeRetire.ts";
+import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorkspace.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
@@ -490,11 +493,11 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettingsService;
   const slots = yield* BoardStepSlots;
   const usageLimits = yield* UsageLimitDetector;
-  const git = yield* GitVcsDriver.GitVcsDriver;
-  const pullRequests = yield* BoardPullRequestGateway;
+  // T3O-64 (D21): every git and forge operation for a card runs in the card's
+  // workspace — this server's, or the worker it is placed on.
+  const workspaces = yield* BoardWorkspaces;
+  const workspaceFor = (card: Pick<BoardCard, "id" | "projectId">) => workspaces.forCard(card);
   const setupRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-  // T3O-23: every removal stops the worktree's processes and runs its remove scripts first.
-  const retirer = yield* WorktreeRetirer;
   // The activation boundary the boot reconcile waits on (t3o-10, D3). Captured
   // at CONSTRUCTION, where the reference is in scope (`activationLayer` is
   // provided to the runtime services layer), because `reconcile` itself runs on
@@ -809,21 +812,12 @@ const make = Effect.gen(function* () {
       the step falls back to the todo-advance signal and the nudge ladder. That
       direction is deliberate — the alternative, reading the tip when the scoped
       read fails, is the exact defect this replaced. */
-  const latestBranchCommitIso = (cwd: string, baseRefName: string) =>
-    git
-      .execute({
-        operation: "boardSupervisor.progressCommit",
-        cwd,
-        args: ["log", "-1", "--format=%cI", "HEAD", "--not", `refs/heads/${baseRefName}`],
-        allowNonZeroExit: true,
-      })
-      .pipe(
-        Effect.map((result): string | null => {
-          const iso = result.stdout.trim();
-          return iso.length > 0 ? iso : null;
-        }),
-        Effect.catchCause(() => Effect.succeed(null as string | null)),
-      );
+  const latestBranchCommitIso = (card: BoardCard, worktreePath: string, baseRefName: string) =>
+    workspaceFor(card).pipe(
+      Effect.flatMap((workspace) => workspace.branchHeartbeat({ worktreePath, baseRefName })),
+      Effect.map((heartbeat) => heartbeat.committedAt),
+      Effect.catchCause(() => Effect.succeed(null as string | null)),
+    );
 
   /** The step thread's cached todo row, or null (t3o-18). Best-effort: a
       snapshot query built without the board factory (upstream test mocks) or a
@@ -938,7 +932,7 @@ const make = Effect.gen(function* () {
     const worktreePath = card.worktree?.path ?? null;
     const baseRefName = card.worktree?.baseRefName ?? null;
     if (state.mode !== "build" || worktreePath === null || baseRefName === null) return false;
-    const committedAt = yield* latestBranchCommitIso(worktreePath, baseRefName);
+    const committedAt = yield* latestBranchCommitIso(card, worktreePath, baseRefName);
     return committedAt !== null && isAfter(committedAt, since);
   });
 
@@ -1068,51 +1062,34 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // The project checkout's DEFAULT branch — not whatever it happens to have
-  // checked out. origin/HEAD names it when a remote exists; a purely local
-  // repo falls back to the current branch, with a detached HEAD (`rev-parse`
-  // answers the literal string 'HEAD') treated as a resolution failure rather
-  // than a branch. Shared by worktree provisioning and integration-branch
-  // creation; `defaultBranch === ""` is the failure signal, `detachedHead` and
-  // `unbornBranch` (a repository with no commits) disambiguate the message.
-  const resolveDefaultBranch = Effect.fn("board-supervisor-resolveDefaultBranch")(function* (
-    cwd: string,
-  ) {
-    const gitRef = (args: ReadonlyArray<string>) =>
-      git
-        .execute({
-          operation: "boardCardWorktree.defaultBranch",
-          cwd,
-          args: [...args],
-          timeoutMs: 10_000,
-          allowNonZeroExit: true,
-        })
-        .pipe(
-          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
-          Effect.catchCause(() => Effect.succeed("")),
-        );
-    const originHead = yield* gitRef([
-      "symbolic-ref",
-      "--quiet",
-      "--short",
-      "refs/remotes/origin/HEAD",
-    ]);
-    const currentBranch = yield* gitRef(["rev-parse", "--abbrev-ref", "HEAD"]);
-    const defaultBranch =
-      originHead.startsWith("origin/") && originHead.length > "origin/".length
-        ? originHead.slice("origin/".length)
-        : currentBranch === "HEAD"
-          ? ""
-          : currentBranch;
-    // A repository with no commits yet (T3O-15): HEAD names a branch that does
-    // not exist, so `rev-parse` answers nothing while `symbolic-ref` still does.
-    // Only read on failure — it shapes the message, not the resolution.
-    const unbornBranch =
-      defaultBranch === "" && currentBranch === ""
-        ? yield* gitRef(["symbolic-ref", "--quiet", "--short", "HEAD"])
-        : "";
-    return { defaultBranch, detachedHead: currentBranch === "HEAD", unbornBranch };
-  });
+  // The project checkout's DEFAULT branch (resolved in the card's workspace,
+  // `LocalBoardWorkspace.resolveDefaultBranch`). Shared by worktree
+  // provisioning and integration-branch creation; `defaultBranch === ""` is
+  // the failure signal, `detachedHead` and `unbornBranch` (a repository with
+  // no commits) disambiguate the message, and `unavailable` is a worker the
+  // board cannot reach — not a repository fault, so nothing is reported for it.
+  const resolveDefaultBranch = (workspace: BoardCardWorkspace) =>
+    workspace.resolveDefaultBranch({}).pipe(
+      Effect.map((resolved) => ({ ...resolved, unavailable: false })),
+      Effect.catch((error) =>
+        Effect.succeed({
+          defaultBranch: "",
+          detachedHead: false,
+          unbornBranch: "",
+          checkoutPath: workspace.checkoutPath ?? "",
+          unavailable: error._tag === "WorkerUnavailable",
+        }),
+      ),
+      Effect.catchCause(() =>
+        Effect.succeed({
+          defaultBranch: "",
+          detachedHead: false,
+          unbornBranch: "",
+          checkoutPath: workspace.checkoutPath ?? "",
+          unavailable: false,
+        }),
+      ),
+    );
 
   // Why `resolveDefaultBranch` found nothing, in words that name the fix.
   // Shared by card and integration-branch provisioning so both say the same.
@@ -1128,57 +1105,22 @@ const make = Effect.gen(function* () {
         : `${cwd} is not a git repository, or has no commits yet, so there is no branch to cut ${what} from.`;
 
   /**
-   * Make sure `base` names a LOCAL branch in `cwd` (T3O-5, D7), creating it
-   * from `<remote>/<base>` when it exists only on the remote. Answers whether
-   * the caller may go on to cut from it.
-   *
-   * Why this and not "just use origin/develop": three call sites re-qualify the
-   * recorded base as a local ref and each fails SILENTLY on a remote-qualified
-   * one — `measureBaseTip` stops measuring staleness with no error,
-   * `pullMergedBaseBranch` creates a local branch literally named
-   * `origin/develop`, and the retarget rebase targets a ref that drifts under
-   * the branch. Materialising once here keeps every reader honest.
-   *
-   * Idempotent: a base that already exists locally is the desired state, and a
-   * raced creation is re-checked rather than treated as fatal.
+   * Make sure `base` names a LOCAL branch in the card's checkout (T3O-5, D7),
+   * creating it from `<remote>/<base>` when it exists only on the remote
+   * (`LocalBoardWorkspace.ensureLocalBaseBranch`). Answers whether the caller
+   * may go on to cut from it, or `unavailable` for a worker the board cannot
+   * reach.
    */
-  const ensureLocalBaseBranch = Effect.fn("board-supervisor-ensureLocalBaseBranch")(function* (
-    cwd: string,
-    base: string,
-  ) {
-    const gitRef = (args: ReadonlyArray<string>) =>
-      git
-        .execute({
-          operation: "boardCardWorktree.baseRef",
-          cwd,
-          args: [...args],
-          timeoutMs: 10_000,
-          allowNonZeroExit: true,
-        })
-        .pipe(
-          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
-          Effect.catchCause(() => Effect.succeed("")),
-        );
-    if ((yield* gitRef(["rev-parse", "--verify", "--quiet", `refs/heads/${base}`])) !== "") {
-      return true;
-    }
-    const remoteName = yield* git
-      .resolvePrimaryRemoteName(cwd)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
-    if (remoteName === null) return false;
-    if (
-      (yield* gitRef([
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        `refs/remotes/${remoteName}/${base}`,
-      ])) === ""
-    ) {
-      return false;
-    }
-    yield* gitRef(["branch", base, `${remoteName}/${base}`]);
-    return (yield* gitRef(["rev-parse", "--verify", "--quiet", `refs/heads/${base}`])) !== "";
-  });
+  const ensureLocalBaseBranch = (workspace: BoardCardWorkspace, base: string) =>
+    workspace.ensureLocalBaseBranch({ base }).pipe(
+      Effect.map((result): boolean | "unavailable" => result.exists),
+      Effect.catch((error) =>
+        Effect.succeed<boolean | "unavailable">(
+          error._tag === "WorkerUnavailable" ? "unavailable" : false,
+        ),
+      ),
+      Effect.catchCause(() => Effect.succeed<boolean | "unavailable">(false)),
+    );
 
   // Provision the card's branch + worktree (t3o-09 effects), reporting every
   // failure arm through `failWorktree` so the card carries a visible reason.
@@ -1193,20 +1135,37 @@ const make = Effect.gen(function* () {
     }
     const stuck = (reason: string) =>
       failWorktree(card, reason).pipe(Effect.as<WorktreeOutcome>({ kind: "stuck", reason }));
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
+    // T3O-64: a worker the board cannot reach is no fault of the repository.
+    // Nothing is reported, no attempt is spent, and the next pass retries.
+    const unreachable = { kind: "transient" } as WorktreeOutcome;
+    const workspace = yield* workspaceFor(card);
+    const cwd = workspace.checkoutPath;
     // Every pre-flight failure below reports through `fail-worktree` rather
     // than a server-side log: the card is the only place the human is looking,
     // and a build that cannot start must say so THERE (the activity rail's
     // "could not prepare the worktree: …" row) instead of leaving the card
     // parked in its stage with nothing running and no explanation.
     if (cwd === null) {
-      return yield* stuck("The card's project has no workspace folder on this server.");
+      return yield* stuck(noWorkspaceFolderReason(workspace));
+    }
+    // A provision the worker dropped mid-way (T3O-64) resumes on the slice it
+    // already recorded: `provision-worktree` would be refused for a worktree
+    // still `provisioning`, and re-dispatching it would count an attempt.
+    const resuming =
+      card.worktree !== null &&
+      card.worktree.status === "provisioning" &&
+      interruptedProvisions.has(String(card.id));
+    if (resuming && card.worktree !== null) {
+      return yield* provisionOnWorkspace(card, workspace, {
+        branch: card.worktree.branch,
+        baseRefName: card.worktree.baseRefName,
+      });
     }
     const branch = boardCardWorktreeBranchName(card);
     // A sub-board plan card branches off its parent's integration branch
     // (D12); a top-level card off the project default.
-    const resolved = yield* resolveDefaultBranch(cwd);
+    const resolved = yield* resolveDefaultBranch(workspace);
+    if (resolved.unavailable) return unreachable;
     const { defaultBranch } = resolved;
     // A child of a LIVE split retries the integration-branch creation HERE,
     // BEFORE resolving its base (t3o-23, D5): approval fires the creation
@@ -1246,6 +1205,8 @@ const make = Effect.gen(function* () {
         !branchLive
       ) {
         const failure = yield* ensureIntegrationBranch(parent);
+        // The parent's worker is out of reach: retried next pass, unreported.
+        if (failure?.unavailable === true) return unreachable;
         if (failure !== null) parentFailure = { key: parent.key, ...failure };
       }
     }
@@ -1282,7 +1243,9 @@ const make = Effect.gen(function* () {
     // rebase target — each breaks silently on a remote-qualified name. So a
     // base that exists only on the remote is materialised first, exactly as
     // `ensureIntegrationBranch` materialises its own branch below.
-    if (!(yield* ensureLocalBaseBranch(cwd, baseRefName))) {
+    const baseExists = yield* ensureLocalBaseBranch(workspace, baseRefName);
+    if (baseExists === "unavailable") return unreachable;
+    if (!baseExists) {
       // Never fall back to the default. A card pinned to `release/2.4` that
       // silently builds off `main` is worse than a card that does not build,
       // and this path is card-visible and retryable.
@@ -1312,21 +1275,57 @@ const make = Effect.gen(function* () {
         ),
       );
     if (!provisionAccepted) return { kind: "transient" } as WorktreeOutcome;
-    const provisioned = yield* provisionBoardCardWorktree({
-      projectCwd: cwd,
-      branch,
-      baseRefName,
-    }).pipe(
-      Effect.provideService(GitVcsDriver.GitVcsDriver, git),
-      Effect.map(Option.some),
+    return yield* provisionOnWorkspace(card, workspace, { branch, baseRefName });
+  });
+
+  /** Why a card's checkout cannot be found, naming where it was looked for. */
+  const noWorkspaceFolderReason = (workspace: BoardCardWorkspace) =>
+    workspace.workerId === BOARD_LOCAL_WORKER_ID
+      ? "The card's project has no workspace folder on this server."
+      : "The card's project has no checkout on its worker.";
+
+  /**
+   * Cards whose provision the worker dropped mid-way (T3O-64): their worktree
+   * is recorded `provisioning`, and the next pass finishes the provision on
+   * that slice instead of starting another. In memory — after a restart the
+   * boot reconcile sees the slice as it always did.
+   */
+  const interruptedProvisions = new Set<string>();
+
+  /** The git half of a provision, once `provision-worktree` is recorded:
+      create the worktree in the card's workspace, then `record-worktree`. */
+  const provisionOnWorkspace = Effect.fn("board-supervisor-provisionOnWorkspace")(function* (
+    card: BoardCard,
+    workspace: BoardCardWorkspace,
+    slice: { readonly branch: string; readonly baseRefName: string },
+  ) {
+    type Provisioned =
+      | { readonly kind: "ok"; readonly path: string }
+      | { readonly kind: "unavailable" }
+      | { readonly kind: "failed" };
+    const provisioned = yield* workspace.provisionWorktree(slice).pipe(
+      Effect.map((worktree): Provisioned => ({ kind: "ok", path: worktree.path })),
+      Effect.catch((error): Effect.Effect<Provisioned> =>
+        error._tag === "WorkerUnavailable"
+          ? Effect.succeed({ kind: "unavailable" } as const)
+          : Effect.logWarning("board supervisor: worktree provisioning failed", {
+              cardId: card.id,
+              detail: error.detail,
+            }).pipe(Effect.as({ kind: "failed" } as const)),
+      ),
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: worktree provisioning failed", {
           cardId: card.id,
           cause: Cause.pretty(cause),
-        }).pipe(Effect.as(Option.none<{ readonly path: string }>())),
+        }).pipe(Effect.as({ kind: "failed" } as const)),
       ),
     );
-    if (Option.isNone(provisioned)) {
+    if (provisioned.kind === "unavailable") {
+      interruptedProvisions.add(String(card.id));
+      return { kind: "transient" } as WorktreeOutcome;
+    }
+    interruptedProvisions.delete(String(card.id));
+    if (provisioned.kind === "failed") {
       yield* failWorktree(card, "git worktree add failed; retry the build.");
       return { kind: "transient", reason: "git worktree add failed." } as WorktreeOutcome;
     }
@@ -1334,10 +1333,10 @@ const make = Effect.gen(function* () {
       type: "board.card.record-worktree",
       commandId: yield* commandId("record-worktree"),
       cardId: card.id,
-      path: provisioned.value.path,
+      path: provisioned.path,
       createdAt: yield* nowIso,
     });
-    return { kind: "ready", path: provisioned.value.path } as WorktreeOutcome;
+    return { kind: "ready", path: provisioned.path } as WorktreeOutcome;
   });
 
   // Provision a build step's worktree, parking the step `stalled` with reason
@@ -1485,8 +1484,9 @@ const make = Effect.gen(function* () {
     // not only at provisioning, so a worktree that predates the pin gets it
     // before its next agent runs. Idempotent and never fails the spawn.
     if (input.branch !== null) {
-      yield* pinBoardWorktreeGhDefault(input.worktreePath).pipe(
-        Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+      yield* workspaceFor(card).pipe(
+        Effect.flatMap((workspace) => workspace.pinGhDefault({ worktreePath: input.worktreePath })),
+        Effect.catchCause(() => Effect.void),
       );
     }
     // A spawn whose create or first turn is refused leaves no thread behind
@@ -1628,10 +1628,9 @@ const make = Effect.gen(function* () {
     const recorded = card.worktree?.baseRefName ?? null;
     if (recorded !== null) return recorded;
     if (card.baseBranch !== null) return card.baseBranch;
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
-    if (cwd === null) return null;
-    const { defaultBranch } = yield* resolveDefaultBranch(cwd);
+    const workspace = yield* workspaceFor(card);
+    if (workspace.checkoutPath === null) return null;
+    const { defaultBranch } = yield* resolveDefaultBranch(workspace);
     return resolveBoardCardEffectiveBase({
       card,
       cards: (yield* readBoard).cards,
@@ -2003,7 +2002,9 @@ const make = Effect.gen(function* () {
         card.worktree !== null && card.worktree.status === "ready" ? card.worktree.path : null;
       if (
         worktreePath === null &&
-        (card.worktree === null || card.worktree.status !== "provisioning")
+        (card.worktree === null ||
+          card.worktree.status !== "provisioning" ||
+          interruptedProvisions.has(String(card.id)))
       ) {
         worktreePath = yield* provisionBuildStep(card);
       }
@@ -2048,31 +2049,22 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // ── Base-tip measurement (t3o-24, D1) ──────────────────────────────────
-  // One `rev-parse` in the PROJECT ROOT — never the card's worktree, whose
-  // HEAD is the card branch — against the card's recorded base ref. Null is
-  // the honest failure signal (no worktree slice, no workspace root, an
-  // unresolvable ref): staleness is measured, never assumed, so an
+  // ── Base-tip measurement (t3o-24, D1; T3O-64, D21) ─────────────────────
+  // The base's tip as the REMOTE has it, fetched first, in the card's
+  // workspace (`LocalBoardWorkspace.measureBaseTip`): a merge landed from
+  // another worker is base movement here too. Null is the honest failure
+  // signal (no worktree slice, no checkout, an unresolvable ref, an
+  // unreachable worker): staleness is measured, never assumed, so an
   // unmeasurable tip records nothing and intercepts nothing.
   const measureBaseTip = Effect.fn("board-supervisor-measureBaseTip")(function* (card: BoardCard) {
     const baseRefName = card.worktree?.baseRefName ?? null;
     if (baseRefName === null) return null;
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
-    if (cwd === null) return null;
-    const tip = yield* git
-      .execute({
-        operation: "boardBaseTip.resolve",
-        cwd,
-        args: ["rev-parse", "--verify", "--quiet", `refs/heads/${baseRefName}`],
-        timeoutMs: 10_000,
-        allowNonZeroExit: true,
-      })
-      .pipe(
-        Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
-        Effect.catchCause(() => Effect.succeed("")),
-      );
-    return tip.length > 0 ? tip : null;
+    const workspace = yield* workspaceFor(card);
+    if (workspace.checkoutPath === null) return null;
+    return yield* workspace.measureBaseTip({ baseRefName }).pipe(
+      Effect.map((measured) => measured.tip),
+      Effect.catchCause(() => Effect.succeed(null as string | null)),
+    );
   });
 
   // Whether the card's base has MOVED since the run row's recorded
@@ -2136,10 +2128,9 @@ const make = Effect.gen(function* () {
       const needsDefault = card.parentCardId === null && card.baseBranch === null;
       const defaultBranch = needsDefault
         ? yield* Effect.gen(function* () {
-            const model = yield* readModel;
-            const cwd = projectCwd(model, card);
-            if (cwd === null) return null;
-            const resolved = yield* resolveDefaultBranch(cwd);
+            const workspace = yield* workspaceFor(card);
+            if (workspace.checkoutPath === null) return null;
+            const resolved = yield* resolveDefaultBranch(workspace);
             return resolved.defaultBranch === "" ? null : resolved.defaultBranch;
           })
         : null;
@@ -4238,9 +4229,8 @@ const make = Effect.gen(function* () {
         // automatic trigger takes the cached read, so a burst of triggers
         // costs one forge call per cache window. Failures are not cached, so
         // a forge that keeps failing is asked again on the next trigger.
-        const found = yield* pullRequests
-          .get({
-            projectId: card.projectId,
+        const found = yield* (yield* workspaceFor(card))
+          .getPullRequest({
             number: recorded.number,
             force: options?.force === true,
           })
@@ -4324,20 +4314,21 @@ const make = Effect.gen(function* () {
         return boardRefreshOutcomeOf(held);
       }
 
-      const model = yield* readModel;
-      const cwd = worktree.path ?? projectCwd(model, card);
-      if (cwd === null) return { outcome: "no-branch" } as const;
+      const workspace = yield* workspaceFor(card);
+      if (worktree.path === null && workspace.checkoutPath === null) {
+        return { outcome: "no-branch" } as const;
+      }
 
       // T3o (T3O-48): a failure carries the forge's own words out rather than
       // only logging them. "We looked and there is none" and "we could not
       // look" are different answers, and a refresh that cannot tell them apart
       // is what this card was filed about. Recording is unchanged: neither
       // branch below writes anything, so the card's last known link stands.
-      const found = yield* pullRequests
-        .find({
-          cwd,
+      const found = yield* workspace
+        .pullRequestByBranch({
           branch: worktree.branch,
-          ...(options?.force === true ? { force: true } : {}),
+          worktreePath: worktree.path,
+          force: options?.force === true,
         })
         .pipe(
           Effect.catch((error) =>
@@ -4520,19 +4511,19 @@ const make = Effect.gen(function* () {
    * creating a card can check its pull request before the card exists.
    */
   const resolvePullRequestLink = Effect.fn("board-supervisor-resolvePullRequestLink")(function* (
-    projectId: ProjectId,
+    workspace: BoardCardWorkspace,
     target: BoardCardPullRequestTarget,
   ) {
     // T3o (T3O-24): the board's repository — `origin` — not the project
     // identity, which in a fork names upstream.
-    const repository = yield* pullRequests
-      .repository(projectId)
+    const repository = yield* workspace
+      .pullRequestRepository({})
       .pipe(Effect.orElseSucceed(() => null));
     const resolved = resolveCardPullRequestTarget(target, repository);
     if ("refused" in resolved) {
       return { outcome: "refused", detail: resolved.refused } as const;
     }
-    const found = yield* pullRequests.get({ projectId, number: resolved.number, force: true }).pipe(
+    const found = yield* workspace.getPullRequest({ number: resolved.number, force: true }).pipe(
       Effect.map((summary) => ({ summary }) as const),
       Effect.catch((error) =>
         Effect.succeed({
@@ -4581,7 +4572,7 @@ const make = Effect.gen(function* () {
       if (options?.resolved !== undefined) {
         pullRequest = options.resolved;
       } else {
-        const resolution = yield* resolvePullRequestLink(card.projectId, target);
+        const resolution = yield* resolvePullRequestLink(yield* workspaceFor(card), target);
         if (resolution.outcome === "refused") return resolution;
         pullRequest = resolution.pullRequest;
       }
@@ -4646,9 +4637,8 @@ const make = Effect.gen(function* () {
     const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
     if (!isBoardMergeStageExecution(exec) || !exec.deleteBranchOnDone) return;
 
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
-    if (cwd === null) return;
+    const workspace = yield* workspaceFor(card);
+    if (workspace.checkoutPath === null) return;
 
     // T3O-18: a linked pull request can live on another branch (a stack
     // layer). Its merge says nothing about the card's own branch, which may
@@ -4665,7 +4655,7 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const result = yield* deleteCardBranch({ git, cwd, branch: worktree.branch }).pipe(
+    const result = yield* workspace.deleteCardBranch({ branch: worktree.branch }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: branch cleanup failed", {
           cardId: card.id,
@@ -4755,9 +4745,8 @@ const make = Effect.gen(function* () {
   ) {
     const worktree = card.worktree;
     if (worktree === null || worktree.status !== "ready" || worktree.path === null) return null;
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
-    if (cwd === null) {
+    const workspace = yield* workspaceFor(card);
+    if (workspace.checkoutPath === null) {
       // A failure, not a quiet skip: the card IS finished, and Check again
       // must not answer that it isn't.
       yield* Effect.logWarning("board supervisor: worktree reclaim has no project checkout", {
@@ -4772,38 +4761,39 @@ const make = Effect.gen(function* () {
       ...card.pullRequestHistory,
       ...(card.pullRequest === null ? [] : [card.pullRequest]),
     ];
-    const reclaimed = yield* reclaimBoardCardWorktree(
-      {
-        projectCwd: cwd,
-        worktreePath: worktree.path,
-        baseRefName: worktree.baseRefName,
-        branch: worktree.branch,
-        mergedPullRequestNumbers: pullRequests
-          .filter(
-            (pullRequest) =>
-              pullRequest.state === "merged" &&
-              // T3o (T3O-24): an earlier card's merge on a reused branch name
-              // proves nothing about this card's work.
-              (pullRequest.linked === true ||
-                !boardPullRequestPredatesCard(pullRequest, card.createdAt)),
-          )
-          .map((pullRequest) => pullRequest.number),
-        openPullRequestNumber: card.pullRequest?.state === "open" ? card.pullRequest.number : null,
-        fetchedBases,
-      },
-      cardStillFinished(card, worktree.path),
-    ).pipe(
-      Effect.provideService(GitVcsDriver.GitVcsDriver, git),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(WorktreeRetirer, retirer),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("board supervisor: worktree reclaim failed", {
-          cardId: card.id,
-          cause: Cause.pretty(cause),
-        }).pipe(Effect.as("failed" as const)),
-      ),
-      Effect.ensuring(Effect.sync(() => reclaimingCards.delete(key))),
-    );
+    // An unreachable worker reads as "failed" here, which records nothing:
+    // the next sweep asks again (T3O-64).
+    const reclaimed = yield* workspace
+      .reclaimWorktree(
+        {
+          worktreePath: worktree.path,
+          baseRefName: worktree.baseRefName,
+          branch: worktree.branch,
+          mergedPullRequestNumbers: pullRequests
+            .filter(
+              (pullRequest) =>
+                pullRequest.state === "merged" &&
+                // T3o (T3O-24): an earlier card's merge on a reused branch name
+                // proves nothing about this card's work.
+                (pullRequest.linked === true ||
+                  !boardPullRequestPredatesCard(pullRequest, card.createdAt)),
+            )
+            .map((pullRequest) => pullRequest.number),
+          openPullRequestNumber:
+            card.pullRequest?.state === "open" ? card.pullRequest.number : null,
+          fetchedBases,
+        },
+        cardStillFinished(card, worktree.path),
+      )
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: worktree reclaim failed", {
+            cardId: card.id,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as("failed" as const)),
+        ),
+        Effect.ensuring(Effect.sync(() => reclaimingCards.delete(key))),
+      );
     if (reclaimed === "failed") return { outcome: "failed" } satisfies BoardCardReclaimAttempt;
     // Abandoned: the card was no longer finished by the time the probe ended.
     if (reclaimed === null) return null;
@@ -4999,27 +4989,6 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * This server's own worktrees directory, as spelled and as resolved through
-   * symlinks — git reports a checkout by either. Empty without a config (the
-   * test harness), which leaves the orphan sweep nothing to claim.
-   */
-  const ownWorktreeRoots = Option.match(serverConfig, {
-    onNone: () => Effect.succeed([] as ReadonlyArray<string>),
-    onSome: (config) => {
-      const spelled = pathService.resolve(config.worktreesDir);
-      return fileSystem.realPath(spelled).pipe(
-        Effect.map((real) => [...new Set([spelled, pathService.resolve(real)])]),
-        Effect.orElseSucceed(() => [spelled]),
-      );
-    },
-  });
-
-  const isWithinRoot = (candidate: string, root: string) => {
-    const relative = pathService.relative(root, candidate);
-    return relative !== "" && !relative.startsWith("..") && !pathService.isAbsolute(relative);
-  };
-
-  /**
    * Remove `board/*` worktrees no card owns any more (T3O-52, D4): the card
    * was deleted while its removal failed, or the card's worktree record moved
    * on (reclaimed, or re-provisioned at another path) while the old checkout
@@ -5029,70 +4998,75 @@ const make = Effect.gen(function* () {
    * is no card to name a pull request. Anything else is logged: there is no
    * card to flag. A card that is mid-provisioning, failed or branch-only owns
    * its branch's checkout and is left alone.
+   *
+   * Once per workspace — per worker and project (T3O-64) — and judged only
+   * against the cards placed on that worker. Each workspace lists only the checkouts
+   * under ITS OWN worktrees directory: another T3 environment on the same
+   * repository — a dev server seeded with a copy of the live database, say —
+   * has its own board, and its in-use `board/*` checkouts are no orphans of
+   * ours.
    */
   const sweepOrphanWorktrees = Effect.fn("board-supervisor-sweepOrphanWorktrees")(function* (
     board: BoardState,
-    model: BoardWorld,
     fetchedBases: Set<string>,
   ) {
-    // Only checkouts under THIS server's worktrees directory are ours to
-    // judge. Another T3 environment on the same repository — a dev server
-    // seeded with a copy of the live database, say — has its own board, and
-    // its in-use `board/*` checkouts are no orphans of ours.
-    const roots = yield* ownWorktreeRoots;
-    if (roots.length === 0) return;
-    const projectIds = new Set(board.cards.map((card) => card.projectId));
-    for (const projectId of projectIds) {
-      const project = model.projects.find((entry) => entry.id === projectId);
-      const cwd = project?.workspaceRoot ?? null;
-      if (cwd === null) continue;
-      const listed = yield* git
-        .execute({
-          operation: "board.sweep.worktrees",
-          cwd,
-          args: ["worktree", "list", "--porcelain"],
-          allowNonZeroExit: true,
-        })
-        .pipe(Effect.catch(() => Effect.succeed(null)));
-      if (listed === null || listed.exitCode !== 0) continue;
-      // The first block is the repository's own checkout, never a worktree
-      // to remove — git refuses anyway, but it is not ours to ask about.
-      for (const registered of parseRegisteredWorktrees(listed.stdout).slice(1)) {
-        if (registered.branch === null || !registered.branch.startsWith("board/")) continue;
-        if (registered.prunable) continue;
-        const registeredPath = pathService.resolve(registered.path);
-        if (!roots.some((root) => isWithinRoot(registeredPath, root))) continue;
+    const groups = yield* workspaces.groupByWorkspace(board.cards);
+    // Ownership is judged per WORKER, across its projects: two board projects
+    // can share one repository, and one's live checkout is no orphan of the
+    // other's.
+    const idsOnWorker = new Map<string, Set<string>>();
+    for (const { workspace, cards } of groups) {
+      const ids = idsOnWorker.get(workspace.workerId) ?? new Set<string>();
+      for (const card of cards) ids.add(card.id);
+      idsOnWorker.set(workspace.workerId, ids);
+    }
+    for (const { workspace } of groups) {
+      const ids = idsOnWorker.get(workspace.workerId) ?? new Set<string>();
+      const placedHere = (fresh: BoardState): BoardState => ({
+        ...fresh,
+        cards: fresh.cards.filter((card) => ids.has(card.id)),
+      });
+      const listed = yield* workspace
+        .listBoardWorktrees({})
+        .pipe(Effect.catchCause(() => Effect.succeed({ worktrees: [] })));
+      for (const registered of listed.worktrees) {
         const candidate = { path: registered.path, branch: registered.branch };
-        if (!isOrphanWorktree(board, candidate)) continue;
-        const owner = board.cards.find((card) => card.worktree?.branch === registered.branch);
-        const outcome = yield* reclaimBoardCardWorktree(
-          {
-            projectCwd: cwd,
-            worktreePath: registered.path,
-            baseRefName: owner?.worktree?.baseRefName ?? (yield* projectDefaultBranch(cwd)),
-            branch: registered.branch,
-            mergedPullRequestNumbers: [],
-            fetchedBases,
-          },
-          // Ownership is re-judged on a FRESH board right before removal. The
-          // pass's snapshot is minutes old by now, and a card that started
-          // provisioning in between owns a checkout cut at the base tip —
-          // clean and durable, and anything but an orphan.
-          readBoard.pipe(
-            Effect.map((fresh) => isOrphanWorktree(fresh, candidate)),
-            Effect.orElseSucceed(() => false),
-          ),
-        ).pipe(
-          Effect.provideService(GitVcsDriver.GitVcsDriver, git),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(WorktreeRetirer, retirer),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("board supervisor: orphan worktree check failed", {
-              path: registered.path,
-              cause: Cause.pretty(cause),
-            }).pipe(Effect.as(null)),
-          ),
+        if (!isOrphanWorktree(placedHere(board), candidate)) continue;
+        const owner = placedHere(board).cards.find(
+          (card) => card.worktree?.branch === registered.branch,
         );
+        const baseRefName =
+          owner?.worktree?.baseRefName ??
+          (yield* workspace.remoteDefaultBranch({}).pipe(
+            Effect.map((result) => result.branch),
+            Effect.orElseSucceed(() => "main"),
+          ));
+        const outcome = yield* workspace
+          .reclaimWorktree(
+            {
+              worktreePath: registered.path,
+              baseRefName,
+              branch: registered.branch,
+              mergedPullRequestNumbers: [],
+              fetchedBases,
+            },
+            // Ownership is re-judged on a FRESH board right before removal. The
+            // pass's snapshot is minutes old by now, and a card that started
+            // provisioning in between owns a checkout cut at the base tip —
+            // clean and durable, and anything but an orphan.
+            readBoard.pipe(
+              Effect.map((fresh) => isOrphanWorktree(placedHere(fresh), candidate)),
+              Effect.orElseSucceed(() => false),
+            ),
+          )
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("board supervisor: orphan worktree check failed", {
+                path: registered.path,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(null)),
+            ),
+          );
         if (outcome === null) continue;
         if (outcome.outcome === "removed") {
           yield* Effect.logInfo("board supervisor: removed orphan worktree", {
@@ -5109,15 +5083,6 @@ const make = Effect.gen(function* () {
       }
     }
   });
-
-  /** The project's default branch, for an orphan with no card to name its
-      base; `main` when the remote cannot say. */
-  const projectDefaultBranch = (cwd: string) =>
-    git.resolvePrimaryRemoteName(cwd).pipe(
-      Effect.flatMap((remote) => git.resolveDefaultBranchName(cwd, remote)),
-      Effect.map((name) => name ?? "main"),
-      Effect.catch(() => Effect.succeed("main")),
-    );
 
   /**
    * One worktree-cleanup pass (T3O-52, D4). Candidates:
@@ -5138,7 +5103,6 @@ const make = Effect.gen(function* () {
   }) {
     const settings = yield* boardSettings;
     const board = yield* readBoard;
-    const model = yield* readModel;
     const fetchedBases = new Set<string>();
     for (const card of board.cards) {
       // T3o (T3O-18): a linked pull request settles its card whether or not
@@ -5171,7 +5135,7 @@ const make = Effect.gen(function* () {
       }
       yield* settleCardAtDone(card, { branchCleanup: "after-reclaim", fetchedBases });
     }
-    yield* sweepOrphanWorktrees(board, model, fetchedBases);
+    yield* sweepOrphanWorktrees(board, fetchedBases);
   });
 
   /**
@@ -5184,21 +5148,21 @@ const make = Effect.gen(function* () {
   const retireDeletedCardWorktree = Effect.fn("board-supervisor-retireDeletedCardWorktree")(
     function* (request: {
       readonly cardId: BoardCardId;
-      readonly projectCwd: string;
+      /** Resolved when the card was deleted: the card is gone by now. */
+      readonly workspace: BoardCardWorkspace;
       readonly worktreePath: string | null;
       readonly branch: string;
     }) {
       if (request.worktreePath !== null) {
-        const { hookWarning } = yield* forceRemoveBoardCardWorktree({
-          projectCwd: request.projectCwd,
-          worktreePath: request.worktreePath,
-        }).pipe(
-          Effect.provideService(WorktreeRetirer, retirer),
+        const hookWarning = yield* forceRemoveWorktree(
+          request.workspace,
+          request.worktreePath,
+        ).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("board supervisor: worktree removal on card delete failed", {
               cardId: request.cardId,
               cause: Cause.pretty(cause),
-            }).pipe(Effect.as({ hookWarning: null })),
+            }).pipe(Effect.as(null)),
           ),
         );
         if (hookWarning !== null) {
@@ -5211,7 +5175,7 @@ const make = Effect.gen(function* () {
       // Attempted whatever the worktree's state — a card can carry a branch
       // whose worktree was already reclaimed (at an earlier archive, or at
       // Done), and that branch is exactly the one nothing else will collect.
-      yield* deleteCardBranch({ git, cwd: request.projectCwd, branch: request.branch }).pipe(
+      yield* request.workspace.deleteCardBranch({ branch: request.branch }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("board supervisor: branch cleanup on card delete failed", {
             cardId: request.cardId,
@@ -5222,6 +5186,16 @@ const make = Effect.gen(function* () {
       );
     },
   );
+
+  /**
+   * Remove a worktree whatever it holds (`forceRemoveBoardCardWorktree`), in
+   * the card's workspace: forced, so survivors are killed rather than holding
+   * it back. Answers any remove-script failure.
+   */
+  const forceRemoveWorktree = (workspace: BoardCardWorkspace, worktreePath: string) =>
+    workspace
+      .retireWorktree({ worktreePath, kind: "forced", verifiedClean: false })
+      .pipe(Effect.map((retired) => (retired?.outcome === "removed" ? retired.hookWarning : null)));
 
   /**
    * Per-card cleanup the reactor's own worker asks for (T3O-52): the settle on
@@ -5325,19 +5299,27 @@ const make = Effect.gen(function* () {
     const finished =
       card.archivedAt !== null || (stage !== null && effectiveBoardStageRole(stage) === "done");
     if (!finished) return { outcome: "not-finished" } as const;
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
-    if (cwd === null) {
+    const workspace = yield* workspaceFor(card);
+    if (workspace.checkoutPath === null) {
       // The card does hold a worktree; it is the project that cannot be found.
       yield* Effect.logWarning("board supervisor: forced removal has no project checkout", {
         cardId: card.id,
       });
       return { outcome: "failed" } as const;
     }
-    const { hookWarning } = yield* forceRemoveBoardCardWorktree({
-      projectCwd: cwd,
-      worktreePath: worktree.path,
-    }).pipe(Effect.provideService(WorktreeRetirer, retirer));
+    const removed = yield* forceRemoveWorktree(workspace, worktree.path).pipe(
+      Effect.map((hookWarning) => ({ hookWarning })),
+      Effect.catch(
+        (
+          error,
+        ): Effect.Effect<{ readonly hookWarning: string | null } | null, BoardWorkerGitError> =>
+          error._tag === "WorkerUnavailable" ? Effect.succeed(null) : Effect.fail(error),
+      ),
+    );
+    // The worker is out of reach: nothing was removed, and saying so beats
+    // recording a removal that did not happen (T3O-64).
+    if (removed === null) return { outcome: "failed" } as const;
+    const { hookWarning } = removed;
     yield* dispatchOptional({
       type: "board.card.reclaim-worktree",
       commandId: yield* commandId("force-reclaim-worktree"),
@@ -5466,8 +5448,8 @@ const make = Effect.gen(function* () {
       const pullRequest = card.pullRequest;
       if (pullRequest === null || pullRequest.state !== "open") return false;
       if (!options.forMerge && !(yield* draftPullRequestsOn)) return false;
-      const result = yield* pullRequests
-        .markReady({ projectId: card.projectId, number: pullRequest.number })
+      const result = yield* (yield* workspaceFor(card))
+        .markPullRequestReady({ number: pullRequest.number })
         .pipe(Effect.catch((error) => Effect.succeed({ failure: error.detail } as const)));
       if (result === "not-draft") return false;
       if (result === "readied") {
@@ -5530,8 +5512,8 @@ const make = Effect.gen(function* () {
   ) {
     const pullRequest = card.pullRequest;
     if (pullRequest === null) return { state: null, failure: undefined };
-    return yield* pullRequests
-      .mergeState({ projectId: card.projectId, number: pullRequest.number })
+    return yield* (yield* workspaceFor(card))
+      .pullRequestMergeState({ number: pullRequest.number })
       .pipe(
         Effect.map((state) => ({ state, failure: undefined })),
         // The probe's own words go on the card (T3O-8): a probe that failed is
@@ -5676,8 +5658,8 @@ const make = Effect.gen(function* () {
     // root — so that is the one path whose absence makes a card unmergeable. A
     // reclaimed worktree is irrelevant to it, which is what this guard used to
     // have to say explicitly.
-    const root = projectCwd(model, fresh);
-    if (root === null) return { outcome: "no-workspace" } as const;
+    const workspace = yield* workspaceFor(fresh);
+    if (workspace.checkoutPath === null) return { outcome: "no-workspace" } as const;
 
     const settings = yield* boardSettings;
     // Resolved from the MERGE-ROLE stage, not from `fresh.stage`. They are the
@@ -5688,8 +5670,8 @@ const make = Effect.gen(function* () {
     const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
     const strategy = isBoardMergeStageExecution(exec) ? exec.strategy : "squash";
 
-    const failure = yield* pullRequests
-      .merge({ projectId: fresh.projectId, number: pullRequest.number, method: strategy })
+    const failure = yield* workspace
+      .mergePullRequest({ number: pullRequest.number, method: strategy })
       .pipe(
         Effect.as(null),
         Effect.catch((error) => Effect.succeed(error)),
@@ -5725,12 +5707,15 @@ const make = Effect.gen(function* () {
       // conflict, because starting a fix agent is the expensive mistake.
       const state =
         probe.state === null &&
-        (yield* probeLocalMergeConflict({
-          git,
-          cwd: root,
-          headBranch: pullRequest.headBranch,
-          baseBranch: pullRequest.baseRef,
-        })) === "conflict"
+        (yield* workspace
+          .probeLocalMergeConflict({
+            headBranch: pullRequest.headBranch,
+            baseBranch: pullRequest.baseRef,
+          })
+          .pipe(
+            Effect.map((probe) => probe.result),
+            Effect.orElseSucceed(() => "unknown" as const),
+          )) === "conflict"
           ? LOCAL_CONFLICT_MERGE_STATE
           : probe.state;
       const detail = boardMergeRefusalReason(state, probe.failure);
@@ -5858,7 +5843,9 @@ const make = Effect.gen(function* () {
     // a reason to fail a merge that already landed.
     const baseBranch = merged.pullRequest?.baseRef ?? null;
     if (baseBranch !== null) {
-      yield* pullMergedBaseBranch({ git, cwd: root, baseBranch }).pipe(
+      // Only on this card's worker (T3O-64): every other worker sees the merge
+      // through the fetch `measureBaseTip` makes.
+      yield* workspace.pullMergedBaseBranch({ baseBranch }).pipe(
         Effect.flatMap((sync) =>
           sync.updated || sync.skippedReason === null
             ? Effect.void
@@ -7524,9 +7511,8 @@ const make = Effect.gen(function* () {
 
     const worktree = card.worktree;
     if (worktree !== null) {
-      const model = yield* readModel;
-      const cwd = projectCwd(model, card);
-      if (cwd !== null) {
+      const workspace = yield* workspaceFor(card);
+      if (workspace.checkoutPath !== null) {
         // T3O-23: retiring runs the remove scripts, which can take minutes, so
         // it goes to its own worker and the delete handler moves on. The queue
         // is in memory: a restart before it runs leaves the branch behind, so
@@ -7538,7 +7524,7 @@ const make = Effect.gen(function* () {
         });
         yield* cardRetireWorker.enqueue({
           cardId: card.id,
-          projectCwd: cwd,
+          workspace,
           worktreePath: worktree.status === "ready" ? worktree.path : null,
           branch: worktree.branch,
         });
@@ -7591,29 +7577,30 @@ const make = Effect.gen(function* () {
     ) {
       return null;
     }
-    type Failure = { readonly reason: string; readonly transient: boolean } | null;
+    type Failure = {
+      readonly reason: string;
+      readonly transient: boolean;
+      /** The parent's worker is out of reach (T3O-64): nothing was recorded,
+          and the child retries on its next pass. */
+      readonly unavailable?: boolean;
+    } | null;
     const fail = (reason: string, transient = false) =>
       failWorktree(card, reason).pipe(Effect.as<Failure>({ reason, transient }));
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
+    const unreachable: Failure = {
+      reason: "The card's worker is unreachable.",
+      transient: true,
+      unavailable: true,
+    };
+    // Cut on the PARENT's worker and pushed (D12): a child placed elsewhere
+    // cuts its own branch from the remote copy.
+    const workspace = yield* workspaceFor(card);
+    const cwd = workspace.checkoutPath;
     if (cwd === null) {
-      return yield* fail("The card's project has no workspace folder on this server.");
+      return yield* fail(noWorkspaceFolderReason(workspace));
     }
     const branch = boardCardWorktreeBranchName(card);
-    const gitRef = (args: ReadonlyArray<string>) =>
-      git
-        .execute({
-          operation: "boardIntegrationBranch.ref",
-          cwd,
-          args: [...args],
-          timeoutMs: 10_000,
-          allowNonZeroExit: true,
-        })
-        .pipe(
-          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
-          Effect.catchCause(() => Effect.succeed("")),
-        );
-    const resolved = yield* resolveDefaultBranch(cwd);
+    const resolved = yield* resolveDefaultBranch(workspace);
+    if (resolved.unavailable) return unreachable;
     const { defaultBranch } = resolved;
     if (defaultBranch === "") {
       return yield* fail(noDefaultBranchReason(cwd, resolved, "the integration branch"));
@@ -7630,64 +7617,42 @@ const make = Effect.gen(function* () {
         cards: (yield* readBoard).cards,
         defaultBranch,
       }) ?? defaultBranch;
-    if (!(yield* ensureLocalBaseBranch(cwd, integrationBase))) {
+    const baseExists = yield* ensureLocalBaseBranch(workspace, integrationBase);
+    if (baseExists === "unavailable") return unreachable;
+    if (!baseExists) {
       return yield* fail(
         `The card's base branch '${integrationBase}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the integration branch from.`,
       );
     }
     // Idempotent on retry: an existing branch is the desired state, not an
     // error (an earlier attempt may have created it and died before the
-    // record landed).
-    const exists = yield* gitRef(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
-    if (exists === "") {
-      const created = yield* git
-        .execute({
-          operation: "boardIntegrationBranch.create",
-          cwd,
-          args: ["branch", branch, integrationBase],
-          timeoutMs: 10_000,
-          allowNonZeroExit: true,
-        })
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("board supervisor: integration branch creation failed", {
+    // record landed, or a raced sibling created it a moment ago).
+    type Cut = BoardWorkspaceIntegrationBranch | "unavailable";
+    const cut = yield* workspace.createIntegrationBranch({ branch, base: integrationBase }).pipe(
+      Effect.map((result): Cut => result),
+      Effect.catch((error): Effect.Effect<Cut> =>
+        error._tag === "WorkerUnavailable"
+          ? Effect.succeed("unavailable" as const)
+          : Effect.logWarning("board supervisor: integration branch creation failed", {
               cardId: card.id,
-              cause: Cause.pretty(cause),
-            }).pipe(Effect.as(null)),
-          ),
-        );
-      if (created === null || created.exitCode !== 0) {
-        // A raced sibling (two children retrying at once) may have created the
-        // branch between the check above and this create — `git branch` then
-        // exits non-zero with "already exists". Re-check rather than treat it
-        // as fatal: an existing branch IS the desired state (idempotent).
-        const nowExists = yield* gitRef([
-          "rev-parse",
-          "--verify",
-          "--quiet",
-          `refs/heads/${branch}`,
-        ]);
-        if (nowExists === "") {
-          return yield* fail(
-            `Could not create the integration branch '${branch}' from '${integrationBase}'.`,
-            true,
-          );
-        }
-      }
-    }
-    const pushed = yield* git.resolvePrimaryRemoteName(cwd).pipe(
-      Effect.flatMap((remoteName) =>
-        git.execute({
-          operation: "boardIntegrationBranch.push",
-          cwd,
-          args: ["push", remoteName, branch],
-          timeoutMs: 60_000,
-          allowNonZeroExit: true,
-        }),
+              detail: error.detail,
+            }).pipe(Effect.as({ outcome: "create-failed" } as const)),
       ),
-      Effect.map((result) => result.exitCode === 0),
-      Effect.catch(() => Effect.succeed(false)),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: integration branch creation failed", {
+          cardId: card.id,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as({ outcome: "create-failed" } as const)),
+      ),
     );
+    if (cut === "unavailable") return unreachable;
+    if (cut.outcome === "create-failed") {
+      return yield* fail(
+        `Could not create the integration branch '${branch}' from '${integrationBase}'.`,
+        true,
+      );
+    }
+    const pushed = cut.pushed;
     if (!pushed) {
       yield* dispatch({
         type: "board.card.record-note",
@@ -8880,7 +8845,7 @@ const make = Effect.gen(function* () {
       const worktreePath = card.worktree?.path ?? null;
       const baseRefName = card.worktree?.baseRefName ?? null;
       if (state.mode === "build" && worktreePath !== null && baseRefName !== null) {
-        const committedAt = yield* latestBranchCommitIso(worktreePath, baseRefName);
+        const committedAt = yield* latestBranchCommitIso(card, worktreePath, baseRefName);
         const committedMs = committedAt === null ? Number.NaN : Date.parse(committedAt);
         if (Number.isFinite(committedMs) && nowMs - committedMs <= state.timeoutMs) continue;
       }
@@ -9114,20 +9079,25 @@ const make = Effect.gen(function* () {
     // click.
     // T3o (T3O-18): TOTAL for the same reason — an agent's tool call and the
     // card's "Link one" both owe their caller an answer.
+    // A card being created has no placement yet, so its project's own
+    // checkout answers (T3O-65 places it).
     resolvePullRequestLink: (projectId, target) =>
-      resolvePullRequestLink(projectId, target).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("board supervisor: pull request link lookup failed", {
-            projectId,
-            cause: Cause.pretty(cause),
-          }).pipe(
-            Effect.as({
-              outcome: "refused",
-              detail: "The pull request could not be looked up. See the server log for details.",
-            } as const),
+      workspaces
+        .localProject(projectId)
+        .pipe(Effect.flatMap((workspace) => resolvePullRequestLink(workspace, target)))
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board supervisor: pull request link lookup failed", {
+              projectId,
+              cause: Cause.pretty(cause),
+            }).pipe(
+              Effect.as({
+                outcome: "refused",
+                detail: "The pull request could not be looked up. See the server log for details.",
+              } as const),
+            ),
           ),
         ),
-      ),
     linkPullRequest: (cardId, target, options) =>
       linkPullRequest(cardId, target, options).pipe(
         Effect.catchCause((cause) =>

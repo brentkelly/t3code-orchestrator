@@ -121,8 +121,8 @@ export type BoardWorkspaceRemoteBranchTip = typeof BoardWorkspaceRemoteBranchTip
 /** A pull request as the board reads it (`BoardFoundPullRequest`). */
 export const BoardWorkspacePullRequest = Schema.Struct({
   ...VcsStatusChangeRequest.fields,
-  mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
-  closedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  mergedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  closedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type BoardWorkspacePullRequest = typeof BoardWorkspacePullRequest.Type;
 
@@ -147,7 +147,7 @@ export type BoardWorkspaceMergeState = typeof BoardWorkspaceMergeState.Type;
 export const BoardWorkspaceRepository = Schema.NullOr(
   Schema.Struct({
     repository: Schema.String,
-    host: Schema.optional(Schema.String),
+    host: Schema.optionalKey(Schema.String),
     path: Schema.String,
   }),
 );
@@ -163,7 +163,7 @@ export class BoardWorkerGitError extends Schema.TaggedError<BoardWorkerGitError>
   {
     operation: Schema.String,
     detail: Schema.String,
-    refusal: Schema.optional(Schema.Literals(["host", "blocked", "unavailable"])),
+    refusal: Schema.optionalKey(Schema.Literals(["host", "blocked", "unavailable"])),
   },
 ) {}
 

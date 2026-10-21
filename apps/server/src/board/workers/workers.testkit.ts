@@ -70,6 +70,9 @@ export interface FakeWorker {
   readonly sessionExpiry: Map<string, number>;
   /** The open link's close signal, while one is open. */
   link: Deferred.Deferred<void> | null;
+  /** How the worker answers `boardWorker.git.*`; by default it has no such
+      calls, as a T3o before T3O-64 does not. */
+  git: WorkerRpc["git"];
 }
 
 /** Upstream's fixed session lifetime. */
@@ -116,6 +119,13 @@ export const makeFakeWorkers = Effect.sync(() => {
         renewFailures: 0,
         sessionExpiry: new Map(),
         link: null,
+        git: () =>
+          Effect.fail(
+            new WorkerRpcError({
+              message: "The worker doesn't support this board call.",
+              unsupported: true,
+            }),
+          ),
       };
       workers.set(url, worker);
       return worker;
@@ -191,6 +201,7 @@ export const makeFakeWorkers = Effect.sync(() => {
           worker.cloneRetries.push(projectId);
           return worker.retryApplied;
         }),
+      git: (method, payload) => Effect.suspend(() => worker.git(method, payload)),
       // Ends with a failure when the link drops, as a real subscription does.
       projectClones: SubscriptionRef.changes(worker.clones).pipe(
         Stream.interruptWhen(Deferred.await(closed)),

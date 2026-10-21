@@ -579,7 +579,7 @@ export interface BoardCardWorktreeReclaimResult {
  * to the folder check, which keeps a live checkout spelled through a symlink
  * and still catches a gone one whose branch is now checked out elsewhere.
  */
-const goneBoardWorktreePath = Effect.fn("goneBoardWorktreePath")(function* (
+export const goneBoardWorktreePath = Effect.fn("goneBoardWorktreePath")(function* (
   input: BoardWorktreeDurabilityInput,
 ) {
   const git = yield* GitVcsDriver.GitVcsDriver;

@@ -60,7 +60,6 @@ import {
   claimBoardCardAttachment,
   deleteBoardCardAttachmentFile,
 } from "./attachments.ts";
-import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import {
   BOARD_HUMAN_ACTOR_FALLBACK_NAME,
   boardHumanActor,
@@ -76,6 +75,8 @@ import type { BoardCommand } from "./decider.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 import { BoardWorkers } from "./workers/BoardWorkers.ts";
 import { boardWorkerRpcHandlers } from "./workers/workerRpc.ts";
+import { BoardWorkspaces, type BoardWorkspacesShape } from "./workspace/BoardWorkspace.ts";
+import { boardWorkerGitRpcHandlers } from "./workspace/workerGitRpc.ts";
 
 export interface BoardRpcHandlerDeps {
   readonly currentSession: AuthenticatedSession;
@@ -95,10 +96,11 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
     const boardEngine = yield* BoardEngine;
     const boardQueries = yield* BoardQueries;
     // Built once per connection, so the actor-name caches live as long as it does.
+    const workspaces = yield* BoardWorkspaces;
     const stampActor = boardActorStamp({
       threads: yield* ThreadGateway,
       boardQueries,
-      git: yield* GitVcsDriver,
+      workspaces,
     });
     // The subscription's services, provided here so the handler's stream needs
     // only the RPC scope.
@@ -114,6 +116,9 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
       }),
       // T3O-62: worker management, and the worker side's handshake.
       ...(yield* boardWorkerRpcHandlers(deps.currentSession)),
+      // T3O-64: the named git and forge operations, for a central server
+      // whose cards run here.
+      ...boardWorkerGitRpcHandlers(deps.currentSession, workspaces),
     };
   });
 
@@ -575,27 +580,17 @@ function makeBoardRpcHandlers(
  * Resolution is two point reads plus at most one `git config` per project for the
  * lifetime of the process, on a path a human drives by hand. Every failure
  * degrades to the fallback name; none can fail the dispatch.
+ *
+ * T3O-64: read from this server's own checkout of the project when it has
+ * one, and otherwise from the card's worker, where the commits are made.
  */
 export function boardActorStamp(deps: {
   readonly threads: Pick<ThreadGatewayShape, "project">;
   readonly boardQueries: BoardQueriesShape;
-  readonly git: GitVcsDriver["Service"];
+  readonly workspaces: Pick<BoardWorkspacesShape, "localProject" | "forCard">;
 }): (command: BoardCommand) => Effect.Effect<void> {
   const projectByCard = new Map<string, ProjectId>();
   const nameByProject = new Map<string, string>();
-
-  const gitUserName = (workspaceRoot: string) =>
-    deps.git
-      .execute({
-        operation: "board.activityActor.userName",
-        cwd: workspaceRoot,
-        args: ["config", "user.name"],
-        allowNonZeroExit: true,
-      })
-      .pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.catchCause(() => Effect.succeed("")),
-      );
 
   const resolveName = Effect.fn("board-activity-actor-name")(function* (cardId: BoardCardId) {
     let projectId = projectByCard.get(String(cardId));
@@ -616,10 +611,14 @@ export function boardActorStamp(deps: {
       .project(projectId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
     const workspaceRoot = project?.workspaceRoot;
-    const resolved =
+    const workspace =
       workspaceRoot === undefined || workspaceRoot.length === 0
-        ? ""
-        : yield* gitUserName(workspaceRoot);
+        ? yield* deps.workspaces.forCard({ id: cardId, projectId })
+        : yield* deps.workspaces.localProject(projectId);
+    const resolved = yield* workspace.gitUserName({}).pipe(
+      Effect.map((result) => result.name),
+      Effect.catchCause(() => Effect.succeed("")),
+    );
     const name = resolved.length > 0 ? resolved : BOARD_HUMAN_ACTOR_FALLBACK_NAME;
     nameByProject.set(String(projectId), name);
     return name;
