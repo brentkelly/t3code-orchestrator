@@ -1,0 +1,396 @@
+/**
+ * T3o distributed board: the named git and forge operations a central server
+ * runs on a card's worker (T3O-64, overview D21).
+ *
+ * Remote callers never get raw `git`: each operation here has typed inputs, a
+ * bounded effect and a test. Every payload names the WORKER's project id, and
+ * the worker resolves it to its own checkout — a path the central server sends
+ * is only ever a worktree of that checkout, which the worker checks.
+ *
+ * The same shapes back `BoardWorkspace` on the server, so the local and the
+ * remote implementation answer in one vocabulary.
+ */
+import * as Schema from "effect/Schema";
+import * as Rpc from "effect/rpc/Rpc";
+
+import {
+  AuthOrchestrationReadScope,
+  AuthSourceControlWriteScope,
+  EnvironmentAuthorizationError,
+} from "./auth.ts";
+import { NonNegativeInt, PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { VcsStatusChangeRequest } from "./git.ts";
+import { PullRequestMergeMethod } from "./pullRequest.ts";
+
+// ── Results ────────────────────────────────────────────────────────────
+
+/** The checkout's default branch; `defaultBranch === ""` is the failure
+    signal, and the other two fields say which way it failed. */
+export const BoardWorkspaceDefaultBranch = Schema.Struct({
+  defaultBranch: Schema.String,
+  detachedHead: Schema.Boolean,
+  unbornBranch: Schema.String,
+  /** The checkout's path on its worker, for messages that name it. */
+  checkoutPath: Schema.String,
+});
+export type BoardWorkspaceDefaultBranch = typeof BoardWorkspaceDefaultBranch.Type;
+
+export const BoardWorkspaceProvisionedWorktree = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  branch: TrimmedNonEmptyString,
+  baseRefName: TrimmedNonEmptyString,
+});
+export type BoardWorkspaceProvisionedWorktree = typeof BoardWorkspaceProvisionedWorktree.Type;
+
+/** Cutting a split parent's integration branch (D12). `create-failed` is git
+    itself failing on a repository that is otherwise fine. */
+export const BoardWorkspaceIntegrationBranch = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("ready"), pushed: Schema.Boolean }),
+  Schema.Struct({ outcome: Schema.Literal("create-failed") }),
+]);
+export type BoardWorkspaceIntegrationBranch = typeof BoardWorkspaceIntegrationBranch.Type;
+
+/**
+ * What the durability probe found (T3O-52, D1). `durable`, `unmergedCount`
+ * and the changed paths drive the reclaim decision; `unpushedCount` and
+ * `hasUpstream` are the detail a move-refusal screen shows.
+ */
+export const BoardWorkspaceDurability = Schema.Struct({
+  hasWorkingTreeChanges: Schema.Boolean,
+  changedPaths: Schema.Array(Schema.String),
+  openPullRequestNumber: Schema.NullOr(PositiveInt),
+  durable: Schema.Boolean,
+  /** Commits on `HEAD` that no remote-tracking ref contains. */
+  unmergedCount: NonNegativeInt,
+  /** Commits on `HEAD` that its upstream does not have; every commit no
+      remote has when there is no upstream. */
+  unpushedCount: NonNegativeInt,
+  /** Whether the checked-out branch tracks a remote branch. */
+  hasUpstream: Schema.Boolean,
+  /** Whether this probe fetched the base branch, so a pass fetches each base
+      once rather than once per card. */
+  baseFetched: Schema.Boolean,
+});
+export type BoardWorkspaceDurability = typeof BoardWorkspaceDurability.Type;
+
+export const BoardWorkspaceRetireResult = Schema.NullOr(
+  Schema.Union([
+    Schema.Struct({
+      outcome: Schema.Literal("removed"),
+      hookWarning: Schema.NullOr(Schema.String),
+    }),
+    Schema.Struct({ outcome: Schema.Literal("blocked"), reason: Schema.String }),
+  ]),
+);
+export type BoardWorkspaceRetireResult = typeof BoardWorkspaceRetireResult.Type;
+
+/** A `board/*` worktree under the worker's own worktrees directory. */
+export const BoardWorkspaceWorktree = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  branch: TrimmedNonEmptyString,
+});
+export type BoardWorkspaceWorktree = typeof BoardWorkspaceWorktree.Type;
+
+export const BoardWorkspaceBranchCleanup = Schema.Struct({
+  remoteDeleted: Schema.Boolean,
+  localDeleted: Schema.Boolean,
+  skippedReason: Schema.NullOr(Schema.String),
+});
+export type BoardWorkspaceBranchCleanup = typeof BoardWorkspaceBranchCleanup.Type;
+
+export const BoardWorkspaceBaseBranchSync = Schema.Struct({
+  updated: Schema.Boolean,
+  skippedReason: Schema.NullOr(Schema.String),
+});
+export type BoardWorkspaceBaseBranchSync = typeof BoardWorkspaceBaseBranchSync.Type;
+
+export const BoardWorkspaceLocalMergeConflict = Schema.Literals(["conflict", "clean", "unknown"]);
+export type BoardWorkspaceLocalMergeConflict = typeof BoardWorkspaceLocalMergeConflict.Type;
+
+/** The tip of a branch on the remote, for the move and force-move dialogs. */
+export const BoardWorkspaceRemoteBranchTip = Schema.NullOr(
+  Schema.Struct({
+    sha: TrimmedNonEmptyString,
+    subject: Schema.String,
+    committedAt: Schema.String,
+    author: Schema.String,
+  }),
+);
+export type BoardWorkspaceRemoteBranchTip = typeof BoardWorkspaceRemoteBranchTip.Type;
+
+/** A pull request as the board reads it (`BoardFoundPullRequest`). */
+export const BoardWorkspacePullRequest = Schema.Struct({
+  ...VcsStatusChangeRequest.fields,
+  mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  closedAt: Schema.optional(Schema.NullOr(Schema.String)),
+});
+export type BoardWorkspacePullRequest = typeof BoardWorkspacePullRequest.Type;
+
+/** Why the forge is refusing a merge (`BoardMergeState`). */
+export const BoardWorkspaceMergeState = Schema.Struct({
+  mergeable: Schema.Literals(["mergeable", "blocked", "unknown"]),
+  blockedReason: Schema.NullOr(Schema.Literals(["behind", "draft", "conflict", "other"])),
+  checks: Schema.Struct({
+    total: NonNegativeInt,
+    passed: NonNegativeInt,
+    pending: NonNegativeInt,
+    failed: NonNegativeInt,
+    failing: Schema.Array(Schema.String),
+    running: Schema.Array(Schema.String),
+  }),
+  headSha: Schema.NullOr(Schema.String),
+  checksUnread: Schema.Boolean,
+});
+export type BoardWorkspaceMergeState = typeof BoardWorkspaceMergeState.Type;
+
+/** The repository the board's pull requests live on (`BoardRepository`). */
+export const BoardWorkspaceRepository = Schema.NullOr(
+  Schema.Struct({
+    repository: Schema.String,
+    host: Schema.optional(Schema.String),
+    path: Schema.String,
+  }),
+);
+export type BoardWorkspaceRepository = typeof BoardWorkspaceRepository.Type;
+
+/**
+ * A named operation the worker ran and that failed — git, or the forge. The
+ * pull-request operations carry the gateway's `refusal`, so a merge refused on
+ * a remote worker reads exactly like one refused locally.
+ */
+export class BoardWorkerGitError extends Schema.TaggedError<BoardWorkerGitError>()(
+  "BoardWorkerGitError",
+  {
+    operation: Schema.String,
+    detail: Schema.String,
+    refusal: Schema.optional(Schema.Literals(["host", "blocked", "unavailable"])),
+  },
+) {}
+
+// ── RPCs (`boardWorker.git.*`) ─────────────────────────────────────────
+
+export const BOARD_WORKER_GIT_WS_METHODS = {
+  resolveDefaultBranch: "boardWorker.git.resolveDefaultBranch",
+  remoteDefaultBranch: "boardWorker.git.remoteDefaultBranch",
+  ensureLocalBaseBranch: "boardWorker.git.ensureLocalBaseBranch",
+  provisionWorktree: "boardWorker.git.provisionWorktree",
+  provisionWorktreeFromRemoteBranch: "boardWorker.git.provisionWorktreeFromRemoteBranch",
+  pinGhDefault: "boardWorker.git.pinGhDefault",
+  branchHeartbeat: "boardWorker.git.branchHeartbeat",
+  measureBaseTip: "boardWorker.git.measureBaseTip",
+  createIntegrationBranch: "boardWorker.git.createIntegrationBranch",
+  probeLocalMergeConflict: "boardWorker.git.probeLocalMergeConflict",
+  pullMergedBaseBranch: "boardWorker.git.pullMergedBaseBranch",
+  probeWorktreeDurability: "boardWorker.git.probeWorktreeDurability",
+  goneWorktreePath: "boardWorker.git.goneWorktreePath",
+  pruneWorktree: "boardWorker.git.pruneWorktree",
+  retireWorktree: "boardWorker.git.retireWorktree",
+  listBoardWorktrees: "boardWorker.git.listBoardWorktrees",
+  deleteCardBranch: "boardWorker.git.deleteCardBranch",
+  gitUserName: "boardWorker.git.gitUserName",
+  remoteBranchTip: "boardWorker.git.remoteBranchTip",
+  pullRequestByBranch: "boardWorker.git.pullRequestByBranch",
+  getPullRequest: "boardWorker.git.getPullRequest",
+  mergePullRequest: "boardWorker.git.mergePullRequest",
+  pullRequestMergeState: "boardWorker.git.pullRequestMergeState",
+  markPullRequestReady: "boardWorker.git.markPullRequestReady",
+  pullRequestRepository: "boardWorker.git.pullRequestRepository",
+} as const;
+
+export type BoardWorkerGitOperation = keyof typeof BOARD_WORKER_GIT_WS_METHODS;
+
+const gitError = Schema.Union([BoardWorkerGitError, EnvironmentAuthorizationError]);
+const M = BOARD_WORKER_GIT_WS_METHODS;
+const onProject = { projectId: ProjectId };
+const branchName = TrimmedNonEmptyString;
+const path = TrimmedNonEmptyString;
+
+export const BOARD_WORKER_GIT_RPCS = [
+  Rpc.make(M.resolveDefaultBranch, {
+    payload: onProject,
+    success: BoardWorkspaceDefaultBranch,
+    error: gitError,
+  }),
+  Rpc.make(M.remoteDefaultBranch, {
+    payload: onProject,
+    success: Schema.Struct({ branch: Schema.String }),
+    error: gitError,
+  }),
+  Rpc.make(M.ensureLocalBaseBranch, {
+    payload: { ...onProject, base: branchName },
+    success: Schema.Struct({ exists: Schema.Boolean }),
+    error: gitError,
+  }),
+  Rpc.make(M.provisionWorktree, {
+    payload: { ...onProject, branch: branchName, baseRefName: branchName },
+    success: BoardWorkspaceProvisionedWorktree,
+    error: gitError,
+  }),
+  Rpc.make(M.provisionWorktreeFromRemoteBranch, {
+    payload: { ...onProject, branch: branchName, baseRefName: branchName },
+    success: BoardWorkspaceProvisionedWorktree,
+    error: gitError,
+  }),
+  Rpc.make(M.pinGhDefault, {
+    payload: { ...onProject, worktreePath: path },
+    success: Schema.Void,
+    error: gitError,
+  }),
+  Rpc.make(M.branchHeartbeat, {
+    payload: { ...onProject, worktreePath: path, baseRefName: branchName },
+    success: Schema.Struct({ committedAt: Schema.NullOr(Schema.String) }),
+    error: gitError,
+  }),
+  Rpc.make(M.measureBaseTip, {
+    payload: { ...onProject, baseRefName: branchName },
+    success: Schema.Struct({ tip: Schema.NullOr(Schema.String) }),
+    error: gitError,
+  }),
+  Rpc.make(M.createIntegrationBranch, {
+    payload: { ...onProject, branch: branchName, base: branchName },
+    success: BoardWorkspaceIntegrationBranch,
+    error: gitError,
+  }),
+  Rpc.make(M.probeLocalMergeConflict, {
+    payload: { ...onProject, headBranch: branchName, baseBranch: branchName },
+    success: Schema.Struct({ result: BoardWorkspaceLocalMergeConflict }),
+    error: gitError,
+  }),
+  Rpc.make(M.pullMergedBaseBranch, {
+    payload: { ...onProject, baseBranch: branchName },
+    success: BoardWorkspaceBaseBranchSync,
+    error: gitError,
+  }),
+  Rpc.make(M.probeWorktreeDurability, {
+    payload: {
+      ...onProject,
+      worktreePath: path,
+      baseRefName: branchName,
+      branch: branchName,
+      mergedPullRequestNumbers: Schema.Array(PositiveInt),
+      openPullRequestNumber: Schema.NullOr(PositiveInt),
+      baseAlreadyFetched: Schema.Boolean,
+    },
+    success: BoardWorkspaceDurability,
+    error: gitError,
+  }),
+  Rpc.make(M.goneWorktreePath, {
+    payload: { ...onProject, worktreePath: path, branch: branchName },
+    success: Schema.Struct({ path: Schema.NullOr(Schema.String) }),
+    error: gitError,
+  }),
+  Rpc.make(M.pruneWorktree, {
+    payload: { ...onProject, worktreePath: path },
+    success: Schema.Void,
+    error: gitError,
+  }),
+  Rpc.make(M.retireWorktree, {
+    payload: {
+      ...onProject,
+      worktreePath: path,
+      kind: Schema.Literals(["reclaim", "forced"]),
+      verifiedClean: Schema.Boolean,
+    },
+    success: BoardWorkspaceRetireResult,
+    error: gitError,
+  }),
+  Rpc.make(M.listBoardWorktrees, {
+    payload: onProject,
+    success: Schema.Struct({ worktrees: Schema.Array(BoardWorkspaceWorktree) }),
+    error: gitError,
+  }),
+  Rpc.make(M.deleteCardBranch, {
+    payload: { ...onProject, branch: branchName },
+    success: BoardWorkspaceBranchCleanup,
+    error: gitError,
+  }),
+  Rpc.make(M.gitUserName, {
+    payload: onProject,
+    success: Schema.Struct({ name: Schema.String }),
+    error: gitError,
+  }),
+  Rpc.make(M.remoteBranchTip, {
+    payload: { ...onProject, branch: branchName },
+    success: BoardWorkspaceRemoteBranchTip,
+    error: gitError,
+  }),
+  Rpc.make(M.pullRequestByBranch, {
+    payload: {
+      ...onProject,
+      branch: branchName,
+      /** Looked up from this worktree when it is still there. */
+      worktreePath: Schema.NullOr(path),
+      force: Schema.Boolean,
+    },
+    success: Schema.NullOr(BoardWorkspacePullRequest),
+    error: gitError,
+  }),
+  Rpc.make(M.getPullRequest, {
+    payload: { ...onProject, number: PositiveInt, force: Schema.Boolean },
+    success: BoardWorkspacePullRequest,
+    error: gitError,
+  }),
+  Rpc.make(M.mergePullRequest, {
+    payload: { ...onProject, number: PositiveInt, method: PullRequestMergeMethod },
+    success: Schema.Void,
+    error: gitError,
+  }),
+  Rpc.make(M.pullRequestMergeState, {
+    payload: { ...onProject, number: PositiveInt },
+    success: BoardWorkspaceMergeState,
+    error: gitError,
+  }),
+  Rpc.make(M.markPullRequestReady, {
+    payload: { ...onProject, number: PositiveInt },
+    success: Schema.Literals(["readied", "not-draft"]),
+    error: gitError,
+  }),
+  Rpc.make(M.pullRequestRepository, {
+    payload: onProject,
+    success: BoardWorkspaceRepository,
+    error: gitError,
+  }),
+] as const;
+
+export type BoardWorkerGitRpc = (typeof BOARD_WORKER_GIT_RPCS)[number];
+export type BoardWorkerGitMethod = BoardWorkerGitRpc["_tag"];
+export type BoardWorkerGitPayload<Method extends BoardWorkerGitMethod> = Rpc.Payload<
+  Rpc.ExtractTag<BoardWorkerGitRpc, Method>
+>;
+export type BoardWorkerGitSuccess<Method extends BoardWorkerGitMethod> = Rpc.Success<
+  Rpc.ExtractTag<BoardWorkerGitRpc, Method>
+>;
+
+/**
+ * Scopes, spread into `BOARD_RPC_SCOPES`. Reads sit at the thread-read tier;
+ * anything that writes to the repository — a ref, a worktree, a branch, a
+ * merge, even a fetch's remote-tracking refs — at source-control write. The
+ * board's own session holds both (D19).
+ */
+export const BOARD_WORKER_GIT_RPC_SCOPES = {
+  [M.resolveDefaultBranch]: AuthOrchestrationReadScope,
+  [M.remoteDefaultBranch]: AuthOrchestrationReadScope,
+  [M.ensureLocalBaseBranch]: AuthSourceControlWriteScope,
+  [M.provisionWorktree]: AuthSourceControlWriteScope,
+  [M.provisionWorktreeFromRemoteBranch]: AuthSourceControlWriteScope,
+  [M.pinGhDefault]: AuthSourceControlWriteScope,
+  [M.branchHeartbeat]: AuthOrchestrationReadScope,
+  [M.measureBaseTip]: AuthSourceControlWriteScope,
+  [M.createIntegrationBranch]: AuthSourceControlWriteScope,
+  [M.probeLocalMergeConflict]: AuthSourceControlWriteScope,
+  [M.pullMergedBaseBranch]: AuthSourceControlWriteScope,
+  [M.probeWorktreeDurability]: AuthSourceControlWriteScope,
+  [M.goneWorktreePath]: AuthOrchestrationReadScope,
+  [M.pruneWorktree]: AuthSourceControlWriteScope,
+  [M.retireWorktree]: AuthSourceControlWriteScope,
+  [M.listBoardWorktrees]: AuthOrchestrationReadScope,
+  [M.deleteCardBranch]: AuthSourceControlWriteScope,
+  [M.gitUserName]: AuthOrchestrationReadScope,
+  [M.remoteBranchTip]: AuthSourceControlWriteScope,
+  [M.pullRequestByBranch]: AuthOrchestrationReadScope,
+  [M.getPullRequest]: AuthOrchestrationReadScope,
+  [M.mergePullRequest]: AuthSourceControlWriteScope,
+  [M.pullRequestMergeState]: AuthOrchestrationReadScope,
+  [M.markPullRequestReady]: AuthSourceControlWriteScope,
+  [M.pullRequestRepository]: AuthOrchestrationReadScope,
+} as const satisfies Record<BoardWorkerGitMethod, string>;

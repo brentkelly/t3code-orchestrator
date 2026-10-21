@@ -65,6 +65,7 @@ import {
   BoardWorkersState,
   BoardWorkerSetDefaultCommand,
 } from "./boardWorkers.ts";
+import { BOARD_WORKER_GIT_RPC_SCOPES, BOARD_WORKER_GIT_RPCS } from "./boardWorkspace.ts";
 
 export const BoardCardId = TrimmedNonEmptyString.pipe(Schema.brand("BoardCardId"));
 export type BoardCardId = typeof BoardCardId.Type;
@@ -7955,6 +7956,8 @@ export const BOARD_RPCS = [
   // `boardWorker.*` the central server calls over its own session.
   ...BOARD_WORKERS_RPCS,
   ...BOARD_WORKER_RPCS,
+  // T3O-64: the named git and forge operations a card's worker runs (D21).
+  ...BOARD_WORKER_GIT_RPCS,
 ] as const;
 
 /**
@@ -7995,6 +7998,7 @@ export const BOARD_RPC_SCOPES = {
   [BOARD_WS_METHODS.setProviderLimitResumeAt]: AuthOrchestrationOperateScope,
   // T3O-62: worker management and the worker side's handshake (D19).
   ...BOARD_WORKER_RPC_SCOPES,
+  ...BOARD_WORKER_GIT_RPC_SCOPES,
 } as const;
 
 // ── Board settings (D10, t3o-07) ───────────────────────────────────────
