@@ -1,8 +1,8 @@
 /**
  * Everything the board adds to the server, as one layer (T3O-59): the
  * supervisor and its slots, the board's engine, queries and thread tail, its
- * window onto the forge, worktree retirement, and the v2 thread gateway below
- * them all. `server.ts` merges it into the runtime with one seam and provides
+ * workers (T3O-62), its window onto the forge, worktree retirement, and the v2
+ * thread gateway below them all. `server.ts` merges it into the runtime with one seam and provides
  * the upstream services it needs from the same graph.
  *
  * `EventSinkV2` must be upstream's own instance (the gateway subscribes to its
@@ -20,10 +20,23 @@ import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts
 import { ThreadGatewayV2Live } from "./ThreadGatewayV2.ts";
 import { UsageLimitDetectorLive } from "./UsageLimitDetector.ts";
 import { WorktreeRetirerLive } from "./worktreeRetire.ts";
+import { BoardWorkersLive } from "./workers/BoardWorkers.ts";
+import { WorkerConnectionsLive } from "./workers/WorkerConnections.ts";
+import { WorkerSnapshotStoreLive } from "./workers/WorkerSnapshotStore.ts";
+import { WorkerTransportLive } from "./workers/WorkerTransport.ts";
+
+/** The distributed board (T3O-62): worker management over the connections the
+    central server holds to each worker. */
+const BoardWorkersServerLive = BoardWorkersLive.pipe(
+  Layer.provideMerge(WorkerConnectionsLive),
+  Layer.provideMerge(WorkerTransportLive),
+  Layer.provide(WorkerSnapshotStoreLive),
+);
 
 export const BoardServerLive = SupervisorReactorLive.pipe(
   Layer.provide(BoardStepSlotsLive),
   Layer.provide(UsageLimitDetectorLive),
+  Layer.provideMerge(BoardWorkersServerLive),
   Layer.provideMerge(BoardRuntimeLive),
   Layer.provideMerge(BoardPullRequestGatewayLive),
   Layer.provideMerge(WorktreeRetirerLive),
