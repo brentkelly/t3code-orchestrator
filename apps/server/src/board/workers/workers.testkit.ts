@@ -60,7 +60,7 @@ export const helloFor = (environmentId: string, protocolVersion = BOARD_WORKER_P
     t3oVersion: "0.0.45",
   }) satisfies BoardWorkerHello;
 
-export const makeFakeWorkers = Effect.gen(function* () {
+export const makeFakeWorkers = Effect.sync(() => {
   const workers = new Map<string, FakeWorker>();
 
   const add = (url: string, environmentId: string) =>

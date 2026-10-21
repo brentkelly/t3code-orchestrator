@@ -574,8 +574,8 @@ export const makeBoardWorkers = Effect.gen(function* () {
       const key = setupKey(worker.id, project.id);
       const previous = (yield* SubscriptionRef.get(setups)).get(key);
       if (previous?.phase === "cloning") return previous;
-      const folder = input.folder ?? worker.snapshot?.projectsFolder ?? "~";
-      const destinationPath = cloneDestination(folder, remoteUrl);
+      const destinationPath =
+        input.folder ?? cloneDestination(worker.snapshot?.projectsFolder ?? "~", remoteUrl);
       const startedAt = yield* nowIso;
 
       // A failed clone the worker still tracks is retried in place; anything

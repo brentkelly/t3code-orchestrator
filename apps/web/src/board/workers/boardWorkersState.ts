@@ -33,7 +33,10 @@ export const mintWorkerPairingToken = createRuntimeCommand(connectionAtomRuntime
           message: "This device isn't connected to that environment.",
         });
       }
-      return yield* mintEnvironmentPairingToken({ prepared, label: input.sessionLabel });
+      const minted = yield* mintEnvironmentPairingToken({ prepared, label: input.sessionLabel });
+      // Where THIS device reaches the worker, which is where the board server
+      // is asked to dial it.
+      return { token: minted.credential, httpBaseUrl: prepared.httpBaseUrl };
     }),
 });
 
@@ -59,18 +62,35 @@ export function useBoardWorkers(environmentId: EnvironmentId): BoardWorkersView 
 }
 
 /**
- * The current time, re-read once at `deadline` (and never otherwise), so a
- * transient state like "Set up just now" settles without a ticking clock
- * repainting the page.
+ * The current time, re-read only when one of `deadlines` passes (and never
+ * otherwise), so a transient state like "Set up just now" settles without a
+ * ticking clock repainting the page.
  */
-export function useNowUntil(deadline: number | null): number {
+export function useNowAtDeadlines(deadlines: ReadonlyArray<number>): number {
   const [now, setNow] = useState(() => Date.now());
+  const key = deadlines.join(",");
   useEffect(() => {
-    if (deadline === null) return;
-    const delay = deadline - Date.now();
-    if (delay <= 0) return;
-    const timer = setTimeout(() => setNow(Date.now()), delay + 50);
+    const deadlinesNow = key
+      .split(",")
+      .filter((part) => part.length > 0)
+      .map(Number);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => {
+      const current = Date.now();
+      const next = deadlinesNow
+        .filter((deadline) => deadline > current)
+        .toSorted((left, right) => left - right)[0];
+      if (next === undefined) return;
+      timer = setTimeout(
+        () => {
+          setNow(Date.now());
+          arm();
+        },
+        next - current + 50,
+      );
+    };
+    arm();
     return () => clearTimeout(timer);
-  }, [deadline]);
+  }, [key]);
   return now;
 }

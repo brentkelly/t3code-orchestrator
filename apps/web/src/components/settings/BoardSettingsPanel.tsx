@@ -50,6 +50,7 @@ import {
   setBoardProjectSetting,
 } from "./BoardSettingsPanel.logic";
 import { BoardPipelineSection, NumberStepper } from "./BoardPipelineSection";
+import { BoardWorkerSettings } from "../../board/workers/BoardWorkerSettings";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
@@ -81,6 +82,8 @@ export function BoardSettingsPanel() {
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
       <BoardPipelineSection />
       <ConcurrencySection board={board} instanceIds={instanceIds} update={update} />
+      {/* T3O-62: the board's workers, and which projects each has checked out. */}
+      {environmentId === null ? null : <BoardWorkerSettings environmentId={environmentId} />}
       <LifecycleSection board={board} update={update} />
     </SettingsPageContainer>
   );

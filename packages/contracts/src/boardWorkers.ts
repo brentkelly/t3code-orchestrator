@@ -482,8 +482,8 @@ export type BoardWorkersSetDefaultInput = typeof BoardWorkersSetDefaultInput.Typ
 export const BoardWorkersSetupProjectInput = Schema.Struct({
   projectId: ProjectId,
   workerId: EnvironmentId,
-  /** The folder to clone INTO; the repository's own folder is created below
-      it. Defaults to the worker's projects folder. */
+  /** The folder to clone into, on the worker. Defaults to the worker's
+      projects folder plus the repository's name. */
   folder: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type BoardWorkersSetupProjectInput = typeof BoardWorkersSetupProjectInput.Type;

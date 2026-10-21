@@ -423,7 +423,7 @@ describe("BoardWorkers", () => {
         yield* workers.setupProject({
           projectId: PROJECT_ID,
           workerId: WORKER_ID,
-          folder: "/srv/code",
+          folder: "/srv/code/app",
         });
         const [start] = worker.cloneStarts;
         assert.strictEqual(start?.destinationPath, "/srv/code/app");
@@ -441,7 +441,7 @@ describe("BoardWorkers", () => {
         const retried = yield* workers.setupProject({
           projectId: PROJECT_ID,
           workerId: WORKER_ID,
-          folder: "/srv/code",
+          folder: "/srv/code/app",
         });
         assert.strictEqual(retried.phase, "cloning");
         assert.deepStrictEqual(worker.cloneRetries, [start!.projectId]);
