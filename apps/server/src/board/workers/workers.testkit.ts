@@ -54,6 +54,8 @@ export interface FakeWorker {
   /** Whether `projectClone.retry` finds the clone; false once it forgot it. */
   retryApplied: boolean;
   released: number;
+  /** Runs as each release arrives, before it is counted. */
+  onRelease: Effect.Effect<void>;
   /** The session each release gave back. */
   readonly releasedTokens: Array<string>;
   /** The session each renew was asked by, in order; its successor is
@@ -105,6 +107,7 @@ export const makeFakeWorkers = Effect.sync(() => {
         cloneRetries: [],
         retryApplied: true,
         released: 0,
+        onRelease: Effect.void,
         releasedTokens: [],
         renewedTokens: [],
         sessionExpiry: new Map(),
@@ -153,10 +156,14 @@ export const makeFakeWorkers = Effect.sync(() => {
         providers: worker.providers,
         projectsFolder: worker.projectsFolder,
       })),
-      release: Effect.sync(() => {
-        worker.released += 1;
-        worker.releasedTokens.push(accessToken);
-      }),
+      release: Effect.suspend(() => worker.onRelease).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            worker.released += 1;
+            worker.releasedTokens.push(accessToken);
+          }),
+        ),
+      ),
       renew: Clock.currentTimeMillis.pipe(
         Effect.map((now) => {
           worker.renewedTokens.push(accessToken);

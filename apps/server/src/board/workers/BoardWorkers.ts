@@ -463,14 +463,9 @@ export const makeBoardWorkers = Effect.gen(function* () {
       if ((yield* defaultWorkerId) === workerId) {
         return yield* actionError("is-default", "Make another worker the default first.");
       }
-      // Give the session back first, while the connection that can do it is
-      // still up. Unreachable is fine: the human can revoke it on the worker.
-      const revoked = yield* connections.get(workerId).pipe(
-        Effect.flatMap((rpc) => rpc.release.pipe(Effect.timeout(RELEASE_TIMEOUT))),
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      );
-      yield* secrets.remove(workerSecretName(workerId)).pipe(Effect.ignore);
+      // The record goes first: a removal the decider refuses (a concurrent
+      // Make default, say) must leave the worker's session and token intact.
+      const rpc = yield* connections.get(workerId).pipe(Effect.option);
       yield* engine
         .dispatch({
           type: "board.worker.remove",
@@ -479,6 +474,16 @@ export const makeBoardWorkers = Effect.gen(function* () {
           createdAt: yield* nowIso,
         })
         .pipe(Effect.mapError((cause) => actionError("internal", cause.message)));
+      // Then the session goes back over the connection, still held until the
+      // sync below. Unreachable is fine: the human can revoke it on the worker.
+      const revoked = Option.isNone(rpc)
+        ? false
+        : yield* rpc.value.release.pipe(
+            Effect.timeout(RELEASE_TIMEOUT),
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          );
+      yield* secrets.remove(workerSecretName(workerId)).pipe(Effect.ignore);
       yield* syncConnections;
       yield* dropSetups(workerId);
       return { revoked };
@@ -634,21 +639,9 @@ export const makeBoardWorkers = Effect.gen(function* () {
           ),
         );
       const key = setupKey(worker.id, project.id);
-      const previous = (yield* SubscriptionRef.get(setups)).get(key);
-      if (previous?.phase === "cloning") return previous;
       const destinationPath =
         input.folder ?? cloneDestination(worker.snapshot?.projectsFolder ?? "~", remoteUrl);
       const startedAt = yield* nowIso;
-
-      // A failed clone the worker still tracks is retried in place; anything
-      // else (a new folder, a folder that existed) starts a fresh clone.
-      const retryId =
-        previous?.phase === "failed" &&
-        previous.destinationPath === destinationPath &&
-        previous.failure?.kind !== "folder-exists" &&
-        previous.failure?.kind !== "worker-offline"
-          ? previous.workerProjectId
-          : null;
       const setup: BoardWorkerSetup = {
         projectId: project.id,
         workerId: worker.id,
@@ -661,6 +654,26 @@ export const makeBoardWorkers = Effect.gen(function* () {
         startedAt,
         endedAt: null,
       };
+      // Claimed before going over the network, so a second Set up for the
+      // same project and worker joins this one instead of cloning again.
+      const previous = yield* SubscriptionRef.modify(
+        setups,
+        (map): readonly [BoardWorkerSetup | undefined, Map<string, BoardWorkerSetup>] => {
+          const existing = map.get(key);
+          return [existing, existing?.phase === "cloning" ? map : new Map(map).set(key, setup)];
+        },
+      );
+      if (previous?.phase === "cloning") return previous;
+
+      // A failed clone the worker still tracks is retried in place; anything
+      // else (a new folder, a folder that existed) starts a fresh clone.
+      const retryId =
+        previous?.phase === "failed" &&
+        previous.destinationPath === destinationPath &&
+        previous.failure?.kind !== "folder-exists" &&
+        previous.failure?.kind !== "worker-offline"
+          ? previous.workerProjectId
+          : null;
       const startFresh = Effect.gen(function* () {
         const projectId = ProjectId.make(yield* newUuid);
         yield* rpc.startProjectClone({

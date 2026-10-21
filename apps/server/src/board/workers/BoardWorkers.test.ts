@@ -13,7 +13,9 @@ import {
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
@@ -381,8 +383,15 @@ describe("BoardWorkers", () => {
         const { http, kit, worker, connections, workers } = yield* setup;
         yield* addWithToken(workers, http);
         yield* waitFor(connections, "online");
+        // The session goes back only once the removal has landed.
+        const registeredAtRelease: Array<boolean> = [];
+        worker.onRelease = workers.state.pipe(
+          Effect.map((current) => current.workers.some((entry) => entry.id === WORKER_ID)),
+          Effect.flatMap((registered) => Effect.sync(() => registeredAtRelease.push(registered))),
+        );
         const removed = yield* workers.remove(WORKER_ID);
         assert.isTrue(removed.revoked);
+        assert.deepStrictEqual(registeredAtRelease, [false]);
         assert.strictEqual(worker.released, 1);
         assert.strictEqual(kit.secrets.secrets.size, 0);
         assert.deepStrictEqual((yield* workers.state).workers, []);
@@ -477,6 +486,33 @@ describe("BoardWorkers", () => {
         });
         const done = yield* waitForSetup(workers, (setup) => setup.phase === "done");
         assert.isNotNull(done.endedAt);
+      }),
+    ));
+
+  test("two Set up calls at once for the same project and worker start one clone", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { http, worker, connections, workers } = yield* setup;
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+
+        // The worker takes a moment to accept the clone.
+        const accepted = yield* Deferred.make<void>();
+        const accept = worker.startClone;
+        worker.startClone = (input) => Deferred.await(accepted).pipe(Effect.andThen(accept(input)));
+        const both = yield* Effect.all(
+          [
+            workers.setupProject({ projectId: PROJECT_ID, workerId: WORKER_ID }),
+            workers.setupProject({ projectId: PROJECT_ID, workerId: WORKER_ID }),
+          ],
+          { concurrency: 2 },
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(accepted, undefined);
+        const [first, second] = yield* Fiber.join(both);
+        assert.strictEqual(worker.cloneStarts.length, 1);
+        assert.strictEqual(first.phase, "cloning");
+        assert.strictEqual(second.phase, "cloning");
       }),
     ));
 
