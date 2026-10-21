@@ -548,6 +548,28 @@ describe("the worker side of the named operations (T3O-64)", () => {
         assert.strictEqual(refused._tag, "BoardWorkerGitError");
         assert.include(detailOf(refused), "not one of this project's worktrees");
       }
+      // A folder under the worktrees directory that this project never
+      // registered (another project's checkout, the per-repo container) is
+      // not this project's either.
+      const config = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const foreign = NodePath.join(config.worktreesDir, "other-repo", "board-x");
+      yield* fileSystem.makeDirectory(foreign, { recursive: true });
+      for (const worktreePath of [foreign, NodePath.dirname(foreign)]) {
+        const refused = yield* Effect.flip(
+          ws.retireWorktree({ projectId, worktreePath, kind: "forced", verifiedClean: false }),
+        );
+        assert.strictEqual(refused._tag, "BoardWorkerGitError");
+        assert.include(detailOf(refused), "not one of this project's worktrees");
+      }
+      assert.isTrue(yield* fileSystem.exists(foreign));
+      // A checkout already gone from disk and git may still be named on retry.
+      const gone = yield* ws.goneWorktreePath({
+        projectId,
+        worktreePath: NodePath.join(config.worktreesDir, "repo", "board-gone"),
+        branch: "board/gone",
+      });
+      assert.isNotNull(gone);
       // A registered worktree outside the worktrees directory is still the
       // project's own.
       const elsewhere = NodePath.join(env.root, "elsewhere");

@@ -71,11 +71,17 @@ export function makeBoardWorkspaces(
     return relative !== "" && !relative.startsWith("..") && !pathService.isAbsolute(relative);
   };
 
+  /**
+   * Whether `path` is one of the project's worktrees on this server: a
+   * checkout the project's repository has registered, or — a checkout already
+   * gone from disk and from git, which a reclaim or forced removal may still
+   * name on retry — a missing path under the worktrees directory. A folder
+   * that exists there but is not the project's (another project's checkout,
+   * the per-repository container) is refused.
+   */
   const ownsWorktreePath: BoardWorkspacesShape["ownsWorktreePath"] = (projectId, path) =>
     Effect.gen(function* () {
       const resolved = pathService.resolve(path);
-      const roots = yield* deps.worktreeRoots;
-      if (roots.some((root) => isWithinRoot(resolved, root))) return true;
       const cwd = yield* deps.projectRoot(projectId);
       if (cwd === null) return false;
       const listed = yield* deps.git
@@ -87,9 +93,14 @@ export function makeBoardWorkspaces(
         })
         .pipe(Effect.catch(() => Effect.succeed(null)));
       if (listed === null || listed.exitCode !== 0) return false;
-      return parseRegisteredWorktrees(listed.stdout)
+      const registered = parseRegisteredWorktrees(listed.stdout)
         .slice(1)
-        .some((registered) => pathService.resolve(registered.path) === resolved);
+        .some((worktree) => pathService.resolve(worktree.path) === resolved);
+      if (registered) return true;
+      const roots = yield* deps.worktreeRoots;
+      if (!roots.some((root) => isWithinRoot(resolved, root))) return false;
+      const exists = yield* deps.fileSystem.exists(resolved).pipe(Effect.orElseSucceed(() => true));
+      return !exists;
     });
 
   return {
