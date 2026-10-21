@@ -25,6 +25,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { SecretStorePersistError, ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import type { WorkerGatewayRpc } from "./gatewayWire.ts";
 import { WorkerSnapshotStore, makeMemoryWorkerSnapshotStore } from "./WorkerSnapshotStore.ts";
 import {
   WorkerConnectError,
@@ -70,7 +71,45 @@ export interface FakeWorker {
   readonly sessionExpiry: Map<string, number>;
   /** The open link's close signal, while one is open. */
   link: Deferred.Deferred<void> | null;
+  /** What the worker's thread gateway answers (T3O-63): an in-process
+      worker's own host, or a worker that has none. */
+  gateway: WorkerGatewayRpc;
 }
+
+/** A worker without the T3O-63 gateway: every call is unsupported. */
+export const unsupportedGateway: WorkerGatewayRpc = (() => {
+  const unsupported = new WorkerRpcError({
+    message: "The worker doesn't support this board call.",
+    unsupported: true,
+  });
+  const fail = () => Effect.fail(unsupported);
+  const failStream = () => Stream.fail(unsupported);
+  return {
+    spawn: fail,
+    send: fail,
+    interrupt: fail,
+    stopSession: fail,
+    settle: fail,
+    delete: fail,
+    armLimitRecovery: fail,
+    threadState: fail,
+    threadRecords: fail,
+    threadsInWorktree: fail,
+    listLiveThreadIds: Effect.fail(unsupported),
+    latestAssistantMessage: fail,
+    lastSignalAt: fail,
+    pendingTurnStartAt: fail,
+    projects: Effect.fail(unsupported),
+    project: fail,
+    subscribeSignals: failStream,
+    todoLogHead: Effect.fail(unsupported),
+    readTodoLog: failStream,
+    subscribeTodoLog: Stream.fail(unsupported),
+    subscribeMcpRelay: failStream,
+    mcpRelayRespond: fail,
+    stageAttachments: fail,
+  };
+})();
 
 /** Upstream's fixed session lifetime. */
 export const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
@@ -82,6 +121,48 @@ export const helloFor = (environmentId: string, protocolVersion = BOARD_WORKER_P
     t3oVersion: "0.0.45",
     sessionExpiresAt: null,
   }) satisfies BoardWorkerHello;
+
+/** A gateway bound to one link: its streams end with `gone` when the link
+    drops, and its calls fail once it has. */
+const linkedGateway = (
+  gateway: WorkerGatewayRpc,
+  closed: Deferred.Deferred<void>,
+  gone: WorkerRpcError,
+): WorkerGatewayRpc => {
+  const guard = <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E | WorkerRpcError> =>
+    Deferred.isDone(closed).pipe(
+      Effect.flatMap((done): Effect.Effect<A, E | WorkerRpcError> =>
+        done ? Effect.fail(gone) : effect,
+      ),
+    );
+  const live = <A, E>(stream: Stream.Stream<A, E>): Stream.Stream<A, E | WorkerRpcError> =>
+    stream.pipe(Stream.interruptWhen(Deferred.await(closed)), Stream.concat(Stream.fail(gone)));
+  return {
+    spawn: (input) => guard(gateway.spawn(input)),
+    send: (input) => guard(gateway.send(input)),
+    interrupt: (input) => guard(gateway.interrupt(input)),
+    stopSession: (input) => guard(gateway.stopSession(input)),
+    settle: (input) => guard(gateway.settle(input)),
+    delete: (input) => guard(gateway.delete(input)),
+    armLimitRecovery: (input) => guard(gateway.armLimitRecovery(input)),
+    threadState: (threadId) => guard(gateway.threadState(threadId)),
+    threadRecords: (threadIds) => guard(gateway.threadRecords(threadIds)),
+    threadsInWorktree: (path) => guard(gateway.threadsInWorktree(path)),
+    listLiveThreadIds: guard(gateway.listLiveThreadIds),
+    latestAssistantMessage: (threadId) => guard(gateway.latestAssistantMessage(threadId)),
+    lastSignalAt: (threadId) => guard(gateway.lastSignalAt(threadId)),
+    pendingTurnStartAt: (threadId) => guard(gateway.pendingTurnStartAt(threadId)),
+    projects: guard(gateway.projects),
+    project: (projectId) => guard(gateway.project(projectId)),
+    subscribeSignals: (after) => live(gateway.subscribeSignals(after)),
+    todoLogHead: guard(gateway.todoLogHead),
+    readTodoLog: (after, upTo) => gateway.readTodoLog(after, upTo),
+    subscribeTodoLog: live(gateway.subscribeTodoLog),
+    subscribeMcpRelay: (central) => live(gateway.subscribeMcpRelay(central)),
+    mcpRelayRespond: (response) => guard(gateway.mcpRelayRespond(response)),
+    stageAttachments: (input) => guard(gateway.stageAttachments(input)),
+  };
+};
 
 export const makeFakeWorkers = Effect.sync(() => {
   const workers = new Map<string, FakeWorker>();
@@ -116,6 +197,7 @@ export const makeFakeWorkers = Effect.sync(() => {
         renewFailures: 0,
         sessionExpiry: new Map(),
         link: null,
+        gateway: unsupportedGateway,
       };
       workers.set(url, worker);
       return worker;
@@ -192,6 +274,9 @@ export const makeFakeWorkers = Effect.sync(() => {
           return worker.retryApplied;
         }),
       // Ends with a failure when the link drops, as a real subscription does.
+      // The gateway lives as long as the link: a dropped link ends its
+      // streams with a failure and fails its calls, as a real socket does.
+      gateway: linkedGateway(worker.gateway, closed, gone),
       projectClones: SubscriptionRef.changes(worker.clones).pipe(
         Stream.interruptWhen(Deferred.await(closed)),
         Stream.concat(Stream.fail(gone)),

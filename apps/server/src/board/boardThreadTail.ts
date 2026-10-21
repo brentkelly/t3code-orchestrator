@@ -23,6 +23,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
@@ -33,6 +34,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { makeBoardEventStore } from "./boardEventStore.ts";
 import { makeBoardSqlProjector } from "./projection.ts";
 import { ThreadGateway, type TodoLogEntry } from "./ThreadGateway.ts";
+import { WorkerSignalFeed } from "./workers/WorkerSignalFeed.ts";
 
 /** The tail's cursor row in `boards.projection_state`, in the gateway's todo
     log positions. */
@@ -135,6 +137,15 @@ export const makeBoardThreadTail = Effect.gen(function* () {
   }
 
   yield* Effect.forkScoped(Stream.runForEach(live, apply));
+  // T3o (T3O-63): the workers' todo signals are applied by their feed, with
+  // its own cursor; their changes reach board clients here all the same.
+  const feed = yield* Effect.serviceOption(WorkerSignalFeed);
+  if (Option.isSome(feed)) {
+    const remote = yield* feed.value.subscribeTodoChanges;
+    yield* Effect.forkScoped(
+      Stream.runForEach(remote, (threadId) => PubSub.publish(changes, threadId)),
+    );
+  }
   // Persist where the tail got to on shutdown, so a quiet stretch of irrelevant
   // positions is not re-scanned on the next boot.
   yield* Effect.addFinalizer(() =>

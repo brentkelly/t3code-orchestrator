@@ -13,7 +13,11 @@
  * socket itself never retries.
  */
 import {
+  BOARD_GATEWAY_CALL_RESULTS,
+  BOARD_WORKER_GATEWAY_WS_METHODS,
   BOARD_WORKER_WS_METHODS,
+  type BoardGatewayCall,
+  type BoardWorkerGatewayError,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   ORCHESTRATION_PROTOCOL_VERSION,
   WS_METHODS,
@@ -33,13 +37,16 @@ import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import { RpcClient, RpcSerialization } from "effect/rpc";
+import { RpcClient, RpcClientError, RpcSerialization } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
+
+import type { WorkerGatewayRpc } from "./gatewayWire.ts";
 
 /** A worker RPC failed: refused, or the connection went. `unsupported` is a
     worker that does not have the call at all — an upstream server, or a T3o
@@ -72,6 +79,9 @@ export interface WorkerRpc {
   readonly retryProjectClone: (projectId: ProjectId) => Effect.Effect<boolean, WorkerRpcError>;
   /** Every tracked clone on the worker, once now and again on each change. */
   readonly projectClones: Stream.Stream<ProjectCloneListEvent, WorkerRpcError>;
+  /** The worker's own threads, its signals, the MCP relay and attachment
+      staging (T3O-63). */
+  readonly gateway: WorkerGatewayRpc;
 }
 
 export interface WorkerLink {
@@ -247,6 +257,7 @@ const connectWorker = ({
           ),
           "The worker couldn't retry the clone.",
         ),
+      gateway: makeLiveGatewayRpc(client),
       projectClones: client[WS_METHODS.subscribeProjectClones]({}).pipe(
         Stream.mapError(
           (cause) =>
@@ -256,3 +267,93 @@ const connectWorker = ({
     };
     return { rpc, closed: Deferred.await(disconnected) };
   });
+
+/** The gateway half of a live worker client (T3O-63). */
+const makeLiveGatewayRpc = (
+  client: RpcClient.FromGroup<typeof WsRpcGroup, RpcClientError.RpcClientError>,
+): WorkerGatewayRpc => {
+  const M = BOARD_WORKER_GATEWAY_WS_METHODS;
+  const wire = <A, E>(effect: Effect.Effect<A, E>, message: string) =>
+    effect.pipe(
+      Effect.mapError((cause) =>
+        Predicate.isTagged(cause, "BoardWorkerGatewayError")
+          ? (cause as unknown as BoardWorkerGatewayError)
+          : new WorkerRpcError({ message, cause }),
+      ),
+      Effect.catchDefect((cause) =>
+        Effect.fail(
+          new WorkerRpcError({
+            message: "The worker doesn't support this board call.",
+            cause,
+            unsupported: true,
+          }),
+        ),
+      ),
+    );
+  const wireStream = <A, E>(stream: Stream.Stream<A, E>, message: string) =>
+    stream.pipe(
+      Stream.mapError((cause) =>
+        Predicate.isTagged(cause, "BoardWorkerGatewayError")
+          ? (cause as unknown as BoardWorkerGatewayError)
+          : new WorkerRpcError({ message, cause }),
+      ),
+    );
+  const call = <T extends BoardGatewayCall["_tag"]>(
+    request: Extract<BoardGatewayCall, { readonly _tag: T }>,
+  ) =>
+    wire(
+      client[M.call](request).pipe(
+        Effect.flatMap((encoded) =>
+          Schema.decodeUnknownEffect(
+            BOARD_GATEWAY_CALL_RESULTS[request._tag] as unknown as Schema.Codec<
+              BoardGatewayCallResult<T>
+            >,
+          )(encoded),
+        ),
+      ),
+      `The worker didn't answer '${request._tag}'.`,
+    );
+  return {
+    spawn: (input) => call({ _tag: "spawn", input }).pipe(Effect.asVoid),
+    send: (input) => call({ _tag: "send", input }).pipe(Effect.asVoid),
+    interrupt: (input) => call({ _tag: "interrupt", input }).pipe(Effect.asVoid),
+    stopSession: (input) => call({ _tag: "stopSession", input }).pipe(Effect.asVoid),
+    settle: (input) => call({ _tag: "settle", input }).pipe(Effect.asVoid),
+    delete: (input) => call({ _tag: "delete", input }).pipe(Effect.asVoid),
+    armLimitRecovery: (input) => call({ _tag: "armLimitRecovery", input }),
+    threadState: (threadId) => call({ _tag: "threadState", threadId }),
+    threadRecords: (threadIds) => call({ _tag: "threadRecords", threadIds }),
+    threadsInWorktree: (worktreePath) => call({ _tag: "threadsInWorktree", worktreePath }),
+    listLiveThreadIds: call({ _tag: "listLiveThreadIds" }),
+    latestAssistantMessage: (threadId) => call({ _tag: "latestAssistantMessage", threadId }),
+    lastSignalAt: (threadId) => call({ _tag: "lastSignalAt", threadId }),
+    pendingTurnStartAt: (threadId) => call({ _tag: "pendingTurnStartAt", threadId }),
+    projects: call({ _tag: "projects" }),
+    project: (projectId) => call({ _tag: "project", projectId }),
+    todoLogHead: call({ _tag: "todoLogHead" }),
+    subscribeSignals: (afterSequence) =>
+      wireStream(
+        client[M.subscribeSignals]({ afterSequence }),
+        "The worker's signal stream ended.",
+      ),
+    readTodoLog: (after, upTo) =>
+      wireStream(client[M.readTodoLog]({ after, upTo }), "The worker's todo log read failed."),
+    subscribeTodoLog: wireStream(
+      client[M.subscribeTodoLog]({}),
+      "The worker's todo log stream ended.",
+    ),
+    subscribeMcpRelay: (centralEnvironmentId) =>
+      wireStream(
+        client[M.subscribeMcpRelay]({ centralEnvironmentId }),
+        "The worker's relay stream ended.",
+      ),
+    mcpRelayRespond: (response) =>
+      wire(client[M.mcpRelayRespond](response), "The worker didn't take the board's answer."),
+    stageAttachments: (input) =>
+      wire(client[M.stageAttachments](input), "The worker couldn't stage the card's files."),
+  };
+};
+
+/** What a gateway call of tag `T` answers. */
+type BoardGatewayCallResult<T extends BoardGatewayCall["_tag"]> =
+  (typeof BOARD_GATEWAY_CALL_RESULTS)[T]["Type"];

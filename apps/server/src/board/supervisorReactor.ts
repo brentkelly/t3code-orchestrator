@@ -17,6 +17,7 @@
  * server will restart mid-step.
  */
 import {
+  BOARD_LOCAL_WORKER_ID,
   boardCardAutoStartDue,
   boardCardChildren,
   boardBuildHumanInLoopDefault,
@@ -143,10 +144,12 @@ import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
 import { pullMergedBaseBranch } from "./baseBranchSync.ts";
 import {
   removeBoardCardAttachmentsDir,
+  resolveBoardCardAttachmentPath,
   spawnPushesBriefImages,
   stageBoardCardImagesAsPending,
 } from "./attachments.ts";
 import { deleteCardBranch } from "./branchCleanup.ts";
+import { BoardPlacement } from "./workers/BoardPlacement.ts";
 import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
@@ -1455,6 +1458,26 @@ const make = Effect.gen(function* () {
             ),
     });
 
+  // T3O-63: the test-only placement seam, and the brief's files a thread on a
+  // worker reads from where they were staged there.
+  const placement = yield* Effect.serviceOption(BoardPlacement);
+  const stagedBriefFiles = (card: BoardCard) => ({
+    cardId: String(card.id),
+    files: Option.match(serverConfig, {
+      onNone: () => [],
+      onSome: (config) =>
+        card.attachments.flatMap((attachment) => {
+          const filePath = resolveBoardCardAttachmentPath({
+            path: pathService,
+            stateDir: config.stateDir,
+            cardId: card.id,
+            name: attachment.name,
+          });
+          return filePath === null ? [] : [{ name: attachment.name, path: filePath }];
+        }),
+    }),
+  });
+
   const spawnStepThread = Effect.fn("board-supervisor-spawnStepThread")(function* (input: {
     readonly card: BoardCard;
     /** The frozen run-row fields a spawn needs (D12). */
@@ -1495,10 +1518,17 @@ const make = Effect.gen(function* () {
     // needed" and continues once a human approves. Tool access stays
     // `interactionMode: "default"` (the MCP write tools are a separate axis).
     const runtimeMode = step.runtimeMode;
+    // T3O-63: the worker the thread runs on. Always this server until
+    // placement exists (T3O-65); a test places a card on a worker.
+    const workerId = Option.match(placement, {
+      onNone: () => BOARD_LOCAL_WORKER_ID,
+      onSome: (service) => service.workerFor(card),
+    });
+    const remoteWorker = workerId === BOARD_LOCAL_WORKER_ID ? null : workerId;
     // T3o (T3O-24): pin the agent's gh to origin on every build-mode spawn,
     // not only at provisioning, so a worktree that predates the pin gets it
     // before its next agent runs. Idempotent and never fails the spawn.
-    if (input.branch !== null) {
+    if (input.branch !== null && remoteWorker === null) {
       yield* pinBoardWorktreeGhDefault(input.worktreePath).pipe(
         Effect.provideService(GitVcsDriver.GitVcsDriver, git),
       );
@@ -1524,6 +1554,9 @@ const make = Effect.gen(function* () {
         worktreePath: input.worktreePath,
         text: input.text,
         attachments: input.attachments,
+        ...(remoteWorker === null
+          ? {}
+          : { workerId: remoteWorker, stageAttachments: stagedBriefFiles(card) }),
       }),
     );
     if (!spawned) return null;
@@ -1533,11 +1566,12 @@ const make = Effect.gen(function* () {
       cardId: card.id,
       threadId,
       role: step.stepId,
+      ...(remoteWorker === null ? {} : { workerId: remoteWorker }),
       createdAt: yield* nowIso,
     });
     // Run the worktree setup script in the build thread's terminal (t3o-09).
     // Build-mode only — a plan-mode step has no worktree. Best-effort.
-    if (input.runSetup) {
+    if (input.runSetup && remoteWorker === null) {
       yield* runBoardCardWorktreeSetup({
         threadId,
         projectId: card.projectId,
