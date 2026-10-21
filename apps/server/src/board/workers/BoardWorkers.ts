@@ -402,12 +402,17 @@ export const makeBoardWorkers = Effect.gen(function* () {
       // A minted token works at any of the worker's addresses, and the URL
       // beside it is the one the CLIENT reaches it on. The board keeps dialing
       // the address it already uses, and moves only when that one has stopped
-      // answering (the worker moved). A pasted link names its own address.
+      // answering, or another server now answers there (the worker moved). A
+      // pasted link names its own address.
       const { target, descriptor } =
         input.credential.kind === "pairing-token" &&
         input.url !== undefined &&
         input.url !== worker.url
           ? yield* locate(worker.url).pipe(
+              Effect.filterOrFail(
+                (located) => located.descriptor.environmentId === worker.id,
+                () => new BoardWorkerAddError({ code: "unreachable", message: "moved" }),
+              ),
               Effect.catchIf(
                 (error) => error.code === "unreachable",
                 () => locate(input.url ?? worker.url),

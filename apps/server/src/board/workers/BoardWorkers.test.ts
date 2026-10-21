@@ -377,6 +377,29 @@ describe("BoardWorkers", () => {
       }),
     ));
 
+  test("re-pairing from the picker moves when another server now answers at the old address", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { http, kit, connections, workers } = yield* setup;
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+
+        // The worker moved, and a different server took over its old address.
+        const moved = yield* withWorkerHttp;
+        const movedWorker = yield* kit.fake.add(moved.origin, WORKER_ID);
+        http.descriptor = descriptor("env-ci-runner-3", "ci-runner-3");
+        moved.tokens.set("fresh", "access-fresh");
+        const repaired = yield* workers.repair({
+          workerId: WORKER_ID,
+          url: moved.origin,
+          credential: { kind: "pairing-token", token: "fresh" },
+        });
+        assert.strictEqual(repaired.worker.url, moved.origin);
+        yield* waitFor(connections, "online");
+        assert.strictEqual(movedWorker.dialedTokens.at(-1), "access-fresh");
+      }),
+    ));
+
   test("removes a worker: gives the session back, then forgets token and record", () =>
     Effect.scoped(
       Effect.gen(function* () {
