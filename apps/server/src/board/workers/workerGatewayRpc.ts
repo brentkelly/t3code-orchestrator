@@ -5,7 +5,6 @@
  * handlers, so building the record needs no service.
  */
 import {
-  BOARD_GATEWAY_CALL_RESULTS,
   BOARD_WORKER_GATEWAY_RPC_SCOPES,
   BOARD_WORKER_GATEWAY_WS_METHODS as M,
   BoardWorkerGatewayError,
@@ -16,10 +15,10 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
+import { encodeGatewayCallResult } from "./gatewayWire.ts";
 import { WorkerGatewayHost, type WorkerGatewayHostShape } from "./WorkerGatewayHost.ts";
 
 type Method = keyof typeof BOARD_WORKER_GATEWAY_RPC_SCOPES;
@@ -67,21 +66,19 @@ export const runGatewayCall = (
         return host.todoLogHead;
     }
   };
-  // Every result schema is context-free; the union of their types is not
-  // something the checker can index, so it is read as the codec it is.
-  const schema = BOARD_GATEWAY_CALL_RESULTS[call._tag] as unknown as Schema.Codec<unknown>;
   return answer().pipe(
-    Effect.flatMap((value) => Schema.encodeUnknownEffect(schema)(value)),
-    Effect.catchTag("SchemaError", (error) =>
-      Effect.fail(
-        new BoardWorkerGatewayError({
-          kind: "failed",
-          operation: call._tag,
-          threadId: null,
-          detail: `The worker's answer did not encode: ${error.message}`,
-        }),
-      ),
-    ),
+    Effect.flatMap((value) => encodeGatewayCallResult(call._tag, value)),
+    Effect.catchTags({
+      SchemaError: (error) =>
+        Effect.fail(
+          new BoardWorkerGatewayError({
+            kind: "failed",
+            operation: call._tag,
+            threadId: null,
+            detail: `The worker's answer did not encode: ${error.message}`,
+          }),
+        ),
+    }),
   );
 };
 
@@ -100,7 +97,7 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
       method: Method,
       run: (host: WorkerGatewayHostShape, input: I) => Effect.Effect<A, E>,
     ) =>
-    (input: I) => {
+    (input: I): Effect.Effect<A, E | EnvironmentAuthorizationError, WorkerGatewayHost> => {
       const error = denied(method);
       return error === null
         ? Effect.flatMap(WorkerGatewayHost, (host) => run(host, input))
@@ -111,7 +108,7 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
       method: Method,
       run: (host: WorkerGatewayHostShape, input: I) => Stream.Stream<A, E>,
     ) =>
-    (input: I) => {
+    (input: I): Stream.Stream<A, E | EnvironmentAuthorizationError, WorkerGatewayHost> => {
       const error = denied(method);
       return error === null
         ? Stream.unwrap(Effect.map(WorkerGatewayHost, (host) => run(host, input)))

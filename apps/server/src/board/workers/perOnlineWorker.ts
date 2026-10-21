@@ -56,13 +56,13 @@ export const runPerOnlineWorker = (
           if (rpc === null) return;
           last = rpc;
           yield* run(workerId, rpc).pipe(
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.failCause(cause)
-                : Effect.logWarning(`board ${name}: a worker's run ended`, {
-                    workerId,
-                    cause: Cause.pretty(cause),
-                  }),
+            Effect.catchCauseIf(
+              (cause) => !Cause.hasInterruptsOnly(cause),
+              (cause) =>
+                Effect.logWarning(`board ${name}: a worker's run ended`, {
+                  workerId,
+                  cause: Cause.pretty(cause),
+                }),
             ),
           );
         }

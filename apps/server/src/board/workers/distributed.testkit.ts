@@ -22,7 +22,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import * as ServerConfig from "../../config.ts";
-import { makeFakeThreadGateway } from "../threadGateway.testkit.ts";
+import { makeFakeThreadGateway, type FakeThreadGatewayOptions } from "../threadGateway.testkit.ts";
 import { makeMemoryBoardRelayStore } from "./BoardRelayStore.ts";
 import { makeMcpRelayHost, McpRelayHost } from "./McpRelayHost.ts";
 import {
@@ -65,10 +65,17 @@ export const registeredWorker: BoardWorker = {
  * A central server's connections to one in-process worker, online. `stateDir`
  * prefixes the worker's own state directory.
  */
-export const makeInProcessWorker = (options: { readonly relayTimeout?: Duration.Input } = {}) =>
+export const makeInProcessWorker = (
+  options: {
+    readonly relayTimeout?: Duration.Input;
+    /** Runs before each call the worker's thread engine takes. */
+    readonly onThreadCall?: FakeThreadGatewayOptions["onCall"];
+  } = {},
+) =>
   Effect.gen(function* () {
     const kit = yield* makeFakeWorkerLayer;
     const threads = yield* makeFakeThreadGateway({
+      ...(options.onThreadCall === undefined ? {} : { onCall: options.onThreadCall }),
       projects: [
         {
           id: WORKER_PROJECT_ID,
@@ -92,7 +99,7 @@ export const makeInProcessWorker = (options: { readonly relayTimeout?: Duration.
       Effect.provide(workerContext),
     );
     const host = yield* makeWorkerGatewayHost.pipe(
-      Effect.provide(Layer.succeed(McpRelayHost, relayHost)),
+      Effect.provideService(McpRelayHost, relayHost),
       Effect.provide(workerContext),
     );
     const workerConfig = yield* ServerConfig.ServerConfig.pipe(Effect.provide(workerContext));

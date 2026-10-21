@@ -77,7 +77,15 @@ import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts
 import { UsageLimitDetector, type UsageLimitDetectorShape } from "./UsageLimitDetector.ts";
 import type { WorktreeRetirer } from "./worktreeRetire.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
-import type { BoardProject, BoardThreadState, ThreadSignal } from "./ThreadGateway.ts";
+import {
+  ThreadGateway,
+  type BoardProject,
+  type BoardThreadState,
+  type LocalThreadGatewayShape,
+  type ThreadGatewayShape,
+  type ThreadSignal,
+} from "./ThreadGateway.ts";
+import { BoardPlacement, type BoardPlacementShape } from "./workers/BoardPlacement.ts";
 import {
   aliveThread,
   failedThread,
@@ -616,6 +624,11 @@ export function withGovernor(
         the real one with nothing running and no remove scripts, so it only
         removes — what every fixture written before it expects. */
     readonly worktreeRetirer?: Layer.Layer<WorktreeRetirer, never, GitVcsDriver.GitVcsDriver>;
+    /** The board's gateway over the harness's own threads (T3O-63): a router
+        that also reaches a worker. Absent: the threads are the fake alone. */
+    readonly gateway?: (local: LocalThreadGatewayShape) => ThreadGatewayShape;
+    /** Where the supervisor spawns each card's threads (T3O-63). */
+    readonly placement?: BoardPlacementShape;
   },
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
@@ -691,6 +704,7 @@ export function withGovernor(
       pendingTurnStartAt: (threadId) => threadPendingTurnStarts.get(String(threadId)) ?? null,
     });
     const shells = fake.states;
+    const gateway = input.gateway?.(fake.gateway) ?? fake.gateway;
 
     const boardQueriesStub = {
       // The reactor's todo signal + boot sweep have something to call;
@@ -725,7 +739,7 @@ export function withGovernor(
       recordCommand(command).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const context = yield* loadDecisionContext(command, boardQueriesStub, fake.gateway);
+            const context = yield* loadDecisionContext(command, boardQueriesStub, gateway);
             const outcome = yield* decideBoardCommand({
               command,
               readModel: yield* Ref.get(model),
@@ -1058,7 +1072,8 @@ export function withGovernor(
       (input.worktreeRetirer ?? worktreeRetirerTestLayer()).pipe(Layer.provide(gitLayer)),
       Layer.succeed(BoardEngine, boardEngineStub),
       Layer.succeed(BoardQueries, boardQueriesStub),
-      fake.layer,
+      Layer.succeed(ThreadGateway, gateway),
+      input.placement === undefined ? Layer.empty : Layer.succeed(BoardPlacement, input.placement),
       Layer.succeed(ServerSettingsService, settingsStub),
       gitLayer,
       Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),

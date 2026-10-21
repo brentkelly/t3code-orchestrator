@@ -13,7 +13,6 @@
  * socket itself never retries.
  */
 import {
-  BOARD_GATEWAY_CALL_RESULTS,
   BOARD_WORKER_GATEWAY_WS_METHODS,
   BOARD_WORKER_WS_METHODS,
   type BoardGatewayCall,
@@ -46,7 +45,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 import { RpcClient, RpcClientError, RpcSerialization } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
 
-import type { WorkerGatewayRpc } from "./gatewayWire.ts";
+import { decodeGatewayCallResult, type WorkerGatewayRpc } from "./gatewayWire.ts";
 
 /** A worker RPC failed: refused, or the connection went. `unsupported` is a
     worker that does not have the call at all — an upstream server, or a T3o
@@ -303,13 +302,7 @@ const makeLiveGatewayRpc = (
   ) =>
     wire(
       client[M.call](request).pipe(
-        Effect.flatMap((encoded) =>
-          Schema.decodeUnknownEffect(
-            BOARD_GATEWAY_CALL_RESULTS[request._tag] as unknown as Schema.Codec<
-              BoardGatewayCallResult<T>
-            >,
-          )(encoded),
-        ),
+        Effect.flatMap((encoded) => decodeGatewayCallResult(request._tag as T, encoded)),
       ),
       `The worker didn't answer '${request._tag}'.`,
     );
@@ -353,7 +346,3 @@ const makeLiveGatewayRpc = (
       wire(client[M.stageAttachments](input), "The worker couldn't stage the card's files."),
   };
 };
-
-/** What a gateway call of tag `T` answers. */
-type BoardGatewayCallResult<T extends BoardGatewayCall["_tag"]> =
-  (typeof BOARD_GATEWAY_CALL_RESULTS)[T]["Type"];

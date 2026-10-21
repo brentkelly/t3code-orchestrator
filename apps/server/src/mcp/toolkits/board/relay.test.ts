@@ -331,7 +331,7 @@ describe("the board MCP relay", () => {
         const threadId = ThreadId.make("thread-alone");
         // A thread a board placed here, whose board is not listening.
         yield* world.relayStore.store.recordRelayedThread(threadId, EnvironmentId.make("env-gone"));
-        const error = yield* Effect.flip(onWorker(world, threadId, getContext()));
+        const error = yield* Effect.flip(onWorker(world, threadId, getContext(undefined)));
         assert.strictEqual(error._tag, "BoardToolError");
         assert.strictEqual(
           error._tag === "BoardToolError" ? error.code : null,
@@ -391,7 +391,7 @@ describe("the board MCP relay", () => {
           },
         });
 
-        const context = yield* onWorker(world, threadId, getContext());
+        const context = yield* onWorker(world, threadId, getContext(undefined));
         const [entry] = context.attachments;
         const expected = path.join(
           world.workerStateDir,

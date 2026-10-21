@@ -106,7 +106,9 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
         if (!keep.has(name)) yield* fs.remove(path.join(dir, name)).pipe(Effect.ignore);
       }
       return { needed, written, stateDir: config.stateDir } satisfies BoardStageAttachmentsResult;
-    }).pipe(Effect.catchTag("PlatformError", (error) => Effect.fail(stagingError(error.message))));
+    }).pipe(
+      Effect.catchTags({ PlatformError: (error) => Effect.fail(stagingError(error.message)) }),
+    );
 
   return {
     spawn: ({ centralEnvironmentId, ...input }) =>

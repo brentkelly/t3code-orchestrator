@@ -12,7 +12,9 @@
  * `BoardWorkerGatewayError` that names which it was.
  */
 import {
+  BOARD_GATEWAY_CALL_RESULTS,
   BoardWorkerGatewayError,
+  type BoardGatewayCall,
   type BoardGatewaySendInput,
   type BoardGatewaySettleInput,
   type BoardGatewaySignal,
@@ -29,6 +31,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import type * as Stream from "effect/Stream";
 
 import {
@@ -91,6 +94,41 @@ export interface WorkerGatewayRpcOf<E> {
 }
 
 export type WorkerGatewayRpc = WorkerGatewayRpcOf<WorkerGatewayCallError>;
+
+// ── Call results ───────────────────────────────────────────────────────
+
+type CallTag = BoardGatewayCall["_tag"];
+
+/** What a gateway call of tag `T` answers. */
+export type BoardGatewayCallResult<T extends CallTag> =
+  (typeof BOARD_GATEWAY_CALL_RESULTS)[T]["Type"];
+
+interface ResultCodec {
+  readonly encode: (value: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
+  readonly decode: (encoded: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
+}
+
+/** Every result schema is context-free; the union of their types is not
+    something the checker can index, so each is read as the codec it is. */
+const codecOf = (schema: Schema.Top): ResultCodec => {
+  const codec = schema as unknown as Schema.Codec<unknown>;
+  return { encode: Schema.encodeUnknownEffect(codec), decode: Schema.decodeUnknownEffect(codec) };
+};
+
+const RESULT_CODECS = Object.fromEntries(
+  Object.entries(BOARD_GATEWAY_CALL_RESULTS).map(([tag, schema]) => [tag, codecOf(schema)]),
+) as Record<CallTag, ResultCodec>;
+
+/** A call's answer, encoded for the wire. */
+export const encodeGatewayCallResult = (tag: CallTag, value: unknown) =>
+  RESULT_CODECS[tag].encode(value);
+
+/** A call's answer, decoded off the wire. */
+export const decodeGatewayCallResult = <T extends CallTag>(tag: T, encoded: unknown) =>
+  RESULT_CODECS[tag].decode(encoded) as Effect.Effect<
+    BoardGatewayCallResult<T>,
+    Schema.SchemaError
+  >;
 
 // ── Signals ────────────────────────────────────────────────────────────
 

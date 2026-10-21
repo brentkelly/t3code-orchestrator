@@ -59,14 +59,28 @@ export class BoardRelayInvocation extends Context.Service<
   { readonly workerId: EnvironmentId; readonly stateDir: string }
 >()("t3/mcp/toolkits/board/relay/BoardRelayInvocation") {}
 
+interface ToolCodecs {
+  readonly encodeParameters: (value: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
+  readonly decodeParameters: (encoded: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
+  readonly encodeSuccess: (value: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
+  readonly decodeSuccess: (encoded: unknown) => Effect.Effect<unknown, Schema.SchemaError>;
+}
+
 /** A tool's schemas, read as the context-free codecs they are. */
-const schemasOf = (name: BoardToolName) => {
-  const tool = BoardToolkit.tools[name];
+const codecsOf = (tool: (typeof BoardToolkit.tools)[BoardToolName]): ToolCodecs => {
+  const parameters = tool.parametersSchema as unknown as Schema.Codec<unknown>;
+  const success = tool.successSchema as unknown as Schema.Codec<unknown>;
   return {
-    parameters: tool.parametersSchema as unknown as Schema.Codec<unknown>,
-    success: tool.successSchema as unknown as Schema.Codec<unknown>,
+    encodeParameters: Schema.encodeUnknownEffect(parameters),
+    decodeParameters: Schema.decodeUnknownEffect(parameters),
+    encodeSuccess: Schema.encodeUnknownEffect(success),
+    decodeSuccess: Schema.decodeUnknownEffect(success),
   };
 };
+
+const TOOL_CODECS = Object.fromEntries(
+  Object.entries(BoardToolkit.tools).map(([name, tool]) => [name, codecsOf(tool)]),
+) as Record<BoardToolName, ToolCodecs>;
 
 const internal = (message: string) => new BoardToolError({ code: "internal", message });
 
@@ -102,11 +116,11 @@ export const relayable =
         .pipe(Effect.mapError(() => internal("Couldn't read whether this thread is relayed.")));
       if (central === null) return yield* handle(params);
 
-      const schemas = schemasOf(name);
+      const codecs = TOOL_CODECS[name];
       // A tool without parameters is called with none.
-      const encoded = yield* Schema.encodeUnknownEffect(schemas.parameters)(params ?? {}).pipe(
-        Effect.mapError(() => internal("Couldn't encode the call for the board.")),
-      );
+      const encoded = yield* codecs
+        .encodeParameters(params ?? {})
+        .pipe(Effect.mapError(() => internal("Couldn't encode the call for the board.")));
       const config = yield* ServerConfig.ServerConfig;
       const outcome = yield* relay.value
         .forward(central, {
@@ -124,9 +138,9 @@ export const relayable =
           message: outcome.message,
         });
       }
-      return (yield* Schema.decodeUnknownEffect(schemas.success)(outcome.value).pipe(
-        Effect.mapError(() => internal("The board's answer did not decode.")),
-      )) as A;
+      return (yield* codecs
+        .decodeSuccess(outcome.value)
+        .pipe(Effect.mapError(() => internal("The board's answer did not decode.")))) as A;
     });
 
 // ── Central side ───────────────────────────────────────────────────────
@@ -195,10 +209,8 @@ export const runRelayedBoardTool = (input: {
       return failure("rejected", "The calling provider no longer owns an active thread run.");
     }
 
-    const schemas = schemasOf(name);
-    const params = yield* Schema.decodeUnknownEffect(schemas.parameters)(request.params).pipe(
-      Effect.option,
-    );
+    const codecs = TOOL_CODECS[name];
+    const params = yield* codecs.decodeParameters(request.params).pipe(Effect.option);
     if (Option.isNone(params))
       return failure("invalid-input", "The call's parameters did not decode.");
 
@@ -225,9 +237,7 @@ export const runRelayedBoardTool = (input: {
         ? failure(error.code, error.message)
         : failure("rejected", error.message);
     }
-    const encoded = yield* Schema.encodeUnknownEffect(schemas.success)(result.success).pipe(
-      Effect.option,
-    );
+    const encoded = yield* codecs.encodeSuccess(result.success).pipe(Effect.option);
     return Option.isSome(encoded)
       ? ({ _tag: "success", value: encoded.value } satisfies BoardMcpRelayOutcome)
       : failure("internal", "The board's answer did not encode.");
