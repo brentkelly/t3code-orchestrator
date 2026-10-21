@@ -39,7 +39,7 @@ import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexA
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
-import { ThreadGateway, type ThreadSignal, type TodoLogEntry } from "./ThreadGateway.ts";
+import { LocalThreadGateway, type ThreadSignal, type TodoLogEntry } from "./ThreadGateway.ts";
 import { makeSignalReader } from "./ThreadGatewayV2.ts";
 
 const projectId = ProjectId.make("project-contract");
@@ -68,7 +68,7 @@ const ensureProject = Effect.gen(function* () {
 /** Spawn a thread through the gateway, in its own worktree. */
 const spawn = Effect.fn("spawn")(function* (tag: string) {
   yield* ensureProject;
-  const threads = yield* ThreadGateway;
+  const threads = yield* LocalThreadGateway;
   const threadId = ThreadId.make(`thread-contract-${tag}`);
   yield* threads.spawn({
     commandId: boardCommandId("spawn-thread"),
@@ -147,7 +147,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       Effect.gen(function* () {
         const before = yield* head;
         const threadId = yield* spawn("spawned");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
 
         const state = yield* threads.threadState(threadId);
         assert.isNotNull(state);
@@ -183,7 +183,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("a planning spawn runs in the project root, with no worktree of its own (D6)", () =>
       Effect.gen(function* () {
         yield* ensureProject;
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const threadId = ThreadId.make("thread-contract-planning");
         yield* threads.spawn({
           commandId: boardCommandId("spawn-thread"),
@@ -204,7 +204,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
 
     it.effect("a spawn into a project that does not exist is refused and leaves nothing", () =>
       Effect.gen(function* () {
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const threadId = ThreadId.make("thread-contract-orphan");
         const exit = yield* Effect.exit(
           threads.spawn({
@@ -229,7 +229,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
 
     it.effect("a turn sent to a thread that does not exist is refused", () =>
       Effect.gen(function* () {
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const exit = yield* Effect.exit(
           threads.send({
             commandId: boardCommandId("recover-turn"),
@@ -247,7 +247,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("a board turn on an idle thread is the board's, and takes the stage's modes", () =>
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("sent");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const before = yield* head;
         yield* threads.send({
           commandId: boardCommandId("recover-turn"),
@@ -269,7 +269,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("an interrupt reaches the engine, and one with no run is refused", () =>
       Effect.gen(function* () {
         const threadId = yield* spawn("interrupted");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const before = yield* head;
         yield* threads.interrupt({ commandId: boardCommandId("interrupt-paused"), threadId });
         const signals = signalsOf(yield* loggedSince(before));
@@ -295,7 +295,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("a human's Stop before the run started reads as a Stop, not a bare turn end", () =>
       Effect.gen(function* () {
         const threadId = yield* spawn("human-stop");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const engine = yield* boardStackEngine;
         const runId = (yield* threads.threadState(threadId))!.activeTurnRef;
         assert.isNotNull(runId);
@@ -339,7 +339,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("a thread whose first turn is still waiting to start refuses a settle", () =>
       Effect.gen(function* () {
         const threadId = yield* spawn("queued");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         for (const auto of [true, false]) {
           const exit = yield* Effect.exit(
             threads.settle({ commandId: boardCommandId("release-thread"), threadId, auto }),
@@ -353,7 +353,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("a settle is recorded; an automatic one refuses a thread already settled", () =>
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("settled");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         assert.isTrue((yield* threads.threadState(threadId))!.autoSettleCandidate);
         yield* threads.settle({ commandId: boardCommandId("settle"), threadId, auto: false });
         assert.isTrue((yield* threads.threadRecords([threadId])).get(threadId)!.settlementDecided);
@@ -371,7 +371,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("an automatic settle settles a candidate", () =>
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("auto-settled");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         yield* threads.settle({
           commandId: boardCommandId("release-thread"),
           threadId,
@@ -386,7 +386,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("an automatic settle refuses a thread that is no longer a candidate", () =>
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("snoozed");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const engine = yield* boardStackEngine;
         assert.isTrue((yield* threads.threadState(threadId))!.autoSettleCandidate);
         yield* engine.dispatch({
@@ -406,7 +406,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("a deleted thread reads as deleted, drops out of the live set, and is logged", () =>
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("deleted");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const before = yield* threads.todoLogHead;
         yield* threads.delete({ commandId: boardCommandId("delete-card-thread"), threadId });
 
@@ -433,7 +433,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("a todo list is a todo signal carrying its steps, in the board's vocabulary", () =>
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("todos");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const before = yield* threads.todoLogHead;
         yield* providerWrites([
           {
@@ -480,7 +480,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("the live todo tail attaches before the head is read, losing nothing", () =>
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("todo-tail");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const entries = yield* Effect.scoped(
           Effect.gen(function* () {
             const tail = yield* threads.subscribeTodoLog;
@@ -503,7 +503,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("the reads answer about the thread's output and worktree", () =>
       Effect.gen(function* () {
         const threadId = yield* spawn("reads");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         assert.isNull(yield* threads.latestAssistantMessage(threadId));
         assert.isNotNull(yield* threads.lastSignalAt(threadId));
 
@@ -520,7 +520,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
       Effect.gen(function* () {
         yield* ensureProject;
         const engine = yield* boardStackEngine;
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const threadId = ThreadId.make("thread-contract-session");
         yield* engine.dispatch({
           type: "thread.create",
@@ -606,7 +606,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("the latest assistant message is read from the latest turn only", () =>
       Effect.gen(function* () {
         const threadId = yield* spawn("assistant");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const projections = yield* ProjectionStore.ProjectionStoreV2;
         const latestRunId = (yield* projections.getThreadShell(threadId))!.latestRunId!;
         const message = (id: string, runId: RunId, text: string, iso: string) =>
@@ -652,7 +652,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("the last signal moves with the thread's activity", () =>
       Effect.gen(function* () {
         const threadId = yield* spawn("signal");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const before = yield* threads.lastSignalAt(threadId);
         assert.isNotNull(before);
         yield* providerWrites([
@@ -683,7 +683,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("a requested turn is pending until it runs, and not once it is gone", () =>
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("pending");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const engine = yield* boardStackEngine;
         assert.isNull(yield* threads.pendingTurnStartAt(threadId));
         yield* engine.dispatch({
@@ -706,7 +706,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("a thread that is not limited has no recovery to arm", () =>
       Effect.gen(function* () {
         const threadId = yield* createIdleThread("unlimited");
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         assert.isFalse(
           yield* threads.armLimitRecovery({ commandId: boardCommandId("limit-arm"), threadId }),
         );
@@ -716,7 +716,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
     it.effect("projects are listed, and one reads back with its root", () =>
       Effect.gen(function* () {
         yield* ensureProject;
-        const threads = yield* ThreadGateway;
+        const threads = yield* LocalThreadGateway;
         const listed = (yield* threads.projects()).find((project) => project.id === projectId);
         assert.deepInclude(listed, {
           id: projectId,

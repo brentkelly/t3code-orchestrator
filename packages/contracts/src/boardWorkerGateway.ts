@@ -83,12 +83,14 @@ export const BoardGatewayThreadRecord = Schema.Struct({
   archived: Schema.Boolean,
   settlementDecided: Schema.Boolean,
 });
+export type BoardGatewayThreadRecord = typeof BoardGatewayThreadRecord.Type;
 
 export const BoardGatewayWorktreeThread = Schema.Struct({
   threadId: ThreadId,
   deleted: Schema.Boolean,
   sessionLive: Schema.Boolean,
 });
+export type BoardGatewayWorktreeThread = typeof BoardGatewayWorktreeThread.Type;
 
 export const BoardGatewayProject = Schema.Struct({
   id: ProjectId,
@@ -97,11 +99,13 @@ export const BoardGatewayProject = Schema.Struct({
   deleted: Schema.Boolean,
   scripts: Schema.Array(ProjectScript),
 });
+export type BoardGatewayProject = typeof BoardGatewayProject.Type;
 
 export const BoardGatewayProjectDetail = Schema.Struct({
   ...BoardGatewayProject.fields,
   repositoryIdentity: Schema.NullOr(RepositoryIdentity),
 });
+export type BoardGatewayProjectDetail = typeof BoardGatewayProjectDetail.Type;
 
 export const BoardGatewayAssistantMessage = Schema.Struct({
   text: Schema.String,
@@ -170,6 +174,7 @@ export const BoardGatewayTodoLogEntry = Schema.Struct({
   cursor: NonNegativeInt,
   signal: Schema.NullOr(BoardGatewayTodoSignal),
 });
+export type BoardGatewayTodoLogEntry = typeof BoardGatewayTodoLogEntry.Type;
 
 // ── Commands ───────────────────────────────────────────────────────────
 
@@ -200,16 +205,19 @@ export const BoardGatewaySendInput = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
 });
+export type BoardGatewaySendInput = typeof BoardGatewaySendInput.Type;
 
 export const BoardGatewayTargetInput = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
 });
+export type BoardGatewayTargetInput = typeof BoardGatewayTargetInput.Type;
 
 export const BoardGatewaySettleInput = Schema.Struct({
   ...BoardGatewayTargetInput.fields,
   auto: Schema.Boolean,
 });
+export type BoardGatewaySettleInput = typeof BoardGatewaySettleInput.Type;
 
 /**
  * A gateway call the worker answered with a failure. `refused` and `failed`
@@ -291,26 +299,60 @@ export type BoardStageAttachmentsResult = typeof BoardStageAttachmentsResult.Typ
 
 // ── RPCs ───────────────────────────────────────────────────────────────
 
+/**
+ * One request/response gateway call. The gateway's request/response methods
+ * travel as one tagged RPC rather than one each: the WebSocket RPC group is at
+ * the edge of what the type checker will instantiate, and the board's own
+ * session holds every scope these need anyway.
+ */
+export const BoardGatewayCall = Schema.Union([
+  Schema.TaggedStruct("spawn", { input: BoardGatewaySpawnInput }),
+  Schema.TaggedStruct("send", { input: BoardGatewaySendInput }),
+  Schema.TaggedStruct("interrupt", { input: BoardGatewayTargetInput }),
+  Schema.TaggedStruct("stopSession", { input: BoardGatewayTargetInput }),
+  Schema.TaggedStruct("settle", { input: BoardGatewaySettleInput }),
+  Schema.TaggedStruct("delete", { input: BoardGatewayTargetInput }),
+  Schema.TaggedStruct("armLimitRecovery", { input: BoardGatewayTargetInput }),
+  Schema.TaggedStruct("threadState", { threadId: ThreadId }),
+  Schema.TaggedStruct("threadRecords", { threadIds: Schema.Array(ThreadId) }),
+  Schema.TaggedStruct("threadsInWorktree", { worktreePath: Schema.String }),
+  Schema.TaggedStruct("listLiveThreadIds", {}),
+  Schema.TaggedStruct("latestAssistantMessage", { threadId: ThreadId }),
+  Schema.TaggedStruct("lastSignalAt", { threadId: ThreadId }),
+  Schema.TaggedStruct("pendingTurnStartAt", { threadId: ThreadId }),
+  Schema.TaggedStruct("projects", {}),
+  Schema.TaggedStruct("project", { projectId: ProjectId }),
+  Schema.TaggedStruct("todoLogHead", {}),
+]);
+export type BoardGatewayCall = typeof BoardGatewayCall.Type;
+
+/** What each call answers. The RPC carries it encoded; each end codes it with
+    the schema its tag names. */
+export const BOARD_GATEWAY_CALL_RESULTS = {
+  spawn: Schema.Null,
+  send: Schema.Null,
+  interrupt: Schema.Null,
+  stopSession: Schema.Null,
+  settle: Schema.Null,
+  delete: Schema.Null,
+  armLimitRecovery: Schema.Boolean,
+  threadState: Schema.NullOr(BoardGatewayThreadState),
+  threadRecords: Schema.Array(BoardGatewayThreadRecord),
+  threadsInWorktree: Schema.Array(BoardGatewayWorktreeThread),
+  listLiveThreadIds: Schema.Array(ThreadId),
+  latestAssistantMessage: Schema.NullOr(BoardGatewayAssistantMessage),
+  lastSignalAt: Schema.NullOr(Schema.String),
+  pendingTurnStartAt: Schema.NullOr(Schema.String),
+  projects: Schema.Array(BoardGatewayProject),
+  project: Schema.NullOr(BoardGatewayProjectDetail),
+  todoLogHead: NonNegativeInt,
+} as const satisfies Record<BoardGatewayCall["_tag"], Schema.Top>;
+
 export const BOARD_WORKER_GATEWAY_WS_METHODS = {
-  spawn: "boardWorker.gateway.spawn",
-  send: "boardWorker.gateway.send",
-  interrupt: "boardWorker.gateway.interrupt",
-  stopSession: "boardWorker.gateway.stopSession",
-  settle: "boardWorker.gateway.settle",
-  delete: "boardWorker.gateway.delete",
-  armLimitRecovery: "boardWorker.gateway.armLimitRecovery",
-  threadState: "boardWorker.gateway.threadState",
-  threadRecords: "boardWorker.gateway.threadRecords",
-  threadsInWorktree: "boardWorker.gateway.threadsInWorktree",
-  listLiveThreadIds: "boardWorker.gateway.listLiveThreadIds",
-  latestAssistantMessage: "boardWorker.gateway.latestAssistantMessage",
-  lastSignalAt: "boardWorker.gateway.lastSignalAt",
-  pendingTurnStartAt: "boardWorker.gateway.pendingTurnStartAt",
-  projects: "boardWorker.gateway.projects",
-  project: "boardWorker.gateway.project",
+  /** Every request/response gateway method (`BoardGatewayCall`). */
+  call: "boardWorker.gateway.call",
   /** The worker's thread signals after a log position, live. */
   subscribeSignals: "boardWorker.gateway.subscribeSignals",
-  todoLogHead: "boardWorker.gateway.todoLogHead",
   readTodoLog: "boardWorker.gateway.readTodoLog",
   subscribeTodoLog: "boardWorker.gateway.subscribeTodoLog",
   /** Board tool calls relayed to the central server holding this stream. */
@@ -321,84 +363,15 @@ export const BOARD_WORKER_GATEWAY_WS_METHODS = {
 
 const M = BOARD_WORKER_GATEWAY_WS_METHODS;
 const failure = Schema.Union([BoardWorkerGatewayError, EnvironmentAuthorizationError]);
-const threadIdInput = Schema.Struct({ threadId: ThreadId });
 
 export const BOARD_WORKER_GATEWAY_RPCS = [
-  Rpc.make(M.spawn, { payload: BoardGatewaySpawnInput, success: Schema.Void, error: failure }),
-  Rpc.make(M.send, { payload: BoardGatewaySendInput, success: Schema.Void, error: failure }),
-  Rpc.make(M.interrupt, {
-    payload: BoardGatewayTargetInput,
-    success: Schema.Void,
-    error: failure,
-  }),
-  Rpc.make(M.stopSession, {
-    payload: BoardGatewayTargetInput,
-    success: Schema.Void,
-    error: failure,
-  }),
-  Rpc.make(M.settle, { payload: BoardGatewaySettleInput, success: Schema.Void, error: failure }),
-  Rpc.make(M.delete, { payload: BoardGatewayTargetInput, success: Schema.Void, error: failure }),
-  Rpc.make(M.armLimitRecovery, {
-    payload: BoardGatewayTargetInput,
-    success: Schema.Boolean,
-    error: failure,
-  }),
-  Rpc.make(M.threadState, {
-    payload: threadIdInput,
-    success: Schema.NullOr(BoardGatewayThreadState),
-    error: failure,
-  }),
-  Rpc.make(M.threadRecords, {
-    payload: Schema.Struct({ threadIds: Schema.Array(ThreadId) }),
-    success: Schema.Array(BoardGatewayThreadRecord),
-    error: failure,
-  }),
-  Rpc.make(M.threadsInWorktree, {
-    payload: Schema.Struct({ worktreePath: Schema.String }),
-    success: Schema.Array(BoardGatewayWorktreeThread),
-    error: failure,
-  }),
-  Rpc.make(M.listLiveThreadIds, {
-    payload: Schema.Struct({}),
-    success: Schema.Array(ThreadId),
-    error: failure,
-  }),
-  Rpc.make(M.latestAssistantMessage, {
-    payload: threadIdInput,
-    success: Schema.NullOr(BoardGatewayAssistantMessage),
-    error: failure,
-  }),
-  Rpc.make(M.lastSignalAt, {
-    payload: threadIdInput,
-    success: Schema.NullOr(Schema.String),
-    error: failure,
-  }),
-  Rpc.make(M.pendingTurnStartAt, {
-    payload: threadIdInput,
-    success: Schema.NullOr(Schema.String),
-    error: failure,
-  }),
-  Rpc.make(M.projects, {
-    payload: Schema.Struct({}),
-    success: Schema.Array(BoardGatewayProject),
-    error: failure,
-  }),
-  Rpc.make(M.project, {
-    payload: Schema.Struct({ projectId: ProjectId }),
-    success: Schema.NullOr(BoardGatewayProjectDetail),
-    error: failure,
-  }),
+  Rpc.make(M.call, { payload: BoardGatewayCall, success: Schema.Unknown, error: failure }),
   Rpc.make(M.subscribeSignals, {
     /** Null starts at the log's head: only what happens from now on. */
     payload: Schema.Struct({ afterSequence: Schema.NullOr(NonNegativeInt) }),
     success: BoardGatewaySignalBatch,
     error: failure,
     stream: true,
-  }),
-  Rpc.make(M.todoLogHead, {
-    payload: Schema.Struct({}),
-    success: NonNegativeInt,
-    error: failure,
   }),
   Rpc.make(M.readTodoLog, {
     payload: Schema.Struct({ after: NonNegativeInt, upTo: NonNegativeInt }),
@@ -430,27 +403,12 @@ export const BOARD_WORKER_GATEWAY_RPCS = [
   }),
 ] as const;
 
-/** Reads at the thread-shell tier; anything that starts, steers or writes at
-    the operate tier — the scopes the board's own session already holds (D19). */
+/** Thread reads stream at the thread-shell tier. Calls start, steer and read
+    threads, so they sit at the operate tier with the relay and staging —
+    scopes the board's own session already holds (D19). */
 export const BOARD_WORKER_GATEWAY_RPC_SCOPES = {
-  [M.spawn]: AuthOrchestrationOperateScope,
-  [M.send]: AuthOrchestrationOperateScope,
-  [M.interrupt]: AuthOrchestrationOperateScope,
-  [M.stopSession]: AuthOrchestrationOperateScope,
-  [M.settle]: AuthOrchestrationOperateScope,
-  [M.delete]: AuthOrchestrationOperateScope,
-  [M.armLimitRecovery]: AuthOrchestrationOperateScope,
-  [M.threadState]: AuthOrchestrationReadScope,
-  [M.threadRecords]: AuthOrchestrationReadScope,
-  [M.threadsInWorktree]: AuthOrchestrationReadScope,
-  [M.listLiveThreadIds]: AuthOrchestrationReadScope,
-  [M.latestAssistantMessage]: AuthOrchestrationReadScope,
-  [M.lastSignalAt]: AuthOrchestrationReadScope,
-  [M.pendingTurnStartAt]: AuthOrchestrationReadScope,
-  [M.projects]: AuthOrchestrationReadScope,
-  [M.project]: AuthOrchestrationReadScope,
+  [M.call]: AuthOrchestrationOperateScope,
   [M.subscribeSignals]: AuthOrchestrationReadScope,
-  [M.todoLogHead]: AuthOrchestrationReadScope,
   [M.readTodoLog]: AuthOrchestrationReadScope,
   [M.subscribeTodoLog]: AuthOrchestrationReadScope,
   // Answering a relayed call writes to the board on the agent's behalf.
@@ -462,4 +420,3 @@ export const BOARD_WORKER_GATEWAY_RPC_SCOPES = {
 /** How long a worker waits for the central server to answer a relayed call
     before telling the agent the board is unreachable. */
 export const BOARD_MCP_RELAY_TIMEOUT_MS = 60_000;
-

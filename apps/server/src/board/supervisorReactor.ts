@@ -130,6 +130,8 @@ import type { BoardDispatchError } from "./errors.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import {
   ThreadGateway,
+  ThreadReadError,
+  UNKNOWN_THREAD_STATE,
   type BoardProject,
   type BoardTurnOutcome,
   type ThreadCommandError,
@@ -522,9 +524,21 @@ const make = Effect.gen(function* () {
   /** A thread the board can still act on — present and not deleted — or
       undefined. */
   const liveThread = (threadId: ThreadId) =>
-    threads
-      .threadState(threadId)
-      .pipe(Effect.map((state) => (state === null || state.deleted ? undefined : state)));
+    threads.threadState(threadId).pipe(
+      Effect.flatMap((state) =>
+        // T3o (T3O-63): a thread on a worker the board cannot reach is neither
+        // gone nor alive, so no decision may be taken on it: surfaced as a
+        // read failure until offline handling (T3O-66) owns it.
+        state === UNKNOWN_THREAD_STATE
+          ? Effect.fail(
+              new ThreadReadError({
+                operation: "threadState",
+                detail: `Thread ${threadId} is on a worker the board cannot reach.`,
+              }),
+            )
+          : Effect.succeed(state === null || state.deleted ? undefined : state),
+      ),
+    );
 
   const dispatchAny = (command: BoardCommand) => boardEngine.dispatch(command);
 
@@ -3634,7 +3648,10 @@ const make = Effect.gen(function* () {
       state.threadId === null
         ? Effect.succeed(true)
         : threads.threadState(state.threadId).pipe(
-            Effect.map((thread) => thread?.usageLimit?.resumeArmed !== true),
+            Effect.map(
+              (thread) =>
+                thread === UNKNOWN_THREAD_STATE || thread?.usageLimit?.resumeArmed !== true,
+            ),
             Effect.orElseSucceed(() => true),
           ),
     );

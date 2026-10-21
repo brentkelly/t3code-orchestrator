@@ -56,6 +56,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   ThreadGateway,
+  UNKNOWN_THREAD_STATE,
   type BoardProject,
   type ThreadGatewayShape,
 } from "../../../board/ThreadGateway.ts";
@@ -502,9 +503,10 @@ const resolveProjectId = (
       const thread = yield* deps.threads
         .threadState(deps.scope.thread.threadId)
         .pipe(Effect.mapError(internalError));
-      const owned = thread
-        ? projects.find((project) => project.id === thread.projectId)
-        : undefined;
+      const owned =
+        thread !== null && thread !== UNKNOWN_THREAD_STATE
+          ? projects.find((project) => project.id === thread.projectId)
+          : undefined;
       if (owned !== undefined) {
         return owned.id;
       }

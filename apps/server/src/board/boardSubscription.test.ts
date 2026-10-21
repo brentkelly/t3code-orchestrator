@@ -76,6 +76,7 @@ const windowDeltas = (inputs: Parameters<typeof boardStreamWindowDeltas>[0]) => 
         return [{ cardId, threadId: linkedThread }];
       }),
     boardCardIdForThread: (threadId) => Effect.succeed(threadId === linkedThread ? cardId : null),
+    boardThreadWorker: () => Effect.succeed(null),
   });
   return boardStreamWindowDeltas(inputs, { queries, latestSequence: Effect.succeed(9) }).pipe(
     Effect.map((deltas) => ({ deltas, reads })),

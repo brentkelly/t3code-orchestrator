@@ -75,6 +75,7 @@ import { ThreadGateway, type ThreadGatewayShape } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 import { BoardWorkers } from "./workers/BoardWorkers.ts";
+import { workerGatewayRpcHandlers } from "./workers/workerGatewayRpc.ts";
 import { boardWorkerRpcHandlers } from "./workers/workerRpc.ts";
 
 export interface BoardRpcHandlerDeps {
@@ -114,6 +115,8 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
       }),
       // T3O-62: worker management, and the worker side's handshake.
       ...(yield* boardWorkerRpcHandlers(deps.currentSession)),
+      // T3O-63: the worker side's thread gateway, MCP relay and staging.
+      ...workerGatewayRpcHandlers(deps.currentSession),
     };
   });
 

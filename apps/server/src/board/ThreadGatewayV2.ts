@@ -49,7 +49,9 @@ import {
   ThreadCommandFailedError,
   ThreadCommandRefusedError,
   deletedThreadState,
+  LocalThreadGateway,
   ThreadGateway,
+  type LocalThreadGatewayShape,
   ThreadReadError,
   type BoardSessionStatus,
   type BoardThreadRecord,
@@ -559,7 +561,7 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
       });
     });
 
-  const gateway: ThreadGatewayShape = {
+  const gateway: LocalThreadGatewayShape = {
     // Upstream's `ThreadLaunchService.launch` is NOT used: its preparation runs
     // the project's setup script on every launch, including into an existing
     // worktree or the project root, so every review phase would re-run it and
@@ -853,6 +855,14 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
         Stream.flatMap((stored) => Stream.fromIterable(read(stored))),
       );
     }),
+    signalLog: (afterSequence) =>
+      Stream.suspend(() => {
+        const read = makeSignalReader();
+        return followStoredEvents(eventSink, FOLLOW_RETRY, afterSequence).pipe(
+          Stream.map((stored) => ({ sequence: stored.sequence, signals: read(stored) })),
+          Stream.filter((batch) => batch.signals.length > 0),
+        );
+      }),
 
     todoLogHead: eventSink.latestSequence().pipe(Effect.orElseSucceed(() => 0)),
     readTodoLog: (after, upTo) =>
@@ -874,4 +884,13 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
   return gateway;
 });
 
-export const ThreadGatewayV2Live = Layer.effect(ThreadGateway, makeThreadGatewayV2);
+/** The gateway onto this server's own threads (T3O-63): what the router and
+    the worker side build on. */
+export const LocalThreadGatewayV2Live = Layer.effect(LocalThreadGateway, makeThreadGatewayV2);
+
+/** One gateway as both the board's `ThreadGateway` and this server's own,
+    for a board with no workers — the test stacks. */
+export const ThreadGatewayV2Live = Layer.effect(
+  ThreadGateway,
+  Effect.map(LocalThreadGateway, (local): ThreadGatewayShape => local),
+).pipe(Layer.provideMerge(LocalThreadGatewayV2Live));
