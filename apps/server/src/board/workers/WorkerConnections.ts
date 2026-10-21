@@ -94,6 +94,7 @@ export const workerSecretName = (workerId: EnvironmentId): string => `board-work
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 export const encodeWorkerToken = (token: string): Uint8Array => textEncoder.encode(token);
+export const decodeWorkerToken = (bytes: Uint8Array): string => textDecoder.decode(bytes);
 
 /** Redial delays: quick at first, then every 30 seconds. */
 export function workerRedialDelay(failures: number): Duration.Duration {
@@ -197,7 +198,7 @@ export const makeWorkerConnections = Effect.gen(function* () {
 
   const readToken = (workerId: EnvironmentId) =>
     secrets.get(workerSecretName(workerId)).pipe(
-      Effect.map(Option.map((bytes) => textDecoder.decode(bytes))),
+      Effect.map(Option.map(decodeWorkerToken)),
       Effect.catchCause(() => Effect.succeed(Option.none<string>())),
     );
 
@@ -217,15 +218,20 @@ export const makeWorkerConnections = Effect.gen(function* () {
             : ({ _tag: "unreachable" } as const);
         }
         const link = connected.success;
-        // The socket is open, so a refused handshake is a server that does not
-        // speak the board-worker protocol at all.
-        const hello = yield* link.rpc.hello.pipe(Effect.option);
-        if (Option.isNone(hello)) return { _tag: "incompatible", hello: null } as const;
+        // A server without the handshake does not speak the board-worker
+        // protocol at all; one that fails to answer it is just unreachable.
+        const helloResult = yield* link.rpc.hello.pipe(Effect.result);
+        if (helloResult._tag === "Failure") {
+          return helloResult.failure.unsupported === true
+            ? ({ _tag: "incompatible", hello: null } as const)
+            : ({ _tag: "unreachable" } as const);
+        }
+        const hello = helloResult.success;
         // Another server answering at this address: the board's token is not
         // for it, whatever it says.
-        if (hello.value.environmentId !== worker.id) return { _tag: "unauthorized" } as const;
-        if (hello.value.protocolVersion < BOARD_WORKER_PROTOCOL_FLOOR) {
-          return { _tag: "incompatible", hello: hello.value } as const;
+        if (hello.environmentId !== worker.id) return { _tag: "unauthorized" } as const;
+        if (hello.protocolVersion < BOARD_WORKER_PROTOCOL_FLOOR) {
+          return { _tag: "incompatible", hello } as const;
         }
         const snapshot = yield* readWorkerSnapshot(link.rpc).pipe(Effect.option);
         if (Option.isNone(snapshot)) return { _tag: "unreachable" } as const;
@@ -237,8 +243,8 @@ export const makeWorkerConnections = Effect.gen(function* () {
           status: {
             state: "online",
             lastSeenAt: seenAt,
-            t3oVersion: hello.value.t3oVersion,
-            protocolVersion: hello.value.protocolVersion,
+            t3oVersion: hello.t3oVersion,
+            protocolVersion: hello.protocolVersion,
           },
         }));
         yield* persist(worker.id);

@@ -37,6 +37,8 @@ export interface FakeWorker {
   mode: "ok" | "unreachable" | "unauthorized";
   /** Null: a server with no `boardWorker.hello` at all (upstream). */
   hello: BoardWorkerHello | null;
+  /** The handshake fails on the wire, as a dropped worker's would. */
+  helloFails: boolean;
   projects: ReadonlyArray<BoardWorkerProject>;
   providers: ReadonlyArray<BoardWorkerProvider>;
   projectsFolder: string | null;
@@ -51,6 +53,8 @@ export interface FakeWorker {
   /** Whether `projectClone.retry` finds the clone; false once it forgot it. */
   retryApplied: boolean;
   released: number;
+  /** The session each release gave back. */
+  readonly releasedTokens: Array<string>;
   /** The open link's close signal, while one is open. */
   link: Deferred.Deferred<void> | null;
 }
@@ -72,6 +76,7 @@ export const makeFakeWorkers = Effect.sync(() => {
         url,
         mode: "ok",
         hello: helloFor(environmentId),
+        helloFails: false,
         projects: [],
         providers: [],
         projectsFolder: "~/projects",
@@ -88,6 +93,7 @@ export const makeFakeWorkers = Effect.sync(() => {
         cloneRetries: [],
         retryApplied: true,
         released: 0,
+        releasedTokens: [],
         link: null,
       };
       workers.set(url, worker);
@@ -100,13 +106,24 @@ export const makeFakeWorkers = Effect.sync(() => {
       worker.link === null ? Effect.void : Deferred.succeed(worker.link, undefined),
     ).pipe(Effect.asVoid);
 
-  const rpcFor = (worker: FakeWorker, closed: Deferred.Deferred<void>): WorkerRpc => {
+  const rpcFor = (
+    worker: FakeWorker,
+    closed: Deferred.Deferred<void>,
+    accessToken: string,
+  ): WorkerRpc => {
     const gone = new WorkerRpcError({ message: "The connection dropped." });
     return {
       hello: Effect.suspend(() =>
-        worker.hello === null
-          ? Effect.fail(new WorkerRpcError({ message: "Unknown request tag boardWorker.hello" }))
-          : Effect.succeed(worker.hello),
+        worker.helloFails
+          ? Effect.fail(gone)
+          : worker.hello === null
+            ? Effect.fail(
+                new WorkerRpcError({
+                  message: "Unknown request tag boardWorker.hello",
+                  unsupported: true,
+                }),
+              )
+            : Effect.succeed(worker.hello),
       ),
       projects: Effect.sync(() => ({ projects: worker.projects })),
       providers: Effect.sync(() => ({
@@ -115,6 +132,7 @@ export const makeFakeWorkers = Effect.sync(() => {
       })),
       release: Effect.sync(() => {
         worker.released += 1;
+        worker.releasedTokens.push(accessToken);
       }),
       startProjectClone: (input) =>
         Effect.suspend(() => {
@@ -152,7 +170,7 @@ export const makeFakeWorkers = Effect.sync(() => {
             if (worker.link === closed) worker.link = null;
           }),
         );
-        return { rpc: rpcFor(worker, closed), closed: Deferred.await(closed) };
+        return { rpc: rpcFor(worker, closed, accessToken), closed: Deferred.await(closed) };
       }),
   });
 

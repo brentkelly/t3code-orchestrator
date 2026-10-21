@@ -262,3 +262,19 @@ it.effect("redials an offline worker quietly: it stays offline, never blue conne
     }),
   ),
 );
+
+it.effect("a handshake that fails on the wire is offline, not incompatible", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { worker, connections } = yield* setup((worker) => {
+        worker.helloFails = true;
+      });
+      yield* connections.sync([registered]);
+      yield* waitFor(connections, "offline");
+
+      worker.helloFails = false;
+      yield* TestClock.adjust("1 second");
+      yield* waitFor(connections, "online");
+    }),
+  ),
+);

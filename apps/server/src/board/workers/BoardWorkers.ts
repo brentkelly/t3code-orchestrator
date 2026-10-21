@@ -58,6 +58,7 @@ import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import { BoardEngine } from "../BoardEngine.ts";
 import { classifyCloneFailure, cloneDestination, cloneFailureMessage } from "./setupFailure.ts";
 import {
+  decodeWorkerToken,
   encodeWorkerToken,
   readWorkerSnapshot,
   WorkerConnections,
@@ -169,10 +170,30 @@ export const makeBoardWorkers = Effect.gen(function* () {
       Effect.orElseSucceed(() => ({ coveredProjects: 0, totalProjects: 0 })),
     );
 
+  /** Give a session back on the worker: dial with it and ask the worker to
+      revoke it. Best effort — a worker that can't be reached keeps it until
+      the human revokes it there. */
+  const releaseSession = (url: string, accessToken: string) =>
+    Effect.scoped(
+      transport.connect({ url, accessToken }).pipe(Effect.flatMap((link) => link.rpc.release)),
+    ).pipe(Effect.timeout(RELEASE_TIMEOUT), Effect.ignore);
+
+  /** Undo a pairing whose record never landed: hand the new session back,
+      and drop the stored token unless someone else's has replaced it. */
+  const abandonPairing = (workerId: EnvironmentId, url: string, accessToken: string) =>
+    Effect.gen(function* () {
+      yield* releaseSession(url, accessToken);
+      const stored = yield* secrets
+        .get(workerSecretName(workerId))
+        .pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
+      if (Option.isSome(stored) && decodeWorkerToken(stored.value) === accessToken) {
+        yield* secrets.remove(workerSecretName(workerId)).pipe(Effect.ignore);
+      }
+    });
+
   /**
    * Prove the worker speaks the board-worker protocol over the session just
-   * obtained, and read what it has. A worker that does not is given its
-   * session straight back, so a refused add leaves nothing behind on it.
+   * obtained, and read what it has.
    */
   const probe = (input: {
     readonly url: string;
@@ -203,11 +224,17 @@ export const makeBoardWorkers = Effect.gen(function* () {
           workerLabel: input.workerLabel,
           workerVersion: input.workerVersion,
         });
-        const hello = yield* link.rpc.hello.pipe(Effect.option);
-        if (Option.isNone(hello) || hello.value.protocolVersion < BOARD_WORKER_PROTOCOL_FLOOR) {
-          yield* link.rpc.release.pipe(Effect.timeout(RELEASE_TIMEOUT), Effect.ignore);
-          return yield* incompatible;
-        }
+        const hello = yield* link.rpc.hello.pipe(
+          Effect.mapError((error) =>
+            error.unsupported === true
+              ? incompatible
+              : new BoardWorkerAddError({
+                  code: "unreachable",
+                  message: `${input.workerLabel} stopped answering while being added.`,
+                }),
+          ),
+        );
+        if (hello.protocolVersion < BOARD_WORKER_PROTOCOL_FLOOR) return yield* incompatible;
         const snapshot = yield* readWorkerSnapshot(link.rpc).pipe(
           Effect.mapError(
             () =>
@@ -217,12 +244,14 @@ export const makeBoardWorkers = Effect.gen(function* () {
               }),
           ),
         );
-        return { hello: hello.value, snapshot };
+        return { hello, snapshot };
       }),
     );
 
   /** Exchange, probe and store: the half of add and re-pair after the worker
-      is known to be the right one. */
+      is known to be the right one. Any failure after the exchange gives the
+      new session straight back, so a refused add leaves nothing on the
+      worker. */
   const pair = (input: {
     readonly workerId: EnvironmentId;
     readonly httpBaseUrl: string;
@@ -244,17 +273,21 @@ export const makeBoardWorkers = Effect.gen(function* () {
           accessToken,
           workerLabel: input.workerLabel,
           workerVersion: input.workerVersion,
-        });
-      yield* secrets.set(workerSecretName(input.workerId), encodeWorkerToken(accessToken)).pipe(
-        Effect.mapError(
-          () =>
-            new BoardWorkerAddError({
-              code: "unreachable",
-              message: "The board server couldn't store the worker's credential.",
-            }),
-        ),
-      );
-      return probed;
+        }).pipe(
+          Effect.tap(() =>
+            secrets.set(workerSecretName(input.workerId), encodeWorkerToken(accessToken)).pipe(
+              Effect.mapError(
+                () =>
+                  new BoardWorkerAddError({
+                    code: "unreachable",
+                    message: "The board server couldn't store the worker's credential.",
+                  }),
+              ),
+            ),
+          ),
+          Effect.onError(() => abandonPairing(input.workerId, input.httpBaseUrl, accessToken)),
+        );
+      return { ...probed, accessToken };
     });
 
   /** The worker's descriptor, refusing the board server itself. */
@@ -338,6 +371,9 @@ export const makeBoardWorkers = Effect.gen(function* () {
           Effect.mapError(
             dispatchFailure("already-worker", `${descriptor.label} is already a worker.`),
           ),
+          Effect.onError(() =>
+            abandonPairing(descriptor.environmentId, target.httpBaseUrl, probed.accessToken),
+          ),
         );
       yield* connections.record(descriptor.environmentId, probed.hello, probed.snapshot);
       yield* syncConnections;
@@ -365,6 +401,11 @@ export const makeBoardWorkers = Effect.gen(function* () {
           workerLabel: descriptor.label,
         });
       }
+      // The session being replaced, to give back once the new one is in.
+      const previousToken = yield* secrets.get(workerSecretName(worker.id)).pipe(
+        Effect.map(Option.map(decodeWorkerToken)),
+        Effect.orElseSucceed(() => Option.none<string>()),
+      );
       const probed = yield* pair({
         workerId: worker.id,
         httpBaseUrl: target.httpBaseUrl,
@@ -382,9 +423,17 @@ export const makeBoardWorkers = Effect.gen(function* () {
           worker: { ...worker, url: target.httpBaseUrl },
           createdAt: yield* nowIso,
         })
-        .pipe(Effect.mapError(dispatchFailure("not-found", "That worker was removed meanwhile.")));
+        .pipe(
+          Effect.mapError(dispatchFailure("not-found", "That worker was removed meanwhile.")),
+          Effect.onError(() => abandonPairing(worker.id, target.httpBaseUrl, probed.accessToken)),
+        );
       yield* connections.record(worker.id, probed.hello, probed.snapshot);
       yield* syncConnections;
+      // Re-pairing a worker whose old session still works (it moved, say)
+      // must not leave that session behind where the board can't revoke it.
+      if (Option.isSome(previousToken)) {
+        yield* releaseSession(worker.url, previousToken.value);
+      }
       yield* connections.restart(worker.id);
       return yield* result(worker.id);
     });

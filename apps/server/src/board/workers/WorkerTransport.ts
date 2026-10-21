@@ -40,10 +40,13 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
 
-/** A worker RPC failed: refused, or the connection went. */
+/** A worker RPC failed: refused, or the connection went. `unsupported` is a
+    worker that does not have the call at all — an upstream server, or a T3o
+    too old for it — rather than one that failed to answer. */
 export class WorkerRpcError extends Data.TaggedError("WorkerRpcError")<{
   readonly message: string;
   readonly cause?: unknown;
+  readonly unsupported?: boolean;
 }> {}
 
 /** Why a dial failed. `unauthorized` is the worker refusing the board's
@@ -95,8 +98,12 @@ const TICKET_TIMEOUT = "10 seconds";
 const TicketResponse = Schema.Struct({ ticket: Schema.String });
 const decodeTicket = Schema.decodeUnknownEffect(TicketResponse);
 
-const toWsUrl = (url: string, ticket: string): string => {
-  const next = new URL("/ws", url);
+/** A path under the worker's base URL, keeping any path prefix it has — the
+    same joining the HTTP calls in `workerCredential.ts` use. */
+const workerPath = (url: string, path: string): URL => new URL(`${url.replace(/\/+$/, "")}${path}`);
+
+export const toWsUrl = (url: string, ticket: string): string => {
+  const next = workerPath(url, "/ws");
   next.protocol = next.protocol === "https:" ? "wss:" : "ws:";
   next.searchParams.set("wsTicket", ticket);
   next.searchParams.set(ORCHESTRATION_PROTOCOL_QUERY_PARAM, String(ORCHESTRATION_PROTOCOL_VERSION));
@@ -112,7 +119,7 @@ const requestTicket = (url: string, accessToken: string) =>
     const http = yield* HttpClient.HttpClient;
     const response = yield* http
       .execute(
-        HttpClientRequest.post(new URL("/api/auth/websocket-ticket", url).toString()).pipe(
+        HttpClientRequest.post(workerPath(url, "/api/auth/websocket-ticket").toString()).pipe(
           HttpClientRequest.bearerToken(accessToken),
         ),
       )
@@ -132,7 +139,21 @@ const requestTicket = (url: string, accessToken: string) =>
     return decoded.ticket;
   });
 
-const rpcError = (message: string) => (cause: unknown) => new WorkerRpcError({ message, cause });
+/** One worker call, its failures typed. A server answers a call it does not
+    have with a defect, not an error, so that is caught and named too. */
+const call = <A, E>(effect: Effect.Effect<A, E>, message: string) =>
+  effect.pipe(
+    Effect.mapError((cause) => new WorkerRpcError({ message, cause })),
+    Effect.catchDefect((cause) =>
+      Effect.fail(
+        new WorkerRpcError({
+          message: "The worker doesn't support this board call.",
+          cause,
+          unsupported: true,
+        }),
+      ),
+    ),
+  );
 
 /** The live transport: a real socket and `RpcClient` over `WsRpcGroup`. */
 export const WorkerTransportLive = Layer.effect(
@@ -194,29 +215,36 @@ const connectWorker = ({
       });
     }
     const rpc: WorkerRpc = {
-      hello: client[BOARD_WORKER_WS_METHODS.hello]({}).pipe(
-        Effect.mapError(rpcError("The worker didn't answer the board's handshake.")),
+      hello: call(
+        client[BOARD_WORKER_WS_METHODS.hello]({}),
+        "The worker didn't answer the board's handshake.",
       ),
-      projects: client[BOARD_WORKER_WS_METHODS.projects]({}).pipe(
-        Effect.mapError(rpcError("The worker didn't list its projects.")),
+      projects: call(
+        client[BOARD_WORKER_WS_METHODS.projects]({}),
+        "The worker didn't list its projects.",
       ),
-      providers: client[BOARD_WORKER_WS_METHODS.providers]({}).pipe(
-        Effect.mapError(rpcError("The worker didn't list its providers.")),
+      providers: call(
+        client[BOARD_WORKER_WS_METHODS.providers]({}),
+        "The worker didn't list its providers.",
       ),
-      release: client[BOARD_WORKER_WS_METHODS.release]({}).pipe(
-        Effect.mapError(rpcError("The worker didn't release the board's session.")),
+      release: call(
+        client[BOARD_WORKER_WS_METHODS.release]({}),
+        "The worker didn't release the board's session.",
       ),
       startProjectClone: (input) =>
-        client[WS_METHODS.projectCloneStart](input).pipe(
-          Effect.mapError(rpcError("The worker couldn't start the clone.")),
-        ),
+        call(client[WS_METHODS.projectCloneStart](input), "The worker couldn't start the clone."),
       retryProjectClone: (projectId) =>
-        client[WS_METHODS.projectCloneRetry]({ projectId }).pipe(
-          Effect.map((result) => result.applied),
-          Effect.mapError(rpcError("The worker couldn't retry the clone.")),
+        call(
+          client[WS_METHODS.projectCloneRetry]({ projectId }).pipe(
+            Effect.map((result) => result.applied),
+          ),
+          "The worker couldn't retry the clone.",
         ),
       projectClones: client[WS_METHODS.subscribeProjectClones]({}).pipe(
-        Stream.mapError(rpcError("The worker's clone progress stream ended.")),
+        Stream.mapError(
+          (cause) =>
+            new WorkerRpcError({ message: "The worker's clone progress stream ended.", cause }),
+        ),
       ),
     };
     return { rpc, closed: Deferred.await(disconnected) };

@@ -309,6 +309,51 @@ describe("BoardWorkers", () => {
       }),
     ));
 
+  test("a handshake that fails on the wire is unreachable, and its new session is given back", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { http, kit, worker, workers } = yield* setup;
+        worker.helloFails = true;
+        const failure = yield* Effect.flip(addWithToken(workers, http, "blip"));
+        assert.strictEqual(failure.code, "unreachable");
+        // Not stored, not registered, and the worker holds no session for it.
+        assert.deepStrictEqual(worker.releasedTokens, ["access-blip"]);
+        assert.strictEqual(kit.secrets.secrets.size, 0);
+        assert.deepStrictEqual((yield* workers.state).workers, []);
+
+        // A server with no handshake at all is still incompatible.
+        worker.helloFails = false;
+        worker.hello = null;
+        assert.strictEqual(
+          yield* addError(addWithToken(workers, http, "upstream")),
+          "incompatible",
+        );
+        assert.deepStrictEqual(worker.releasedTokens, ["access-blip", "access-upstream"]);
+      }),
+    ));
+
+  test("re-pairing a worker whose session still works gives the old session back", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { http, kit, worker, connections, workers } = yield* setup;
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+
+        http.tokens.set("fresh", "access-fresh");
+        yield* workers.repair({
+          workerId: WORKER_ID,
+          credential: { kind: "pairing-token", token: "fresh" },
+        });
+        assert.deepStrictEqual(worker.releasedTokens, ["access-one-time"]);
+        assert.strictEqual(
+          new TextDecoder().decode(kit.secrets.secrets.get(workerSecretName(WORKER_ID))),
+          "access-fresh",
+        );
+        yield* waitFor(connections, "online");
+        assert.strictEqual(worker.dialedTokens.at(-1), "access-fresh");
+      }),
+    ));
+
   test("removes a worker: gives the session back, then forgets token and record", () =>
     Effect.scoped(
       Effect.gen(function* () {
