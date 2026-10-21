@@ -10,7 +10,10 @@
  * - the worker has no such call (an older T3o): a `BoardWorkerGitError` saying
  *   so, since waiting will not change it;
  * - the worker is not online, or the connection dropped mid-call:
- *   `WorkerUnavailable`.
+ *   `WorkerUnavailable`;
+ * - anything else (a call or answer that will not decode): a
+ *   `BoardWorkerGitError`, so a fault that repeats is never retried as an
+ *   outage.
  */
 import {
   BOARD_WORKER_GIT_WS_METHODS,
@@ -54,12 +57,34 @@ const failureOf =
         detail: "The worker refused the board's session for this operation.",
       });
     }
-    return new WorkerUnavailable({
-      workerId,
-      state: "unknown",
-      message: `The connection to the worker dropped during ${operation}.`,
+    if (connectionLost(error.cause)) {
+      return new WorkerUnavailable({
+        workerId,
+        state: "unknown",
+        message: `The connection to the worker dropped during ${operation}.`,
+      });
+    }
+    // Anything else — a payload or answer that will not decode, a protocol
+    // fault — fails the same way on every retry, so it is not an outage.
+    return new BoardWorkerGitError({
+      operation,
+      detail: `The worker's answer could not be used: ${error.message}`,
     });
   };
+
+/**
+ * Whether an RPC failure is the connection going, which a retry may outlive:
+ * a socket, HTTP or worker transport failure, or a drop with no cause at all.
+ * An `RpcClientDefect` is the client failing to encode or decode the call.
+ */
+const connectionLost = (cause: unknown): boolean => {
+  if (cause === undefined) return true;
+  const failure = cause as {
+    readonly _tag?: unknown;
+    readonly reason?: { readonly _tag?: unknown };
+  };
+  return failure._tag === "RpcClientError" && failure.reason?._tag !== "RpcClientDefect";
+};
 
 export function makeRemoteBoardWorkspace(
   workerId: EnvironmentId,

@@ -84,22 +84,17 @@ export interface BoardWorkspace extends BoardWorkspaceOperations<BoardWorkspaceF
 }
 
 /** The operations that read or act on the forge rather than on git. */
-const PULL_REQUEST_OPERATIONS = new Set<PullRequestOperation | BoardWorkerGitOperation>([
+const PULL_REQUEST_OPERATIONS = [
   "pullRequestByBranch",
   "getPullRequest",
   "mergePullRequest",
   "pullRequestMergeState",
   "markPullRequestReady",
   "pullRequestRepository",
-]);
+] as const satisfies ReadonlyArray<BoardWorkerGitOperation>;
 
-type PullRequestOperation =
-  | "pullRequestByBranch"
-  | "getPullRequest"
-  | "mergePullRequest"
-  | "pullRequestMergeState"
-  | "markPullRequestReady"
-  | "pullRequestRepository";
+type PullRequestOperation = (typeof PULL_REQUEST_OPERATIONS)[number];
+const isPullRequestOperation = new Set<BoardWorkerGitOperation>(PULL_REQUEST_OPERATIONS);
 
 type Bound<Op extends BoardWorkerGitOperation> = (
   input: Omit<BoardWorkspaceInput<Op>, "projectId">,
@@ -156,7 +151,7 @@ export function bindBoardWorkspace(input: {
     const run = workspace[op] as (
       payload: unknown,
     ) => Effect.Effect<unknown, BoardWorkspaceFailure>;
-    bound[op] = PULL_REQUEST_OPERATIONS.has(op)
+    bound[op] = isPullRequestOperation.has(op)
       ? (args: object) => run({ ...args, projectId }).pipe(Effect.mapError(asForgeFailure(op)))
       : (args: object) => run({ ...args, projectId });
   }

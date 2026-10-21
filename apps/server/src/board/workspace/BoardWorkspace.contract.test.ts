@@ -26,6 +26,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { RpcClientError } from "effect/rpc";
 
 import { ServerConfig } from "../../config.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
@@ -633,6 +634,38 @@ describe("the worker side of the named operations (T3O-64)", () => {
       const refused = yield* Effect.flip(ws.resolveDefaultBranch({ projectId }));
       assert.strictEqual(refused._tag, "BoardWorkerGitError");
       assert.include(detailOf(refused), "too old");
+    }),
+  );
+
+  it.effect("a call that will not decode is a git error, a dropped socket is an outage", () =>
+    Effect.gen(function* () {
+      const failingWith = (cause: unknown) =>
+        makeRemoteBoardWorkspace(EnvironmentId.make("env-skewed"), {
+          get: () =>
+            Effect.succeed({
+              git: () => Effect.fail(new WorkerRpcError({ message: "call failed", cause })),
+            } as never),
+        });
+      const undecodable = yield* Effect.flip(
+        failingWith(
+          new RpcClientError.RpcClientError({
+            reason: new RpcClientError.RpcClientDefect({
+              message: "Expected a string, got undefined",
+              cause: null,
+            }),
+          }),
+        ).resolveDefaultBranch({ projectId }),
+      );
+      assert.strictEqual(undecodable._tag, "BoardWorkerGitError");
+      assert.include(detailOf(undecodable), "could not be used");
+
+      const dropped = yield* Effect.flip(
+        failingWith({
+          _tag: "RpcClientError",
+          reason: { _tag: "SocketCloseError" },
+        }).resolveDefaultBranch({ projectId }),
+      );
+      assert.strictEqual(dropped._tag, "WorkerUnavailable");
     }),
   );
 });

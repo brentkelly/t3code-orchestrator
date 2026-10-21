@@ -55,6 +55,9 @@ export interface LocalBoardWorkspaceDeps {
   readonly worktreeRoots: Effect.Effect<ReadonlyArray<string>>;
 }
 
+/** How long a staleness check waits on the remote before reading what it has. */
+const BASE_TIP_FETCH_TIMEOUT_MS = 15_000;
+
 const noCheckout = (operation: string) =>
   new BoardWorkerGitError({
     operation,
@@ -106,7 +109,13 @@ export function makeLocalBoardWorkspace(deps: LocalBoardWorkspaceDeps): BoardWor
     git.resolvePrimaryRemoteName(cwd).pipe(Effect.catch(() => Effect.succeed(null)));
 
   /** Fetch one remote branch into its remote-tracking ref; whether it worked. */
-  const fetchRemoteBranch = (operation: string, cwd: string, remote: string, branch: string) =>
+  const fetchRemoteBranch = (
+    operation: string,
+    cwd: string,
+    remote: string,
+    branch: string,
+    timeoutMs = 60_000,
+  ) =>
     git
       .execute({
         operation,
@@ -117,7 +126,7 @@ export function makeLocalBoardWorkspace(deps: LocalBoardWorkspaceDeps): BoardWor
           remote,
           `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`,
         ],
-        timeoutMs: 60_000,
+        timeoutMs,
         allowNonZeroExit: true,
       })
       .pipe(
@@ -312,6 +321,12 @@ export function makeLocalBoardWorkspace(deps: LocalBoardWorkspaceDeps): BoardWor
    * with no remote, or a base the remote does not have, reads its local
    * branch as it always did. Null is the honest failure signal: staleness is
    * measured, never assumed.
+   *
+   * Never cached: it answers the merge gate, where a sibling's merge a moment
+   * ago is exactly what it must see. The reactor only asks for a sub-board
+   * child or a retargeted card, at a stage plan or a merge crossing, so the
+   * fetch is bounded by `BASE_TIP_FETCH_TIMEOUT_MS` rather than deduplicated;
+   * a fetch that times out reads the last-fetched remote ref.
    */
   const measureBaseTip: BoardWorkspace["measureBaseTip"] = ({ projectId, baseRefName }) =>
     Effect.gen(function* () {
@@ -319,7 +334,13 @@ export function makeLocalBoardWorkspace(deps: LocalBoardWorkspaceDeps): BoardWor
       if (cwd === null) return { tip: null };
       const remoteName = yield* primaryRemote(cwd);
       if (remoteName !== null) {
-        yield* fetchRemoteBranch("boardBaseTip.fetch", cwd, remoteName, baseRefName);
+        yield* fetchRemoteBranch(
+          "boardBaseTip.fetch",
+          cwd,
+          remoteName,
+          baseRefName,
+          BASE_TIP_FETCH_TIMEOUT_MS,
+        );
         const remoteTip = yield* gitRef("boardBaseTip.resolve", cwd, [
           "rev-parse",
           "--verify",

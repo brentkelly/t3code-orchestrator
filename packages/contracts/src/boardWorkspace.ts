@@ -202,7 +202,34 @@ export type BoardWorkerGitOperation = keyof typeof BOARD_WORKER_GIT_WS_METHODS;
 const gitError = Schema.Union([BoardWorkerGitError, EnvironmentAuthorizationError]);
 const M = BOARD_WORKER_GIT_WS_METHODS;
 const onProject = { projectId: ProjectId };
-const branchName = TrimmedNonEmptyString;
+/**
+ * A branch name git accepts (`git check-ref-format --branch`'s core rules),
+ * which also cannot be read as an option: a worker passes it to git argv.
+ */
+const isGitBranchName = Schema.makeFilter(
+  (value: string) =>
+    !value.startsWith("-") &&
+    !value.startsWith("/") &&
+    !value.endsWith("/") &&
+    !value.endsWith(".") &&
+    !value.endsWith(".lock") &&
+    !value.includes("..") &&
+    !value.includes("//") &&
+    !value.includes("@{") &&
+    !value.includes("/.") &&
+    !value.startsWith(".") &&
+    value !== "@" &&
+    // oxlint-disable-next-line no-control-regex -- git forbids control characters in a ref
+    !/[\x00-\x20\x7f~^:?*[\\]/.test(value),
+  { expected: "a git branch name" },
+);
+const branchName = TrimmedNonEmptyString.check(isGitBranchName);
+/** A card's own branch: the only kind a worker creates, pushes or deletes. */
+const boardBranchName = branchName.check(
+  Schema.makeFilter((value: string) => value.startsWith("board/"), {
+    expected: "a board/ branch",
+  }),
+);
 const path = TrimmedNonEmptyString;
 
 export const BOARD_WORKER_GIT_RPCS = [
@@ -222,12 +249,12 @@ export const BOARD_WORKER_GIT_RPCS = [
     error: gitError,
   }),
   Rpc.make(M.provisionWorktree, {
-    payload: { ...onProject, branch: branchName, baseRefName: branchName },
+    payload: { ...onProject, branch: boardBranchName, baseRefName: branchName },
     success: BoardWorkspaceProvisionedWorktree,
     error: gitError,
   }),
   Rpc.make(M.provisionWorktreeFromRemoteBranch, {
-    payload: { ...onProject, branch: branchName, baseRefName: branchName },
+    payload: { ...onProject, branch: boardBranchName, baseRefName: branchName },
     success: BoardWorkspaceProvisionedWorktree,
     error: gitError,
   }),
@@ -247,7 +274,7 @@ export const BOARD_WORKER_GIT_RPCS = [
     error: gitError,
   }),
   Rpc.make(M.createIntegrationBranch, {
-    payload: { ...onProject, branch: branchName, base: branchName },
+    payload: { ...onProject, branch: boardBranchName, base: branchName },
     success: BoardWorkspaceIntegrationBranch,
     error: gitError,
   }),
@@ -300,7 +327,7 @@ export const BOARD_WORKER_GIT_RPCS = [
     error: gitError,
   }),
   Rpc.make(M.deleteCardBranch, {
-    payload: { ...onProject, branch: branchName },
+    payload: { ...onProject, branch: boardBranchName },
     success: BoardWorkspaceBranchCleanup,
     error: gitError,
   }),
