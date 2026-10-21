@@ -104,3 +104,24 @@ it.effect("hello reports when the calling session expires", () =>
     assert.strictEqual(hello.sessionExpiresAt, "2026-11-20T10:00:00.000Z");
   }).pipe(Effect.provide(layer)),
 );
+
+it.effect("renew refuses a browser cookie, a DPoP-bound or a non-board session", () =>
+  Effect.gen(function* () {
+    issued.length = 0;
+    const callers: Array<AuthenticatedSession> = [
+      { ...session([AuthOrchestrationReadScope]), method: "browser-session-cookie" },
+      {
+        ...session([AuthOrchestrationReadScope]),
+        method: "dpop-access-token",
+        proofKeyThumbprint: "thumbprint",
+      },
+      { ...session([AuthOrchestrationReadScope]), sessionId: AuthSessionId.make("session-cli") },
+    ];
+    for (const caller of callers) {
+      const handlers = yield* boardWorkerRpcHandlers(caller);
+      const failure = yield* Effect.flip(handlers["boardWorker.renew"]({}));
+      assert.strictEqual(failure._tag, "BoardWorkerRequestError");
+    }
+    assert.deepStrictEqual(issued, []);
+  }).pipe(Effect.provide(layer)),
+);

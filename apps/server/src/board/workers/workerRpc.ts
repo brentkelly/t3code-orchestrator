@@ -33,6 +33,7 @@ import { ProjectService } from "../../project/ProjectService.ts";
 import { ProviderRegistry } from "../../provider/ProviderRegistry.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { BoardWorkers } from "./BoardWorkers.ts";
+import { isBoardSessionLabel } from "./workerCredential.ts";
 
 /** How long the worker lets its answer to `release` reach the board before
     revoking the session that carries it. */
@@ -169,22 +170,38 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
         ),
       // The successor copies the caller's subject, scopes and label, so a
       // session can only extend itself, never widen itself. The old one stays
-      // valid until the caller gives it back.
+      // valid until the caller gives it back. Only a board's own plain bearer
+      // session may renew: a browser cookie or a DPoP-bound session would
+      // otherwise trade itself for an unbound token readable from script.
       [BOARD_WORKER_WS_METHODS.renew]: (_input: Record<string, never>) =>
         authorized(
           BOARD_WORKER_WS_METHODS.renew,
           Effect.gen(function* () {
             const service = yield* auth;
-            const sessions = yield* service.listSessions();
+            const sessions = yield* service
+              .listSessions()
+              .pipe(Effect.mapError(requestError("Couldn't renew the board's session.")));
             const label = sessions.find((session) => session.sessionId === currentSession.sessionId)
               ?.client.label;
-            const issued = yield* service.issueSession({
-              subject: currentSession.subject,
-              scopes: currentSession.scopes,
-              ...(label === undefined ? {} : { label }),
-            });
+            if (
+              currentSession.method !== "bearer-access-token" ||
+              currentSession.proofKeyThumbprint !== undefined ||
+              label === undefined ||
+              !isBoardSessionLabel(label)
+            ) {
+              return yield* new BoardWorkerRequestError({
+                message: "Only a board's own session can be renewed.",
+              });
+            }
+            const issued = yield* service
+              .issueSession({
+                subject: currentSession.subject,
+                scopes: currentSession.scopes,
+                label,
+              })
+              .pipe(Effect.mapError(requestError("Couldn't renew the board's session.")));
             return { accessToken: issued.token };
-          }).pipe(Effect.mapError(requestError("Couldn't renew the board's session."))),
+          }),
         ),
     };
   });
