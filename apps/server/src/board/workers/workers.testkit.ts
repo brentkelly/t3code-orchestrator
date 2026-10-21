@@ -24,7 +24,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
-import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import { SecretStorePersistError, ServerSecretStore } from "../../auth/ServerSecretStore.ts";
 import { WorkerSnapshotStore, makeMemoryWorkerSnapshotStore } from "./WorkerSnapshotStore.ts";
 import {
   WorkerConnectError,
@@ -62,6 +62,8 @@ export interface FakeWorker {
   /** The session each renew was asked by, in order; its successor is
       `<old>-renewed`. */
   readonly renewedTokens: Array<string>;
+  /** How many renewals fail on the wire before one succeeds. */
+  renewFailures: number;
   /** When each session expires (epoch millis), by token; a token missing
       here reports `hello.sessionExpiresAt` as scripted. Renewing issues a
       successor that lives 30 days from then. */
@@ -111,6 +113,7 @@ export const makeFakeWorkers = Effect.sync(() => {
         onRelease: Effect.void,
         releasedTokens: [],
         renewedTokens: [],
+        renewFailures: 0,
         sessionExpiry: new Map(),
         link: null,
       };
@@ -165,7 +168,12 @@ export const makeFakeWorkers = Effect.sync(() => {
           }),
         ),
       ),
-      renew: Clock.currentTimeMillis.pipe(
+      renew: Effect.suspend(() => {
+        if (worker.renewFailures === 0) return Effect.void;
+        worker.renewFailures -= 1;
+        return Effect.fail(gone);
+      }).pipe(
+        Effect.andThen(Clock.currentTimeMillis),
         Effect.map((now) => {
           worker.renewedTokens.push(accessToken);
           const successor = `${accessToken}-renewed`;
@@ -219,9 +227,16 @@ export const makeFakeWorkers = Effect.sync(() => {
 /** An in-memory secret store. */
 export const makeMemorySecretStore = Effect.sync(() => {
   const secrets = new Map<string, Uint8Array>();
+  /** While true, every `set` fails, as a full or read-only disk would. */
+  const control = { failSets: false };
   const store = ServerSecretStore.of({
     get: (name) => Effect.sync(() => Option.fromNullishOr(secrets.get(name))),
-    set: (name, value) => Effect.sync(() => void secrets.set(name, value)),
+    set: (name, value) =>
+      control.failSets
+        ? Effect.fail(
+            new SecretStorePersistError({ resource: name, cause: new Error("disk full") }),
+          )
+        : Effect.sync(() => void secrets.set(name, value)),
     create: (name, value) => Effect.sync(() => void secrets.set(name, value)),
     getOrCreateRandom: (name, bytes) =>
       Effect.sync(() => {
@@ -233,7 +248,7 @@ export const makeMemorySecretStore = Effect.sync(() => {
       }),
     remove: (name) => Effect.sync(() => void secrets.delete(name)),
   });
-  return { secrets, store };
+  return { secrets, store, control };
 });
 
 /** Fake transport, memory secrets and memory snapshots, as one layer. */

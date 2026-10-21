@@ -125,6 +125,12 @@ export function sessionRenewalDelay(
   );
 }
 
+/** Delays between attempts at a renewal that failed: a minute at first,
+    then hourly, well inside `SESSION_RENEW_AHEAD`. */
+export function sessionRenewalRetryDelay(failures: number): Duration.Duration {
+  return Duration.minutes(Math.min(60, 2 ** Math.min(failures, 6)));
+}
+
 /** A worker's providers and checkouts, read over its connection. */
 export const readWorkerSnapshot = (rpc: WorkerRpc) =>
   Effect.gen(function* () {
@@ -230,20 +236,38 @@ export const makeWorkerConnections = Effect.gen(function* () {
       Effect.catchCause(() => Effect.succeed(Option.none<string>())),
     );
 
+  /** Give back a session the board was issued but couldn't keep, over a
+      link of its own: `release` revokes the session that calls it. */
+  const releaseUnstored = (worker: BoardWorker, accessToken: string) =>
+    Effect.scoped(
+      transport
+        .connect({ url: worker.url, accessToken })
+        .pipe(Effect.flatMap((link) => link.rpc.release)),
+    ).pipe(Effect.ignore);
+
   /** Swap the board's session for its successor: store the new token, then
-      give the old one back. False when the worker didn't issue one, which
-      leaves the old token in place. */
-  const renewSession = (workerId: EnvironmentId, rpc: WorkerRpc) =>
+      give the old one back. False when the swap didn't happen, which leaves
+      the old token in place. */
+  const renewSession = (worker: BoardWorker, rpc: WorkerRpc) =>
     Effect.gen(function* () {
       const renewal = yield* rpc.renew;
-      yield* secrets.set(workerSecretName(workerId), encodeWorkerToken(renewal.accessToken));
+      const stored = yield* secrets
+        .set(workerSecretName(worker.id), encodeWorkerToken(renewal.accessToken))
+        .pipe(Effect.result);
+      if (stored._tag === "Failure") {
+        // Unstored, the successor would linger on the worker until it expired.
+        yield* releaseUnstored(worker, renewal.accessToken);
+        return false;
+      }
       // Unreturned, the old session only lingers until it expires.
       yield* rpc.release.pipe(Effect.ignore);
       return true;
     }).pipe(Effect.catchCause(() => Effect.succeed(false)));
 
   /** Hold an online link until it drops — or until its session is due for
-      renewal, when the link is let go for one on the successor. */
+      renewal, when the link is let go for one on the successor. A failed
+      renewal is retried while the link is up: upstream doesn't close a
+      socket whose session expires, so the next redial would be refused. */
   const hold = (worker: BoardWorker, link: WorkerLink, hello: BoardWorkerHello) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
@@ -252,13 +276,16 @@ export const makeWorkerConnections = Effect.gen(function* () {
         yield* link.closed;
         return { _tag: "dropped" } as const;
       }
-      const due = yield* Effect.raceFirst(
-        link.closed.pipe(Effect.as(false)),
-        Effect.sleep(delay).pipe(Effect.as(true)),
-      );
-      if (due && (yield* renewSession(worker.id, link.rpc))) return { _tag: "renewed" } as const;
-      yield* link.closed;
-      return { _tag: "dropped" } as const;
+      let wait = delay;
+      for (let failures = 0; ; failures++) {
+        const due = yield* Effect.raceFirst(
+          link.closed.pipe(Effect.as(false)),
+          Effect.sleep(wait).pipe(Effect.as(true)),
+        );
+        if (!due) return { _tag: "dropped" } as const;
+        if (yield* renewSession(worker, link.rpc)) return { _tag: "renewed" } as const;
+        wait = sessionRenewalRetryDelay(failures);
+      }
     });
 
   /** One dial, held until the connection drops or its session is renewed. */

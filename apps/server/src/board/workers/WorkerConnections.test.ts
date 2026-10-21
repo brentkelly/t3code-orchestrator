@@ -284,6 +284,56 @@ it.effect("a handshake that fails on the wire is offline, not incompatible", () 
   ),
 );
 
+it.effect("retries a failed renewal while the link stays up", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { worker, connections } = yield* setup((worker) => {
+        worker.sessionExpiry.set("token-1", SESSION_LIFETIME_MS);
+        worker.renewFailures = 1;
+      });
+      yield* connections.sync([registered]);
+      yield* waitFor(connections, "online");
+      const firstSeen = (yield* statusOf(connections))?.status.lastSeenAt;
+
+      // The first try fails; the link stays up, so the board tries again a
+      // minute later instead of waiting for a drop that may never come.
+      yield* TestClock.adjust("23 days");
+      assert.deepStrictEqual(worker.renewedTokens, []);
+      yield* TestClock.adjust("1 minute");
+      yield* connections.states.pipe(
+        Stream.filter((runtime) => runtime.get(WORKER_ID)?.status.lastSeenAt !== firstSeen),
+        Stream.runHead,
+      );
+      assert.deepStrictEqual(worker.renewedTokens, ["token-1"]);
+      assert.deepStrictEqual(worker.dialedTokens, ["token-1", "token-1-renewed"]);
+    }),
+  ),
+);
+
+it.effect("gives back a successor it couldn't store, and keeps the old token", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { kit, worker, connections } = yield* setup((worker) => {
+        worker.sessionExpiry.set("token-1", SESSION_LIFETIME_MS);
+      });
+      yield* connections.sync([registered]);
+      yield* waitFor(connections, "online");
+
+      kit.secrets.control.failSets = true;
+      yield* TestClock.adjust("23 days");
+      assert.deepStrictEqual(worker.renewedTokens, ["token-1"]);
+      // The successor goes back over a link of its own; the old one stays.
+      assert.deepStrictEqual(worker.releasedTokens, ["token-1-renewed"]);
+      const stored = yield* kit.secrets.store.get(workerSecretName(WORKER_ID));
+      assert.strictEqual(
+        new TextDecoder().decode(stored._tag === "Some" ? stored.value : new Uint8Array()),
+        "token-1",
+      );
+      assert.strictEqual((yield* statusOf(connections))?.status.state, "online");
+    }),
+  ),
+);
+
 it.effect("renews the board's session before it expires, and stays online throughout", () =>
   Effect.scoped(
     Effect.gen(function* () {
