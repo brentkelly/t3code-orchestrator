@@ -651,6 +651,27 @@ export const boardHandlers = {
         .boardCardThreads(card.id)
         .pipe(Effect.mapError(internalError));
       const dependencies = describeDependencies(board, card);
+      // T3o (T3O-63): a relayed call hands out paths on the worker, so the
+      // card's files go there first — staging at spawn misses later ones.
+      const relayed = yield* Effect.serviceOption(BoardRelayInvocation);
+      if (Option.isSome(relayed) && card.attachments.length > 0) {
+        const config = yield* ServerConfig.ServerConfig;
+        const files = boardCardAttachmentManifest({
+          path: deps.path,
+          stateDir: config.stateDir,
+          card,
+        }).map((entry) => ({ name: entry.name, path: entry.path }));
+        yield* relayed.value.stageCardFiles({ cardId: String(card.id), files }).pipe(
+          Effect.mapError(
+            () =>
+              new BoardToolError({
+                code: "board-unreachable",
+                message:
+                  "Couldn't copy the card's files to the machine this thread runs on. This is temporary: retry the call.",
+              }),
+          ),
+        );
+      }
       return {
         card,
         brief: detail?.brief ?? null,

@@ -80,6 +80,47 @@ const unavailableCommand = (command: string, threadId: ThreadId) => (cause: Work
 const unavailableRead = (operation: string) => (cause: WorkerUnavailable) =>
   new ThreadReadError({ operation, detail: cause.message, cause });
 
+/**
+ * Copy a card's brief files onto a worker, sending only what changed: the
+ * worker names the files whose hash it lacks, and only those travel. Used at
+ * spawn and again by a relayed card context, so a file added after the spawn
+ * is on the worker by the time its path is handed out.
+ */
+export const stageCardFilesOnWorker = (input: {
+  readonly rpc: WorkerRpc;
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly crypto: Crypto.Crypto;
+  readonly staging: NonNullable<ThreadSpawnInput["stageAttachments"]>;
+}) =>
+  Effect.gen(function* () {
+    const { rpc, staging } = input;
+    const files = yield* Effect.forEach(staging.files, (file) =>
+      input.fileSystem
+        .readFile(file.path)
+        .pipe(
+          Effect.flatMap((bytes) =>
+            input.crypto
+              .digest("SHA-256", bytes)
+              .pipe(Effect.map((digest) => ({ name: file.name, hash: Hex.encode(digest), bytes }))),
+          ),
+        ),
+    );
+    const first = yield* rpc.gateway.stageAttachments({
+      cardId: staging.cardId,
+      files: files.map((file) => ({ name: file.name, sha256: file.hash })),
+    });
+    if (first.needed.length === 0) return;
+    const needed = new Set(first.needed);
+    yield* rpc.gateway.stageAttachments({
+      cardId: staging.cardId,
+      files: files.map((file) => ({
+        name: file.name,
+        sha256: file.hash,
+        ...(needed.has(file.name) ? { contentBase64: Base64.encode(file.bytes) } : {}),
+      })),
+    });
+  });
+
 export const makeRemoteThreadGateway = (
   deps: RemoteThreadGatewayDeps,
 ): RemoteThreadGatewayShape => {
@@ -138,37 +179,17 @@ export const makeRemoteThreadGateway = (
       return workerProjectId;
     });
 
-  const sha256 = (bytes: Uint8Array) =>
-    deps.crypto.digest("SHA-256", bytes).pipe(Effect.map(Hex.encode));
-
   /** Copy a card's brief files onto the worker, sending only what changed. */
   const stage = (staging: NonNullable<ThreadSpawnInput["stageAttachments"]>, threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const rpc = yield* link;
-      const files = yield* Effect.forEach(staging.files, (file) =>
-        deps.fileSystem
-          .readFile(file.path)
-          .pipe(
-            Effect.flatMap((bytes) =>
-              sha256(bytes).pipe(Effect.map((hash) => ({ name: file.name, hash, bytes }))),
-            ),
-          ),
-      );
-      const first = yield* rpc.gateway.stageAttachments({
-        cardId: staging.cardId,
-        files: files.map((file) => ({ name: file.name, sha256: file.hash })),
-      });
-      if (first.needed.length === 0) return;
-      const needed = new Set(first.needed);
-      yield* rpc.gateway.stageAttachments({
-        cardId: staging.cardId,
-        files: files.map((file) => ({
-          name: file.name,
-          sha256: file.hash,
-          ...(needed.has(file.name) ? { contentBase64: Base64.encode(file.bytes) } : {}),
-        })),
-      });
-    }).pipe(
+    link.pipe(
+      Effect.flatMap((rpc) =>
+        stageCardFilesOnWorker({
+          rpc,
+          fileSystem: deps.fileSystem,
+          crypto: deps.crypto,
+          staging,
+        }),
+      ),
       Effect.mapError(
         (cause): ThreadCommandError =>
           new ThreadCommandFailedError({

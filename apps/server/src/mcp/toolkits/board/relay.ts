@@ -31,9 +31,15 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { BoardQueries } from "../../../board/BoardQueries.ts";
-import { ThreadGateway, UNKNOWN_THREAD_STATE } from "../../../board/ThreadGateway.ts";
+import {
+  ThreadGateway,
+  UNKNOWN_THREAD_STATE,
+  type ThreadSpawnInput,
+} from "../../../board/ThreadGateway.ts";
 import { BoardRelayStore } from "../../../board/workers/BoardRelayStore.ts";
 import { McpRelayHost } from "../../../board/workers/McpRelayHost.ts";
+import type { stageCardFilesOnWorker } from "../../../board/workers/RemoteThreadGateway.ts";
+import type { WorkerUnavailable } from "../../../board/workers/WorkerConnections.ts";
 import * as ServerConfig from "../../../config.ts";
 import { McpInvocationContext, type McpInvocationScope } from "../../McpInvocationContext.ts";
 import { BOARD_TOOL_ERROR_CODES, BoardToolError, BoardToolkit } from "./tools.ts";
@@ -52,11 +58,22 @@ const READ_TOOLS: ReadonlySet<string> = new Set<BoardToolName>([
 /**
  * Central side: the call being answered came from a worker. Board tools read
  * the worker's state directory from it, so the paths they hand out (the
- * brief's staged files) are paths on the machine the agent runs on.
+ * brief's staged files) are paths on the machine the agent runs on, and stage
+ * the card's current files there first, so a file added after the spawn
+ * exists where its path points.
  */
 export class BoardRelayInvocation extends Context.Service<
   BoardRelayInvocation,
-  { readonly workerId: EnvironmentId; readonly stateDir: string }
+  {
+    readonly workerId: EnvironmentId;
+    readonly stateDir: string;
+    readonly stageCardFiles: (
+      staging: NonNullable<ThreadSpawnInput["stageAttachments"]>,
+    ) => Effect.Effect<
+      void,
+      Effect.Error<ReturnType<typeof stageCardFilesOnWorker>> | WorkerUnavailable
+    >;
+  }
 >()("t3/mcp/toolkits/board/relay/BoardRelayInvocation") {}
 
 interface ToolCodecs {
@@ -167,6 +184,7 @@ export const runRelayedBoardTool = (input: {
   readonly centralEnvironmentId: EnvironmentId;
   readonly request: BoardMcpRelayRequest;
   readonly handlers: Readonly<Record<string, AnyBoardHandler>>;
+  readonly stageCardFiles: BoardRelayInvocation["Service"]["stageCardFiles"];
 }): Effect.Effect<BoardMcpRelayOutcome, never, BoardQueries | ThreadGateway> =>
   Effect.gen(function* () {
     const { request, workerId } = input;
@@ -228,7 +246,11 @@ export const runRelayedBoardTool = (input: {
     };
     const result = yield* handler(params.value).pipe(
       Effect.provideService(McpInvocationContext, scope),
-      Effect.provideService(BoardRelayInvocation, { workerId, stateDir: request.stateDir }),
+      Effect.provideService(BoardRelayInvocation, {
+        workerId,
+        stateDir: request.stateDir,
+        stageCardFiles: input.stageCardFiles,
+      }),
       Effect.result,
     );
     if (result._tag === "Failure") {

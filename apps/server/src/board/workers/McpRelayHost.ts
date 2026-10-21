@@ -10,7 +10,9 @@
  * A call survives a dropped stream: it is sent again, under the same call id,
  * to the next stream the central server opens, and the central server answers
  * a repeated call id once. With no central server connected, or no answer in
- * `BOARD_MCP_RELAY_TIMEOUT_MS`, the agent gets a retryable "board unreachable".
+ * `BOARD_MCP_RELAY_TIMEOUT_MS`, the agent gets a retryable "board unreachable";
+ * its retry of the same call, from the same session, rejoins the timed-out
+ * call rather than running it a second time.
  */
 import {
   BOARD_MCP_RELAY_TIMEOUT_MS,
@@ -76,24 +78,55 @@ export const makeMcpRelayHost = (
       SubscriptionRef.set(connected, new Set(subscribers.keys())),
     );
 
-    const forward: McpRelayHostShape["forward"] = (central, call) =>
+    // Per thread, the call whose wait last timed out. It stays pending, so it
+    // is still redelivered and its answer still lands; an agent retrying the
+    // very same call joins it instead of running it again under a new id.
+    const timedOut = new Map<string, { readonly fingerprint: string; readonly callId: string }>();
+    const fingerprintOf = (central: EnvironmentId, call: McpRelayCall) =>
+      JSON.stringify([central, call.providerSessionId, call.toolName, call.params]);
+
+    /** The pending call a retry joins, or a new one sent to every stream. */
+    const pendingFor = (central: EnvironmentId, call: McpRelayCall, fingerprint: string) =>
       Effect.gen(function* () {
+        const previous = timedOut.get(call.threadId);
+        timedOut.delete(call.threadId);
+        if (previous !== undefined) {
+          const entry = pending.get(previous.callId);
+          if (entry !== undefined && previous.fingerprint === fingerprint) return entry;
+          // The agent moved on to another call: stop redelivering the old one.
+          pending.delete(previous.callId);
+        }
         const listening = subscribers.get(central);
         if (listening === undefined || listening.size === 0) {
           return yield* new McpRelayUnreachable({ reason: "not-connected" });
         }
         const callId = `relay:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`;
-        const request: BoardMcpRelayRequest = { callId, ...call };
-        const answer = yield* Deferred.make<BoardMcpRelayOutcome>();
-        pending.set(callId, { central, request, answer });
-        for (const queue of listening) yield* Queue.offer(queue, request);
-        const outcome = yield* Deferred.await(answer).pipe(
+        const entry: Pending = {
+          central,
+          request: { callId, ...call },
+          answer: yield* Deferred.make<BoardMcpRelayOutcome>(),
+        };
+        pending.set(callId, entry);
+        for (const queue of listening) yield* Queue.offer(queue, entry.request);
+        return entry;
+      });
+
+    const forward: McpRelayHostShape["forward"] = (central, call) =>
+      Effect.gen(function* () {
+        const fingerprint = fingerprintOf(central, call);
+        const entry = yield* pendingFor(central, call, fingerprint);
+        const { callId } = entry.request;
+        const outcome = yield* Deferred.await(entry.answer).pipe(
           Effect.timeoutOption(timeout),
-          Effect.ensuring(Effect.sync(() => pending.delete(callId))),
+          // The agent's request was cancelled: nobody will retry this call.
+          Effect.onInterrupt(() => Effect.sync(() => pending.delete(callId))),
         );
-        return Option.isSome(outcome)
-          ? outcome.value
-          : yield* new McpRelayUnreachable({ reason: "timed-out" });
+        if (Option.isSome(outcome)) {
+          pending.delete(callId);
+          return outcome.value;
+        }
+        timedOut.set(call.threadId, { fingerprint, callId });
+        return yield* new McpRelayUnreachable({ reason: "timed-out" });
       });
 
     const subscribe: McpRelayHostShape["subscribe"] = (central) =>

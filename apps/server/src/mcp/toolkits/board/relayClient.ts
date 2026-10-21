@@ -9,13 +9,16 @@
  */
 import type { BoardMcpRelayOutcome, BoardMcpRelayRequest, EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 import { BoardRelayStore } from "../../../board/workers/BoardRelayStore.ts";
+import { stageCardFilesOnWorker } from "../../../board/workers/RemoteThreadGateway.ts";
 import { runPerOnlineWorker } from "../../../board/workers/perOnlineWorker.ts";
 import { WorkerConnections } from "../../../board/workers/WorkerConnections.ts";
 import { boardHandlers } from "./handlers.ts";
@@ -62,7 +65,19 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
         ).pipe(Effect.provide(context)),
     ]),
   );
+  const fileSystem = yield* FileSystem.FileSystem;
+  const crypto = yield* Crypto.Crypto;
+  const scope = yield* Effect.scope;
   const inflight = new Map<string, Deferred.Deferred<BoardMcpRelayOutcome>>();
+
+  const stageCardFilesFor =
+    (workerId: EnvironmentId): BoardRelayInvocation["Service"]["stageCardFiles"] =>
+    (staging) =>
+      connections
+        .get(workerId)
+        .pipe(
+          Effect.flatMap((rpc) => stageCardFilesOnWorker({ rpc, fileSystem, crypto, staging })),
+        );
 
   const answer: BoardMcpRelayClientShape["answer"] = (workerId, request) =>
     Effect.gen(function* () {
@@ -74,22 +89,32 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
       if (running !== undefined) return yield* Deferred.await(running);
       const done = yield* Deferred.make<BoardMcpRelayOutcome>();
       inflight.set(request.callId, done);
-      const outcome = yield* runRelayedBoardTool({
+      // The run belongs to this client, not to the stream that delivered the
+      // call: a dropped link interrupts the delivering fiber, and the call
+      // redelivered on the next link waits on this same run.
+      yield* runRelayedBoardTool({
         workerId,
         centralEnvironmentId,
         request,
         handlers: handlers as never,
-      }).pipe(Effect.provide(context));
-      yield* store
-        .recordRelayCall(request.callId, workerId, outcome)
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("board relay: a call's answer was not recorded", { cause }),
-          ),
-        );
-      yield* Deferred.succeed(done, outcome);
-      inflight.delete(request.callId);
-      return outcome;
+        stageCardFiles: stageCardFilesFor(workerId),
+      }).pipe(
+        Effect.provide(context),
+        Effect.tap((outcome) =>
+          store
+            .recordRelayCall(request.callId, workerId, outcome)
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("board relay: a call's answer was not recorded", { cause }),
+              ),
+            ),
+        ),
+        Effect.exit,
+        Effect.flatMap((exit) => Deferred.done(done, exit)),
+        Effect.ensuring(Effect.sync(() => inflight.delete(request.callId))),
+        Effect.forkIn(scope),
+      );
+      return yield* Deferred.await(done);
     });
 
   yield* runPerOnlineWorker(connections, "MCP relay", (workerId, rpc) =>

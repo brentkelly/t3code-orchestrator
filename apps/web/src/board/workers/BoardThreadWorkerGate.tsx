@@ -44,10 +44,12 @@ export function BoardThreadWorkerGate({
   const navigate = useNavigate();
   if (access === "open") return <>{children(worker.environmentId)}</>;
   const copy = workerThreadAccessCopy(access, worker);
+  // Sign in acts on the environment this device already has, so it opens the
+  // list as is; only a worker with no entry here prefills Add environment.
   const openConnections = () =>
     void navigate({
       to: "/settings/connections",
-      search: worker.url === null ? {} : { addHost: worker.url },
+      search: copy.action === "sign-in" || worker.url === null ? {} : { addHost: worker.url },
     });
   return (
     <div className="flex min-h-0 flex-1 flex-col justify-center p-4">

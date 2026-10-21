@@ -21,7 +21,9 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -404,5 +406,102 @@ describe("the board MCP relay", () => {
         assert.strictEqual(yield* fs.readFileString(expected), "# Brief");
       }),
     ),
+  );
+  it.effect("a call whose delivering stream drops mid-run is still answered when redelivered", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const world = yield* setup();
+        const cardId = BoardCardId.make("card-interrupt");
+        const threadId = ThreadId.make("thread-interrupt");
+        yield* seedCard(world, { cardId, threadId }).pipe(Effect.provide(world.runtime));
+
+        // Hold the run at its last step, recording the answer.
+        const store = yield* BoardRelayStore;
+        const reached = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        const relayClient = yield* makeBoardMcpRelayClient.pipe(
+          Effect.provide(world.runtime),
+          Effect.provideService(BoardRelayStore, {
+            ...store,
+            recordRelayCall: (...args) =>
+              Deferred.succeed(reached, undefined).pipe(
+                Effect.andThen(Deferred.await(gate)),
+                Effect.andThen(store.recordRelayCall(...args)),
+              ),
+          }),
+        );
+        const request: BoardMcpRelayRequest = {
+          callId: "relay:call-interrupted",
+          toolName: "board_create_card",
+          params: { title: "Interrupted" },
+          threadId,
+          providerSessionId: "sess-1",
+          providerInstanceId: CODEX,
+          stateDir: world.workerStateDir,
+        };
+        // The link drops while the call runs: its delivering fiber is
+        // interrupted, and the worker sends the call again on the next link.
+        const delivering = yield* Effect.forkChild(relayClient.answer(WORKER_ID, request));
+        yield* Deferred.await(reached);
+        yield* Fiber.interrupt(delivering);
+        yield* Deferred.succeed(gate, undefined);
+        const redelivered = yield* relayClient.answer(WORKER_ID, request);
+        assert.strictEqual(redelivered._tag, "success");
+
+        const engine = yield* BoardEngine.pipe(Effect.provide(world.runtime));
+        const titles = ((yield* engine.getReadModel).board?.cards ?? []).map((card) => card.title);
+        assert.deepStrictEqual(
+          titles.filter((title) => title === "Interrupted"),
+          ["Interrupted"],
+        );
+      }),
+    ),
+  );
+
+  it.effect(
+    "a file attached after the spawn is staged on the worker by the next context call",
+    () =>
+      inCentral(
+        Effect.gen(function* () {
+          const world = yield* setup();
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const config = yield* ServerConfig.ServerConfig;
+          const cardId = BoardCardId.make("card-later");
+          const threadId = ThreadId.make("thread-later");
+          const engine = yield* BoardEngine.pipe(Effect.provide(world.runtime));
+          // The thread is spawned before the card has any files.
+          yield* seedCard(world, { cardId, threadId }).pipe(Effect.provide(world.runtime));
+          const centralDir = path.join(config.stateDir, "board", "attachments", cardId);
+          yield* fs.makeDirectory(centralDir, { recursive: true });
+          yield* fs.writeFileString(path.join(centralDir, "later.md"), "# Later");
+          yield* engine.dispatch({
+            type: "board.card.attach",
+            commandId: CommandId.make("cmd-attach-later"),
+            cardId,
+            attachment: {
+              id: BoardCardAttachmentId.make("att-later"),
+              name: "later.md",
+              type: "file",
+              mimeType: "text/markdown",
+              sizeBytes: 7,
+              addedAt: t0,
+            },
+            createdAt: t0,
+          });
+
+          const context = yield* onWorker(world, threadId, getContext(undefined));
+          const [entry] = context.attachments;
+          const expected = path.join(
+            world.workerStateDir,
+            "board",
+            "attachments",
+            cardId,
+            "later.md",
+          );
+          assert.strictEqual(entry?.path, expected);
+          assert.strictEqual(yield* fs.readFileString(expected), "# Later");
+        }),
+      ),
   );
 });

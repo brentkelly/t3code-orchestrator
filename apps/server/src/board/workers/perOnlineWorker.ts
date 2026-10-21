@@ -5,11 +5,14 @@
  * The signal feed and the MCP relay both hold a stream open on each worker
  * for as long as its connection lasts, and open it again when the connection
  * manager redials. This is that loop, once: a fiber per registered worker
- * that waits for a link it has not run on yet, runs, and waits again. A
- * worker removed from the registry has its fiber stopped.
+ * that waits for a link, runs, and runs again — at once on a new link, after
+ * a backoff on the same one, so a transient failure on a healthy link does
+ * not stop the feed until the next redial. A worker removed from the
+ * registry has its fiber stopped.
  */
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Option from "effect/Option";
@@ -40,10 +43,16 @@ const nextLink = (
     Effect.map((next) => (Option.isSome(next) ? next.value.rpc : null)),
   );
 
+/** The pause before a run that ended is run again on the same link: one
+    second, doubling to thirty while it keeps ending. */
+export const rerunDelay = (reruns: number): Duration.Duration =>
+  Duration.seconds(Math.min(30, 2 ** Math.min(reruns, 5)));
+
 export const runPerOnlineWorker = (
   connections: WorkerConnectionsShape,
   name: string,
   run: (workerId: EnvironmentId, rpc: WorkerRpc) => Effect.Effect<void>,
+  delay: (reruns: number) => Duration.Duration = rerunDelay,
 ): Effect.Effect<void, never, Scope.Scope> =>
   Effect.gen(function* () {
     const fibers = yield* FiberMap.make<EnvironmentId>();
@@ -51,9 +60,21 @@ export const runPerOnlineWorker = (
     const loop = (workerId: EnvironmentId) =>
       Effect.gen(function* () {
         let last: WorkerRpc | null = null;
+        let reruns = 0;
         while (true) {
-          const rpc: WorkerRpc | null = yield* nextLink(connections, workerId, last);
+          // A run that ended on a link still up is run on it again after a
+          // pause; a new link (a redial) starts at once.
+          const rpc: WorkerRpc | null =
+            last === null
+              ? yield* nextLink(connections, workerId, null)
+              : yield* Effect.raceFirst(
+                  nextLink(connections, workerId, last),
+                  Effect.sleep(delay(reruns)).pipe(
+                    Effect.andThen(nextLink(connections, workerId, null)),
+                  ),
+                );
           if (rpc === null) return;
+          reruns = rpc === last ? reruns + 1 : 0;
           last = rpc;
           yield* run(workerId, rpc).pipe(
             Effect.catchCauseIf(
