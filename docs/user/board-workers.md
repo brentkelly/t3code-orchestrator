@@ -49,6 +49,18 @@ Changing it only affects cards that don't have a worktree yet.
   keeps its label and settings.
 - **Incompatible version** — update T3o on the worker.
 
+## Threads on a worker
+
+A card's thread runs on the worker the card was placed on, and that's where it opens. On a board
+with workers, each thread row says which worker it ran on. The board itself works without a
+connection to the worker, but to read or reply in one of its threads this device needs a connection
+to that worker too. If it has none, the thread pane says so and **Open Settings → Connections**
+opens the Add environment dialog with the worker's address filled in.
+
+Agents on a worker keep reaching the board through their own server, which passes their board calls
+on to the board server. While the board server isn't connected to that worker, an agent's board
+calls fail with a message telling it to retry shortly.
+
 ## Removing a worker
 
 **Remove worker…** in a worker's menu takes it off the board and gives the board's access back on
