@@ -32,4 +32,5 @@ export const BoardWorkersLocalOnlyTest = Layer.succeed(BoardWorkers, {
   dismissSetup: () => Effect.void,
   state: Effect.succeed(EMPTY_BOARD_WORKERS_STATE),
   changes: Stream.never,
+  states: Stream.make(EMPTY_BOARD_WORKERS_STATE),
 });

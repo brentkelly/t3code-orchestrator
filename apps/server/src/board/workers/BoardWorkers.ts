@@ -46,9 +46,9 @@ import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
 
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
@@ -96,6 +96,9 @@ export interface BoardWorkersShape {
       snapshots, setups. Registry changes ride the board log. Each access
       subscribes. */
   readonly changes: Stream.Stream<BoardWorkersState>;
+  /** The summary now, then as `changes`, subscribed atomically with the
+      first read. */
+  readonly states: Stream.Stream<BoardWorkersState>;
 }
 
 export class BoardWorkers extends Context.Service<BoardWorkers, BoardWorkersShape>()(
@@ -121,8 +124,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
   const http = yield* HttpClient.HttpClient;
   const crypto = yield* Crypto.Crypto;
 
-  const setups = yield* Ref.make(new Map<string, BoardWorkerSetup>());
-  const setupChanges = yield* PubSub.unbounded<void>();
+  const setups = yield* SubscriptionRef.make(new Map<string, BoardWorkerSetup>());
   const followers = yield* FiberMap.make<string>();
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -150,7 +152,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
         status: runtime.get(worker.id)?.status ?? bootStatus(undefined),
         snapshot: runtime.get(worker.id)?.snapshot ?? null,
       })),
-      setups: [...(yield* Ref.get(setups)).values()],
+      setups: [...(yield* SubscriptionRef.get(setups)).values()],
     };
   });
 
@@ -448,28 +450,28 @@ export const makeBoardWorkers = Effect.gen(function* () {
 
   // ── Project setup ──────────────────────────────────────────────────
 
-  const publishSetups = PubSub.publish(setupChanges, undefined).pipe(Effect.asVoid);
-
   const putSetup = (setup: BoardWorkerSetup) =>
-    Ref.update(setups, (map) =>
+    SubscriptionRef.update(setups, (map) =>
       new Map(map).set(setupKey(setup.workerId, setup.projectId), setup),
-    ).pipe(Effect.andThen(publishSetups));
+    );
 
   const patchSetup = (key: string, patch: Partial<BoardWorkerSetup>) =>
-    Ref.update(setups, (map) => {
+    SubscriptionRef.update(setups, (map) => {
       const current = map.get(key);
       return current === undefined ? map : new Map(map).set(key, { ...current, ...patch });
-    }).pipe(Effect.andThen(publishSetups));
+    });
 
   const dropSetups = (workerId: EnvironmentId) =>
     Effect.gen(function* () {
-      const map = yield* Ref.get(setups);
+      const map = yield* SubscriptionRef.get(setups);
       for (const [key, setup] of map) {
         if (setup.workerId !== workerId) continue;
         yield* FiberMap.remove(followers, key);
       }
-      yield* Ref.set(setups, new Map([...map].filter(([, setup]) => setup.workerId !== workerId)));
-      yield* publishSetups;
+      yield* SubscriptionRef.set(
+        setups,
+        new Map([...map].filter(([, setup]) => setup.workerId !== workerId)),
+      );
     });
 
   const failed = (
@@ -570,7 +572,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
           ),
         );
       const key = setupKey(worker.id, project.id);
-      const previous = (yield* Ref.get(setups)).get(key);
+      const previous = (yield* SubscriptionRef.get(setups)).get(key);
       if (previous?.phase === "cloning") return previous;
       const folder = input.folder ?? worker.snapshot?.projectsFolder ?? "~";
       const destinationPath = cloneDestination(folder, remoteUrl);
@@ -640,19 +642,22 @@ export const makeBoardWorkers = Effect.gen(function* () {
     Effect.gen(function* () {
       const key = setupKey(workerId, projectId);
       yield* FiberMap.remove(followers, key);
-      yield* Ref.update(setups, (map) => {
+      yield* SubscriptionRef.update(setups, (map) => {
         const next = new Map(map);
         next.delete(key);
         return next;
       });
-      yield* publishSetups;
     });
 
   // Registry events are in the board log, and the board subscription re-sends
   // the summary when it replays one; these are the changes the log never sees.
   const changes: BoardWorkersShape["changes"] = Stream.merge(
     connections.changes,
-    Stream.fromPubSub(setupChanges),
+    SubscriptionRef.changes(setups).pipe(Stream.drop(1)),
+  ).pipe(Stream.mapEffect(() => state));
+  const states: BoardWorkersShape["states"] = Stream.merge(
+    connections.states,
+    SubscriptionRef.changes(setups),
   ).pipe(Stream.mapEffect(() => state));
 
   // Dial every registered worker from boot.
@@ -667,6 +672,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
     dismissSetup,
     state,
     changes,
+    states,
   } satisfies BoardWorkersShape;
 });
 
