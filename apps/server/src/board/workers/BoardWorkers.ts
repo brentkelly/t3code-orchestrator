@@ -389,11 +389,27 @@ export const makeBoardWorkers = Effect.gen(function* () {
           message: "That worker isn't on this board any more.",
         });
       }
-      const target = yield* resolveWorkerTarget({
-        url: input.url ?? worker.url,
-        credential: input.credential,
-      });
-      const descriptor = yield* describe(target.httpBaseUrl);
+      const locate = (url: string) =>
+        resolveWorkerTarget({ url, credential: input.credential }).pipe(
+          Effect.flatMap((target) =>
+            describe(target.httpBaseUrl).pipe(Effect.map((descriptor) => ({ target, descriptor }))),
+          ),
+        );
+      // A minted token works at any of the worker's addresses, and the URL
+      // beside it is the one the CLIENT reaches it on. The board keeps dialing
+      // the address it already uses, and moves only when that one has stopped
+      // answering (the worker moved). A pasted link names its own address.
+      const { target, descriptor } =
+        input.credential.kind === "pairing-token" &&
+        input.url !== undefined &&
+        input.url !== worker.url
+          ? yield* locate(worker.url).pipe(
+              Effect.catchIf(
+                (error) => error.code === "unreachable",
+                () => locate(input.url ?? worker.url),
+              ),
+            )
+          : yield* locate(input.url ?? worker.url);
       if (descriptor.environmentId !== worker.id) {
         return yield* new BoardWorkerAddError({
           code: "different-server",

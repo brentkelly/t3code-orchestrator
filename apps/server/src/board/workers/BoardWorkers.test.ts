@@ -354,6 +354,27 @@ describe("BoardWorkers", () => {
       }),
     ));
 
+  test("re-pairing from the picker keeps the address the board already dials", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { http, worker, connections, workers } = yield* setup;
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+
+        // The client minted the token over its own address for the worker,
+        // which the board server can't reach.
+        http.tokens.set("fresh", "access-fresh");
+        const repaired = yield* workers.repair({
+          workerId: WORKER_ID,
+          url: "http://127.0.0.1:1",
+          credential: { kind: "pairing-token", token: "fresh" },
+        });
+        assert.strictEqual(repaired.worker.url, http.origin);
+        yield* waitFor(connections, "online");
+        assert.strictEqual(worker.dialedTokens.at(-1), "access-fresh");
+      }),
+    ));
+
   test("removes a worker: gives the session back, then forgets token and record", () =>
     Effect.scoped(
       Effect.gen(function* () {
