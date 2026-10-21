@@ -1068,7 +1068,8 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     [activeSuggestionId, ariaLabel, className, disabled, placeholder, richText, suggestionListId],
   );
 
-  const editor = useEditor(
+  // T3o: `tiptapEditor` (was `editor`); see the destroyed-editor guard below.
+  const tiptapEditor = useEditor(
     {
       extensions: [
         StarterKit.configure({
@@ -1529,6 +1530,12 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     },
     [],
   );
+  // T3o: drop a destroyed editor (upstream bug). useEditor builds its first
+  // editor during render and destroys it if the mount takes longer than a
+  // millisecond to commit, then hands over a replacement on the next render.
+  // The destroyed one has no view, so everything below sees null until the
+  // replacement arrives; a focus request landing in that window is dropped.
+  const editor = tiptapEditor?.isDestroyed ? null : tiptapEditor;
 
   useEffect(() => {
     editor?.setEditable(!disabled);
@@ -1605,11 +1612,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 
   // Controlled value/cursor from the store (history recall, chip insertion…).
   useLayoutEffect(() => {
-    // T3o: guard a destroyed editor (upstream bug). useEditor destroys its
-    // first editor when the mount takes longer than a millisecond to commit,
-    // then hands over a replacement on the next render. The destroyed one
-    // has no view, so wait for the replacement.
-    if (!editor || editor.isDestroyed) return;
+    if (!editor) return;
     const initialSelection = !hasAppliedControlledSelectionRef.current;
     hasAppliedControlledSelectionRef.current = true;
     const normalizedCursor = clampEditorCursor(value, cursor);
@@ -1689,7 +1692,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 
   const focusAt = useCallback(
     (nextCursor: number) => {
-      if (!editor || editor.isDestroyed) return;
+      if (!editor) return;
       // view.focus() writes the state selection to the DOM as it focuses. A
       // bare DOM focus leaves the native caret at the start until
       // ProseMirror resyncs it 20ms later, and dictation tools type fast
@@ -1779,7 +1782,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         if (edge === "start" ? beforeCaret.includes("\n") : afterCaret.includes("\n")) {
           return false;
         }
-        const rootElement = editor && !editor.isDestroyed ? editor.view.dom : null;
+        const rootElement = editor?.view.dom;
         const selection = window.getSelection();
         if (
           !rootElement ||
