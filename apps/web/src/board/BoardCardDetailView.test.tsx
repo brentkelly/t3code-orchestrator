@@ -11,6 +11,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   BOARD_SEED_STAGES,
   DEFAULT_SERVER_SETTINGS,
+  EMPTY_BOARD_WORKERS_STATE,
   BoardCardId,
   BoardLabelId,
   BoardStageId,
@@ -27,6 +28,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Menu } from "../components/ui/menu";
 import { boardAutoMergeToggleCopy } from "./boardAutoMergeHold";
 import { boardConflictFix } from "./boardConflictFix";
+import { boardThreadWorker } from "./workers/threadWorker";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 // The Threads section deep-links with TanStack Router's <Link>, which needs a
@@ -169,6 +171,11 @@ function splitShells(count: number) {
 }
 
 const noop = () => {};
+const localWorker = boardThreadWorker({
+  workerId: undefined,
+  workers: EMPTY_BOARD_WORKERS_STATE,
+  boardEnvironmentId: environmentId,
+});
 const baseProps = {
   environmentId,
   baseBranch: {
@@ -706,6 +713,8 @@ describe("BoardCardDetailPanel", () => {
             title: "Live planning thread",
             threadState: "working",
             awaitingInput: false,
+            worker: localWorker,
+            ranOn: null,
           },
           {
             threadId: ThreadId.make("thread-gone"),
@@ -714,6 +723,8 @@ describe("BoardCardDetailPanel", () => {
             title: null,
             threadState: "none",
             awaitingInput: false,
+            worker: localWorker,
+            ranOn: null,
           },
         ]}
       />,

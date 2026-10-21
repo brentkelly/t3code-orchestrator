@@ -174,6 +174,7 @@ import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
 import { BoardHint } from "./BoardHint";
+import { threadWorkerOpensOn, type BoardThreadWorker } from "./workers/threadWorker";
 import {
   boardForwardShownBesideRecovery,
   boardReviewPaneStopped,
@@ -327,6 +328,10 @@ export interface BoardDetailThreadLink {
   readonly title: string | null;
   readonly threadState: BoardCardThreadState;
   readonly awaitingInput: boolean;
+  /** The worker the thread lives on, which is where it opens (T3O-63). */
+  readonly worker: BoardThreadWorker;
+  /** "ran on {worker}", only on a board with more than one worker. */
+  readonly ranOn: string | null;
 }
 
 export interface BoardCardDetailViewProps {
@@ -1098,13 +1103,14 @@ function ThreadsSection(props: BoardCardDetailViewProps) {
                       ? " · Waiting for permission"
                       : ` · ${THREAD_STATE_LABEL[link.threadState]}`}
                   {link.threadId === activeThreadId && !link.tombstoned ? " · active" : ""}
+                  {link.ranOn === null ? "" : ` · ${link.ranOn}`}
                 </span>
               </div>
               {link.tombstoned ? null : (
                 <Link
                   className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                  params={{ environmentId: props.environmentId, threadId: link.threadId }}
-                  title="Open thread"
+                  params={{ environmentId: link.worker.environmentId, threadId: link.threadId }}
+                  title={threadWorkerOpensOn(link.worker)}
                   to="/$environmentId/$threadId"
                 >
                   <ExternalLinkIcon className="size-3.5" />
@@ -2783,7 +2789,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               <BoardCardThreadPane
                 adoptableThreads={props.adoptableThreads}
                 cardKey={card.key}
-                environmentId={props.environmentId}
                 maximised={props.maximised}
                 onCreateBlankThread={props.onCreateBlankThread}
                 onLinkThread={props.onLinkThread}

@@ -67,6 +67,7 @@ import { randomUUID } from "../lib/utils";
 import { getCustomModelOptionsByInstance, resolveAppModelSelectionState } from "../modelSelection";
 import { getTriggerDisplayModelName } from "../components/chat/providerIconUtils";
 import { boardEnvironment } from "../state/board";
+import { boardThreadWorker, threadWorkerRanOn } from "./workers/threadWorker";
 import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import { boardConflictFix } from "./boardConflictFix";
 import { boardScheduleKind } from "./boardSchedule";
@@ -436,6 +437,8 @@ export function BoardCardDetail({
     return (board?.cards ?? []).filter((shell) => shell.parentCardId === card.id);
   }, [board, card]);
 
+  // T3o (T3O-63): the worker each thread lives on, for where it opens.
+  const workers = useAtomValue(boardEnvironment.workersAtom(environmentId));
   const threadLinks = useMemo<ReadonlyArray<BoardDetailThreadLink>>(() => {
     if (card === null) return [];
     const threads = snapshot?.threads ?? [];
@@ -444,16 +447,24 @@ export function BoardCardDetail({
       const { threadState, awaitingInput } = deriveBoardCardThreadState(
         thread === undefined ? undefined : boardThreadStateSource(thread),
       );
+      const worker = boardThreadWorker({
+        workerId: link.workerId,
+        workers,
+        boardEnvironmentId: environmentId,
+      });
       return {
         threadId: link.threadId,
         role: link.role,
         tombstoned: link.tombstonedAt !== null,
-        title: thread?.title ?? null,
+        // A thread on another worker is not in this server's snapshot.
+        title: thread?.title ?? (link.workerId === undefined ? null : `Thread on ${worker.label}`),
         threadState,
         awaitingInput,
+        worker,
+        ranOn: threadWorkerRanOn(worker, workers),
       };
     });
-  }, [card, snapshot]);
+  }, [card, snapshot, workers, environmentId]);
 
   // Agent display names and accents for the Activity rail (t3o-18, D11). Resolved
   // at render time from the provider instance list the app already holds, so a
