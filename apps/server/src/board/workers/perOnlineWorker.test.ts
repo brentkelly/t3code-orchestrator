@@ -3,10 +3,12 @@
  */
 import { EnvironmentId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { runPerOnlineWorker } from "./perOnlineWorker.ts";
 import type { WorkerConnectionsShape, WorkerRuntime } from "./WorkerConnections.ts";
@@ -53,6 +55,40 @@ describe("runPerOnlineWorker", () => {
       );
       assert.strictEqual(yield* Queue.take(runs), 1);
       assert.strictEqual(yield* Queue.take(runs), 2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("the backoff starts over after a run that lasted", () =>
+    Effect.gen(function* () {
+      const runs = yield* Queue.unbounded<number>();
+      const pauses: Array<number> = [];
+      const release = yield* Deferred.make<void>();
+      let count = 0;
+      yield* runPerOnlineWorker(
+        steadyLink({} as WorkerRpc),
+        "test",
+        () =>
+          Effect.gen(function* () {
+            count += 1;
+            yield* Queue.offer(runs, count);
+            // The first run fails at once; the second holds a while, then fails.
+            if (count === 2) yield* Deferred.await(release);
+            if (count <= 2) return yield* Effect.die("stream error");
+            return yield* Effect.never;
+          }),
+        (reruns) => {
+          pauses.push(reruns);
+          return Duration.seconds(1);
+        },
+      );
+      assert.strictEqual(yield* Queue.take(runs), 1);
+      yield* TestClock.adjust(Duration.seconds(1));
+      assert.strictEqual(yield* Queue.take(runs), 2);
+      yield* TestClock.adjust(Duration.seconds(10));
+      yield* Deferred.succeed(release, undefined);
+      yield* TestClock.adjust(Duration.seconds(1));
+      assert.strictEqual(yield* Queue.take(runs), 3);
+      assert.deepStrictEqual(pauses, [0, 0]);
     }).pipe(Effect.scoped),
   );
 });

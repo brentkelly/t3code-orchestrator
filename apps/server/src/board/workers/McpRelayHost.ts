@@ -71,6 +71,7 @@ export const makeMcpRelayHost = (
 ) =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
+    const scope = yield* Effect.scope;
     const pending = new Map<string, Pending>();
     const subscribers = new Map<EnvironmentId, Set<Queue.Queue<BoardMcpRelayRequest>>>();
     const connected = yield* SubscriptionRef.make<ReadonlySet<EnvironmentId>>(new Set());
@@ -81,6 +82,7 @@ export const makeMcpRelayHost = (
     // Per thread, the call whose wait last timed out. It stays pending, so it
     // is still redelivered and its answer still lands; an agent retrying the
     // very same call joins it instead of running it again under a new id.
+    // An agent that never retries leaves it for one more timeout, no longer.
     const timedOut = new Map<string, { readonly fingerprint: string; readonly callId: string }>();
     const fingerprintOf = (central: EnvironmentId, call: McpRelayCall) =>
       JSON.stringify([central, call.providerSessionId, call.toolName, call.params]);
@@ -126,6 +128,16 @@ export const makeMcpRelayHost = (
           return outcome.value;
         }
         timedOut.set(call.threadId, { fingerprint, callId });
+        yield* Effect.sleep(timeout).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              if (timedOut.get(call.threadId)?.callId !== callId) return;
+              timedOut.delete(call.threadId);
+              pending.delete(callId);
+            }),
+          ),
+          Effect.forkIn(scope),
+        );
         return yield* new McpRelayUnreachable({ reason: "timed-out" });
       });
 

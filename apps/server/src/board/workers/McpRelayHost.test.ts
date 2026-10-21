@@ -68,6 +68,32 @@ describe("McpRelayHost", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("a timed-out call nobody retries is dropped after one more timeout", () =>
+    Effect.gen(function* () {
+      const { host, sent } = yield* listening;
+
+      const first = yield* Effect.forkChild(host.forward(CENTRAL, call({ title: "Abandoned" })));
+      yield* Queue.take(sent);
+      yield* TestClock.adjust(TIMEOUT);
+      yield* Effect.flip(Fiber.join(first));
+      yield* TestClock.adjust(TIMEOUT);
+
+      // A board that connects now is sent only what is still waiting.
+      const later = yield* Queue.unbounded<BoardMcpRelayRequest>();
+      yield* host.subscribe(CENTRAL).pipe(
+        Stream.runForEach((request) => Queue.offer(later, request)),
+        Effect.forkScoped,
+      );
+      const other = yield* Effect.forkChild(
+        host.forward(CENTRAL, { ...call({ title: "Next" }), threadId: ThreadId.make("thread-2") }),
+      );
+      const delivered = yield* Queue.take(later);
+      assert.deepStrictEqual(delivered.params, { title: "Next" });
+      yield* host.respond({ callId: delivered.callId, outcome: created });
+      yield* Fiber.join(other);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("a different call after a timeout is sent as a new call", () =>
     Effect.gen(function* () {
       const { host, sent } = yield* listening;

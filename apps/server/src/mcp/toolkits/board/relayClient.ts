@@ -5,7 +5,8 @@
  * open and answers each board tool call that arrives on it. A call can arrive
  * twice — a stream dropped between the answer and its delivery — so each is
  * answered once by call id: an answer on record is sent again, and a call
- * still running is waited on rather than run a second time.
+ * still running is waited on rather than run a second time. A transient
+ * `board-unreachable` is not recorded, so the same call id can still succeed.
  */
 import type { BoardMcpRelayOutcome, BoardMcpRelayRequest, EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -45,6 +46,9 @@ export class BoardMcpRelayClient extends Context.Service<
   BoardMcpRelayClientShape
 >()("t3/mcp/toolkits/board/relayClient/BoardMcpRelayClient") {}
 
+const isTransient = (outcome: BoardMcpRelayOutcome) =>
+  outcome._tag === "failure" && outcome.code === "board-unreachable";
+
 export const makeBoardMcpRelayClient = Effect.gen(function* () {
   const connections = yield* WorkerConnections;
   const store = yield* BoardRelayStore;
@@ -81,37 +85,42 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
 
   const answer: BoardMcpRelayClientShape["answer"] = (workerId, request) =>
     Effect.gen(function* () {
-      const recorded = yield* store
-        .relayCallOutcome(request.callId)
-        .pipe(Effect.orElseSucceed(() => null));
-      if (recorded !== null) return recorded;
+      // Claimed before the first yield, so a redelivery can never slip in
+      // between the store lookup and the claim and run the call a second time.
       const running = inflight.get(request.callId);
       if (running !== undefined) return yield* Deferred.await(running);
-      const done = yield* Deferred.make<BoardMcpRelayOutcome>();
+      const done = Deferred.makeUnsafe<BoardMcpRelayOutcome>();
       inflight.set(request.callId, done);
       // The run belongs to this client, not to the stream that delivered the
       // call: a dropped link interrupts the delivering fiber, and the call
-      // redelivered on the next link waits on this same run.
-      yield* runRelayedBoardTool({
-        workerId,
-        centralEnvironmentId,
-        request,
-        handlers: handlers as never,
-        stageCardFiles: stageCardFilesFor(workerId),
-      }).pipe(
-        Effect.provide(context),
-        Effect.tap((outcome) =>
-          store
-            .recordRelayCall(request.callId, workerId, outcome)
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("board relay: a call's answer was not recorded", { cause }),
-              ),
+      // redelivered on the next link waits on this same run. Its answer is
+      // recorded before the claim is released, so a later redelivery finds it.
+      yield* Effect.gen(function* () {
+        const recorded = yield* store
+          .relayCallOutcome(request.callId)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (recorded !== null) return recorded;
+        const outcome = yield* runRelayedBoardTool({
+          workerId,
+          centralEnvironmentId,
+          request,
+          handlers: handlers as never,
+          stageCardFiles: stageCardFilesFor(workerId),
+        }).pipe(Effect.provide(context));
+        // A transient refusal is not this call's answer: a retry may succeed.
+        if (isTransient(outcome)) return outcome;
+        yield* store
+          .recordRelayCall(request.callId, workerId, outcome)
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("board relay: a call's answer was not recorded", { cause }),
             ),
-        ),
+          );
+        return outcome;
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => inflight.delete(request.callId))),
         Effect.exit,
         Effect.flatMap((exit) => Deferred.done(done, exit)),
-        Effect.ensuring(Effect.sync(() => inflight.delete(request.callId))),
         Effect.forkIn(scope),
       );
       return yield* Deferred.await(done);

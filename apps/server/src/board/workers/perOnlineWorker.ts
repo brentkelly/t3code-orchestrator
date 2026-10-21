@@ -12,6 +12,7 @@
  */
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
@@ -44,7 +45,7 @@ const nextLink = (
   );
 
 /** The pause before a run that ended is run again on the same link: one
-    second, doubling to thirty while it keeps ending. */
+    second, doubling to thirty while it keeps ending soon after it starts. */
 export const rerunDelay = (reruns: number): Duration.Duration =>
   Duration.seconds(Math.min(30, 2 ** Math.min(reruns, 5)));
 
@@ -61,6 +62,7 @@ export const runPerOnlineWorker = (
       Effect.gen(function* () {
         let last: WorkerRpc | null = null;
         let reruns = 0;
+        let pause: Duration.Duration | null = null;
         while (true) {
           // A run that ended on a link still up is run on it again after a
           // pause; a new link (a redial) starts at once.
@@ -69,13 +71,17 @@ export const runPerOnlineWorker = (
               ? yield* nextLink(connections, workerId, null)
               : yield* Effect.raceFirst(
                   nextLink(connections, workerId, last),
-                  Effect.sleep(delay(reruns)).pipe(
+                  Effect.sleep(pause ?? delay(0)).pipe(
                     Effect.andThen(nextLink(connections, workerId, null)),
                   ),
                 );
           if (rpc === null) return;
-          reruns = rpc === last ? reruns + 1 : 0;
+          if (rpc !== last) {
+            reruns = 0;
+            pause = null;
+          }
           last = rpc;
+          const startedAt = yield* Clock.currentTimeMillis;
           yield* run(workerId, rpc).pipe(
             Effect.catchCauseIf(
               (cause) => !Cause.hasInterruptsOnly(cause),
@@ -86,6 +92,11 @@ export const runPerOnlineWorker = (
                 }),
             ),
           );
+          // A run that outlasted its pause was healthy: the backoff starts over.
+          const ranFor = (yield* Clock.currentTimeMillis) - startedAt;
+          if (pause !== null && ranFor >= Duration.toMillis(pause)) reruns = 0;
+          pause = delay(reruns);
+          reruns += 1;
         }
       });
     yield* connections.states.pipe(

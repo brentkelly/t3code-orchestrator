@@ -215,7 +215,14 @@ export const runRelayedBoardTool = (input: {
     // the worker, not here.
     const threads = yield* ThreadGateway;
     const state = yield* threads.threadState(request.threadId);
-    if (state === null || state === UNKNOWN_THREAD_STATE || state.deleted) {
+    if (state === UNKNOWN_THREAD_STATE) {
+      // The worker could not be asked just now; that is no verdict on the thread.
+      return failure(
+        "board-unreachable",
+        "The board could not check this thread on its worker just now. This is temporary: retry the same call in a minute.",
+      );
+    }
+    if (state === null || state.deleted) {
       return failure("rejected", "The calling thread was not found.");
     }
     const ownsRun =

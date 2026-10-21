@@ -38,7 +38,11 @@ import {
   SupervisorReactor,
   type SupervisorReactorShape,
 } from "../../../board/supervisorReactor.ts";
-import { ThreadGateway, type ThreadSpawnInput } from "../../../board/ThreadGateway.ts";
+import {
+  ThreadGateway,
+  UNKNOWN_THREAD_STATE,
+  type ThreadSpawnInput,
+} from "../../../board/ThreadGateway.ts";
 import { makeThreadGatewayRouter } from "../../../board/ThreadGatewayRouter.ts";
 import { aliveThread, makeFakeThreadGateway } from "../../../board/threadGateway.testkit.ts";
 import { BoardRelayStore, BoardRelayStoreLive } from "../../../board/workers/BoardRelayStore.ts";
@@ -454,6 +458,107 @@ describe("the board MCP relay", () => {
           titles.filter((title) => title === "Interrupted"),
           ["Interrupted"],
         );
+      }),
+    ),
+  );
+
+  it.effect("a redelivery whose store lookup races the first run does not run it again", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const world = yield* setup();
+        const cardId = BoardCardId.make("card-race");
+        const threadId = ThreadId.make("thread-race");
+        yield* seedCard(world, { cardId, threadId }).pipe(Effect.provide(world.runtime));
+
+        // The first run is held while it records its answer; a redelivery's
+        // lookup reads the store then, and resumes only after that run ends.
+        const store = yield* BoardRelayStore;
+        const recording = yield* Deferred.make<void>();
+        const recordGate = yield* Deferred.make<void>();
+        const lookupGate = yield* Deferred.make<void>();
+        let lookups = 0;
+        const relayClient = yield* makeBoardMcpRelayClient.pipe(
+          Effect.provide(world.runtime),
+          Effect.provideService(BoardRelayStore, {
+            ...store,
+            relayCallOutcome: (callId) =>
+              store.relayCallOutcome(callId).pipe(
+                Effect.tap(() => {
+                  lookups += 1;
+                  return lookups === 1 ? Effect.void : Deferred.await(lookupGate);
+                }),
+              ),
+            recordRelayCall: (...args) =>
+              Deferred.succeed(recording, undefined).pipe(
+                Effect.andThen(Deferred.await(recordGate)),
+                Effect.andThen(store.recordRelayCall(...args)),
+              ),
+          }),
+        );
+        const request: BoardMcpRelayRequest = {
+          callId: "relay:call-race",
+          toolName: "board_create_card",
+          params: { title: "Raced" },
+          threadId,
+          providerSessionId: "sess-1",
+          providerInstanceId: CODEX,
+          stateDir: world.workerStateDir,
+        };
+        const first = yield* Effect.forkChild(relayClient.answer(WORKER_ID, request));
+        yield* Deferred.await(recording);
+        const redelivered = yield* Effect.forkChild(relayClient.answer(WORKER_ID, request));
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(recordGate, undefined);
+        const answered = yield* Fiber.join(first);
+        yield* Deferred.succeed(lookupGate, undefined);
+        assert.deepStrictEqual(yield* Fiber.join(redelivered), answered);
+
+        const engine = yield* BoardEngine.pipe(Effect.provide(world.runtime));
+        const titles = ((yield* engine.getReadModel).board?.cards ?? []).map((card) => card.title);
+        assert.deepStrictEqual(
+          titles.filter((title) => title === "Raced"),
+          ["Raced"],
+        );
+      }),
+    ),
+  );
+
+  it.effect("an unreachable worker is a retryable answer, not recorded for the call", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const world = yield* setup();
+        const cardId = BoardCardId.make("card-blip");
+        const threadId = ThreadId.make("thread-blip");
+        yield* seedCard(world, { cardId, threadId }).pipe(Effect.provide(world.runtime));
+
+        // The worker cannot be asked about the thread for a moment.
+        const blipped = yield* makeBoardMcpRelayClient.pipe(
+          Effect.provideService(ThreadGateway, {
+            ...world.router,
+            threadState: () => Effect.succeed(UNKNOWN_THREAD_STATE),
+          }),
+          Effect.provide(world.runtime),
+        );
+        const request: BoardMcpRelayRequest = {
+          callId: "relay:call-blip",
+          toolName: "board_create_card",
+          params: { title: "After the blip" },
+          threadId,
+          providerSessionId: "sess-1",
+          providerInstanceId: CODEX,
+          stateDir: world.workerStateDir,
+        };
+        const during = yield* blipped.answer(WORKER_ID, request);
+        assert.deepStrictEqual(
+          during._tag === "failure" ? during.code : during._tag,
+          "board-unreachable",
+        );
+        const store = yield* BoardRelayStore;
+        assert.isNull(yield* store.relayCallOutcome(request.callId));
+
+        // The same call, once the worker answers again, goes through.
+        const after = yield* world.relayClient.answer(WORKER_ID, request);
+        assert.strictEqual(after._tag, "success");
       }),
     ),
   );
