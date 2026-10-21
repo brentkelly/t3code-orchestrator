@@ -450,8 +450,9 @@ export const followStoredEvents = (
   });
 
 /** How far before a resume cursor `readSignalLog` starts reading, so the reader
-    holds the same memory it would have had at the cursor. Matches the reader's
-    own bound: nothing older than this is remembered anyway. */
+    holds most of the memory it would have had at the cursor. A bounded best
+    effort: a live reader keeps a run's failure text until the run ends, so a
+    resume whose error item lies further back than this still loses that text. */
 export const SIGNAL_READER_WARMUP_EVENTS = 4096;
 
 /**
