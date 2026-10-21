@@ -18,6 +18,11 @@ import {
   BoardCardStepAwaitingReason,
   BoardCardStepStalledReason,
   BoardProviderLimit,
+  BoardWorker,
+  BoardWorkerId,
+  compareBoardWorkers,
+  BOARD_LOCAL_WORKER_ID,
+  type EnvironmentId,
   activeBoardCardThreadId,
   BOARD_CARD_BRIEF_BODY_KIND,
   BoardCard,
@@ -450,6 +455,14 @@ const BoardProviderLimitDbRow = Schema.Struct({
   setByHuman: Schema.Int,
 });
 type BoardProviderLimitDbRow = typeof BoardProviderLimitDbRow.Type;
+
+/** The `board_workers` row (T3O-62): the registry, one row per worker. */
+const BoardWorkerDbRow = Schema.Struct({
+  id: BoardWorker.fields.id,
+  label: BoardWorker.fields.label,
+  url: BoardWorker.fields.url,
+  addedAt: BoardWorker.fields.addedAt,
+});
 
 // `dependsOn` JSON-encodes; `locked` travels as 0/1 (SQLite has no boolean).
 const BoardPlanDbRow = Schema.Struct({
@@ -1934,6 +1947,55 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // The worker registry (T3O-62). Upsert on the worker id: a re-pair replaces
+  // the same row.
+  const upsertBoardWorkerRow = SqlSchema.void({
+    Request: BoardWorkerDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_workers (worker_id, label, url, added_at)
+      VALUES (${row.id}, ${row.label}, ${row.url}, ${row.addedAt})
+      ON CONFLICT (worker_id)
+      DO UPDATE SET label = excluded.label, url = excluded.url, added_at = excluded.added_at
+    `,
+  });
+
+  const deleteBoardWorkerRow = SqlSchema.void({
+    Request: Schema.String,
+    execute: (workerId) => sql`
+      DELETE FROM board_workers WHERE worker_id = ${workerId}
+    `,
+  });
+
+  const listBoardWorkerRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardWorkerDbRow,
+    execute: () => sql`
+      SELECT worker_id AS "id", label, url, added_at AS "addedAt"
+      FROM board_workers
+    `,
+  });
+
+  // One row or none: none means the default is `local`.
+  const writeBoardDefaultWorkerRow = SqlSchema.void({
+    Request: BoardWorkerId,
+    execute: (workerId) =>
+      workerId === BOARD_LOCAL_WORKER_ID
+        ? sql`DELETE FROM board_default_worker`
+        : sql`
+            INSERT INTO board_default_worker (singleton, worker_id)
+            VALUES (1, ${workerId})
+            ON CONFLICT (singleton) DO UPDATE SET worker_id = excluded.worker_id
+          `,
+  });
+
+  const findBoardDefaultWorkerRow = SqlSchema.findOneOption({
+    Request: Schema.Void,
+    Result: Schema.Struct({ workerId: BoardWorkerId }),
+    execute: () => sql`
+      SELECT worker_id AS "workerId" FROM board_default_worker WHERE singleton = 1
+    `,
+  });
+
   /** ONE card's live-step stop reason (t3o-30, D2) — the card detail's failure
       banner and nothing else. A one-column read rather than a second use of
       `listBoardCardStepStateRows`: the banner needs the text, never the frozen
@@ -2114,6 +2176,11 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     upsertBoardProviderLimitRow,
     deleteBoardProviderLimitRow,
     listBoardProviderLimitRows,
+    upsertBoardWorkerRow,
+    deleteBoardWorkerRow,
+    listBoardWorkerRows,
+    writeBoardDefaultWorkerRow,
+    findBoardDefaultWorkerRow,
     findBoardCardStepErrorRow,
     deleteBoardPlansForCard,
     insertBoardPlanRow,
@@ -2454,6 +2521,21 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       .pipe(
         Effect.mapError(toPersistenceSqlError("BoardCardsProjection.providerLimitDelete:query")),
       );
+
+  const upsertWorker = (worker: BoardWorker) =>
+    queries
+      .upsertBoardWorkerRow(worker)
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.worker:query")));
+
+  const deleteWorker = (workerId: EnvironmentId) =>
+    queries
+      .deleteBoardWorkerRow(workerId)
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.workerDelete:query")));
+
+  const writeDefaultWorker = (workerId: BoardWorkerId) =>
+    queries
+      .writeBoardDefaultWorkerRow(workerId)
+      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.defaultWorker:query")));
 
   const upsertStage = (stage: BoardStageDefinition) =>
     queries
@@ -3017,6 +3099,20 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         yield* deleteProviderLimit(event.payload.providerInstanceId);
         return;
 
+      // T3o (T3O-62): the worker registry. No card, so no activity row; what
+      // removal does to the cards on a worker belongs to D22's fallback.
+      case "board.worker-registered":
+        yield* upsertWorker(event.payload.worker);
+        return;
+
+      case "board.worker-removed":
+        yield* deleteWorker(event.payload.workerId);
+        return;
+
+      case "board.default-worker-set":
+        yield* writeDefaultWorker(event.payload.workerId);
+        return;
+
       default: {
         event satisfies never;
         return;
@@ -3052,6 +3148,8 @@ export function loadBoardState(
     queries.listBoardCardStepStateRows(),
     queries.listBoardPlanRows(),
     queries.listBoardProviderLimitRows(),
+    queries.listBoardWorkerRows(),
+    queries.findBoardDefaultWorkerRow(),
   ]).pipe(
     Effect.map(
       ([
@@ -3066,6 +3164,8 @@ export function loadBoardState(
         stepStateRows,
         planRows,
         providerLimitRows,
+        workerRows,
+        defaultWorkerRow,
       ]) => {
         // Canonical ordering comes from the shared JS comparators — the same
         // ones the replay path uses — never from SQL collation.
@@ -3097,7 +3197,10 @@ export function loadBoardState(
         if (
           cardRows.length === 0 &&
           boardLabelsAreSeedOnly(labels) &&
-          boardStagesAreSeedOnly(stages)
+          boardStagesAreSeedOnly(stages) &&
+          // T3O-62: a board with only workers registered is not unused.
+          workerRows.length === 0 &&
+          Option.isNone(defaultWorkerRow)
         ) {
           return null;
         }
@@ -3180,6 +3283,12 @@ export function loadBoardState(
         const providerLimits = providerLimitRows
           .map(rowToBoardProviderLimit)
           .sort(compareBoardProviderLimits);
+        // The worker registry (T3O-62): absent when empty, and the default
+        // absent when it is `local`, matching the projector's fold.
+        const workers = [...workerRows].sort(compareBoardWorkers);
+        const defaultWorkerId = Option.getOrNull(
+          Option.map(defaultWorkerRow, (row) => row.workerId),
+        );
         return {
           cards: cardRows
             .map((row) =>
@@ -3197,6 +3306,10 @@ export function loadBoardState(
           ...(stepStates.length > 0 ? { stepStates } : {}),
           ...(plans.length > 0 ? { plans } : {}),
           ...(providerLimits.length > 0 ? { providerLimits } : {}),
+          ...(workers.length > 0 ? { workers } : {}),
+          ...(defaultWorkerId !== null && defaultWorkerId !== BOARD_LOCAL_WORKER_ID
+            ? { defaultWorkerId }
+            : {}),
           nextCardNumberByProject: Object.fromEntries(
             counterRows.map((row) => [row.projectId, row.maxCardNumber + 1]),
           ),

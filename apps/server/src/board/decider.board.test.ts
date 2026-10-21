@@ -14,6 +14,7 @@ import {
   BoardLabelId,
   boardPlanId,
   CommandId,
+  EnvironmentId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -1861,6 +1862,15 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             // catalog's completion needs one to succeed against.
             makeStepState("card-ready", "running", "build"),
           ],
+          // T3O-62: a registered worker for the registry commands to act on.
+          workers: [
+            {
+              id: EnvironmentId.make("env-worker-a"),
+              label: "worker-a",
+              url: "http://worker-a:3773",
+              addedAt: NOW,
+            },
+          ],
           stepCompletions: [
             {
               cardId: BoardCardId.make("card-reopen"),
@@ -2303,6 +2313,30 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           type: "board.provider-limit.clear",
           commandId: CommandId.make("cmd-limit-clear"),
           providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          createdAt: NOW,
+        },
+        "board.worker.register": {
+          type: "board.worker.register",
+          commandId: CommandId.make("cmd-worker-register"),
+          mode: "add",
+          worker: {
+            id: EnvironmentId.make("env-worker-b"),
+            label: "worker-b",
+            url: "http://worker-b:3773",
+            addedAt: NOW,
+          },
+          createdAt: NOW,
+        },
+        "board.worker.remove": {
+          type: "board.worker.remove",
+          commandId: CommandId.make("cmd-worker-remove"),
+          workerId: EnvironmentId.make("env-worker-a"),
+          createdAt: NOW,
+        },
+        "board.worker.set-default": {
+          type: "board.worker.set-default",
+          commandId: CommandId.make("cmd-worker-default"),
+          workerId: EnvironmentId.make("env-worker-a"),
           createdAt: NOW,
         },
       };

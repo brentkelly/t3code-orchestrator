@@ -99,6 +99,8 @@ import {
   type BoardCommand,
   type BoardEvent,
   type ProjectId,
+  BOARD_LOCAL_WORKER_ID,
+  type BoardWorkerId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -141,11 +143,18 @@ function isBoardProviderLimitCommand(command: BoardCommand): command is BoardPro
   return command.type.startsWith("board.provider-limit.");
 }
 
-/** Card-aggregate commands — every board command except the label, stage and
-    provider-limit ones; the only commands that carry a `cardId`. */
+/** Worker-registry commands (T3O-62) aggregate on the worker — they carry a
+    worker id and no card. Keyed on the `board.worker.` prefix. */
+type BoardWorkerCommand = Extract<BoardCommand, { type: `board.worker.${string}` }>;
+function isBoardWorkerCommand(command: BoardCommand): command is BoardWorkerCommand {
+  return command.type.startsWith("board.worker.");
+}
+
+/** Card-aggregate commands — every board command except the label, stage,
+    provider-limit and worker ones; the only commands that carry a `cardId`. */
 type BoardCardCommand = Exclude<
   BoardCommand,
-  BoardLabelCommand | BoardStageCommand | BoardProviderLimitCommand
+  BoardLabelCommand | BoardStageCommand | BoardProviderLimitCommand | BoardWorkerCommand
 >;
 
 export { isBoardCommand };
@@ -178,9 +187,20 @@ export function boardDecidedEvents(decided: BoardDecision): ReadonlyArray<Planne
  * behind the `isBoardCommand` predicate.
  */
 export function boardCommandAggregateRef(command: BoardCommand): {
-  readonly aggregateKind: "card" | "label" | "stage" | "provider-limit";
-  readonly aggregateId: BoardCardId | BoardLabelId | BoardStageId | ProviderInstanceId;
+  readonly aggregateKind: "card" | "label" | "stage" | "provider-limit" | "worker";
+  readonly aggregateId:
+    | BoardCardId
+    | BoardLabelId
+    | BoardStageId
+    | ProviderInstanceId
+    | BoardWorkerId;
 } {
+  if (isBoardWorkerCommand(command)) {
+    return {
+      aggregateKind: "worker",
+      aggregateId: command.type === "board.worker.register" ? command.worker.id : command.workerId,
+    };
+  }
   if (isBoardLabelCommand(command)) {
     return { aggregateKind: "label", aggregateId: command.labelId };
   }
@@ -662,6 +682,26 @@ const makeBoardProviderLimitEventBase = Effect.fn("makeBoardProviderLimitEventBa
     };
   },
 );
+
+/** Event base for worker-registry events (T3O-62): aggregates on the worker. */
+const makeBoardWorkerEventBase = Effect.fn("makeBoardWorkerEventBase")(function* (input: {
+  readonly workerId: BoardWorkerId;
+  readonly occurredAt: string;
+  readonly commandId: BoardCommand["commandId"];
+}) {
+  const crypto = yield* Crypto.Crypto;
+  const eventId = yield* crypto.randomUUIDv4();
+  return {
+    eventId: EventId.make(eventId),
+    aggregateKind: "worker" as const,
+    aggregateId: input.workerId,
+    occurredAt: input.occurredAt,
+    commandId: input.commandId,
+    causationEventId: null,
+    correlationId: input.commandId,
+    metadata: {},
+  };
+});
 
 /** Event base for stage events (t3o-15): aggregates on the stage. */
 const makeBoardStageEventBase = Effect.fn("makeBoardStageEventBase")(function* (input: {
@@ -4250,6 +4290,75 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         })),
         type: "board.provider-limit-cleared",
         payload: { providerInstanceId: command.providerInstanceId },
+      };
+    }
+
+    // ── Worker registry (T3O-62, D19) ────────────────────────────────
+    // Keyed on the worker, never a card. What happens to cards placed on a
+    // removed worker belongs to the removal fallback (D22), not here.
+    case "board.worker.register": {
+      const existing = (board.workers ?? []).find((worker) => worker.id === command.worker.id);
+      if (command.mode === "add" && existing !== undefined) {
+        return yield* invariant(command, `'${existing.label}' is already a worker.`);
+      }
+      if (command.mode === "repair" && existing === undefined) {
+        return yield* invariant(command, `Worker '${command.worker.id}' is not registered.`);
+      }
+      // A re-pair keeps the worker's label and when it was added; only where
+      // it is reached may change.
+      const worker =
+        existing === undefined ? command.worker : { ...existing, url: command.worker.url };
+      return {
+        ...(yield* makeBoardWorkerEventBase({
+          workerId: worker.id,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.worker-registered",
+        payload: { worker },
+      };
+    }
+
+    case "board.worker.remove": {
+      const existing = (board.workers ?? []).find((worker) => worker.id === command.workerId);
+      if (existing === undefined) {
+        return yield* invariant(command, `Worker '${command.workerId}' is not registered.`);
+      }
+      if ((board.defaultWorkerId ?? BOARD_LOCAL_WORKER_ID) === command.workerId) {
+        return yield* invariant(
+          command,
+          `'${existing.label}' is the default worker. Make another worker the default first.`,
+        );
+      }
+      return {
+        ...(yield* makeBoardWorkerEventBase({
+          workerId: command.workerId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.worker-removed",
+        payload: { workerId: command.workerId },
+      };
+    }
+
+    case "board.worker.set-default": {
+      if (
+        command.workerId !== BOARD_LOCAL_WORKER_ID &&
+        !(board.workers ?? []).some((worker) => worker.id === command.workerId)
+      ) {
+        return yield* invariant(command, `Worker '${command.workerId}' is not registered.`);
+      }
+      // Idempotent: choosing the worker that is already the default changes
+      // nothing, so there is nothing to record.
+      if ((board.defaultWorkerId ?? BOARD_LOCAL_WORKER_ID) === command.workerId) return [];
+      return {
+        ...(yield* makeBoardWorkerEventBase({
+          workerId: command.workerId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.default-worker-set",
+        payload: { workerId: command.workerId },
       };
     }
 

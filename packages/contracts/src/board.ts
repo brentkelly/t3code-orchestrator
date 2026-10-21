@@ -51,6 +51,20 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import {
+  BOARD_WORKER_RPC_SCOPES,
+  BOARD_WORKER_RPCS,
+  BOARD_WORKERS_RPCS,
+  BoardDefaultWorkerSetPayload,
+  BoardWorker,
+  BoardWorkerId,
+  BoardWorkerRegisterCommand,
+  BoardWorkerRegisteredPayload,
+  BoardWorkerRemoveCommand,
+  BoardWorkerRemovedPayload,
+  BoardWorkersState,
+  BoardWorkerSetDefaultCommand,
+} from "./boardWorkers.ts";
 
 export const BoardCardId = TrimmedNonEmptyString.pipe(Schema.brand("BoardCardId"));
 export type BoardCardId = typeof BoardCardId.Type;
@@ -2239,6 +2253,16 @@ export const BoardState = Schema.Struct({
       `labels` fallback: absent means the compiled seeds, and a persisted
       pre-stage read model decodes unchanged. */
   stages: Schema.optional(Schema.Array(BoardStageDefinition)),
+  /** Registered workers (T3O-62, D8/D19), in `compareBoardWorkers` order. In
+      the read model because the decider branches on it: a duplicate add, a
+      re-pair of nothing and removing an unknown worker are refused off this
+      slice, and placement (D20) reads it. The built-in `local` worker is
+      never listed. Absent on a board that has never added one — every board
+      before the distributed board decodes unchanged. */
+  workers: Schema.optional(Schema.Array(BoardWorker)),
+  /** The worker unpinned cards follow (D20). Absent means `local`. In the read
+      model because removing the default is refused. */
+  defaultWorkerId: Schema.optional(BoardWorkerId),
   /** Next key number per project (D14). Lives in the read model so
       allocation is exact and race-free under the engine's total command
       ordering; rebuilt from `MAX(card_number)` on rehydration. */
@@ -6775,6 +6799,21 @@ export const BoardProviderLimitClearedShellEvent = Schema.Struct({
 export type BoardProviderLimitClearedShellEvent = typeof BoardProviderLimitClearedShellEvent.Type;
 
 /**
+ * The board's whole worker summary (T3O-62, D7/D19), re-sent whenever any of
+ * it changes: a registry event, a connection status change, a setup's
+ * progress. Refetch-shaped like `card-threads` and applied without the
+ * sequence guard — connection status is runtime state with no place in the
+ * board log, so the sequence stamped on it is only the board head. A handful
+ * of workers, so the whole state is cheaper than any diff.
+ */
+export const BoardWorkersShellEvent = Schema.Struct({
+  kind: Schema.Literal("workers"),
+  sequence: NonNegativeInt,
+  state: BoardWorkersState,
+});
+export type BoardWorkersShellEvent = typeof BoardWorkersShellEvent.Type;
+
+/**
  * Type guards for the `board.` prefix rule. Generic over the input
  * union (rather than typed against `OrchestrationCommand` etc.) because this
  * file cannot import `orchestration.ts` — narrowing still resolves to the
@@ -6869,6 +6908,12 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardProviderLimitClearCommand,
   BoardCardAttachCommand,
   BoardCardDetachCommand,
+  // T3O-62: the worker registry. Internal, because each one lands only after
+  // the RPC that owns it has done its network work (a credential exchange, a
+  // status check).
+  BoardWorkerRegisterCommand,
+  BoardWorkerRemoveCommand,
+  BoardWorkerSetDefaultCommand,
 ] as const;
 
 /**
@@ -6932,6 +6977,10 @@ export const BOARD_EVENT_TYPES = [
   "board.card-step-checked-in",
   "board.provider-limit-recorded",
   "board.provider-limit-cleared",
+  // T3O-62: the worker registry.
+  "board.worker-registered",
+  "board.worker-removed",
+  "board.default-worker-set",
 ] as const;
 
 export const BOARD_SHELL_STREAM_EVENTS = [
@@ -6947,6 +6996,7 @@ export const BOARD_SHELL_STREAM_EVENTS = [
   BoardStageRemovedShellEvent,
   BoardProviderLimitUpsertedShellEvent,
   BoardProviderLimitClearedShellEvent,
+  BoardWorkersShellEvent,
 ] as const;
 
 /** One board delta on `board.subscribeBoard`, stamped with the BOARD's sequence. */
@@ -6979,6 +7029,9 @@ export const BoardShellSnapshot = Schema.Struct({
   cardThreads: Schema.Array(BoardCardThreadShell),
   /** Provider cooldowns (T3O-22, D14); empty on most boards. */
   providerLimits: Schema.Array(BoardProviderLimit),
+  /** Workers (T3O-62, D19). Absent on a local-only board, which is then
+      exactly today's board. */
+  workers: Schema.optionalKey(BoardWorkersState),
 });
 export type BoardShellSnapshot = typeof BoardShellSnapshot.Type;
 
@@ -7247,6 +7300,21 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.provider-limit-cleared"),
       payload: BoardProviderLimitClearedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.worker-registered"),
+      payload: BoardWorkerRegisteredPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.worker-removed"),
+      payload: BoardWorkerRemovedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.default-worker-set"),
+      payload: BoardDefaultWorkerSetPayload,
     }),
   ] as const;
 }
@@ -7883,6 +7951,10 @@ export const BOARD_RPCS = [
     success: Schema.Void,
     error: EnvironmentAuthorizationError,
   }),
+  // T3O-62: the central server's `board.workers.*`, and the worker side's
+  // `boardWorker.*` the central server calls over its own session.
+  ...BOARD_WORKERS_RPCS,
+  ...BOARD_WORKER_RPCS,
 ] as const;
 
 /**
@@ -7921,6 +7993,8 @@ export const BOARD_RPC_SCOPES = {
   // the board will. The same mutation tier as every other board write.
   [BOARD_WS_METHODS.probeProviderLimit]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.setProviderLimitResumeAt]: AuthOrchestrationOperateScope,
+  // T3O-62: worker management and the worker side's handshake (D19).
+  ...BOARD_WORKER_RPC_SCOPES,
 } as const;
 
 // ── Board settings (D10, t3o-07) ───────────────────────────────────────
