@@ -1605,7 +1605,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 
   // Controlled value/cursor from the store (history recall, chip insertion…).
   useLayoutEffect(() => {
-    if (!editor) return;
+    // T3o: guard a destroyed editor (upstream bug). useEditor destroys its
+    // first editor when the mount takes longer than a millisecond to commit,
+    // then hands over a replacement on the next render. The destroyed one
+    // has no view, so wait for the replacement.
+    if (!editor || editor.isDestroyed) return;
     const initialSelection = !hasAppliedControlledSelectionRef.current;
     hasAppliedControlledSelectionRef.current = true;
     const normalizedCursor = clampEditorCursor(value, cursor);
@@ -1685,7 +1689,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 
   const focusAt = useCallback(
     (nextCursor: number) => {
-      if (!editor) return;
+      if (!editor || editor.isDestroyed) return;
       // view.focus() writes the state selection to the DOM as it focuses. A
       // bare DOM focus leaves the native caret at the start until
       // ProseMirror resyncs it 20ms later, and dictation tools type fast
@@ -1775,7 +1779,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         if (edge === "start" ? beforeCaret.includes("\n") : afterCaret.includes("\n")) {
           return false;
         }
-        const rootElement = editor?.view.dom;
+        const rootElement = editor && !editor.isDestroyed ? editor.view.dom : null;
         const selection = window.getSelection();
         if (
           !rootElement ||
