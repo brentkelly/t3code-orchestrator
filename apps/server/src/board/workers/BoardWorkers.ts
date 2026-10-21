@@ -577,17 +577,13 @@ export const makeBoardWorkers = Effect.gen(function* () {
 
       // A failed clone the worker still tracks is retried in place; anything
       // else (a new folder, a folder that existed) starts a fresh clone.
-      const retryInPlace =
+      const retryId =
         previous?.phase === "failed" &&
-        previous.workerProjectId !== null &&
         previous.destinationPath === destinationPath &&
         previous.failure?.kind !== "folder-exists" &&
-        previous.failure?.kind !== "worker-offline";
-      const workerProjectId =
-        retryInPlace && previous.workerProjectId !== null
+        previous.failure?.kind !== "worker-offline"
           ? previous.workerProjectId
-          : ProjectId.make(yield* newUuid);
-
+          : null;
       const setup: BoardWorkerSetup = {
         projectId: project.id,
         workerId: worker.id,
@@ -600,15 +596,25 @@ export const makeBoardWorkers = Effect.gen(function* () {
         startedAt,
         endedAt: null,
       };
-      const start: Effect.Effect<unknown, WorkerRpcError> = retryInPlace
-        ? rpc.retryProjectClone(workerProjectId)
-        : rpc.startProjectClone({
-            projectId: workerProjectId,
-            title: project.title,
-            createdAt: startedAt,
-            destinationPath,
-            remoteUrl,
-          });
+      const startFresh = Effect.gen(function* () {
+        const projectId = ProjectId.make(yield* newUuid);
+        yield* rpc.startProjectClone({
+          projectId,
+          title: project.title,
+          createdAt: startedAt,
+          destinationPath,
+          remoteUrl,
+        });
+        return projectId;
+      });
+      // The worker may have forgotten the failed clone (a restart, say): then
+      // `applied` is false and it is cloned afresh instead.
+      const start: Effect.Effect<ProjectId, WorkerRpcError> =
+        retryId === null
+          ? startFresh
+          : rpc
+              .retryProjectClone(retryId)
+              .pipe(Effect.flatMap((applied) => (applied ? Effect.succeed(retryId) : startFresh)));
       const started = yield* Effect.result(start);
       if (started._tag === "Failure") {
         const cause = started.failure.cause;
@@ -625,6 +631,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
         yield* putSetup(failedSetup);
         return failedSetup;
       }
+      const workerProjectId = started.success;
       const cloning: BoardWorkerSetup = { ...setup, workerProjectId };
       yield* putSetup(cloning);
       yield* FiberMap.run(

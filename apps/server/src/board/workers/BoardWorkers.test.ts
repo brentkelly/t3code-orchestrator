@@ -448,6 +448,42 @@ describe("BoardWorkers", () => {
       }),
     ));
 
+  test("a retry the worker no longer tracks starts a fresh clone instead of hanging", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { http, worker, connections, workers } = yield* setup;
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+        yield* workers.setupProject({ projectId: PROJECT_ID, workerId: WORKER_ID });
+        const [first] = worker.cloneStarts;
+        yield* reportClone(worker, first!.projectId, {
+          phase: "failed",
+          stage: "connecting",
+          percent: null,
+          error: "fatal: unable to access: Could not resolve host: github.com",
+        });
+        yield* waitForSetup(workers, (setup) => setup.phase === "failed");
+
+        // The worker restarted and forgot the failed clone.
+        worker.retryApplied = false;
+        yield* SubscriptionRef.set(worker.clones, []);
+        const retried = yield* workers.setupProject({ projectId: PROJECT_ID, workerId: WORKER_ID });
+        assert.deepStrictEqual(worker.cloneRetries, [first!.projectId]);
+        const second = worker.cloneStarts[1];
+        assert.isDefined(second);
+        assert.notStrictEqual(second?.projectId, first?.projectId);
+        assert.strictEqual(retried.workerProjectId, second?.projectId);
+
+        // Its progress is followed to the end.
+        yield* reportClone(worker, second!.projectId, {
+          phase: "done",
+          stage: "checkout",
+          percent: 100,
+        });
+        yield* waitForSetup(workers, (setup) => setup.phase === "done");
+      }),
+    ));
+
   test("a clone the worker refuses to start fails as setup, with its reason", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -48,6 +48,8 @@ export interface FakeWorker {
   readonly dialedTokens: Array<string>;
   readonly cloneStarts: Array<ProjectCloneStartInput>;
   readonly cloneRetries: Array<ProjectId>;
+  /** Whether `projectClone.retry` finds the clone; false once it forgot it. */
+  retryApplied: boolean;
   released: number;
   /** The open link's close signal, while one is open. */
   link: Deferred.Deferred<void> | null;
@@ -84,6 +86,7 @@ export const makeFakeWorkers = Effect.sync(() => {
         dialedTokens: [],
         cloneStarts: [],
         cloneRetries: [],
+        retryApplied: true,
         released: 0,
         link: null,
       };
@@ -121,7 +124,7 @@ export const makeFakeWorkers = Effect.sync(() => {
       retryProjectClone: (projectId) =>
         Effect.sync(() => {
           worker.cloneRetries.push(projectId);
-          return true;
+          return worker.retryApplied;
         }),
       // Ends with a failure when the link drops, as a real subscription does.
       projectClones: SubscriptionRef.changes(worker.clones).pipe(
