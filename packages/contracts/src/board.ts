@@ -43,6 +43,7 @@ import { ProviderOptionSelections } from "./model.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import {
   CommandId,
+  EnvironmentId,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -52,6 +53,7 @@ import {
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  BOARD_LOCAL_WORKER_ID,
   BOARD_WORKER_RPC_SCOPES,
   BOARD_WORKER_RPCS,
   BOARD_WORKERS_RPCS,
@@ -65,6 +67,7 @@ import {
   BoardWorkersState,
   BoardWorkerSetDefaultCommand,
 } from "./boardWorkers.ts";
+import { BOARD_WORKER_GATEWAY_RPC_SCOPES, BOARD_WORKER_GATEWAY_RPCS } from "./boardWorkerGateway.ts";
 
 export const BoardCardId = TrimmedNonEmptyString.pipe(Schema.brand("BoardCardId"));
 export type BoardCardId = typeof BoardCardId.Type;
@@ -462,8 +465,18 @@ export const BoardCardThreadLink = Schema.Struct({
   role: TrimmedNonEmptyString,
   linkedAt: IsoDateTime,
   tombstonedAt: Schema.NullOr(IsoDateTime),
+  /** The worker the thread lives on (T3O-63, D9): its environment id.
+      Absent for the central server itself (`local`), so every link written
+      before workers existed, and every link on a local-only board, is
+      unchanged. */
+  workerId: Schema.optionalKey(EnvironmentId),
 });
 export type BoardCardThreadLink = typeof BoardCardThreadLink.Type;
+
+/** The worker a thread link's thread lives on. */
+export function boardThreadLinkWorkerId(link: Pick<BoardCardThreadLink, "workerId">): BoardWorkerId {
+  return link.workerId ?? BOARD_LOCAL_WORKER_ID;
+}
 
 /**
  * Canonical thread-link order: (linkedAt, threadId), needed because linkedAt
@@ -3994,6 +4007,8 @@ export const BoardCardLinkThreadCommand = Schema.Struct({
   cardId: BoardCardId,
   threadId: ThreadId,
   role: TrimmedNonEmptyString,
+  /** Where the thread was spawned (T3O-63); absent means `local`. */
+  workerId: Schema.optionalKey(EnvironmentId),
   createdAt: IsoDateTime,
 });
 export type BoardCardLinkThreadCommand = typeof BoardCardLinkThreadCommand.Type;
@@ -5690,6 +5705,9 @@ export function boardThreadTodoSummary(
 export const BoardCardThreadShell = Schema.Struct({
   cardId: BoardCardId,
   threadId: ThreadId,
+  /** The worker the thread lives on (T3O-63); absent for `local`, so a
+      local-only board's shell is unchanged. */
+  workerId: Schema.optionalKey(EnvironmentId),
   /** One char per stored item: `d` | `i` | `p`. Absent when the thread has no
       list at all — never an empty string. */
   todoStatuses: Schema.optionalKey(TrimmedNonEmptyString),
@@ -7955,6 +7973,8 @@ export const BOARD_RPCS = [
   // `boardWorker.*` the central server calls over its own session.
   ...BOARD_WORKERS_RPCS,
   ...BOARD_WORKER_RPCS,
+  // T3O-63: the worker's thread gateway, the MCP relay and attachment staging.
+  ...BOARD_WORKER_GATEWAY_RPCS,
 ] as const;
 
 /**
@@ -7995,6 +8015,7 @@ export const BOARD_RPC_SCOPES = {
   [BOARD_WS_METHODS.setProviderLimitResumeAt]: AuthOrchestrationOperateScope,
   // T3O-62: worker management and the worker side's handshake (D19).
   ...BOARD_WORKER_RPC_SCOPES,
+  ...BOARD_WORKER_GATEWAY_RPC_SCOPES,
 } as const;
 
 // ── Board settings (D10, t3o-07) ───────────────────────────────────────
