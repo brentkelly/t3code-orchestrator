@@ -912,3 +912,4 @@ function parseBoardCardDetailKey(key: string): {
   ];
   return { environmentId, cardId: input.cardId };
 }
+export * from "./boardWorkerPairing.ts";
