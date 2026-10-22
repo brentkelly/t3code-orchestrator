@@ -40,7 +40,7 @@ import { boardWorkerLabel } from "./cardWorker";
 type Phase =
   | { readonly kind: "checking" }
   | { readonly kind: "answer"; readonly answer: BoardCardWorkerMoveAnswer }
-  | { readonly kind: "started" }
+  | { readonly kind: "started"; readonly fromWorkerId: BoardWorkerId | null }
   | { readonly kind: "failed"; readonly detail: string };
 
 /** The move's progress rows, read off the card as the server records it. */
@@ -68,44 +68,35 @@ export function BoardCardMoveDialog(props: {
 }) {
   const { card, toWorkerId } = props;
   const move = useAtomCommand(boardEnvironment.cardWorkerMove, { reportFailure: false });
+  // Mounted afresh for each target (the row keys it), so it starts checking.
   const [phase, setPhase] = useState<Phase>({ kind: "checking" });
-  const [fromLabel, setFromLabel] = useState<string | null>(null);
+  const { environmentId } = props;
+  const cardId = card.id;
 
   useEffect(() => {
     if (toWorkerId === null) return;
     let live = true;
-    setPhase({ kind: "checking" });
     void move({
-      environmentId: props.environmentId,
-      input: { action: "check", cardId: card.id, toWorkerId },
+      environmentId,
+      input: { action: "check", cardId, toWorkerId },
     }).then((result) => {
       if (!live) return;
-      if (result._tag === "Failure") {
-        setPhase({ kind: "failed", detail: "The board server didn't answer. Try again." });
-        return;
-      }
-      if (result.value.outcome === "ready") {
-        setFromLabel(
-          result.value.fromWorkerId === null
-            ? null
-            : boardWorkerLabel(result.value.fromWorkerId, props.workers),
-        );
-      }
-      setPhase({ kind: "answer", answer: result.value });
+      setPhase(
+        result._tag === "Failure"
+          ? { kind: "failed", detail: "The board server didn't answer. Try again." }
+          : { kind: "answer", answer: result.value },
+      );
     });
     return () => {
       live = false;
     };
-    // The check runs once per target; the card updating under it must not re-run it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [toWorkerId, card.id, props.environmentId]);
+  }, [cardId, environmentId, move, toWorkerId]);
 
   if (toWorkerId === null) return null;
   const to = boardWorkerLabel(toWorkerId, props.workers);
-  const branch = card.worktree?.branch ?? "its branch";
 
-  const start = () => {
-    setPhase({ kind: "started" });
+  const start = (fromWorkerId: BoardWorkerId | null) => {
+    setPhase({ kind: "started", fromWorkerId });
     void move({
       environmentId: props.environmentId,
       input: { action: "move", cardId: card.id, toWorkerId },
@@ -165,7 +156,13 @@ export function BoardCardMoveDialog(props: {
             : `You can close this. The card shows “Moving to ${to}” until it's done.`,
         content: (
           <ul className="flex flex-col gap-1.5 text-[12.5px]">
-            {moveProgress(card, fromLabel, to).map((step) => (
+            {moveProgress(
+              card,
+              phase.fromWorkerId === null
+                ? null
+                : boardWorkerLabel(phase.fromWorkerId, props.workers),
+              to,
+            ).map((step) => (
               <li className="flex items-center gap-2" key={step.label}>
                 {step.done ? (
                   <CheckIcon className="size-3.5 text-muted-foreground" />
@@ -218,7 +215,7 @@ export function BoardCardMoveDialog(props: {
               </li>
             </ol>
           ),
-          actions: <Button onClick={start}>Move to {to}</Button>,
+          actions: <Button onClick={() => start(answer.fromWorkerId)}>Move to {to}</Button>,
         };
       }
       case "step-running": {

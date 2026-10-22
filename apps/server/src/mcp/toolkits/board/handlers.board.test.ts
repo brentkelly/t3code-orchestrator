@@ -1387,37 +1387,35 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
-  it.effect(
-    "board_pin_card_worker pins a card by key, unpins it, and refuses an unknown worker",
-    () =>
-      Effect.gen(function* () {
-        yield* seed();
-        const snapshotQuery = yield* boardStackSnapshotQuery;
-        const key = (yield* snapshotQuery.getCommandReadModel()).board!.cards.find(
-          (candidate) => candidate.id === cardId,
-        )!.key;
-        const pinned = yield* boardHandlers
-          .board_pin_card_worker({ cardId: key, workerId: "local" })
-          .pipe(withScope(orphanThread));
-        assert.deepStrictEqual(pinned, { cardId, key, workerId: "local" });
-        const pinnedCard = (yield* snapshotQuery.getCommandReadModel()).board!.cards.find(
-          (candidate) => candidate.id === cardId,
-        );
-        assert.strictEqual(pinnedCard?.pinnedWorkerId, "local");
+  it.effect("board_pin_card_worker pins a card, unpins it, and refuses an unknown worker", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const snapshotQuery = yield* boardStackSnapshotQuery;
+      const key = (yield* snapshotQuery.getCommandReadModel()).board!.cards.find(
+        (candidate) => candidate.id === cardId,
+      )!.key;
+      const pinned = yield* boardHandlers
+        .board_pin_card_worker({ cardId, workerId: "local" })
+        .pipe(withScope(orphanThread));
+      assert.deepStrictEqual(pinned, { cardId, key, workerId: "local" });
+      const pinnedCard = (yield* snapshotQuery.getCommandReadModel()).board!.cards.find(
+        (candidate) => candidate.id === cardId,
+      );
+      assert.strictEqual(pinnedCard?.pinnedWorkerId, "local");
 
-        yield* boardHandlers
-          .board_pin_card_worker({ cardId: key, workerId: null })
-          .pipe(withScope(orphanThread));
-        const unpinned = (yield* snapshotQuery.getCommandReadModel()).board!.cards.find(
-          (candidate) => candidate.id === cardId,
-        );
-        assert.strictEqual(unpinned?.pinnedWorkerId, null);
+      yield* boardHandlers
+        .board_pin_card_worker({ cardId, workerId: null })
+        .pipe(withScope(orphanThread));
+      const unpinned = (yield* snapshotQuery.getCommandReadModel()).board!.cards.find(
+        (candidate) => candidate.id === cardId,
+      );
+      assert.strictEqual(unpinned?.pinnedWorkerId, null);
 
-        const refused = yield* boardHandlers
-          .board_pin_card_worker({ cardId: key, workerId: EnvironmentId.make("env-nowhere") })
-          .pipe(withScope(orphanThread), Effect.flip);
-        assert.include(refused.message, "not registered");
-      }),
+      const refused = yield* boardHandlers
+        .board_pin_card_worker({ cardId, workerId: EnvironmentId.make("env-nowhere") })
+        .pipe(withScope(orphanThread), Effect.flip);
+      assert.include(refused.message, "not registered");
+    }),
   );
 
   it.effect("board_move_card lands the moved card at the bottom of the target column", () =>

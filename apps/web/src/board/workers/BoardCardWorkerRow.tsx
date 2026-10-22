@@ -116,6 +116,7 @@ export function BoardCardWorkerRow(props: {
         </span>
       ) : null}
       <BoardCardMoveDialog
+        key={moveTo ?? "closed"}
         card={card}
         environmentId={environmentId}
         onClose={() => setMoveTo(null)}

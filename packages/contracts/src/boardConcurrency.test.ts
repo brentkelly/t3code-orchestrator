@@ -8,9 +8,11 @@ import {
   type BoardConcurrencySettings,
 } from "./board.ts";
 
+const decodeBoardSettings = Schema.decodeUnknownSync(BoardSettings);
+
 describe("per-worker concurrency settings (T3O-65, D11)", () => {
   it("decodes a settings file written before workers, unchanged", () => {
-    const settings = Schema.decodeUnknownSync(BoardSettings)({
+    const settings = decodeBoardSettings({
       concurrency: { globalMaxConcurrent: 4, perInstance: { "claude-max": 3 } },
     });
     expect(settings.concurrency).toEqual({
@@ -21,7 +23,7 @@ describe("per-worker concurrency settings (T3O-65, D11)", () => {
   });
 
   it("migrates today's limit and caps to this server, and nothing to another worker", () => {
-    const legacy = Schema.decodeUnknownSync(BoardSettings)({
+    const legacy = decodeBoardSettings({
       concurrency: { globalMaxConcurrent: 4, perInstance: { "claude-max": 3 } },
     }).concurrency;
     expect(resolveBoardWorkerConcurrency(legacy, "local")).toEqual({
@@ -35,7 +37,7 @@ describe("per-worker concurrency settings (T3O-65, D11)", () => {
   });
 
   it("lets local's own entry override what it inherited", () => {
-    const concurrency = Schema.decodeUnknownSync(BoardSettings)({
+    const concurrency = decodeBoardSettings({
       concurrency: {
         globalMaxConcurrent: 8,
         perInstance: { "claude-max": 3 },

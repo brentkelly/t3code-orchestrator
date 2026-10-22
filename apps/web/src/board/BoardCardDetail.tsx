@@ -442,6 +442,8 @@ export function BoardCardDetail({
 
   // T3o (T3O-63): the worker each thread lives on, for where it opens.
   const workers = useAtomValue(boardEnvironment.workersAtom(environmentId));
+  // "today" in a move divider is measured from when the card was opened.
+  const [openedAt] = useState(() => Date.now());
   const threadLinks = useMemo<ReadonlyArray<BoardDetailThreadLink>>(() => {
     if (card === null) return [];
     const threads = snapshot?.threads ?? [];
@@ -454,7 +456,7 @@ export function BoardCardDetail({
           : [],
       ),
       state: workers,
-      nowMs: Date.now(),
+      nowMs: openedAt,
     });
     return card.threadLinks.map((link) => {
       const thread = threads.find((candidate) => candidate.id === link.threadId);
@@ -479,7 +481,7 @@ export function BoardCardDetail({
         movedFrom: movedFrom.get(link.threadId) ?? null,
       };
     });
-  }, [card, detail?.activity, snapshot, workers, environmentId]);
+  }, [card, detail?.activity, snapshot, workers, environmentId, openedAt]);
 
   // Agent display names and accents for the Activity rail (t3o-18, D11). Resolved
   // at render time from the provider instance list the app already holds, so a
