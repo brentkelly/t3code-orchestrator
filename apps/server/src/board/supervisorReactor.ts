@@ -289,9 +289,11 @@ type BoardCardReclaimAttempt =
  * - `unknown`: the connection went mid-call. The worker may well have
  *   created the thread, so it must not be read as "no thread".
  */
+const isThreadCommandFailed = Schema.is(ThreadCommandFailedError);
+
 const spawnFailureLeft = (cause: Cause.Cause<unknown>) => {
   const error = Cause.findErrorOption(cause).pipe(Option.getOrUndefined);
-  const reason = Schema.is(ThreadCommandFailedError)(error) ? error.cause : undefined;
+  const reason = isThreadCommandFailed(error) ? error.cause : undefined;
   if (Predicate.isTagged(reason, "WorkerUnavailable")) return "worker-offline" as const;
   if (Predicate.isTagged(reason, "WorkerRpcError")) return "unknown" as const;
   return "none" as const;
