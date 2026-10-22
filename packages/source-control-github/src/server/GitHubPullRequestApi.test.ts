@@ -21,8 +21,11 @@ import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import { KnownWorkflowRuns } from "./gitHubConditionalChecks.ts";
 // T3o (T3O-67): batched reads are grouped by the project's gitenv token.
+// gitenv reads a real file under a temp state dir.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as NodePath from "node:path";
 import { initGitenv, resetGitenvForTesting } from "@t3tools/shared/gitenv";
 import { T3oGitenvProject } from "./t3oGitenvCredential.ts";
