@@ -305,18 +305,37 @@ export function boardQueueReason(input: {
 // ── Move notices (prototype 6) ─────────────────────────────────────────
 
 export interface BoardCardMoveNotice {
-  readonly status: "moving" | "failed";
+  /** `moving` is blue; the two failures are amber. */
+  readonly status: "moving" | "failed" | "clone-failed";
   readonly label: string;
   readonly tooltip: string;
 }
 
-/** Moving (blue) or Move failed (amber), or null. */
+/**
+ * The card's worker notice: Moving (blue), Move failed (amber), or — for a card
+ * held waiting on its worker's checkout whose clone failed — Clone failed
+ * (amber). Null otherwise.
+ */
 export function boardCardMoveNotice(
-  card: Pick<BoardCardShell, "workerMove">,
+  card: Pick<BoardCardShell, "workerMove"> &
+    Partial<Pick<BoardCardShell, "workerId" | "queued" | "queuedBy" | "projectId">>,
   state: BoardWorkersState,
 ): BoardCardMoveNotice | null {
   const move = card.workerMove;
-  if (move === undefined) return null;
+  if (move === undefined) {
+    if (card.queued !== true || card.queuedBy !== "setup" || card.projectId === undefined) {
+      return null;
+    }
+    const { workerId } = boardCardWorker(card, state);
+    const setup = setupOf(state, workerId, card.projectId);
+    if (setup?.phase !== "failed") return null;
+    const worker = boardWorkerLabel(workerId, state);
+    return {
+      status: "clone-failed",
+      label: "Clone failed",
+      tooltip: `Cloning this card's project on ${worker} failed. Retry it in Settings → Board → Project checkouts, or pick another worker.`,
+    };
+  }
   const worker = boardWorkerLabel(move.toWorkerId, state);
   return move.status === "moving"
     ? {

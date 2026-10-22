@@ -5,9 +5,9 @@
  * The supervisor keeps calling one gateway. Each call goes where its thread
  * lives: a spawn to the worker it names (absent means here), every other
  * thread call to the worker its card's thread link names, and anything
- * without a thread — projects, the todo log — to this server. Until placement
- * exists (T3O-65) the supervisor names no worker, so everything routes here
- * and a local-only board behaves exactly as before.
+ * without a thread — projects, the todo log — to this server. The supervisor
+ * names the card's worker (T3O-65); on a local-only board that is always this
+ * server, so everything routes here exactly as before.
  *
  * `observe` merges this server's signals with every worker's
  * (`WorkerSignalFeed`). Each worker's todo signals are applied by the feed,

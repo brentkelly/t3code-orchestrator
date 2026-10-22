@@ -9353,7 +9353,7 @@ const make = Effect.gen(function* () {
     // T3o (T3O-18): TOTAL for the same reason — an agent's tool call and the
     // card's "Link one" both owe their caller an answer.
     // A card being created has no placement yet, so its project's own
-    // checkout answers (T3O-65 places it).
+    // checkout on this server answers.
     resolvePullRequestLink: (projectId, target) =>
       workspaces
         .localProject(projectId)

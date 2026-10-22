@@ -301,3 +301,29 @@ describe("worker-only provider instances in the model pickers", () => {
     ]);
   });
 });
+
+describe("the clone-failed notice", () => {
+  it("shows on a card held for a checkout whose clone failed", () => {
+    const board = state([worker(MBP, "mbp-brent", { checkout: false })], {
+      setups: [
+        {
+          projectId,
+          workerId: MBP,
+          workerProjectId: null,
+          destinationPath: "/home/mbp/advisor",
+          phase: "failed",
+          stage: null,
+          percent: null,
+          failure: { kind: "no-credentials", message: "denied", log: "" },
+          startedAt: NOW,
+          endedAt: NOW,
+        },
+      ],
+    });
+    expect(
+      boardCardMoveNotice({ workerId: MBP, queued: true, queuedBy: "setup", projectId }, board)
+        ?.label,
+    ).toBe("Clone failed");
+    expect(boardCardMoveNotice({ workerId: MBP, queued: false, projectId }, board)).toBeNull();
+  });
+});
