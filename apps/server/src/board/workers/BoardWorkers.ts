@@ -520,6 +520,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
               : running
                 ? `${live.stepLabel ?? live.stageLabel ?? "Current"} step running`
                 : "Has worktree",
+          running,
         };
         (outcome === "fallback" ? toDefault : byHand).push(row);
       }

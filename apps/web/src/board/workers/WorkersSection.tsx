@@ -389,8 +389,7 @@ function RemoveWorkerDialog(props: {
   const name = worker?.label ?? "";
   const affected =
     current?.result == null ? 0 : current.result.toDefault.length + current.result.byHand.length;
-  const stopsAStep =
-    current?.result?.byHand.some((card) => card.detail.endsWith("step running")) ?? false;
+  const stopsAStep = current?.result?.byHand.some((card) => card.running) ?? false;
   return (
     <AlertDialog
       open={worker !== null}

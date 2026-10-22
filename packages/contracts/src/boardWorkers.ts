@@ -515,12 +515,13 @@ export type BoardWorkersDismissSetupInput = typeof BoardWorkersDismissSetupInput
 
 /** One card in Remove worker's confirm dialog (prototype 1.11). `detail` is
     the row's right-hand text: its stage, "Build step running", or "Has
-    worktree". */
+    worktree". `running` says whether removal stops one of its steps. */
 export const BoardWorkerRemovePreviewCard = Schema.Struct({
   cardId: TrimmedNonEmptyString,
   key: TrimmedNonEmptyString,
   title: Schema.String,
   detail: TrimmedNonEmptyString,
+  running: Schema.Boolean,
 });
 export type BoardWorkerRemovePreviewCard = typeof BoardWorkerRemovePreviewCard.Type;
 

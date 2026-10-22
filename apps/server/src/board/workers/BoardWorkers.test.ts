@@ -515,9 +515,10 @@ describe("BoardWorkers", () => {
           [["card-idle", "Stream build logs"]],
         );
         assert.deepStrictEqual(
-          preview.byHand.map((card) => [card.cardId, card.detail]),
-          [["card-busy", "Build step running"]],
+          preview.byHand.map((card) => [card.cardId, card.detail, card.running]),
+          [["card-busy", "Build step running", true]],
         );
+        assert.isFalse(preview.toDefault[0]?.running);
 
         const removed = yield* workers.remove(WORKER_ID);
         assert.isTrue(removed.revoked);
