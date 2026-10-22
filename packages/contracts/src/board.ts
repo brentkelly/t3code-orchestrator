@@ -7888,25 +7888,6 @@ export const BoardRemoveCardWorktreeResult = Schema.Union([
 ]);
 export type BoardRemoveCardWorktreeResult = typeof BoardRemoveCardWorktreeResult.Type;
 
-/** What "Check again" on a kept worktree did (T3O-52). */
-/**
- * Whether a card can move to another worker now (T3O-65, prototype 5.1–5.4).
- *
- * - `ready` — nothing is left behind: the dialog shows what the card continues
- *   from (`tip`, the branch's head on the remote; null when it could not be
- *   read) and the steps that will run. `fromWorkerId` is null when there is no
- *   worktree left to retire (a retry after a failed move).
- * - `pin` — the card has no worktree; changing its worker is a pin, not a move.
- * - `step-running` — a step is running on the source worker (blue, with Open
- *   thread). Wait for it or stop it.
- * - `unpushed` — the source worktree has commits the remote lacks or
- *   uncommitted files. Ask the agent to push.
- * - `no-upstream` — the card's branch was never pushed.
- * - `source-unreachable` — the source worker didn't answer, so nothing could
- *   be checked.
- * - `refused` — anything else, said in a sentence: the target is offline or has
- *   no checkout, a move is already running, the card is archived.
- */
 /** A move to another worker (T3O-65): the card and where it goes. */
 export const BoardCardMoveInput = Schema.Struct({
   cardId: BoardCardId,
@@ -7940,6 +7921,24 @@ const BOARD_CARD_MOVE_REFUSALS = [
   Schema.Struct({ outcome: Schema.Literal("refused"), detail: TrimmedNonEmptyString }),
 ] as const;
 
+/**
+ * Whether a card can move to another worker now (T3O-65, prototype 5.1–5.4).
+ *
+ * - `ready` — nothing is left behind: the dialog shows what the card continues
+ *   from (`tip`, the branch's head on the remote; null when it could not be
+ *   read) and the steps that will run. `fromWorkerId` is null when there is no
+ *   worktree left to retire (a retry after a failed move).
+ * - `pin` — the card has no worktree; changing its worker is a pin, not a move.
+ * - `step-running` — a step is running on the source worker (blue, with Open
+ *   thread). Wait for it or stop it.
+ * - `unpushed` — the source worktree has commits the remote lacks or
+ *   uncommitted files. Ask the agent to push.
+ * - `no-upstream` — the card's branch was never pushed.
+ * - `source-unreachable` — the source worker didn't answer, so nothing could
+ *   be checked.
+ * - `refused` — anything else, said in a sentence: the target is offline or has
+ *   no checkout, a move is already running, the card is archived.
+ */
 export const BoardCardMoveCheck = Schema.Union([
   Schema.Struct({
     outcome: Schema.Literal("ready"),
@@ -7985,6 +7984,7 @@ export const BoardCardWorkerMoveAnswer = Schema.Union([
 ]);
 export type BoardCardWorkerMoveAnswer = typeof BoardCardWorkerMoveAnswer.Type;
 
+/** What "Check again" on a kept worktree did (T3O-52). */
 export const BoardCheckCardWorktreeResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("removed") }),
   /** Still refused; `reason` is the refusal, recorded on the card. */
