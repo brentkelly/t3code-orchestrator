@@ -22,6 +22,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Base64 from "effect/encoding/Base64";
@@ -43,7 +44,7 @@ import {
   fromWireReadError,
   type WorkerGatewayCallError,
 } from "./gatewayWire.ts";
-import type { WorkerConnectionsShape, WorkerUnavailable } from "./WorkerConnections.ts";
+import { WorkerUnavailable, type WorkerConnectionsShape } from "./WorkerConnections.ts";
 import type { WorkerRpc } from "./WorkerTransport.ts";
 
 /** The thread-scoped half of the gateway: what a worker's threads answer. */
@@ -73,6 +74,13 @@ export interface RemoteThreadGatewayDeps {
   readonly fileSystem: FileSystem.FileSystem;
   readonly crypto: Crypto.Crypto;
 }
+
+/** The card's files didn't reach the worker, so its spawn was never sent.
+    Kept apart from a `WorkerRpcError` on the spawn call itself, which may
+    have left a thread behind (D22). */
+export class CardFilesNotStaged extends Data.TaggedError("CardFilesNotStaged")<{
+  readonly cause: unknown;
+}> {}
 
 const unavailableCommand = (command: string, threadId: ThreadId) => (cause: WorkerUnavailable) =>
   new ThreadCommandFailedError({ command, threadId, detail: cause.message, cause });
@@ -196,7 +204,9 @@ export const makeRemoteThreadGateway = (
             command: "spawn",
             threadId,
             detail: `Couldn't copy the card's files to worker ${workerId}.`,
-            cause,
+            // An unreachable worker is still offline; anything else failed
+            // before the spawn was sent.
+            cause: cause instanceof WorkerUnavailable ? cause : new CardFilesNotStaged({ cause }),
           }),
       ),
     );

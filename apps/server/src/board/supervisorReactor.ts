@@ -157,6 +157,7 @@ import {
   stageBoardCardImagesAsPending,
 } from "./attachments.ts";
 import { BoardPlacement, boardPlacementGate } from "./workers/BoardPlacement.ts";
+import { WorkerRpcError } from "./workers/WorkerTransport.ts";
 import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
@@ -279,23 +280,27 @@ type BoardCardReclaimAttempt =
   | { readonly outcome: "busy" }
   | { readonly outcome: "failed" };
 
+const isThreadCommandFailed = Schema.is(ThreadCommandFailedError);
+
 /**
  * What a failed spawn left behind (T3O-66, D22), read off the remote
  * gateway's cause:
  *
- * - `none`: refused, or failed where the board could see it fail. No thread
- *   is left (the gateway deletes one whose first turn never started).
+ * - `none`: refused, failed where the board could see it fail, failed before
+ *   the spawn call was sent (staging the card's files), or a worker without
+ *   the call at all. No thread is left (the gateway deletes one whose first
+ *   turn never started).
  * - `worker-offline`: the worker couldn't be reached, so nothing was sent.
  * - `unknown`: the connection went mid-call. The worker may well have
  *   created the thread, so it must not be read as "no thread".
  */
-const isThreadCommandFailed = Schema.is(ThreadCommandFailedError);
-
 const spawnFailureLeft = (cause: Cause.Cause<unknown>) => {
   const error = Cause.findErrorOption(cause).pipe(Option.getOrUndefined);
   const reason = isThreadCommandFailed(error) ? error.cause : undefined;
   if (Predicate.isTagged(reason, "WorkerUnavailable")) return "worker-offline" as const;
-  if (Predicate.isTagged(reason, "WorkerRpcError")) return "unknown" as const;
+  if (reason instanceof WorkerRpcError && reason.unsupported !== true) {
+    return "unknown" as const;
+  }
   return "none" as const;
 };
 

@@ -45,7 +45,7 @@ import {
   WORKER_PROJECT_ID,
   WORKER_ROOT,
 } from "./distributed.testkit.ts";
-import { makeRemoteThreadGateway } from "./RemoteThreadGateway.ts";
+import { CardFilesNotStaged, makeRemoteThreadGateway } from "./RemoteThreadGateway.ts";
 import { WorkerConnections } from "./WorkerConnections.ts";
 import { makeWorkerSignalFeed } from "./WorkerSignalFeed.ts";
 
@@ -325,6 +325,31 @@ describe("the remote thread gateway", () => {
         );
         const staged = path.join(workerStateDir, "board", "attachments", cardId, "brief.md");
         assert.strictEqual(yield* fs.readFileString(staged), "# The brief");
+      }),
+    ),
+  );
+
+  it.effect("a card's files failing to stage is told apart from a spawn that may have run", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const { router, threads } = yield* setup();
+        const failure = yield* router
+          .spawn(
+            spawnInput(ThreadId.make("thread-unstaged"), {
+              stageAttachments: {
+                cardId: BoardCardId.make("card-unstaged"),
+                files: [{ name: "brief.md", path: "/nonexistent/brief.md" }],
+              },
+            }),
+          )
+          .pipe(Effect.flip);
+        assert.strictEqual(failure._tag, "ThreadCommandFailedError");
+        assert.instanceOf(
+          failure._tag === "ThreadCommandFailedError" ? failure.cause : undefined,
+          CardFilesNotStaged,
+        );
+        // Nothing was sent to the worker.
+        assert.isFalse((yield* threads.calls).some((call) => call.type === "thread.spawn"));
       }),
     ),
   );

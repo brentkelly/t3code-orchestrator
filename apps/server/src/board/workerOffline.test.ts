@@ -45,9 +45,12 @@ import {
   ThreadCommandFailedError,
   ThreadReadError,
   UNKNOWN_THREAD_STATE,
+  type LocalThreadGatewayShape,
+  type ThreadGatewayShape,
 } from "./ThreadGateway.ts";
 import { aliveThread, idleThread } from "./threadGateway.testkit.ts";
 import type { BoardPlacementShape } from "./workers/BoardPlacement.ts";
+import { CardFilesNotStaged } from "./workers/RemoteThreadGateway.ts";
 import { WorkerUnavailable } from "./workers/WorkerConnections.ts";
 import { WorkerRpcError } from "./workers/WorkerTransport.ts";
 
@@ -903,6 +906,53 @@ it.effect("a spawn whose connection drops after the worker took it is run, not s
     );
   }),
 );
+
+/** A spawn that fails on W1 with `cause` and never reaches the worker. */
+const failedSpawnBoard = (cause: unknown) =>
+  Effect.map(makePlacement(true), ({ placement }) => ({
+    board: { ...board(pendingStep()), cards: [unlinkedCard()] },
+    settings,
+    placement,
+    gateway: (local: LocalThreadGatewayShape): ThreadGatewayShape => ({
+      ...local,
+      spawn: (input) =>
+        Effect.fail(
+          new ThreadCommandFailedError({
+            command: "spawn",
+            threadId: input.threadId,
+            detail: "failed",
+            cause,
+          }),
+        ),
+    }),
+  }));
+
+for (const [name, cause] of [
+  [
+    "a worker without the spawn call",
+    new WorkerRpcError({ message: "unsupported", unsupported: true }),
+  ],
+  [
+    "a spawn whose card files never reached the worker",
+    new CardFilesNotStaged({ cause: new WorkerRpcError({ message: "gone" }) }),
+  ],
+] as const) {
+  it.effect(`${name} leaves no thread: the step stalls, nothing is linked`, () =>
+    Effect.gen(function* () {
+      yield* withGovernor(yield* failedSpawnBoard(cause), (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          const stalled = yield* step(h);
+          assert.strictEqual(stalled?.status, "stalled");
+          assert.isNull(stalled?.threadId ?? null);
+          const card = (yield* h.board).cards.find((candidate) => candidate.id === cardId);
+          assert.deepStrictEqual(card?.threadLinks, []);
+          assert.strictEqual(yield* h.slots.heldOnWorker(W1), 0);
+        }),
+      );
+    }),
+  );
+}
 
 it.effect("a worker unreachable at spawn holds the step for it and frees the slot", () =>
   Effect.gen(function* () {
