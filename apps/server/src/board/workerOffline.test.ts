@@ -927,32 +927,30 @@ const failedSpawnBoard = (cause: unknown) =>
     }),
   }));
 
-for (const [name, cause] of [
-  [
-    "a worker without the spawn call",
-    new WorkerRpcError({ message: "unsupported", unsupported: true }),
-  ],
-  [
-    "a spawn whose card files never reached the worker",
-    new CardFilesNotStaged({ cause: new WorkerRpcError({ message: "gone" }) }),
-  ],
-] as const) {
-  it.effect(`${name} leaves no thread: the step stalls, nothing is linked`, () =>
-    Effect.gen(function* () {
-      yield* withGovernor(yield* failedSpawnBoard(cause), (h) =>
-        Effect.gen(function* () {
-          yield* h.reactor.drain;
-          const stalled = yield* step(h);
-          assert.strictEqual(stalled?.status, "stalled");
-          assert.isNull(stalled?.threadId ?? null);
-          const card = (yield* h.board).cards.find((candidate) => candidate.id === cardId);
-          assert.deepStrictEqual(card?.threadLinks, []);
-          assert.strictEqual(yield* h.slots.heldOnWorker(W1), 0);
-        }),
-      );
-    }),
-  );
-}
+it.effect.each([
+  {
+    name: "a worker without the spawn call",
+    cause: new WorkerRpcError({ message: "unsupported", unsupported: true }),
+  },
+  {
+    name: "a spawn whose card files never reached the worker",
+    cause: new CardFilesNotStaged({ cause: new WorkerRpcError({ message: "gone" }) }),
+  },
+])("$name leaves no thread: the step stalls, nothing is linked", ({ cause }) =>
+  Effect.gen(function* () {
+    yield* withGovernor(yield* failedSpawnBoard(cause), (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drain;
+        const stalled = yield* step(h);
+        assert.strictEqual(stalled?.status, "stalled");
+        assert.isNull(stalled?.threadId ?? null);
+        const card = (yield* h.board).cards.find((candidate) => candidate.id === cardId);
+        assert.deepStrictEqual(card?.threadLinks, []);
+        assert.strictEqual(yield* h.slots.heldOnWorker(W1), 0);
+      }),
+    );
+  }),
+);
 
 it.effect("a worker unreachable at spawn holds the step for it and frees the slot", () =>
   Effect.gen(function* () {
