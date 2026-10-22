@@ -20,6 +20,15 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import { KnownWorkflowRuns } from "./gitHubConditionalChecks.ts";
+// T3o (T3O-67): batched reads are grouped by the project's gitenv token.
+// gitenv reads a real file under a temp state dir.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodePath from "node:path";
+import { initGitenv, resetGitenvForTesting } from "@t3tools/shared/gitenv";
+import { T3oGitenvProject } from "./t3oGitenvCredential.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -783,6 +792,44 @@ layer("GitHubPullRequestApi.layer", (it) => {
         s1_number: 8,
       });
     }),
+  );
+
+  // T3o (T3O-67): a gitenv project's reads never share a batched document with another identity.
+  it.effect("reads linked pull requests of a gitenv project and an ambient one separately", () =>
+    Effect.gen(function* () {
+      const base = NodeFS.realpathSync(
+        NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-67-batch-")),
+      );
+      const project = NodePath.join(base, "project");
+      const other = NodePath.join(base, "other");
+      for (const dir of [NodePath.join(project, ".git"), NodePath.join(other, ".git")]) {
+        NodeFS.mkdirSync(dir, { recursive: true });
+      }
+      NodeFS.writeFileSync(NodePath.join(base, "gitenv"), `${project}=github_pat_t3o67batch\n`, {
+        mode: 0o600,
+      });
+      initGitenv(base);
+      mockedExecute.mockImplementation(() =>
+        Effect.succeed(output(encodeJson({ data: { s0: { pullRequest: null } } }))),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const under = (cwd: string, number: number) =>
+        cli
+          .getPullRequestSummary({ cwd, repository: "acme/web", host: "github.com", number })
+          // Only the batching is under test; each answer may fail to decode.
+          .pipe(Effect.provideService(T3oGitenvProject, cwd), Effect.exit);
+      const reads = yield* Effect.all([under(project, 7), under(other, 8)], {
+        concurrency: "unbounded",
+      }).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      yield* Fiber.join(reads);
+
+      // Under one shared document the second read would ride along as `s1`.
+      expect(mockedExecute.mock.calls.length).toBeGreaterThanOrEqual(2);
+      mockedExecute.mock.calls.forEach((_, index) =>
+        expect(varsAt(index)).not.toHaveProperty("s1_number"),
+      );
+    }).pipe(Effect.ensuring(Effect.sync(resetGitenvForTesting))),
   );
 
   // T3o (T3O-54): a token without the Checks permission still reads the batch, minus the rollup.

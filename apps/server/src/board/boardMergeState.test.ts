@@ -3,9 +3,8 @@
  *
  * This is the input to every auto-merge verdict, so the rules that matter are
  * the ones the classifier turns on: what counts as a failed check, what a
- * conflict outranks, and — the one this rewrite introduced — when "the host
- * says it is fine and refused anyway" may be read as a decision rather than as
- * something to wait for.
+ * conflict outranks, and that "the host says it is fine and refused anyway"
+ * is never read as a decision (T3O-67). The forge's own words explain it.
  */
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -15,7 +14,9 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  BOARD_MERGE_FORGE_TEXT_MAX_LENGTH,
   BOARD_MERGE_STATE_MAX_NAMED_CHECKS,
+  boardHostMergeRefusalReason,
   boardMergeRefusalReason,
   boardMergeStateOf,
 } from "./boardMergeState.ts";
@@ -142,14 +143,14 @@ describe("boardMergeStateOf: why the host is blocking", () => {
     assert.strictEqual(state.blockedReason, null);
   });
 
-  it("calls a green, ready, up-to-date pull request that was refused anyway a decision", () => {
-    // The probe only runs after a refusal, so nothing here being wrong means
-    // the host refused for a reason it does not report: an approval, a
-    // protection rule, an unresolved conversation. All need a person.
+  it("does not guess why a green, ready, up-to-date pull request was refused (T3O-67)", () => {
+    // Read by elimination this was a missing approval, a hard stop. A merge
+    // refused because the token could read the pull request but not merge it
+    // looks exactly the same, and sat held behind a reason that was not true.
     const state = boardMergeStateOf(detail({ checks: [check("ci/build", "success")] }));
 
-    assert.strictEqual(state.mergeable, "blocked");
-    assert.strictEqual(state.blockedReason, "other");
+    assert.strictEqual(state.mergeable, "mergeable");
+    assert.strictEqual(state.blockedReason, null);
   });
 
   it("does not call it a decision while checks are still running", () => {
@@ -207,8 +208,7 @@ describe("boardMergeRefusalReason", () => {
   });
 
   it("concludes nothing from checks the token could not read (T3O-8)", () => {
-    // Green by elimination would read this as a missing approval and stop the
-    // card, when the unread checks may simply still be running.
+    // The unread checks may simply still be running.
     const state = boardMergeStateOf(detail({ baseComparison: "up-to-date", checksUnread: true }));
     assert.strictEqual(state.mergeable, "mergeable");
     assert.strictEqual(state.blockedReason, null);
@@ -229,5 +229,61 @@ describe("boardMergeRefusalReason", () => {
       boardMergeRefusalReason(null, "GitHub API rate limit exceeded."),
       "The forge refused the merge, and asking it why failed: GitHub API rate limit exceeded.",
     );
+  });
+});
+
+describe("boardHostMergeRefusalReason (T3O-67)", () => {
+  const GITHUB_SAYS = "GitHub returned an error: Resource not accessible by personal access token";
+
+  it("lets the forge explain a refusal the detail cannot", () => {
+    const state = boardMergeStateOf(detail({ checks: [check("ci/build", "success")] }));
+
+    assert.strictEqual(
+      boardHostMergeRefusalReason(state, undefined, GITHUB_SAYS),
+      `The forge refused the merge: ${GITHUB_SAYS}`,
+    );
+  });
+
+  it("leads with the cause the detail names, then gives the forge's words", () => {
+    const state = boardMergeStateOf(detail({ mergeability: "conflicting" }));
+
+    assert.strictEqual(
+      boardHostMergeRefusalReason(state, undefined, "GitHub returned an error: not mergeable"),
+      "Its pull request conflicts with its base branch. The forge said: GitHub returned an error: not mergeable",
+    );
+    const failing = boardMergeStateOf(detail({ checks: [check("ci/test", "failure")] }));
+    assert.strictEqual(
+      boardHostMergeRefusalReason(failing, undefined, "GitHub returned HTTP 405."),
+      "Its checks are failing. The forge said: GitHub returned HTTP 405.",
+    );
+  });
+
+  it("keeps the failed-probe sentence and adds the forge's words", () => {
+    assert.strictEqual(
+      boardHostMergeRefusalReason(null, "GitHub API rate limit exceeded.", GITHUB_SAYS),
+      `The forge refused the merge, and asking it why failed: GitHub API rate limit exceeded. The forge said: ${GITHUB_SAYS}`,
+    );
+  });
+
+  it("falls back to the derived sentence when the forge said nothing", () => {
+    const state = boardMergeStateOf(detail({ checks: [check("ci/build", "success")] }));
+
+    assert.strictEqual(
+      boardHostMergeRefusalReason(state, undefined, "   "),
+      "The forge refused the merge and did not say why.",
+    );
+    assert.strictEqual(
+      boardHostMergeRefusalReason(state, undefined, undefined),
+      "The forge refused the merge and did not say why.",
+    );
+  });
+
+  it("bounds the forge's text, because the card persists and renders it", () => {
+    const state = boardMergeStateOf(detail());
+    const reason = boardHostMergeRefusalReason(state, undefined, "x".repeat(2_000));
+    const said = reason.slice("The forge refused the merge: ".length);
+
+    assert.strictEqual(said.length, BOARD_MERGE_FORGE_TEXT_MAX_LENGTH);
+    assert.isTrue(said.endsWith("…"));
   });
 });

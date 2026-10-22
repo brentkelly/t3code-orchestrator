@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - exercises the deliberately
 // synchronous gitenv module against real temp directories.
 // @effect-diagnostics globalDate:off - forces a distinct file mtime.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -8,6 +9,7 @@ import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  gitenvToken,
   gitenvTokenEnv,
   initGitenv,
   resetGitenvForTesting,
@@ -98,6 +100,18 @@ describe("gitenv", () => {
       GH_TOKEN: TOKEN,
       GITHUB_TOKEN: TOKEN,
     });
+  });
+
+  it("names the matched root and a digest of the token for the API transport", () => {
+    const fixture = makeFixture();
+    writeGitenv(fixture, `${fixture.projectRoot}=${TOKEN}\n`);
+    expect(gitenvToken(fixture.worktreeDir)).toEqual({
+      root: fixture.projectRoot,
+      token: TOKEN,
+      digest: NodeCrypto.createHash("sha256").update(TOKEN).digest("hex"),
+    });
+    expect(gitenvToken(fixture.outsideDir)).toBeUndefined();
+    expect(gitenvToken(undefined)).toBeUndefined();
   });
 
   it("wins over an ambient GH_TOKEN but leaves unmatched env untouched", () => {

@@ -21,6 +21,8 @@ import {
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
 import { definition } from "../client/definition.ts";
+// T3o (t3o-34, T3O-67): the server's own GitHub API calls honour gitenv.
+import { t3oWithGitenvProject } from "./t3oGitenvCredential.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -666,5 +668,6 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(fail("setThreadResolution"))),
   };
 
-  return provider;
+  // T3o (t3o-34, T3O-67): each call's GitHub API requests use its project's gitenv token.
+  return t3oWithGitenvProject(provider);
 });

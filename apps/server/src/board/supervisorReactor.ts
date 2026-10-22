@@ -187,7 +187,7 @@ import {
   type BoardAutoMergeVerdict,
 } from "./autoMergeClassification.ts";
 import {
-  boardMergeRefusalReason,
+  boardHostMergeRefusalReason,
   LOCAL_CONFLICT_MERGE_STATE,
   type BoardMergeState,
 } from "./boardMergeState.ts";
@@ -6102,9 +6102,8 @@ const make = Effect.gen(function* () {
       // action this host does not offer, a permission this account lacks, a
       // missing CLI, a rate limit — and those failures carry their own words,
       // which name the fix. Probing there would describe a pull request that
-      // was never the problem: a green, up-to-date, unconflicted one, which
-      // `boardMergeStateOf` reads BY ELIMINATION as a missing approval, and the
-      // card would send the user chasing a reviewer over a merge-strategy
+      // was never the problem: a green, up-to-date, unconflicted one, and the
+      // card would describe the pull request instead of the merge-strategy
       // setting. So: the attempt's own sentence, no probe, no conflict route,
       // and a ladder that stops where a retry cannot help.
       if (failure.refusal !== undefined && failure.refusal !== "host") {
@@ -6137,7 +6136,9 @@ const make = Effect.gen(function* () {
           )) === "conflict"
           ? LOCAL_CONFLICT_MERGE_STATE
           : probe.state;
-      const detail = boardMergeRefusalReason(state, probe.failure);
+      // T3O-67: the host's own words ride along. Without them a clean pull
+      // request's refusal had no explanation at all.
+      const detail = boardHostMergeRefusalReason(state, probe.failure, failure.detail);
       // T3O-18: both automatic fixes run in the card's OWN worktree. A linked
       // pull request on another branch (a stack layer, a card with no
       // worktree) would have that agent fix the wrong branch, so the refusal

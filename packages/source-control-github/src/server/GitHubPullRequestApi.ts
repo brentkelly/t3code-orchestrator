@@ -128,6 +128,8 @@ import {
   type GitHubReviewThreadPage,
   type GitHubViewerAccess,
 } from "./gitHubPullRequestJson.ts";
+// T3o (t3o-34, T3O-67): batched reads are grouped by the project's gitenv token.
+import { t3oGitenvBatchKey } from "./t3oGitenvCredential.ts";
 // T3o (T3O-8, T3O-54): the core and summary reads' missing-scope fallback.
 import {
   coreQueryForFields,
@@ -1856,6 +1858,8 @@ export const make = Effect.gen(function* () {
         Context.getOrElse(context, GitHubApi.PinnedGitHubCredential, () => null)
           ?.credentialFingerprint ?? null,
         Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
+        // T3o (t3o-34, T3O-67): one batched document carries one project's gitenv token.
+        t3oGitenvBatchKey(context),
       ]),
     resolver: (entries) => {
       const [first] = entries;
@@ -1940,6 +1944,8 @@ export const make = Effect.gen(function* () {
         Context.getOrElse(context, GitHubApi.PinnedGitHubCredential, () => null)
           ?.credentialFingerprint ?? null,
         Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
+        // T3o (t3o-34, T3O-67): one batched document carries one project's gitenv token.
+        t3oGitenvBatchKey(context),
       ]),
     resolver: (entries) => {
       const [first] = entries;

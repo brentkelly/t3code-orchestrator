@@ -56,6 +56,8 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import { readSourceControlHostSettings } from "@t3tools/source-control-core/client/definition";
 
 import * as GitHubClient from "../client/definition.ts";
+// T3o (t3o-34, T3O-67): the server's own GitHub API calls honour gitenv.
+import { t3oGitenvBatchKey, t3oWithGitenvProject } from "./t3oGitenvCredential.ts";
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -571,6 +573,8 @@ export const make = Effect.gen(function* () {
         Context.getOrElse(context, GitHubApi.PinnedGitHubCredential, () => null)
           ?.credentialFingerprint ?? "",
         Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
+        // T3o (t3o-34, T3O-67): one batched document carries one project's gitenv token.
+        t3oGitenvBatchKey(context),
       ].join("\0"),
     resolver: (entries) => {
       const [first] = entries;
@@ -947,7 +951,7 @@ export const make = Effect.gen(function* () {
     return { title: subject.title, body: subject.body ?? null };
   });
 
-  return SourceControlProvider.SourceControlProvider.of({
+  const provider = SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("github"),
     // `gh pr list --head` filters on the head ref name alone and accepts anything, so an
     // `owner:branch` or `remote:branch` selector silently lists zero pull requests while
@@ -1100,4 +1104,6 @@ export const make = Effect.gen(function* () {
         ),
       ),
   });
+  // T3o (t3o-34, T3O-67): each call's GitHub API requests use its project's gitenv token.
+  return t3oWithGitenvProject(provider);
 });

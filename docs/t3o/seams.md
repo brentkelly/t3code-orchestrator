@@ -351,6 +351,12 @@ resolution is regenerate, not hand-merge.
 - **A pinned GitHub credential outranks `gitenv`.** Upstream's `PinnedGitHubCredential` sets
   `GH_TOKEN` on the calls it verifies; `VcsProcess` now applies the per-project token only when the
   caller did not set one.
+- **`GitHubApi.credential` must still consult gitenv (`T3O-67`).** Upstream resolves the API
+  transport's token per host, so a sync that rewrites `credential`, the providers' returned objects
+  or the head-lookup resolver can silently drop the seams. Board merges then run as the ambient
+  account and GitHub refuses them. After every sync, check that `credential` calls
+  `t3oGitenvCredential` after the pinned check and that both GitHub providers return through
+  `t3oWithGitenvProject`. `t3oGitenvCredential.test.ts` fails if the first goes.
 - **The board's model-row menu is its own component.** Upstream extracted `runtimeModeConfig` and
   rebuilt `CompactComposerControlsMenu` around composer-only plumbing, so the fork's
   `AccessLevelPicker` is deleted and the `t3o-27` menu reuse moved to fork-owned
@@ -766,6 +772,18 @@ path), `vcs/VcsProcess.ts` 3
 agent-session spawn). All the logic lives in the new `sourceControl/gitenv.ts`; every seam is an
 import or a one-expression env merge.
 
+`T3O-67` extended gitenv to the server's own GitHub API calls, which since `v0.1.0` carry the merge
+and every PR read over HTTP rather than through `gh`. It added 14 markers across 5 upstream-owned
+files: in `packages/source-control-github`, `GitHubApi.ts` 3 (import, the delegating check in
+`credential`, and a 401 that leaves the ambient cache alone when the gitenv token was refused),
+`GitHubPullRequestProvider.ts` 2 (import + the wrapped return), `GitHubSourceControlProvider.ts` 3
+(import, wrapped return, batch-key entry) and `GitHubPullRequestApi.ts` 3 (import + the summary and
+watch-fingerprint batch keys); in `apps/server`, `pullRequest/PullRequestService.ts` 3 (import + the
+cross-repository search and stats batches split by gitenv identity). The logic lives in the new
+`t3oGitenvCredential.ts`; the token lookup is `gitenvToken` in `@t3tools/shared/gitenv`. The
+listing's viewer is still resolved once per host, so with a gitenv project on github.com the
+involvement filter ("mine", "review requested") uses whichever identity answered first.
+
 Making the board primary (`T3O-34`) added 7 markers across 3 upstream-owned files:
 `__root.tsx` 2 (import + the cold-start guard), `pair.tsx` 3 (import + the two pairing exits) and
 `SidebarChrome.tsx` 2 (import + the mode-tabs slot). `SidebarChrome.tsx` was pristine upstream
@@ -850,6 +868,11 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/vcs/GitVcsDriverCore.ts`                                       | `t3o-34`          | Import `gitenvTokenEnv`; git subprocesses take the project's token, merged last                                                                      | import + one env spread                                                   |
 | `packages/source-control-github/src/server/gitHubRepositoryResolution.ts`       | `T3O-48`          | Import `t3oOriginRepository`; act on `origin`, never gh's `upstream` preference                                                                      | import + one delegating early return                                      |
 | `packages/source-control-github/src/server/GitHubPullRequestApi.ts`             | `T3O-8`, `T3O-54` | Import the scope fallback; the core detail read runs through `readCoreWithScopeFallback`, the summary reads through `readSummariesWithScopeFallback` | import + three wrapped reads                                              |
+| `packages/source-control-github/src/server/GitHubApi.ts`                        | `T3O-67`          | Import the gitenv helpers; `credential` asks gitenv after a pinned credential; a refused gitenv token keeps the ambient cache                        | import + early return + wrapped invalidate                                |
+| `packages/source-control-github/src/server/GitHubPullRequestApi.ts`             | `T3O-67`          | Import `t3oGitenvBatchKey`; the summary and watch-fingerprint batch keys separate gitenv projects                                                    | import + two key entries                                                  |
+| `apps/server/src/pullRequest/PullRequestService.ts`                             | `T3O-67`          | Import `gitenvToken`; cross-repository search and stats batches are split by gitenv identity                                                         | import + two key suffixes                                                 |
+| `packages/source-control-github/src/server/GitHubPullRequestProvider.ts`        | `T3O-67`          | Import `t3oWithGitenvProject`; every provider call runs under its `cwd`'s gitenv project                                                             | import + one wrapped return                                               |
+| `packages/source-control-github/src/server/GitHubSourceControlProvider.ts`      | `T3O-67`          | Import the gitenv helpers; calls run under their `cwd`'s gitenv project, and the head-lookup batch key separates projects                            | import + wrapped return + key entry                                       |
 | `packages/source-control-github/src/server/GitHubSourceControlProvider.test.ts` | `T3O-48`          | Three upstream assertions expect `origin` where gh would pick `upstream`                                                                             | marked fork expectation                                                   |
 | `packages/contracts/src/vcs.ts`                                                 | `T3O-8`           | `missing-scope` failure kind and its message: a scope refusal is not a missing resource                                                              | literal member + one ternary branch                                       |
 | `apps/server/src/vcs/VcsProcess.ts`                                             | `T3O-8`           | A GitHub scope or fine-grained refusal classifies as `missing-scope`, not not-found                                                                  | one predicate branch                                                      |
@@ -939,6 +962,7 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/web/src/components/ProjectScriptsControl.tsx`                             | `T3O-23`          | Import through `newProjectScriptInputFromFile`; `(teardown)` menu label                                                                              | delegating call + label branch                                            |
 | `apps/web/src/components/settings/ProjectActionsSettings.tsx`                   | `T3O-23`          | Import through `newProjectScriptInputFromFile`                                                                                                       | delegating call                                                           |
 | `apps/web/src/components/settings/ProjectActionsList.tsx`                       | `T3O-23`          | `teardown` badge beside `setup`                                                                                                                      | one badge                                                                 |
+| `apps/web/src/components/ComposerPromptEditorTiptap.tsx`                        | `upstream bug`    | Editor destroyed in useEditor's 1 ms render-to-commit race is skipped where `view` is read; drop once @tiptap/react fixes it                         | three `isDestroyed` guards                                                |
 | `apps/web/src/index.css`                                                        | `status palette`  | `--attention` violet token: theme mapping, light and dark values                                                                                     | three token blocks (frozen)                                               |
 | `apps/web/src/components/Sidebar.logic.ts`                                      | `status palette`  | Awaiting Input pill reads violet                                                                                                                     | colour-class swap (frozen)                                                |
 | `apps/web/src/components/Sidebar.tsx`                                           | `status palette`  | Running pill reads blue, waiting reads violet                                                                                                        | two colour-class swaps (frozen)                                           |

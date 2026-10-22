@@ -50,8 +50,9 @@ function describe(state: BoardMergeState): string | null {
  *
  * Order matters and is the table in the spec: a failed required check is the
  * only verdict that survives a green-looking rollup, pending checks always
- * mean wait, and a block with everything green is the one case where "the
- * forge still says no" can only be a decision the board does not have.
+ * mean wait, and only a block the detail actually names stops the ladder. A
+ * refusal with everything green is no longer read as a missing approval
+ * (T3O-67): it waits, and the card shows the forge's own words.
  */
 export function classifyBoardAutoMergeRefusal(state: BoardMergeState): BoardAutoMergeVerdict {
   const detail = describe(state);
@@ -76,14 +77,13 @@ export function classifyBoardAutoMergeRefusal(state: BoardMergeState): BoardAuto
       case "conflict":
       case "draft":
         return { classification: "other", detail, headSha };
-      default:
-        // Blocked with every check green: a missing approval, a protection
-        // rule, an unresolved conversation. A decision, not a wait.
-        return { classification: "approval-required", detail, headSha };
+      case null:
+        break;
     }
   }
-  // The forge says it is mergeable and refused anyway. We do not understand
-  // that, so we wait — the safe direction.
+  // The forge says it is mergeable and refused anyway, or blocked without a
+  // reason the detail names. We do not understand that, so we wait, which is
+  // the safe direction. The card shows the forge's own words meanwhile.
   return { classification: "soft", detail, headSha };
 }
 

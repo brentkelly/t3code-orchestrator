@@ -1104,17 +1104,21 @@ describe("merging a card's pull request", () => {
         board: { nextCardNumberByProject: {}, cards: [cardInMerge()] },
         settings: settings(),
         pullRequest: openPr,
-        mergeFailure: "the host refused",
-        // A policy block — failing CI starts a fix of its own (T3O-12).
-        mergeState: refusal({ blockedReason: "other" }),
+        mergeFailure: "GitHub returned an error: At least 1 approving review is required.",
+        // A refusal the detail cannot explain; failing CI starts a fix of its
+        // own (T3O-12).
+        mergeState: refusal({}),
       },
       (h) =>
         Effect.gen(function* () {
           const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
           assert.equal(result.outcome, "refused");
-          // The user reads WHY, derived from the same structured state the
-          // board branched on rather than from the refusal's prose.
-          assert.include(result.outcome === "refused" ? result.detail : "", "review approval");
+          // The user reads the forge's own reason, not one the board guessed
+          // (T3O-67).
+          assert.strictEqual(
+            result.outcome === "refused" ? result.detail : "",
+            "The forge refused the merge: GitHub returned an error: At least 1 approving review is required.",
+          );
           // A block only a human can clear: the card stays where it is, and
           // nothing tries again on its own.
           assert.deepStrictEqual(movesTo(yield* h.commands), []);
@@ -1444,7 +1448,7 @@ describe("merging a card's pull request", () => {
           // gave no reason (T3O-8).
           assert.equal(
             result.outcome === "refused" ? result.detail : "",
-            "The forge refused the merge, and asking it why failed: No provider is registered.",
+            "The forge refused the merge, and asking it why failed: No provider is registered. The forge said: the host refused",
           );
           const started = (yield* h.commands).filter(
             (command) => command.type === "board.card.start-stage-thread",
@@ -1472,7 +1476,7 @@ describe("merging a card's pull request", () => {
           assert.equal(result.outcome, "conflict");
           assert.equal(
             result.outcome === "conflict" ? result.detail : "",
-            "Its pull request conflicts with its base branch.",
+            "Its pull request conflicts with its base branch. The forge said: the host refused",
           );
           const started = (yield* h.commands).filter(
             (command) => command.type === "board.card.start-stage-thread",
@@ -1518,14 +1522,17 @@ describe("merging a card's pull request", () => {
         // Everything green and the host still says no: an approval, a
         // protection rule, an unresolved conversation. Starting a conflict fix
         // here would merge base into a branch that has nothing wrong with it.
-        mergeFailure: "the host refused",
-        mergeState: refusal({ blockedReason: "other" }),
+        mergeFailure: "GitHub returned an error: At least 1 approving review is required.",
+        mergeState: refusal({}),
       },
       (h) =>
         Effect.gen(function* () {
           const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
           assert.equal(result.outcome, "refused");
-          assert.include(result.outcome === "refused" ? result.detail : "", "review approval");
+          assert.include(
+            result.outcome === "refused" ? result.detail : "",
+            "approving review is required",
+          );
           const started = (yield* h.commands).filter(
             (command) => command.type === "board.card.start-stage-thread",
           );

@@ -46,10 +46,10 @@ import { ThreadGateway } from "./ThreadGateway.ts";
  * work out for itself, and the bit that decides what it does next.
  *
  * - `host` — the request reached the host, which weighed this merge and said
- *   no. `detail` is a placeholder: upstream's process layer drops a
- *   subprocess's stderr on purpose (it can carry credentialed URLs), so `gh pr
- *   merge`'s own words never get this far. The board has to ask WHY, which is
- *   what `mergeState` is for.
+ *   no. `detail` is the host's own error text where its API returned one
+ *   (T3O-67). The board still asks for the structured state through
+ *   `mergeState`, because that is what it can act on: a conflict, a branch
+ *   behind its base, failing checks.
  * - `blocked` — refused before the host was asked, and no retry can change it:
  *   a merge strategy or an action this host does not offer, a permission this
  *   account lacks, a project with no recognised remote. `detail` is upstream's
@@ -60,8 +60,7 @@ import { ThreadGateway } from "./ThreadGateway.ts";
  *
  * Only `host` is worth a merge-state probe. On the other two the pull request
  * was never the problem, and a probe would describe a branch that is perfectly
- * mergeable — which the board would then read, by elimination, as a missing
- * approval.
+ * mergeable.
  */
 export type BoardPullRequestRefusal = "host" | "blocked" | "unavailable";
 
