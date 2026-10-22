@@ -8430,11 +8430,6 @@ export type BoardProjectSettings = typeof BoardProjectSettings.Type;
 export const BoardProjectSettingsMap = Schema.Record(ProjectId, BoardProjectSettings);
 export type BoardProjectSettingsMap = typeof BoardProjectSettingsMap.Type;
 
-/** Concurrency governance (D11, consumed by t3o-11): a ceiling per provider
-    instance plus a global ceiling. A per-instance value of `null` means "no
-    cap for this instance, use the global limit" — clearing a cap is stored as
-    null rather than by deleting the key, because settings patches merge through
-    the stock `deepMerge`, which cannot delete a map key (see `BoardSettingsPatch`). */
 /** One worker's limits (T3O-65, D11): its own ceiling, and a cap per provider
     instance ON THAT WORKER — an instance id on one machine is a different
     account and CPU from the same id on another. `null` means no limit of that
@@ -8459,6 +8454,10 @@ export type BoardWorkerConcurrencySettings = typeof BoardWorkerConcurrencySettin
  * its own — `local`'s worker limit. So a settings file written before the
  * distributed board means exactly what it did, and a local-only board's
  * Settings keep editing these two fields as they always have.
+ *
+ * A cleared limit or cap is stored as `null` rather than by deleting the key,
+ * because settings patches merge through the stock `deepMerge`, which cannot
+ * delete a map key (see `BoardSettingsPatch`).
  */
 export const BoardConcurrencySettings = Schema.Struct({
   perInstance: Schema.Record(ProviderInstanceId, Schema.NullOr(PositiveInt)),
