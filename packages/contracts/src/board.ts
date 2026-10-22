@@ -2233,7 +2233,8 @@ export const BoardCardActivityPayload = Schema.Struct({
   /** The pull-request rows: which PR, and what state it moved to. */
   prNumber: Schema.optionalKey(PositiveInt),
   prState: Schema.optionalKey(BoardCardPullRequestState),
-  /** card-worktree-removed: a human forced it past the safety rule. */
+  /** card-worktree-removed: a human forced it past the safety rule.
+      card-worker-moved `start` (T3O-66): a force-move, which checked nothing. */
   forced: Schema.optionalKey(Schema.Boolean),
   /** card-worktree-removed (T3O-23): the remove script failed or timed out,
       and the removal went ahead anyway. */

@@ -321,7 +321,7 @@ it.effect("back online after the step completed offline: it advances, once", () 
                 {
                   cardId,
                   stepId: "building",
-                  outcome: "succeeded",
+                  outcome: "succeeded" as const,
                   summary: "done",
                   payload: null,
                   threadId,

@@ -109,6 +109,7 @@ import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
 import { projectAccent, projectIconColorOf } from "./projectAccent";
 import { BoardWorkersContext, useBoardWorkersCardView } from "./workers/BoardWorkersContext";
 import { boardQueueReason } from "./workers/cardWorker";
+import { BoardWorkersAttentionPill } from "./workers/BoardWorkersAttentionPill";
 import { validateBoardSearch, type BoardSearch } from "../routes/board";
 
 const EMPTY_COLUMNS: BoardStageColumns = mergeBoardStageColumns([]);
@@ -1230,6 +1231,13 @@ function EnvironmentBoard({
             and holds every card on it, so it belongs in the board's own header
             rather than on whichever card happened to notice. Renders nothing
             unless something is limited. */}
+          {/* T3o (T3O-66): workers that are offline, revoked or incompatible,
+            and the cards they hold. Renders nothing otherwise. */}
+          <BoardWorkersAttentionPill
+            cards={everyCard}
+            onOpenCard={(cardId) => patchSearch((previous) => ({ ...previous, card: cardId }))}
+            workers={workersState}
+          />
           <BoardProviderUsagePill
             cards={everyCard}
             limits={providerLimits}

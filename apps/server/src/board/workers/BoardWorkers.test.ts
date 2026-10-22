@@ -495,7 +495,6 @@ describe("BoardWorkers", () => {
           maxAttempts: 3,
           timeoutMs: 60_000,
           baseTipAtRoundStart: null,
-          lastError: null,
           createdAt: t0,
         });
         yield* engine.dispatch({

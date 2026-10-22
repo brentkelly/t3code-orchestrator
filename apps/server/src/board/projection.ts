@@ -3203,6 +3203,10 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
             fromWorkerId: event.payload.move.fromWorkerId,
             toWorkerId: event.payload.move.toWorkerId,
             ...(event.payload.step.phase === "failed" ? { detail: event.payload.step.error } : {}),
+            // A force-move's start checked nothing (T3O-66).
+            ...(event.payload.step.phase === "start" && event.payload.step.force === true
+              ? { forced: true }
+              : {}),
             ...(event.payload.step.phase === "abandoned" && event.payload.step.worktreePath !== null
               ? { detail: event.payload.step.worktreePath }
               : {}),

@@ -26,6 +26,7 @@ import {
 } from "@t3tools/contracts";
 
 import { LOCAL_WORKER_LABEL } from "./threadWorker";
+import { clockTime } from "./workerCopy";
 
 /** Whether the board has workers to choose between. */
 export function boardShowsWorkers(state: BoardWorkersState): boolean {
@@ -296,6 +297,9 @@ export function boardQueueReason(input: {
       for (const card of input.cards) if (card.stepRunning) running += 1;
       return { kind: "board", running, limit: input.concurrency.globalMaxConcurrent };
     }
+    case "worker-offline":
+      // The card's Worker offline notice says it (T3O-66).
+      return null;
     case "setup": {
       const setup = setupOf(input.state, workerId, input.card.projectId);
       return {
@@ -307,6 +311,139 @@ export function boardQueueReason(input: {
       };
     }
   }
+}
+
+// ── Worker trouble (T3O-66, D22; prototype 6) ──────────────────────────
+
+/** Whether the board can't run anything on a worker now. `connecting` is a
+    first dial, over in seconds, and is not trouble; a redial of a worker
+    already offline stays `offline`. */
+export function boardWorkerOutOfReach(worker: BoardWorkerView): boolean {
+  const state = worker.status.state;
+  return state === "offline" || state === "unauthorized" || state === "incompatible";
+}
+
+/** The card's Worker removed or Worker offline notice, and its panel. */
+export interface BoardCardWorkerTrouble {
+  readonly kind: "removed" | "offline";
+  /** The worker the card is stuck on. */
+  readonly workerId: BoardWorkerId | null;
+  readonly workerLabel: string;
+  readonly label: string;
+  readonly tooltip: string;
+  readonly panelTitle: string;
+  readonly panelBody: string;
+}
+
+/**
+ * Worker removed (the card holds until it is moved) or Worker offline (its
+ * work is paused until the worker is back), or null. Both amber. Offline is
+ * said only of a card with work there — a step running, parked, or waiting to
+ * start — not of every card that happens to be pinned to the worker.
+ */
+export function boardCardWorkerTrouble(
+  card: Pick<BoardCardShell, "workerId" | "placementOrphaned" | "stepRunning" | "queued"> &
+    Partial<Pick<BoardCardShell, "stepAwaiting">>,
+  state: BoardWorkersState,
+): BoardCardWorkerTrouble | null {
+  if (card.placementOrphaned !== undefined) {
+    const worker = card.placementOrphaned.workerLabel;
+    return {
+      kind: "removed",
+      workerId: null,
+      workerLabel: worker,
+      label: "Move this card",
+      tooltip: `${worker} was removed from the board. Move this card to keep going.`,
+      panelTitle: "Worker removed — move this card",
+      panelBody: `${worker} was removed from the board while this card had work there. Pick a new worker and the card continues from its pushed branch.`,
+    };
+  }
+  if (!card.stepRunning && !card.queued && card.stepAwaiting == null) return null;
+  const { workerId } = boardCardWorker(card, state);
+  if (workerId === BOARD_LOCAL_WORKER_ID) return null;
+  const worker = state.workers.find((candidate) => candidate.id === workerId);
+  if (worker === undefined || !boardWorkerOutOfReach(worker)) return null;
+  const name = worker.label;
+  const lastSeenAt = worker.status.lastSeenAt;
+  const why =
+    worker.status.state === "unauthorized"
+      ? `${name}'s access was revoked.`
+      : worker.status.state === "incompatible"
+        ? `${name} needs a newer T3o.`
+        : lastSeenAt === null
+          ? `${name} is offline.`
+          : `${name} went offline at ${clockTime(lastSeenAt)}.`;
+  return {
+    kind: "offline",
+    workerId,
+    workerLabel: name,
+    label: "Worker offline",
+    tooltip: `${why} Work is paused; nothing has been restarted.`,
+    panelTitle: `${name} is offline`,
+    panelBody: `Work on this card is paused. Nothing was restarted or moved. It carries on from where it stopped when ${name} reconnects.${
+      lastSeenAt === null ? "" : ` Last heard from ${clockTime(lastSeenAt)}.`
+    }`,
+  };
+}
+
+/** One worker in the board header's indicator popover (prototype 6.3). */
+export interface BoardWorkerAttentionRow {
+  readonly workerId: BoardWorkerId;
+  readonly label: string;
+  /** "Offline since 09:12", "Access revoked", "Needs T3o 0.14.0 or newer". */
+  readonly status: string;
+  readonly pausedCards: ReadonlyArray<Pick<BoardCardShell, "cardId" | "key" | "title">>;
+}
+
+/**
+ * The board header's worker indicator: "1 worker offline", or "N workers need
+ * attention" once any is revoked or incompatible — and each of them with the
+ * cards it has paused. Null when every worker is fine, and on a local-only
+ * board.
+ */
+export function boardWorkersAttention(
+  cards: ReadonlyArray<
+    Pick<
+      BoardCardShell,
+      | "cardId"
+      | "key"
+      | "title"
+      | "workerId"
+      | "placementOrphaned"
+      | "stepRunning"
+      | "queued"
+      | "stepAwaiting"
+    >
+  >,
+  state: BoardWorkersState,
+): { readonly label: string; readonly rows: ReadonlyArray<BoardWorkerAttentionRow> } | null {
+  const troubled = state.workers.filter(boardWorkerOutOfReach);
+  if (troubled.length === 0) return null;
+  const rows = troubled.map(
+    (worker): BoardWorkerAttentionRow => ({
+      workerId: worker.id,
+      label: worker.label,
+      status:
+        worker.status.state === "unauthorized"
+          ? "Access revoked"
+          : worker.status.state === "incompatible"
+            ? `Needs T3o ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer`
+            : worker.status.lastSeenAt === null
+              ? "Offline"
+              : `Offline since ${clockTime(worker.status.lastSeenAt)}`,
+      pausedCards: cards.filter(
+        (card) => boardCardWorkerTrouble(card, state)?.workerId === worker.id,
+      ),
+    }),
+  );
+  const allOffline = troubled.every((worker) => worker.status.state === "offline");
+  const count = troubled.length;
+  return {
+    label: allOffline
+      ? `${count} ${count === 1 ? "worker" : "workers"} offline`
+      : `${count} ${count === 1 ? "worker needs" : "workers need"} attention`,
+    rows,
+  };
 }
 
 // ── Move notices (prototype 6) ─────────────────────────────────────────

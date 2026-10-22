@@ -26,6 +26,10 @@ export const repairBoardWorker = (input: BoardWorkersRepairInput) =>
 export const removeBoardWorker = (input: BoardWorkerIdInput) =>
   request(BOARD_WORKERS_WS_METHODS.remove, input);
 
+/** What removing a worker would do to its cards (T3O-66), for the confirm. */
+export const previewBoardWorkerRemoval = (input: BoardWorkerIdInput) =>
+  request(BOARD_WORKERS_WS_METHODS.removePreview, input);
+
 export const setDefaultBoardWorker = (input: BoardWorkersSetDefaultInput) =>
   request(BOARD_WORKERS_WS_METHODS.setDefault, input);
 

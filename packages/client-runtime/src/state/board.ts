@@ -60,6 +60,7 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   addBoardWorker,
   dismissBoardWorkerSetup,
+  previewBoardWorkerRemoval,
   removeBoardWorker,
   repairBoardWorker,
   setDefaultBoardWorker,
@@ -794,6 +795,10 @@ export function createBoardEnvironmentAtoms<R, ER>(
     removeWorker: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:remove-worker",
       execute: (input: BoardWorkerIdInput) => removeBoardWorker(input),
+    }),
+    previewWorkerRemoval: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:preview-worker-removal",
+      execute: (input: BoardWorkerIdInput) => previewBoardWorkerRemoval(input),
     }),
     setDefaultWorker: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:set-default-worker",
