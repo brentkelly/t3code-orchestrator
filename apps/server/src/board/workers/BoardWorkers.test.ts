@@ -476,7 +476,7 @@ describe("BoardWorkers", () => {
   test("re-pairing from the picker moves when another server now answers at the old address", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { http, kit, connections, workers } = yield* setup;
+        const { http, kit, worker, connections, workers } = yield* setup;
         yield* addWithToken(workers, http);
         yield* waitFor(connections, "online");
 
@@ -493,6 +493,10 @@ describe("BoardWorkers", () => {
         assert.strictEqual(repaired.worker.url, moved.origin);
         yield* waitFor(connections, "online");
         assert.strictEqual(movedWorker.dialedTokens.at(-1), "access-fresh");
+        // The old session is given back where the worker now is, not to
+        // whatever answers at its old address.
+        assert.deepStrictEqual(movedWorker.releasedTokens, ["access-one-time"]);
+        assert.deepStrictEqual(worker.releasedTokens, []);
       }),
     ));
 

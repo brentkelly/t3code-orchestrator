@@ -539,8 +539,11 @@ export const makeBoardWorkers = Effect.gen(function* () {
       yield* syncConnections;
       // Re-pairing a worker whose old session still works (it moved, say)
       // must not leave that session behind where the board can't revoke it.
+      // It is given back where the worker answers now: the old address may
+      // be dead, or another server's. A session left live keeps the worker's
+      // relay claimed for the board, refusing the new one.
       if (Option.isSome(previousToken)) {
-        yield* releaseSession(worker.url, previousToken.value);
+        yield* releaseSession(target.httpBaseUrl, previousToken.value);
       }
       yield* connections.restart(worker.id);
       return yield* result(worker.id);
