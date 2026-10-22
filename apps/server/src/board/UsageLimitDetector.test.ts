@@ -11,7 +11,11 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { ThreadGateway, type BoardThreadUsageLimit } from "./ThreadGateway.ts";
+import {
+  ThreadGateway,
+  UNKNOWN_THREAD_STATE,
+  type BoardThreadUsageLimit,
+} from "./ThreadGateway.ts";
 import { fakeThreadState, inertThreadGateway } from "./threadGateway.testkit.ts";
 import { UsageLimitDetector, UsageLimitDetectorLive } from "./UsageLimitDetector.ts";
 
@@ -20,7 +24,7 @@ const NOW = Date.parse("2026-07-19T12:00:00.000Z");
 
 const classify = (
   usageLimit: BoardThreadUsageLimit | null,
-  options: { readonly gone?: boolean } = {},
+  options: { readonly gone?: boolean; readonly unreachable?: boolean } = {},
 ) =>
   Effect.gen(function* () {
     const detector = yield* UsageLimitDetector;
@@ -38,11 +42,13 @@ const classify = (
             ThreadGateway,
             inertThreadGateway({
               threadState: () =>
-                options.gone === true
-                  ? Effect.succeed(null)
-                  : Effect.succeed(
-                      fakeThreadState("thread-1", { sessionStatus: "error", usageLimit }),
-                    ),
+                options.unreachable === true
+                  ? Effect.succeed(UNKNOWN_THREAD_STATE)
+                  : options.gone === true
+                    ? Effect.succeed(null)
+                    : Effect.succeed(
+                        fakeThreadState("thread-1", { sessionStatus: "error", usageLimit }),
+                      ),
             }),
           ),
         ),
@@ -81,5 +87,12 @@ it.effect("any other ending is no match", () =>
   Effect.gen(function* () {
     assert.isNull(yield* classify(null));
     assert.isNull(yield* classify(null, { gone: true }));
+  }),
+);
+
+it.effect("a thread on a worker the board can't reach is no answer, not a clean turn", () =>
+  Effect.gen(function* () {
+    const failure = yield* classify(null, { unreachable: true }).pipe(Effect.flip);
+    assert.strictEqual(failure._tag, "ThreadReadError");
   }),
 );

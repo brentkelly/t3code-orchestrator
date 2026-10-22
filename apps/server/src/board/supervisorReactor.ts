@@ -124,7 +124,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Random from "effect/Random";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -137,6 +139,7 @@ import { BoardEngine } from "./BoardEngine.ts";
 import type { BoardDispatchError } from "./errors.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import {
+  ThreadCommandFailedError,
   ThreadGateway,
   ThreadReadError,
   UNKNOWN_THREAD_STATE,
@@ -275,6 +278,24 @@ type BoardCardReclaimAttempt =
   | { readonly outcome: "kept"; readonly reason: string | null }
   | { readonly outcome: "busy" }
   | { readonly outcome: "failed" };
+
+/**
+ * What a failed spawn left behind (T3O-66, D22), read off the remote
+ * gateway's cause:
+ *
+ * - `none`: refused, or failed where the board could see it fail. No thread
+ *   is left (the gateway deletes one whose first turn never started).
+ * - `worker-offline`: the worker couldn't be reached, so nothing was sent.
+ * - `unknown`: the connection went mid-call. The worker may well have
+ *   created the thread, so it must not be read as "no thread".
+ */
+const spawnFailureLeft = (cause: Cause.Cause<unknown>) => {
+  const error = Cause.findErrorOption(cause).pipe(Option.getOrUndefined);
+  const reason = Schema.is(ThreadCommandFailedError)(error) ? error.cause : undefined;
+  if (Predicate.isTagged(reason, "WorkerUnavailable")) return "worker-offline" as const;
+  if (Predicate.isTagged(reason, "WorkerRpcError")) return "unknown" as const;
+  return "none" as const;
+};
 
 // Consecutive git failures provisioning one card's branch before the build
 // step parks for a human instead of retrying again (T3O-15).
@@ -802,7 +823,10 @@ const make = Effect.gen(function* () {
     const records = released.length === 0 ? new Map() : yield* threads.threadRecords(released);
     for (const threadId of released) {
       const thread = records.get(threadId);
-      if (thread === undefined || thread.deleted || thread.archived || thread.settlementDecided) {
+      // No record is no answer: the thread's worker couldn't be asked
+      // (T3O-66), so an abandoned thread there is kept for the next pass.
+      if (thread === undefined) continue;
+      if (thread.deleted || thread.archived || thread.settlementDecided) {
         // Nothing left to ask about — and an abandoned thread that reaches this
         // is finished business, so stop carrying it.
         abandonedThreads.delete(String(threadId));
@@ -1655,11 +1679,14 @@ const make = Effect.gen(function* () {
       );
     }
     // A spawn whose create or first turn is refused leaves no thread behind
-    // (the gateway deletes a thread whose first turn never started), so a
-    // failure here is simply "no thread".
-    const spawned = yield* landed(
-      "thread.spawn",
-      threads.spawn({
+    // (the gateway deletes a thread whose first turn never started), so such
+    // a failure is simply "no thread". A worker that couldn't be reached was
+    // sent nothing, and the step waits for it (D22). One that dropped
+    // mid-call may have created the thread: it is linked and run as spawned,
+    // so the worker's reconcile when it is back watches it if it is alive and
+    // recovers the step if it isn't — never a second agent in the worktree.
+    const spawned = yield* threads
+      .spawn({
         commandId: yield* commandId("spawn-thread"),
         threadId,
         projectId: card.projectId,
@@ -1678,9 +1705,21 @@ const make = Effect.gen(function* () {
         ...(remoteWorker === null
           ? {}
           : { workerId: remoteWorker, stageAttachments: stagedBriefFiles(card) }),
-      }),
-    );
-    if (!spawned) return null;
+      })
+      .pipe(
+        Effect.as("spawned" as const),
+        Effect.catchCause((cause) =>
+          // An interrupt-only cause is a teardown, as in `landed`.
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("board supervisor dispatch failed", {
+                commandType: "thread.spawn",
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(spawnFailureLeft(cause))),
+        ),
+      );
+    if (spawned === "none") return null;
+    if (spawned === "worker-offline") return "worker-offline" as const;
     yield* dispatch({
       type: "board.card.link-thread",
       commandId: yield* commandId("link-thread"),
@@ -2151,89 +2190,107 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    // A step that already owns a live thread is being RESUMED, not started
-    // (T3O-23): it was paused, a human pressed Resume, and the governor has just
-    // admitted it. A refused resume must give the slot straight back, or the
-    // acquire above leaks capacity nothing will ever release.
-    const resumed = yield* resumeExistingStepThread({ card, state });
-    if (resumed === "refused") {
-      yield* slots.release(slotKey);
-      return;
-    }
-    if (resumed === "admitted") return;
-    const spawnAttachments = yield* stageSpawnAttachments(card);
-    const threadId = yield* spawnStepThread({
-      card,
-      attachments: spawnAttachments,
-      step: {
-        stepId: state.stepId,
-        stepLabel: state.stepLabel,
-        stageLabel: state.stageLabel,
-        providerInstanceId: state.providerInstanceId,
-        model: state.model,
-        mode: state.mode,
-        runtimeMode: state.runtimeMode,
-        modelOptions: state.modelOptions,
-      },
-      worktreePath: input.worktreePath,
-      branch: card.worktree?.branch ?? null,
-      runSetup: true,
-      text: yield* stepPromptFor(card, state),
-    });
-    if (threadId === null) {
-      // No thread was created, so release the slot this candidate just acquired
-      // (the persisted `slotHeld` is still false — admit-step never ran — so
-      // `releaseSlot` would decline it) and escalate rather than admit.
-      yield* slots.release(slotKey);
-      yield* escalateSpawnFailure({ card, state });
-      return;
-    }
-    // Observe the admit dispatch (the generic `dispatch` helper swallows
-    // rejections): if admit-step does not land, the persisted `slotHeld` stays
-    // false and the settle path can never release the slot just acquired — a
-    // permanent under-capacity leak. Release it here and unlink the orphaned
-    // thread instead.
-    const admitLanded = yield* boardEngine
-      .dispatch({
-        type: "board.card.admit-step",
-        commandId: yield* commandId("admit-step"),
-        cardId: card.id,
-        stepId: state.stepId,
-        admitted: true,
-        threadId,
-        createdAt: yield* nowIso,
-      })
-      .pipe(
-        Effect.as(true),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("board supervisor: admit-step rejected after acquire; releasing slot", {
-            cardId: card.id,
-            stepId: state.stepId,
-            cause: Cause.pretty(cause),
-          }).pipe(Effect.as(false)),
-        ),
-      );
-    if (!admitLanded) {
-      yield* slots.release(slotKey);
-      // The spawn already started an agent turn — interrupt it so the orphan
-      // is not left burning tokens against a step the board refused to admit.
-      // The immediate dispatch only lands if the provider session has already
-      // bound (a slow admit); the usual case is caught durably by the
-      // orphanedThreads set — the runtime `session.started` for this thread
-      // re-dispatches the interrupt once there is a session to interrupt.
-      orphanedThreads.add(String(threadId));
-      yield* interruptOrphan(threadId);
-      yield* dispatch({
-        type: "board.card.unlink-thread",
-        commandId: yield* commandId("unlink-orphan"),
-        cardId: card.id,
-        threadId,
-        createdAt: yield* nowIso,
+    // Until an admit lands, the slot just taken is this candidate's alone:
+    // the persisted `slotHeld` is still false, so no settle path would ever
+    // give it back. Any failure before then — the step's worker dropping
+    // between the placement gate and the read of its thread (T3O-66) — returns
+    // it here. Nothing after an admit lands can fail, so this never releases
+    // a slot the step row holds.
+    yield* Effect.gen(function* () {
+      // A step that already owns a live thread is being RESUMED, not started
+      // (T3O-23): it was paused, a human pressed Resume, and the governor has just
+      // admitted it. A refused resume must give the slot straight back, or the
+      // acquire above leaks capacity nothing will ever release.
+      const resumed = yield* resumeExistingStepThread({ card, state });
+      if (resumed === "refused") {
+        yield* slots.release(slotKey);
+        return;
+      }
+      if (resumed === "admitted") return;
+      const spawnAttachments = yield* stageSpawnAttachments(card);
+      const threadId = yield* spawnStepThread({
+        card,
+        attachments: spawnAttachments,
+        step: {
+          stepId: state.stepId,
+          stepLabel: state.stepLabel,
+          stageLabel: state.stageLabel,
+          providerInstanceId: state.providerInstanceId,
+          model: state.model,
+          mode: state.mode,
+          runtimeMode: state.runtimeMode,
+          modelOptions: state.modelOptions,
+        },
+        worktreePath: input.worktreePath,
+        branch: card.worktree?.branch ?? null,
+        runSetup: true,
+        text: yield* stepPromptFor(card, state),
       });
-      // Unlinked while alive, so no card derives it any more (t3o-13). It is a
-      // thread for a step the board refused to admit — nothing will use it.
-      abandonedThreads.add(String(threadId));
-    }
+      if (threadId === null) {
+        // No thread was created, so release the slot this candidate just acquired
+        // (the persisted `slotHeld` is still false — admit-step never ran — so
+        // `releaseSlot` would decline it) and escalate rather than admit.
+        yield* slots.release(slotKey);
+        yield* escalateSpawnFailure({ card, state });
+        return;
+      }
+      if (threadId === "worker-offline") {
+        // Its worker went between the placement gate and the spawn, and was
+        // sent nothing: the step waits for it, as the gate would have held it.
+        yield* slots.release(slotKey);
+        yield* holdQueued(state, "worker-offline");
+        return;
+      }
+      // Observe the admit dispatch (the generic `dispatch` helper swallows
+      // rejections): if admit-step does not land, the persisted `slotHeld` stays
+      // false and the settle path can never release the slot just acquired — a
+      // permanent under-capacity leak. Release it here and unlink the orphaned
+      // thread instead.
+      const admitLanded = yield* boardEngine
+        .dispatch({
+          type: "board.card.admit-step",
+          commandId: yield* commandId("admit-step"),
+          cardId: card.id,
+          stepId: state.stepId,
+          admitted: true,
+          threadId,
+          createdAt: yield* nowIso,
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            Effect.logWarning(
+              "board supervisor: admit-step rejected after acquire; releasing slot",
+              {
+                cardId: card.id,
+                stepId: state.stepId,
+                cause: Cause.pretty(cause),
+              },
+            ).pipe(Effect.as(false)),
+          ),
+        );
+      if (!admitLanded) {
+        yield* slots.release(slotKey);
+        // The spawn already started an agent turn — interrupt it so the orphan
+        // is not left burning tokens against a step the board refused to admit.
+        // The immediate dispatch only lands if the provider session has already
+        // bound (a slow admit); the usual case is caught durably by the
+        // orphanedThreads set — the runtime `session.started` for this thread
+        // re-dispatches the interrupt once there is a session to interrupt.
+        orphanedThreads.add(String(threadId));
+        yield* interruptOrphan(threadId);
+        yield* dispatch({
+          type: "board.card.unlink-thread",
+          commandId: yield* commandId("unlink-orphan"),
+          cardId: card.id,
+          threadId,
+          createdAt: yield* nowIso,
+        });
+        // Unlinked while alive, so no card derives it any more (t3o-13). It is a
+        // thread for a step the board refused to admit — nothing will use it.
+        abandonedThreads.add(String(threadId));
+      }
+    }).pipe(Effect.onError(() => slots.release(slotKey)));
   });
 
   // A plan-mode step holds no slot and needs no worktree (D5): spawn it directly
@@ -2287,6 +2344,10 @@ const make = Effect.gen(function* () {
     // must still not be admitted against a thread that was never created.
     if (threadId === null) {
       yield* escalateSpawnFailure({ card, state });
+      return;
+    }
+    if (threadId === "worker-offline") {
+      yield* holdQueued(state, "worker-offline");
       return;
     }
     yield* dispatch({
@@ -9553,15 +9614,30 @@ const make = Effect.gen(function* () {
     for (const id of backgroundWaits.keys()) {
       if (!runningThreadIds.has(id)) backgroundWaits.delete(id);
     }
-    // An offline interval is only read for a running step on its worker; a
-    // worker with none drops its history so the list stays bounded.
-    const runningWorkers = new Set(
-      (board.stepStates ?? [])
-        .filter((state) => state.status === "running")
-        .map((state) => slotKeyFor(board, state).workerId),
-    );
-    for (const workerId of offlineIntervals.keys()) {
-      if (!runningWorkers.has(workerId)) offlineIntervals.delete(workerId);
+    // An offline interval is only read for a running step on its worker, and
+    // only from that step's reference time, which is never before its last
+    // nudge or start. So a worker with no running step drops its history, and
+    // an interval that ended before its earliest running step's nudge or start
+    // can never count again — a flapping worker's list stays bounded.
+    const earliestReference = new Map<BoardWorkerId, number>();
+    for (const state of board.stepStates ?? []) {
+      if (state.status !== "running") continue;
+      const workerId = slotKeyFor(board, state).workerId;
+      const at = Date.parse(state.lastNudgeAt ?? state.startedAt ?? "");
+      earliestReference.set(
+        workerId,
+        Math.min(
+          earliestReference.get(workerId) ?? Number.POSITIVE_INFINITY,
+          Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY,
+        ),
+      );
+    }
+    for (const [workerId, intervals] of offlineIntervals) {
+      const earliest = earliestReference.get(workerId);
+      const kept =
+        earliest === undefined ? [] : intervals.filter((interval) => interval.to > earliest);
+      if (kept.length === 0) offlineIntervals.delete(workerId);
+      else if (kept.length !== intervals.length) offlineIntervals.set(workerId, kept);
     }
   }).pipe(
     Effect.catchCause((cause) =>

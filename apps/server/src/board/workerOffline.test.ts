@@ -25,9 +25,9 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
-import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
@@ -41,9 +41,15 @@ import {
   withGovernor,
   type Harness,
 } from "./supervisorHarness.testkit.ts";
-import { ThreadReadError, UNKNOWN_THREAD_STATE } from "./ThreadGateway.ts";
+import {
+  ThreadCommandFailedError,
+  ThreadReadError,
+  UNKNOWN_THREAD_STATE,
+} from "./ThreadGateway.ts";
 import { aliveThread, idleThread } from "./threadGateway.testkit.ts";
 import type { BoardPlacementShape } from "./workers/BoardPlacement.ts";
+import { WorkerUnavailable } from "./workers/WorkerConnections.ts";
+import { WorkerRpcError } from "./workers/WorkerTransport.ts";
 
 const W1 = EnvironmentId.make("env-w1");
 const codex = ProviderInstanceId.make("codex");
@@ -88,15 +94,44 @@ const workersState = (online: boolean): BoardWorkersState => ({
   setups: [],
 });
 
-/** A placement whose single worker each test takes offline and back. */
+/** The worker summary a test flips, and the supervisor's view of its changes. */
+interface WorkersFeed {
+  /** Publish summaries back to back; resolves once the supervisor has taken
+      in every one. */
+  readonly set: (...states: ReadonlyArray<BoardWorkersState>) => Effect.Effect<void>;
+}
+
+/**
+ * A placement whose single worker each test takes offline and back. Its change
+ * feed hands the supervisor one summary per pull, and a pull after the first
+ * means the summary before it was handled — the milestone `set` waits on, so
+ * no test depends on how its fibers happen to be scheduled.
+ */
 const makePlacement = (online: boolean) =>
-  Effect.map(SubscriptionRef.make(workersState(online)), (ref) => ({
-    ref,
-    placement: {
-      workers: SubscriptionRef.get(ref),
-      changes: SubscriptionRef.changes(ref).pipe(Stream.drop(1)),
-    } satisfies BoardPlacementShape,
-  }));
+  Effect.gen(function* () {
+    const current = yield* Ref.make(workersState(online));
+    const inbox = yield* Queue.unbounded<BoardWorkersState>();
+    const taken = yield* Queue.unbounded<void>();
+    const pulled = yield* Ref.make(false);
+    const ref: WorkersFeed = {
+      set: (...states) =>
+        Effect.forEach(states, (state) =>
+          Ref.set(current, state).pipe(Effect.andThen(Queue.offer(inbox, state))),
+        ).pipe(Effect.andThen(Effect.forEach(states, () => Queue.take(taken)))),
+    };
+    return {
+      ref,
+      placement: {
+        workers: Ref.get(current),
+        changes: Stream.fromEffectRepeat(
+          Ref.getAndSet(pulled, true).pipe(
+            Effect.flatMap((again) => (again ? Queue.offer(taken, undefined) : Effect.void)),
+            Effect.andThen(Queue.take(inbox)),
+          ),
+        ),
+      } satisfies BoardPlacementShape,
+    };
+  });
 
 const registered = [
   { id: W1, label: "w1", url: "http://env-w1:3773", addedAt: "2026-01-01T00:00:00.000Z" },
@@ -165,16 +200,8 @@ const board = (step: BoardCardStepState = runningStep()): BoardState => ({
 const aliveShells = () => new Map([[String(threadId), aliveThread(String(threadId))]]);
 
 /** Flip the worker and let the supervisor process the change. */
-const setOnline = (
-  h: Harness,
-  ref: SubscriptionRef.SubscriptionRef<BoardWorkersState>,
-  online: boolean,
-) =>
-  SubscriptionRef.set(ref, workersState(online)).pipe(
-    Effect.andThen(Effect.yieldNow),
-    Effect.andThen(Effect.yieldNow),
-    Effect.andThen(h.reactor.drain),
-  );
+const setOnline = (h: Harness, ref: WorkersFeed, online: boolean) =>
+  ref.set(workersState(online)).pipe(Effect.andThen(h.reactor.drain));
 
 /** Move the clock on, and let the sweeps it fires finish. */
 const advance = (h: Harness, minutes: number) =>
@@ -312,11 +339,8 @@ it.effect("a drop and reconnect both landing before the supervisor looks is stil
           yield* h.reactor.drain;
           // Out and back with nothing processed between: the thread died in
           // the gap, and the summary already reads online again.
-          yield* SubscriptionRef.set(ref, workersState(false));
           yield* Ref.set(h.shells, new Map([[String(threadId), idleThread(String(threadId))]]));
-          yield* SubscriptionRef.set(ref, workersState(true));
-          yield* Effect.yieldNow;
-          yield* Effect.yieldNow;
+          yield* ref.set(workersState(false), workersState(true));
           yield* h.reactor.drain;
           assert.strictEqual(yield* recoveries(h), 1);
           assert.strictEqual((yield* step(h))?.attempt, 2);
@@ -816,6 +840,142 @@ it.effect("a force-move off an offline worker takes a parked step with it", () =
           const running = yield* step(h);
           assert.strictEqual(running?.status, "running");
           assert.notStrictEqual(running?.threadId, threadId);
+        }),
+    );
+  }),
+);
+
+/** A step about to start on W1, with no thread yet. */
+const pendingStep = () =>
+  runningStep({ status: "pending", threadId: null, slotHeld: false, startedAt: null });
+const unlinkedCard = (): BoardCard => ({ ...placedCard(), threadLinks: [] });
+
+it.effect("a spawn whose connection drops after the worker took it is run, not stalled", () =>
+  Effect.gen(function* () {
+    const { ref, placement } = yield* makePlacement(true);
+    yield* withGovernor(
+      {
+        board: { ...board(pendingStep()), cards: [unlinkedCard()] },
+        settings,
+        placement,
+        // The worker created the thread; the answer never came back.
+        gateway: (local) => ({
+          ...local,
+          spawn: (input) =>
+            local.spawn(input).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ThreadCommandFailedError({
+                    command: "spawn",
+                    threadId: input.threadId,
+                    detail: "The connection to the worker went.",
+                    cause: new WorkerRpcError({ message: "The connection to the worker went." }),
+                  }),
+                ),
+              ),
+            ),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          const started = yield* step(h);
+          assert.strictEqual(started?.status, "running");
+          assert.isNotNull(started?.threadId ?? null);
+          // Linked on W1, so the worker's reconcile can find it.
+          const card = (yield* h.board).cards.find((candidate) => candidate.id === cardId);
+          assert.deepStrictEqual(
+            card?.threadLinks.map((link) => [link.threadId, link.workerId]),
+            [[started?.threadId, W1]],
+          );
+          assert.strictEqual(yield* h.slots.heldOnWorker(W1), 1);
+          // The worker comes back with the thread working: watched, not respawned.
+          yield* setOnline(h, ref, false);
+          yield* Ref.set(
+            h.shells,
+            new Map([[String(started!.threadId), aliveThread(String(started!.threadId))]]),
+          );
+          yield* setOnline(h, ref, true);
+          assert.strictEqual(yield* spawns(h), 1);
+          assert.strictEqual(yield* recoveries(h), 0);
+          assert.strictEqual((yield* step(h))?.threadId, started?.threadId);
+        }),
+    );
+  }),
+);
+
+it.effect("a worker unreachable at spawn holds the step for it and frees the slot", () =>
+  Effect.gen(function* () {
+    const { ref, placement } = yield* makePlacement(true);
+    const reachable = yield* Ref.make(false);
+    yield* withGovernor(
+      {
+        board: { ...board(pendingStep()), cards: [unlinkedCard()] },
+        settings,
+        placement,
+        // The summary still says online; the link is already gone.
+        gateway: (local) => ({
+          ...local,
+          spawn: (input) =>
+            Effect.flatMap(Ref.get(reachable), (up) =>
+              up
+                ? local.spawn(input)
+                : Effect.fail(
+                    new ThreadCommandFailedError({
+                      command: "spawn",
+                      threadId: input.threadId,
+                      detail: "Worker env-w1 is offline.",
+                      cause: new WorkerUnavailable({
+                        workerId: W1,
+                        state: "offline",
+                        message: "Worker env-w1 is offline.",
+                      }),
+                    }),
+                  ),
+            ),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          const held = yield* step(h);
+          assert.strictEqual(held?.status, "queued");
+          assert.strictEqual(held?.queuedBy, "worker-offline");
+          assert.strictEqual(yield* h.slots.heldOnWorker(W1), 0);
+          assert.strictEqual(yield* spawns(h), 0);
+          // Back: it starts.
+          yield* Ref.set(reachable, true);
+          yield* setOnline(h, ref, false);
+          yield* setOnline(h, ref, true);
+          assert.strictEqual(yield* spawns(h), 1);
+          assert.strictEqual((yield* step(h))?.status, "running");
+          assert.strictEqual(yield* h.slots.heldOnWorker(W1), 1);
+        }),
+    );
+  }),
+);
+
+it.effect("a worker dropping between the gate and the read of a step's thread leaks no slot", () =>
+  Effect.gen(function* () {
+    const { placement } = yield* makePlacement(true);
+    // Resumed through the queue, on the thread it already owns on W1.
+    const queued = runningStep({ status: "queued", slotHeld: false, queuedBy: "worker" });
+    yield* withGovernor(
+      {
+        board: board(queued),
+        settings,
+        placement,
+        gateway: (local) => ({
+          ...local,
+          threadState: (id) =>
+            id === threadId ? Effect.succeed(UNKNOWN_THREAD_STATE) : local.threadState(id),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          assert.strictEqual((yield* step(h))?.status, "queued");
+          assert.strictEqual(yield* h.slots.heldOnWorker(W1), 0);
         }),
     );
   }),
