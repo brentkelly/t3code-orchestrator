@@ -252,6 +252,14 @@ export interface BoardWorkspacesShape {
     path: string,
     owner?: BoardWorktreeOwner,
   ) => Effect.Effect<boolean>;
+  /**
+   * Whether a central server may delete `branch`, local and remote, from
+   * `projectId`'s checkout on this server: not a branch on this server's own
+   * board's cards, and not checked out in a worktree the central board did
+   * not make (this board's, or a user's thread's). The worker asks it before
+   * `deleteCardBranch`, which names no path for `ownsWorktreePath` to check.
+   */
+  readonly centralMayDeleteBranch: (projectId: ProjectId, branch: string) => Effect.Effect<boolean>;
   /** The workspace a card's git and forge work runs in, bound to its checkout. */
   readonly forCard: (
     card: Pick<BoardCard, "id" | "projectId">,

@@ -181,20 +181,24 @@ const workspacesOver = (
   checkout: string,
   pullRequests: BoardPullRequestGateway["Service"] = scriptedForge([]),
   boardHasWorkers = true,
+  ownBoardBranches: ReadonlyArray<string> = [],
 ) =>
   Effect.gen(function* () {
     const config = yield* ServerConfig;
     const pathService = yield* Path.Path;
-    return makeBoardWorkspaces({
-      git: yield* GitVcsDriver.GitVcsDriver,
-      pullRequests,
-      retirer: yield* WorktreeRetirer,
-      fileSystem: yield* FileSystem.FileSystem,
-      path: pathService,
-      projectRoot: (id) => Effect.succeed(id === projectId ? checkout : null),
-      worktreeRoots: Effect.succeed([pathService.resolve(config.worktreesDir)]),
-      boardHasWorkers: Effect.succeed(boardHasWorkers),
-    });
+    return makeBoardWorkspaces(
+      {
+        git: yield* GitVcsDriver.GitVcsDriver,
+        pullRequests,
+        retirer: yield* WorktreeRetirer,
+        fileSystem: yield* FileSystem.FileSystem,
+        path: pathService,
+        projectRoot: (id) => Effect.succeed(id === projectId ? checkout : null),
+        worktreeRoots: Effect.succeed([pathService.resolve(config.worktreesDir)]),
+        boardHasWorkers: Effect.succeed(boardHasWorkers),
+      },
+      { ownBoardBranches: Effect.succeed(new Set(ownBoardBranches)) },
+    );
   });
 
 /** Every named operation, in an order that exercises each one's real work. */
@@ -761,6 +765,55 @@ describe("the worker side of the named operations (T3O-64)", () => {
       const listed = yield* git(env.checkout, ["worktree", "list", "--porcelain"]);
       assert.notInclude(listed, placed.path);
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect(
+    "refuses to delete a branch of the worker's own board or a checkout it didn't make",
+    () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("branches");
+        const workspaces = yield* workspacesOver(env.checkout, undefined, true, ["board/own-card"]);
+        const central = remoteOver(makeInProcessWorker(workspaces));
+        // The worker's own board's checkout, a user's thread worktree on a
+        // board-shaped branch, and a branch on the worker board's own card that
+        // no checkout holds right now but the remote does.
+        yield* workspaces.local.provisionWorktree({
+          projectId,
+          branch: "board/own-w",
+          baseRefName: "main",
+        });
+        const thread = NodePath.join(env.root, "thread-worktree");
+        yield* git(env.checkout, ["worktree", "add", "-b", "board/by-hand", thread]);
+        yield* git(env.checkout, ["branch", "board/own-card", "main"]);
+        yield* git(env.checkout, ["push", "origin", "board/own-card"]);
+        for (const branch of ["board/own-w", "board/by-hand", "board/own-card"]) {
+          const refused = yield* Effect.flip(central.deleteCardBranch({ projectId, branch }));
+          assert.strictEqual(refused._tag, "BoardWorkerGitError");
+          assert.include(detailOf(refused), "own board");
+          assert.strictEqual(
+            yield* git(env.checkout, ["branch", "--list", branch]).pipe(
+              Effect.map((out) => out !== ""),
+            ),
+            true,
+          );
+        }
+        assert.notStrictEqual(yield* git(env.remote, ["branch", "--list", "board/own-card"]), "");
+
+        // The central board's own branch, its checkout retired, is deleted.
+        const placed = yield* central.provisionWorktree({
+          projectId,
+          branch: "board/central-b",
+          baseRefName: "main",
+        });
+        yield* central.retireWorktree({
+          projectId,
+          worktreePath: placed.path,
+          kind: "forced",
+          verifiedClean: false,
+        });
+        const deleted = yield* central.deleteCardBranch({ projectId, branch: "board/central-b" });
+        assert.isTrue(deleted.localDeleted);
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
   it.effect("a worker's own board and the central board each sweep only their own checkouts", () =>

@@ -12,7 +12,9 @@
  * - a path the caller names is one of the project's worktrees on THIS server,
  *   and, for an operation that changes or removes a checkout, one the central
  *   board made (its owner marker), so no write reaches this server's own
- *   board's checkouts or a user's thread worktree.
+ *   board's checkouts or a user's thread worktree;
+ * - a branch it deletes is not on this server's own board's cards, nor
+ *   checked out in a worktree the central board didn't make.
  *
  * Anything that goes wrong comes back as `BoardWorkerGitError`, a defect
  * included, so the central server never mistakes a broken operation for a
@@ -83,6 +85,22 @@ const guardPaths = (
       ),
   );
 
+/** `deleteCardBranch` names a branch, not a path: it must be one the central
+    board may delete here (`centralMayDeleteBranch`). */
+const guardBranch = (workspaces: BoardWorkspacesShape, projectId: ProjectId, branch: string) =>
+  workspaces.centralMayDeleteBranch(projectId, branch).pipe(
+    Effect.flatMap((allowed) =>
+      allowed
+        ? Effect.void
+        : Effect.fail(
+            new BoardWorkerGitError({
+              operation: "deleteCardBranch",
+              detail: `${branch} belongs to this server's own board or a checkout the board didn't make.`,
+            }),
+          ),
+    ),
+  );
+
 export const boardWorkerGitRpcHandlers = (
   currentSession: AuthenticatedSession,
   workspaces: BoardWorkspacesShape,
@@ -102,6 +120,9 @@ export const boardWorkerGitRpcHandlers = (
       }
       return Effect.gen(function* () {
         yield* guardPaths(workspaces, op, input.projectId, pathsOf(input));
+        if (op === "deleteCardBranch") {
+          yield* guardBranch(workspaces, input.projectId, String(input["branch"]));
+        }
         const run = workspaces.forCentral[op] as (
           payload: unknown,
         ) => Effect.Effect<unknown, BoardWorkerGitError | { readonly _tag: "WorkerUnavailable" }>;

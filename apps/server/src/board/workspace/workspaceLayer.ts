@@ -58,6 +58,9 @@ export interface BoardWorkspacesOptions {
     workerId: BoardWorkspacePlacement["workerId"],
     projectId: ProjectId,
   ) => Effect.Effect<ProjectId | null>;
+  /** Every branch this server's own board has on a card: never the central
+      board's to delete. */
+  readonly ownBoardBranches?: Effect.Effect<ReadonlySet<string>>;
 }
 
 export function makeBoardWorkspaces(
@@ -131,6 +134,33 @@ export function makeBoardWorkspaces(
       return !exists;
     });
 
+  const centralMayDeleteBranch: BoardWorkspacesShape["centralMayDeleteBranch"] = (
+    projectId,
+    branch,
+  ) =>
+    Effect.gen(function* () {
+      if (options.ownBoardBranches !== undefined) {
+        if ((yield* options.ownBoardBranches).has(branch)) return false;
+      }
+      const cwd = yield* deps.projectRoot(projectId);
+      if (cwd === null) return false;
+      const listed = yield* deps.git
+        .execute({
+          operation: "board.workspace.branchHolders",
+          cwd,
+          args: ["worktree", "list", "--porcelain"],
+          allowNonZeroExit: true,
+        })
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      // Unreadable is refused: a branch kept is cheaper than one lost.
+      if (listed === null || listed.exitCode !== 0) return false;
+      for (const worktree of parseRegisteredWorktrees(listed.stdout)) {
+        if (worktree.branch !== branch || worktree.prunable) continue;
+        if ((yield* boardWorktreeOwner(deps, worktree.path)) !== "central") return false;
+      }
+      return true;
+    });
+
   const forWorker: BoardWorkspacesShape["forWorker"] = (workerId, projectId) =>
     Effect.gen(function* () {
       if (workerId === BOARD_LOCAL_WORKER_ID || options.remote === undefined) {
@@ -147,6 +177,7 @@ export function makeBoardWorkspaces(
     local,
     forCentral,
     ownsWorktreePath,
+    centralMayDeleteBranch,
     forCard,
     localProject,
     forWorker,
@@ -247,6 +278,16 @@ export const BoardWorkspacesLive = Layer.effect(
         }),
       remote: remoteCardWorkspace(connections),
       workerProjectOf,
+      ownBoardBranches: engine.getReadModel.pipe(
+        Effect.map(
+          (model) =>
+            new Set(
+              (model.board?.cards ?? []).flatMap((card) =>
+                card.worktree === null ? [] : [card.worktree.branch],
+              ),
+            ),
+        ),
+      ),
     });
   }),
 );
