@@ -7616,10 +7616,16 @@ const make = Effect.gen(function* () {
     // A step stalled because its worker lacks its provider (T3O-65) never ran,
     // and its model was frozen at stage entry — so a human's "Change model",
     // which is a card edit, only lands if the stage starts over and resolves it
-    // again. Any edit does it: there is nothing to lose, and a worker that
-    // still lacks the provider stalls the fresh step the same way.
-    if (state.status === "stalled" && state.stalledReason === "provider-not-on-worker") {
-      yield* dispatch({
+    // again. Only an edit to the model overrides does it — a title edit must
+    // not restart a stage — and a worker that still lacks the provider stalls
+    // the fresh step the same way. Optional: a restart the decider refuses
+    // (say, a dependency now unmet) leaves the stall for a human.
+    if (
+      event.payload.modelOverridesEdited === true &&
+      state.status === "stalled" &&
+      state.stalledReason === "provider-not-on-worker"
+    ) {
+      yield* dispatchOptional({
         type: "board.card.start-stage-thread",
         commandId: yield* commandId("restart-for-model"),
         cardId: card.id,

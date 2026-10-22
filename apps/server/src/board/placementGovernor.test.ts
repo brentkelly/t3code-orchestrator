@@ -859,6 +859,39 @@ it.effect("after a move, a paused step's next turn starts afresh on the new work
   }),
 );
 
+it.effect("an edit that leaves the model alone does not restart a provider stall", () =>
+  Effect.gen(function* () {
+    const { placement } = yield* makePlacement(
+      workersState([workerView(W1, { providers: [claude] })]),
+    );
+    const building = placedBuildingCard("card-1", "m", W1);
+    yield* withGovernor(
+      {
+        board: { cards: [building], nextCardNumberByProject: {}, workers: registered },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        placement,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(building, 1));
+          assert.strictEqual((yield* step(h, "card-1"))?.stalledReason, "provider-not-on-worker");
+
+          const retitled: BoardCard = { ...(yield* card(h, "card-1")), title: "Renamed" };
+          yield* h.pumpDomain({
+            type: "board.card-updated",
+            sequence: 2,
+            payload: { cardId: retitled.id, card: retitled },
+          } as unknown as HarnessEvent);
+          yield* h.reactor.drain;
+          assert.isUndefined(
+            (yield* h.decided).find((event) => event.type === "board.card-stage-thread-requested"),
+          );
+          assert.strictEqual((yield* step(h, "card-1"))?.status, "stalled");
+        }),
+    );
+  }),
+);
+
 it.effect("changing the stage's model to one the worker has restarts a provider stall", () =>
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(
@@ -886,7 +919,7 @@ it.effect("changing the stage's model to one the worker has restarts a provider 
           yield* h.pumpDomain({
             type: "board.card-updated",
             sequence: 2,
-            payload: { cardId: edited.id, card: edited },
+            payload: { cardId: edited.id, card: edited, modelOverridesEdited: true },
           } as unknown as HarnessEvent);
           yield* h.reactor.drain;
           // The engine publishes the restart it decided; the double does not,

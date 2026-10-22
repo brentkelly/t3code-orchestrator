@@ -5283,6 +5283,10 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       you is the complaint this feature exists to answer — so the supervisor
       must be able to tell that edit from a title change on the same card. */
   autoMerge: Schema.optional(Schema.Boolean),
+  /** Present when this edit touched the card's model overrides (T3O-65). A
+      step stalled because its worker lacks its provider restarts only on this
+      edit — Change model — and never on a title or label change. */
+  modelOverridesEdited: Schema.optional(Schema.Literal(true)),
   /** The card face's review summary AFTER this edit (t3o-22, D7), folded by
       the decider when the edit could change it (a round budget or a stop). It
       rides the `card-upserted` shell delta this event produces, so a pure

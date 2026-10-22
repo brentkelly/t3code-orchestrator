@@ -851,6 +851,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       assert.deepStrictEqual(event.payload.card.modelOverrides, {
         [BOARD_SEED_STAGE_IDS.building]: opusOverride,
       });
+      // T3O-65: the marker that lets Change model restart a provider stall.
+      assert.strictEqual(event.payload.modelOverridesEdited, true);
     }),
   );
 

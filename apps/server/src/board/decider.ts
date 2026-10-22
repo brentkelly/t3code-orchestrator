@@ -1866,6 +1866,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           // arm goes on, and only on an edit that named the field — an
           // unrelated title edit must never fire a merge.
           ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
+          // Says the edit TOUCHED the model overrides (T3O-65): the supervisor
+          // restarts a provider-stalled step on Change model, and only then.
+          ...(command.modelOverrides === undefined ? {} : { modelOverridesEdited: true as const }),
           // Fold the review summary onto the event when the edit could change
           // it (t3o-22, D7), so a pure override edit updates the card face live
           // — the same reason the step-completion path folds it. Only when the
