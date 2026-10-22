@@ -80,7 +80,7 @@ import { usePaginatedBranches } from "../state/queries";
 import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../hooks/useSettings";
-import { boardQueueReason } from "./workers/cardWorker";
+import { boardQueueReason, boardThreadMoveDividers } from "./workers/cardWorker";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   boardStageRestartBlockedReason,
@@ -445,6 +445,17 @@ export function BoardCardDetail({
   const threadLinks = useMemo<ReadonlyArray<BoardDetailThreadLink>>(() => {
     if (card === null) return [];
     const threads = snapshot?.threads ?? [];
+    // T3O-65: "Moved from {worker}" above the first thread after each move.
+    const movedFrom = boardThreadMoveDividers({
+      links: card.threadLinks,
+      moves: (detail?.activity ?? []).flatMap((entry) =>
+        entry.kind === "card-worker-moved" && entry.payload.movePhase === "done"
+          ? [{ at: entry.createdAt, fromWorkerId: entry.payload.fromWorkerId ?? null }]
+          : [],
+      ),
+      state: workers,
+      nowMs: Date.now(),
+    });
     return card.threadLinks.map((link) => {
       const thread = threads.find((candidate) => candidate.id === link.threadId);
       const { threadState, awaitingInput } = deriveBoardCardThreadState(
@@ -465,9 +476,10 @@ export function BoardCardDetail({
         awaitingInput,
         worker,
         ranOn: threadWorkerRanOn(worker, workers),
+        movedFrom: movedFrom.get(link.threadId) ?? null,
       };
     });
-  }, [card, snapshot, workers, environmentId]);
+  }, [card, detail?.activity, snapshot, workers, environmentId]);
 
   // Agent display names and accents for the Activity rail (t3o-18, D11). Resolved
   // at render time from the provider instance list the app already holds, so a

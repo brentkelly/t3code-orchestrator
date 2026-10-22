@@ -11,6 +11,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCardMoveNotice,
+  boardThreadMoveDividers,
+  boardWorkerOnlyProviders,
   boardCardWorkerChip,
   boardDefaultWorkerCheckoutWarning,
   boardQueueReason,
@@ -244,5 +246,58 @@ describe("queue reasons and move notices", () => {
       boardCardMoveNotice({ workerMove: { status: "failed", toWorkerId: LINUX } }, board)?.label,
     ).toBe("Move failed");
     expect(boardCardMoveNotice({}, board)).toBeNull();
+  });
+});
+
+describe("the thread list's move dividers", () => {
+  it("marks the first thread linked after each move with where the card came from", () => {
+    // Local times, so "today" holds whatever zone the suite runs in.
+    const local = (hour: number, minute = 0) => new Date(2026, 2, 12, hour, minute).toISOString();
+    const nowMs = Date.parse(local(12));
+    const dividers = boardThreadMoveDividers({
+      links: [
+        { threadId: "plan", linkedAt: local(8) },
+        { threadId: "build-2", linkedAt: local(10, 30) },
+        { threadId: "build-1", linkedAt: local(9) },
+      ],
+      moves: [{ at: local(10, 4), fromWorkerId: BOARD_LOCAL_WORKER_ID }],
+      state: state([worker(LINUX, "linux-box")]),
+      nowMs,
+    });
+    expect([...dividers.keys()]).toEqual(["build-2"]);
+    expect(dividers.get("build-2")).toMatch(/^Moved from This server · today /);
+  });
+});
+
+describe("worker-only provider instances in the model pickers", () => {
+  it("adds instance ids only workers have, once, after this server's own", () => {
+    const withProviders = (id: EnvironmentId, label: string, ids: ReadonlyArray<string>) => {
+      const base = worker(id, label);
+      return {
+        ...base,
+        snapshot: {
+          ...base.snapshot!,
+          providers: ids.map((instanceId) => ({
+            instanceId: instanceId as never,
+            driver: "claudeAgent",
+            displayName: null,
+            enabled: true,
+            models: [{ slug: "opus", name: "Opus" }],
+          })),
+        },
+      };
+    };
+    const board = state([
+      withProviders(LINUX, "linux-box", ["claude-max", "claude-api"]),
+      withProviders(MBP, "mbp-brent", ["claude-api"]),
+    ]);
+    const own = [{ instanceId: "claude-max" }] as never;
+    const added = boardWorkerOnlyProviders(board, own);
+    expect(added.map((provider) => [provider.instanceId, provider.badgeLabel])).toEqual([
+      ["claude-api", "linux-box"],
+    ]);
+    expect(added[0]?.models).toEqual([
+      { slug: "opus", name: "Opus", isCustom: false, capabilities: null },
+    ]);
   });
 });

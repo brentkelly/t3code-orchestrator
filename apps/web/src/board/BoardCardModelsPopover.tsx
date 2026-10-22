@@ -18,7 +18,7 @@
  * traits, and nesting those inside a still-open menu stacks three focus traps
  * where picking a model is an outside-pointerdown on the menu containing it.
  */
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 
 import { useAtomValue } from "@effect/atom-react";
 
@@ -42,6 +42,8 @@ import {
   sortProviderInstanceEntries,
 } from "../providerInstances";
 import { primaryServerProvidersAtom } from "../state/server";
+import { useBoardWorkersState } from "./workers/BoardWorkersContext";
+import { boardWorkerOnlyProviders } from "./workers/cardWorker";
 import { usePrimarySettings } from "../hooks/useSettings";
 import type { BoardCardModelRowSpec } from "./boardCardModelRows";
 
@@ -105,7 +107,14 @@ export function BoardCardModelsPopover({
   // review pane's per-round drawer does — this module is lazily loaded, so the
   // provider list it pulls in costs nothing until the popover is opened.
   const settings = usePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const ownProviders = useAtomValue(primaryServerProvidersAtom);
+  // T3O-65: and the instance ids only workers have, so a card can pick a model
+  // its worker offers.
+  const workers = useBoardWorkersState();
+  const serverProviders = useMemo(
+    () => [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)],
+    [ownProviders, workers],
+  );
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );

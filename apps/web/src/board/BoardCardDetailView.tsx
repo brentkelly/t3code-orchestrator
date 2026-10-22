@@ -98,7 +98,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
 
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
@@ -334,6 +334,9 @@ export interface BoardDetailThreadLink {
   readonly worker: BoardThreadWorker;
   /** "ran on {worker}", only on a board with more than one worker. */
   readonly ranOn: string | null;
+  /** "Moved from {worker} · {time}" when this is the first thread after a
+      move (T3O-65), drawn as a divider above it. */
+  readonly movedFrom?: string | null | undefined;
 }
 
 export interface BoardCardDetailViewProps {
@@ -1014,8 +1017,10 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
       <p className="mt-1 text-[11.5px] leading-[1.45] text-muted-foreground">{info.detail}</p>
       {props.onQueueForceStart === undefined && props.onQueueMoveToFront === undefined ? null : (
         <div className="mt-2.5 flex items-center gap-1.5">
-          {props.onQueueForceStart === undefined ? null : (
-            <BoardHint label="Run this task now, over the agent limit.">
+          {/* A card waiting for its worker's checkout has no limit to start
+              past (T3O-65): nothing can run until the clone lands. */}
+          {props.onQueueForceStart === undefined || info.waitingForCheckout === true ? null : (
+            <BoardHint label="Run this task now, past every agent limit: the board's, its worker's and its provider's.">
               <button
                 className={cn(
                   "inline-flex h-[28px] items-center justify-center gap-[6px] rounded-lg border border-primary bg-primary px-2.5 text-[12px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90",
@@ -1080,58 +1085,64 @@ function ThreadsSection(props: BoardCardDetailViewProps) {
       ) : (
         <ul className="flex flex-col gap-1.5">
           {props.threadLinks.map((link) => (
-            <li
-              className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]"
-              key={link.threadId}
-            >
-              <div className="flex min-w-0 flex-1 flex-col">
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={cn(
-                      "min-w-0 truncate text-[13px] text-foreground",
-                      link.tombstoned && "text-muted-foreground line-through",
-                    )}
-                  >
-                    {link.title ?? "Deleted thread"}
-                  </span>
-                  {/* A permission prompt (T3O-16) needs the human as much as a
+            <Fragment key={link.threadId}>
+              {link.movedFrom == null ? null : (
+                <li className="flex items-center gap-2 text-[10.5px] text-muted-foreground">
+                  <span className="h-px flex-1 bg-border" />
+                  {link.movedFrom}
+                  <span className="h-px flex-1 bg-border" />
+                </li>
+              )}
+              <li className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]">
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "min-w-0 truncate text-[13px] text-foreground",
+                        link.tombstoned && "text-muted-foreground line-through",
+                      )}
+                    >
+                      {link.title ?? "Deleted thread"}
+                    </span>
+                    {/* A permission prompt (T3O-16) needs the human as much as a
                       question does. */}
-                  {link.awaitingInput || isBoardCardAwaitingPermission(link) ? (
-                    <CircleAlertIcon className="size-3 shrink-0 text-attention-foreground" />
-                  ) : null}
+                    {link.awaitingInput || isBoardCardAwaitingPermission(link) ? (
+                      <CircleAlertIcon className="size-3 shrink-0 text-attention-foreground" />
+                    ) : null}
+                  </div>
+                  <span className="text-[10.5px] text-muted-foreground">
+                    {link.role}
+                    {link.tombstoned
+                      ? " · deleted"
+                      : isBoardCardAwaitingPermission(link)
+                        ? " · Waiting for permission"
+                        : ` · ${THREAD_STATE_LABEL[link.threadState]}`}
+                    {link.threadId === activeThreadId && !link.tombstoned ? " · active" : ""}
+                    {link.ranOn === null ? "" : ` · ${link.ranOn}`}
+                  </span>
                 </div>
-                <span className="text-[10.5px] text-muted-foreground">
-                  {link.role}
-                  {link.tombstoned
-                    ? " · deleted"
-                    : isBoardCardAwaitingPermission(link)
-                      ? " · Waiting for permission"
-                      : ` · ${THREAD_STATE_LABEL[link.threadState]}`}
-                  {link.threadId === activeThreadId && !link.tombstoned ? " · active" : ""}
-                  {link.ranOn === null ? "" : ` · ${link.ranOn}`}
-                </span>
-              </div>
-              {link.tombstoned ? null : (
-                <Link
-                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                  params={{ environmentId: link.worker.environmentId, threadId: link.threadId }}
-                  title={threadWorkerOpensOn(link.worker)}
-                  to="/$environmentId/$threadId"
-                >
-                  <ExternalLinkIcon className="size-3.5" />
-                </Link>
-              )}
-              {link.tombstoned ? null : (
-                <Button
-                  onClick={() => props.onUnlinkThread(link.threadId)}
-                  size="icon-xs"
-                  title="Unlink thread"
-                  variant="ghost"
-                >
-                  <XIcon />
-                </Button>
-              )}
-            </li>
+                {link.tombstoned ? null : (
+                  <Link
+                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    params={{ environmentId: link.worker.environmentId, threadId: link.threadId }}
+                    title={threadWorkerOpensOn(link.worker)}
+                    to="/$environmentId/$threadId"
+                  >
+                    <ExternalLinkIcon className="size-3.5" />
+                  </Link>
+                )}
+                {link.tombstoned ? null : (
+                  <Button
+                    onClick={() => props.onUnlinkThread(link.threadId)}
+                    size="icon-xs"
+                    title="Unlink thread"
+                    variant="ghost"
+                  >
+                    <XIcon />
+                  </Button>
+                )}
+              </li>
+            </Fragment>
           ))}
         </ul>
       )}

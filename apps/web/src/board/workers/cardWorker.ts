@@ -21,6 +21,7 @@ import {
   type BoardWorkerSetup,
   type BoardWorkerView,
   type ProjectId,
+  type ServerProvider,
 } from "@t3tools/contracts";
 
 import { LOCAL_WORKER_LABEL } from "./threadWorker";
@@ -328,4 +329,91 @@ export function boardCardMoveNotice(
         label: "Move failed",
         tooltip: `Couldn't create a worktree on ${worker}.`,
       };
+}
+
+// ── The thread list's move dividers (prototype 7.1) ────────────────────
+
+/** "today 10:04", or "12 Mar 10:04" on another day. */
+function movedAtLabel(iso: string, nowMs: number): string {
+  const at = new Date(iso);
+  const time = at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return new Date(nowMs).toDateString() === at.toDateString()
+    ? `today ${time}`
+    : `${at.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${time}`;
+}
+
+/**
+ * "Moved from {worker} · {time}" above the first thread linked after each move
+ * — the moves read off the card's `card-worker-moved` done rows. A thread list
+ * on a card that never moved gets none.
+ */
+export function boardThreadMoveDividers(input: {
+  readonly links: ReadonlyArray<{ readonly threadId: string; readonly linkedAt: string }>;
+  readonly moves: ReadonlyArray<{
+    readonly at: string;
+    readonly fromWorkerId: BoardWorkerId | null;
+  }>;
+  readonly state: BoardWorkersState;
+  readonly nowMs: number;
+}): ReadonlyMap<string, string> {
+  const dividers = new Map<string, string>();
+  const ordered = [...input.links].sort((left, right) =>
+    left.linkedAt.localeCompare(right.linkedAt),
+  );
+  for (const move of input.moves) {
+    const first = ordered.find((link) => link.linkedAt >= move.at && !dividers.has(link.threadId));
+    if (first === undefined) continue;
+    const from =
+      move.fromWorkerId === null
+        ? "its old worker"
+        : boardWorkerLabel(move.fromWorkerId, input.state);
+    dividers.set(first.threadId, `Moved from ${from} · ${movedAtLabel(move.at, input.nowMs)}`);
+  }
+  return dividers;
+}
+
+// ── Model pickers (D10) ────────────────────────────────────────────────
+
+/**
+ * Provider instances only workers have, shaped like this server's own so the
+ * stage and card model pickers can offer them (T3O-65): a recipe names an
+ * instance id, and the id resolves on whichever worker the card is placed on.
+ * The central server's own list is unchanged and comes first; an id it already
+ * has is never repeated.
+ */
+export function boardWorkerOnlyProviders(
+  state: BoardWorkersState,
+  serverProviders: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> {
+  const known = new Set<string>(serverProviders.map((provider) => provider.instanceId));
+  const added: Array<ServerProvider> = [];
+  for (const worker of state.workers) {
+    const snapshot = worker.snapshot;
+    if (snapshot === null) continue;
+    for (const provider of snapshot.providers) {
+      if (known.has(provider.instanceId)) continue;
+      known.add(provider.instanceId);
+      added.push({
+        instanceId: provider.instanceId,
+        driver: provider.driver as ServerProvider["driver"],
+        ...(provider.displayName === null ? {} : { displayName: provider.displayName }),
+        badgeLabel: worker.label,
+        enabled: provider.enabled,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "unknown" },
+        checkedAt: snapshot.reportedAt,
+        models: provider.models.map((model) => ({
+          slug: model.slug,
+          name: model.name,
+          isCustom: false,
+          capabilities: null,
+        })),
+        slashCommands: [],
+        skills: [],
+      });
+    }
+  }
+  return added;
 }

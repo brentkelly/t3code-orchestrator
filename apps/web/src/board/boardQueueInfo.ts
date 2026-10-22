@@ -25,6 +25,8 @@ export interface BoardQueueInfo {
   readonly headline: string;
   /** Why it is waiting, and that nobody has to do anything about it. */
   readonly detail: string;
+  /** Waiting for its worker's checkout (T3O-65): no limit to start past. */
+  readonly waitingForCheckout?: boolean;
 }
 
 /**
@@ -134,6 +136,7 @@ function withQueueReason(
     case "setup":
       return {
         ...base,
+        waitingForCheckout: true,
         label: "Queued · setting up",
         headline: "Waiting for a checkout",
         detail: reason.failed
