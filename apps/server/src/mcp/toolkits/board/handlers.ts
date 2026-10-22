@@ -32,6 +32,7 @@ import {
   type BoardCardCompleteStepCommand,
   type BoardCardDeleteCommand,
   type BoardCardMoveCommand,
+  type BoardCardPinWorkerCommand,
   type BoardCardUnarchiveCommand,
   type BoardCardUpdateCommand,
   type BoardCard,
@@ -1064,6 +1065,22 @@ export const boardHandlers = {
       return { cardId: input.cardId, stage: input.toStage };
     }),
 
+  board_pin_card_worker: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      const board = yield* readBoardState(deps);
+      const target = yield* findCardByKeyOrId(board, input.cardId);
+      const command: BoardCardPinWorkerCommand = {
+        type: "board.card.pin-worker",
+        commandId: yield* mintCommandId,
+        cardId: target.id,
+        workerId: input.workerId,
+        createdAt: yield* nowIso,
+      };
+      yield* dispatch(deps, command);
+      return { cardId: target.id, key: target.key, workerId: input.workerId };
+    }),
+
   board_update_card: (input) =>
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
@@ -1314,6 +1331,9 @@ export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
   ),
   board_update_card: McpToolAccess.writesWithCapability(
     relayable("board_update_card", boardHandlers.board_update_card),
+  ),
+  board_pin_card_worker: McpToolAccess.writesWithCapability(
+    relayable("board_pin_card_worker", boardHandlers.board_pin_card_worker),
   ),
   board_archive_card: McpToolAccess.writesWithCapability(
     relayable("board_archive_card", boardHandlers.board_archive_card),

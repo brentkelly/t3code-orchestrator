@@ -35,6 +35,7 @@ import {
   BoardPullRequestGatewayError,
 } from "./BoardPullRequestGateway.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
+import { WorkerConnectionsNoneTest } from "./workers/boardWorkers.testkit.ts";
 import { BoardWorkspacesLive } from "./workspace/workspaceLayer.ts";
 import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
@@ -87,6 +88,9 @@ const card: BoardCard = {
   autoStart: false,
   autoMerge: false,
   autoMergeHold: null,
+  pinnedWorkerId: null,
+  placedWorkerId: null,
+  workerMove: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",
@@ -131,6 +135,7 @@ const runningState: BoardCardStepState = {
   status: "running",
   slotHeld: true,
   forceStart: false,
+  queuedBy: null,
   startedAt: NOW,
   updatedAt: NOW,
 };
@@ -306,7 +311,12 @@ function reconcileCommandObjects(input: {
     }).pipe(
       Effect.provide(
         SupervisorReactorLive.pipe(
-          Layer.provide(BoardWorkspacesLive.pipe(Layer.provideMerge(deps))),
+          Layer.provide(
+            BoardWorkspacesLive.pipe(
+              Layer.provideMerge(deps),
+              Layer.provide(WorkerConnectionsNoneTest),
+            ),
+          ),
         ),
       ),
     );

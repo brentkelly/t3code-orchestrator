@@ -7,9 +7,6 @@ listed as **This server (local)**, so a board with no workers added works exactl
 Workers are managed under **Settings → Board → Workers**. Every device connected to the board
 server sees the same list, with each worker's live status.
 
-> Choosing which worker a card runs on is still being built. For now, adding workers sets up the
-> connections, the default worker and the project checkouts that card placement will use.
-
 ## Before you add one
 
 - The worker must run T3o, at or above the version the board needs. A worker on an older version
@@ -38,6 +35,42 @@ On the worker, the board then appears under **Settings → Connections → Clien
 Unpinned cards run on the default worker, which starts out as this server. Change it with
 **Default worker**, or **Make default** in a worker's menu. Only an online worker can be the default.
 Changing it only affects cards that don't have a worktree yet.
+
+## Choosing where a card runs
+
+Once a board has a worker, cards show a small worker chip and get a **Worker** field, in the new card
+dialog and in the card's details. A card either follows the default worker or is pinned to one.
+Planning and every later step run on the same worker, in that worker's checkout of the project.
+
+Each worker in the picker says how busy it is, or why it can't be picked: no checkout of the project
+(with **Set up on worker**), offline, access revoked, or too old a T3o. A card pinned to a worker
+that's still cloning the project waits as **Queued · setting up** and starts once the clone
+finishes. Sub-board cards start out pinned where their parent is.
+
+If a step's provider isn't on the card's worker, the step doesn't start and the card says
+**Provider missing**. Pin the card to a worker that has it, or pick a model the worker offers in the
+card's **Models**, and the step starts again.
+
+## Moving a card to another worker
+
+Before a card has a worktree, picking another worker simply re-pins it. Once it has one, the card is
+tied to that worker, and picking another worker opens **Move**. A move needs everything on the
+card's branch pushed: the old worktree is retired and a new one is created on the other worker from
+the branch on the remote. Nothing is copied between machines. Earlier threads stay on the worker
+they ran on and stay linked from the card.
+
+A move is refused while a step is running, and when the worktree has commits or files the remote
+doesn't have. The dialog lists them, and **Ask agent to push** asks the card's agent to push its
+work. If creating the new worktree fails, the card shows **Move failed**; its branch is safe on the
+remote, so **Retry** it or pick another worker.
+
+## Concurrency across workers
+
+With workers, **Settings → Board → Concurrency** has a board limit, and each worker has its own limit
+and a cap for each of its provider instances. A card starts only when all three have room. A
+queued card says which limit it's waiting on: **worker full**, **provider full** or **board full**.
+**Start now** runs a queued card past all of them. Your old limit and provider caps carry over as
+the board limit and this server's limits.
 
 ## When a worker needs attention
 

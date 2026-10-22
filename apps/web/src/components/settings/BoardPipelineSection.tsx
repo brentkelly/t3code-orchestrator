@@ -76,13 +76,14 @@ import {
   RotateCcwIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { primaryServerProvidersAtom } from "../../state/server";
+import { boardWorkerOnlyProviders } from "../../board/workers/cardWorker";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -654,7 +655,16 @@ export function BoardPipelineSection() {
 
   // ProviderModelPicker context (shared across every stage row).
   const settings = usePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const ownProviders = useAtomValue(primaryServerProvidersAtom);
+  // T3O-65: and the instance ids only workers have — a recipe names an id, and
+  // it resolves on the worker the card runs on.
+  const workers = useAtomValue(
+    boardEnvironment.workersAtom(environmentId ?? ("" as EnvironmentId)),
+  );
+  const serverProviders = useMemo(
+    () => [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)],
+    [ownProviders, workers],
+  );
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );

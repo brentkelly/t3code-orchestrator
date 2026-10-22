@@ -70,6 +70,7 @@ const stalledAdjudicate: BoardCardStepState = {
   status: "stalled",
   slotHeld: false,
   forceStart: false,
+  queuedBy: null,
   startedAt: null,
   updatedAt: NOW,
 };

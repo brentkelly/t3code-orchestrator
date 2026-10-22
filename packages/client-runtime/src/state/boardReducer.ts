@@ -89,11 +89,16 @@ function preserveAbsentShellFields(
   // means "the producer could not see step state" — carry.
   const carryStall =
     next.stalled && next.stalledReason === undefined && existing.stalledReason !== undefined;
+  // Which limit holds a queued card (T3O-65) rides only `card-queued` and the
+  // snapshot, so under a card still queued, a delta without it means "carry".
+  const carryQueuedBy =
+    next.queued && next.queuedBy === undefined && existing.queuedBy !== undefined;
   if (
     briefHasImage === next.briefHasImage &&
     planCount === next.planCount &&
     !carryReview &&
-    !carryStall
+    !carryStall &&
+    !carryQueuedBy
   ) {
     return next;
   }
@@ -114,6 +119,7 @@ function preserveAbsentShellFields(
     ...next,
     ...(briefHasImage === undefined ? {} : { briefHasImage }),
     ...(planCount === undefined ? {} : { planCount }),
+    ...(carryQueuedBy ? { queuedBy: existing.queuedBy } : {}),
     ...carried,
   };
 }
@@ -234,12 +240,24 @@ export function applyBoardShellStreamEvent(
       // Admission also settles the durable `stepRunning` dot: admitted-to-running
       // (`queued=false, stepRunning=true`) vs held-for-a-slot (`queued=true,
       // stepRunning=false`). Both flip on this one delta.
-      const nextCards = Arr.map(cards, (card) =>
-        card.cardId === event.cardId &&
-        (card.queued !== event.queued || card.stepRunning !== event.stepRunning)
-          ? { ...card, queued: event.queued, stepRunning: event.stepRunning }
-          : card,
-      );
+      // …and which limit holds it (T3O-65), authoritative here: absent clears.
+      const nextCards = Arr.map(cards, (card) => {
+        if (
+          card.cardId !== event.cardId ||
+          (card.queued === event.queued &&
+            card.stepRunning === event.stepRunning &&
+            card.queuedBy === event.queuedBy)
+        ) {
+          return card;
+        }
+        const { queuedBy: _previous, ...rest } = card;
+        return {
+          ...rest,
+          queued: event.queued,
+          stepRunning: event.stepRunning,
+          ...(event.queuedBy === undefined ? {} : { queuedBy: event.queuedBy }),
+        };
+      });
       return { ...snapshot, cards: nextCards };
     }
     case "card-stalled": {
@@ -303,6 +321,9 @@ export function applyBoardShellStreamEvent(
         for (const field of STALL_SHELL_FIELDS) delete stripped[field];
         // Key-optional and authoritative here too (T3O-12): absent means false.
         delete stripped.stepChecksFix;
+        // Every emitter of this delta leaves the step out of the queue, so the
+        // limit that held it goes with it (T3O-65).
+        if (!event.queued) delete stripped.queuedBy;
         return {
           ...stripped,
           stalled: event.stalled,

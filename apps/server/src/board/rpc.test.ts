@@ -26,6 +26,8 @@ import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 import { boardRpcHandlers } from "./rpc.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
+import { BoardCardMoverLive } from "./workers/BoardCardMove.ts";
+import { BoardPlacementLocalOnlyTest } from "./workers/boardWorkers.testkit.ts";
 import { localGitOnlyBoardWorkspaces } from "./workspace/boardWorkspaces.testkit.ts";
 
 /** The human-actor stamp asks git for the project's `user.name`. */
@@ -41,7 +43,9 @@ const gitStub = Layer.succeed(GitVcsDriver, {
 } as unknown as GitVcsDriver["Service"]);
 
 const makeBoardRpcTestLayer = (prefix: string) =>
-  localGitOnlyBoardWorkspaces.pipe(
+  BoardCardMoverLive.pipe(
+    Layer.provideMerge(BoardPlacementLocalOnlyTest),
+    Layer.provideMerge(localGitOnlyBoardWorkspaces),
     Layer.provideMerge(makeBoardStackTestLayer(prefix)),
     Layer.provideMerge(gitStub),
   );

@@ -38,6 +38,7 @@ import {
   LockIcon,
   PauseIcon,
   TriangleAlertIcon,
+  ArrowRightLeftIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import type { DragEvent, ReactNode } from "react";
@@ -65,6 +66,8 @@ import {
   BoardCardTodoThreadRow,
 } from "./BoardCardSummaryRow";
 import { projectAccent } from "./projectAccent";
+import { useBoardWorkersState } from "./workers/BoardWorkersContext";
+import { boardCardMoveNotice, boardCardWorkerChip } from "./workers/cardWorker";
 import { BoardHint } from "./BoardHint";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 
@@ -211,21 +214,33 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
                 tooltip: "Ready to merge, but this card has no pull request — open it to see why",
                 tint: "text-warning-foreground",
               }
-            : notice.kind === "worktree-kept"
+            : notice.kind === "worker-move"
               ? {
-                  // T3O-52. Amber: the card is finished but its cleanup is
-                  // blocked, and only a human can clear what is in the way.
-                  icon: <HardDriveIcon className="size-3 shrink-0" />,
-                  label: "Worktree kept",
-                  tooltip: `Worktree kept: ${notice.reason}`,
-                  tint: "text-warning-foreground",
+                  // T3O-65: blue while the move runs (something is working on
+                  // it), amber once it failed (only a human can retry it).
+                  icon: <ArrowRightLeftIcon className="size-3 shrink-0" />,
+                  label: notice.move.label,
+                  tooltip: notice.move.tooltip,
+                  tint:
+                    notice.move.status === "moving"
+                      ? "text-info-foreground"
+                      : "text-warning-foreground",
                 }
-              : {
-                  icon: <LockIcon className="size-3 shrink-0" />,
-                  label: "Blocked",
-                  tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
-                  tint: "text-warning-foreground",
-                };
+              : notice.kind === "worktree-kept"
+                ? {
+                    // T3O-52. Amber: the card is finished but its cleanup is
+                    // blocked, and only a human can clear what is in the way.
+                    icon: <HardDriveIcon className="size-3 shrink-0" />,
+                    label: "Worktree kept",
+                    tooltip: `Worktree kept: ${notice.reason}`,
+                    tint: "text-warning-foreground",
+                  }
+                : {
+                    icon: <LockIcon className="size-3 shrink-0" />,
+                    label: "Blocked",
+                    tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
+                    tint: "text-warning-foreground",
+                  };
   return (
     <BoardHint label={view.tooltip}>
       <span
@@ -315,6 +330,8 @@ export function BoardCardContent({
 }) {
   const accent = projectAccent(card.projectId, accentName);
   const summary = boardCardSummary(card);
+  // T3O-65: where the card runs, said only once a second worker exists.
+  const workers = useBoardWorkersState();
   const todoThreads = todos?.threads ?? EMPTY_TODO_THREADS;
   const stateOf = todos?.stateOf ?? (() => boardCardShellThreadState(card));
   const winner = pickBoardCardTodoThread({
@@ -414,6 +431,7 @@ export function BoardCardContent({
     blocked: card.blocked,
     dependencyCount: card.dependencyCount,
     worktreeKeptReason,
+    workerMove: boardCardMoveNotice(card, workers),
   });
   // The card's scheduled start (T3O-19, D9/D14). Null on a done card and on
   // one whose time has already passed — the server clears the field within a
@@ -686,7 +704,10 @@ export function BoardCardContent({
       )}
       {/* Last, always: the meta row is the card's footer, so it sits below the
           stage summary and the todo strip however tall those grow. */}
-      <BoardCardMetaRow meta={boardCardMeta(card, todoThreads.length)} />
+      <BoardCardMetaRow
+        meta={boardCardMeta(card, todoThreads.length)}
+        worker={boardCardWorkerChip(card, workers)}
+      />
     </article>
   );
 }

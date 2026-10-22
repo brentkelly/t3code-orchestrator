@@ -21,6 +21,7 @@ import type {
   BoardCardActivityEntry,
   BoardStageDefinition,
   BoardStepOutcome,
+  BoardWorkerId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import {
@@ -45,6 +46,8 @@ import {
   ScissorsIcon,
   TriangleAlertIcon,
   XIcon,
+  ArrowRightLeftIcon,
+  ServerIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
@@ -57,6 +60,8 @@ import {
   toggleBoardActivityGroup,
 } from "./boardActivityGroups";
 import { boardStageLabel } from "./boardStages";
+import { useBoardWorkersState } from "./workers/BoardWorkersContext";
+import { boardWorkerLabel } from "./workers/cardWorker";
 import { BoardHint } from "./BoardHint";
 
 /** How the rail resolves an agent's display name and accent (D11): from the
@@ -155,6 +160,12 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
     // T3O-20: a check-in on a background wait claims nothing — neutral.
     case "card-step-checked-in":
       return <HourglassIcon className={className} />;
+    // T3O-65: choosing a worker and each step of a move claim nothing — a
+    // failed move is the one amber row, because only a human can retry it.
+    case "card-worker-pinned":
+      return <ServerIcon className={className} />;
+    case "card-worker-moved":
+      return <ArrowRightLeftIcon className={className} />;
   }
 }
 
@@ -213,6 +224,8 @@ function activitySentence(
       (deleted, or another environment's) falls back to the reissued key alone,
       which is still a true sentence. */
   projectNames: ReadonlyMap<string, string> | undefined,
+  /** A worker's name for the T3O-65 rows. */
+  workerName: (workerId: BoardWorkerId) => string,
 ): ReactNode {
   const payload = entry.payload;
   switch (entry.kind) {
@@ -387,6 +400,36 @@ function activitySentence(
       ) : (
         <>checked on a background task in {payload.stepLabel}</>
       );
+    case "card-worker-pinned":
+      return payload.workerId == null ? (
+        <>set the card to follow the default worker</>
+      ) : (
+        <>pinned the card to {workerName(payload.workerId)}</>
+      );
+    case "card-worker-moved": {
+      const to =
+        payload.toWorkerId === undefined ? "another worker" : workerName(payload.toWorkerId);
+      const from = payload.fromWorkerId == null ? null : workerName(payload.fromWorkerId);
+      switch (payload.movePhase) {
+        case "start":
+          return <>checked for unpushed work and started moving the card to {to}</>;
+        case "retired":
+          return <>retired the worktree on {from ?? "the old worker"}</>;
+        case "done":
+          return <>moved the card to {to}; its next step runs there</>;
+        case "failed":
+          return (
+            <>
+              couldn't move the card to {to}
+              {payload.detail === undefined ? null : (
+                <span className="block text-warning-foreground">{payload.detail}</span>
+              )}
+            </>
+          );
+        default:
+          return <>moved the card to {to}</>;
+      }
+    }
   }
 }
 
@@ -427,13 +470,16 @@ function ActivityRow({
   readonly projectNames: ReadonlyMap<string, string> | undefined;
   readonly toggle: ReactNode;
 }) {
+  const workers = useBoardWorkersState();
+  const workerName = (workerId: BoardWorkerId) => boardWorkerLabel(workerId, workers);
   return (
     <li className="flex items-start gap-1.5 text-[12px]/[1.5] text-muted-foreground">
       <span className="mt-[3px]">
         <ActivityIcon kind={entry.kind} />
       </span>
       <span className="min-w-0 flex-1 text-pretty">
-        <ActorName agents={agents} entry={entry} /> {activitySentence(entry, stages, projectNames)}
+        <ActorName agents={agents} entry={entry} />{" "}
+        {activitySentence(entry, stages, projectNames, workerName)}
         {toggle}
       </span>
       <BoardHint label={entry.createdAt}>

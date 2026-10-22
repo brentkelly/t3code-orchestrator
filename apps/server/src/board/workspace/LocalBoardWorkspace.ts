@@ -14,6 +14,7 @@
  * `ensureLocalBaseBranch` fetches a base this checkout has never seen.
  */
 import {
+  BOARD_UNPUSHED_COMMITS_MAX,
   BOARD_LOCAL_WORKER_ID,
   BoardWorkerGitError,
   type BoardWorkspaceDurability,
@@ -343,9 +344,9 @@ export function makeLocalBoardWorkspace(
 
   /**
    * Provision a card's worktree from its branch on the REMOTE (T3O-65's move):
-   * the branch is fetched and, when this checkout has no local copy of it,
-   * created from the remote one, so the worktree carries exactly what was
-   * pushed. Nothing is copied worker to worker (D21).
+   * the branch is fetched and its local copy created from, or fast-forwarded
+   * to, the remote one, so the worktree carries exactly what was pushed.
+   * Nothing is copied worker to worker (D21).
    */
   const provisionWorktreeFromRemoteBranch: BoardWorkspace["provisionWorktreeFromRemoteBranch"] = ({
     projectId,
@@ -380,12 +381,56 @@ export function makeLocalBoardWorkspace(
         "--quiet",
         `refs/heads/${branch}`,
       ]);
-      if (local === "") {
+      const remoteTip = yield* gitRef("boardCardWorktree.fromRemote.remoteRef", cwd, [
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `refs/remotes/${remoteName}/${branch}`,
+      ]);
+      if (local !== "" && local !== remoteTip) {
+        // A local copy left behind by an earlier placement here (A→B→A keeps
+        // the branch ref on retire) is stale: what was pushed since, possibly
+        // rebased, replaces it. It counts as pushed when every commit it holds
+        // is in some tip the remote-tracking ref has had: its reflog keeps the
+        // pre-rewrite tip even after a fetch (this move's own check, or any
+        // plain fetch here) has moved the ref on. Commits only this copy
+        // holds are never lost.
+        const seenTips = (yield* gitRef("boardCardWorktree.fromRemote.reflog", cwd, [
+          "reflog",
+          "show",
+          "--format=%H",
+          `refs/remotes/${remoteName}/${branch}`,
+        ]))
+          .split("\n")
+          .filter((sha) => sha !== "");
+        const unpushed = yield* git
+          .execute({
+            operation: "boardCardWorktree.fromRemote.unpushed",
+            cwd,
+            args: [
+              "rev-list",
+              "--max-count=1",
+              local,
+              "--not",
+              ...new Set([remoteTip, ...seenTips].filter((sha) => sha !== "")),
+            ],
+            timeoutMs: 10_000,
+          })
+          .pipe(Effect.mapError(gitFailed(operation)));
+        const pushed = unpushed.stdout.trim() === "";
+        if (!pushed) {
+          return yield* new BoardWorkerGitError({
+            operation,
+            detail: `This checkout's '${branch}' has commits ${remoteName} does not. Push or delete them here, then retry.`,
+          });
+        }
+      }
+      if (local !== remoteTip) {
         yield* git
           .execute({
             operation: "boardCardWorktree.fromRemote.branch",
             cwd,
-            args: ["branch", "--track", branch, `${remoteName}/${branch}`],
+            args: ["branch", "--force", "--track", branch, `${remoteName}/${branch}`],
             timeoutMs: 10_000,
           })
           .pipe(Effect.mapError(gitFailed(operation)));
@@ -551,7 +596,39 @@ export function makeLocalBoardWorkspace(
           ? ["rev-list", "--count", "@{upstream}..HEAD"]
           : ["rev-list", "--count", "HEAD", "--not", "--remotes"],
       );
-      return { hasUpstream, unpushedCount: Number(count) || 0 };
+      const unpushedCount = Number(count) || 0;
+      const listed =
+        unpushedCount === 0
+          ? ""
+          : yield* gitRef(
+              "boardCardWorktree.durable.unpushedLog",
+              worktreePath,
+              hasUpstream
+                ? [
+                    "log",
+                    `-n${BOARD_UNPUSHED_COMMITS_MAX}`,
+                    "--format=%h%x09%s",
+                    "@{upstream}..HEAD",
+                  ]
+                : [
+                    "log",
+                    `-n${BOARD_UNPUSHED_COMMITS_MAX}`,
+                    "--format=%h%x09%s",
+                    "HEAD",
+                    "--not",
+                    "--remotes",
+                  ],
+            );
+      const unpushedCommits = listed
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => {
+          const tab = line.indexOf("\t");
+          return tab < 0
+            ? { sha: line, subject: "" }
+            : { sha: line.slice(0, tab), subject: line.slice(tab + 1) };
+        });
+      return { hasUpstream, unpushedCount, unpushedCommits };
     });
 
   const probeWorktreeDurability: BoardWorkspace["probeWorktreeDurability"] = (input) =>

@@ -2,12 +2,21 @@
  * T3o (T3O-64, D21): `BoardWorkspaces`, the one answer to "where does this
  * card's git run".
  *
- * Built from the local workspace and a placement. Until placement lands
- * (T3O-65) `BoardWorkspacesLive` has none, so every card is local and the
- * board behaves exactly as it did; a test supplies a placement and a remote
- * resolver to put a card on another worker.
+ * Built from the local workspace and a placement (T3O-65): a card runs where
+ * it holds its worktree, else on its pin, else on the default worker, and its
+ * project maps to that worker's checkout of the same repository. A board with
+ * no workers places every card here, exactly as it always did.
  */
-import type { BoardCard, ProjectId } from "@t3tools/contracts";
+import {
+  BOARD_LOCAL_WORKER_ID,
+  boardCardEffectiveWorkerId,
+  boardRepositoryGroupingKey,
+  EMPTY_BOARD_STATE,
+  resolveBoardWorkerCheckout,
+  type BoardCard,
+  type EnvironmentId,
+  type ProjectId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -16,9 +25,11 @@ import * as Path from "effect/Path";
 
 import * as ServerConfig from "../../config.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
+import { BoardEngine } from "../BoardEngine.ts";
 import { BoardPullRequestGateway } from "../BoardPullRequestGateway.ts";
 import { ThreadGateway } from "../ThreadGateway.ts";
 import { parseRegisteredWorktrees } from "../worktree.ts";
+import { WorkerConnections } from "../workers/WorkerConnections.ts";
 import { WorktreeRetirer } from "../worktreeRetire.ts";
 import {
   bindBoardWorkspace,
@@ -28,6 +39,7 @@ import {
   type BoardWorkspacesShape,
 } from "./BoardWorkspace.ts";
 import { makeLocalBoardWorkspace, type LocalBoardWorkspaceDeps } from "./LocalBoardWorkspace.ts";
+import { remoteCardWorkspace } from "./RemoteBoardWorkspace.ts";
 
 export interface BoardWorkspacesOptions {
   /** Where a card runs when it is not here; null for this server. */
@@ -36,6 +48,12 @@ export interface BoardWorkspacesOptions {
   ) => Effect.Effect<BoardWorkspacePlacement | null>;
   /** The placed card's workspace on its worker. */
   readonly remote?: (placement: BoardWorkspacePlacement) => Effect.Effect<BoardCardWorkspace>;
+  /** A board project's id on a worker — its checkout of the same repository —
+      or null when the worker has none. */
+  readonly workerProjectOf?: (
+    workerId: BoardWorkspacePlacement["workerId"],
+    projectId: ProjectId,
+  ) => Effect.Effect<ProjectId | null>;
 }
 
 export function makeBoardWorkspaces(
@@ -104,12 +122,25 @@ export function makeBoardWorkspaces(
       return !exists;
     });
 
+  const forWorker: BoardWorkspacesShape["forWorker"] = (workerId, projectId) =>
+    Effect.gen(function* () {
+      if (workerId === BOARD_LOCAL_WORKER_ID || options.remote === undefined) {
+        return yield* localProject(projectId);
+      }
+      const workerProjectId =
+        options.workerProjectOf === undefined
+          ? projectId
+          : ((yield* options.workerProjectOf(workerId, projectId)) ?? projectId);
+      return yield* options.remote({ workerId, projectId: workerProjectId });
+    });
+
   return {
     local,
     forCentral,
     ownsWorktreePath,
     forCard,
     localProject,
+    forWorker,
     groupByWorkspace: (cards) =>
       Effect.gen(function* () {
         const groups = new Map<
@@ -162,8 +193,46 @@ export const localBoardWorkspaceDeps = Effect.gen(function* () {
   } satisfies LocalBoardWorkspaceDeps;
 });
 
-/** Every card local: today's board. Placement (T3O-65) replaces this. */
+/**
+ * Each card's workspace where the board places it (T3O-65, D20). A worker with
+ * no checkout of the card's project yields a workspace whose `checkoutPath` is
+ * null, which every caller already reads as "no checkout there".
+ */
 export const BoardWorkspacesLive = Layer.effect(
   BoardWorkspaces,
-  localBoardWorkspaceDeps.pipe(Effect.map((deps) => makeBoardWorkspaces(deps))),
+  Effect.gen(function* () {
+    const deps = yield* localBoardWorkspaceDeps;
+    const engine = yield* BoardEngine;
+    const connections = yield* WorkerConnections;
+    const threads = yield* ThreadGateway;
+    const workerProjectOf = (workerId: EnvironmentId, projectId: ProjectId) =>
+      Effect.gen(function* () {
+        const project = yield* threads
+          .project(projectId)
+          .pipe(Effect.catchCause(() => Effect.succeed(null)));
+        const runtime = (yield* connections.current).get(workerId);
+        return (
+          resolveBoardWorkerCheckout(
+            boardRepositoryGroupingKey(project?.repositoryIdentity),
+            runtime?.snapshot?.checkouts ?? [],
+          )?.projectId ?? null
+        );
+      });
+    return makeBoardWorkspaces(deps, {
+      placementOf: (card) =>
+        Effect.gen(function* () {
+          const board = (yield* engine.getReadModel).board ?? EMPTY_BOARD_STATE;
+          const placed = board.cards.find((candidate) => candidate.id === card.id);
+          if (placed === undefined) return null;
+          const workerId = boardCardEffectiveWorkerId(placed, board.defaultWorkerId);
+          if (workerId === BOARD_LOCAL_WORKER_ID) return null;
+          return {
+            workerId,
+            projectId: (yield* workerProjectOf(workerId, card.projectId)) ?? card.projectId,
+          };
+        }),
+      remote: remoteCardWorkspace(connections),
+      workerProjectOf,
+    });
+  }),
 );

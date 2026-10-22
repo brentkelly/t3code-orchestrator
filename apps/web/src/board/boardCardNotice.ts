@@ -49,6 +49,7 @@ import type { BoardCardAttentionReason, BoardCardAttentionTone } from "@t3tools/
 
 import type { BoardAutoMergePill } from "./boardAutoMergeHold";
 import type { BoardConflictFixInfo } from "./boardConflictFix";
+import type { BoardCardMoveNotice } from "./workers/cardWorker";
 
 /** The attention chip as the card renders it — `boardCardAttention`'s answer
     after the card has resolved a parent's inherited child attention into the
@@ -70,7 +71,9 @@ export type BoardCardNotice =
   | { readonly kind: "no-pull-request" }
   | { readonly kind: "blocked"; readonly dependencyCount: number }
   /** T3O-52: a finished card still holding its worktree, and why. */
-  | { readonly kind: "worktree-kept"; readonly reason: string };
+  | { readonly kind: "worktree-kept"; readonly reason: string }
+  /** T3O-65: the card is moving to another worker, or its move failed. */
+  | { readonly kind: "worker-move"; readonly move: BoardCardMoveNotice };
 
 /** The one notice a card header shows, or null when it has nothing to say. */
 export function boardCardNotice(input: {
@@ -94,6 +97,8 @@ export function boardCardNotice(input: {
   /** T3O-52: why a finished card kept its worktree, or null when it has not
       (`boardCardWorktreeKept`, resolved by the board page). */
   readonly worktreeKeptReason?: string | null | undefined;
+  /** T3O-65: Moving (blue) or Move failed (amber), or null. */
+  readonly workerMove?: BoardCardMoveNotice | null | undefined;
 }): BoardCardNotice | null {
   const attention = input.attention;
   // A permission prompt is as answerable as a question (T3O-16), so it takes
@@ -101,6 +106,9 @@ export function boardCardNotice(input: {
   if (attention !== null && (attention.reason === "input" || attention.reason === "permission")) {
     return { kind: "attention", attention };
   }
+  // A card mid-move, or whose move failed, can do nothing else until the move
+  // lands or a human retries it (T3O-65): that is the one thing worth saying.
+  if (input.workerMove != null) return { kind: "worker-move", move: input.workerMove };
   // A conflict fix RUNS and a hold WAITS; the server never records both, and a
   // running agent is the more specific claim if they somehow collide.
   if (input.conflictFix !== null) return { kind: "conflicts", fix: input.conflictFix };

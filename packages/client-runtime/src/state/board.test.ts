@@ -73,6 +73,9 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   autoStart: false,
   autoMerge: false,
   autoMergeHold: null,
+  pinnedWorkerId: null,
+  placedWorkerId: null,
+  workerMove: null,
   worktree: null,
   blocked: false,
   archivedAt: null,
@@ -156,6 +159,48 @@ describe("board shell reducer", () => {
       stepRunning: true,
     });
     expect(cleared.cards?.[0]?.queued).toBe(false);
+  });
+
+  it("card-queued carries which limit holds the card, card deltas keep it, and leaving the queue clears it (T3O-65)", () => {
+    const held = snapshot({
+      cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })],
+    });
+    const queued = applyBoardShellStreamEvent(held, {
+      kind: "card-queued",
+      sequence: 2,
+      cardId: BoardCardId.make("card-1"),
+      queued: true,
+      stepRunning: false,
+      queuedBy: "worker",
+    });
+    expect(queued.cards?.[0]?.queuedBy).toBe("worker");
+    // A drag re-upserts the card without step state: the reason stays.
+    const dragged = applyBoardShellStreamEvent(queued, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "zz" }),
+    });
+    expect(dragged.cards?.[0]?.queued).toBe(true);
+    expect(dragged.cards?.[0]?.queuedBy).toBe("worker");
+    // A different limit takes over.
+    const board = applyBoardShellStreamEvent(dragged, {
+      kind: "card-queued",
+      sequence: 4,
+      cardId: BoardCardId.make("card-1"),
+      queued: true,
+      stepRunning: false,
+      queuedBy: "board",
+    });
+    expect(board.cards?.[0]?.queuedBy).toBe("board");
+    // Admitted: no longer queued, no reason left behind.
+    const admitted = applyBoardShellStreamEvent(board, {
+      kind: "card-queued",
+      sequence: 5,
+      cardId: BoardCardId.make("card-1"),
+      queued: false,
+      stepRunning: true,
+    });
+    expect(admitted.cards?.[0]?.queuedBy).toBeUndefined();
   });
 
   it("card-queued admitted-to-running lights stepRunning; holding for a slot clears it", () => {

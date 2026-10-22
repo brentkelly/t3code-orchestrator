@@ -188,6 +188,7 @@ const atTheCeiling = (
   // test's slot assertion about the PAUSE and nothing else.
   slotHeld: false,
   forceStart: false,
+  queuedBy: null,
   startedAt: NOW,
   updatedAt: NOW,
 });
@@ -353,6 +354,62 @@ it.effect("Resume sends a paused step through the queue and nudges its EXISTING 
       assert.strictEqual(turns.at(-1)?.type, "thread.send");
       assert.strictEqual(turns.at(-1)?.text, BOARD_STEP_RESUME_NUDGE);
     }),
+  ),
+);
+
+it.effect("Resume while the board is full waits queued on its EXISTING thread (T3O-65)", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [buildingCard("full-a", "a"), buildingCard("full-b", "b")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 1 }),
+    },
+    ({ pumpDomain, board, shells, commands }) =>
+      Effect.gen(function* () {
+        const threadA = yield* startBuild({ pumpDomain, board }, "full-a");
+        yield* pumpDomain(movedToBuilding(buildingCard("full-b", "b"), 2));
+        yield* Ref.update(
+          shells,
+          (current) => new Map([...current, [String(threadA), idleThreadShell(String(threadA))]]),
+        );
+        // A pauses, and B takes the only slot it gave back.
+        yield* pumpDomain(turnInterruptRequested(threadA, 3));
+        const paused = boardCardStepState(yield* board, BoardCardId.make("full-a"));
+        assert.strictEqual(paused?.status, "paused");
+        assert.strictEqual(stepStatus(yield* board, BoardCardId.make("full-b")), "running");
+
+        // Resume with the board full: the governor records the limit holding A,
+        // and that record must not cost A its conversation.
+        yield* pumpDomain(stepRequeued(paused!, 4));
+        const waiting = boardCardStepState(yield* board, BoardCardId.make("full-a"));
+        assert.strictEqual(waiting?.status, "queued");
+        assert.isNotNull(waiting?.queuedBy);
+        assert.strictEqual(waiting?.threadId, threadA);
+
+        const spawnsBefore = commandTypes(yield* commands).filter(
+          (type) => type === "thread.spawn",
+        ).length;
+        yield* pumpDomain(
+          stepCompleted(
+            BoardCardId.make("full-b"),
+            "succeeded",
+            5,
+            String(BOARD_SEED_STAGE_IDS.building),
+          ),
+        );
+
+        const admitted = boardCardStepState(yield* board, BoardCardId.make("full-a"));
+        assert.strictEqual(admitted?.status, "running");
+        assert.strictEqual(admitted?.threadId, threadA);
+        const after = yield* commands;
+        assert.strictEqual(
+          commandTypes(after).filter((type) => type === "thread.spawn").length,
+          spawnsBefore,
+        );
+        assert.strictEqual(turnsOf(after).at(-1)?.text, BOARD_STEP_RESUME_NUDGE);
+      }),
   ),
 );
 

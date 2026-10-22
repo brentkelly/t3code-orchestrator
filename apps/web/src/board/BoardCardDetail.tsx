@@ -80,6 +80,7 @@ import { usePaginatedBranches } from "../state/queries";
 import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../hooks/useSettings";
+import { boardQueueReason, boardThreadMoveDividers } from "./workers/cardWorker";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   boardStageRestartBlockedReason,
@@ -169,6 +170,8 @@ export function BoardCardDetail({
   const detail = useAtomValue(boardEnvironment.cardDetailValueAtom({ environmentId, cardId }));
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
   const stages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
+  // T3O-65: the board's workers, for the queue's reason.
+  const workersState = useAtomValue(boardEnvironment.workersAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
 
   const updateCard = useAtomCommand(boardEnvironment.updateCard);
@@ -439,9 +442,22 @@ export function BoardCardDetail({
 
   // T3o (T3O-63): the worker each thread lives on, for where it opens.
   const workers = useAtomValue(boardEnvironment.workersAtom(environmentId));
+  // "today" in a move divider is measured from when the card was opened.
+  const [openedAt] = useState(() => Date.now());
   const threadLinks = useMemo<ReadonlyArray<BoardDetailThreadLink>>(() => {
     if (card === null) return [];
     const threads = snapshot?.threads ?? [];
+    // T3O-65: "Moved from {worker}" above the first thread after each move.
+    const movedFrom = boardThreadMoveDividers({
+      links: card.threadLinks,
+      moves: (detail?.activity ?? []).flatMap((entry) =>
+        entry.kind === "card-worker-moved" && entry.payload.movePhase === "done"
+          ? [{ at: entry.createdAt, fromWorkerId: entry.payload.fromWorkerId ?? null }]
+          : [],
+      ),
+      state: workers,
+      nowMs: openedAt,
+    });
     return card.threadLinks.map((link) => {
       const thread = threads.find((candidate) => candidate.id === link.threadId);
       const { threadState, awaitingInput } = deriveBoardCardThreadState(
@@ -462,9 +478,10 @@ export function BoardCardDetail({
         awaitingInput,
         worker,
         ranOn: threadWorkerRanOn(worker, workers),
+        movedFrom: movedFrom.get(link.threadId) ?? null,
       };
     });
-  }, [card, snapshot, workers, environmentId]);
+  }, [card, detail?.activity, snapshot, workers, environmentId, openedAt]);
 
   // Agent display names and accents for the Activity rail (t3o-18, D11). Resolved
   // at render time from the provider instance list the app already holds, so a
@@ -558,13 +575,25 @@ export function BoardCardDetail({
             slot: boardBuildQueue(allShellCards, queueStages, Date.now()).get(cardId),
             running: boardRunningStepCount(allShellCards),
             cap: boardSettings.concurrency.globalMaxConcurrent,
+            reason: boardQueueReason({
+              card: cardShell,
+              state: workersState,
+              cards: allShellCards,
+              concurrency: boardSettings.concurrency,
+              // Named as the board's own queue pill names it.
+              projectName:
+                snapshot?.projects.find((project) => project.id === cardShell.projectId)?.title ??
+                "this project",
+            }),
           }),
     [
       allShellCards,
-      boardSettings.concurrency.globalMaxConcurrent,
+      boardSettings.concurrency,
       cardId,
-      cardShell?.queued,
+      cardShell,
       queueStages,
+      snapshot,
+      workersState,
     ],
   );
   // Null whenever reordering could not actually improve the card's position —
@@ -980,6 +1009,7 @@ export function BoardCardDetail({
 
   const view = (
     <BoardCardDetailView
+      stalledReason={cardShell?.stalledReason}
       nav={nav}
       adoptableThreads={adoptableThreads}
       stageRestart={stageRestart}

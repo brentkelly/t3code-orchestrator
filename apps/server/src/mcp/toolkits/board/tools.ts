@@ -23,6 +23,7 @@ import {
   BoardCardExternalRef,
   BoardCardAttachmentId,
   BoardCardId,
+  BoardWorkerId,
   BoardCardPullRequestState,
   BoardCardPullRequestTarget,
   BoardBriefSectionEdit,
@@ -435,6 +436,23 @@ const BoardCardWriteResult = Schema.Struct({
   key: TrimmedNonEmptyString,
 });
 
+export const BoardPinCardWorkerTool = Tool.make("board_pin_card_worker", {
+  description:
+    "Choose the worker (machine) a card runs on: pass a worker id to pin it there, or null to have it follow the board's default worker. cardId takes the card's key (e.g. 'Z5-39') or id; worker ids are 'local' for the board's own server, or a registered worker's environment id. Only a card with no worktree is re-pinned: its next thread runs on the new worker and earlier threads stay where they ran. A card whose worktree is on another worker is refused — moving it retires that worktree and needs its work pushed first, so a human does it from the app.",
+  parameters: Schema.Struct({
+    /** Card key or id. */
+    cardId: TrimmedNonEmptyString,
+    workerId: Schema.NullOr(BoardWorkerId),
+  }),
+  success: Schema.Struct({
+    cardId: BoardCardId,
+    key: TrimmedNonEmptyString,
+    workerId: Schema.NullOr(BoardWorkerId),
+  }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Pin board card to a worker");
+
 export const BoardArchiveCardTool = Tool.make("board_archive_card", {
   description:
     "Archive a card — the reversible way to take it off the board. The card, its threads, its history and its dependency edges all survive; it leaves the columns, stops gating the cards that depend on it, and is still readable in the archive. Use it for cards that are done with, duplicated, or no longer wanted. Rejected on a card that is already archived, on a card whose plan cards are still unfinished (finish or archive those first), and on YOUR OWN card — archiving reclaims the worktree you are running in and unarchiving does not bring it back, so ask a human to do it from the app. Allowed on a card ANOTHER agent is working on — it is the softer route board_delete_card points at — but it is not free there: the in-flight step is settled as abandoned, so that agent's turn is orphaned, and the card's checkout is reclaimed unless it holds uncommitted or unpushed work. Wait for the step to settle if you are only tidying. Reverse it with board_unarchive_card; use board_delete_card only when nothing should survive.",
@@ -518,6 +536,7 @@ export const BoardToolkit = Toolkit.make(
   BoardCreateCardTool,
   BoardMoveCardTool,
   BoardUpdateCardTool,
+  BoardPinCardWorkerTool,
   BoardArchiveCardTool,
   BoardUnarchiveCardTool,
   BoardDeleteCardTool,

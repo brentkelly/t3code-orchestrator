@@ -335,8 +335,8 @@ export function BoardCardThreadPane({
             <span className="font-semibold text-foreground">{queueInfo.headline}.</span> No agent
             has picked this up yet.
           </p>
-          {onQueueForceStart === undefined ? null : (
-            <BoardHint label="Run this task now, over the agent limit.">
+          {onQueueForceStart === undefined || queueInfo.waitingForCheckout === true ? null : (
+            <BoardHint label="Run this task now, past every agent limit: the board's, its worker's and its provider's.">
               <button
                 className={cn(
                   "inline-flex h-[24px] shrink-0 items-center gap-[5px] rounded-[7px] border border-input bg-popover px-2 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent",

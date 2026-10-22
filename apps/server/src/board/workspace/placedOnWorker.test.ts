@@ -2,8 +2,8 @@
  * T3o (T3O-64, D21): a card placed on a worker has its git and forge work done
  * THERE, against the live reactor.
  *
- * Placement does not exist yet (T3O-65), so these suites supply their own: one
- * card is placed on an in-process worker whose `boardWorker.git.*` handlers run
+ * These suites supply their own placement rather than the board's (T3O-65),
+ * so one card sits on an in-process worker whose `boardWorker.git.*` handlers run
  * a local workspace of the worker's own. Every git command the worker runs is
  * logged separately from the central server's, so "on that worker" is a
  * checked fact: the central server runs none for the placed card.

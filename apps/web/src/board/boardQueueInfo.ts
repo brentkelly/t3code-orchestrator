@@ -10,6 +10,8 @@
  */
 import type { BoardQueueSlot } from "@t3tools/client-runtime/state/shell";
 
+import type { BoardQueueReason } from "./workers/cardWorker";
+
 export interface BoardQueueInfo {
   readonly position: number;
   readonly total: number;
@@ -23,6 +25,8 @@ export interface BoardQueueInfo {
   readonly headline: string;
   /** Why it is waiting, and that nobody has to do anything about it. */
   readonly detail: string;
+  /** Waiting for its worker's checkout (T3O-65): no limit to start past. */
+  readonly waitingForCheckout?: boolean;
 }
 
 /**
@@ -65,10 +69,14 @@ export function boardQueueInfo(input: {
   readonly slot: BoardQueueSlot | undefined;
   readonly running: number;
   readonly cap: number;
+  /** Which limit holds the card, on a board with workers (T3O-65); absent or
+      null keeps the one-worker copy. */
+  readonly reason?: BoardQueueReason | null | undefined;
 }): BoardQueueInfo | null {
   const { slot } = input;
   if (slot === undefined) return null;
   const ahead = slot.ahead === 0 ? "" : ` · ${slot.ahead} task${slot.ahead === 1 ? "" : "s"} ahead`;
+  if (input.reason != null) return withQueueReason(slot, input, input.reason);
   return {
     position: slot.position,
     total: slot.total,
@@ -80,4 +88,62 @@ export function boardQueueInfo(input: {
     headline: slot.startsNext ? "Queued — starts next" : `Queued #${slot.position}`,
     detail: `${describeAgents(input.running, input.cap)}${ahead}. It starts on its own when an agent frees up.`,
   };
+}
+
+/**
+ * The queued story on a board with workers (T3O-65, D11): the card names the
+ * limit it is waiting on, because "Queued #3" alone no longer says whether a
+ * worker, a provider on it, or the whole board is full. A card waiting for its
+ * worker's checkout has no queue position to wait for — it is not competing for
+ * a slot yet.
+ */
+function withQueueReason(
+  slot: BoardQueueSlot,
+  input: { readonly running: number; readonly cap: number },
+  reason: BoardQueueReason,
+): BoardQueueInfo {
+  const base = {
+    position: slot.position,
+    total: slot.total,
+    ahead: slot.ahead,
+    running: input.running,
+    cap: input.cap,
+    startsNext: slot.startsNext,
+  };
+  const n = slot.position;
+  switch (reason.kind) {
+    case "worker":
+      return {
+        ...base,
+        label: `Queued #${n} · worker full`,
+        headline: `Queued #${n} on ${reason.worker}`,
+        detail: `${reason.worker} is running ${reason.running} of ${reason.limit} agents. This card starts when one finishes.`,
+      };
+    case "provider":
+      return {
+        ...base,
+        label: `Queued #${n} · provider full`,
+        headline: `Queued #${n} on ${reason.worker}`,
+        detail: `The provider this step uses is at its cap on ${reason.worker}. This card starts when one of those finishes.`,
+      };
+    case "board":
+      return {
+        ...base,
+        label: `Queued #${n} · board full`,
+        headline: `Queued #${n} for the board`,
+        detail: `${reason.running} of ${reason.limit} agents are busy across all workers. This card starts when any of them finishes.`,
+      };
+    case "setup":
+      return {
+        ...base,
+        waitingForCheckout: true,
+        label: "Queued · setting up",
+        headline: "Waiting for a checkout",
+        detail: reason.failed
+          ? `Cloning ${reason.project} on ${reason.worker} failed. Retry it in Settings → Board → Project checkouts, or pick another worker.`
+          : reason.percent !== null
+            ? `${reason.project} is being cloned on ${reason.worker} (${reason.percent}%). This card starts once it's ready.`
+            : `${reason.worker} has no checkout of ${reason.project} yet. This card starts once it has one.`,
+      };
+  }
 }

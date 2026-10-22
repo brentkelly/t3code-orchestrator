@@ -33,6 +33,8 @@ import {
   type BoardCardDetailStreamItem,
   type BoardCardId,
   type BoardCardPullRequestActionInput,
+  type BoardCardWorkerMoveAnswer,
+  type BoardCardWorkerMoveRequest,
   // T3o: the refresh's own payload (T3O-48).
   type BoardRefreshCardPullRequestInput,
   type BoardLinkCardPullRequestInput,
@@ -73,6 +75,7 @@ import { BoardThreadTail } from "./boardThreadTail.ts";
 import { ThreadGateway, type ThreadGatewayShape } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
+import { BoardCardMover, type BoardCardMoverShape } from "./workers/BoardCardMove.ts";
 import { BoardWorkers } from "./workers/BoardWorkers.ts";
 import { workerGatewayRpcHandlers } from "./workers/workerGatewayRpc.ts";
 import { boardWorkerRpcHandlers } from "./workers/workerRpc.ts";
@@ -113,6 +116,7 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
         boardEngine,
         boardQueries,
         stampActor,
+        mover: yield* BoardCardMover,
         subscriptionContext,
       }),
       // T3O-62: worker management, and the worker side's handshake.
@@ -131,6 +135,7 @@ function makeBoardRpcHandlers(
     readonly boardEngine: BoardEngineShape;
     readonly boardQueries: BoardQueriesShape;
     readonly stampActor: (command: BoardCommand) => Effect.Effect<void>;
+    readonly mover: BoardCardMoverShape;
     readonly subscriptionContext: Context.Context<
       BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
     >;
@@ -352,6 +357,23 @@ function makeBoardRpcHandlers(
       authorized(
         BOARD_WS_METHODS.checkCardWorktree,
         deps.boardSupervisor.checkWorktree(input.cardId),
+      ),
+
+    /** The Move dialog (T3O-65): check, move, or ask the agent to push. A
+        move is a human act (D18), so each step it records carries the human. */
+    [BOARD_WS_METHODS.cardWorkerMove]: (input: BoardCardWorkerMoveRequest) =>
+      authorized(
+        BOARD_WS_METHODS.cardWorkerMove,
+        Effect.suspend((): Effect.Effect<BoardCardWorkerMoveAnswer> => {
+          if (input.action === "ask-push") return services.mover.askAgentToPush(input.cardId);
+          if (input.action === "move") {
+            return services.mover.move(input.cardId, input.toWorkerId ?? null, services.stampActor);
+          }
+          if (input.toWorkerId === undefined) {
+            return Effect.succeed({ outcome: "refused", detail: "Pick a worker to move to." });
+          }
+          return services.mover.check(input.cardId, input.toWorkerId);
+        }),
       ),
 
     /**

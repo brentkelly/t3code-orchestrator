@@ -9,9 +9,12 @@
  * blip would.
  */
 import {
+  BOARD_LOCAL_WORKER_ID,
   EnvironmentId,
   ProjectId,
+  ProviderInstanceId,
   type BoardWorker,
+  type BoardWorkerProvider,
   type RepositoryIdentity,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -23,6 +26,7 @@ import { TestClock } from "effect/testing";
 
 import * as ServerConfig from "../../config.ts";
 import { makeFakeThreadGateway, type FakeThreadGatewayOptions } from "../threadGateway.testkit.ts";
+import type { BoardPlacementShape } from "./BoardPlacement.ts";
 import { makeMemoryBoardRelayStore } from "./BoardRelayStore.ts";
 import { makeMcpRelayHost, McpRelayHost } from "./McpRelayHost.ts";
 import {
@@ -53,6 +57,15 @@ export const REPOSITORY: RepositoryIdentity = {
 
 export const WORKER_PROJECT_ID = ProjectId.make("worker-project");
 export const WORKER_ROOT = "/home/worker/repo";
+
+/** The provider instance the worker reports — the one the harness's steps use. */
+export const WORKER_PROVIDER: BoardWorkerProvider = {
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: "codex",
+  displayName: "Codex",
+  enabled: true,
+  models: [{ slug: "gpt-5-codex", name: "GPT-5 Codex" }],
+};
 
 export const registeredWorker: BoardWorker = {
   id: WORKER_ID,
@@ -113,6 +126,7 @@ export const makeInProcessWorker = (
         repositoryIdentity: REPOSITORY,
       },
     ];
+    worker.providers = [WORKER_PROVIDER];
     yield* kit.secrets.store.set(workerSecretName(WORKER_ID), encodeWorkerToken("token-1"));
     const connections = yield* makeWorkerConnections.pipe(Effect.provide(kit.layer));
     return {
@@ -127,6 +141,25 @@ export const makeInProcessWorker = (
       workerStateDir: workerConfig.stateDir,
     };
   });
+
+/**
+ * Placement over the in-process worker's live connection (T3O-65): the board's
+ * worker summary as `BoardWorkers` would build it, with no setups.
+ */
+export const placementOver = (connections: WorkerConnectionsShape): BoardPlacementShape => ({
+  workers: connections.current.pipe(
+    Effect.map((runtimes) => ({
+      defaultWorkerId: BOARD_LOCAL_WORKER_ID,
+      workers: [...runtimes].map(([, runtime]) => ({
+        ...registeredWorker,
+        status: runtime.status,
+        snapshot: runtime.snapshot,
+      })),
+      setups: [],
+    })),
+  ),
+  changes: connections.changes,
+});
 
 /** Resolve once the worker is online — read atomically with subscribing. */
 export const waitOnline = (connections: WorkerConnectionsShape) =>
