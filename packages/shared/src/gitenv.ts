@@ -52,6 +52,8 @@ interface GitenvFileCache {
   readonly mtimeMs: number;
   readonly size: number;
   readonly entries: ReadonlyMap<string, string>;
+  /** Token → hex SHA-256, filled on first use and dropped with the file cache. */
+  readonly digests: Map<string, string>;
 }
 
 let gitenvPath: string | undefined;
@@ -139,7 +141,12 @@ function readEntries(): ReadonlyMap<string, string> | undefined {
   } catch {
     return undefined;
   }
-  fileCache = { mtimeMs: stat.mtimeMs, size: stat.size, entries: parseGitenv(text) };
+  fileCache = {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    entries: parseGitenv(text),
+    digests: new Map(),
+  };
   return fileCache.entries;
 }
 
@@ -233,7 +240,12 @@ export function gitenvToken(
   if (token === undefined) {
     return undefined;
   }
-  const digest = NodeCrypto.createHash("sha256").update(token).digest("hex");
+  // The API transport asks on every request; hash each token once per file read.
+  let digest = fileCache?.digests.get(token);
+  if (digest === undefined) {
+    digest = NodeCrypto.createHash("sha256").update(token).digest("hex");
+    fileCache?.digests.set(token, digest);
+  }
   return { root, token, digest };
 }
 

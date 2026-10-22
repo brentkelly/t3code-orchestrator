@@ -4645,6 +4645,54 @@ it.effect("searches a gitenv project's repositories apart from the ambient ones"
     ]);
   }).pipe(Effect.ensuring(Effect.sync(resetGitenvForTesting))),
 );
+// T3o (T3O-67): one stats read carries one project's gitenv token, so identities never share it.
+it.effect("reads a gitenv project's line counts apart from the ambient ones", () =>
+  Effect.gen(function* () {
+    const base = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-67-stats-")),
+    );
+    const roots = ["a", "b", "c"].map((name) => NodePath.join(base, name));
+    for (const root of roots) NodeFS.mkdirSync(NodePath.join(root, ".git"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(base, "gitenv"), `${roots[1]}=github_pat_t3o67stats\n`, {
+      mode: 0o600,
+    });
+    initGitenv(base);
+    const asked: Array<readonly [string, ReadonlyArray<string>]> = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "t3code",
+          workspaceRoot: roots[0]!,
+          repository: "pingdotgg/t3code",
+        }),
+        project({ id: "p2", title: "web", workspaceRoot: roots[1]!, repository: "acme/web" }),
+        project({ id: "p3", title: "docs", workspaceRoot: roots[2]!, repository: "acme/docs" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequestStats: (input) => {
+            asked.push([input.cwd, input.changeRequests.map((entry) => entry.repository)]);
+            return Effect.succeed([]);
+          },
+        }),
+      ],
+    });
+
+    yield* service.listStats({
+      refs: [
+        { projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 1 },
+        { projectId: "p2" as ProjectId, repository: "acme/web", number: 2 },
+        { projectId: "p3" as ProjectId, repository: "acme/docs", number: 3 },
+      ],
+    });
+
+    assert.sameDeepMembers(asked, [
+      [roots[0]!, ["pingdotgg/t3code", "acme/docs"]],
+      [roots[1]!, ["acme/web"]],
+    ]);
+  }).pipe(Effect.ensuring(Effect.sync(resetGitenvForTesting))),
+);
 it.effect("carries every repository of a slice on from the oldest row in it", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
