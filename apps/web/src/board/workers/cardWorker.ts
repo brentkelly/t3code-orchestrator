@@ -265,7 +265,9 @@ export type BoardQueueReason =
       readonly kind: "setup";
       readonly worker: string;
       readonly project: string;
-      readonly percent: number | null;
+      /** No percent: queue copy reads the card view, which drops clone
+          progress so its ticks don't re-render the board. */
+      readonly cloning: boolean;
       readonly failed: boolean;
     };
 
@@ -306,7 +308,7 @@ export function boardQueueReason(input: {
         kind: "setup",
         worker,
         project: input.projectName,
-        percent: setup?.phase === "cloning" ? setup.percent : null,
+        cloning: setup?.phase === "cloning",
         failed: setup?.phase === "failed",
       };
     }

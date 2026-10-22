@@ -8,7 +8,7 @@ import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import type { BoardWorkersState, EnvironmentId } from "@t3tools/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { boardEnvironment, environmentBoard } from "../../state/board";
@@ -62,13 +62,16 @@ export function useBoardWorkers(environmentId: EnvironmentId): BoardWorkersView 
 }
 
 /**
- * The current time, re-read only when one of `deadlines` passes (and never
- * otherwise), so a transient state like "Set up just now" settles without a
- * ticking clock repainting the page.
+ * The current time, re-read only when one of `deadlines` passes or the set of
+ * deadlines changes (and never otherwise), so a transient state like "Set up
+ * just now" settles without a ticking clock repainting the page.
  */
 export function useNowAtDeadlines(deadlines: ReadonlyArray<number>): number {
   const [now, setNow] = useState(() => Date.now());
   const key = deadlines.join(",");
+  // The deadlines `now` was last read for; new ones may belong to state that
+  // arrived after that read, so the clock is re-read once for them.
+  const readFor = useRef(key);
   useEffect(() => {
     const deadlinesNow = key
       .split(",")
@@ -89,7 +92,15 @@ export function useNowAtDeadlines(deadlines: ReadonlyArray<number>): number {
         next - current + 50,
       );
     };
-    arm();
+    if (readFor.current === key) {
+      arm();
+    } else {
+      readFor.current = key;
+      timer = setTimeout(() => {
+        setNow(Date.now());
+        arm();
+      }, 0);
+    }
     return () => clearTimeout(timer);
   }, [key]);
   return now;

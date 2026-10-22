@@ -17,7 +17,7 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   AlertDialog,
@@ -47,10 +47,14 @@ import { BoardHint } from "../BoardHint";
 import { describeBoardCommandFailure } from "../boardCommandFeedback";
 import { AddWorkerDialog, type AddWorkerMode } from "./AddWorkerDialog";
 import { useBoardWorkers, useNowAtDeadlines } from "./boardWorkersState";
-import { workerLastSeen, workerStatusPresentation, type WorkerTone } from "./workerCopy";
+import {
+  workerLastSeen,
+  workerLastSeenDeadlines,
+  workerStatusPresentation,
+  type WorkerTone,
+} from "./workerCopy";
 
 const LOCAL_LABEL = "This server (local)";
-const EMPTY_DEADLINES: ReadonlyArray<number> = [];
 
 const TONE_BADGE: Record<WorkerTone, "outline" | "info" | "warning" | "success"> = {
   neutral: "outline",
@@ -73,8 +77,13 @@ export function WorkersSection(props: {
   const removeWorker = useAtomCommand(boardEnvironment.removeWorker, { reportFailure: false });
   const [dialog, setDialog] = useState<AddWorkerMode | null>(null);
   const [removing, setRemoving] = useState<BoardWorkerView | null>(null);
-  // Last seen is coarse ("2 min ago"); every status change re-renders it.
-  const nowMs = useNowAtDeadlines(EMPTY_DEADLINES);
+  // Last seen is coarse ("2 min ago"): re-read the clock only when an offline
+  // worker's label is due to change.
+  const lastSeenDeadlines = useMemo(
+    () => workers.state.workers.flatMap(workerLastSeenDeadlines),
+    [workers.state.workers],
+  );
+  const nowMs = useNowAtDeadlines(lastSeenDeadlines);
 
   const runDefault = async (workerId: BoardWorkerId) => {
     const result = await setDefault({ environmentId, input: { workerId } });

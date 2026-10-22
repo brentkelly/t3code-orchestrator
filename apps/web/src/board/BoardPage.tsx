@@ -582,7 +582,8 @@ function EnvironmentBoard({
   // together or not at all — and it costs a single pass when nothing is queued.
   // T3O-65: the board's workers, for the queue's reasons and every card below.
   const workersState = useAtomValue(boardEnvironment.workersAtom(environmentId));
-  // What the cards read: the same object across a clone's progress ticks.
+  // What the cards and the queue read: the same object across a clone's
+  // progress ticks, so those don't rebuild the queue or re-render the columns.
   const cardWorkersState = useBoardWorkersCardView(workersState);
   const queueSlots = useMemo(() => {
     const queue = boardBuildQueue(everyCard, orderedStages, Date.now());
@@ -601,7 +602,7 @@ function EnvironmentBoard({
           ? null
           : boardQueueReason({
               card,
-              state: workersState,
+              state: cardWorkersState,
               cards: everyCard,
               concurrency: boardSettings.concurrency,
               projectName: projectNames.get(card.projectId) ?? "this project",
@@ -610,7 +611,7 @@ function EnvironmentBoard({
       if (resolved !== null) info.set(cardId, resolved);
     }
     return info;
-  }, [allProjects, boardSettings.concurrency, everyCard, orderedStages, workersState]);
+  }, [allProjects, boardSettings.concurrency, everyCard, orderedStages, cardWorkersState]);
 
   // ── Card todo strips (t3o-18) ────────────────────────────────────────
   // The card→thread links and their cached lists ride the shell snapshot as
@@ -1236,7 +1237,7 @@ function EnvironmentBoard({
           <BoardWorkersAttentionPill
             cards={everyCard}
             onOpenCard={(cardId) => patchSearch((previous) => ({ ...previous, card: cardId }))}
-            workers={workersState}
+            workers={cardWorkersState}
           />
           <BoardProviderUsagePill
             cards={everyCard}

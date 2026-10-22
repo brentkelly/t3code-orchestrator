@@ -82,6 +82,12 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   no spinner and no ticking countdown: its numbers are coarse (`in 1h 38m`) and repaint only when
   the board does, because a header is on screen all the time and a per-second repaint there is the
   GPU cost this document exists to refuse.
+- **A worker the board can't use is amber, and online stays grey (T3O-60).** Worker offline, Worker
+  removed, Access revoked and Incompatible all say the same thing: the cards on that worker are
+  held, and only a human (or the worker coming back) frees them. A failed Move is amber for the same
+  reason — the card is held mid-move until someone retries or picks another worker. Connecting and
+  cloning are running, so they are blue; a finished checkout is green; a worker that is simply
+  online is the steady state and makes no claim, so it is neutral.
 - **No colour without a claim.** A colour asserts something about work happening right now, so an
   indicator that cannot make that assertion stays neutral (`bg-muted text-muted-foreground`) and
   says why in words. The review pane is the case that forced the rule: its loop and round state are

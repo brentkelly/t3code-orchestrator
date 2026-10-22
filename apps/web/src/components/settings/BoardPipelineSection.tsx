@@ -84,6 +84,7 @@ import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { primaryServerProvidersAtom } from "../../state/server";
 import { boardWorkerOnlyProviders } from "../../board/workers/cardWorker";
+import { useBoardWorkersCardView } from "../../board/workers/BoardWorkersContext";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -658,8 +659,10 @@ export function BoardPipelineSection() {
   const ownProviders = useAtomValue(primaryServerProvidersAtom);
   // T3O-65: and the instance ids only workers have — a recipe names an id, and
   // it resolves on the worker the card runs on.
-  const workers = useAtomValue(
-    boardEnvironment.workersAtom(environmentId ?? ("" as EnvironmentId)),
+  // The card view keeps the same object across a clone's progress ticks, which
+  // this page streams and the provider lists don't depend on.
+  const workers = useBoardWorkersCardView(
+    useAtomValue(boardEnvironment.workersAtom(environmentId ?? ("" as EnvironmentId))),
   );
   const serverProviders = useMemo(
     () => [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)],

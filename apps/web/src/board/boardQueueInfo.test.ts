@@ -104,7 +104,7 @@ describe("boardQueueInfo with workers (T3O-65)", () => {
     );
   });
 
-  it("says a card waiting for a checkout is setting up, with the clone's progress", () => {
+  it("says a card waiting for a checkout is setting up while it clones", () => {
     const cloning = boardQueueInfo({
       slot: slot(1, 1),
       running: 0,
@@ -113,13 +113,13 @@ describe("boardQueueInfo with workers (T3O-65)", () => {
         kind: "setup",
         worker: "mbp-brent",
         project: "advisor",
-        percent: 32,
+        cloning: true,
         failed: false,
       },
     })!;
     expect(cloning.label).toBe("Queued · setting up");
     expect(cloning.detail).toBe(
-      "advisor is being cloned on mbp-brent (32%). This card starts once it's ready.",
+      "advisor is being cloned on mbp-brent. This card starts once it's ready.",
     );
     const failed = boardQueueInfo({
       slot: slot(1, 1),
@@ -129,7 +129,7 @@ describe("boardQueueInfo with workers (T3O-65)", () => {
         kind: "setup",
         worker: "mbp-brent",
         project: "advisor",
-        percent: null,
+        cloning: false,
         failed: true,
       },
     })!;

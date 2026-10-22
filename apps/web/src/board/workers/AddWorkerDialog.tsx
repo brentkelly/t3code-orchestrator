@@ -52,7 +52,13 @@ export type AddWorkerMode =
 
 /** Why the paste step is showing, which decides its explanation box. */
 type PasteReason =
-  | { readonly kind: "needs-link"; readonly environment: EnvironmentPresentation }
+  | {
+      readonly kind: "needs-link";
+      readonly environment: EnvironmentPresentation;
+      /** Known up front to lack admin access, or the token mint just failed
+          (a refusal or a dropped connection alike). */
+      readonly cause: "no-admin" | "mint-failed";
+    }
   | { readonly kind: "not-listed" }
   | { readonly kind: "no-environments" }
   | { readonly kind: "repair" };
@@ -200,7 +206,11 @@ function AddWorkerFlow(props: {
     const environment = props.mode.kind === "repair" ? repairTarget : picked;
     if (environment === null) return;
     if (candidateOf(environment).kind === "needs-link") {
-      setStep({ kind: "paste", reason: { kind: "needs-link", environment }, canGoBack: true });
+      setStep({
+        kind: "paste",
+        reason: { kind: "needs-link", environment, cause: "no-admin" },
+        canGoBack: true,
+      });
       return;
     }
     setError(null);
@@ -212,7 +222,11 @@ function AddWorkerFlow(props: {
     if (minted._tag !== "Success") {
       // The session lost admin access, or the connection dropped: the link
       // path still works.
-      setStep({ kind: "paste", reason: { kind: "needs-link", environment }, canGoBack: true });
+      setStep({
+        kind: "paste",
+        reason: { kind: "needs-link", environment, cause: "mint-failed" },
+        canGoBack: true,
+      });
       return;
     }
     await submit({
@@ -592,7 +606,10 @@ function pasteWhy(
         subtitle: null,
         box: {
           title: `Needs a pairing link from ${reason.environment.label}`,
-          body: `Your connection to ${reason.environment.label} doesn't have admin access there, so this device can't issue a pairing token for the board. Someone with access to ${reason.environment.label} can create one.`,
+          body:
+            reason.cause === "no-admin"
+              ? `Your connection to ${reason.environment.label} doesn't have admin access there, so this device can't issue a pairing token for the board. Someone with access to ${reason.environment.label} can create one.`
+              : `This device couldn't issue a pairing token on ${reason.environment.label}: the connection may have dropped, or it doesn't have admin access there. Paste a pairing link created on ${reason.environment.label} instead.`,
         },
       };
     case "not-listed":
@@ -663,7 +680,9 @@ function ProgressLine(props: {
       {props.done ? (
         <CheckIcon className="size-3.5 text-muted-foreground" />
       ) : props.active === true ? (
-        <Spinner className="size-3.5" />
+        <span className="flex text-info-foreground">
+          <Spinner size="sm" />
+        </span>
       ) : (
         <span className="size-3.5 rounded-full border border-border" />
       )}

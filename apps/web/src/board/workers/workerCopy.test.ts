@@ -13,6 +13,7 @@ import {
   remoteHost,
   SETUP_JUST_NOW_MS,
   workerLastSeen,
+  workerLastSeenDeadlines,
   workerStatusPresentation,
 } from "./workerCopy";
 
@@ -61,6 +62,24 @@ describe("worker status", () => {
     expect(workerLastSeen(worker("online"), NOW)).toBe("Now");
     expect(workerLastSeen(worker("offline", "2026-10-21T09:58:00.000Z"), NOW)).toBe("2 min ago");
     expect(workerLastSeen(worker("offline"), NOW)).toBe("Never");
+  });
+
+  it("lists every moment an offline worker's last-seen label changes", () => {
+    expect(workerLastSeenDeadlines(worker("online"))).toEqual([]);
+    expect(workerLastSeenDeadlines(worker("offline"))).toEqual([]);
+    const seen = worker("offline", "2026-10-21T09:58:00.000Z");
+    const deadlines = workerLastSeenDeadlines(seen);
+    // Walk a day minute by minute: the label may only differ from the one a
+    // minute earlier if a deadline fell in between.
+    const start = Date.parse("2026-10-21T09:58:00.000Z");
+    let previous = workerLastSeen(seen, start);
+    for (let at = start + 1_000; at < start + 26 * 3_600_000; at += 1_000) {
+      const label = workerLastSeen(seen, at);
+      if (label !== previous) {
+        expect(deadlines.some((deadline) => deadline > at - 1_000 && deadline <= at)).toBe(true);
+      }
+      previous = label;
+    }
   });
 });
 

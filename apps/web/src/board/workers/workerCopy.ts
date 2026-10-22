@@ -83,6 +83,27 @@ export function workerLastSeen(worker: BoardWorkerView, nowMs: number): string {
   });
 }
 
+const HALF_MINUTE_MS = 30_000;
+const HALF_HOUR_MS = 30 * 60_000;
+
+/**
+ * Every moment `workerLastSeen`'s label can change, until it settles on an
+ * absolute time. Its rounding flips minutes on half-minute ages (to 59.5 min)
+ * and hours half a minute before each odd half-hour (to 23.5 h).
+ */
+export function workerLastSeenDeadlines(worker: BoardWorkerView): ReadonlyArray<number> {
+  if (worker.status.state === "online" || worker.status.lastSeenAt === null) return [];
+  const seenMs = Date.parse(worker.status.lastSeenAt);
+  const deadlines: Array<number> = [];
+  for (let age = HALF_MINUTE_MS * 2; age <= 119 * HALF_MINUTE_MS; age += HALF_MINUTE_MS) {
+    deadlines.push(seenMs + age);
+  }
+  for (let age = HALF_HOUR_MS * 3; age <= 47 * HALF_HOUR_MS; age += HALF_HOUR_MS * 2) {
+    deadlines.push(seenMs + age - HALF_MINUTE_MS);
+  }
+  return deadlines;
+}
+
 export interface AddWorkerErrorCopy {
   readonly title: string;
   readonly body: string;

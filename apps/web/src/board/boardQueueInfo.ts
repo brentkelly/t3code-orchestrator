@@ -141,8 +141,8 @@ function withQueueReason(
         headline: "Waiting for a checkout",
         detail: reason.failed
           ? `Cloning ${reason.project} on ${reason.worker} failed. Retry it in Settings → Board → Project checkouts, or pick another worker.`
-          : reason.percent !== null
-            ? `${reason.project} is being cloned on ${reason.worker} (${reason.percent}%). This card starts once it's ready.`
+          : reason.cloning
+            ? `${reason.project} is being cloned on ${reason.worker}. This card starts once it's ready.`
             : `${reason.worker} has no checkout of ${reason.project} yet. This card starts once it has one.`,
       };
   }

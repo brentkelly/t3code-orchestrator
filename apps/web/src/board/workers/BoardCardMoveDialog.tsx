@@ -147,7 +147,7 @@ export function BoardCardMoveDialog(props: {
       return {
         title: `Move ${card.key} to ${to}?`,
         description: "Checking for unpushed work…",
-        content: <Spinner className="size-4" />,
+        content: <Spinner size="md" />,
         actions: null,
       };
     }
@@ -187,7 +187,9 @@ export function BoardCardMoveDialog(props: {
                 ) : failed ? (
                   <CircleIcon className="size-3.5 text-warning-foreground" />
                 ) : (
-                  <Spinner className="size-3.5" />
+                  <span className="flex text-info-foreground">
+                    <Spinner size="sm" />
+                  </span>
                 )}
                 <span>{step.label}</span>
               </li>

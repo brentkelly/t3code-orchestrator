@@ -65,6 +65,9 @@ export function BoardCardWorkerRow(props: {
             workers,
           )
       : boardCardWorkerTrouble(props.shell, workers);
+  // The force-move dialog unmounts without onClose when the trouble clears (the
+  // worker came back); forget it, so a later outage doesn't reopen it unasked.
+  if (trouble === null && forcing) setForcing(false);
   if (!field.shown && trouble === null) return null;
 
   const holds = boardCardHoldsWorktree(card);

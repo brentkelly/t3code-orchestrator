@@ -24,8 +24,8 @@ decisions with their rationale and rejected alternatives. Per-feature specs are 
 **Status:** the board is built and in use. Upstream is synced to `v0.1.0` (`T3O-59`), the first
 orchestration-v2 release; the board reaches threads only through `board/ThreadGatewayV2.ts`. The
 seam inventory and sync runbook are in `docs/t3o/seams.md`. The distributed board (`T3O-60`,
-overview D19–D22) is being built: one central server hosts the board and dials other T3o servers
-as workers.
+overview D19–D22) is built: one central server hosts the board and dials other T3o servers as
+workers. The user-facing guide is `docs/user/board-workers.md`.
 
 **Status colours are a fixed vocabulary.** Green means done and only done, blue means running,
 violet (`--attention`) means waiting on a human, amber means blocked. Read
