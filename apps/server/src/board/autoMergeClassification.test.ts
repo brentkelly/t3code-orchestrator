@@ -70,10 +70,12 @@ describe("classifyBoardAutoMergeRefusal (T3O-38, D6)", () => {
     );
   });
 
-  it("calls a block with everything green an approval, not a wait", () => {
+  it("waits on a green refusal the detail cannot explain, rather than guessing an approval (T3O-67)", () => {
+    // A merge refused for the wrong credential looks exactly like this. Calling
+    // it an approval stopped the ladder on a reason that was not true.
     expect(
       classifyBoardAutoMergeRefusal(state({ checks: checks({ passed: 4 }) })).classification,
-    ).toBe("approval-required");
+    ).toBe("soft");
   });
 
   it("names a branch that is behind its base, which needs a rebase not a retry", () => {
