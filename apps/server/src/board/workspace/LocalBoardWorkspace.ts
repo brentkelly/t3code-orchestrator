@@ -363,15 +363,6 @@ export function makeLocalBoardWorkspace(
           detail: `${cwd} has no remote to fetch '${branch}' from.`,
         });
       }
-      // What this checkout last saw on the remote, read BEFORE the fetch
-      // moves it: a local tip contained in it was pushed from here, even if
-      // the branch has since been rebased and force-pushed elsewhere.
-      const lastSeenTip = yield* gitRef("boardCardWorktree.fromRemote.lastSeen", cwd, [
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        `refs/remotes/${remoteName}/${branch}`,
-      ]);
       const fetched = yield* fetchRemoteBranch(
         "boardCardWorktree.fromRemote.fetch",
         cwd,
@@ -399,24 +390,34 @@ export function makeLocalBoardWorkspace(
       if (local !== "" && local !== remoteTip) {
         // A local copy left behind by an earlier placement here (A→B→A keeps
         // the branch ref on retire) is stale: what was pushed since, possibly
-        // rebased, replaces it. Commits only this copy holds — in neither the
-        // remote tip nor what the remote held when last seen — are never lost.
-        const containedIn = (tip: string) =>
-          git
-            .execute({
-              operation: "boardCardWorktree.fromRemote.ancestor",
-              cwd,
-              args: ["merge-base", "--is-ancestor", local, tip],
-              timeoutMs: 10_000,
-              allowNonZeroExit: true,
-            })
-            .pipe(
-              Effect.map((result) => result.exitCode === 0),
-              Effect.mapError(gitFailed(operation)),
-            );
-        const pushed =
-          (yield* containedIn(remoteTip)) ||
-          (lastSeenTip !== "" && (yield* containedIn(lastSeenTip)));
+        // rebased, replaces it. It counts as pushed when every commit it holds
+        // is in some tip the remote-tracking ref has had: its reflog keeps the
+        // pre-rewrite tip even after a fetch (this move's own check, or any
+        // plain fetch here) has moved the ref on. Commits only this copy
+        // holds are never lost.
+        const seenTips = (yield* gitRef("boardCardWorktree.fromRemote.reflog", cwd, [
+          "reflog",
+          "show",
+          "--format=%H",
+          `refs/remotes/${remoteName}/${branch}`,
+        ]))
+          .split("\n")
+          .filter((sha) => sha !== "");
+        const unpushed = yield* git
+          .execute({
+            operation: "boardCardWorktree.fromRemote.unpushed",
+            cwd,
+            args: [
+              "rev-list",
+              "--max-count=1",
+              local,
+              "--not",
+              ...new Set([remoteTip, ...seenTips].filter((sha) => sha !== "")),
+            ],
+            timeoutMs: 10_000,
+          })
+          .pipe(Effect.mapError(gitFailed(operation)));
+        const pushed = unpushed.stdout.trim() === "";
         if (!pushed) {
           return yield* new BoardWorkerGitError({
             operation,

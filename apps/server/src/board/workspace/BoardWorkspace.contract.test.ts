@@ -503,12 +503,24 @@ describe("BoardWorkspace contract (T3O-64)", () => {
       yield* git(onB.path, ["push", "--force", "origin", branch]);
       yield* retire(workerB, onB.path);
 
+      // The move's own check (and any plain fetch on A) moves A's tracking
+      // ref to the rewritten tip before A provisions from it.
+      assert.strictEqual((yield* workerA.remoteBranchTip({ projectId, branch }))?.sha, rewritten);
+
       const backOnA = yield* workerA.provisionWorktreeFromRemoteBranch({
         projectId,
         branch,
         baseRefName: "main",
       });
       assert.strictEqual(yield* git(backOnA.path, ["rev-parse", "HEAD"]), rewritten);
+
+      // Commits only A holds are still refused after the rewrite.
+      yield* commitFile(backOnA.path, "only-a.txt", "a\n", "not pushed");
+      yield* retire(workerA, backOnA.path);
+      const diverged = yield* Effect.flip(
+        workerA.provisionWorktreeFromRemoteBranch({ projectId, branch, baseRefName: "main" }),
+      );
+      assert.include(detailOf(diverged), "has commits origin does not");
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
