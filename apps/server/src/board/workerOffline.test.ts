@@ -31,6 +31,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
+  boardTurnStartRequested,
   codexStep,
   makeBoardCard,
   readyWorktree,
@@ -40,7 +41,7 @@ import {
   withGovernor,
   type Harness,
 } from "./supervisorHarness.testkit.ts";
-import { UNKNOWN_THREAD_STATE } from "./ThreadGateway.ts";
+import { ThreadReadError, UNKNOWN_THREAD_STATE } from "./ThreadGateway.ts";
 import { aliveThread, idleThread } from "./threadGateway.testkit.ts";
 import type { BoardPlacementShape } from "./workers/BoardPlacement.ts";
 
@@ -317,6 +318,85 @@ it.effect("a drop and reconnect both landing before the supervisor looks is stil
           yield* Effect.yieldNow;
           yield* Effect.yieldNow;
           yield* h.reactor.drain;
+          assert.strictEqual(yield* recoveries(h), 1);
+          assert.strictEqual((yield* step(h))?.attempt, 2);
+          assert.strictEqual(yield* spawns(h), 0);
+        }),
+    );
+  }),
+);
+
+it.effect("a reconcile that fails partway still drops the held signals it already decided", () =>
+  Effect.gen(function* () {
+    const { ref, placement } = yield* makePlacement(true);
+    const otherCardId = BoardCardId.make("card-2");
+    const otherThreadId = ThreadId.make("thread-w1-other");
+    const otherCard: BoardCard = {
+      ...placedCard(),
+      ...makeBoardCard({
+        id: "card-2",
+        stage: "building",
+        orderKey: "n",
+        worktree: readyWorktree("card-2"),
+        placedWorkerId: W1,
+      }),
+      threadLinks: [{ ...placedCard().threadLinks[0]!, threadId: otherThreadId }],
+    };
+    /** The other card's thread can't be read once: the worker went again. */
+    const failOtherRead = yield* Ref.make(false);
+    yield* withGovernor(
+      {
+        board: {
+          ...board(),
+          cards: [placedCard(), otherCard],
+          stepStates: [
+            runningStep(),
+            runningStep({ cardId: otherCardId, threadId: otherThreadId }),
+          ],
+        },
+        settings,
+        placement,
+        initialShells: new Map([
+          [String(threadId), aliveThread(String(threadId))],
+          [String(otherThreadId), aliveThread(String(otherThreadId))],
+        ]),
+        gateway: (local) => ({
+          ...local,
+          threadState: (id) =>
+            id === otherThreadId
+              ? Ref.getAndSet(failOtherRead, false).pipe(
+                  Effect.flatMap((fail) =>
+                    fail
+                      ? Effect.fail(
+                          new ThreadReadError({ operation: "threadState", detail: "gone" }),
+                        )
+                      : local.threadState(id),
+                  ),
+                )
+              : local.threadState(id),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          yield* setOnline(h, ref, false);
+          // While out of reach the board's last turn started and the thread
+          // then died; both signals are held.
+          yield* h.pumpRuntime(boardTurnStartRequested(threadId));
+          yield* Ref.update(h.shells, (shells) =>
+            new Map(shells).set(String(threadId), idleThread(String(threadId))),
+          );
+          yield* h.pumpRuntime(turnCompleted(threadId, "turn-live"));
+          yield* Ref.set(failOtherRead, true);
+          yield* setOnline(h, ref, true);
+          // The dead step was recovered onto its backoff rung; the other
+          // couldn't be read, so the worker is not reconciled yet.
+          assert.strictEqual(yield* recoveries(h), 1);
+          assert.strictEqual((yield* step(h))?.status, "stalled");
+          yield* setOnline(h, ref, true);
+          // The held turn start predates that recovery: it doesn't wake the
+          // step off its rung, and nothing is recovered twice.
+          assert.strictEqual((yield* step(h))?.status, "stalled");
           assert.strictEqual(yield* recoveries(h), 1);
           assert.strictEqual((yield* step(h))?.attempt, 2);
           assert.strictEqual(yield* spawns(h), 0);

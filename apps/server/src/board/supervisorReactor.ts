@@ -1546,6 +1546,11 @@ const make = Effect.gen(function* () {
   const droppedWorkers = new Map<BoardWorkerId, number>();
   /** Signals from a worker not yet reconciled, released after it is. */
   const heldSignals = new Map<BoardWorkerId, Array<ThreadSignal>>();
+  /** Threads a reconcile of each worker settled, recovered or parked, kept
+      across a pass that failed partway until the held signals are released:
+      the retry reads those steps as already handled, so only this remembers
+      that their held signals predate what was decided. */
+  const decidedThreads = new Map<BoardWorkerId, Set<string>>();
   /** A held-signal backlog's ceiling. Reconcile reads the truth anyway, so a
       dropped signal costs nothing it would not re-learn. */
   const HELD_SIGNALS_MAX = 1000;
@@ -1953,6 +1958,7 @@ const make = Effect.gen(function* () {
     function* (workerId: BoardWorkerId) {
       reconciledWorkers.delete(workerId);
       heldSignals.delete(workerId);
+      decidedThreads.delete(workerId);
       const board = yield* readBoard;
       for (const state of boardNonTerminalStepStates(board)) {
         if (state.status !== "running" && state.status !== "completing") continue;
@@ -8815,10 +8821,10 @@ const make = Effect.gen(function* () {
    * Reconcile the steps placed on one worker, as it comes back (T3O-66, D22):
    * the boot pass, scoped to that worker, run before any of its held signals.
    * Threads match by id, so a thread still alive there is watched, never
-   * respawned. Null when a step's thread could not be read — the worker went
-   * again — so the caller tries again rather than treat it as reconciled;
-   * otherwise the threads whose steps it settled, recovered or parked, whose
-   * held signals it has already accounted for.
+   * respawned. False when a step's thread could not be read — the worker went
+   * again — so the caller tries again rather than treat it as reconciled. The
+   * threads whose steps it settled, recovered or parked, whose held signals it
+   * has already accounted for, are added to `decidedThreads` either way.
    */
   const reconcileWorker = Effect.fn("board-supervisor-reconcileWorker")(function* (
     workerId: BoardWorkerId,
@@ -8826,7 +8832,8 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     let whole = true;
     const advanced: BoardCard["id"][] = [];
-    const decidedThreads = new Set<string>();
+    const decided = decidedThreads.get(workerId) ?? new Set<string>();
+    decidedThreads.set(workerId, decided);
     for (const state of boardNonTerminalStepStates(board)) {
       if (slotKeyFor(board, state).workerId !== workerId) continue;
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
@@ -8850,11 +8857,11 @@ const make = Effect.gen(function* () {
         state.threadId !== null &&
         (result === "advance" || result === "recover" || result === "park")
       ) {
-        decidedThreads.add(String(state.threadId));
+        decided.add(String(state.threadId));
       }
     }
     yield* kickoffAdvanced(advanced);
-    return whole ? decidedThreads : null;
+    return whole;
   });
 
   /**
@@ -8894,13 +8901,14 @@ const make = Effect.gen(function* () {
       }
     }
     // A removed worker is forgotten; its cards are the removal's business.
-    for (const map of [unreachableSince, offlineIntervals, heldSignals]) {
+    for (const map of [unreachableSince, offlineIntervals, heldSignals, decidedThreads]) {
       for (const workerId of map.keys()) if (!registered.has(workerId)) map.delete(workerId);
     }
     for (const workerId of online) {
       if (reconciledWorkers.has(workerId)) continue;
-      const decidedThreads = yield* reconcileWorker(workerId);
-      if (decidedThreads === null) continue;
+      if (!(yield* reconcileWorker(workerId))) continue;
+      const decided = decidedThreads.get(workerId) ?? new Set<string>();
+      decidedThreads.delete(workerId);
       const since = unreachableSince.get(workerId);
       if (since !== undefined) {
         offlineIntervals.set(workerId, [
@@ -8913,7 +8921,7 @@ const make = Effect.gen(function* () {
       const held = heldSignals.get(workerId) ?? [];
       heldSignals.delete(workerId);
       for (const signal of held) {
-        if (decidedThreads.has(String(signal.threadId))) continue;
+        if (decided.has(String(signal.threadId))) continue;
         yield* processThreadSignal(signal).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("board supervisor: a held signal failed", {
