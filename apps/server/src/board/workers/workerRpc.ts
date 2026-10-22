@@ -85,6 +85,11 @@ export const boardWorkerRpcHandlers = (currentSession: AuthenticatedSession) =>
           BOARD_WORKERS_WS_METHODS.remove,
           Effect.flatMap(workers, (service) => service.remove(input.workerId)),
         ),
+      [BOARD_WORKERS_WS_METHODS.removePreview]: (input: BoardWorkerIdInput) =>
+        authorized(
+          BOARD_WORKERS_WS_METHODS.removePreview,
+          Effect.flatMap(workers, (service) => service.removePreview(input.workerId)),
+        ),
       [BOARD_WORKERS_WS_METHODS.setDefault]: (input: BoardWorkersSetDefaultInput) =>
         authorized(
           BOARD_WORKERS_WS_METHODS.setDefault,

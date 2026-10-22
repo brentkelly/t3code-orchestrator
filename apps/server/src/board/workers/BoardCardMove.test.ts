@@ -103,6 +103,7 @@ const makeCard = (overrides: Partial<BoardCard> = {}): BoardCard => ({
   pinnedWorkerId: null,
   placedWorkerId: BOARD_LOCAL_WORKER_ID,
   workerMove: null,
+  placementOrphaned: null,
   worktree: readyWorktree,
   pullRequest: null,
   pullRequestHistory: [],

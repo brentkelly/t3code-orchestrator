@@ -1200,6 +1200,19 @@ export const BoardCardWorkerMove = Schema.Struct({
 });
 export type BoardCardWorkerMove = typeof BoardCardWorkerMove.Type;
 
+/**
+ * A card whose worker was removed while it had work there (T3O-66, D22): a
+ * worktree, or a step running. The card holds with "Worker removed — move this
+ * card" until it is moved, or the worker is added back. The label is kept
+ * because the removed worker is no longer in the board's worker list.
+ */
+export const BoardCardPlacementOrphan = Schema.Struct({
+  workerId: BoardWorkerId,
+  workerLabel: TrimmedNonEmptyString,
+  orphanedAt: IsoDateTime,
+});
+export type BoardCardPlacementOrphan = typeof BoardCardPlacementOrphan.Type;
+
 export const BoardCard = Schema.Struct({
   id: BoardCardId,
   /** Generated `<prefix>-<cardNumber>`, e.g. "T3-195" (D14). */
@@ -1449,6 +1462,12 @@ export const BoardCard = Schema.Struct({
   ),
   /** A move to another worker in progress, or one that failed (T3O-65). */
   workerMove: Schema.NullOr(BoardCardWorkerMove).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** The card's worker was removed while it had work there (T3O-66, D22).
+      Decodes to null on every event written before, matching migration 049's
+      NULL column. */
+  placementOrphaned: Schema.NullOr(BoardCardPlacementOrphan).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
@@ -1708,6 +1727,11 @@ export const BOARD_STEP_STALLED_REASONS = [
   // runs the step elsewhere or on another provider. Clears when the card is
   // pinned to a worker that has it, its model changes, or the instance appears.
   "provider-not-on-worker",
+  // The card's worker was removed from the board (T3O-66, D22), or the card
+  // was force-moved off a worker it could not reach, while this step ran
+  // there. Its thread was stopped if the worker answered, and its slot
+  // released. Clears when the card is moved, or the worker is added back.
+  "worker-removed",
 ] as const;
 export const BoardCardStepStalledReason = Schema.Literals(BOARD_STEP_STALLED_REASONS);
 export type BoardCardStepStalledReason = typeof BoardCardStepStalledReason.Type;
@@ -2106,6 +2130,10 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
       provisioning failed. The thread list draws its "Moved from" divider at
       the `done` row. */
   "card-worker-moved",
+  /** The card's worker was removed from the board, or added back (T3O-66,
+      D22): it fell back to the default worker, was left holding for a move,
+      or was reattached. */
+  "card-worker-removal",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -2210,8 +2238,16 @@ export const BoardCardActivityPayload = Schema.Struct({
   workerId: Schema.optionalKey(Schema.NullOr(BoardWorkerId)),
   fromWorkerId: Schema.optionalKey(Schema.NullOr(BoardWorkerId)),
   toWorkerId: Schema.optionalKey(BoardWorkerId),
-  /** card-worker-moved: which step of the move this row records. */
-  movePhase: Schema.optionalKey(Schema.Literals(["start", "retired", "done", "failed"])),
+  /** card-worker-moved: which step of the move this row records. `abandoned`
+      is a force-move leaving the old worktree on a worker it couldn't reach;
+      `restarted` is one with no remote branch, starting Build over from base
+      (T3O-66). */
+  movePhase: Schema.optionalKey(
+    Schema.Literals(["start", "retired", "abandoned", "restarted", "done", "failed"]),
+  ),
+  /** card-worker-removal (T3O-66): what the removal, or the re-add, did. The
+      worker's label rides in `detail`, since a removed worker has none left. */
+  removalOutcome: Schema.optionalKey(Schema.Literals(["fallback", "orphaned", "reattached"])),
 });
 export type BoardCardActivityPayload = typeof BoardCardActivityPayload.Type;
 
@@ -3300,6 +3336,12 @@ function boardStalledWords(
         label: "Provider missing",
         detail:
           "This step's provider isn't on the card's worker. The step hasn't started. Move the card to a worker that has it, or pick a model the worker offers.",
+      };
+    case "worker-removed":
+      return {
+        label: "Worker removed — move this card",
+        detail:
+          "This step was running on a worker the board no longer uses. Move the card, and it continues from its pushed branch.",
       };
   }
 }
@@ -4595,6 +4637,17 @@ export type BoardCardPlaceCommand = typeof BoardCardPlaceCommand.Type;
  *   worktree is not restored: its branch is safe on the remote. A failure
  *   before `retired` (the retire itself failed) closes the move instead, and
  *   the card stays on its source with its worktree.
+ *
+ * A FORCE-move (T3O-66, D22) leaves a worker the board can't reach — offline,
+ * or removed — so nothing there can be checked or retired:
+ *
+ * - `start` with `force` is allowed while a step "runs" there, and over a
+ *   worktree the board can't see.
+ * - `abandoned` replaces `retired`: the old worktree is left on that worker,
+ *   untouched and recorded as abandoned; the card is unassigned.
+ * - `restarted` replaces `abandoned` when the branch never reached the
+ *   remote: the card's branch is forgotten, so Build starts over from its
+ *   base on the target, and the move is done. Brief, plan and threads stay.
  */
 export const BoardCardMoveWorkerCommand = Schema.Struct({
   type: Schema.Literal("board.card.move-worker"),
@@ -4605,8 +4658,15 @@ export const BoardCardMoveWorkerCommand = Schema.Struct({
       phase: Schema.Literal("start"),
       toWorkerId: BoardWorkerId,
       sha: Schema.NullOr(TrimmedNonEmptyString),
+      force: Schema.optionalKey(Schema.Boolean),
     }),
     Schema.Struct({ phase: Schema.Literal("retired") }),
+    Schema.Struct({
+      phase: Schema.Literal("abandoned"),
+      /** Where the abandoned worktree is left, on the old worker. */
+      worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    }),
+    Schema.Struct({ phase: Schema.Literal("restarted") }),
     Schema.Struct({ phase: Schema.Literal("done"), worktreePath: TrimmedNonEmptyString }),
     Schema.Struct({ phase: Schema.Literal("failed"), error: TrimmedNonEmptyString }),
   ]),
@@ -5577,6 +5637,27 @@ export const BoardCardWorkerMoveRecordedPayload = Schema.Struct({
   card: BoardCard,
 });
 export type BoardCardWorkerMoveRecordedPayload = typeof BoardCardWorkerMoveRecordedPayload.Type;
+
+/**
+ * What removing a worker did to one card, or what adding it back did (T3O-66,
+ * D22), decided with `board.worker-removed` / `board.worker-registered`:
+ *
+ * - `fallback` — no worktree and nothing running: the pin and the placement
+ *   are cleared, so the card follows the default worker. The one board-driven
+ *   placement change (D18).
+ * - `orphaned` — a worktree or a running step: the card holds with "Worker
+ *   removed — move this card" (`placementOrphaned`).
+ * - `reattached` — the worker was added back with the same environment id,
+ *   and the card is placed there again.
+ */
+export const BoardCardWorkerRemovalPayload = Schema.Struct({
+  cardId: BoardCardId,
+  workerId: BoardWorkerId,
+  workerLabel: TrimmedNonEmptyString,
+  outcome: Schema.Literals(["fallback", "orphaned", "reattached"]),
+  card: BoardCard,
+});
+export type BoardCardWorkerRemovalPayload = typeof BoardCardWorkerRemovalPayload.Type;
 // Worktree lifecycle payloads (t3o-09). Each carries the whole post-change
 // card, like every other non-created board event, so the shell-delta mapping
 // stays a pure function of the event and the projectors upsert exactly what
@@ -6277,6 +6358,11 @@ export const BoardCardShell = Schema.Struct({
       toWorkerId: BoardWorkerId,
     }),
   ),
+  /** The card's worker was removed while it had work there (T3O-66): Worker
+      removed — move this card, amber. On the aggregate, so both producers
+      carry it; omitted otherwise. The label is the removed worker's, which
+      the board's worker list no longer has. */
+  placementOrphaned: Schema.optionalKey(Schema.Struct({ workerLabel: TrimmedNonEmptyString })),
   /** Which limit holds a queued card (T3O-65, D11). Present only beside
       `queued`; rides the snapshot and the `card-queued` delta like `queued`
       itself, and card deltas preserve the last known value. */
@@ -6591,6 +6677,8 @@ export function makeBoardCardShell(input: {
       local-only board's shell is byte-identical. */
   readonly workerId?: BoardWorkerId | null | undefined;
   readonly workerMove?: Pick<BoardCardWorkerMove, "status" | "toWorkerId"> | null | undefined;
+  /** T3O-66: the removed worker the card was left holding on. */
+  readonly placementOrphaned?: Pick<BoardCardPlacementOrphan, "workerLabel"> | null | undefined;
   /** Which limit holds a queued card (T3O-65). Real on the snapshot, absent
       on card deltas (the client keeps the last known value). */
   readonly queuedBy?: BoardStepQueuedBy | null | undefined;
@@ -6689,6 +6777,9 @@ export function makeBoardCardShell(input: {
       : {
           workerMove: { status: input.workerMove.status, toWorkerId: input.workerMove.toWorkerId },
         }),
+    ...(input.placementOrphaned == null
+      ? {}
+      : { placementOrphaned: { workerLabel: input.placementOrphaned.workerLabel } }),
     ...(input.queued === true && input.queuedBy != null ? { queuedBy: input.queuedBy } : {}),
     // The review slice (t3o-22, D7). Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
@@ -6776,6 +6867,7 @@ export function boardCardShellFromCard(
     worktreeKeptReason: card.worktree?.reclaimBlockedReason ?? null,
     workerId: boardCardBoundWorkerId(card),
     workerMove: card.workerMove,
+    placementOrphaned: card.placementOrphaned,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined
@@ -7243,6 +7335,8 @@ export const BOARD_EVENT_TYPES = [
   "board.card-worker-pinned",
   "board.card-placed",
   "board.card-worker-move-recorded",
+  // T3O-66: a card's worker removed, or added back.
+  "board.card-worker-removal",
 ] as const;
 
 export const BOARD_SHELL_STREAM_EVENTS = [
@@ -7593,6 +7687,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       type: Schema.Literal("board.card-worker-move-recorded"),
       payload: BoardCardWorkerMoveRecordedPayload,
     }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-worker-removal"),
+      payload: BoardCardWorkerRemovalPayload,
+    }),
   ] as const;
 }
 
@@ -7922,6 +8021,15 @@ const BOARD_CARD_MOVE_REFUSALS = [
     branch: TrimmedNonEmptyString,
   }),
   Schema.Struct({ outcome: Schema.Literal("source-unreachable"), workerId: BoardWorkerId }),
+  /** A force-move (T3O-66) whose branch isn't on the remote: nothing pushed to
+      continue from, so the card can only restart Build from `baseRefName`,
+      behind a second confirmation. */
+  Schema.Struct({
+    outcome: Schema.Literal("no-remote-branch"),
+    workerId: BoardWorkerId,
+    branch: TrimmedNonEmptyString,
+    baseRefName: TrimmedNonEmptyString,
+  }),
   Schema.Struct({ outcome: Schema.Literal("refused"), detail: TrimmedNonEmptyString }),
 ] as const;
 
@@ -7972,11 +8080,16 @@ export const BoardAskCardAgentToPushResult = Schema.Union(BOARD_ASK_AGENT_TO_PUS
 export type BoardAskCardAgentToPushResult = typeof BoardAskCardAgentToPushResult.Type;
 
 /** `board.cardWorkerMove`'s payload: one of the Move dialog's actions, with
-    the worker it moves to for `check` and `move`. */
+    the worker it moves to for `check` and `move`. `force` is a force-move off
+    a worker that is offline or removed (T3O-66), which abandons whatever the
+    remote lacks; `restartFromBase` is its second confirmation, when the branch
+    was never pushed. */
 export const BoardCardWorkerMoveRequest = Schema.Struct({
   action: Schema.Literals(["check", "move", "ask-push"]),
   cardId: BoardCardId,
   toWorkerId: Schema.optionalKey(BoardWorkerId),
+  force: Schema.optionalKey(Schema.Boolean),
+  restartFromBase: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardCardWorkerMoveRequest = typeof BoardCardWorkerMoveRequest.Type;
 
@@ -10366,6 +10479,38 @@ export function boardCardEffectiveWorkerId(
 export function boardCardBoundWorkerId(card: BoardCardPlacementFields): BoardWorkerId | null {
   if (boardCardHoldsWorktree(card)) return card.placedWorkerId ?? BOARD_LOCAL_WORKER_ID;
   return card.pinnedWorkerId;
+}
+
+/**
+ * What removing `workerId` does to a card (T3O-66, D22), or null when the
+ * card has nothing there. The decider applies it and the confirm dialog lists
+ * it, so both say the same thing:
+ *
+ * - `orphaned` — the card holds a worktree there, or its live step is running
+ *   there: it holds until a human moves it.
+ * - `fallback` — it is only pinned (or was last placed) there: it follows the
+ *   default worker from now on.
+ */
+export function boardCardWorkerRemovalOutcome(
+  card: Pick<
+    BoardCard,
+    "id" | "worktree" | "pinnedWorkerId" | "placedWorkerId" | "threadLinks" | "placementOrphaned"
+  >,
+  liveStep: Pick<BoardCardStepState, "status" | "threadId"> | null,
+  workerId: BoardWorkerId,
+): "orphaned" | "fallback" | null {
+  if (card.placementOrphaned !== null) return null;
+  const stepThere =
+    liveStep !== null &&
+    (liveStep.status === "running" || liveStep.status === "completing") &&
+    liveStep.threadId !== null &&
+    card.threadLinks.some(
+      (link) => link.threadId === liveStep.threadId && boardThreadLinkWorkerId(link) === workerId,
+    );
+  if (stepThere) return "orphaned";
+  if (boardCardHoldsWorktree(card) && card.placedWorkerId === workerId) return "orphaned";
+  if (card.pinnedWorkerId === workerId || card.placedWorkerId === workerId) return "fallback";
+  return null;
 }
 
 /**

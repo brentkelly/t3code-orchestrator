@@ -29,6 +29,7 @@ export const BoardWorkersLocalOnlyTest = Layer.succeed(BoardWorkers, {
   add: () => Effect.fail(refused),
   repair: () => Effect.fail(refused),
   remove: () => Effect.fail(refusedAction),
+  removePreview: () => Effect.fail(refusedAction),
   setDefault: () => Effect.fail(refusedAction),
   setupProject: () => Effect.fail(refusedAction),
   dismissSetup: () => Effect.void,

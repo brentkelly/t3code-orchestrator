@@ -18,6 +18,7 @@ import {
   BoardCardStepAwaitingReason,
   BoardCardStepStalledReason,
   BoardCardWorkerMove,
+  BoardCardPlacementOrphan,
   type BoardStepQueuedBy,
   BoardProviderLimit,
   BoardWorker,
@@ -177,6 +178,9 @@ const BoardCardDbRow = Schema.Struct({
   pinnedWorkerId: BoardCard.fields.pinnedWorkerId,
   placedWorkerId: BoardCard.fields.placedWorkerId,
   workerMove: Schema.NullOr(Schema.fromJsonString(BoardCardWorkerMove)),
+  /** NULL before migration 049 and for every card whose worker is still on
+      the board (T3O-66). */
+  placementOrphaned: Schema.NullOr(Schema.fromJsonString(BoardCardPlacementOrphan)),
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -603,6 +607,8 @@ const BoardCardShellDbRow = Schema.Struct({
   workerId: BoardCard.fields.pinnedWorkerId,
   workerMoveStatus: Schema.NullOr(Schema.Literals(["moving", "failed"])),
   workerMoveTo: BoardCard.fields.pinnedWorkerId,
+  /** The removed worker's label, for Worker removed (T3O-66). */
+  orphanedWorkerLabel: Schema.NullOr(Schema.String),
   /** The review-summary CACHE (t3o-22, D7); NULL for a card with no review
       history. Its `outcome` is provisional — `resolveBoardCardReviewOutcome`
       settles it against the card's live step at assembly. */
@@ -666,6 +672,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     pinnedWorkerId: card.pinnedWorkerId,
     placedWorkerId: card.placedWorkerId,
     workerMove: card.workerMove,
+    placementOrphaned: card.placementOrphaned,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
@@ -720,6 +727,7 @@ function rowToBoardCard(
     pinnedWorkerId: row.pinnedWorkerId,
     placedWorkerId: row.placedWorkerId,
     workerMove: row.workerMove,
+    placementOrphaned: row.placementOrphaned,
     blocked: row.blocked !== 0,
     threadLinks,
     attachments,
@@ -786,6 +794,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pinned_worker_id,
         placed_worker_id,
         worker_move,
+        placement_orphaned,
         blocked,
         archived_at,
         created_at,
@@ -820,6 +829,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.pinnedWorkerId},
         ${row.placedWorkerId},
         ${row.workerMove},
+        ${row.placementOrphaned},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -854,6 +864,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pinned_worker_id = excluded.pinned_worker_id,
         placed_worker_id = excluded.placed_worker_id,
         worker_move = excluded.worker_move,
+        placement_orphaned = excluded.placement_orphaned,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -898,6 +909,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pinned_worker_id AS "pinnedWorkerId",
         placed_worker_id AS "placedWorkerId",
         worker_move AS "workerMove",
+        placement_orphaned AS "placementOrphaned",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -1035,6 +1047,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         END AS "workerId",
         json_extract(worker_move, '$.status') AS "workerMoveStatus",
         json_extract(worker_move, '$.toWorkerId') AS "workerMoveTo",
+        json_extract(placement_orphaned, '$.workerLabel') AS "orphanedWorkerLabel",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -1124,6 +1137,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         END AS "workerId",
         json_extract(worker_move, '$.status') AS "workerMoveStatus",
         json_extract(worker_move, '$.toWorkerId') AS "workerMoveTo",
+        json_extract(placement_orphaned, '$.workerLabel') AS "orphanedWorkerLabel",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -1222,6 +1236,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         pinned_worker_id AS "pinnedWorkerId",
         placed_worker_id AS "placedWorkerId",
         worker_move AS "workerMove",
+        placement_orphaned AS "placementOrphaned",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -3188,6 +3203,26 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
             fromWorkerId: event.payload.move.fromWorkerId,
             toWorkerId: event.payload.move.toWorkerId,
             ...(event.payload.step.phase === "failed" ? { detail: event.payload.step.error } : {}),
+            ...(event.payload.step.phase === "abandoned" && event.payload.step.worktreePath !== null
+              ? { detail: event.payload.step.worktreePath }
+              : {}),
+          },
+          threadId: null,
+        });
+        return;
+
+      case "board.card-worker-removal":
+        // The one board-driven placement change (T3O-66, D22) earns its row,
+        // and so do the hold it leaves and the re-add that ends it.
+        yield* upsertCard(event.payload.card);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-worker-removal",
+          payload: {
+            workerId: event.payload.workerId,
+            detail: event.payload.workerLabel,
+            removalOutcome: event.payload.outcome,
           },
           threadId: null,
         });
@@ -3608,6 +3643,8 @@ function boardShellCards(
             row.workerMoveStatus === null || row.workerMoveTo === null
               ? null
               : { status: row.workerMoveStatus, toWorkerId: row.workerMoveTo },
+          placementOrphaned:
+            row.orphanedWorkerLabel === null ? null : { workerLabel: row.orphanedWorkerLabel },
           queuedBy: queueReasonByCard.get(row.cardId) ?? null,
           // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
           // against `stepRunning`, which every shell already holds — resolving
@@ -3696,6 +3733,8 @@ function boardArchivedShellCards(
               row.workerMoveStatus === null || row.workerMoveTo === null
                 ? null
                 : { status: row.workerMoveStatus, toWorkerId: row.workerMoveTo },
+            placementOrphaned:
+              row.orphanedWorkerLabel === null ? null : { workerLabel: row.orphanedWorkerLabel },
             archivedAt: row.archivedAt,
             activeThreadId: null,
           }),

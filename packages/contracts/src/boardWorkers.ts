@@ -443,6 +443,8 @@ export const BOARD_WORKERS_WS_METHODS = {
   repair: "board.workers.repair",
   /** Revoke the board's access on the worker if reachable, then forget it. */
   remove: "board.workers.remove",
+  /** The cards removing a worker would affect, for its confirm dialog. */
+  removePreview: "board.workers.removePreview",
   /** Make an online worker the default. */
   setDefault: "board.workers.setDefault",
   /** Clone a board project's repository onto a worker. */
@@ -510,6 +512,33 @@ export const BoardWorkersDismissSetupInput = Schema.Struct({
   workerId: EnvironmentId,
 });
 export type BoardWorkersDismissSetupInput = typeof BoardWorkersDismissSetupInput.Type;
+
+/** One card in Remove worker's confirm dialog (prototype 1.11). `detail` is
+    the row's right-hand text: its stage, "Build step running", or "Has
+    worktree". */
+export const BoardWorkerRemovePreviewCard = Schema.Struct({
+  cardId: TrimmedNonEmptyString,
+  key: TrimmedNonEmptyString,
+  title: Schema.String,
+  detail: TrimmedNonEmptyString,
+});
+export type BoardWorkerRemovePreviewCard = typeof BoardWorkerRemovePreviewCard.Type;
+
+/**
+ * What removing a worker would do to its cards (T3O-66, D22): the cards with
+ * no worktree yet move to the default worker; the ones with a worktree or a
+ * running step need moving by hand, and hold until they are. Archived cards
+ * are not listed.
+ */
+export const BoardWorkerRemovePreview = Schema.Struct({
+  workerId: EnvironmentId,
+  workerLabel: TrimmedNonEmptyString,
+  /** The default worker the first group falls back to. */
+  defaultWorkerLabel: TrimmedNonEmptyString,
+  toDefault: Schema.Array(BoardWorkerRemovePreviewCard),
+  byHand: Schema.Array(BoardWorkerRemovePreviewCard),
+});
+export type BoardWorkerRemovePreview = typeof BoardWorkerRemovePreview.Type;
 
 /** The success summary Add worker shows (prototype 1.6). */
 export const BoardWorkerAddResult = Schema.Struct({
@@ -582,6 +611,11 @@ export const BOARD_WORKERS_RPCS = [
     success: Schema.Struct({ revoked: Schema.Boolean }),
     error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WORKERS_WS_METHODS.removePreview, {
+    payload: BoardWorkerIdInput,
+    success: BoardWorkerRemovePreview,
+    error: Schema.Union([BoardWorkerActionError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WORKERS_WS_METHODS.setDefault, {
     payload: BoardWorkersSetDefaultInput,
     success: Schema.Void,
@@ -616,6 +650,8 @@ export const BOARD_WORKER_RPC_SCOPES = {
   [BOARD_WORKERS_WS_METHODS.add]: AuthOrchestrationOperateScope,
   [BOARD_WORKERS_WS_METHODS.repair]: AuthOrchestrationOperateScope,
   [BOARD_WORKERS_WS_METHODS.remove]: AuthOrchestrationOperateScope,
+  // A read of the board's own cards, ahead of the write it previews.
+  [BOARD_WORKERS_WS_METHODS.removePreview]: AuthOrchestrationReadScope,
   [BOARD_WORKERS_WS_METHODS.setDefault]: AuthOrchestrationOperateScope,
   [BOARD_WORKERS_WS_METHODS.setupProject]: AuthSourceControlWriteScope,
   [BOARD_WORKERS_WS_METHODS.dismissSetup]: AuthOrchestrationOperateScope,

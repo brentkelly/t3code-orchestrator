@@ -6,9 +6,11 @@
  * - `add` / `repair`: refuse the wrong server before spending the one-time
  *   token, exchange it for the board's own session, prove the worker speaks
  *   the board-worker protocol, store the token, then record the worker.
- * - `remove`: give the board's session back on the worker if it is reachable,
- *   then forget the token, the snapshot and the record. What removal does to
- *   the cards placed there is D22's, not this file's.
+ * - `removePreview` / `remove` (T3O-66, D22): which cards removal affects, for
+ *   the confirm dialog; then forget the worker — its cards fall back to the
+ *   default or hold, decided with the removal itself — stop the steps running
+ *   there if it answers, and give the board's session back. Nothing on the
+ *   worker is deleted.
  * - `setDefault`: only to an online worker, or back to `local`.
  * - `setupProject`: clone a board project's remote onto a worker, following
  *   the worker's own clone progress so it survives anyone leaving the page.
@@ -21,13 +23,20 @@ import {
   BOARD_WORKER_SETUP_LOG_MAX_LENGTH,
   BoardWorkerActionError,
   BoardWorkerAddError,
+  boardCardStepState,
+  boardCardWorkerRemovalOutcome,
   boardRepositoryGroupingKey,
+  boardStageById,
+  boardThreadLinkWorkerId,
   CommandId,
+  EMPTY_BOARD_STATE,
   ProjectId,
   resolveBoardWorkerCheckout,
   type BoardWorker,
   type BoardWorkerAddResult,
   type BoardWorkerHello,
+  type BoardWorkerRemovePreview,
+  type BoardWorkerRemovePreviewCard,
   type BoardWorkerSetup,
   type BoardWorkerSnapshot,
   type BoardWorkersAddInput,
@@ -83,6 +92,10 @@ export interface BoardWorkersShape {
   readonly remove: (
     workerId: EnvironmentId,
   ) => Effect.Effect<{ readonly revoked: boolean }, BoardWorkerActionError>;
+  /** What removing the worker would do to its cards. */
+  readonly removePreview: (
+    workerId: EnvironmentId,
+  ) => Effect.Effect<BoardWorkerRemovePreview, BoardWorkerActionError>;
   readonly setDefault: (workerId: BoardWorkerId) => Effect.Effect<void, BoardWorkerActionError>;
   readonly setupProject: (
     input: BoardWorkersSetupProjectInput,
@@ -105,6 +118,9 @@ export class BoardWorkers extends Context.Service<BoardWorkers, BoardWorkersShap
 
 /** How long Remove waits for the worker to give the session back. */
 const RELEASE_TIMEOUT = "5 seconds";
+
+/** How long Remove waits for the worker to stop each running step. */
+const STOP_TIMEOUT = "5 seconds";
 
 /** How long Set up waits for the worker to accept the clone. Starting one
     only checks the folder and spawns git, so this is generous. */
@@ -463,7 +479,12 @@ export const makeBoardWorkers = Effect.gen(function* () {
       return yield* result(worker.id);
     });
 
-  const remove: BoardWorkersShape["remove"] = (workerId) =>
+  const readBoard = engine.getReadModel.pipe(
+    Effect.map((model) => model.board ?? EMPTY_BOARD_STATE),
+  );
+
+  /** The registered, non-default worker removal is about. */
+  const removable = (workerId: EnvironmentId) =>
     Effect.gen(function* () {
       const worker = (yield* registry).find((candidate) => candidate.id === workerId);
       if (worker === undefined) {
@@ -472,6 +493,69 @@ export const makeBoardWorkers = Effect.gen(function* () {
       if ((yield* defaultWorkerId) === workerId) {
         return yield* actionError("is-default", "Make another worker the default first.");
       }
+      return worker;
+    });
+
+  const removePreview: BoardWorkersShape["removePreview"] = (workerId) =>
+    Effect.gen(function* () {
+      const worker = yield* removable(workerId);
+      const board = yield* readBoard;
+      const toDefault: BoardWorkerRemovePreviewCard[] = [];
+      const byHand: BoardWorkerRemovePreviewCard[] = [];
+      for (const card of board.cards) {
+        if (card.archivedAt !== null) continue;
+        const live = boardCardStepState(board, card.id);
+        const outcome = boardCardWorkerRemovalOutcome(card, live, workerId);
+        if (outcome === null) continue;
+        const running =
+          live !== null && (live.status === "running" || live.status === "completing");
+        const row = {
+          cardId: card.id,
+          key: card.key,
+          title: card.title,
+          detail:
+            outcome === "fallback"
+              ? (boardStageById(board, card.stage)?.label ?? card.stage)
+              : running
+                ? `${live.stepLabel ?? live.stageLabel ?? "Current"} step running`
+                : "Has worktree",
+        };
+        (outcome === "fallback" ? toDefault : byHand).push(row);
+      }
+      const fallbackTo = board.defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
+      return {
+        workerId,
+        workerLabel: worker.label,
+        defaultWorkerLabel:
+          fallbackTo === BOARD_LOCAL_WORKER_ID
+            ? "This server (local)"
+            : ((yield* registry).find((candidate) => candidate.id === fallbackTo)?.label ??
+              fallbackTo),
+        toDefault,
+        byHand,
+      };
+    });
+
+  /** The threads of the steps running on a worker, which removal stops. */
+  const runningThreadsOn = (workerId: EnvironmentId) =>
+    readBoard.pipe(
+      Effect.map((board) =>
+        board.cards.flatMap((card) => {
+          const live = boardCardStepState(board, card.id);
+          if (live === null || live.threadId === null) return [];
+          if (live.status !== "running" && live.status !== "completing") return [];
+          const link = card.threadLinks.find((candidate) => candidate.threadId === live.threadId);
+          return link !== undefined && boardThreadLinkWorkerId(link) === workerId
+            ? [live.threadId]
+            : [];
+        }),
+      ),
+    );
+
+  const remove: BoardWorkersShape["remove"] = (workerId) =>
+    Effect.gen(function* () {
+      yield* removable(workerId);
+      const running = yield* runningThreadsOn(workerId);
       // The record goes first: a removal the decider refuses (a concurrent
       // Make default, say) must leave the worker's session and token intact.
       const rpc = yield* connections.get(workerId).pipe(Effect.option);
@@ -483,6 +567,17 @@ export const makeBoardWorkers = Effect.gen(function* () {
           createdAt: yield* nowIso,
         })
         .pipe(Effect.mapError((cause) => actionError("internal", cause.message)));
+      // Stop what was running there, so it doesn't go on spending tokens for
+      // a board that no longer uses it (D22). Best effort, and only while the
+      // worker answers; the supervisor stalls those steps and frees their
+      // slots off the removal event either way.
+      if (Option.isSome(rpc)) {
+        for (const threadId of running) {
+          yield* rpc.value.gateway
+            .stopSession({ commandId: yield* newCommandId, threadId })
+            .pipe(Effect.timeout(STOP_TIMEOUT), Effect.ignore);
+        }
+      }
       // Then the session goes back over the connection, still held until the
       // sync below. Unreachable is fine: the human can revoke it on the worker.
       const revoked = Option.isNone(rpc)
@@ -785,6 +880,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
     add,
     repair,
     remove,
+    removePreview,
     setDefault,
     setupProject,
     dismissSetup,

@@ -91,6 +91,7 @@ const card: BoardCard = {
   pinnedWorkerId: null,
   placedWorkerId: null,
   workerMove: null,
+  placementOrphaned: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",
