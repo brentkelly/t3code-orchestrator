@@ -210,7 +210,9 @@ export const makeBoardCardMover = Effect.gen(function* () {
     if (tip === null) {
       // A restart sends the card back to Build: a Done card has nothing to
       // go back to.
-      const done = boardStageWithRole(yield* readBoard, "done");
+      const board = yield* readBoard;
+      const done = boardStageWithRole(board, "done");
+      const build = boardStageWithRole(board, "build");
       if (done !== null && card.stage === done.stageId) {
         return refused(
           `${worktree.branch} isn't on the remote, and a Done card isn't restarted from its base.`,
@@ -221,6 +223,10 @@ export const makeBoardCardMover = Effect.gen(function* () {
         workerId: from,
         branch: worktree.branch,
         baseRefName: worktree.baseRefName,
+        // Where restartFromBase leaves it: the start of Build for a card at or
+        // past Build; a card not there yet keeps its stage.
+        backToStage:
+          build !== null && isBoardStageAtOrAfterBuild(board, card.stage) ? build.label : null,
       } as const;
     }
     return { outcome: "ready", fromWorkerId: from, branch: worktree.branch, tip } as const;

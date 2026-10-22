@@ -750,6 +750,7 @@ it.layer(NodeServices.layer)("moving a card to another worker (T3O-65)", (it) =>
             workerId: W1,
             branch: "board/t3-1",
             baseRefName: "main",
+            backToStage: "Building",
           });
           // The first confirmation is not enough.
           const unconfirmed = yield* mover.move(cardId, BOARD_LOCAL_WORKER_ID, undefined, {
@@ -837,6 +838,9 @@ it.layer(NodeServices.layer)("moving a card to another worker (T3O-65)", (it) =>
       },
       (mover, f) =>
         Effect.gen(function* () {
+          // The confirmation is told the card keeps its stage.
+          const checked = yield* mover.check(cardId, BOARD_LOCAL_WORKER_ID, { force: true });
+          expect(checked).toMatchObject({ outcome: "no-remote-branch", backToStage: null });
           const restarted = yield* mover.move(cardId, BOARD_LOCAL_WORKER_ID, undefined, {
             force: true,
             restartFromBase: true,

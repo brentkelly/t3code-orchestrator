@@ -55,7 +55,10 @@ function pushedAtLabel(iso: string): string {
 type Phase =
   | { readonly kind: "checking" }
   | { readonly kind: "answer"; readonly answer: BoardCardWorkerMoveAnswer }
-  | { readonly kind: "confirm-restart"; readonly branch: string; readonly baseRefName: string }
+  | {
+      readonly kind: "confirm-restart";
+      readonly answer: Extract<BoardCardWorkerMoveAnswer, { outcome: "no-remote-branch" }>;
+    }
   | { readonly kind: "moving" }
   | { readonly kind: "failed"; readonly detail: string };
 
@@ -168,40 +171,41 @@ export function BoardCardForceMoveDialog(props: {
         <DialogPopup className="max-w-lg">
           <DialogHeader>
             <DialogTitle>
-              Restart {card.key} from {phase.baseRefName}?
+              Restart {card.key} from {phase.answer.baseRefName}?
             </DialogTitle>
             <DialogDescription>
-              <code className="font-mono">origin/{phase.branch}</code> doesn't exist, so there's
-              nothing pushed to continue from.
+              <code className="font-mono">origin/{phase.answer.branch}</code> doesn't exist, so
+              there's nothing pushed to continue from.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <p className="text-[13px]">
-              {to} creates a fresh worktree from{" "}
-              <code className="font-mono">{phase.baseRefName}</code> and the card goes back to the
-              start of Build. All code work from {source.label} is abandoned. The brief, plan and
-              thread history are kept.
+              {phase.answer.backToStage === null ? (
+                <>
+                  The card stays in its stage and its branch is forgotten. When it reaches Build,{" "}
+                  {to} creates a fresh worktree from{" "}
+                  <code className="font-mono">{phase.answer.baseRefName}</code>.
+                </>
+              ) : (
+                <>
+                  {to} creates a fresh worktree from{" "}
+                  <code className="font-mono">{phase.answer.baseRefName}</code> and the card goes
+                  back to the start of {phase.answer.backToStage}.
+                </>
+              )}{" "}
+              All code work from {source.label} is abandoned. The brief, plan and thread history are
+              kept.
             </p>
           </DialogPanel>
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() =>
-                setPhase({
-                  kind: "answer",
-                  answer: {
-                    outcome: "no-remote-branch",
-                    workerId: target ?? BOARD_LOCAL_WORKER_ID,
-                    branch: phase.branch,
-                    baseRefName: phase.baseRefName,
-                  },
-                })
-              }
+              onClick={() => setPhase({ kind: "answer", answer: phase.answer })}
             >
               Go back
             </Button>
             <Button variant="destructive" onClick={() => run(true)}>
-              Restart from {phase.baseRefName}
+              Restart from {phase.answer.baseRefName}
             </Button>
           </DialogFooter>
         </DialogPopup>
@@ -329,11 +333,7 @@ export function BoardCardForceMoveDialog(props: {
             disabled={!canMove}
             onClick={() => {
               if (noRemote !== null) {
-                setPhase({
-                  kind: "confirm-restart",
-                  branch: noRemote.branch,
-                  baseRefName: noRemote.baseRefName,
-                });
+                setPhase({ kind: "confirm-restart", answer: noRemote });
                 return;
               }
               run(false);

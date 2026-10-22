@@ -8031,13 +8031,16 @@ const BOARD_CARD_MOVE_REFUSALS = [
   }),
   Schema.Struct({ outcome: Schema.Literal("source-unreachable"), workerId: BoardWorkerId }),
   /** A force-move (T3O-66) whose branch isn't on the remote: nothing pushed to
-      continue from, so the card can only restart Build from `baseRefName`,
-      behind a second confirmation. */
+      continue from, so the card can only restart from `baseRefName`, behind a
+      second confirmation. `backToStage` is the label of the stage whose start a
+      restart puts the card at (Build), or null when it keeps its stage: a card
+      not yet at Build only forgets its branch. */
   Schema.Struct({
     outcome: Schema.Literal("no-remote-branch"),
     workerId: BoardWorkerId,
     branch: TrimmedNonEmptyString,
     baseRefName: TrimmedNonEmptyString,
+    backToStage: Schema.NullOr(TrimmedNonEmptyString),
   }),
   Schema.Struct({ outcome: Schema.Literal("refused"), detail: TrimmedNonEmptyString }),
 ] as const;
