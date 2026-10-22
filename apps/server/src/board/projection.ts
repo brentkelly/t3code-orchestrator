@@ -22,7 +22,7 @@ import {
   BoardWorkerId,
   compareBoardWorkers,
   BOARD_LOCAL_WORKER_ID,
-  type EnvironmentId,
+  EnvironmentId,
   activeBoardCardThreadId,
   BOARD_CARD_BRIEF_BODY_KIND,
   BoardCard,
@@ -182,6 +182,8 @@ const BoardCardThreadLinkDbRow = Schema.Struct({
   role: BoardCardThreadLink.fields.role,
   linkedAt: BoardCardThreadLink.fields.linkedAt,
   tombstonedAt: BoardCardThreadLink.fields.tombstonedAt,
+  /** Null for `local` (T3O-63). */
+  workerId: Schema.NullOr(EnvironmentId),
 });
 type BoardCardThreadLinkDbRow = typeof BoardCardThreadLinkDbRow.Type;
 
@@ -286,6 +288,7 @@ const BoardCardThreadShellDbRow = Schema.Struct({
   totalCount: Schema.NullOr(Schema.Int),
   currentStartedAt: Schema.NullOr(IsoDateTime),
   updatedAt: Schema.NullOr(IsoDateTime),
+  workerId: Schema.NullOr(EnvironmentId),
 });
 type BoardCardThreadShellDbRow = typeof BoardCardThreadShellDbRow.Type;
 
@@ -309,6 +312,10 @@ function toBoardCardActivityEntry(row: BoardCardActivityDbRow): BoardCardActivit
   };
 }
 
+/** A link row's worker, absent for `local` (T3O-63). */
+const linkWorker = (row: { readonly workerId: EnvironmentId | null }) =>
+  row.workerId === null ? {} : { workerId: row.workerId };
+
 /** Map a joined row to the wire shell (t3o-18, D3): the todo fields are
     key-optional, so a thread with no list serialises as a bare link entry. */
 function toBoardCardThreadShell(row: BoardCardThreadShellDbRow): BoardCardThreadShell {
@@ -316,6 +323,7 @@ function toBoardCardThreadShell(row: BoardCardThreadShellDbRow): BoardCardThread
   return {
     cardId: row.cardId,
     threadId: row.threadId,
+    ...linkWorker(row),
     ...(hasTodos ? { todoStatuses: row.statuses as string } : {}),
     ...(row.currentText !== null && row.currentText.length > 0
       ? { todoCurrent: row.currentText }
@@ -874,7 +882,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         card_id AS "cardId",
         role,
         linked_at AS "linkedAt",
-        tombstoned_at AS "tombstonedAt"
+        tombstoned_at AS "tombstonedAt",
+        worker_id AS "workerId"
       FROM board_card_thread_links
       ORDER BY linked_at ASC, thread_id ASC
     `,
@@ -893,7 +902,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         card_id AS "cardId",
         role,
         linked_at AS "linkedAt",
-        tombstoned_at AS "tombstonedAt"
+        tombstoned_at AS "tombstonedAt",
+        worker_id AS "workerId"
       FROM board_card_thread_links
       WHERE tombstoned_at IS NULL
         AND card_id IN (SELECT card_id FROM board_cards WHERE archived_at IS NULL)
@@ -1173,7 +1183,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         card_id AS "cardId",
         role,
         linked_at AS "linkedAt",
-        tombstoned_at AS "tombstonedAt"
+        tombstoned_at AS "tombstonedAt",
+        worker_id AS "workerId"
       FROM board_card_thread_links
       WHERE card_id = ${cardId}
     `,
@@ -1323,21 +1334,24 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         card_id,
         role,
         linked_at,
-        tombstoned_at
+        tombstoned_at,
+        worker_id
       )
       VALUES (
         ${row.threadId},
         ${row.cardId},
         ${row.role},
         ${row.linkedAt},
-        ${row.tombstonedAt}
+        ${row.tombstonedAt},
+        ${row.workerId}
       )
       ON CONFLICT (thread_id)
       DO UPDATE SET
         card_id = excluded.card_id,
         role = excluded.role,
         linked_at = excluded.linked_at,
-        tombstoned_at = excluded.tombstoned_at
+        tombstoned_at = excluded.tombstoned_at,
+        worker_id = excluded.worker_id
     `,
   });
 
@@ -1664,7 +1678,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         todos.done_count AS "doneCount",
         todos.total_count AS "totalCount",
         todos.current_started_at AS "currentStartedAt",
-        todos.updated_at AS "updatedAt"
+        todos.updated_at AS "updatedAt",
+        links.worker_id AS "workerId"
       FROM board_card_thread_links links
       INNER JOIN board_cards cards ON cards.card_id = links.card_id
       LEFT JOIN board_thread_todos todos ON todos.thread_id = links.thread_id
@@ -1685,7 +1700,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         todos.done_count AS "doneCount",
         todos.total_count AS "totalCount",
         todos.current_started_at AS "currentStartedAt",
-        todos.updated_at AS "updatedAt"
+        todos.updated_at AS "updatedAt",
+        links.worker_id AS "workerId"
       FROM board_card_thread_links links
       INNER JOIN board_cards cards ON cards.card_id = links.card_id
       LEFT JOIN board_thread_todos todos ON todos.thread_id = links.thread_id
@@ -1706,6 +1722,16 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       SELECT card_id AS "cardId"
       FROM board_card_thread_links
       WHERE thread_id = ${threadId} AND tombstoned_at IS NULL
+    `,
+  });
+
+  const findBoardThreadWorker = SqlSchema.findOneOption({
+    Request: ThreadId,
+    Result: Schema.Struct({ workerId: Schema.NullOr(EnvironmentId) }),
+    execute: (threadId) => sql`
+      SELECT worker_id AS "workerId"
+      FROM board_card_thread_links
+      WHERE thread_id = ${threadId}
     `,
   });
 
@@ -2166,6 +2192,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardThreadShellRows,
     listBoardCardThreadShellRowsForCard,
     findBoardCardIdForLiveThread,
+    findBoardThreadWorker,
     listBoardCardStepRowsForCard,
     updateBoardCardReviewSummaryRow,
     updateBoardCardSplitRationaleRow,
@@ -2251,6 +2278,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           role: link.role,
           linkedAt: link.linkedAt,
           tombstonedAt: link.tombstonedAt,
+          workerId: link.workerId ?? null,
         });
       }
     }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadLinks:query")));
@@ -3213,6 +3241,7 @@ export function loadBoardState(
             role: row.role,
             linkedAt: row.linkedAt,
             tombstonedAt: row.tombstonedAt,
+            ...linkWorker(row),
           });
           linksByCard.set(row.cardId, links);
         }
@@ -3367,6 +3396,7 @@ function boardShellCards(
           role: row.role,
           linkedAt: row.linkedAt,
           tombstonedAt: row.tombstonedAt,
+          ...linkWorker(row),
         });
         linksByCard.set(row.cardId, links);
       }
@@ -3701,6 +3731,7 @@ export function makeBoardCardDetailLoader(
               role: row.role,
               linkedAt: row.linkedAt,
               tombstonedAt: row.tombstonedAt,
+              ...linkWorker(row),
             })),
           );
           const labels = [...labelRows]
@@ -3860,6 +3891,12 @@ export interface BoardQueriesShape {
   readonly boardCardIdForThread: (
     threadId: ThreadId,
   ) => Effect.Effect<BoardCardId | null, ProjectionRepositoryError>;
+  /** The worker a linked thread lives on (T3O-63) — tombstoned links
+      included, since a deleted thread still answers where it was — or null
+      for a thread no card links. */
+  readonly boardThreadWorker: (
+    threadId: ThreadId,
+  ) => Effect.Effect<BoardWorkerId | null, ProjectionRepositoryError>;
   /** One thread's cached todo row (t3o-18): the supervisor reads the
       stall-reset signal from it, so `recoveryDecision` stays pure with no SQL
       of its own. Null when the thread has no list. */
@@ -3938,6 +3975,16 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
           Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.cardId })),
           Effect.mapError(toPersistenceSqlError("BoardCardsProjection.cardForThread:query")),
         ),
+    boardThreadWorker: (threadId) =>
+      queries.findBoardThreadWorker(threadId).pipe(
+        Effect.map(
+          Option.match({
+            onNone: () => null,
+            onSome: (row): BoardWorkerId => row.workerId ?? BOARD_LOCAL_WORKER_ID,
+          }),
+        ),
+        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadWorker:query")),
+      ),
     boardThreadTodo: (threadId) =>
       queries.findBoardThreadTodoRow(threadId).pipe(
         Effect.map(

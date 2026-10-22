@@ -18,7 +18,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { ThreadGateway } from "./ThreadGateway.ts";
+import { ThreadGateway, UNKNOWN_THREAD_STATE } from "./ThreadGateway.ts";
 
 /** Added to a provider's reset time before anything is retried against it,
     as the catalogue's matches always carried (D5). */
@@ -56,7 +56,7 @@ const make = Effect.gen(function* () {
   const classifyTurn: UsageLimitDetectorShape["classifyTurn"] = (input) =>
     threads.threadState(input.threadId).pipe(
       Effect.map((state): BoardUsageLimitMatch | null => {
-        const limit = state?.usageLimit ?? null;
+        const limit = state === UNKNOWN_THREAD_STATE ? null : (state?.usageLimit ?? null);
         if (limit === null) return null;
         const resetMs = limit.resetAt === null ? Number.NaN : Date.parse(limit.resetAt);
         return {

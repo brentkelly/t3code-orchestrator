@@ -17,6 +17,7 @@
  * server will restart mid-step.
  */
 import {
+  BOARD_LOCAL_WORKER_ID,
   boardCardAutoStartDue,
   boardCardChildren,
   boardBuildHumanInLoopDefault,
@@ -89,7 +90,6 @@ import {
   ThreadId,
   type ChatAttachment,
   type BoardCard,
-  BOARD_LOCAL_WORKER_ID,
   type BoardWorkerGitError,
   type BoardWorkspaceIntegrationBranch,
   type BoardCardId,
@@ -132,6 +132,8 @@ import type { BoardDispatchError } from "./errors.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import {
   ThreadGateway,
+  ThreadReadError,
+  UNKNOWN_THREAD_STATE,
   type BoardProject,
   type BoardTurnOutcome,
   type ThreadCommandError,
@@ -141,9 +143,11 @@ import type { BoardCommand } from "./decider.ts";
 import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
 import {
   removeBoardCardAttachmentsDir,
+  resolveBoardCardAttachmentPath,
   spawnPushesBriefImages,
   stageBoardCardImagesAsPending,
 } from "./attachments.ts";
+import { BoardPlacement } from "./workers/BoardPlacement.ts";
 import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
@@ -515,9 +519,21 @@ const make = Effect.gen(function* () {
   /** A thread the board can still act on — present and not deleted — or
       undefined. */
   const liveThread = (threadId: ThreadId) =>
-    threads
-      .threadState(threadId)
-      .pipe(Effect.map((state) => (state === null || state.deleted ? undefined : state)));
+    threads.threadState(threadId).pipe(
+      Effect.flatMap((state) =>
+        // T3o (T3O-63): a thread on a worker the board cannot reach is neither
+        // gone nor alive, so no decision may be taken on it: surfaced as a
+        // read failure until offline handling (T3O-66) owns it.
+        state === UNKNOWN_THREAD_STATE
+          ? Effect.fail(
+              new ThreadReadError({
+                operation: "threadState",
+                detail: `Thread ${threadId} is on a worker the board cannot reach.`,
+              }),
+            )
+          : Effect.succeed(state === null || state.deleted ? undefined : state),
+      ),
+    );
 
   const dispatchAny = (command: BoardCommand) => boardEngine.dispatch(command);
 
@@ -1443,6 +1459,26 @@ const make = Effect.gen(function* () {
             ),
     });
 
+  // T3O-63: the test-only placement seam, and the brief's files a thread on a
+  // worker reads from where they were staged there.
+  const placement = yield* Effect.serviceOption(BoardPlacement);
+  const stagedBriefFiles = (card: BoardCard) => ({
+    cardId: String(card.id),
+    files: Option.match(serverConfig, {
+      onNone: () => [],
+      onSome: (config) =>
+        card.attachments.flatMap((attachment) => {
+          const filePath = resolveBoardCardAttachmentPath({
+            path: pathService,
+            stateDir: config.stateDir,
+            cardId: card.id,
+            name: attachment.name,
+          });
+          return filePath === null ? [] : [{ name: attachment.name, path: filePath }];
+        }),
+    }),
+  });
+
   const spawnStepThread = Effect.fn("board-supervisor-spawnStepThread")(function* (input: {
     readonly card: BoardCard;
     /** The frozen run-row fields a spawn needs (D12). */
@@ -1483,6 +1519,13 @@ const make = Effect.gen(function* () {
     // needed" and continues once a human approves. Tool access stays
     // `interactionMode: "default"` (the MCP write tools are a separate axis).
     const runtimeMode = step.runtimeMode;
+    // T3O-63: the worker the thread runs on. Always this server until
+    // placement exists (T3O-65); a test places a card on a worker.
+    const workerId = Option.match(placement, {
+      onNone: () => BOARD_LOCAL_WORKER_ID,
+      onSome: (service) => service.workerFor(card),
+    });
+    const remoteWorker = workerId === BOARD_LOCAL_WORKER_ID ? null : workerId;
     // T3o (T3O-24): pin the agent's gh to origin on every build-mode spawn,
     // not only at provisioning, so a worktree that predates the pin gets it
     // before its next agent runs. Idempotent and never fails the spawn.
@@ -1513,6 +1556,9 @@ const make = Effect.gen(function* () {
         worktreePath: input.worktreePath,
         text: input.text,
         attachments: input.attachments,
+        ...(remoteWorker === null
+          ? {}
+          : { workerId: remoteWorker, stageAttachments: stagedBriefFiles(card) }),
       }),
     );
     if (!spawned) return null;
@@ -1522,11 +1568,12 @@ const make = Effect.gen(function* () {
       cardId: card.id,
       threadId,
       role: step.stepId,
+      ...(remoteWorker === null ? {} : { workerId: remoteWorker }),
       createdAt: yield* nowIso,
     });
     // Run the worktree setup script in the build thread's terminal (t3o-09).
     // Build-mode only — a plan-mode step has no worktree. Best-effort.
-    if (input.runSetup) {
+    if (input.runSetup && remoteWorker === null) {
       yield* runBoardCardWorktreeSetup({
         threadId,
         projectId: card.projectId,
@@ -3628,7 +3675,10 @@ const make = Effect.gen(function* () {
       state.threadId === null
         ? Effect.succeed(true)
         : threads.threadState(state.threadId).pipe(
-            Effect.map((thread) => thread?.usageLimit?.resumeArmed !== true),
+            Effect.map(
+              (thread) =>
+                thread === UNKNOWN_THREAD_STATE || thread?.usageLimit?.resumeArmed !== true,
+            ),
             Effect.orElseSucceed(() => true),
           ),
     );

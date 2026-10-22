@@ -1,7 +1,7 @@
 /**
  * T3o (T3O-64, D21): the worker side of the board's named git and forge
- * operations — `boardWorker.git.*`, spread into the board's RPC handler
- * record (`board/rpc.ts`).
+ * operations — `boardWorker.git.*`, which arrive as one `boardWorker.git.call`
+ * spread into the board's RPC handler record (`board/rpc.ts`).
  *
  * Every T3o server answers them, for the central server that dialed it, by
  * running its own `LocalBoardWorkspace`: the same code the central server runs
@@ -17,9 +17,11 @@
  * worker it cannot reach.
  */
 import {
+  BOARD_WORKER_GIT_CALL_WS_METHODS,
   BOARD_WORKER_GIT_RPC_SCOPES,
   BOARD_WORKER_GIT_WS_METHODS,
   BoardWorkerGitError,
+  type BoardWorkerGitCall,
   EnvironmentAuthorizationError,
   type BoardWorkerGitMethod,
   type BoardWorkerGitOperation,
@@ -32,6 +34,7 @@ import * as Effect from "effect/Effect";
 
 import type { AuthenticatedSession } from "../../auth/EnvironmentAuth.ts";
 import type { BoardWorkspacesShape } from "./BoardWorkspace.ts";
+import { decodeGitPayload, encodeGitSuccess } from "./gitWire.ts";
 
 export type BoardWorkerGitHandlers = {
   readonly [Method in BoardWorkerGitMethod]: (
@@ -114,4 +117,38 @@ export const boardWorkerGitRpcHandlers = (
       handler(op),
     ]),
   ) as unknown as BoardWorkerGitHandlers;
+};
+
+const operationOf = Object.fromEntries(
+  Object.entries(BOARD_WORKER_GIT_WS_METHODS).map(([op, method]) => [method, op]),
+) as Record<BoardWorkerGitMethod, BoardWorkerGitOperation>;
+
+/**
+ * `boardWorker.git.call`: decodes the operation's payload with its own schema
+ * — a branch the rules refuse never reaches git — runs the operation's handler
+ * above, and encodes its answer.
+ */
+export const boardWorkerGitCallRpcHandlers = (
+  currentSession: AuthenticatedSession,
+  workspaces: BoardWorkspacesShape,
+) => {
+  const operations = boardWorkerGitRpcHandlers(currentSession, workspaces) as unknown as Record<
+    BoardWorkerGitMethod,
+    (input: unknown) => Effect.Effect<unknown, BoardWorkerGitError | EnvironmentAuthorizationError>
+  >;
+  const unusable = (method: BoardWorkerGitMethod, what: string) => (error: { message: string }) =>
+    new BoardWorkerGitError({
+      operation: operationOf[method],
+      detail: `The ${what} could not be used: ${error.message}`,
+    });
+  return {
+    [BOARD_WORKER_GIT_CALL_WS_METHODS.call]: ({ method, payload }: BoardWorkerGitCall) =>
+      decodeGitPayload(method, payload).pipe(
+        Effect.mapError(unusable(method, "call's payload")),
+        Effect.flatMap((input) => operations[method](input)),
+        Effect.flatMap((value) =>
+          encodeGitSuccess(method, value).pipe(Effect.mapError(unusable(method, "answer"))),
+        ),
+      ),
+  };
 };

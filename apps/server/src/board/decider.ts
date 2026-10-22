@@ -1890,6 +1890,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             role: command.role,
             linkedAt: command.createdAt,
             tombstonedAt: null,
+            ...(command.workerId === undefined ? {} : { workerId: command.workerId }),
           },
         ]),
         updatedAt: command.createdAt,

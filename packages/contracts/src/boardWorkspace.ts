@@ -167,7 +167,7 @@ export class BoardWorkerGitError extends Schema.TaggedError<BoardWorkerGitError>
   },
 ) {}
 
-// ── RPCs (`boardWorker.git.*`) ─────────────────────────────────────────
+// ── Operations (`boardWorker.git.*`) ───────────────────────────────────
 
 export const BOARD_WORKER_GIT_WS_METHODS = {
   resolveDefaultBranch: "boardWorker.git.resolveDefaultBranch",
@@ -389,7 +389,7 @@ export type BoardWorkerGitSuccess<Method extends BoardWorkerGitMethod> = Rpc.Suc
 >;
 
 /**
- * Scopes, spread into `BOARD_RPC_SCOPES`. Reads sit at the thread-read tier;
+ * Each operation's scope, which the worker's handler checks. Reads sit at the thread-read tier;
  * anything that writes to the repository — a ref, a worktree, a branch, a
  * merge, even a fetch's remote-tracking refs — at source-control write. The
  * board's own session holds both (D19).
@@ -421,3 +421,36 @@ export const BOARD_WORKER_GIT_RPC_SCOPES = {
   [M.markPullRequestReady]: AuthSourceControlWriteScope,
   [M.pullRequestRepository]: AuthOrchestrationReadScope,
 } as const satisfies Record<BoardWorkerGitMethod, string>;
+
+// ── The RPC (`boardWorker.git.call`) ───────────────────────────────────
+
+/**
+ * The one RPC every operation above travels as. The WebSocket RPC group is at
+ * the edge of what the type checker will instantiate (see `BoardGatewayCall`),
+ * so the operations are not registered one each: `payload` is the operation's
+ * payload encoded with its own schema, the answer is its success encoded the
+ * same way, and each end codes them with `BOARD_WORKER_GIT_RPCS`. The worker's
+ * handler enforces the operation's own scope; the call sits at the lowest.
+ */
+export const BOARD_WORKER_GIT_CALL_WS_METHODS = {
+  call: "boardWorker.git.call",
+} as const;
+
+export const BoardWorkerGitCall = Schema.Struct({
+  method: Schema.Literals(Object.values(M) as ReadonlyArray<BoardWorkerGitMethod>),
+  payload: Schema.Unknown,
+});
+export type BoardWorkerGitCall = typeof BoardWorkerGitCall.Type;
+
+export const BOARD_WORKER_GIT_CALL_RPCS = [
+  Rpc.make(BOARD_WORKER_GIT_CALL_WS_METHODS.call, {
+    payload: BoardWorkerGitCall,
+    success: Schema.Unknown,
+    error: gitError,
+  }),
+] as const;
+
+/** Spread into `BOARD_RPC_SCOPES`. */
+export const BOARD_WORKER_GIT_CALL_RPC_SCOPES = {
+  [BOARD_WORKER_GIT_CALL_WS_METHODS.call]: AuthOrchestrationReadScope,
+} as const;

@@ -49,6 +49,7 @@ import {
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import type { McpThreadInvocationScope } from "../../McpInvocationContext.ts";
@@ -56,6 +57,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   ThreadGateway,
+  UNKNOWN_THREAD_STATE,
   type BoardProject,
   type ThreadGatewayShape,
 } from "../../../board/ThreadGateway.ts";
@@ -70,6 +72,7 @@ import { boardAgentActor, stampBoardActivityActor } from "../../../board/activit
 import { boardBriefVersion } from "../../../board/briefEdits.ts";
 import { isKeptStepThread, keptPlanningStepId } from "../../../board/planningThreadKeep.ts";
 import { SupervisorReactor } from "../../../board/supervisorReactor.ts";
+import { BoardRelayInvocation, relayable } from "./relay.ts";
 import { BoardToolError, BoardToolkit } from "./tools.ts";
 
 const nonEmpty = (value: string | undefined, fallback: string): string =>
@@ -140,12 +143,14 @@ const boardToolDeps = Effect.gen(function* () {
   const board = yield* BoardQueries;
   const config = yield* ServerConfig.ServerConfig;
   const path = yield* Path.Path;
+  // T3o (T3O-63): a call relayed from a worker hands out paths on the worker.
+  const relayed = yield* Effect.serviceOption(BoardRelayInvocation);
   return {
     scope,
     boardEngine,
     threads,
     board,
-    stateDir: config.stateDir,
+    stateDir: Option.isSome(relayed) ? relayed.value.stateDir : config.stateDir,
     path,
   } satisfies BoardToolDeps;
 });
@@ -502,9 +507,10 @@ const resolveProjectId = (
       const thread = yield* deps.threads
         .threadState(deps.scope.thread.threadId)
         .pipe(Effect.mapError(internalError));
-      const owned = thread
-        ? projects.find((project) => project.id === thread.projectId)
-        : undefined;
+      const owned =
+        thread !== null && thread !== UNKNOWN_THREAD_STATE
+          ? projects.find((project) => project.id === thread.projectId)
+          : undefined;
       if (owned !== undefined) {
         return owned.id;
       }
@@ -645,6 +651,27 @@ export const boardHandlers = {
         .boardCardThreads(card.id)
         .pipe(Effect.mapError(internalError));
       const dependencies = describeDependencies(board, card);
+      // T3o (T3O-63): a relayed call hands out paths on the worker, so the
+      // card's files go there first — staging at spawn misses later ones.
+      const relayed = yield* Effect.serviceOption(BoardRelayInvocation);
+      if (Option.isSome(relayed) && card.attachments.length > 0) {
+        const config = yield* ServerConfig.ServerConfig;
+        const files = boardCardAttachmentManifest({
+          path: deps.path,
+          stateDir: config.stateDir,
+          card,
+        }).map((entry) => ({ name: entry.name, path: entry.path }));
+        yield* relayed.value.stageCardFiles({ cardId: String(card.id), files }).pipe(
+          Effect.mapError(
+            () =>
+              new BoardToolError({
+                code: "board-unreachable",
+                message:
+                  "Couldn't copy the card's files to the machine this thread runs on. This is temporary: retry the call.",
+              }),
+          ),
+        );
+      }
       return {
         card,
         brief: detail?.brief ?? null,
@@ -1256,20 +1283,51 @@ export const boardHandlers = {
  * for the calling thread's card (D3), so all of them need a T3 thread caller;
  * the reads stop there, and the writes also need that thread's run to be live.
  * Whether the thread is linked to a card is still the handler's question.
+ *
+ * T3o (T3O-63): a thread a central board placed on this server relays its
+ * call to that board instead (`relayable`), after the access check here.
  */
 export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
-  board_get_card_context: McpToolAccess.readsAsCaller(boardHandlers.board_get_card_context),
-  board_get_card: McpToolAccess.readsAsCaller(boardHandlers.board_get_card),
-  board_list_projects: McpToolAccess.readsAsCaller(boardHandlers.board_list_projects),
-  board_list_cards: McpToolAccess.readsAsCaller(boardHandlers.board_list_cards),
-  board_get_plan: McpToolAccess.readsAsCaller(boardHandlers.board_get_plan),
-  board_complete_step: McpToolAccess.writesWithCapability(boardHandlers.board_complete_step),
-  board_create_card: McpToolAccess.writesWithCapability(boardHandlers.board_create_card),
-  board_move_card: McpToolAccess.writesWithCapability(boardHandlers.board_move_card),
-  board_update_card: McpToolAccess.writesWithCapability(boardHandlers.board_update_card),
-  board_archive_card: McpToolAccess.writesWithCapability(boardHandlers.board_archive_card),
-  board_unarchive_card: McpToolAccess.writesWithCapability(boardHandlers.board_unarchive_card),
-  board_delete_card: McpToolAccess.writesWithCapability(boardHandlers.board_delete_card),
-  board_propose_plans: McpToolAccess.writesWithCapability(boardHandlers.board_propose_plans),
-  board_write_plan: McpToolAccess.writesWithCapability(boardHandlers.board_write_plan),
+  board_get_card_context: McpToolAccess.readsAsCaller(
+    relayable("board_get_card_context", boardHandlers.board_get_card_context),
+  ),
+  board_get_card: McpToolAccess.readsAsCaller(
+    relayable("board_get_card", boardHandlers.board_get_card),
+  ),
+  board_list_projects: McpToolAccess.readsAsCaller(
+    relayable("board_list_projects", boardHandlers.board_list_projects),
+  ),
+  board_list_cards: McpToolAccess.readsAsCaller(
+    relayable("board_list_cards", boardHandlers.board_list_cards),
+  ),
+  board_get_plan: McpToolAccess.readsAsCaller(
+    relayable("board_get_plan", boardHandlers.board_get_plan),
+  ),
+  board_complete_step: McpToolAccess.writesWithCapability(
+    relayable("board_complete_step", boardHandlers.board_complete_step),
+  ),
+  board_create_card: McpToolAccess.writesWithCapability(
+    relayable("board_create_card", boardHandlers.board_create_card),
+  ),
+  board_move_card: McpToolAccess.writesWithCapability(
+    relayable("board_move_card", boardHandlers.board_move_card),
+  ),
+  board_update_card: McpToolAccess.writesWithCapability(
+    relayable("board_update_card", boardHandlers.board_update_card),
+  ),
+  board_archive_card: McpToolAccess.writesWithCapability(
+    relayable("board_archive_card", boardHandlers.board_archive_card),
+  ),
+  board_unarchive_card: McpToolAccess.writesWithCapability(
+    relayable("board_unarchive_card", boardHandlers.board_unarchive_card),
+  ),
+  board_delete_card: McpToolAccess.writesWithCapability(
+    relayable("board_delete_card", boardHandlers.board_delete_card),
+  ),
+  board_propose_plans: McpToolAccess.writesWithCapability(
+    relayable("board_propose_plans", boardHandlers.board_propose_plans),
+  ),
+  board_write_plan: McpToolAccess.writesWithCapability(
+    relayable("board_write_plan", boardHandlers.board_write_plan),
+  ),
 });

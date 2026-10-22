@@ -33,6 +33,7 @@ import {
   commandError,
   followStoredEvents,
   makeSignalReader,
+  readSignalLog,
 } from "./ThreadGatewayV2.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -520,6 +521,72 @@ describe("followStoredEvents", () => {
         assert.deepStrictEqual(Array.from(sequences), [11, 12, 13]);
         assert.deepStrictEqual(subscribedAfter, [10, 12]);
       }),
+    );
+  });
+});
+
+describe("readSignalLog", () => {
+  effectIt.effect("a resume between an error item and its run's end keeps the failure text", () => {
+    const failure = {
+      id: TurnItemId.make("item-error-resume"),
+      runId: RunId.make("run-resume"),
+      type: "error",
+      failure: { class: "usage_limit", message: "Grok prompt request failed: quota." },
+    };
+    const errorItem = stored("turn-item.updated", failure);
+    const ended = stored("run.updated", run("failed", t0, { id: RunId.make("run-resume") }));
+    const log = [errorItem, ended];
+    const subscribedAfter: Array<number | undefined> = [];
+    const sink = {
+      latestSequence: () => Effect.succeed(ended.sequence),
+      stream: (input?: { readonly afterSequence?: number }) => {
+        subscribedAfter.push(input?.afterSequence);
+        return Stream.fromIterable(
+          log.filter((event) => event.sequence > (input?.afterSequence ?? 0)),
+        );
+      },
+    };
+    // The central cursor already passed the error item, which carries no signal.
+    return readSignalLog(sink, errorItem.sequence, Schedule.recurs(0)).pipe(
+      Stream.runCollect,
+      Effect.map((batches) => {
+        assert.deepStrictEqual(Array.from(batches), [
+          {
+            sequence: ended.sequence,
+            signals: [
+              {
+                type: "turn-ended",
+                threadId,
+                turnRef: "run-resume",
+                outcome: "failed",
+                errorMessage: "Grok prompt request failed: quota.",
+              },
+            ],
+          },
+        ]);
+        assert.isBelow(subscribedAfter[0] ?? Infinity, errorItem.sequence);
+      }),
+    );
+  });
+
+  effectIt.effect("a resume does not repeat a question already signalled before the cursor", () => {
+    const question = (status: string) =>
+      stored("runtime-request.updated", {
+        id: RuntimeRequestId.make("request-resume"),
+        kind: "user_input",
+        status,
+      });
+    const asked = question("pending");
+    const askedAgain = question("pending");
+    const log = [asked, askedAgain];
+    const sink = {
+      latestSequence: () => Effect.succeed(askedAgain.sequence),
+      stream: (input?: { readonly afterSequence?: number }) =>
+        Stream.fromIterable(log.filter((event) => event.sequence > (input?.afterSequence ?? 0))),
+    };
+    return readSignalLog(sink, asked.sequence, Schedule.recurs(0)).pipe(
+      Stream.runCollect,
+      Effect.map((batches) => assert.deepStrictEqual(Array.from(batches), [])),
     );
   });
 });
