@@ -363,6 +363,15 @@ export function makeLocalBoardWorkspace(
           detail: `${cwd} has no remote to fetch '${branch}' from.`,
         });
       }
+      // What this checkout last saw on the remote, read BEFORE the fetch
+      // moves it: a local tip contained in it was pushed from here, even if
+      // the branch has since been rebased and force-pushed elsewhere.
+      const lastSeenTip = yield* gitRef("boardCardWorktree.fromRemote.lastSeen", cwd, [
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `refs/remotes/${remoteName}/${branch}`,
+      ]);
       const fetched = yield* fetchRemoteBranch(
         "boardCardWorktree.fromRemote.fetch",
         cwd,
@@ -389,21 +398,26 @@ export function makeLocalBoardWorkspace(
       ]);
       if (local !== "" && local !== remoteTip) {
         // A local copy left behind by an earlier placement here (A→B→A keeps
-        // the branch ref on retire) is behind what was pushed since. Bring it
-        // up to the remote tip, but never past commits only it holds.
-        const behind = yield* git
-          .execute({
-            operation: "boardCardWorktree.fromRemote.ancestor",
-            cwd,
-            args: ["merge-base", "--is-ancestor", local, `refs/remotes/${remoteName}/${branch}`],
-            timeoutMs: 10_000,
-            allowNonZeroExit: true,
-          })
-          .pipe(
-            Effect.map((result) => result.exitCode === 0),
-            Effect.mapError(gitFailed(operation)),
-          );
-        if (!behind) {
+        // the branch ref on retire) is stale: what was pushed since, possibly
+        // rebased, replaces it. Commits only this copy holds — in neither the
+        // remote tip nor what the remote held when last seen — are never lost.
+        const containedIn = (tip: string) =>
+          git
+            .execute({
+              operation: "boardCardWorktree.fromRemote.ancestor",
+              cwd,
+              args: ["merge-base", "--is-ancestor", local, tip],
+              timeoutMs: 10_000,
+              allowNonZeroExit: true,
+            })
+            .pipe(
+              Effect.map((result) => result.exitCode === 0),
+              Effect.mapError(gitFailed(operation)),
+            );
+        const pushed =
+          (yield* containedIn(remoteTip)) ||
+          (lastSeenTip !== "" && (yield* containedIn(lastSeenTip)));
+        if (!pushed) {
           return yield* new BoardWorkerGitError({
             operation,
             detail: `This checkout's '${branch}' has commits ${remoteName} does not. Push or delete them here, then retry.`,

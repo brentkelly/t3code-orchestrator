@@ -476,6 +476,42 @@ describe("BoardWorkspace contract (T3O-64)", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
+  it.effect("a card moved A→B→A lands on B's rebased, force-pushed branch", () =>
+    Effect.gen(function* () {
+      const env = yield* makeEnv("rebased");
+      const workerA = (yield* workspacesOver(env.checkout)).local;
+      const workerB = (yield* workspacesOver(env.pusher)).local;
+      const branch = "board/t-rb";
+      const retire = (ws: BoardWorkspace, worktreePath: string) =>
+        ws.retireWorktree({ projectId, worktreePath, kind: "forced", verifiedClean: false });
+
+      const onA = yield* workerA.provisionWorktree({ projectId, branch, baseRefName: "main" });
+      yield* commitFile(onA.path, "a.txt", "a\n", "on A");
+      yield* git(onA.path, ["push", "-u", "origin", branch]);
+      yield* retire(workerA, onA.path);
+
+      // B rewrites what A pushed and force-pushes it, so A's leftover branch
+      // is no longer an ancestor of the remote tip.
+      const onB = yield* workerB.provisionWorktreeFromRemoteBranch({
+        projectId,
+        branch,
+        baseRefName: "main",
+      });
+      yield* commitFile(onB.path, "b.txt", "b\n", "on B");
+      yield* git(onB.path, ["reset", "--soft", "HEAD~2"]);
+      const rewritten = yield* commitFile(onB.path, "c.txt", "c\n", "squashed on B");
+      yield* git(onB.path, ["push", "--force", "origin", branch]);
+      yield* retire(workerB, onB.path);
+
+      const backOnA = yield* workerA.provisionWorktreeFromRemoteBranch({
+        projectId,
+        branch,
+        baseRefName: "main",
+      });
+      assert.strictEqual(yield* git(backOnA.path, ["rev-parse", "HEAD"]), rewritten);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
   it.effect(
     "the durability probe reports uncommitted files, unpushed commits and the upstream",
     () =>
