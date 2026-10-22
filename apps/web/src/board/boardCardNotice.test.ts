@@ -310,4 +310,3 @@ describe("the worktree-kept notice (T3O-52)", () => {
     ).toEqual({ kind: "attention", attention: providerMissing });
   });
 });
-

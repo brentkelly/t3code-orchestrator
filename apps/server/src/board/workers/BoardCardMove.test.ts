@@ -646,11 +646,13 @@ it.layer(NodeServices.layer)("moving a card to another worker (T3O-65)", (it) =>
   });
 
   it.effect("force-move is refused while the card's worker is reachable", () =>
-    withMover({ board: board(makeCard({ placedWorkerId: W1, worktree: readyWorktree })) }, (mover) =>
-      Effect.gen(function* () {
-        const checked = yield* mover.check(cardId, BOARD_LOCAL_WORKER_ID, { force: true });
-        assert.strictEqual(checked.outcome, "refused");
-      }),
+    withMover(
+      { board: board(makeCard({ placedWorkerId: W1, worktree: readyWorktree })) },
+      (mover) =>
+        Effect.gen(function* () {
+          const checked = yield* mover.check(cardId, BOARD_LOCAL_WORKER_ID, { force: true });
+          assert.strictEqual(checked.outcome, "refused");
+        }),
     ),
   );
 
@@ -664,9 +666,7 @@ it.layer(NodeServices.layer)("moving a card to another worker (T3O-65)", (it) =>
           expect(checked.tip?.sha).toBe("4e1a9c2");
         }
         // Without force it can't even be checked.
-        expect((yield* mover.check(cardId, BOARD_LOCAL_WORKER_ID)).outcome).toBe(
-          "step-running",
-        );
+        expect((yield* mover.check(cardId, BOARD_LOCAL_WORKER_ID)).outcome).toBe("step-running");
         const started = yield* mover.move(cardId, BOARD_LOCAL_WORKER_ID, undefined, {
           force: true,
         });
@@ -772,9 +772,9 @@ it.layer(NodeServices.layer)("moving a card to another worker (T3O-65)", (it) =>
       { board: board(makeCard({ worktree: null, pinnedWorkerId: W1 })), online: false },
       (mover, f) =>
         Effect.gen(function* () {
-          expect(
-            yield* mover.check(cardId, BOARD_LOCAL_WORKER_ID, { force: true }),
-          ).toEqual({ outcome: "pin" });
+          expect(yield* mover.check(cardId, BOARD_LOCAL_WORKER_ID, { force: true })).toEqual({
+            outcome: "pin",
+          });
           expect(
             yield* mover.move(cardId, BOARD_LOCAL_WORKER_ID, undefined, { force: true }),
           ).toEqual({ outcome: "started" });

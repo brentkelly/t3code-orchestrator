@@ -419,23 +419,21 @@ export function boardWorkersAttention(
 ): { readonly label: string; readonly rows: ReadonlyArray<BoardWorkerAttentionRow> } | null {
   const troubled = state.workers.filter(boardWorkerOutOfReach);
   if (troubled.length === 0) return null;
-  const rows = troubled.map(
-    (worker): BoardWorkerAttentionRow => ({
-      workerId: worker.id,
-      label: worker.label,
-      status:
-        worker.status.state === "unauthorized"
-          ? "Access revoked"
-          : worker.status.state === "incompatible"
-            ? `Needs T3o ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer`
-            : worker.status.lastSeenAt === null
-              ? "Offline"
-              : `Offline since ${clockTime(worker.status.lastSeenAt)}`,
-      pausedCards: cards.filter(
-        (card) => boardCardWorkerTrouble(card, state)?.workerId === worker.id,
-      ),
-    }),
-  );
+  const rows = troubled.map((worker): BoardWorkerAttentionRow => ({
+    workerId: worker.id,
+    label: worker.label,
+    status:
+      worker.status.state === "unauthorized"
+        ? "Access revoked"
+        : worker.status.state === "incompatible"
+          ? `Needs T3o ${BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION} or newer`
+          : worker.status.lastSeenAt === null
+            ? "Offline"
+            : `Offline since ${clockTime(worker.status.lastSeenAt)}`,
+    pausedCards: cards.filter(
+      (card) => boardCardWorkerTrouble(card, state)?.workerId === worker.id,
+    ),
+  }));
   const allOffline = troubled.every((worker) => worker.status.state === "offline");
   const count = troubled.length;
   return {

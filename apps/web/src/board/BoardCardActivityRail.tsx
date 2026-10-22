@@ -428,9 +428,7 @@ function activitySentence(
       switch (payload.movePhase) {
         case "start":
           return payload.forced === true ? (
-            <>
-              started force-moving the card to {to}, from its pushed branch
-            </>
+            <>started force-moving the card to {to}, from its pushed branch</>
           ) : (
             <>checked for unpushed work and started moving the card to {to}</>
           );

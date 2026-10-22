@@ -1088,6 +1088,19 @@ describe("boardBuildQueue", () => {
     expect(queue.has("card-a")).toBe(false);
   });
 
+  it("leaves out a card held for its offline worker: it waits on no slot (T3O-66)", () => {
+    const cards = [
+      {
+        ...queuedCard("card-held", BOARD_SEED_STAGE_IDS.building, "a"),
+        queuedBy: "worker-offline" as const,
+      },
+      queuedCard("card-b", BOARD_SEED_STAGE_IDS.building, "m"),
+    ];
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES, NOW_MS);
+    expect(queue.has("card-held")).toBe(false);
+    expect(queue.get("card-b")).toEqual({ position: 1, total: 1, ahead: 0, startsNext: true });
+  });
+
   // The governor admits the LATER stage first, so a Building card queued behind
   // a review step is #2 however low its drag key is. This is the whole reason
   // the derivation stopped reading one project's Building column.

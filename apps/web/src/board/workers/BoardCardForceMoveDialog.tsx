@@ -96,30 +96,40 @@ export function BoardCardForceMoveDialog(props: {
     targets.find((choice) => choice.workerId === props.workers.defaultWorkerId)?.workerId ??
     targets[0]?.workerId ??
     null;
-  const [target, setTarget] = useState<BoardWorkerId | null>(initial);
+  // The rows can arrive after the dialog opens, so the default is derived
+  // until the human picks.
+  const [picked, setPicked] = useState<BoardWorkerId | null>(null);
+  const target = picked ?? initial;
   const [abandon, setAbandon] = useState(false);
-  const [phase, setPhase] = useState<Phase>({ kind: "checking" });
+  /** The check's answer, for the target it was asked about. */
+  const [checked, setChecked] = useState<{
+    readonly target: BoardWorkerId;
+    readonly phase: Phase;
+  } | null>(null);
+  /** What the human's own clicks led to, over the check's answer. */
+  const [action, setAction] = useState<Phase | null>(null);
   const cardId = card.id;
   const open = props.open;
-  // The rows can arrive after the dialog opens.
-  useEffect(() => {
-    if (target === null && initial !== null) setTarget(initial);
-  }, [initial, target]);
+  const phase: Phase =
+    action ??
+    (checked !== null && checked.target === target ? checked.phase : { kind: "checking" });
+  const setPhase = setAction;
 
   useEffect(() => {
     if (!open || target === null) return;
     let live = true;
-    setPhase({ kind: "checking" });
     void move({
       environmentId,
       input: { action: "check", cardId, toWorkerId: target, force: true },
     }).then((result) => {
       if (!live) return;
-      setPhase(
-        result._tag === "Failure"
-          ? { kind: "failed", detail: "The board server didn't answer. Try again." }
-          : { kind: "answer", answer: result.value },
-      );
+      setChecked({
+        target,
+        phase:
+          result._tag === "Failure"
+            ? { kind: "failed", detail: "The board server didn't answer. Try again." }
+            : { kind: "answer", answer: result.value },
+      });
     });
     return () => {
       live = false;
@@ -204,13 +214,10 @@ export function BoardCardForceMoveDialog(props: {
   const noRemote = answer?.outcome === "no-remote-branch" ? answer : null;
   const pinOnly = answer?.outcome === "pin";
   const refusal =
-    answer?.outcome === "refused"
-      ? answer.detail
-      : phase.kind === "failed"
-        ? phase.detail
-        : null;
+    answer?.outcome === "refused" ? answer.detail : phase.kind === "failed" ? phase.detail : null;
   const pushedAt = ready?.tip == null ? null : pushedAtLabel(ready.tip.committedAt);
-  const canMove = phase.kind === "answer" && (pinOnly || (abandon && (ready !== null || noRemote !== null)));
+  const canMove =
+    phase.kind === "answer" && (pinOnly || (abandon && (ready !== null || noRemote !== null)));
 
   return (
     <Dialog open onOpenChange={(next) => (next ? undefined : props.onClose())}>
@@ -232,7 +239,9 @@ export function BoardCardForceMoveDialog(props: {
               <Select<BoardWorkerId>
                 value={target}
                 onValueChange={(value) => {
-                  if (value !== null) setTarget(value);
+                  if (value === null) return;
+                  setPicked(value);
+                  setAction(null);
                 }}
                 items={targets.map((choice) => ({ value: choice.workerId, label: choice.label }))}
               >
@@ -250,8 +259,8 @@ export function BoardCardForceMoveDialog(props: {
             </label>
             {targets.length === 0 ? (
               <span className="text-muted-foreground">
-                No other worker can take this card now: each is offline, or has no checkout of
-                its project.
+                No other worker can take this card now: each is offline, or has no checkout of its
+                project.
               </span>
             ) : null}
             {phase.kind === "checking" || phase.kind === "moving" ? (

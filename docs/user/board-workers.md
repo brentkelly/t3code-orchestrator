@@ -74,8 +74,15 @@ the board limit and this server's limits.
 
 ## When a worker needs attention
 
+While any worker is offline, revoked or incompatible, the board's header shows how many, and its
+popover lists the cards each one has paused, with **Open Workers settings**.
+
 - **Offline** — the board server can't reach it. It keeps trying, and the worker comes back by
-  itself when it's reachable again.
+  itself when it's reachable again. Its cards show **Worker offline**: their work is paused, not
+  restarted or moved, and nothing new starts there. An agent that's still running on that machine
+  isn't treated as dead, and the time the worker is offline doesn't count toward a step's timeout.
+  When the worker is back, the board catches up on what happened there first, then carries on.
+  A card that can't wait can be **Force-move**d to another worker (see below).
 - **Access revoked** — someone removed the board under Settings → Connections → Clients on that
   machine, or the worker was reset. The board renews its own access while it runs, but if the board
   server was off for most of a month its access has expired, and that shows here too. Use **Re-pair…** to give the board access again. The worker
@@ -97,8 +104,26 @@ calls fail with a message telling it to retry shortly.
 ## Removing a worker
 
 **Remove worker…** in a worker's menu takes it off the board and gives the board's access back on
-that machine, if it can be reached. Nothing on the worker is deleted. The default worker can't be
-removed; make another one the default first.
+that machine, if it can be reached. Nothing on the worker is deleted: its worktrees, branches and
+thread history stay there. The default worker can't be removed; make another one the default first.
+
+The confirmation lists the cards on that worker:
+
+- Cards with no worktree yet move to the default worker.
+- Cards with a worktree, or a step running there, show **Worker removed — move this card** until you
+  move them. A running step is stopped first, if the worker can be reached.
+
+Adding the same server back as a worker puts those cards back on it, and a stopped step carries on.
+
+## Force-moving a card off an unreachable worker
+
+A card whose worker is offline or removed can't be checked for unpushed work, so the usual move
+isn't possible. **Force-move…** (or **Move…** on a removed worker's card) moves it anyway: pick the
+worker to move to, and the card continues from its branch on the remote, shown with its last pushed
+commit. Anything that wasn't pushed is left behind on the old machine, so tick **Abandon unpushed
+work** to confirm. If the branch was never pushed, there's nothing to continue from, and a second
+confirmation offers to restart the card's Build from its base branch instead. Its brief, plan and
+threads are kept.
 
 ## Project checkouts
 

@@ -37,7 +37,10 @@ export function BoardCardWorkerRow(props: {
   readonly stalledReason?: BoardCardStepStalledReason | undefined;
   /** What the card's shell says of its work, for Worker offline (T3O-66). */
   readonly shell?:
-    | Pick<BoardCardShell, "workerId" | "placementOrphaned" | "stepRunning" | "queued" | "stepAwaiting">
+    | Pick<
+        BoardCardShell,
+        "workerId" | "placementOrphaned" | "stepRunning" | "queued" | "stepAwaiting"
+      >
     | undefined;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
@@ -110,19 +113,19 @@ export function BoardCardWorkerRow(props: {
         </div>
       )}
       {!field.shown ? null : (
-      <div className="flex items-center gap-1.5">
-        <span>Worker ·</span>
-        <BoardWorkerPicker
-          choices={field.choices}
-          className="h-6 flex-1 text-[11.5px]"
-          followLabel={`Follow default — ${boardWorkerLabel(workers.defaultWorkerId, workers)}`}
-          onSelect={select}
-          onSetUp={field.setUp}
-          pinnedWorkerId={card.pinnedWorkerId}
-          side="top"
-          value={value}
-        />
-      </div>
+        <div className="flex items-center gap-1.5">
+          <span>Worker ·</span>
+          <BoardWorkerPicker
+            choices={field.choices}
+            className="h-6 flex-1 text-[11.5px]"
+            followLabel={`Follow default — ${boardWorkerLabel(workers.defaultWorkerId, workers)}`}
+            onSelect={select}
+            onSetUp={field.setUp}
+            pinnedWorkerId={card.pinnedWorkerId}
+            side="top"
+            value={value}
+          />
+        </div>
       )}
       {holds && move === null ? (
         <span className="text-[11px]/[1.45]">

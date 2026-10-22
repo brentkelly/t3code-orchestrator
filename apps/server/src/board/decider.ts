@@ -4448,8 +4448,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
               }
             : {
                 ...card,
-                pinnedWorkerId: card.pinnedWorkerId === command.workerId ? null : card.pinnedWorkerId,
-                placedWorkerId: card.placedWorkerId === command.workerId ? null : card.placedWorkerId,
+                pinnedWorkerId:
+                  card.pinnedWorkerId === command.workerId ? null : card.pinnedWorkerId,
+                placedWorkerId:
+                  card.placedWorkerId === command.workerId ? null : card.placedWorkerId,
                 updatedAt: command.createdAt,
               };
         cardEvents.push({

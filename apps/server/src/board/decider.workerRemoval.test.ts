@@ -9,7 +9,6 @@
  * remote, restarting the card's branch from base.
  */
 import {
-  BOARD_LOCAL_WORKER_ID,
   BoardCardId,
   BoardStageId,
   CommandId,
@@ -216,14 +215,6 @@ const apply = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
 const pin = (workerId: BoardWorkerId | null): BoardCommand => ({
   type: "board.card.pin-worker",
   commandId: CommandId.make("cmd-pin"),
-  cardId: BoardCardId.make("card-1"),
-  workerId,
-  createdAt: NOW,
-});
-
-const place = (workerId: BoardWorkerId): BoardCommand => ({
-  type: "board.card.place",
-  commandId: CommandId.make("cmd-place"),
   cardId: BoardCardId.make("card-1"),
   workerId,
   createdAt: NOW,

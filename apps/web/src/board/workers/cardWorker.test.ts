@@ -435,7 +435,14 @@ describe("worker trouble (T3O-66)", () => {
     ...overrides,
   });
   const gpuOffline = state([
-    { ...worker(GPU, "gpu-rig", { state: "offline" }), status: { ...worker(GPU, "gpu-rig").status, state: "offline", lastSeenAt: "2026-01-01T09:12:00.000Z" } },
+    {
+      ...worker(GPU, "gpu-rig", { state: "offline" }),
+      status: {
+        ...worker(GPU, "gpu-rig").status,
+        state: "offline",
+        lastSeenAt: "2026-01-01T09:12:00.000Z",
+      },
+    },
     worker(LINUX, "linux-box"),
   ]);
 
@@ -455,11 +462,13 @@ describe("worker trouble (T3O-66)", () => {
     const trouble = boardCardWorkerTrouble(card(), gpuOffline);
     expect(trouble?.kind).toBe("offline");
     expect(trouble?.label).toBe("Worker offline");
-    expect(trouble?.tooltip).toMatch(/^gpu-rig went offline at .+\. Work is paused; nothing has been restarted\.$/);
-    // A card waiting to start there, or parked there, too.
-    expect(boardCardWorkerTrouble(card({ stepRunning: false, queued: true }), gpuOffline)?.kind).toBe(
-      "offline",
+    expect(trouble?.tooltip).toMatch(
+      /^gpu-rig went offline at .+\. Work is paused; nothing has been restarted\.$/,
     );
+    // A card waiting to start there, or parked there, too.
+    expect(
+      boardCardWorkerTrouble(card({ stepRunning: false, queued: true }), gpuOffline)?.kind,
+    ).toBe("offline");
     expect(
       boardCardWorkerTrouble(card({ stepRunning: false, stepAwaiting: "question" }), gpuOffline)
         ?.kind,
@@ -503,4 +512,3 @@ describe("worker trouble (T3O-66)", () => {
     expect(mixed?.rows.map((row) => row.status)).toEqual(["Offline", "Access revoked"]);
   });
 });
-

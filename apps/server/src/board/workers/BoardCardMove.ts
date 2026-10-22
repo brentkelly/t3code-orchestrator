@@ -218,7 +218,8 @@ export const makeBoardCardMover = Effect.gen(function* () {
         return refused("That worker is no longer on this board.");
       }
       if (card.workerMove?.status === "moving") return refused("This card is already moving.");
-      if (options.force === true) return yield* checkForced(card, toWorkerId, board.defaultWorkerId);
+      if (options.force === true)
+        return yield* checkForced(card, toWorkerId, board.defaultWorkerId);
       const holds = boardCardHoldsWorktree(card);
       if (!holds && card.workerMove === null) return { outcome: "pin" } as const;
       const from = holds ? boardCardEffectiveWorkerId(card, board.defaultWorkerId) : null;

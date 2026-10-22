@@ -2007,46 +2007,46 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const requeueResolvedPlacementStalls = Effect.fn("board-supervisor-requeueResolvedPlacementStalls")(
-    function* (onlyCardId?: BoardCardId) {
-      const board = yield* readBoard;
-      for (const state of board.stepStates ?? []) {
-        if (
-          state.status !== "stalled" ||
-          (state.stalledReason !== "provider-not-on-worker" &&
-            state.stalledReason !== "worker-removed")
-        )
-          continue;
-        if (onlyCardId !== undefined && state.cardId !== onlyCardId) continue;
-        const card = board.cards.find((candidate) => candidate.id === state.cardId);
-        if (card === undefined || card.archivedAt !== null) continue;
-        if (
-          state.stalledReason === "worker-removed" &&
-          (card.placementOrphaned !== null || card.workerMove !== null)
-        ) {
-          continue;
-        }
-        // Not while the worker is offline: nothing has been fixed, and
-        // requeueing would hide the needs-a-human stall until it reconnects and
-        // stalls again. A worker still cloning the project (a re-pin to one
-        // being set up) requeues, and the pass holds the step as "setting up".
-        const { gate } = yield* placementFor(board, card, state);
-        if (gate.kind === "offline") continue;
-        // A step whose worker went is requeued whatever the new one lacks: the
-        // pass that follows stalls it again for the reason that now applies.
-        if (gate.kind === "provider-missing" && state.stalledReason === "provider-not-on-worker") {
-          continue;
-        }
-        yield* dispatch({
-          type: "board.card.requeue-step",
-          commandId: yield* commandId("requeue-step"),
-          cardId: card.id,
-          preserveBudget: true,
-          createdAt: yield* nowIso,
-        });
+  const requeueResolvedPlacementStalls = Effect.fn(
+    "board-supervisor-requeueResolvedPlacementStalls",
+  )(function* (onlyCardId?: BoardCardId) {
+    const board = yield* readBoard;
+    for (const state of board.stepStates ?? []) {
+      if (
+        state.status !== "stalled" ||
+        (state.stalledReason !== "provider-not-on-worker" &&
+          state.stalledReason !== "worker-removed")
+      )
+        continue;
+      if (onlyCardId !== undefined && state.cardId !== onlyCardId) continue;
+      const card = board.cards.find((candidate) => candidate.id === state.cardId);
+      if (card === undefined || card.archivedAt !== null) continue;
+      if (
+        state.stalledReason === "worker-removed" &&
+        (card.placementOrphaned !== null || card.workerMove !== null)
+      ) {
+        continue;
       }
-    },
-  );
+      // Not while the worker is offline: nothing has been fixed, and
+      // requeueing would hide the needs-a-human stall until it reconnects and
+      // stalls again. A worker still cloning the project (a re-pin to one
+      // being set up) requeues, and the pass holds the step as "setting up".
+      const { gate } = yield* placementFor(board, card, state);
+      if (gate.kind === "offline") continue;
+      // A step whose worker went is requeued whatever the new one lacks: the
+      // pass that follows stalls it again for the reason that now applies.
+      if (gate.kind === "provider-missing" && state.stalledReason === "provider-not-on-worker") {
+        continue;
+      }
+      yield* dispatch({
+        type: "board.card.requeue-step",
+        commandId: yield* commandId("requeue-step"),
+        cardId: card.id,
+        preserveBudget: true,
+        createdAt: yield* nowIso,
+      });
+    }
+  });
 
   // Offer one build-mode step to the governor: acquire a slot under the resolved
   // caps and spawn its thread on the card's worktree, or leave it queued (D11).
@@ -8866,7 +8866,7 @@ const make = Effect.gen(function* () {
         .filter((worker) => worker.status.state === "online")
         .map((worker) => worker.id),
     );
-    for (const workerId of [...reconciledWorkers]) {
+    for (const workerId of reconciledWorkers) {
       if (!online.has(workerId)) reconciledWorkers.delete(workerId);
     }
     for (const workerId of registered) {
@@ -8876,7 +8876,7 @@ const make = Effect.gen(function* () {
     }
     // A removed worker is forgotten; its cards are the removal's business.
     for (const map of [unreachableSince, offlineIntervals, heldSignals]) {
-      for (const workerId of [...map.keys()]) if (!registered.has(workerId)) map.delete(workerId);
+      for (const workerId of map.keys()) if (!registered.has(workerId)) map.delete(workerId);
     }
     for (const workerId of online) {
       if (reconciledWorkers.has(workerId)) continue;
@@ -9520,7 +9520,7 @@ const make = Effect.gen(function* () {
         .filter((state) => state.status === "running")
         .map((state) => slotKeyFor(board, state).workerId),
     );
-    for (const workerId of [...offlineIntervals.keys()]) {
+    for (const workerId of offlineIntervals.keys()) {
       if (!runningWorkers.has(workerId)) offlineIntervals.delete(workerId);
     }
   }).pipe(

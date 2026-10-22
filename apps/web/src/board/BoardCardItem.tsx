@@ -242,20 +242,20 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
                     tint: "text-warning-foreground",
                   }
                 : notice.kind === "worktree-kept"
-                ? {
-                    // T3O-52. Amber: the card is finished but its cleanup is
-                    // blocked, and only a human can clear what is in the way.
-                    icon: <HardDriveIcon className="size-3 shrink-0" />,
-                    label: "Worktree kept",
-                    tooltip: `Worktree kept: ${notice.reason}`,
-                    tint: "text-warning-foreground",
-                  }
-                : {
-                    icon: <LockIcon className="size-3 shrink-0" />,
-                    label: "Blocked",
-                    tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
-                    tint: "text-warning-foreground",
-                  };
+                  ? {
+                      // T3O-52. Amber: the card is finished but its cleanup is
+                      // blocked, and only a human can clear what is in the way.
+                      icon: <HardDriveIcon className="size-3 shrink-0" />,
+                      label: "Worktree kept",
+                      tooltip: `Worktree kept: ${notice.reason}`,
+                      tint: "text-warning-foreground",
+                    }
+                  : {
+                      icon: <LockIcon className="size-3 shrink-0" />,
+                      label: "Blocked",
+                      tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
+                      tint: "text-warning-foreground",
+                    };
   return (
     <BoardHint label={view.tooltip}>
       <span

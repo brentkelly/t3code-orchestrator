@@ -348,30 +348,32 @@ it.effect("back online after the step completed offline: it advances, once", () 
   }),
 );
 
-it.effect("a step on a worker that is offline at boot is held, with its slot, until it is back", () =>
-  Effect.gen(function* () {
-    const { ref, placement } = yield* makePlacement(false);
-    yield* withGovernor(
-      {
-        board: board(),
-        settings,
-        placement,
-        initialShells: new Map([[String(threadId), idleThread(String(threadId))]]),
-      },
-      (h) =>
-        Effect.gen(function* () {
-          yield* h.reactor.drain;
-          // Boot found a dead-looking thread on a worker it can't reach.
-          assert.strictEqual((yield* step(h))?.status, "running");
-          assert.strictEqual(yield* recoveries(h), 0);
-          assert.strictEqual(yield* h.slots.heldOnWorker(W1), 1);
-          yield* setOnline(h, ref, true);
-          // Recovered once, exactly as a boot with the worker online would.
-          assert.strictEqual(yield* recoveries(h), 1);
-          assert.strictEqual((yield* step(h))?.attempt, 2);
-        }),
-    );
-  }),
+it.effect(
+  "a step on a worker that is offline at boot is held, with its slot, until it is back",
+  () =>
+    Effect.gen(function* () {
+      const { ref, placement } = yield* makePlacement(false);
+      yield* withGovernor(
+        {
+          board: board(),
+          settings,
+          placement,
+          initialShells: new Map([[String(threadId), idleThread(String(threadId))]]),
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.drain;
+            // Boot found a dead-looking thread on a worker it can't reach.
+            assert.strictEqual((yield* step(h))?.status, "running");
+            assert.strictEqual(yield* recoveries(h), 0);
+            assert.strictEqual(yield* h.slots.heldOnWorker(W1), 1);
+            yield* setOnline(h, ref, true);
+            // Recovered once, exactly as a boot with the worker online would.
+            assert.strictEqual(yield* recoveries(h), 1);
+            assert.strictEqual((yield* step(h))?.attempt, 2);
+          }),
+      );
+    }),
 );
 
 it.effect("nothing new starts on an offline worker", () =>
@@ -429,32 +431,34 @@ it.effect("removing the worker stalls its running step and frees the slot", () =
   }),
 );
 
-it.effect("a signal held while offline, that reconcile didn't decide on, is released after it", () =>
-  Effect.gen(function* () {
-    const { ref, placement } = yield* makePlacement(true);
-    yield* withGovernor(
-      { board: board(), settings, placement, initialShells: aliveShells() },
-      (h) =>
-        Effect.gen(function* () {
-          yield* h.reactor.drain;
-          yield* setOnline(h, ref, false);
-          // The agent asked a question while the board couldn't see it.
-          yield* Ref.set(
-            h.shells,
-            new Map([
-              [String(threadId), aliveThread(String(threadId), { awaitingUserInput: true })],
-            ]),
-          );
-          yield* h.pumpRuntime(userInputRequested(threadId));
-          assert.strictEqual((yield* step(h))?.status, "running");
-          yield* setOnline(h, ref, true);
-          // Still alive, so reconcile watched it; the held question then parked it.
-          const parked = yield* step(h);
-          assert.strictEqual(parked?.status, "awaiting-input");
-          assert.strictEqual(yield* spawns(h), 0);
-        }),
-    );
-  }),
+it.effect(
+  "a signal held while offline, that reconcile didn't decide on, is released after it",
+  () =>
+    Effect.gen(function* () {
+      const { ref, placement } = yield* makePlacement(true);
+      yield* withGovernor(
+        { board: board(), settings, placement, initialShells: aliveShells() },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.reactor.drain;
+            yield* setOnline(h, ref, false);
+            // The agent asked a question while the board couldn't see it.
+            yield* Ref.set(
+              h.shells,
+              new Map([
+                [String(threadId), aliveThread(String(threadId), { awaitingUserInput: true })],
+              ]),
+            );
+            yield* h.pumpRuntime(userInputRequested(threadId));
+            assert.strictEqual((yield* step(h))?.status, "running");
+            yield* setOnline(h, ref, true);
+            // Still alive, so reconcile watched it; the held question then parked it.
+            const parked = yield* step(h);
+            assert.strictEqual(parked?.status, "awaiting-input");
+            assert.strictEqual(yield* spawns(h), 0);
+          }),
+      );
+    }),
 );
 
 /** The card as a removal left it, holding on W1 with its step stalled there. */
@@ -548,7 +552,13 @@ it.effect("a force-move strands the step on the offline worker, then runs it whe
             },
           };
           yield* setCard(h, moving);
-          yield* h.pumpDomain(moveRecorded(moving, { phase: "start", toWorkerId: BOARD_LOCAL_WORKER_ID, sha: "4e1a9c2", force: true }, 2));
+          yield* h.pumpDomain(
+            moveRecorded(
+              moving,
+              { phase: "start", toWorkerId: BOARD_LOCAL_WORKER_ID, sha: "4e1a9c2", force: true },
+              2,
+            ),
+          );
           const stranded = yield* step(h);
           assert.strictEqual(stranded?.status, "stalled");
           assert.strictEqual(stranded?.stalledReason, "worker-removed");
@@ -561,11 +571,16 @@ it.effect("a force-move strands the step on the offline worker, then runs it whe
             worktree: { ...readyWorktree("card-1"), path: "/tmp/worktrees/card-1-here" },
           };
           yield* setCard(h, landed);
-          yield* h.pumpDomain(moveRecorded(landed, { phase: "done", worktreePath: "/tmp/worktrees/card-1-here" }, 3));
+          yield* h.pumpDomain(
+            moveRecorded(landed, { phase: "done", worktreePath: "/tmp/worktrees/card-1-here" }, 3),
+          );
           // A fresh thread here; the old one stays linked, on W1.
           const spawned = (yield* h.commands).filter((command) => command.type === "thread.spawn");
           assert.strictEqual(spawned.length, 1);
-          assert.strictEqual(spawned[0]?.type === "thread.spawn" ? spawned[0].workerId : "?", undefined);
+          assert.strictEqual(
+            spawned[0]?.type === "thread.spawn" ? spawned[0].workerId : "?",
+            undefined,
+          );
           const running = yield* step(h);
           assert.strictEqual(running?.status, "running");
           assert.notStrictEqual(running?.threadId, threadId);
@@ -574,4 +589,3 @@ it.effect("a force-move strands the step on the offline worker, then runs it whe
     );
   }),
 );
-

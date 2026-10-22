@@ -466,8 +466,13 @@ export function boardBuildQueue(
       silently number a scheduled card into the queue. */
   nowMs: number,
 ): ReadonlyMap<string, BoardQueueSlot> {
+  // A card held for its offline worker (T3O-66) waits on no slot, so it takes
+  // no place in the queue; its notice says Worker offline instead.
   const queued = cards.filter(
-    (card) => card.queued && isBoardCardScheduleDue(card.scheduledStartAt, nowMs),
+    (card) =>
+      card.queued &&
+      card.queuedBy !== "worker-offline" &&
+      isBoardCardScheduleDue(card.scheduledStartAt, nowMs),
   );
   if (queued.length === 0) return EMPTY_QUEUE;
   const stageOrder = new Map(stages.map((stage, index) => [stage.stageId, index]));
