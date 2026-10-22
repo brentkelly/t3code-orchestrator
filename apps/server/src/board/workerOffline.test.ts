@@ -517,6 +517,11 @@ it.effect("removing the worker stalls its running step and frees the slot", () =
         Effect.gen(function* () {
           yield* h.reactor.drain;
           assert.strictEqual(yield* h.slots.heldOnWorker(W1), 1);
+          // The removal held the card, its worktree there.
+          yield* setCard(h, {
+            ...placedCard(),
+            placementOrphaned: { workerId: W1, workerLabel: "w1", orphanedAt: STARTED },
+          });
           yield* h.pumpDomain({
             type: "board.worker-removed",
             sequence: 2,
@@ -528,6 +533,53 @@ it.effect("removing the worker stalls its running step and frees the slot", () =
           assert.strictEqual(yield* h.slots.heldOnWorker(W1), 0);
           // Spends no recovery budget.
           assert.strictEqual(stalled?.attempt, 1);
+        }),
+    );
+  }),
+);
+
+it.effect("removing the worker restarts a fallback card's parked step on the default", () =>
+  Effect.gen(function* () {
+    const { placement } = yield* makePlacement(true);
+    // Pinned to W1 with no worktree yet, its agent waiting on a question there.
+    const pinned: BoardCard = {
+      ...placedCard(),
+      worktree: null,
+      placedWorkerId: null,
+      pinnedWorkerId: W1,
+    };
+    const parked = runningStep({ status: "awaiting-input", slotHeld: false });
+    yield* withGovernor(
+      {
+        board: { ...board(parked), cards: [pinned] },
+        settings,
+        placement,
+        initialShells: new Map([
+          [String(threadId), aliveThread(String(threadId), { awaitingUserInput: true })],
+        ]),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          assert.strictEqual((yield* step(h))?.status, "awaiting-input");
+          // The removal fell the card back to the default worker.
+          yield* setCard(h, { ...pinned, pinnedWorkerId: null });
+          yield* h.pumpDomain({
+            type: "board.worker-removed",
+            sequence: 2,
+            payload: { workerId: W1 },
+          } as never);
+          const stalls = (yield* h.commands).filter(
+            (command) =>
+              command.type === "board.card.recover-step" &&
+              command.stalledReason === "worker-removed",
+          );
+          assert.strictEqual(stalls.length, 1);
+          // Requeued, and started afresh here rather than left on W1's thread.
+          const restarted = yield* step(h);
+          assert.notStrictEqual(restarted?.status, "awaiting-input");
+          assert.notStrictEqual(restarted?.status, "stalled");
+          assert.notStrictEqual(restarted?.threadId, threadId);
         }),
     );
   }),
@@ -698,6 +750,72 @@ it.effect("a force-move strands the step on the offline worker, then runs it whe
           assert.strictEqual(running?.status, "running");
           assert.notStrictEqual(running?.threadId, threadId);
           assert.strictEqual(yield* h.slots.heldOnWorker(BOARD_LOCAL_WORKER_ID), 1);
+        }),
+    );
+  }),
+);
+
+it.effect("a force-move off an offline worker takes a parked step with it", () =>
+  Effect.gen(function* () {
+    const { placement } = yield* makePlacement(false);
+    // Parked on a usage limit, on W1's thread.
+    const parked = runningStep({
+      status: "stalled",
+      stalledReason: "usage-limit",
+      slotHeld: false,
+    });
+    yield* withGovernor(
+      {
+        board: board(parked),
+        settings,
+        placement,
+        initialShells: new Map([[String(threadId), idleThread(String(threadId))]]),
+        gateway: (local) => ({
+          ...local,
+          threadState: (id) =>
+            id === threadId ? Effect.succeed(UNKNOWN_THREAD_STATE) : local.threadState(id),
+        }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          const moving: BoardCard = {
+            ...placedCard(),
+            workerMove: {
+              fromWorkerId: W1,
+              toWorkerId: BOARD_LOCAL_WORKER_ID,
+              status: "moving",
+              sha: "4e1a9c2",
+              error: null,
+              startedAt: "1970-01-01T00:00:00.000Z",
+            },
+          };
+          yield* setCard(h, moving);
+          yield* h.pumpDomain(
+            moveRecorded(
+              moving,
+              { phase: "start", toWorkerId: BOARD_LOCAL_WORKER_ID, sha: "4e1a9c2", force: true },
+              2,
+            ),
+          );
+          const stranded = yield* step(h);
+          assert.strictEqual(stranded?.status, "stalled");
+          assert.strictEqual(stranded?.stalledReason, "worker-removed");
+          const landed: BoardCard = {
+            ...placedCard(),
+            pinnedWorkerId: BOARD_LOCAL_WORKER_ID,
+            placedWorkerId: BOARD_LOCAL_WORKER_ID,
+            worktree: { ...readyWorktree("card-1"), path: "/tmp/worktrees/card-1-here" },
+          };
+          yield* setCard(h, landed);
+          yield* h.pumpDomain(
+            moveRecorded(landed, { phase: "done", worktreePath: "/tmp/worktrees/card-1-here" }, 3),
+          );
+          // A fresh thread where it landed.
+          assert.strictEqual(yield* spawns(h), 1);
+          const running = yield* step(h);
+          assert.strictEqual(running?.status, "running");
+          assert.notStrictEqual(running?.threadId, threadId);
         }),
     );
   }),

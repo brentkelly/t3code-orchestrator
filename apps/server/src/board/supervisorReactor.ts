@@ -1953,7 +1953,22 @@ const make = Effect.gen(function* () {
     if (landed) yield* releaseSlot(state);
   });
 
-  /** Every step running on a worker just removed from the board (D22). */
+  /**
+   * Whether a step is bound to its thread where that thread is: running on
+   * it, or parked on it — a question, a backoff rung, a usage-limit park —
+   * waiting to be resumed there. A human's Pause is left alone: the decider
+   * refuses to recover it, and their resume starts afresh wherever the card
+   * now is (`resumeExistingStepThread`).
+   */
+  const stepBoundToThread = (state: BoardCardStepState) =>
+    state.threadId !== null &&
+    (state.status === "running" ||
+      state.status === "completing" ||
+      state.status === "awaiting-input" ||
+      (state.status === "stalled" && state.stalledReason !== "worker-removed"));
+
+  /** Every step running or parked on a worker just removed from the board
+      (D22). A card that follows the default from now on restarts there. */
   const stallStepsOnRemovedWorker = Effect.fn("board-supervisor-stallStepsOnRemovedWorker")(
     function* (workerId: BoardWorkerId) {
       reconciledWorkers.delete(workerId);
@@ -1961,18 +1976,20 @@ const make = Effect.gen(function* () {
       decidedThreads.delete(workerId);
       const board = yield* readBoard;
       for (const state of boardNonTerminalStepStates(board)) {
-        if (state.status !== "running" && state.status !== "completing") continue;
+        if (!stepBoundToThread(state)) continue;
         if (slotKeyFor(board, state).workerId !== workerId) continue;
         yield* stallWorkerRemoved(state, "The worker this step ran on was removed from the board.");
       }
+      yield* requeueResolvedPlacementStalls();
     },
   );
 
   /**
-   * A card's live step still reads as running on a worker the board can't
-   * reach, while the card itself now runs somewhere else — it was force-moved,
-   * or re-pinned off it (T3O-66). Nothing will ever end that run as the board
-   * sees it, so it is stalled, and continues where the card is now.
+   * A card's live step still reads as running, or parked, on a worker the
+   * board can't reach, while the card itself now runs somewhere else — it was
+   * force-moved, or re-pinned off it (T3O-66). Nothing will ever end or resume
+   * that run as the board sees it, so it is stalled, and continues where the
+   * card is now.
    */
   const stallStrandedStep = Effect.fn("board-supervisor-stallStrandedStep")(function* (
     cardId: BoardCardId,
@@ -1980,8 +1997,7 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === cardId);
     const state = boardCardStepState(board, cardId);
-    if (card === undefined || state === null) return;
-    if (state.status !== "running" && state.status !== "completing") return;
+    if (card === undefined || state === null || !stepBoundToThread(state)) return;
     const at = slotKeyFor(board, state).workerId;
     const runsOn =
       card.workerMove?.status === "moving"

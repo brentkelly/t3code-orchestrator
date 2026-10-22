@@ -1728,9 +1728,9 @@ export const BOARD_STEP_STALLED_REASONS = [
   // pinned to a worker that has it, its model changes, or the instance appears.
   "provider-not-on-worker",
   // The card's worker was removed from the board (T3O-66, D22), or the card
-  // was force-moved off a worker it could not reach, while this step ran
-  // there. Its thread was stopped if the worker answered, and its slot
-  // released. Clears when the card is moved, or the worker is added back.
+  // was force-moved off a worker it could not reach, while this step ran or
+  // was parked there. Its thread was stopped if the worker answered, and its
+  // slot released. Clears when the card is moved, or the worker is added back.
   "worker-removed",
 ] as const;
 export const BoardCardStepStalledReason = Schema.Literals(BOARD_STEP_STALLED_REASONS);
