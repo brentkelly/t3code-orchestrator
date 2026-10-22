@@ -9,10 +9,18 @@
  * own workers' threads to another board.
  *
  * A thread spawned here is recorded as relayed to the board that spawned it,
- * so its agent's board tools forward there (`McpRelayHost`).
+ * so its agent's board tools forward there (`McpRelayHost`), and forgotten
+ * once it is deleted. The relay's calls and the spawn take the caller's
+ * session, because a board is only the environment id its session claims:
+ * the relay binds each board to one session (`McpRelayHost.claim`).
  */
 import {
   BoardWorkerGatewayError,
+  type AuthSessionId,
+  type BoardGatewaySpawnInput,
+  type BoardMcpRelayRequest,
+  type BoardMcpRelayResponse,
+  type EnvironmentId,
   type BoardStageAttachmentsInput,
   type BoardStageAttachmentsResult,
   type BoardCardId,
@@ -39,15 +47,50 @@ import {
   wireRead,
   type WorkerGatewayRpcOf,
 } from "./gatewayWire.ts";
-import { McpRelayHost } from "./McpRelayHost.ts";
+import { McpRelayHost, type McpRelayRefused } from "./McpRelayHost.ts";
+
+type CallerBound = "spawn" | "subscribeMcpRelay" | "mcpRelayRespond";
 
 /** The host fails only with the worker's own error: there is no wire
-    between it and the gateway it serves. */
-export type WorkerGatewayHostShape = WorkerGatewayRpcOf<BoardWorkerGatewayError>;
+    between it and the gateway it serves. The calls that speak for a board
+    also take the session making them. */
+export type WorkerGatewayHostShape = Omit<
+  WorkerGatewayRpcOf<BoardWorkerGatewayError>,
+  CallerBound
+> & {
+  readonly spawn: (
+    input: BoardGatewaySpawnInput,
+    caller: AuthSessionId,
+  ) => Effect.Effect<void, BoardWorkerGatewayError>;
+  readonly subscribeMcpRelay: (
+    centralEnvironmentId: EnvironmentId,
+    caller: AuthSessionId,
+  ) => Stream.Stream<BoardMcpRelayRequest, BoardWorkerGatewayError>;
+  readonly mcpRelayRespond: (
+    response: BoardMcpRelayResponse,
+    caller: AuthSessionId,
+  ) => Effect.Effect<void, BoardWorkerGatewayError>;
+};
+
+/** The host as one session sees it: the in-process test transport's view. */
+export const hostForSession = (
+  host: WorkerGatewayHostShape,
+  caller: AuthSessionId,
+): WorkerGatewayRpcOf<BoardWorkerGatewayError> => ({
+  ...host,
+  spawn: (input) => host.spawn(input, caller),
+  subscribeMcpRelay: (central) => host.subscribeMcpRelay(central, caller),
+  mcpRelayRespond: (response) => host.mcpRelayRespond(response, caller),
+});
 
 export class WorkerGatewayHost extends Context.Service<WorkerGatewayHost, WorkerGatewayHostShape>()(
   "t3/board/workers/WorkerGatewayHost",
 ) {}
+
+const refused =
+  (operation: string, threadId: string | null = null) =>
+  (error: McpRelayRefused) =>
+    new BoardWorkerGatewayError({ kind: "refused", operation, threadId, detail: error.detail });
 
 const stagingError = (detail: string) =>
   new BoardWorkerGatewayError({
@@ -65,6 +108,23 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
+
+  // A deleted thread makes no more board calls; its relay record goes too,
+  // however it was deleted.
+  yield* local.observe.pipe(
+    Stream.runForEach((signal) =>
+      signal.type === "thread-deleted"
+        ? store
+            .forgetRelayedThread(signal.threadId)
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("board relay: a deleted thread's record was kept", { cause }),
+              ),
+            )
+        : Effect.void,
+    ),
+    Effect.forkScoped,
+  );
 
   const sha256 = (bytes: Uint8Array) =>
     crypto.digest("SHA-256", bytes).pipe(Effect.map(Hex.encode), Effect.orDie);
@@ -111,21 +171,36 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     );
 
   return {
-    spawn: ({ centralEnvironmentId, ...input }) =>
-      // Recorded first: the agent's first tool call can arrive before the
-      // spawn returns.
-      store.recordRelayedThread(input.threadId, centralEnvironmentId).pipe(
-        Effect.mapError(
-          (cause) =>
-            new BoardWorkerGatewayError({
-              kind: "failed",
-              operation: "spawn",
-              threadId: input.threadId,
-              detail: `Couldn't record the thread for the board: ${String(cause.cause)}`,
-            }),
-        ),
-        Effect.andThen(wireCommand(local.spawn(input))),
-      ),
+    spawn: ({ centralEnvironmentId, ...input }, caller) =>
+      Effect.gen(function* () {
+        yield* relay
+          .claim(centralEnvironmentId, caller)
+          .pipe(Effect.mapError(refused("spawn", input.threadId)));
+        // Recorded first: the agent's first tool call can arrive before the
+        // spawn returns. A thread another board placed stays that board's.
+        const recordFailed = (cause: { readonly cause?: unknown }) =>
+          new BoardWorkerGatewayError({
+            kind: "failed",
+            operation: "spawn",
+            threadId: input.threadId,
+            detail: `Couldn't record the thread for the board: ${String(cause.cause)}`,
+          });
+        const current = yield* store
+          .relayedThreadCentral(input.threadId)
+          .pipe(Effect.mapError(recordFailed));
+        if (current !== null && current !== centralEnvironmentId) {
+          return yield* new BoardWorkerGatewayError({
+            kind: "refused",
+            operation: "spawn",
+            threadId: input.threadId,
+            detail: "That thread belongs to another board.",
+          });
+        }
+        yield* store
+          .recordRelayedThread(input.threadId, centralEnvironmentId)
+          .pipe(Effect.mapError(recordFailed));
+        yield* wireCommand(local.spawn(input));
+      }),
     send: (input) => wireCommand(local.send(input)),
     interrupt: (input) => wireCommand(local.interrupt(input)),
     stopSession: (input) => wireCommand(local.stopSession(input)),
@@ -153,8 +228,10 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     readTodoLog: (after, upTo) =>
       local.readTodoLog(after, upTo).pipe(Stream.mapError(toWireReadError)),
     subscribeTodoLog: Stream.unwrap(local.subscribeTodoLog),
-    subscribeMcpRelay: (central) => relay.subscribe(central),
-    mcpRelayRespond: (response) => relay.respond(response),
+    subscribeMcpRelay: (central, caller) =>
+      relay.subscribe(central, caller).pipe(Stream.mapError(refused("subscribeMcpRelay"))),
+    mcpRelayRespond: (response, caller) =>
+      relay.respond(response, caller).pipe(Effect.mapError(refused("mcpRelayRespond"))),
     stageAttachments,
   } satisfies WorkerGatewayHostShape;
 });

@@ -4,7 +4,7 @@
  * For every worker with a live connection, holds that worker's relay stream
  * open and answers each board tool call that arrives on it. A call can arrive
  * twice — a stream dropped between the answer and its delivery — so each is
- * answered once by call id: an answer on record is sent again, and a call
+ * answered once per worker and call id: an answer on record is sent again, and a call
  * still running is waited on rather than run a second time. A transient
  * `board-unreachable` is not recorded, so the same call id can still succeed.
  */
@@ -99,10 +99,13 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
     Effect.gen(function* () {
       // Claimed before the first yield, so a redelivery can never slip in
       // between the store lookup and the claim and run the call a second time.
-      const running = inflight.get(request.callId);
+      // Keyed by worker too: a call id is the worker's own, so another
+      // worker's same id is another call and never gets this one's answer.
+      const key = `${workerId}\u0000${request.callId}`;
+      const running = inflight.get(key);
       if (running !== undefined) return yield* Deferred.await(running);
       const done = Deferred.makeUnsafe<BoardMcpRelayOutcome>();
-      inflight.set(request.callId, done);
+      inflight.set(key, done);
       // The run belongs to this client, not to the stream that delivered the
       // call: a dropped link interrupts the delivering fiber, and the call
       // redelivered on the next link waits on this same run. Its answer is
@@ -111,7 +114,7 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
         // A lookup that failed says nothing about whether the call already
         // ran, so it is a transient answer rather than a reason to run it again.
         const recorded = yield* store
-          .relayCallOutcome(request.callId)
+          .relayCallOutcome(workerId, request.callId)
           .pipe(Effect.orElseSucceed(() => STORE_UNREADABLE));
         if (recorded !== null) return recorded;
         const outcome = yield* runRelayedBoardTool({
@@ -131,7 +134,7 @@ export const makeBoardMcpRelayClient = Effect.gen(function* () {
         );
         return outcome;
       }).pipe(
-        Effect.ensuring(Effect.sync(() => inflight.delete(request.callId))),
+        Effect.ensuring(Effect.sync(() => inflight.delete(key))),
         Effect.exit,
         Effect.flatMap((exit) => Deferred.done(done, exit)),
         Effect.forkIn(scope),

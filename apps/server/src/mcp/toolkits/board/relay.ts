@@ -194,8 +194,9 @@ export const runRelayedBoardTool = (input: {
     }
     const name = request.toolName as BoardToolName;
 
-    // Authorised twice (D3): linked to a card, and placed on THIS worker, so
-    // one worker can never act on another worker's cards.
+    // Authorised twice (D3): linked to a card, and placed on THIS worker. A
+    // write naming another card is bound the same way in its handler
+    // (`refuseOtherWorkersCard`), so one worker never acts on another's cards.
     const queries = yield* BoardQueries;
     const linkedTo = yield* queries.boardThreadWorker(request.threadId);
     if (linkedTo === null) {

@@ -26,13 +26,13 @@ import {
   CommandId,
   EMPTY_BOARD_STATE,
   resolveBoardCardForThread,
+  boardCardEffectiveWorkerId,
   unwrapStringifiedBoardStepPayload,
   type BoardCardArchiveCommand,
   type BoardCardCreateCommand,
   type BoardCardCompleteStepCommand,
   type BoardCardDeleteCommand,
   type BoardCardMoveCommand,
-  type BoardCardPinWorkerCommand,
   type BoardCardUnarchiveCommand,
   type BoardCardUpdateCommand,
   type BoardCard,
@@ -317,6 +317,29 @@ const refuseOwnCard = (
     }),
   );
 };
+
+/**
+ * Refuse a write a worker relayed for a card that runs on another worker
+ * (T3O-63, D3). The relay has already bound the calling thread to a card on
+ * the worker the call came from; this binds the TARGET too, so an agent on one
+ * worker may change its own card and the cards that run there, never another
+ * worker's. Calls from this server's own threads are not relayed and pass.
+ */
+const refuseOtherWorkersCard = (
+  board: BoardState,
+  scope: McpThreadInvocationScope,
+  card: BoardCard,
+): Effect.Effect<void, BoardToolError> =>
+  Effect.gen(function* () {
+    const relayed = yield* Effect.serviceOption(BoardRelayInvocation);
+    if (Option.isNone(relayed)) return;
+    if (resolveBoardCardForThread(board, scope.thread.threadId)?.id === card.id) return;
+    if (boardCardEffectiveWorkerId(card, board.defaultWorkerId) === relayed.value.workerId) return;
+    return yield* new BoardToolError({
+      code: "rejected",
+      message: `'${card.key}' runs on another worker, so it cannot be changed from this one — ask a human to do it from the app.`,
+    });
+  });
 
 /**
  * Refuse an IRREVERSIBLE write aimed at a card another agent is still working
@@ -1029,6 +1052,7 @@ export const boardHandlers = {
       const deps = yield* boardToolDeps;
       const board = yield* readBoardState(deps);
       const card = board.cards.find((candidate) => candidate.id === input.cardId);
+      if (card !== undefined) yield* refuseOtherWorkersCard(board, deps.scope, card);
       // A bottom key in the target column, so a cross-stage move lands last.
       // When the card does not exist the move carries no order key and the
       // decider rejects it with an actionable "does not exist" message —
@@ -1065,28 +1089,13 @@ export const boardHandlers = {
       return { cardId: input.cardId, stage: input.toStage };
     }),
 
-  board_pin_card_worker: (input) =>
-    Effect.gen(function* () {
-      const deps = yield* boardToolDeps;
-      const board = yield* readBoardState(deps);
-      const target = yield* findCardByKeyOrId(board, input.cardId);
-      const command: BoardCardPinWorkerCommand = {
-        type: "board.card.pin-worker",
-        commandId: yield* mintCommandId,
-        cardId: target.id,
-        workerId: input.workerId,
-        createdAt: yield* nowIso,
-      };
-      yield* dispatch(deps, command);
-      return { cardId: target.id, key: target.key, workerId: input.workerId };
-    }),
-
   board_update_card: (input) =>
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
       const board = yield* readBoardState(deps);
       // The target takes a key as readily as its dependency fields do (T3O-53).
       const target = yield* findCardByKeyOrId(board, input.cardId);
+      yield* refuseOtherWorkersCard(board, deps.scope, target);
       const cardId = target.id;
       const labels =
         input.labels === undefined ? undefined : yield* resolveLabelIds(board, input.labels);
@@ -1173,6 +1182,7 @@ export const boardHandlers = {
       const deps = yield* boardToolDeps;
       const board = yield* readBoardState(deps);
       const card = yield* requireTargetCard(board, input.cardId);
+      yield* refuseOtherWorkersCard(board, deps.scope, card);
       yield* refuseOwnCard(
         board,
         deps.scope,
@@ -1194,6 +1204,7 @@ export const boardHandlers = {
       const deps = yield* boardToolDeps;
       const board = yield* readBoardState(deps);
       const card = yield* requireTargetCard(board, input.cardId);
+      yield* refuseOtherWorkersCard(board, deps.scope, card);
       const command: BoardCardUnarchiveCommand = {
         type: "board.card.unarchive",
         commandId: yield* mintCommandId,
@@ -1212,6 +1223,7 @@ export const boardHandlers = {
       // card left to read one off, and "deleted card-4f3a…" is not an answer a
       // human can check.
       const card = yield* requireTargetCard(board, input.cardId);
+      yield* refuseOtherWorkersCard(board, deps.scope, card);
       yield* refuseOwnCard(
         board,
         deps.scope,
@@ -1331,9 +1343,6 @@ export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
   ),
   board_update_card: McpToolAccess.writesWithCapability(
     relayable("board_update_card", boardHandlers.board_update_card),
-  ),
-  board_pin_card_worker: McpToolAccess.writesWithCapability(
-    relayable("board_pin_card_worker", boardHandlers.board_pin_card_worker),
   ),
   board_archive_card: McpToolAccess.writesWithCapability(
     relayable("board_archive_card", boardHandlers.board_archive_card),

@@ -32,7 +32,6 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { BoardEngine } from "../../../board/BoardEngine.ts";
-import { makeBoardQueries } from "../../../board/projection.ts";
 import { BoardRuntimeLive } from "../../../board/runtimeLayer.ts";
 import {
   SupervisorReactor,
@@ -43,7 +42,10 @@ import {
   UNKNOWN_THREAD_STATE,
   type ThreadSpawnInput,
 } from "../../../board/ThreadGateway.ts";
-import { makeThreadGatewayRouter } from "../../../board/ThreadGatewayRouter.ts";
+import {
+  makeLinkedThreadWorkers,
+  makeThreadGatewayRouter,
+} from "../../../board/ThreadGatewayRouter.ts";
 import { aliveThread, makeFakeThreadGateway } from "../../../board/threadGateway.testkit.ts";
 import {
   BoardRelayStore,
@@ -107,14 +109,14 @@ const setup = (options: { readonly relay?: boolean } = {}) =>
     });
     yield* env.connections.sync([registeredWorker]);
     yield* waitOnline(env.connections);
-    const queries = makeBoardQueries(yield* SqlClient.SqlClient);
+    const sql = yield* SqlClient.SqlClient;
     const fileSystem = yield* FileSystem.FileSystem;
     const crypto = yield* Crypto.Crypto;
     const router = makeThreadGatewayRouter({
       local: central.gateway,
       connections: env.connections,
       feed: emptyWorkerSignalFeed,
-      linkedWorker: queries.boardThreadWorker,
+      linkedWorkers: makeLinkedThreadWorkers(sql),
       remote: (workerId) =>
         makeRemoteThreadGateway({
           workerId,
@@ -300,6 +302,68 @@ describe("the board MCP relay", () => {
     ),
   );
 
+  it.effect("refuses a write to a card that runs on another worker", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const world = yield* setup();
+        const threadId = ThreadId.make("thread-cross");
+        yield* seedCard(world, { cardId: BoardCardId.make("card-own"), threadId }).pipe(
+          Effect.provide(world.runtime),
+        );
+        // Another card, following the default worker: this server.
+        const engine = yield* BoardEngine.pipe(Effect.provide(world.runtime));
+        const other = BoardCardId.make("card-elsewhere");
+        yield* engine.dispatch({
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-card-elsewhere"),
+          cardId: other,
+          projectId: PROJECT_ID,
+          title: "A card on this server",
+          orderKey: "n",
+          createdAt: t0,
+        });
+        const updateCard = relayable("board_update_card", boardHandlers.board_update_card);
+        const archiveCard = relayable("board_archive_card", boardHandlers.board_archive_card);
+
+        const refused = yield* Effect.flip(
+          onWorker(world, threadId, updateCard({ cardId: other, title: "Renamed" })),
+        );
+        assert.strictEqual(refused._tag === "BoardToolError" ? refused.code : null, "rejected");
+        const archiveRefused = yield* Effect.flip(
+          onWorker(world, threadId, archiveCard({ cardId: other })),
+        );
+        assert.strictEqual(
+          archiveRefused._tag === "BoardToolError" ? archiveRefused.code : null,
+          "rejected",
+        );
+        const untouched = (yield* engine.getReadModel).board?.cards.find(
+          (card) => card.id === other,
+        );
+        assert.strictEqual(untouched?.title, "A card on this server");
+        assert.isNull(untouched?.archivedAt);
+
+        // Pinned to the calling worker, the same card is the agent's to change.
+        yield* engine.dispatch({
+          type: "board.worker.register",
+          commandId: CommandId.make("cmd-register"),
+          mode: "add",
+          worker: registeredWorker,
+          createdAt: t0,
+        });
+        yield* engine.dispatch({
+          type: "board.card.pin-worker",
+          commandId: CommandId.make("cmd-pin"),
+          cardId: other,
+          workerId: WORKER_ID,
+          createdAt: t0,
+        });
+        yield* onWorker(world, threadId, updateCard({ cardId: other, title: "Renamed" }));
+        const renamed = (yield* engine.getReadModel).board?.cards.find((card) => card.id === other);
+        assert.strictEqual(renamed?.title, "Renamed");
+      }),
+    ),
+  );
+
   it.effect("applies a call delivered twice under one call id once", () =>
     inCentral(
       Effect.gen(function* () {
@@ -330,6 +394,34 @@ describe("the board MCP relay", () => {
           titles.filter((title) => title === "Follow-up"),
           ["Follow-up"],
         );
+      }),
+    ),
+  );
+
+  it.effect("another worker's call under the same call id is not given this one's answer", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const world = yield* setup();
+        const cardId = BoardCardId.make("card-replay");
+        const threadId = ThreadId.make("thread-replay");
+        yield* seedCard(world, { cardId, threadId }).pipe(Effect.provide(world.runtime));
+        const request: BoardMcpRelayRequest = {
+          callId: "relay:call-replayed",
+          toolName: "board_get_card_context",
+          params: {},
+          threadId,
+          providerSessionId: "sess-1",
+          providerInstanceId: CODEX,
+          stateDir: world.workerStateDir,
+        };
+        assert.strictEqual((yield* world.relayClient.answer(WORKER_ID, request))._tag, "success");
+
+        // Replayed by a worker the card does not run on: checked afresh, and refused.
+        const replayed = yield* world.relayClient.answer(
+          EnvironmentId.make("env-other-worker"),
+          request,
+        );
+        assert.strictEqual(replayed._tag === "failure" ? replayed.code : replayed._tag, "rejected");
       }),
     ),
   );
@@ -485,8 +577,8 @@ describe("the board MCP relay", () => {
           Effect.provide(world.runtime),
           Effect.provideService(BoardRelayStore, {
             ...store,
-            relayCallOutcome: (callId) =>
-              store.relayCallOutcome(callId).pipe(
+            relayCallOutcome: (...args) =>
+              store.relayCallOutcome(...args).pipe(
                 Effect.tap(() => {
                   lookups += 1;
                   return lookups === 1 ? Effect.void : Deferred.await(lookupGate);
@@ -558,7 +650,7 @@ describe("the board MCP relay", () => {
           "board-unreachable",
         );
         const store = yield* BoardRelayStore;
-        assert.isNull(yield* store.relayCallOutcome(request.callId));
+        assert.isNull(yield* store.relayCallOutcome(WORKER_ID, request.callId));
 
         // The same call, once the worker answers again, goes through.
         const after = yield* world.relayClient.answer(WORKER_ID, request);

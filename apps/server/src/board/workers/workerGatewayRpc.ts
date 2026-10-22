@@ -6,6 +6,7 @@
  */
 import {
   BOARD_WORKER_GATEWAY_RPC_SCOPES,
+  type AuthSessionId,
   BOARD_WORKER_GATEWAY_WS_METHODS as M,
   BoardWorkerGatewayError,
   EnvironmentAuthorizationError,
@@ -27,11 +28,12 @@ type Method = keyof typeof BOARD_WORKER_GATEWAY_RPC_SCOPES;
 export const runGatewayCall = (
   host: WorkerGatewayHostShape,
   call: BoardGatewayCall,
+  caller: AuthSessionId,
 ): Effect.Effect<unknown, BoardWorkerGatewayError> => {
   const answer = (): Effect.Effect<unknown, BoardWorkerGatewayError> => {
     switch (call._tag) {
       case "spawn":
-        return host.spawn(call.input).pipe(Effect.as(null));
+        return host.spawn(call.input, caller).pipe(Effect.as(null));
       case "send":
         return host.send(call.input).pipe(Effect.as(null));
       case "interrupt":
@@ -116,7 +118,11 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
     };
 
   return {
-    [M.call]: call(M.call, runGatewayCall),
+    // The caller is the authenticated session, never anything the request
+    // says about itself: it is what binds a board's relay (`McpRelayHost`).
+    [M.call]: call(M.call, (host, input: BoardGatewayCall) =>
+      runGatewayCall(host, input, currentSession.sessionId),
+    ),
     [M.subscribeSignals]: stream(
       M.subscribeSignals,
       (host, input: { readonly afterSequence: number | null }) =>
@@ -134,10 +140,10 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
     [M.subscribeMcpRelay]: stream(
       M.subscribeMcpRelay,
       (host, input: { readonly centralEnvironmentId: EnvironmentId }) =>
-        host.subscribeMcpRelay(input.centralEnvironmentId),
+        host.subscribeMcpRelay(input.centralEnvironmentId, currentSession.sessionId),
     ),
     [M.mcpRelayRespond]: call(M.mcpRelayRespond, (host, input: BoardMcpRelayResponse) =>
-      host.mcpRelayRespond(input),
+      host.mcpRelayRespond(input, currentSession.sessionId),
     ),
     [M.stageAttachments]: call(M.stageAttachments, (host, input: BoardStageAttachmentsInput) =>
       host.stageAttachments(input),

@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 export class BoardRelayStoreError extends Schema.TaggedError<BoardRelayStoreError>()(
   "BoardRelayStoreError",
@@ -34,14 +35,24 @@ export interface BoardRelayStoreShape {
   readonly relayedThreadCentral: (
     threadId: ThreadId,
   ) => Effect.Effect<EnvironmentId | null, BoardRelayStoreError>;
+  /** Worker side: forget a thread that is gone. */
+  readonly forgetRelayedThread: (threadId: ThreadId) => Effect.Effect<void, BoardRelayStoreError>;
   /** Central side: the last worker signal position the board has applied. */
   readonly signalCursor: (workerId: EnvironmentId) => Effect.Effect<number | null>;
   readonly saveSignalCursor: (
     workerId: EnvironmentId,
     cursor: number,
   ) => Effect.Effect<void, BoardRelayStoreError>;
-  /** Central side: a relayed call's recorded answer. */
+  /** Central side: forget a worker's cursor, so a worker added again starts
+      at its log's head rather than replaying what it logged meanwhile. */
+  readonly forgetSignalCursor: (
+    workerId: EnvironmentId,
+  ) => Effect.Effect<void, BoardRelayStoreError>;
+  /** Central side: a relayed call's recorded answer, for the worker that
+      sent it: call ids are the worker's own, so another worker's same id is
+      another call. */
   readonly relayCallOutcome: (
+    workerId: EnvironmentId,
     callId: string,
   ) => Effect.Effect<BoardMcpRelayOutcome | null, BoardRelayStoreError>;
   readonly recordRelayCall: (
@@ -96,6 +107,11 @@ export const BoardRelayStoreLive = Layer.effect(
           Effect.map((rows) => (rows[0]?.central ?? null) as EnvironmentId | null),
           failed("relayedThreadCentral"),
         ),
+      forgetRelayedThread: (threadId) =>
+        sql`DELETE FROM board_relayed_threads WHERE thread_id = ${threadId}`.pipe(
+          Effect.asVoid,
+          failed("forgetRelayedThread"),
+        ),
       signalCursor: (workerId) =>
         sql<{ readonly cursor: number }>`
           SELECT signal_cursor AS "cursor" FROM board_worker_cursors WHERE worker_id = ${workerId}
@@ -121,9 +137,15 @@ export const BoardRelayStoreLive = Layer.effect(
           Effect.asVoid,
           failed("saveSignalCursor"),
         ),
-      relayCallOutcome: (callId) =>
+      forgetSignalCursor: (workerId) =>
+        sql`DELETE FROM board_worker_cursors WHERE worker_id = ${workerId}`.pipe(
+          Effect.asVoid,
+          failed("forgetSignalCursor"),
+        ),
+      relayCallOutcome: (workerId, callId) =>
         sql<{ readonly outcome: string }>`
-          SELECT outcome_json AS "outcome" FROM board_mcp_relay_calls WHERE call_id = ${callId}
+          SELECT outcome_json AS "outcome" FROM board_mcp_relay_calls
+          WHERE call_id = ${callId} AND worker_id = ${workerId}
         `.pipe(
           Effect.flatMap((rows) =>
             rows[0] === undefined ? Effect.succeed(null) : decodeOutcome(rows[0].outcome),
@@ -148,26 +170,46 @@ export const BoardRelayStoreLive = Layer.effect(
   }),
 );
 
+const relayCallKey = (workerId: EnvironmentId, callId: string) => `${workerId}\u0000${callId}`;
+
 /** An in-memory store, for tests. */
 export const makeMemoryBoardRelayStore = Effect.gen(function* () {
-  const relayed = yield* Ref.make(new Map<string, EnvironmentId>());
+  // Watchable, so a test can await a record's removal.
+  const relayed = yield* SubscriptionRef.make<ReadonlyMap<string, EnvironmentId>>(new Map());
   const cursors = yield* Ref.make(new Map<string, number>());
   const calls = yield* Ref.make(new Map<string, BoardMcpRelayOutcome>());
   const store: BoardRelayStoreShape = {
     recordRelayedThread: (threadId, central) =>
-      Ref.update(relayed, (map) => new Map(map).set(threadId, central)),
+      SubscriptionRef.update(relayed, (map) => new Map(map).set(threadId, central)),
     relayedThreadCentral: (threadId) =>
-      Ref.get(relayed).pipe(Effect.map((map) => map.get(threadId) ?? null)),
+      SubscriptionRef.get(relayed).pipe(Effect.map((map) => map.get(threadId) ?? null)),
+    forgetRelayedThread: (threadId) =>
+      SubscriptionRef.update(relayed, (map) => {
+        const next = new Map(map);
+        next.delete(threadId);
+        return next;
+      }),
     signalCursor: (workerId) =>
       Ref.get(cursors).pipe(Effect.map((map) => map.get(workerId) ?? null)),
     saveSignalCursor: (workerId, cursor) =>
       Ref.update(cursors, (map) => new Map(map).set(workerId, cursor)),
-    relayCallOutcome: (callId) =>
+    forgetSignalCursor: (workerId) =>
+      Ref.update(cursors, (map) => {
+        const next = new Map(map);
+        next.delete(workerId);
+        return next;
+      }),
+    relayCallOutcome: (workerId, callId) =>
       Ref.get(calls).pipe(
-        Effect.map((map) => Option.getOrNull(Option.fromNullishOr(map.get(callId)))),
+        Effect.map((map) =>
+          Option.getOrNull(Option.fromNullishOr(map.get(relayCallKey(workerId, callId)))),
+        ),
       ),
-    recordRelayCall: (callId, _workerId, outcome) =>
-      Ref.update(calls, (map) => (map.has(callId) ? map : new Map(map).set(callId, outcome))),
+    recordRelayCall: (callId, workerId, outcome) =>
+      Ref.update(calls, (map) => {
+        const key = relayCallKey(workerId, callId);
+        return map.has(key) ? map : new Map(map).set(key, outcome);
+      }),
   };
   return { store, layer: Layer.succeed(BoardRelayStore, store), cursors, calls, relayed };
 });

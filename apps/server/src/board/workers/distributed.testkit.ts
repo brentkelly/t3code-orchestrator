@@ -9,6 +9,7 @@
  * blip would.
  */
 import {
+  AuthSessionId,
   BOARD_LOCAL_WORKER_ID,
   EnvironmentId,
   ProjectId,
@@ -37,7 +38,7 @@ import {
   type WorkerConnectionsShape,
   type WorkerRuntime,
 } from "./WorkerConnections.ts";
-import { makeWorkerGatewayHost } from "./WorkerGatewayHost.ts";
+import { hostForSession, makeWorkerGatewayHost } from "./WorkerGatewayHost.ts";
 import { makeFakeWorkerLayer } from "./workers.testkit.ts";
 
 export const CENTRAL_ID = EnvironmentId.make("env-central");
@@ -58,6 +59,8 @@ export const REPOSITORY: RepositoryIdentity = {
 };
 
 export const WORKER_PROJECT_ID = ProjectId.make("worker-project");
+/** The session the central server holds on the worker. */
+export const BOARD_SESSION_ID = AuthSessionId.make("session-board");
 export const WORKER_ROOT = "/home/worker/repo";
 
 /** The provider instance the worker reports — the one the harness's steps use. */
@@ -119,7 +122,8 @@ export const makeInProcessWorker = (
     );
     const workerConfig = yield* ServerConfig.ServerConfig.pipe(Effect.provide(workerContext));
     const worker = yield* kit.fake.add(WORKER_URL, WORKER_ID);
-    worker.gateway = host;
+    // The board's own session on the worker, as a real link would carry.
+    worker.gateway = hostForSession(host, BOARD_SESSION_ID);
     worker.projects = [
       {
         projectId: WORKER_PROJECT_ID,
