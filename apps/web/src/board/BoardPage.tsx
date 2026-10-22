@@ -107,7 +107,7 @@ import { BoardCardFilterField, BoardTopBar } from "./BoardTopBar";
 import { BoardProviderUsagePill } from "./BoardProviderUsagePill";
 import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
 import { projectAccent, projectIconColorOf } from "./projectAccent";
-import { BoardWorkersContext } from "./workers/BoardWorkersContext";
+import { BoardWorkersContext, useBoardWorkersCardView } from "./workers/BoardWorkersContext";
 import { boardQueueReason } from "./workers/cardWorker";
 import { validateBoardSearch, type BoardSearch } from "../routes/board";
 
@@ -581,6 +581,8 @@ function EnvironmentBoard({
   // together or not at all — and it costs a single pass when nothing is queued.
   // T3O-65: the board's workers, for the queue's reasons and every card below.
   const workersState = useAtomValue(boardEnvironment.workersAtom(environmentId));
+  // What the cards read: the same object across a clone's progress ticks.
+  const cardWorkersState = useBoardWorkersCardView(workersState);
   const queueSlots = useMemo(() => {
     const queue = boardBuildQueue(everyCard, orderedStages, Date.now());
     if (queue.size === 0) return EMPTY_QUEUE_INFO;
@@ -1221,7 +1223,7 @@ function EnvironmentBoard({
   const canCreate = addProjects.length > 0 && firstStageId !== null;
 
   return (
-    <BoardWorkersContext.Provider value={workersState}>
+    <BoardWorkersContext.Provider value={cardWorkersState}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <BoardTopBar>
           {/* T3o (T3O-22, D14): a usage limit is a fact about a provider ACCOUNT

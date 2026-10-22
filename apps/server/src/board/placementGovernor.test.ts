@@ -364,42 +364,44 @@ it.effect("a card pinned to a worker still cloning the project holds, then start
   }),
 );
 
-it.effect("a build card pinned to a worker still cloning cuts no worktree until the clone lands", () =>
-  Effect.gen(function* () {
-    const { placement, ref } = yield* makePlacement(
-      workersState([workerView(W1, { checkout: false })]),
-    );
-    const building = makeBoardCard({
-      id: "card-1",
-      stage: "building",
-      orderKey: "m",
-      pinnedWorkerId: W1,
-    });
-    yield* withGovernor(
-      {
-        board: { cards: [building], nextCardNumberByProject: {}, workers: registered },
-        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
-        placement,
-      },
-      (h) =>
-        Effect.gen(function* () {
-          yield* h.pumpDomain(movedToBuilding(building, 1));
-          // Held as setting up, not stalled for a missing worktree, and no
-          // worktree cut anywhere while the worker has no checkout.
-          const held = yield* step(h, "card-1");
-          assert.strictEqual(held?.status, "queued");
-          assert.strictEqual(held?.queuedBy, "setup");
-          assert.isNull((yield* card(h, "card-1")).worktree);
-          assert.deepStrictEqual(yield* spawnsOn(h), []);
+it.effect(
+  "a build card pinned to a worker still cloning cuts no worktree until the clone lands",
+  () =>
+    Effect.gen(function* () {
+      const { placement, ref } = yield* makePlacement(
+        workersState([workerView(W1, { checkout: false })]),
+      );
+      const building = makeBoardCard({
+        id: "card-1",
+        stage: "building",
+        orderKey: "m",
+        pinnedWorkerId: W1,
+      });
+      yield* withGovernor(
+        {
+          board: { cards: [building], nextCardNumberByProject: {}, workers: registered },
+          settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+          placement,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            yield* h.pumpDomain(movedToBuilding(building, 1));
+            // Held as setting up, not stalled for a missing worktree, and no
+            // worktree cut anywhere while the worker has no checkout.
+            const held = yield* step(h, "card-1");
+            assert.strictEqual(held?.status, "queued");
+            assert.strictEqual(held?.queuedBy, "setup");
+            assert.isNull((yield* card(h, "card-1")).worktree);
+            assert.deepStrictEqual(yield* spawnsOn(h), []);
 
-          yield* SubscriptionRef.set(ref, workersState([workerView(W1)]));
-          yield* Effect.yieldNow;
-          yield* h.reactor.drain;
-          assert.strictEqual((yield* step(h, "card-1"))?.status, "running");
-          assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
-        }),
-    );
-  }),
+            yield* SubscriptionRef.set(ref, workersState([workerView(W1)]));
+            yield* Effect.yieldNow;
+            yield* h.reactor.drain;
+            assert.strictEqual((yield* step(h, "card-1"))?.status, "running");
+            assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
+          }),
+      );
+    }),
 );
 
 it.effect("a provider stall stays stalled while its worker is offline", () =>

@@ -580,10 +580,21 @@ export function BoardCardDetail({
               state: workersState,
               cards: allShellCards,
               concurrency: boardSettings.concurrency,
-              projectName: "this project",
+              // Named as the board's own queue pill names it.
+              projectName:
+                snapshot?.projects.find((project) => project.id === cardShell.projectId)?.title ??
+                "this project",
             }),
           }),
-    [allShellCards, boardSettings.concurrency, cardId, cardShell, queueStages, workersState],
+    [
+      allShellCards,
+      boardSettings.concurrency,
+      cardId,
+      cardShell,
+      queueStages,
+      snapshot,
+      workersState,
+    ],
   );
   // Null whenever reordering could not actually improve the card's position —
   // the rail hides the button rather than offering one that does nothing.

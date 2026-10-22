@@ -13,7 +13,10 @@ import { boardPlacementChanges } from "./BoardPlacement.ts";
 
 const W1 = EnvironmentId.make("env-w1");
 
-const cloning = (percent: number, phase: BoardWorkerSetup["phase"] = "cloning"): BoardWorkerSetup => ({
+const cloning = (
+  percent: number,
+  phase: BoardWorkerSetup["phase"] = "cloning",
+): BoardWorkerSetup => ({
   projectId: ProjectId.make("project-1"),
   workerId: W1,
   workerProjectId: null,

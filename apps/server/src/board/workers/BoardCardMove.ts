@@ -335,11 +335,7 @@ export const makeBoardCardMover = Effect.gen(function* () {
             ),
           ),
         );
-      if (
-        checked.fromWorkerId !== null &&
-        card.worktree !== null &&
-        card.worktree.path !== null
-      ) {
+      if (checked.fromWorkerId !== null && card.worktree !== null && card.worktree.path !== null) {
         const refusal = yield* retire(card, checked.fromWorkerId, stamp).pipe(
           Effect.catchCause((cause) =>
             stopped(cause).pipe(
