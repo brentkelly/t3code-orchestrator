@@ -261,13 +261,24 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
   it.effect("children copy the parent's worker pin (T3O-65, D20)", () =>
     Effect.gen(function* () {
       const workerId = EnvironmentId.make("env-worker-a");
+      const pinnedBoard = makeBoard({ parent: { pinnedWorkerId: workerId } });
       const pinned = yield* decideEvents(
         approve(),
-        makeReadModel(makeBoard({ parent: { pinnedWorkerId: workerId } })),
+        makeReadModel({
+          ...pinnedBoard,
+          workers: [{ id: workerId, label: "worker-a", url: "http://worker-a:3773", addedAt: NOW }],
+        }),
       );
       for (const event of pinned.slice(0, 2)) {
         assert.ok(event.type === "board.card-created");
         expect(event.payload.pinnedWorkerId).toBe(workerId);
+      }
+      // A parent still bound to a removed worker (orphaned, say) doesn't hand
+      // that worker on: its children follow the default, never wait unseen.
+      const orphaned = yield* decideEvents(approve(), makeReadModel(pinnedBoard));
+      for (const event of orphaned.slice(0, 2)) {
+        assert.ok(event.type === "board.card-created");
+        expect(event.payload.pinnedWorkerId).toBeUndefined();
       }
       // A parent following the default leaves its children following it too.
       const following = yield* decideEvents(approve(), makeReadModel(makeBoard()));

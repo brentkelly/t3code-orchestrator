@@ -323,6 +323,85 @@ it.layer(NodeServices.layer)("worker removal and force-move decider (T3O-66)", (
     }),
   );
 
+  it.effect("removing the worker a card is moving to fails the move, so it can go elsewhere", () =>
+    Effect.gen(function* () {
+      const moving = {
+        fromWorkerId: workerA,
+        toWorkerId: workerB,
+        status: "moving",
+        sha: null,
+        error: null,
+        startedAt: NOW,
+      } as const;
+      // Retired already: Move failed, and a human picks another worker.
+      const retired = makeReadModel({
+        cards: [
+          makeCard({
+            worktree: { ...readyWorktree, path: null, status: "reclaimed" },
+            workerMove: moving,
+          }),
+        ],
+      });
+      const events = yield* decideEvents(removeWorker(workerB), retired);
+      expect(events.map((event) => event.type)).toEqual([
+        "board.worker-removed",
+        "board.card-worker-move-recorded",
+      ]);
+      const model = yield* apply(removeWorker(workerB), retired);
+      const failed = model.board!.cards[0]!;
+      expect(failed.workerMove?.status).toBe("failed");
+      expect(failed.workerMove?.error).toContain("worker-b was removed");
+      // The mover's last step finds nothing moving.
+      const late = yield* Effect.flip(
+        decideEvents(moveStep({ phase: "done", worktreePath: "/worker-b/card-1" }), model),
+      );
+      expect(String(late)).toContain("not moving");
+      const retry = yield* decideEvents(
+        moveStep({ phase: "start", toWorkerId: workerA, sha: null }),
+        model,
+      );
+      expect(retry).toHaveLength(1);
+
+      // Not retired yet: the card still holds its worktree, so it stays put.
+      const holding = yield* apply(
+        removeWorker(workerB),
+        makeReadModel({
+          cards: [
+            makeCard({ placedWorkerId: workerA, worktree: readyWorktree, workerMove: moving }),
+          ],
+        }),
+      );
+      expect(holding.board!.cards[0]!.workerMove).toBeNull();
+      expect(holding.board!.cards[0]!.placedWorkerId).toBe(workerA);
+    }),
+  );
+
+  it.effect("a move never lands on a worker the board no longer has", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(
+        decideEvents(
+          moveStep({ phase: "done", worktreePath: "/gone/card-1" }),
+          makeReadModel({
+            cards: [
+              makeCard({
+                worktree: { ...readyWorktree, path: null, status: "reclaimed" },
+                workerMove: {
+                  fromWorkerId: workerA,
+                  toWorkerId: EnvironmentId.make("env-gone"),
+                  status: "moving",
+                  sha: null,
+                  error: null,
+                  startedAt: NOW,
+                },
+              }),
+            ],
+          }),
+        ),
+      );
+      expect(String(failure)).toContain("no longer registered");
+    }),
+  );
+
   it.effect("a pin moves a held card with no worktree, ending the hold", () =>
     Effect.gen(function* () {
       const held = makeReadModel({

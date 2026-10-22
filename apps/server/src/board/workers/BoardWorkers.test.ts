@@ -27,12 +27,15 @@ import { FetchHttpClient } from "effect/http";
 import { TestClock } from "effect/testing";
 
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
+import { BoardEngine, type BoardEngineShape } from "../BoardEngine.ts";
+import { BoardProjectorDecodeError } from "../errors.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import {
   boardStackEngine,
   boardStackSnapshotQuery,
   makeBoardStackTestLayer,
 } from "../boardStack.testkit.ts";
+import { makeMemoryBoardRelayStore } from "./BoardRelayStore.ts";
 import { makeBoardWorkers, type BoardWorkersShape } from "./BoardWorkers.ts";
 import {
   makeWorkerConnections,
@@ -145,36 +148,51 @@ const layer = makeBoardStackTestLayer("t3o-board-workers-").pipe(
 let projectCommands = 0;
 
 /** A board with a project, a worker's HTTP endpoints, its scripted
-    connection, and the service under test. */
-const setup = Effect.gen(function* () {
-  const engine = yield* boardStackEngine;
-  yield* engine.dispatch({
-    type: "project.create",
-    commandId: CommandId.make(`cmd-project-${++projectCommands}`),
-    projectId: PROJECT_ID,
-    title: "app",
-    workspaceRoot: "/tmp/app",
-    createdAt: t0,
+    connection, and the service under test. `dispatch` stands in front of the
+    board engine's, for a dispatch that fails. */
+const setupWith = (
+  options: {
+    readonly dispatch?: (real: BoardEngineShape["dispatch"]) => BoardEngineShape["dispatch"];
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const engine = yield* boardStackEngine;
+    yield* engine.dispatch({
+      type: "project.create",
+      commandId: CommandId.make(`cmd-project-${++projectCommands}`),
+      projectId: PROJECT_ID,
+      title: "app",
+      workspaceRoot: "/tmp/app",
+      createdAt: t0,
+    });
+    const http = yield* withWorkerHttp;
+    const kit = yield* makeFakeWorkerLayer;
+    const worker = yield* kit.fake.add(http.origin, WORKER_ID);
+    worker.providers = [
+      {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: "claudeAgent",
+        displayName: "Claude",
+        enabled: true,
+        models: [],
+      },
+    ];
+    const connections = yield* makeWorkerConnections.pipe(Effect.provide(kit.layer));
+    const relay = yield* makeMemoryBoardRelayStore;
+    const boardEngine = yield* BoardEngine;
+    const workers = yield* makeBoardWorkers.pipe(
+      Effect.provideService(WorkerConnections, connections),
+      Effect.provideService(BoardEngine, {
+        ...boardEngine,
+        dispatch: options.dispatch?.(boardEngine.dispatch) ?? boardEngine.dispatch,
+      }),
+      Effect.provide(relay.layer),
+      Effect.provide(kit.layer),
+    );
+    return { http, kit, worker, connections, workers, relay };
   });
-  const http = yield* withWorkerHttp;
-  const kit = yield* makeFakeWorkerLayer;
-  const worker = yield* kit.fake.add(http.origin, WORKER_ID);
-  worker.providers = [
-    {
-      instanceId: ProviderInstanceId.make("claudeAgent"),
-      driver: "claudeAgent",
-      displayName: "Claude",
-      enabled: true,
-      models: [],
-    },
-  ];
-  const connections = yield* makeWorkerConnections.pipe(Effect.provide(kit.layer));
-  const workers = yield* makeBoardWorkers.pipe(
-    Effect.provideService(WorkerConnections, connections),
-    Effect.provide(kit.layer),
-  );
-  return { http, kit, worker, connections, workers };
-});
+
+const setup = setupWith();
 
 const waitFor = (
   connections: WorkerConnectionsShape,
@@ -367,6 +385,73 @@ describe("BoardWorkers", () => {
       }),
     ));
 
+  test("a re-pair whose record fails keeps the worker's previous session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let failRepair = false;
+        const { http, kit, worker, connections, workers } = yield* setupWith({
+          dispatch: (real) => (command, options) =>
+            failRepair && command.type === "board.worker.register" && command.mode === "repair"
+              ? Effect.fail(new BoardProjectorDecodeError({ eventType: "x", issue: "disk" }))
+              : real(command, options),
+        });
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+
+        failRepair = true;
+        http.tokens.set("fresh", "access-fresh");
+        const failure = yield* Effect.flip(
+          workers.repair({
+            workerId: WORKER_ID,
+            credential: { kind: "pairing-token", token: "fresh" },
+          }),
+        );
+        // The board's own failure, not "removed meanwhile".
+        assert.strictEqual(failure.code, "unreachable");
+        // The new session goes back; the one the board dials with stays.
+        assert.deepStrictEqual(worker.releasedTokens, ["access-fresh"]);
+        assert.strictEqual(
+          new TextDecoder().decode(kit.secrets.secrets.get(workerSecretName(WORKER_ID))),
+          "access-one-time",
+        );
+      }),
+    ));
+
+  test("a re-pair of a worker removed meanwhile says so, and stores nothing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let removeFirst = false;
+        const { http, kit, connections, workers } = yield* setupWith({
+          dispatch: (real) => (command, options) =>
+            removeFirst && command.type === "board.worker.register" && command.mode === "repair"
+              ? real(
+                  {
+                    type: "board.worker.remove",
+                    commandId: CommandId.make("cmd-remove-meanwhile"),
+                    workerId: WORKER_ID,
+                    createdAt: t0,
+                  },
+                  options,
+                ).pipe(Effect.andThen(real(command, options)))
+              : real(command, options),
+        });
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+
+        removeFirst = true;
+        http.tokens.set("fresh", "access-fresh");
+        const failure = yield* Effect.flip(
+          workers.repair({
+            workerId: WORKER_ID,
+            credential: { kind: "pairing-token", token: "fresh" },
+          }),
+        );
+        assert.strictEqual(failure.code, "not-found");
+        assert.strictEqual(failure.message, "That worker was removed meanwhile.");
+        assert.isFalse(kit.secrets.secrets.has(workerSecretName(WORKER_ID)));
+      }),
+    ));
+
   test("re-pairing from the picker keeps the address the board already dials", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -430,6 +515,25 @@ describe("BoardWorkers", () => {
         assert.strictEqual(kit.secrets.secrets.size, 0);
         assert.deepStrictEqual((yield* workers.state).workers, []);
         assert.deepStrictEqual(yield* kit.snapshots.list, []);
+      }),
+    ));
+
+  test("a worker removed and added back reads its signals from its log's head", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { http, connections, workers, relay } = yield* setup;
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+        yield* relay.store.saveSignalCursor(WORKER_ID, 7);
+
+        yield* workers.remove(WORKER_ID);
+        assert.isNull(yield* relay.store.signalCursor(WORKER_ID));
+
+        // A cursor left behind (a crash between the removal and forgetting
+        // it) doesn't survive adding the worker back either.
+        yield* relay.store.saveSignalCursor(WORKER_ID, 7);
+        yield* addWithToken(workers, http, "again");
+        assert.isNull(yield* relay.store.signalCursor(WORKER_ID));
       }),
     ));
 

@@ -696,6 +696,16 @@ function isKnownBoardWorker(board: BoardState, workerId: BoardWorkerId): boolean
   );
 }
 
+/** The pin a child takes from its parent: the parent's worker while the board
+    still has it. An orphaned parent still points at its removed worker, and a
+    child pinned there would wait for it unseen, so it follows the default. */
+function inheritedBoardWorkerPin(
+  board: BoardState,
+  workerId: BoardWorkerId | null,
+): BoardWorkerId | null {
+  return workerId !== null && isKnownBoardWorker(board, workerId) ? workerId : null;
+}
+
 /** Event base for worker-registry events (T3O-62): aggregates on the worker. */
 const makeBoardWorkerEventBase = Effect.fn("makeBoardWorkerEventBase")(function* (input: {
   readonly workerId: BoardWorkerId;
@@ -1244,8 +1254,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.pinnedWorkerId ??
         (command.parentCardId === undefined
           ? null
-          : (board.cards.find((existing) => existing.id === command.parentCardId)?.pinnedWorkerId ??
-            null));
+          : inheritedBoardWorkerPin(
+              board,
+              board.cards.find((existing) => existing.id === command.parentCardId)
+                ?.pinnedWorkerId ?? null,
+            ));
 
       const cardNumber = board.nextCardNumberByProject[command.projectId] ?? 1;
       const keyPrefix = command.keyPrefix ?? DEFAULT_BOARD_KEY_PREFIX;
@@ -2970,6 +2983,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           parentCardId: card.id,
         }),
       ];
+      // A child runs where its parent is bound (T3O-65, D20) — its pin, or
+      // the worker holding its worktree — and can be re-pinned after.
+      const inheritedPin = inheritedBoardWorkerPin(board, boardCardBoundWorkerId(card));
       const childIdByPlan = new Map<BoardPlanId, BoardCardId>();
       for (const plan of plans) {
         childIdByPlan.set(plan.planId, BoardCardId.make(yield* crypto.randomUUIDv4()));
@@ -3004,11 +3020,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             dependsOn: plan.dependsOn.map((dependency) => childIdByPlan.get(dependency)!),
             parentCardId: card.id,
             sourcePlanId: plan.planId,
-            // A child runs where its parent is bound (T3O-65, D20) — its pin,
-            // or the worker holding its worktree — and can be re-pinned after.
-            ...(boardCardBoundWorkerId(card) === null
-              ? {}
-              : { pinnedWorkerId: boardCardBoundWorkerId(card)! }),
+            ...(inheritedPin === null ? {} : { pinnedWorkerId: inheritedPin }),
             stage: floor.stageId,
             orderKey,
             createdAt: command.createdAt,
@@ -4428,6 +4440,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // worktree or a running step holds for a human to move it. Archived
       // cards too, so an unarchived one is never bound to a missing worker.
       const cardEvents: PlannedBoardEvent[] = [];
+      const afterRemoval = new Map<BoardCardId, BoardCard>();
       for (const card of board.cards) {
         const outcome = boardCardWorkerRemovalOutcome(
           card,
@@ -4454,6 +4467,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
                   card.placedWorkerId === command.workerId ? null : card.placedWorkerId,
                 updatedAt: command.createdAt,
               };
+        afterRemoval.set(card.id, nextCard);
         cardEvents.push({
           ...(yield* makeBoardEventBase({
             cardId: card.id,
@@ -4467,6 +4481,37 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             workerLabel: existing.label,
             outcome,
             card: nextCard,
+          },
+        });
+      }
+      // A card moving TO the removed worker can't land there: its move fails
+      // now, so the card shows Move failed and a human picks another worker.
+      // The mover's own last step then finds nothing moving and is dropped.
+      for (const card of board.cards) {
+        const move = card.workerMove;
+        if (move?.status !== "moving" || move.toWorkerId !== command.workerId) continue;
+        const current = afterRemoval.get(card.id) ?? card;
+        const step = {
+          phase: "failed" as const,
+          error: `${existing.label} was removed from the board during the move.`,
+        };
+        const failed: BoardCardWorkerMove = { ...move, status: "failed", error: step.error };
+        cardEvents.push({
+          ...(yield* makeBoardEventBase({
+            cardId: card.id,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "board.card-worker-move-recorded",
+          payload: {
+            cardId: card.id,
+            step,
+            move: failed,
+            card: {
+              ...current,
+              workerMove: boardCardHoldsWorktree(current) ? null : failed,
+              updatedAt: command.createdAt,
+            },
           },
         });
       }
@@ -4637,6 +4682,14 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             return yield* invariant(
               command,
               `Card '${card.key}' has no branch recorded; there is nothing the new worktree carries.`,
+            );
+          }
+          // Never lands on a worker the board no longer has. Removing the
+          // target fails a move in flight, so this only guards that.
+          if (!isKnownBoardWorker(board, move.toWorkerId)) {
+            return yield* invariant(
+              command,
+              `Worker '${move.toWorkerId}' is no longer registered; the move can't land there.`,
             );
           }
           recorded = move;

@@ -123,6 +123,27 @@ export function BoardCardMoveDialog(props: {
     });
   };
 
+  /** A failed move with nothing on the remote either: forget the branch and
+      start over from the base on the target, once confirmed here. */
+  const restartFromBase = () => {
+    void move({
+      environmentId: props.environmentId,
+      input: {
+        action: "move",
+        cardId: card.id,
+        ...(props.followDefault ? {} : { toWorkerId }),
+        restartFromBase: true,
+      },
+    }).then((result) => {
+      if (result._tag === "Failure") {
+        setPhase({ kind: "failed", detail: "The board server didn't answer. Try again." });
+        return;
+      }
+      if (result.value.outcome === "started") props.onClose();
+      else setPhase({ kind: "answer", answer: result.value });
+    });
+  };
+
   const askToPush = () => {
     void move({
       environmentId: props.environmentId,
@@ -292,12 +313,25 @@ export function BoardCardMoveDialog(props: {
           actions: <Button onClick={askToPush}>Ask agent to push</Button>,
         };
       case "no-remote-branch":
-        // Only a force-move asks for this; the Move dialog never does.
+        // A failed move's old worktree is gone and the branch isn't on the
+        // remote: the card can only start over from its base.
         return {
-          title: `Can't move ${card.key}`,
-          description: `${answer.branch} isn't on the remote, so there is nothing to continue from.`,
-          content: null,
-          actions: null,
+          title: `Restart ${card.key} from ${answer.baseRefName}?`,
+          description: `${answer.branch} isn't on the remote, so there's nothing pushed to continue from.`,
+          content: (
+            <p className="text-[13px]">
+              {answer.backToStage === null
+                ? `The card stays in its stage and its branch is forgotten. When it reaches Build, ${to} creates a fresh worktree from ${answer.baseRefName}.`
+                : `${to} creates a fresh worktree from ${answer.baseRefName} and the card goes back to the start of ${answer.backToStage}.`}{" "}
+              Commits left only on {boardWorkerLabel(answer.workerId, props.workers)} are not
+              carried over. The brief, plan and thread history are kept.
+            </p>
+          ),
+          actions: (
+            <Button variant="destructive" onClick={restartFromBase}>
+              Restart from {answer.baseRefName}
+            </Button>
+          ),
         };
       case "source-unreachable":
         return {

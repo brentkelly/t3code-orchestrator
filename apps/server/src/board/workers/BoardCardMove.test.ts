@@ -196,6 +196,8 @@ interface Fixture {
   readonly noRemoteBranch?: boolean;
   /** The target can't reach the remote to ask about the branch. */
   readonly remoteUnreachable?: boolean;
+  /** What every probe after the first finds: work written since the check. */
+  readonly durabilityAfterCheck?: BoardWorkspaceDurability;
 }
 
 /** Every git operation the move ran, with the worker it ran on. */
@@ -214,6 +216,7 @@ const makeLayer = (fixture: Fixture) =>
     const git = yield* Ref.make<ReadonlyArray<GitCall>>([]);
     const sent = yield* Ref.make<ReadonlyArray<{ threadId: string; text: string }>>([]);
     let sequence = 0;
+    let probes = 0;
 
     const engine = {
       dispatch: (command: BoardCommand) =>
@@ -249,7 +252,11 @@ const makeLayer = (fixture: Fixture) =>
                 ? Effect.fail(
                     new WorkerUnavailable({ workerId: W1, state: "offline", message: "offline" }),
                   )
-                : Effect.succeed(fixture.durability ?? clean),
+                : Effect.sync(() =>
+                    ++probes > 1 && fixture.durabilityAfterCheck !== undefined
+                      ? fixture.durabilityAfterCheck
+                      : (fixture.durability ?? clean),
+                  ),
             ),
           ),
         remoteBranchTip: () =>
@@ -629,6 +636,89 @@ it.layer(NodeServices.layer)("moving a card to another worker (T3O-65)", (it) =>
           expect((yield* f.git).map(([, operation]) => operation)).not.toContain("retireWorktree");
           expect((yield* f.card).placedWorkerId).toBe(W1);
           expect((yield* f.card).workerMove).toBeNull();
+        }),
+    ),
+  );
+
+  it.effect("refuses a branch gone from the remote before anything is retired", () =>
+    // The upstream still resolves locally, so nothing reads as unpushed.
+    withMover({ board: board(makeCard()), noRemoteBranch: true }, (mover, f) =>
+      Effect.gen(function* () {
+        const moved = yield* mover.move(cardId, W1);
+        assert.strictEqual(moved.outcome, "refused");
+        if (moved.outcome === "refused") expect(moved.detail).toContain("isn't on the remote");
+        expect((yield* f.git).map(([, operation]) => operation)).not.toContain("retireWorktree");
+        expect(yield* f.events).toEqual([]);
+        expect((yield* f.card).worktree?.status).toBe("ready");
+      }),
+    ),
+  );
+
+  it.effect("a failed move whose branch left the remote restarts from base once confirmed", () =>
+    withMover(
+      {
+        board: board(
+          makeCard({
+            stage: BoardStageId.make("review"),
+            placedWorkerId: null,
+            worktree: { ...readyWorktree, path: null, status: "reclaimed" },
+            workerMove: {
+              fromWorkerId: BOARD_LOCAL_WORKER_ID,
+              toWorkerId: W1,
+              status: "failed",
+              sha: null,
+              error: "Creating the worktree failed: couldn't find remote ref",
+              startedAt: NOW,
+            },
+          }),
+        ),
+        noRemoteBranch: true,
+      },
+      (mover, f) =>
+        Effect.gen(function* () {
+          expect(yield* mover.check(cardId, W1)).toEqual({
+            outcome: "no-remote-branch",
+            workerId: BOARD_LOCAL_WORKER_ID,
+            branch: "board/t3-1",
+            baseRefName: "main",
+            backToStage: "Building",
+          });
+          // Unconfirmed, nothing happens.
+          expect((yield* mover.move(cardId, W1)).outcome).toBe("no-remote-branch");
+          expect(yield* f.events).toEqual([]);
+          expect(yield* mover.move(cardId, W1, undefined, { restartFromBase: true })).toEqual({
+            outcome: "started",
+          });
+          const card = yield* f.card;
+          expect(card.workerMove).toBeNull();
+          expect(card.worktree).toBeNull();
+          expect(card.stage).toBe("building");
+          expect(card.pinnedWorkerId).toBe(W1);
+        }),
+    ),
+  );
+
+  it.effect("work written between the check and the retire refuses the move", () =>
+    withMover(
+      {
+        board: board(makeCard()),
+        durabilityAfterCheck: { ...clean, durable: false, unpushedCount: 1 },
+      },
+      (mover, f) =>
+        Effect.gen(function* () {
+          const moved = yield* mover.move(cardId, W1);
+          assert.strictEqual(moved.outcome, "refused");
+          if (moved.outcome === "refused") expect(moved.detail).toContain("stays on");
+          yield* mover.drain;
+          expect((yield* f.git).map(([, operation]) => operation)).toEqual([
+            "probeWorktreeDurability",
+            "remoteBranchTip",
+            "probeWorktreeDurability",
+          ]);
+          const kept = yield* f.card;
+          expect(kept.workerMove).toBeNull();
+          expect(kept.worktree?.status).toBe("ready");
+          expect(kept.placedWorkerId).toBe(BOARD_LOCAL_WORKER_ID);
         }),
     ),
   );

@@ -299,6 +299,28 @@ it.layer(NodeServices.layer)("card placement decider (T3O-65)", (it) => {
     }),
   );
 
+  it.effect("a hand-created child of a parent pinned to a removed worker follows the default", () =>
+    Effect.gen(function* () {
+      const gone = EnvironmentId.make("env-removed");
+      const parent = makeCard({ stage: BoardStageId.make("planning"), pinnedWorkerId: gone });
+      const [created] = yield* decideEvents(
+        {
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-create-child"),
+          cardId: BoardCardId.make("card-child"),
+          projectId,
+          title: "Child",
+          stage: BoardStageId.make("ready"),
+          parentCardId: parent.id,
+          createdAt: NOW,
+        },
+        makeReadModel({ cards: [parent] }),
+      );
+      assert.ok(created!.type === "board.card-created");
+      expect(created.payload.pinnedWorkerId ?? null).toBeNull();
+    }),
+  );
+
   // ── Pin ──────────────────────────────────────────────────────────────
 
   it.effect("re-pins a card with no worktree at once, clearing where it last ran", () =>

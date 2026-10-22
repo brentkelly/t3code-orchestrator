@@ -66,6 +66,7 @@ import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { ProjectService } from "../../project/ProjectService.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
 import { BoardEngine } from "../BoardEngine.ts";
+import { isBoardCommandInvariantError, type BoardDispatchError } from "../errors.ts";
 import { classifyCloneFailure, cloneDestination, cloneFailureMessage } from "./setupFailure.ts";
 import {
   decodeWorkerToken,
@@ -80,6 +81,7 @@ import {
   fetchWorkerDescriptor,
   resolveWorkerTarget,
 } from "./workerCredential.ts";
+import { BoardRelayStore } from "./BoardRelayStore.ts";
 import { bootStatus } from "./WorkerSnapshotStore.ts";
 import { WorkerRpcError, WorkerTransport, type WorkerRpc } from "./WorkerTransport.ts";
 
@@ -142,6 +144,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
   const git = yield* GitVcsDriver;
   const http = yield* HttpClient.HttpClient;
   const crypto = yield* Crypto.Crypto;
+  const relayStore = yield* BoardRelayStore;
 
   const setups = yield* SubscriptionRef.make(new Map<string, BoardWorkerSetup>());
   const followers = yield* FiberMap.make<string>();
@@ -200,15 +203,27 @@ export const makeBoardWorkers = Effect.gen(function* () {
     ).pipe(Effect.timeout(RELEASE_TIMEOUT), Effect.ignore);
 
   /** Undo a pairing whose record never landed: hand the new session back,
-      and drop the stored token unless someone else's has replaced it. */
-  const abandonPairing = (workerId: EnvironmentId, url: string, accessToken: string) =>
+      and take the stored token back out unless someone else's has replaced
+      it. A re-pair puts back the session it replaced while the worker is
+      still registered, so a failed re-pair leaves the worker as it was. */
+  const abandonPairing = (input: {
+    readonly workerId: EnvironmentId;
+    readonly url: string;
+    readonly accessToken: string;
+    readonly previousToken: Option.Option<string>;
+  }) =>
     Effect.gen(function* () {
-      yield* releaseSession(url, accessToken);
+      yield* releaseSession(input.url, input.accessToken);
+      const name = workerSecretName(input.workerId);
       const stored = yield* secrets
-        .get(workerSecretName(workerId))
+        .get(name)
         .pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
-      if (Option.isSome(stored) && decodeWorkerToken(stored.value) === accessToken) {
-        yield* secrets.remove(workerSecretName(workerId)).pipe(Effect.ignore);
+      if (Option.isNone(stored) || decodeWorkerToken(stored.value) !== input.accessToken) return;
+      const stillRegistered = (yield* registry).some((worker) => worker.id === input.workerId);
+      if (Option.isSome(input.previousToken) && stillRegistered) {
+        yield* secrets.set(name, encodeWorkerToken(input.previousToken.value)).pipe(Effect.ignore);
+      } else {
+        yield* secrets.remove(name).pipe(Effect.ignore);
       }
     });
 
@@ -279,6 +294,8 @@ export const makeBoardWorkers = Effect.gen(function* () {
     readonly token: string;
     readonly workerLabel: string;
     readonly workerVersion: string;
+    /** The session a re-pair replaces, put back if this one never lands. */
+    readonly previousToken: Option.Option<string>;
   }) =>
     Effect.gen(function* () {
       const central = yield* environment.getDescriptor;
@@ -306,7 +323,14 @@ export const makeBoardWorkers = Effect.gen(function* () {
               ),
             ),
           ),
-          Effect.onError(() => abandonPairing(input.workerId, input.httpBaseUrl, accessToken)),
+          Effect.onError(() =>
+            abandonPairing({
+              workerId: input.workerId,
+              url: input.httpBaseUrl,
+              accessToken,
+              previousToken: input.previousToken,
+            }),
+          ),
         );
       return { ...probed, accessToken };
     });
@@ -343,8 +367,27 @@ export const makeBoardWorkers = Effect.gen(function* () {
       } satisfies BoardWorkerAddResult;
     });
 
-  const dispatchFailure = (code: BoardWorkerAddError["code"], message: string) => () =>
-    new BoardWorkerAddError({ code, message });
+  /** A register dispatch's failure: the decider's refusal is `refused`;
+      anything else (persistence, say) is the board's own failure. */
+  /** Best effort: an unreadable cursor already reads as "start at the head". */
+  const forgetSignalCursor = (workerId: EnvironmentId) =>
+    relayStore
+      .forgetSignalCursor(workerId)
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board worker cursor not forgotten", { workerId, cause }),
+        ),
+      );
+
+  const dispatchFailure =
+    (refused: { readonly code: BoardWorkerAddError["code"]; readonly message: string }) =>
+    (cause: BoardDispatchError) =>
+      isBoardCommandInvariantError(cause)
+        ? new BoardWorkerAddError(refused)
+        : new BoardWorkerAddError({
+            code: "unreachable",
+            message: "The board server couldn't record the worker.",
+          });
 
   const add: BoardWorkersShape["add"] = (input) =>
     Effect.gen(function* () {
@@ -374,7 +417,12 @@ export const makeBoardWorkers = Effect.gen(function* () {
         token: target.token,
         workerLabel: input.label,
         workerVersion: descriptor.serverVersion,
+        previousToken: Option.none(),
       });
+      // A server added back starts reading its signals at its log's head, as
+      // a new one does: what it logged while it wasn't a worker isn't the
+      // board's. Before the record lands, so no signal feed is running yet.
+      yield* forgetSignalCursor(descriptor.environmentId);
       yield* engine
         .dispatch({
           type: "board.worker.register",
@@ -390,10 +438,18 @@ export const makeBoardWorkers = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(
-            dispatchFailure("already-worker", `${descriptor.label} is already a worker.`),
+            dispatchFailure({
+              code: "already-worker",
+              message: `${descriptor.label} is already a worker.`,
+            }),
           ),
           Effect.onError(() =>
-            abandonPairing(descriptor.environmentId, target.httpBaseUrl, probed.accessToken),
+            abandonPairing({
+              workerId: descriptor.environmentId,
+              url: target.httpBaseUrl,
+              accessToken: probed.accessToken,
+              previousToken: Option.none(),
+            }),
           ),
         );
       yield* connections.record(descriptor.environmentId, probed.hello, probed.snapshot);
@@ -454,6 +510,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
         token: target.token,
         workerLabel: worker.label,
         workerVersion: descriptor.serverVersion,
+        previousToken,
       });
       // Keeps the label, the pinned cards and the limits: only the URL and the
       // session change.
@@ -466,8 +523,17 @@ export const makeBoardWorkers = Effect.gen(function* () {
           createdAt: yield* nowIso,
         })
         .pipe(
-          Effect.mapError(dispatchFailure("not-found", "That worker was removed meanwhile.")),
-          Effect.onError(() => abandonPairing(worker.id, target.httpBaseUrl, probed.accessToken)),
+          Effect.mapError(
+            dispatchFailure({ code: "not-found", message: "That worker was removed meanwhile." }),
+          ),
+          Effect.onError(() =>
+            abandonPairing({
+              workerId: worker.id,
+              url: target.httpBaseUrl,
+              accessToken: probed.accessToken,
+              previousToken,
+            }),
+          ),
         );
       yield* connections.record(worker.id, probed.hello, probed.snapshot);
       yield* syncConnections;
@@ -594,6 +660,7 @@ export const makeBoardWorkers = Effect.gen(function* () {
           );
       yield* secrets.remove(workerSecretName(workerId)).pipe(Effect.ignore);
       yield* syncConnections;
+      yield* forgetSignalCursor(workerId);
       yield* dropSetups(workerId);
       return { revoked };
     });

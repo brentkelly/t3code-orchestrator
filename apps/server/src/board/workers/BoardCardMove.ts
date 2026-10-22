@@ -9,10 +9,13 @@
  * worktree is retired and a new one provisioned on the target from the pushed
  * branch. Each step lands on the card as it happens (`board.card.move-worker`),
  * which is what the card's Moving / Move failed notices and its activity rail
- * read. Retiring runs before the move answers, and a retire that fails leaves
- * the card on its source with its worktree intact. A failed provision does not
- * restore the retired worktree — its branch is safe on the remote — and Retry
- * or another worker start the move again.
+ * read. The branch must be on the remote before anything is retired, and the
+ * source is probed for unpushed work once more right before it is. Retiring
+ * runs before the move answers, and a retire that fails leaves the card on its
+ * source with its worktree intact. A failed provision does not restore the
+ * retired worktree — its branch is on the remote — and Retry or another worker
+ * start the move again; if the branch has gone from the remote since, the
+ * retry offers to start over from the base instead.
  *
  * A FORCE-move (T3O-66, D22) is the way off a worker the board can't reach —
  * offline, or removed — where nothing can be checked or retired. It continues
@@ -177,6 +180,36 @@ export const makeBoardCardMover = Effect.gen(function* () {
     return `${yield* workerName(workerId)} couldn't reach the remote to look for ${branch}. Try again once it can.`;
   });
 
+  /** A card whose branch isn't on the remote, with no worktree the board can
+      move it from: all it can do is start over from its base, which the
+      human confirms (`restartFromBase`). */
+  const noRemoteBranch = Effect.fn("BoardCardMover.noRemoteBranch")(function* (
+    card: BoardCard,
+    worktree: NonNullable<BoardCard["worktree"]>,
+    stuckOn: BoardWorkerId,
+  ) {
+    // A restart sends the card back to Build: a Done card has nothing to go
+    // back to.
+    const board = yield* readBoard;
+    const done = boardStageWithRole(board, "done");
+    const build = boardStageWithRole(board, "build");
+    if (done !== null && card.stage === done.stageId) {
+      return refused(
+        `${worktree.branch} isn't on the remote, and a Done card isn't restarted from its base.`,
+      );
+    }
+    return {
+      outcome: "no-remote-branch",
+      workerId: stuckOn,
+      branch: worktree.branch,
+      baseRefName: worktree.baseRefName,
+      // Where restartFromBase leaves it: the start of Build for a card at or
+      // past Build; a card not there yet keeps its stage.
+      backToStage:
+        build !== null && isBoardStageAtOrAfterBuild(board, card.stage) ? build.label : null,
+    } as const;
+  });
+
   /** A force-move's check (T3O-66): nothing on the source can be read, so the
       remote branch on the target is all there is to continue from. */
   const checkForced = Effect.fn("BoardCardMover.checkForced")(function* (
@@ -207,28 +240,7 @@ export const makeBoardCardMover = Effect.gen(function* () {
     );
     if (read === null) return refused(yield* remoteUnreachable(toWorkerId, worktree.branch));
     const tip = read.tip;
-    if (tip === null) {
-      // A restart sends the card back to Build: a Done card has nothing to
-      // go back to.
-      const board = yield* readBoard;
-      const done = boardStageWithRole(board, "done");
-      const build = boardStageWithRole(board, "build");
-      if (done !== null && card.stage === done.stageId) {
-        return refused(
-          `${worktree.branch} isn't on the remote, and a Done card isn't restarted from its base.`,
-        );
-      }
-      return {
-        outcome: "no-remote-branch",
-        workerId: from,
-        branch: worktree.branch,
-        baseRefName: worktree.baseRefName,
-        // Where restartFromBase leaves it: the start of Build for a card at or
-        // past Build; a card not there yet keeps its stage.
-        backToStage:
-          build !== null && isBoardStageAtOrAfterBuild(board, card.stage) ? build.label : null,
-      } as const;
-    }
+    if (tip === null) return yield* noRemoteBranch(card, worktree, from);
     return { outcome: "ready", fromWorkerId: from, branch: worktree.branch, tip } as const;
   });
 
@@ -309,18 +321,30 @@ export const makeBoardCardMover = Effect.gen(function* () {
       } else {
         tipFrom = yield* workspaces.forWorker(toWorkerId, card.projectId);
       }
+      // The new worktree is cut from the remote branch, so the branch must be
+      // there before anything is retired: a source whose upstream still
+      // resolves locally can have lost it on the remote (deleted after a
+      // merge, say), and retiring would leave nothing to continue from.
       const read = yield* tipFrom.remoteBranchTip({ branch: worktree.branch }).pipe(
         Effect.map((tip) => ({ tip })),
         Effect.orElseSucceed(() => null),
       );
-      // With the source's worktree to move from, the remote is only a cross-check.
-      if (from === null && read === null) {
-        return refused(yield* remoteUnreachable(toWorkerId, worktree.branch));
+      if (read === null) {
+        return refused(yield* remoteUnreachable(from ?? toWorkerId, worktree.branch));
       }
-      const tip = read?.tip ?? null;
-      if (from === null && tip === null) {
+      const tip = read.tip;
+      if (tip === null && from !== null) {
         return refused(
-          `${worktree.branch} isn't on the remote, so there is nothing to continue from.`,
+          `${worktree.branch} isn't on the remote any more. Push it again, then move the card.`,
+        );
+      }
+      // A failed move's old worktree is already gone: with nothing on the
+      // remote either, the way out is to start over from the base.
+      if (tip === null) {
+        return yield* noRemoteBranch(
+          card,
+          worktree,
+          card.workerMove?.fromWorkerId ?? boardCardEffectiveWorkerId(card, board.defaultWorkerId),
         );
       }
       return { outcome: "ready", fromWorkerId: from, branch: worktree.branch, tip } as const;
@@ -371,6 +395,34 @@ export const makeBoardCardMover = Effect.gen(function* () {
   ) {
     const worktree = card.worktree!;
     const source = yield* workspaces.forCard(card);
+    // Probed again right before: work committed since the check (a push turn
+    // still finishing, say) would otherwise stay behind on the old worker.
+    const recheck = yield* source
+      .probeWorktreeDurability({
+        worktreePath: worktree.path!,
+        baseRefName: worktree.baseRefName,
+        branch: worktree.branch,
+        mergedPullRequestNumbers: [],
+        openPullRequestNumber: null,
+        baseAlreadyFetched: false,
+      })
+      .pipe(Effect.result);
+    const changed =
+      recheck._tag === "Failure"
+        ? `Checking again for unpushed work failed: ${
+            recheck.failure._tag === "WorkerUnavailable"
+              ? recheck.failure.message
+              : recheck.failure.detail
+          }`
+        : !recheck.success.hasUpstream ||
+            recheck.success.unpushedCount > 0 ||
+            recheck.success.hasWorkingTreeChanges
+          ? `${worktree.branch} has work the remote lacks since the move was checked. Push it, then move again.`
+          : null;
+    if (changed !== null) {
+      yield* record(card.id, { phase: "failed", error: changed }, stamp);
+      return refused(`${changed} ${card.key} stays on ${yield* workerName(fromWorkerId)}.`);
+    }
     const retired = yield* source
       .retireWorktree({ worktreePath: worktree.path!, kind: "reclaim", verifiedClean: true })
       .pipe(Effect.result);
@@ -536,7 +588,9 @@ export const makeBoardCardMover = Effect.gen(function* () {
           ? ({ outcome: "started" } as const)
           : refused("The card could not be re-pinned. See the server log.");
       }
-      const restart = force && checked.outcome === "no-remote-branch";
+      // A force-move off an unreachable worker, or a failed move's retry,
+      // with nothing on the remote: start over from the base, once confirmed.
+      const restart = checked.outcome === "no-remote-branch";
       if (restart && options.restartFromBase !== true) return checked;
       if (checked.outcome !== "ready" && !restart) return checked;
       const started = yield* record(
