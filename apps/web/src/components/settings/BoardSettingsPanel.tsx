@@ -54,6 +54,7 @@ import { BoardWorkerSettings } from "../../board/workers/BoardWorkerSettings";
 import { useBoardWorkers } from "../../board/workers/boardWorkersState";
 import { boardShowsWorkers } from "../../board/workers/cardWorker";
 import { WorkerConcurrencySection } from "../../board/workers/WorkerConcurrencySection";
+import { boardLocalConcurrencyDiverges } from "../../board/workers/workerConcurrency";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
@@ -356,7 +357,8 @@ function ConcurrencySection({
 
 /**
  * Concurrency, per worker once the board has any (T3O-65, D11). A local-only
- * board keeps the section exactly as it was.
+ * board keeps the section exactly as it was, unless a per-worker override for
+ * this server outlived the workers.
  */
 function BoardConcurrencySettings(props: {
   board: BoardSettings;
@@ -365,7 +367,10 @@ function BoardConcurrencySettings(props: {
   update: UpdateFn;
 }) {
   const workers = useBoardWorkers(props.environmentId);
-  if (!boardShowsWorkers(workers.state)) {
+  if (
+    !boardShowsWorkers(workers.state) &&
+    !boardLocalConcurrencyDiverges(props.board.concurrency)
+  ) {
     return (
       <ConcurrencySection
         board={props.board}

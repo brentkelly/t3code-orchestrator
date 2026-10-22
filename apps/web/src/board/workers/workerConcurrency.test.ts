@@ -9,6 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardLimitPatch,
+  boardLocalConcurrencyDiverges,
   boardWorkerCapSummary,
   boardWorkerInstanceCapPatch,
   boardWorkerLimitPatch,
@@ -76,5 +77,35 @@ describe("per-worker concurrency (T3O-65, prototype 3)", () => {
     expect(boardWorkerCapSummary(legacy, BOARD_LOCAL_WORKER_ID, ["claude-max", "codex-team"])).toBe(
       "claude-max 3 · codex-team no cap",
     );
+  });
+});
+
+describe("a local override left behind once every worker is removed", () => {
+  it("is not one when it agrees with the single-machine fields", () => {
+    expect(boardLocalConcurrencyDiverges(legacy)).toBe(false);
+    // The first board-limit edit wrote local's limit down at the same value.
+    expect(
+      boardLocalConcurrencyDiverges({
+        ...legacy,
+        workers: { local: { maxConcurrent: PositiveInt.make(4), perInstance: {} } },
+      }),
+    ).toBe(false);
+  });
+
+  it("is one when local's limit or a cap binds differently", () => {
+    expect(
+      boardLocalConcurrencyDiverges({
+        ...legacy,
+        workers: { local: { maxConcurrent: PositiveInt.make(2), perInstance: {} } },
+      }),
+    ).toBe(true);
+    expect(
+      boardLocalConcurrencyDiverges({
+        ...legacy,
+        workers: {
+          local: { perInstance: { [ProviderInstanceId.make("claude-max")]: PositiveInt.make(1) } },
+        },
+      }),
+    ).toBe(true);
   });
 });

@@ -37,6 +37,21 @@ export function boardLimitPatch(
     : { globalMaxConcurrent: value };
 }
 
+/**
+ * Whether `workers.local` binds differently from the single-machine fields a
+ * local-only board's Settings edit. Left behind once every worker is removed,
+ * such an override still governs this server, so Settings keeps showing the
+ * per-worker section, where it can be seen and changed, until the two agree.
+ */
+export function boardLocalConcurrencyDiverges(concurrency: BoardConcurrencySettings): boolean {
+  const local = resolveBoardWorkerConcurrency(concurrency, BOARD_LOCAL_WORKER_ID);
+  if (local.maxConcurrent !== concurrency.globalMaxConcurrent) return true;
+  return Object.entries(local.perInstance).some(
+    ([instanceId, cap]) =>
+      cap !== (concurrency.perInstance[instanceId as keyof typeof concurrency.perInstance] ?? null),
+  );
+}
+
 /** A worker's own limit; null removes it (only the board limit applies). */
 export function boardWorkerLimitPatch(
   workerId: BoardWorkerId,
