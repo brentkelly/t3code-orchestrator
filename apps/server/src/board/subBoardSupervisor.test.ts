@@ -707,7 +707,7 @@ it.effect("advances the parent when the LAST child merges itself down", () =>
   ),
 );
 
-it.effect("stops at a merge the forge REFUSES, and says so on the card", () =>
+it.effect("holds a merge the forge REFUSES, and shows the forge's reason on the card", () =>
   withGovernor(
     {
       board: {
@@ -716,25 +716,23 @@ it.effect("stops at a merge the forge REFUSES, and says so on the card", () =>
       },
       settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
       pullRequest: openPr,
-      mergeFailure: "At least 1 approving review is required.",
-      // Blocked with every check green: a missing approval, which no amount
-      // of waiting clears. (Failing CI starts a fix instead — T3O-12.)
-      mergeState: probeState({ passed: 3, blockedReason: "other" }),
+      mergeFailure: "GitHub returned an error: At least 1 approving review is required.",
+      // Every check green and the host still says no. The detail cannot say
+      // why, so the board does not guess (T3O-67). (Failing CI starts a fix
+      // instead — T3O-12.)
+      mergeState: probeState({ passed: 3, mergeable: "mergeable" }),
     },
     (h) =>
       Effect.gen(function* () {
         yield* h.pumpDomain(childReachedMerge("card-one", 1));
-        // A policy block needs a human: the card holds at merge with the
-        // ladder STOPPED, and the reason is on the activity rail rather than
-        // in a server log nobody is reading.
+        // The card holds at merge on the soft ladder and shows the forge's own
+        // words. The rail gets its row only when the ladder runs out.
         assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-one")), MERGE);
         const holds = autoMergeHolds(yield* h.commands);
         assert.strictEqual(holds.length, 1);
-        assert.strictEqual(holds[0]?.classification, "approval-required");
-        assert.strictEqual(holds[0]?.retryAt, null);
-        const notes = mergeRefusedNotes(yield* h.commands);
-        assert.strictEqual(notes.length, 1);
-        assert.include(String((notes[0] as { readonly detail: string }).detail), "review approval");
+        assert.strictEqual(holds[0]?.classification, "soft");
+        assert.notStrictEqual(holds[0]?.retryAt, null);
+        assert.include(String(holds[0]?.reason), "approving review is required");
       }),
   ),
 );
@@ -1270,17 +1268,19 @@ it.effect("a restart the forge refuses on POLICY spawns no agent and says why", 
         },
         settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
         pullRequest: openPr,
-        mergeFailure: "At least 1 approving review is required.",
-        mergeState: probeState({ passed: 3, blockedReason: "other" }),
+        mergeFailure: "GitHub returned an error: At least 1 approving review is required.",
+        mergeState: probeState({ passed: 3, mergeable: "mergeable" }),
       },
       (h) =>
         Effect.gen(function* () {
           yield* h.pumpDomain(stageThreadRequested(card, 1));
           // Asking the forge instead of assuming a conflict is the whole point:
-          // this refusal needs a human, and an agent sent to "resolve" it would
-          // merge base into a healthy branch for no reason.
+          // an agent sent to "resolve" this would merge base into a healthy
+          // branch for no reason. The card says why in the forge's own words.
           assert.deepStrictEqual(selectedSteps(yield* h.commands), []);
-          assert.equal(mergeRefusedNotes(yield* h.commands).length, 1);
+          const holds = autoMergeHolds(yield* h.commands);
+          assert.strictEqual(holds.length, 1);
+          assert.include(String(holds[0]?.reason), "approving review is required");
           assert.strictEqual(cardStage(yield* h.board, card.id), MERGE);
         }),
     );

@@ -496,27 +496,36 @@ it.effect("an UNARMED card's CI fix waits for the checks its push re-ran, then m
   );
 });
 
-it.effect("stops on a block with every check green — that is a decision, not a wait", () =>
+// T3O-67: a clean pull request the host refused anyway. This used to be read
+// by elimination as a missing approval and stop the card at once. The real
+// cause was a token that could read the pull request but not merge it. Now the
+// refusal waits on the soft ladder and the card shows the forge's own words.
+it.effect("keeps climbing on a refusal with every check green, showing the forge's words", () =>
   withGovernor(
     setup({
       cards: [cardAtMerge({ autoMerge: true })],
-      mergeFailure: "At least 1 approving review is required.",
-      mergeState: probe({ passed: 4 }),
+      mergeFailure: "GitHub returned an error: Resource not accessible by personal access token",
+      mergeState: probe({ passed: 4, mergeable: "mergeable" }),
     }),
     (h) =>
       Effect.gen(function* () {
         yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
         const hold = holdOf(yield* h.board);
-        assert.strictEqual(hold?.classification, "approval-required");
-        assert.strictEqual(hold?.retryAt, null);
+        assert.strictEqual(hold?.classification, "soft");
+        assert.notStrictEqual(hold?.retryAt, null);
+        assert.strictEqual(
+          hold?.reason,
+          "The forge refused the merge: GitHub returned an error: Resource not accessible by personal access token",
+        );
+        // Still waiting, so not yet news on the rail.
+        assert.strictEqual(mergeRefusedNotes(yield* h.commands).length, 0);
       }),
   ),
 );
 
 // A merge refused BEFORE the host was asked (T3O-47). The pull request is
-// green, up to date and unconflicted — because it was never the problem — so
-// probing it and reading the result by elimination would hold the card as
-// "approval-required" and send the user after a reviewer over a merge-strategy
+// green, up to date and unconflicted, because it was never the problem, so a
+// probe would describe the pull request instead of the merge-strategy
 // setting. The attempt's own sentence is the answer, and no retry can change
 // it.
 it.effect("reports a refusal upstream made itself, without probing the pull request", () =>
@@ -525,8 +534,8 @@ it.effect("reports a refusal upstream made itself, without probing the pull requ
       cards: [cardAtMerge({ autoMerge: true })],
       mergeFailure: "This host cannot merge with the squash strategy.",
       mergeRefusal: "blocked",
-      // A probe here WOULD answer, and would answer "blocked, everything
-      // green" — the by-elimination approval verdict. It must never be asked.
+      // A probe here WOULD answer, and would describe a pull request that was
+      // never the problem. It must never be asked.
       mergeState: probe({ passed: 4 }),
     }),
     (h) =>
