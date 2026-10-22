@@ -26,6 +26,7 @@ import type { SupervisorReactorShape } from "./supervisorReactor.ts";
 import { boardRpcHandlers } from "./rpc.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
+import { localGitOnlyBoardWorkspaces } from "./workspace/boardWorkspaces.testkit.ts";
 
 /** The human-actor stamp asks git for the project's `user.name`. */
 const gitStub = Layer.succeed(GitVcsDriver, {
@@ -40,7 +41,10 @@ const gitStub = Layer.succeed(GitVcsDriver, {
 } as unknown as GitVcsDriver["Service"]);
 
 const makeBoardRpcTestLayer = (prefix: string) =>
-  makeBoardStackTestLayer(prefix).pipe(Layer.provideMerge(gitStub));
+  localGitOnlyBoardWorkspaces.pipe(
+    Layer.provideMerge(makeBoardStackTestLayer(prefix)),
+    Layer.provideMerge(gitStub),
+  );
 
 const t0 = "2026-01-01T00:00:00.000Z";
 const projectId = ProjectId.make("project-rpc");

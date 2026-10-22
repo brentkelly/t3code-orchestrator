@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import type { ExecuteGitInput, ExecuteGitResult, GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { boardActivityActorFor, resetBoardActivityActors } from "./activityActors.ts";
 import { boardActorStamp } from "./rpc.ts";
+import { makeBoardWorkspaces } from "./workspace/workspaceLayer.ts";
 import { inertBoardQueries } from "./boardServices.testkit.ts";
 
 const cardId = BoardCardId.make("card-1");
@@ -61,7 +62,19 @@ function fakeDeps(projectOf: { current: ProjectId }) {
       }),
   };
 
-  return { git, threads, boardQueries };
+  // The real local workspace over the faked driver: the name is read where
+  // the board reads every other git fact.
+  const workspaces = makeBoardWorkspaces({
+    git,
+    pullRequests: {} as never,
+    retirer: {} as never,
+    fileSystem: {} as never,
+    path: {} as never,
+    projectRoot: (projectId) => Effect.succeed(`/tmp/${projectId}`),
+    worktreeRoots: Effect.succeed([]),
+  });
+
+  return { threads, boardQueries, workspaces };
 }
 
 const updateCommand = (commandId: string) =>
