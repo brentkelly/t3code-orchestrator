@@ -4626,6 +4626,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
                 ? null
                 : { ...card.worktree, path: null, status: "reclaimed", reclaimBlockedReason: null },
             placedWorkerId: null,
+            // Off the removed worker for good: the hold is over.
+            placementOrphaned: null,
             updatedAt: command.createdAt,
           };
         } else if (step.phase === "done") {

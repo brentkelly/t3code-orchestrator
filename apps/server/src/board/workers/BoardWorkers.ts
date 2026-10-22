@@ -23,6 +23,7 @@ import {
   BOARD_WORKER_SETUP_LOG_MAX_LENGTH,
   BoardWorkerActionError,
   BoardWorkerAddError,
+  boardCardEffectiveWorkerId,
   boardCardStepState,
   boardCardWorkerRemovalOutcome,
   boardRepositoryGroupingKey,
@@ -544,10 +545,13 @@ export const makeBoardWorkers = Effect.gen(function* () {
           const live = boardCardStepState(board, card.id);
           if (live === null || live.threadId === null) return [];
           if (live.status !== "running" && live.status !== "completing") return [];
+          // Where its thread runs: the link says, else where the card runs.
           const link = card.threadLinks.find((candidate) => candidate.threadId === live.threadId);
-          return link !== undefined && boardThreadLinkWorkerId(link) === workerId
-            ? [live.threadId]
-            : [];
+          const runsOn =
+            link === undefined
+              ? boardCardEffectiveWorkerId(card, board.defaultWorkerId)
+              : boardThreadLinkWorkerId(link);
+          return runsOn === workerId ? [live.threadId] : [];
         }),
       ),
     );
