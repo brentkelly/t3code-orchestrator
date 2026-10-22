@@ -189,6 +189,8 @@ interface Fixture {
   readonly online?: boolean;
   readonly durability?: BoardWorkspaceDurability | "unreachable";
   readonly provisionFails?: string;
+  /** The source refuses to retire: a git error, or something written since the check. */
+  readonly retireFails?: "error" | "blocked";
 }
 
 /** Every git operation the move ran, with the worker it ran on. */
@@ -250,7 +252,21 @@ const makeLayer = (fixture: Fixture) =>
             Effect.as({ sha: "4e1a9c2", subject: "Wire it", committedAt: NOW, author: "agent" }),
           ),
         retireWorktree: () =>
-          log("retireWorktree").pipe(Effect.as({ outcome: "removed", hookWarning: null } as const)),
+          log("retireWorktree").pipe(
+            Effect.andThen(
+              fixture.retireFails === "error"
+                ? Effect.fail({
+                    _tag: "BoardWorkerGitError",
+                    operation: "retireWorktree",
+                    detail: "fatal: worktree is locked",
+                  })
+                : Effect.succeed(
+                    fixture.retireFails === "blocked"
+                      ? ({ outcome: "blocked", reason: "it has uncommitted changes" } as const)
+                      : ({ outcome: "removed", hookWarning: null } as const),
+                  ),
+            ),
+          ),
         provisionWorktreeFromRemoteBranch: (input: { branch: string; baseRefName: string }) =>
           log("provisionWorktreeFromRemoteBranch").pipe(
             Effect.andThen(
@@ -484,6 +500,37 @@ it.layer(NodeServices.layer)("moving a card to another worker (T3O-65)", (it) =>
           ).toEqual([]);
         }),
     ),
+  );
+
+  it.effect("a failed retire keeps the card on its source, worktree intact and movable", () =>
+    Effect.gen(function* () {
+      for (const retireFails of ["error", "blocked"] as const) {
+        yield* withMover({ board: board(makeCard()), retireFails }, (mover, f) =>
+          Effect.gen(function* () {
+            const answer = yield* mover.move(cardId, W1);
+            assert.strictEqual(answer.outcome, "refused");
+            if (answer.outcome === "refused") expect(answer.detail).toContain("stays on");
+            yield* mover.drain;
+            const kept = yield* f.card;
+            // Not wedged in Move failed: the card runs on where it was.
+            expect(kept.workerMove).toBeNull();
+            expect(kept.worktree?.status).toBe("ready");
+            expect(kept.worktree?.path).toBe(readyWorktree.path);
+            expect(kept.placedWorkerId).toBe(BOARD_LOCAL_WORKER_ID);
+            expect((yield* f.git).map(([, operation]) => operation)).not.toContain(
+              "provisionWorktreeFromRemoteBranch",
+            );
+            // The failure is still on the record for the activity rail.
+            const phases = (yield* f.events).flatMap((event) =>
+              event.type === "board.card-worker-move-recorded" ? [event.payload.step.phase] : [],
+            );
+            expect(phases).toEqual(["start", "failed"]);
+            // And it can be checked for a move again.
+            expect((yield* mover.check(cardId, W1)).outcome).toBe("ready");
+          }),
+        );
+      }
+    }),
   );
 
   it.effect("a retry after a failed move provisions from the remote without retiring", () =>

@@ -4561,7 +4561,15 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           };
         } else {
           recorded = { ...move, status: "failed", error: step.error };
-          nextCard = { ...card, workerMove: recorded, updatedAt: command.createdAt };
+          // Failing before the old worktree was retired leaves the card where
+          // it was, worktree intact: the move is over, not Move failed, so the
+          // card runs on and can be pinned or moved again. The event still
+          // records the failure for the activity rail.
+          nextCard = {
+            ...card,
+            workerMove: boardCardHoldsWorktree(card) ? null : recorded,
+            updatedAt: command.createdAt,
+          };
         }
       }
       return {

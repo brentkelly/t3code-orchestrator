@@ -4592,7 +4592,9 @@ export type BoardCardPlaceCommand = typeof BoardCardPlaceCommand.Type;
  * - `done` — the new worktree is ready on `toWorkerId`, which becomes the
  *   card's pin and placement.
  * - `failed` — provisioning failed; the card shows Move failed. The retired
- *   worktree is not restored: its branch is safe on the remote.
+ *   worktree is not restored: its branch is safe on the remote. A failure
+ *   before `retired` (the retire itself failed) closes the move instead, and
+ *   the card stays on its source with its worktree.
  */
 export const BoardCardMoveWorkerCommand = Schema.Struct({
   type: Schema.Literal("board.card.move-worker"),

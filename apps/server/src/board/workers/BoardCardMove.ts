@@ -9,8 +9,10 @@
  * worktree is retired and a new one provisioned on the target from the pushed
  * branch. Each step lands on the card as it happens (`board.card.move-worker`),
  * which is what the card's Moving / Move failed notices and its activity rail
- * read. A failed provision does not restore the retired worktree — its branch
- * is safe on the remote — and Retry or another worker start the move again.
+ * read. Retiring runs before the move answers, and a retire that fails leaves
+ * the card on its source with its worktree intact. A failed provision does not
+ * restore the retired worktree — its branch is safe on the remote — and Retry
+ * or another worker start the move again.
  *
  * Moves are human acts (D18): only the RPCs call this.
  */
@@ -248,33 +250,49 @@ export const makeBoardCardMover = Effect.gen(function* () {
       );
     });
 
-  /** Retire the old worktree, provision the new one, record each. */
-  const carryOut = Effect.fn("BoardCardMover.carryOut")(function* (input: {
+  /**
+   * Retire the old worktree, before the move's answer. A failure here leaves
+   * the card where it is: its worktree is intact, so the decider closes the
+   * move rather than marking it failed, and the answer says why.
+   */
+  const retire = Effect.fn("BoardCardMover.retire")(function* (
+    card: BoardCard,
+    fromWorkerId: BoardWorkerId,
+    stamp: BoardMoveStamp,
+  ) {
+    const worktree = card.worktree!;
+    const source = yield* workspaces.forCard(card);
+    const retired = yield* source
+      .retireWorktree({ worktreePath: worktree.path!, kind: "reclaim", verifiedClean: true })
+      .pipe(Effect.result);
+    const problem =
+      retired._tag === "Failure"
+        ? `Retiring the old worktree failed: ${
+            retired.failure._tag === "WorkerUnavailable"
+              ? retired.failure.message
+              : retired.failure.detail
+          }`
+        : retired.success?.outcome === "blocked"
+          ? `The old worktree was kept: ${retired.success.reason}`
+          : null;
+    if (problem !== null) {
+      yield* record(card.id, { phase: "failed", error: problem }, stamp);
+      return refused(`${problem} ${card.key} stays on ${yield* workerName(fromWorkerId)}.`);
+    }
+    if (!(yield* record(card.id, { phase: "retired" }, stamp))) {
+      return refused("The move could not be recorded. See the server log.");
+    }
+    return null;
+  });
+
+  /** Provision the new worktree from the remote branch, and record it. */
+  const provision = Effect.fn("BoardCardMover.provision")(function* (input: {
     readonly card: BoardCard;
-    readonly fromWorkerId: BoardWorkerId | null;
     readonly toWorkerId: BoardWorkerId;
     readonly stamp: BoardMoveStamp;
   }) {
     const { card, stamp } = input;
     const worktree = card.worktree!;
-    const fail = (error: string) => record(card.id, { phase: "failed", error }, stamp);
-    if (input.fromWorkerId !== null && worktree.path !== null) {
-      const source = yield* workspaces.forCard(card);
-      const retired = yield* source
-        .retireWorktree({ worktreePath: worktree.path, kind: "reclaim", verifiedClean: true })
-        .pipe(Effect.result);
-      if (retired._tag === "Failure") {
-        const detail =
-          retired.failure._tag === "WorkerUnavailable"
-            ? retired.failure.message
-            : retired.failure.detail;
-        return yield* fail(`Retiring the old worktree failed: ${detail}`);
-      }
-      if (retired.success?.outcome === "blocked") {
-        return yield* fail(`The old worktree was kept: ${retired.success.reason}`);
-      }
-      if (!(yield* record(card.id, { phase: "retired" }, stamp))) return;
-    }
     const target = yield* workspaces.forWorker(input.toWorkerId, card.projectId);
     const provisioned = yield* target
       .provisionWorktreeFromRemoteBranch({
@@ -287,7 +305,11 @@ export const makeBoardCardMover = Effect.gen(function* () {
         provisioned.failure._tag === "WorkerUnavailable"
           ? `${yield* workerName(input.toWorkerId)} went offline.`
           : provisioned.failure.detail;
-      return yield* fail(`Creating the worktree failed: ${detail}`);
+      return yield* record(
+        card.id,
+        { phase: "failed", error: `Creating the worktree failed: ${detail}` },
+        stamp,
+      );
     }
     yield* record(card.id, { phase: "done", worktreePath: provisioned.success.path }, stamp);
   });
@@ -303,18 +325,32 @@ export const makeBoardCardMover = Effect.gen(function* () {
       );
       if (!started) return refused("The move could not be started. See the server log.");
       const card = (yield* readBoard).cards.find((candidate) => candidate.id === cardId)!;
-      yield* carryOut({ card, fromWorkerId: checked.fromWorkerId, toWorkerId, stamp }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("board move: failed", { cardId, cause: Cause.pretty(cause) }).pipe(
-            Effect.andThen(
-              record(
-                cardId,
-                { phase: "failed", error: "The move stopped unexpectedly. See the server log." },
-                stamp,
-              ),
+      const stopped = (cause: Cause.Cause<unknown>) =>
+        Effect.logWarning("board move: failed", { cardId, cause: Cause.pretty(cause) }).pipe(
+          Effect.andThen(
+            record(
+              cardId,
+              { phase: "failed", error: "The move stopped unexpectedly. See the server log." },
+              stamp,
             ),
           ),
-        ),
+        );
+      if (
+        checked.fromWorkerId !== null &&
+        card.worktree !== null &&
+        card.worktree.path !== null
+      ) {
+        const refusal = yield* retire(card, checked.fromWorkerId, stamp).pipe(
+          Effect.catchCause((cause) =>
+            stopped(cause).pipe(
+              Effect.as(refused("The move stopped unexpectedly. See the server log.")),
+            ),
+          ),
+        );
+        if (refusal !== null) return refusal;
+      }
+      yield* provision({ card, toWorkerId, stamp }).pipe(
+        Effect.catchCause(stopped),
         FiberSet.run(running),
       );
       return { outcome: "started" } as const;
