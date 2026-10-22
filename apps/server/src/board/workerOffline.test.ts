@@ -40,6 +40,7 @@ import {
   withGovernor,
   type Harness,
 } from "./supervisorHarness.testkit.ts";
+import { UNKNOWN_THREAD_STATE } from "./ThreadGateway.ts";
 import { aliveThread, idleThread } from "./threadGateway.testkit.ts";
 import type { BoardPlacementShape } from "./workers/BoardPlacement.ts";
 
@@ -534,7 +535,18 @@ it.effect("a force-move strands the step on the offline worker, then runs it whe
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(false);
     yield* withGovernor(
-      { board: board(), settings, placement, initialShells: aliveShells() },
+      {
+        board: board(),
+        settings,
+        placement,
+        initialShells: aliveShells(),
+        // W1 is offline: as the remote gateway does, its thread reads unknown.
+        gateway: (local) => ({
+          ...local,
+          threadState: (id) =>
+            id === threadId ? Effect.succeed(UNKNOWN_THREAD_STATE) : local.threadState(id),
+        }),
+      },
       (h) =>
         Effect.gen(function* () {
           yield* h.reactor.drain;

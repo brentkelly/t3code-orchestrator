@@ -1816,10 +1816,13 @@ const make = Effect.gen(function* () {
   const resumeExistingStepThread = Effect.fn("board-supervisor-resumeExistingStepThread")(
     function* (input: { readonly card: BoardCard; readonly state: BoardCardStepState }) {
       const { card, state } = input;
-      if (state.threadId === null || (yield* threadGone(state.threadId))) return "no-thread";
+      if (state.threadId === null) return "no-thread";
       // A card moved since this thread ran (T3O-65): the thread is on the old
       // worker, in a checkout that was retired. The step starts afresh where
-      // the card is now; the old thread stays linked, on its old worker.
+      // the card is now; the old thread stays linked, on its old worker. This
+      // is checked before the thread is read: the old worker may be offline or
+      // removed (T3O-66), and reading through it would fail after the caller
+      // acquired a slot.
       const board = yield* readBoard;
       const link = card.threadLinks.find((candidate) => candidate.threadId === state.threadId);
       const fresh = board.cards.find((candidate) => candidate.id === card.id) ?? card;
@@ -1829,6 +1832,7 @@ const make = Effect.gen(function* () {
       ) {
         return "no-thread";
       }
+      if (yield* threadGone(state.threadId)) return "no-thread";
       const admitted = yield* dispatchOptional({
         type: "board.card.admit-step",
         commandId: yield* commandId("admit-step"),
@@ -1976,18 +1980,6 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Put a step stalled for a missing provider back in the queue once its card
-   * can run it (T3O-65): it was pinned elsewhere, or the instance appeared on
-   * the worker. A model change restarts the stage instead, which re-freezes the
-   * step. The scheduling pass that follows re-checks, so a step whose worker
-   * still lacks the instance simply stalls again.
-   *
-   * And one stalled because its worker was removed (T3O-66), once the card
-   * holds no more: it was moved or re-pinned, or the worker was added back.
-   * Requeued, it resumes its thread where that thread still is, or starts
-   * afresh on the card's new worker.
-   */
-  /**
    * Provision a freshly selected build step's worktree at stage entry, but only
    * where the step can run now (T3O-65). A card mid-move, or one whose worker
    * is offline, still cloning or missing the provider, is left to `schedule()`,
@@ -2007,6 +1999,18 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * Put a step stalled for a missing provider back in the queue once its card
+   * can run it (T3O-65): it was pinned elsewhere, or the instance appeared on
+   * the worker. A model change restarts the stage instead, which re-freezes the
+   * step. The scheduling pass that follows re-checks, so a step whose worker
+   * still lacks the instance simply stalls again.
+   *
+   * And one stalled because its worker was removed (T3O-66), once the card
+   * holds no more: it was moved or re-pinned, or the worker was added back.
+   * Requeued, it resumes its thread where that thread still is, or starts
+   * afresh on the card's new worker.
+   */
   const requeueResolvedPlacementStalls = Effect.fn(
     "board-supervisor-requeueResolvedPlacementStalls",
   )(function* (onlyCardId?: BoardCardId) {
