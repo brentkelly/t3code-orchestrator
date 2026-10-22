@@ -44,6 +44,7 @@
  * variant can later pick the variable per detected remote without changing
  * the file format.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -207,10 +208,16 @@ function mainRootFromGitFile(gitFile: string, containingDir: string): string {
 }
 
 /**
- * The env fragment for a matched project, or undefined when the file, an
- * entry, or a repository is absent. GitHub-only by design.
+ * The matched project's token, or undefined when the file, an entry, or a
+ * repository is absent. `root` is the main checkout the entry matched and
+ * `digest` the token's hex SHA-256: both are safe for cache keys and
+ * rate-limit scopes, the token itself never is. Used by the server's own
+ * GitHub API transport (T3O-67), which sends the token as a bearer header
+ * rather than through a spawn env.
  */
-export function gitenvTokenEnv(cwd: string | undefined): Record<string, string> | undefined {
+export function gitenvToken(
+  cwd: string | undefined,
+): { readonly root: string; readonly token: string; readonly digest: string } | undefined {
   if (cwd === undefined) {
     return undefined;
   }
@@ -226,7 +233,20 @@ export function gitenvTokenEnv(cwd: string | undefined): Record<string, string> 
   if (token === undefined) {
     return undefined;
   }
-  return { GH_TOKEN: token, GITHUB_TOKEN: token };
+  const digest = NodeCrypto.createHash("sha256").update(token).digest("hex");
+  return { root, token, digest };
+}
+
+/**
+ * The env fragment for a matched project, or undefined when the file, an
+ * entry, or a repository is absent. GitHub-only by design.
+ */
+export function gitenvTokenEnv(cwd: string | undefined): Record<string, string> | undefined {
+  const match = gitenvToken(cwd);
+  if (match === undefined) {
+    return undefined;
+  }
+  return { GH_TOKEN: match.token, GITHUB_TOKEN: match.token };
 }
 
 /**
