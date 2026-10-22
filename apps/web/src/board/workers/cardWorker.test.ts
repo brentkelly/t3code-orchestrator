@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCardMoveNotice,
+  boardMoveDialogStatus,
   boardThreadMoveDividers,
   boardWorkerOnlyProviders,
   boardCardWorkerChip,
@@ -325,5 +326,74 @@ describe("the clone-failed notice", () => {
         ?.label,
     ).toBe("Clone failed");
     expect(boardCardMoveNotice({ workerId: MBP, queued: false, projectId }, board)).toBeNull();
+  });
+});
+
+describe("boardMoveDialogStatus", () => {
+  const worktree = {
+    branch: "board/t3-1",
+    baseRefName: "main",
+    path: "/wt",
+    status: "ready" as const,
+    attempts: 1,
+    lastError: null,
+    reclaimBlockedReason: null,
+  };
+  const moving = (status: "moving" | "failed", startedAt: string) => ({
+    fromWorkerId: BOARD_LOCAL_WORKER_ID,
+    toWorkerId: LINUX,
+    status,
+    sha: null,
+    error: status === "failed" ? "disk full" : null,
+    startedAt,
+  });
+  const LATER = "2026-01-01T00:05:00.000Z";
+
+  it("is pending, not done, before the server records a first move's start", () => {
+    expect(
+      boardMoveDialogStatus(
+        { workerMove: null, worktree, placedWorkerId: BOARD_LOCAL_WORKER_ID },
+        { toWorkerId: LINUX, priorStartedAt: null },
+      ),
+    ).toBe("pending");
+  });
+
+  it("is pending, not failed, before a Retry's start replaces the last failure", () => {
+    expect(
+      boardMoveDialogStatus(
+        {
+          workerMove: moving("failed", NOW),
+          worktree: { ...worktree, path: null, status: "reclaimed" },
+          placedWorkerId: null,
+        },
+        { toWorkerId: LINUX, priorStartedAt: NOW },
+      ),
+    ).toBe("pending");
+  });
+
+  it("follows this move through retired, failed and done", () => {
+    const reclaimed = { ...worktree, path: null, status: "reclaimed" as const };
+    const input = { toWorkerId: LINUX, priorStartedAt: NOW };
+    expect(
+      boardMoveDialogStatus(
+        { workerMove: moving("moving", LATER), worktree, placedWorkerId: BOARD_LOCAL_WORKER_ID },
+        input,
+      ),
+    ).toBe("moving");
+    expect(
+      boardMoveDialogStatus(
+        { workerMove: moving("moving", LATER), worktree: reclaimed, placedWorkerId: null },
+        input,
+      ),
+    ).toBe("retired");
+    expect(
+      boardMoveDialogStatus(
+        { workerMove: moving("failed", LATER), worktree: reclaimed, placedWorkerId: null },
+        input,
+      ),
+    ).toBe("failed");
+    expect(
+      boardMoveDialogStatus({ workerMove: null, worktree, placedWorkerId: LINUX }, input),
+    ).toBe("done");
   });
 });

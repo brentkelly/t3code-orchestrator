@@ -35,20 +35,26 @@ import { Spinner } from "../../components/ui/spinner";
 import { toastManager } from "../../components/ui/toast";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { boardWorkerLabel } from "./cardWorker";
+import { boardMoveDialogStatus, boardWorkerLabel, type BoardMoveDialogStatus } from "./cardWorker";
 
 type Phase =
   | { readonly kind: "checking" }
   | { readonly kind: "answer"; readonly answer: BoardCardWorkerMoveAnswer }
-  | { readonly kind: "started"; readonly fromWorkerId: BoardWorkerId | null }
+  | {
+      readonly kind: "started";
+      readonly fromWorkerId: BoardWorkerId | null;
+      /** The card's last move when Move was pressed, so it isn't read as this one. */
+      readonly priorStartedAt: string | null;
+    }
   | { readonly kind: "failed"; readonly detail: string };
 
-/** The move's progress rows, read off the card as the server records it. */
-function moveProgress(card: BoardCard, fromLabel: string | null, toLabel: string) {
-  const retired = card.workerMove === null || card.worktree?.status === "reclaimed";
-  const done = card.workerMove === null;
+/** The move's progress rows, from where the move has got to. */
+function moveProgress(status: BoardMoveDialogStatus, fromLabel: string | null, toLabel: string) {
+  const checked = status !== "pending";
+  const retired = status === "retired" || status === "done" || status === "failed";
+  const done = status === "done";
   return [
-    { label: "Checked for unpushed work", done: true },
+    { label: "Checked for unpushed work", done: checked },
     ...(fromLabel === null ? [] : [{ label: `Retired worktree on ${fromLabel}`, done: retired }]),
     {
       label: done ? `Created worktree on ${toLabel}` : `Creating worktree on ${toLabel}…`,
@@ -96,7 +102,11 @@ export function BoardCardMoveDialog(props: {
   const to = boardWorkerLabel(toWorkerId, props.workers);
 
   const start = (fromWorkerId: BoardWorkerId | null) => {
-    setPhase({ kind: "started", fromWorkerId });
+    setPhase({
+      kind: "started",
+      fromWorkerId,
+      priorStartedAt: card.workerMove?.startedAt ?? null,
+    });
     void move({
       environmentId: props.environmentId,
       input: { action: "move", cardId: card.id, toWorkerId },
@@ -146,18 +156,22 @@ export function BoardCardMoveDialog(props: {
       };
     }
     if (phase.kind === "started") {
-      const failed = card.workerMove?.status === "failed";
+      const status = boardMoveDialogStatus(card, {
+        toWorkerId,
+        priorStartedAt: phase.priorStartedAt,
+      });
+      const failed = status === "failed";
       return {
         title: failed ? `Move to ${to} failed` : `Moving ${card.key} to ${to}`,
         description: failed
           ? `${card.workerMove?.error ?? "Creating the worktree failed."} The old worktree is already retired, so pick a worker to try again.`
-          : card.workerMove === null
+          : status === "done"
             ? `${card.key} is on ${to}. Its next step runs there.`
             : `You can close this. The card shows “Moving to ${to}” until it's done.`,
         content: (
           <ul className="flex flex-col gap-1.5 text-[12.5px]">
             {moveProgress(
-              card,
+              status,
               phase.fromWorkerId === null
                 ? null
                 : boardWorkerLabel(phase.fromWorkerId, props.workers),

@@ -13,6 +13,7 @@ import {
   BOARD_WORKER_PROTOCOL_FLOOR_T3O_VERSION,
   resolveBoardWorkerConcurrency,
   resolveBoardWorkerCheckout,
+  type BoardCard,
   type BoardCardShell,
   type BoardConcurrencySettings,
   type BoardStepQueuedBy,
@@ -348,6 +349,32 @@ export function boardCardMoveNotice(
         label: "Move failed",
         tooltip: `Couldn't create a worktree on ${worker}.`,
       };
+}
+
+/**
+ * Where a move the Move dialog started has got to, read off the card. Until the
+ * server records this move's start the card still shows whatever was there
+ * before — no move on a first move, the last failure on a Retry — so a move
+ * counts as this one only once its `startedAt` differs from the one seen when
+ * the human pressed Move, and done only once the card is placed on the target.
+ */
+export type BoardMoveDialogStatus = "pending" | "moving" | "retired" | "done" | "failed";
+
+export function boardMoveDialogStatus(
+  card: Pick<BoardCard, "workerMove" | "worktree" | "placedWorkerId">,
+  input: { readonly toWorkerId: BoardWorkerId; readonly priorStartedAt: string | null },
+): BoardMoveDialogStatus {
+  const move = card.workerMove;
+  if (move === null) {
+    return card.placedWorkerId === input.toWorkerId && card.worktree?.status === "ready"
+      ? "done"
+      : "pending";
+  }
+  if (move.startedAt === input.priorStartedAt || move.toWorkerId !== input.toWorkerId) {
+    return "pending";
+  }
+  if (move.status === "failed") return "failed";
+  return card.worktree?.status === "reclaimed" ? "retired" : "moving";
 }
 
 // ── The thread list's move dividers (prototype 7.1) ────────────────────

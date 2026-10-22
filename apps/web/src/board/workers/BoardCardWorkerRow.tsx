@@ -52,8 +52,10 @@ export function BoardCardWorkerRow(props: {
       : boardWorkerFieldLabel(card.pinnedWorkerId, workers);
   const select = (workerId: BoardWorkerId | null) => {
     // A worktree (or a move that retired one) means the card's work has to
-    // travel: that is a Move, which checks it is pushed first.
-    if (holds || move !== null) {
+    // travel: that is a Move, which checks it is pushed first. Choosing the
+    // worker the worktree is already on moves nothing, so it is just a pin.
+    const staysPut = holds && move === null && (workerId ?? workers.defaultWorkerId) === bound;
+    if ((holds || move !== null) && !staysPut) {
       setMoveTo(workerId ?? workers.defaultWorkerId);
       return;
     }
