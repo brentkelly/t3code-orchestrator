@@ -103,6 +103,7 @@ import {
   boardCardBoundWorkerId,
   boardCardEffectiveWorkerId,
   boardCardHoldsWorktree,
+  boardCardWorkerRemovalOutcome,
   type BoardCardWorkerMove,
   type BoardWorkerId,
 } from "@t3tools/contracts";
@@ -4363,7 +4364,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // it is reached may change.
       const worker =
         existing === undefined ? command.worker : { ...existing, url: command.worker.url };
-      return {
+      const registered: PlannedBoardEvent = {
         ...(yield* makeBoardWorkerEventBase({
           workerId: worker.id,
           occurredAt: command.createdAt,
@@ -4372,6 +4373,28 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         type: "board.worker-registered",
         payload: { worker },
       };
+      // A server added back with the same environment id reattaches the cards
+      // its removal left holding (T3O-66, D22): they are placed there again.
+      const reattached: PlannedBoardEvent[] = [];
+      for (const card of board.cards) {
+        if (card.placementOrphaned?.workerId !== worker.id) continue;
+        reattached.push({
+          ...(yield* makeBoardEventBase({
+            cardId: card.id,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "board.card-worker-removal",
+          payload: {
+            cardId: card.id,
+            workerId: worker.id,
+            workerLabel: worker.label,
+            outcome: "reattached",
+            card: { ...card, placementOrphaned: null, updatedAt: command.createdAt },
+          },
+        });
+      }
+      return reattached.length === 0 ? registered : [registered, ...reattached];
     }
 
     case "board.worker.remove": {
@@ -4390,7 +4413,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `${existing.label} is the default worker. Make another worker the default first.`,
         );
       }
-      return {
+      const removed: PlannedBoardEvent = {
         ...(yield* makeBoardWorkerEventBase({
           workerId: command.workerId,
           occurredAt: command.createdAt,
@@ -4399,6 +4422,55 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         type: "board.worker-removed",
         payload: { workerId: command.workerId },
       };
+      // What happens to the cards placed there (T3O-66, D22), decided with the
+      // removal so no card is ever left pointing at a worker that is gone: a
+      // card with nothing there follows the default worker, and one with a
+      // worktree or a running step holds for a human to move it. Archived
+      // cards too, so an unarchived one is never bound to a missing worker.
+      const cardEvents: PlannedBoardEvent[] = [];
+      for (const card of board.cards) {
+        const outcome = boardCardWorkerRemovalOutcome(
+          card,
+          boardCardStepState(board, card.id),
+          command.workerId,
+        );
+        if (outcome === null) continue;
+        const nextCard: BoardCard =
+          outcome === "orphaned"
+            ? {
+                ...card,
+                placementOrphaned: {
+                  workerId: command.workerId,
+                  workerLabel: existing.label,
+                  orphanedAt: command.createdAt,
+                },
+                updatedAt: command.createdAt,
+              }
+            : {
+                ...card,
+                pinnedWorkerId:
+                  card.pinnedWorkerId === command.workerId ? null : card.pinnedWorkerId,
+                placedWorkerId:
+                  card.placedWorkerId === command.workerId ? null : card.placedWorkerId,
+                updatedAt: command.createdAt,
+              };
+        cardEvents.push({
+          ...(yield* makeBoardEventBase({
+            cardId: card.id,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "board.card-worker-removal",
+          payload: {
+            cardId: card.id,
+            workerId: command.workerId,
+            workerLabel: existing.label,
+            outcome,
+            card: nextCard,
+          },
+        });
+      }
+      return cardEvents.length === 0 ? removed : [removed, ...cardEvents];
     }
 
     case "board.card.pin-worker": {
@@ -4427,9 +4499,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           );
         }
       }
-      if (card.pinnedWorkerId === command.workerId) return [];
+      // A card held by its worker's removal with no worktree (a running
+      // planning step, stopped) is moved by a pin, which ends the hold.
+      if (card.pinnedWorkerId === command.workerId && card.placementOrphaned === null) return [];
       const nextCard: BoardCard = {
         ...card,
+        placementOrphaned: null,
         pinnedWorkerId: command.workerId,
         // No checkout binds it, so its next thread spawns on the new choice;
         // earlier threads keep the worker their links name.
@@ -4492,7 +4567,14 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           return yield* invariant(command, `Card '${card.key}' is already moving.`);
         }
         const live = boardCardStepState(board, card.id);
-        if (live !== null && (live.status === "running" || live.status === "completing")) {
+        // A force-move (T3O-66) leaves a worker the board can't reach, where a
+        // step may still read as running: the supervisor stalls it off this
+        // event, and it continues on the new worker.
+        if (
+          step.force !== true &&
+          live !== null &&
+          (live.status === "running" || live.status === "completing")
+        ) {
           return yield* invariant(
             command,
             `Card '${card.key}' has a step running; wait for it to finish or stop it, then move the card.`,
@@ -4532,7 +4614,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         if (move === null || move.status !== "moving") {
           return yield* invariant(command, `Card '${card.key}' is not moving.`);
         }
-        if (step.phase === "retired") {
+        if (step.phase === "retired" || step.phase === "abandoned") {
+          // `abandoned` (T3O-66): a force-move off a worker the board can't
+          // reach leaves the old worktree there untouched — the event records
+          // it — and is otherwise the same: the card is unassigned.
           recorded = move;
           // The old checkout is gone; the branch is on the remote. Unassigned
           // until the new worktree is ready.
@@ -4543,6 +4628,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
                 ? null
                 : { ...card.worktree, path: null, status: "reclaimed", reclaimBlockedReason: null },
             placedWorkerId: null,
+            // Off the removed worker for good: the hold is over.
+            placementOrphaned: null,
             updatedAt: command.createdAt,
           };
         } else if (step.phase === "done") {
@@ -4565,6 +4652,21 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             pinnedWorkerId: move.toWorkerId,
             placedWorkerId: move.toWorkerId,
             workerMove: null,
+            placementOrphaned: null,
+            updatedAt: command.createdAt,
+          };
+        } else if (step.phase === "restarted") {
+          // A force-move with nothing on the remote (T3O-66): the card's branch
+          // is forgotten, so its next build cuts a fresh one from the base on
+          // the new worker. The move is over; the card waits there.
+          recorded = move;
+          nextCard = {
+            ...card,
+            worktree: null,
+            pinnedWorkerId: move.toWorkerId,
+            placedWorkerId: null,
+            workerMove: null,
+            placementOrphaned: null,
             updatedAt: command.createdAt,
           };
         } else {

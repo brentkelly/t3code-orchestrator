@@ -14,6 +14,14 @@
  * restore the retired worktree — its branch is safe on the remote — and Retry
  * or another worker start the move again.
  *
+ * A FORCE-move (T3O-66, D22) is the way off a worker the board can't reach —
+ * offline, or removed — where nothing can be checked or retired. It continues
+ * from the branch on the remote, the old worktree left where it is and
+ * recorded as abandoned; a step that still reads as running there is stalled
+ * by the supervisor and continues on the new worker. With no branch on the
+ * remote the card can only start Build over from its base, which the human
+ * confirms a second time.
+ *
  * Moves are human acts (D18): only the RPCs call this.
  */
 import {
@@ -23,6 +31,8 @@ import {
   boardCardHoldsWorktree,
   boardCardStepState,
   boardRepositoryGroupingKey,
+  boardStageWithRole,
+  isBoardStageAtOrAfterBuild,
   CommandId,
   EMPTY_BOARD_STATE,
   type BoardAskCardAgentToPushResult,
@@ -49,11 +59,18 @@ import { BoardPlacement, boardPlacementGate } from "./BoardPlacement.ts";
 /** Runs before each command the move dispatches — the RPC stamps the human. */
 export type BoardMoveStamp = (command: BoardCommand) => Effect.Effect<void>;
 
+/** A force-move off an unreachable worker, and its restart-from-base confirmation. */
+export interface BoardMoveForce {
+  readonly force?: boolean | undefined;
+  readonly restartFromBase?: boolean | undefined;
+}
+
 export interface BoardCardMoverShape {
   /** Whether the card can move to `toWorkerId` now, and what it continues from. */
   readonly check: (
     cardId: BoardCardId,
     toWorkerId: BoardWorkerId,
+    options?: BoardMoveForce,
   ) => Effect.Effect<BoardCardMoveCheck>;
   /** Check again, then start the move; the git work runs on after the answer.
       A null worker is the human's Follow default: the board's default worker,
@@ -62,6 +79,7 @@ export interface BoardCardMoverShape {
     cardId: BoardCardId,
     toWorkerId: BoardWorkerId | null,
     stamp?: BoardMoveStamp,
+    options?: BoardMoveForce,
   ) => Effect.Effect<BoardMoveCardToWorkerResult>;
   /** Ask the agent in the card's latest thread to push its work. */
   readonly askAgentToPush: (cardId: BoardCardId) => Effect.Effect<BoardAskCardAgentToPushResult>;
@@ -133,7 +151,88 @@ export const makeBoardCardMover = Effect.gen(function* () {
     return null;
   });
 
-  const check: BoardCardMoverShape["check"] = (cardId, toWorkerId) =>
+  /**
+   * The worker a card is stuck on, when the board can't reach it: removed (the
+   * card holds `placementOrphaned`), or registered and not online. Null when the
+   * card's worker is reachable, or it has none — then there is nothing to force.
+   */
+  const unreachableSource = Effect.fn("BoardCardMover.unreachableSource")(function* (
+    card: BoardCard,
+    defaultWorkerId: BoardWorkerId | undefined,
+  ) {
+    if (card.placementOrphaned !== null) return card.placementOrphaned.workerId;
+    const workerId = boardCardEffectiveWorkerId(card, defaultWorkerId);
+    if (workerId === BOARD_LOCAL_WORKER_ID) return null;
+    const worker = (yield* placement.workers).workers.find(
+      (candidate) => candidate.id === workerId,
+    );
+    return worker === undefined || worker.status.state !== "online" ? workerId : null;
+  });
+
+  /** Why a move refuses when the remote can't be asked about its branch. */
+  const remoteUnreachable = Effect.fn("BoardCardMover.remoteUnreachable")(function* (
+    workerId: BoardWorkerId,
+    branch: string,
+  ) {
+    return `${yield* workerName(workerId)} couldn't reach the remote to look for ${branch}. Try again once it can.`;
+  });
+
+  /** A force-move's check (T3O-66): nothing on the source can be read, so the
+      remote branch on the target is all there is to continue from. */
+  const checkForced = Effect.fn("BoardCardMover.checkForced")(function* (
+    card: BoardCard,
+    toWorkerId: BoardWorkerId,
+    defaultWorkerId: BoardWorkerId | undefined,
+  ) {
+    const from = yield* unreachableSource(card, defaultWorkerId);
+    if (from === null) {
+      return refused(
+        "Force-move is only for a card whose worker is offline or removed. Move it instead.",
+      );
+    }
+    if (from === toWorkerId) return refused(`This card is already on ${yield* workerName(from)}.`);
+    const targetProblem = yield* targetRefusal(card, toWorkerId);
+    if (targetProblem !== null) return refused(targetProblem);
+    const worktree = card.worktree;
+    if (!boardCardHoldsWorktree(card) && card.workerMove === null) {
+      return { outcome: "pin" } as const;
+    }
+    if (worktree === null) return refused("This card has no branch to move.");
+    const target = yield* workspaces.forWorker(toWorkerId, card.projectId);
+    // A remote that couldn't be asked is not one without the branch: only the
+    // latter offers a restart from base, which forgets pushed work.
+    const read = yield* target.remoteBranchTip({ branch: worktree.branch }).pipe(
+      Effect.map((tip) => ({ tip })),
+      Effect.orElseSucceed(() => null),
+    );
+    if (read === null) return refused(yield* remoteUnreachable(toWorkerId, worktree.branch));
+    const tip = read.tip;
+    if (tip === null) {
+      // A restart sends the card back to Build: a Done card has nothing to
+      // go back to.
+      const board = yield* readBoard;
+      const done = boardStageWithRole(board, "done");
+      const build = boardStageWithRole(board, "build");
+      if (done !== null && card.stage === done.stageId) {
+        return refused(
+          `${worktree.branch} isn't on the remote, and a Done card isn't restarted from its base.`,
+        );
+      }
+      return {
+        outcome: "no-remote-branch",
+        workerId: from,
+        branch: worktree.branch,
+        baseRefName: worktree.baseRefName,
+        // Where restartFromBase leaves it: the start of Build for a card at or
+        // past Build; a card not there yet keeps its stage.
+        backToStage:
+          build !== null && isBoardStageAtOrAfterBuild(board, card.stage) ? build.label : null,
+      } as const;
+    }
+    return { outcome: "ready", fromWorkerId: from, branch: worktree.branch, tip } as const;
+  });
+
+  const check: BoardCardMoverShape["check"] = (cardId, toWorkerId, options = {}) =>
     Effect.gen(function* () {
       const board = yield* readBoard;
       const card = board.cards.find((candidate) => candidate.id === cardId);
@@ -147,6 +246,8 @@ export const makeBoardCardMover = Effect.gen(function* () {
         return refused("That worker is no longer on this board.");
       }
       if (card.workerMove?.status === "moving") return refused("This card is already moving.");
+      if (options.force === true)
+        return yield* checkForced(card, toWorkerId, board.defaultWorkerId);
       const holds = boardCardHoldsWorktree(card);
       if (!holds && card.workerMove === null) return { outcome: "pin" } as const;
       const from = holds ? boardCardEffectiveWorkerId(card, board.defaultWorkerId) : null;
@@ -208,9 +309,15 @@ export const makeBoardCardMover = Effect.gen(function* () {
       } else {
         tipFrom = yield* workspaces.forWorker(toWorkerId, card.projectId);
       }
-      const tip = yield* tipFrom
-        .remoteBranchTip({ branch: worktree.branch })
-        .pipe(Effect.orElseSucceed(() => null));
+      const read = yield* tipFrom.remoteBranchTip({ branch: worktree.branch }).pipe(
+        Effect.map((tip) => ({ tip })),
+        Effect.orElseSucceed(() => null),
+      );
+      // With the source's worktree to move from, the remote is only a cross-check.
+      if (from === null && read === null) {
+        return refused(yield* remoteUnreachable(toWorkerId, worktree.branch));
+      }
+      const tip = read?.tip ?? null;
       if (from === null && tip === null) {
         return refused(
           `${worktree.branch} isn't on the remote, so there is nothing to continue from.`,
@@ -341,23 +448,154 @@ export const makeBoardCardMover = Effect.gen(function* () {
     }
   });
 
-  const move: BoardCardMoverShape["move"] = (cardId, choice, stamp = () => Effect.void) =>
+  /** Dispatch a command the move needs besides its own steps, stamped. */
+  const dispatchStamped = (command: BoardCommand, stamp: BoardMoveStamp) =>
+    stamp(command).pipe(
+      Effect.andThen(engine.dispatch(command)),
+      Effect.as(true),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board move: command not recorded", {
+          type: command.type,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(false)),
+      ),
+    );
+
+  /**
+   * Restart a force-moved card from its base (T3O-66, prototype 5.6): there is
+   * nothing on the remote to continue from. A card past Build goes back to it
+   * first — while it still holds its old placement, so nothing starts on the
+   * old branch — then its branch is forgotten and the move ends on the target,
+   * where Build cuts a fresh one from the base. A card not yet at Build keeps
+   * its stage and cuts the branch when it gets there. Whether it restarted:
+   * a refused stage move fails the move instead.
+   */
+  const restartFromBase = Effect.fn("BoardCardMover.restartFromBase")(function* (
+    cardId: BoardCardId,
+    stamp: BoardMoveStamp,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId)!;
+    const build = boardStageWithRole(board, "build");
+    if (
+      build !== null &&
+      card.stage !== build.stageId &&
+      isBoardStageAtOrAfterBuild(board, card.stage)
+    ) {
+      const backToBuild = yield* dispatchStamped(
+        {
+          type: "board.card.move",
+          commandId: yield* commandId("move-restart-build"),
+          cardId,
+          toStage: build.stageId,
+          override: true,
+          createdAt: yield* nowIso,
+        },
+        stamp,
+      );
+      if (!backToBuild) {
+        yield* record(
+          cardId,
+          {
+            phase: "failed",
+            error: `The card couldn't go back to ${build.label}, so it wasn't restarted.`,
+          },
+          stamp,
+        );
+        return false;
+      }
+    }
+    return yield* record(cardId, { phase: "restarted" }, stamp);
+  });
+
+  const move: BoardCardMoverShape["move"] = (
+    cardId,
+    choice,
+    stamp = () => Effect.void,
+    options = {},
+  ) =>
     Effect.gen(function* () {
       const followDefault = choice === null;
       const toWorkerId = choice ?? (yield* readBoard).defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
-      const checked = yield* check(cardId, toWorkerId);
-      if (checked.outcome !== "ready") return checked;
+      const force = options.force === true;
+      const checked = yield* check(cardId, toWorkerId, options);
+      // A force-moved card with no worktree just re-pins; the supervisor
+      // stalls a step stranded on the old worker off the pin.
+      if (force && checked.outcome === "pin") {
+        const pinned = yield* dispatchStamped(
+          {
+            type: "board.card.pin-worker",
+            commandId: yield* commandId("move-force-pin"),
+            cardId,
+            workerId: followDefault ? null : toWorkerId,
+            createdAt: yield* nowIso,
+          },
+          stamp,
+        );
+        return pinned
+          ? ({ outcome: "started" } as const)
+          : refused("The card could not be re-pinned. See the server log.");
+      }
+      const restart = force && checked.outcome === "no-remote-branch";
+      if (restart && options.restartFromBase !== true) return checked;
+      if (checked.outcome !== "ready" && !restart) return checked;
       const started = yield* record(
         cardId,
         {
           phase: "start",
           toWorkerId,
-          sha: checked.tip?.sha ?? null,
+          sha: checked.outcome === "ready" ? (checked.tip?.sha ?? null) : null,
+          ...(force ? { force: true } : {}),
         },
         stamp,
       );
       if (!started) return refused("The move could not be started. See the server log.");
+      if (restart) {
+        const restarted = yield* restartFromBase(cardId, stamp);
+        if (!restarted) return refused("The card could not be restarted. See the server log.");
+        if (followDefault) {
+          yield* dispatchStamped(
+            {
+              type: "board.card.pin-worker",
+              commandId: yield* commandId("move-unpin"),
+              cardId,
+              workerId: null,
+              createdAt: yield* nowIso,
+            },
+            stamp,
+          );
+        }
+        return { outcome: "started" } as const;
+      }
       const card = (yield* readBoard).cards.find((candidate) => candidate.id === cardId)!;
+      if (force) {
+        // Nothing on the old worker is touched: its worktree stays there, and
+        // the card stops using it.
+        if (card.worktree !== null && boardCardHoldsWorktree(card)) {
+          const abandoned = yield* record(
+            cardId,
+            { phase: "abandoned", worktreePath: card.worktree.path },
+            stamp,
+          );
+          if (!abandoned) return refused("The move could not be recorded. See the server log.");
+        }
+        yield* provision({ card, toWorkerId, followDefault, stamp }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board move: failed", { cardId, cause: Cause.pretty(cause) }).pipe(
+              Effect.andThen(
+                record(
+                  cardId,
+                  { phase: "failed", error: "The move stopped unexpectedly. See the server log." },
+                  stamp,
+                ),
+              ),
+            ),
+          ),
+          FiberSet.run(running),
+        );
+        return { outcome: "started" } as const;
+      }
+      if (checked.outcome !== "ready") return checked;
       const stopped = (cause: Cause.Cause<unknown>) =>
         Effect.logWarning("board move: failed", { cardId, cause: Cause.pretty(cause) }).pipe(
           Effect.andThen(

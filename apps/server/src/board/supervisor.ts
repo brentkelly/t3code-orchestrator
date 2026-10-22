@@ -470,6 +470,33 @@ export function reconcileStepDecision(input: {
   return { kind: "recover" };
 }
 
+// ── Offline workers (T3O-66, D22) ──────────────────────────────────────────
+
+/** A stretch of time a worker was out of the board's reach, in epoch millis. */
+export interface BoardOfflineInterval {
+  readonly from: number;
+  readonly to: number;
+}
+
+/**
+ * How much of `(sinceMs, nowMs]` a step's worker spent out of reach — the time
+ * the timeout sweep does not count. A step paused by an offline worker resumes
+ * with its reference time shifted by the offline interval, not reset: only the
+ * part of each interval after the step's latest life sign is credited, so a
+ * life sign that arrives after the worker came back is not extended again.
+ */
+export function boardOfflineCreditMs(
+  intervals: ReadonlyArray<BoardOfflineInterval>,
+  sinceMs: number,
+  nowMs: number,
+): number {
+  let credit = 0;
+  for (const interval of intervals) {
+    credit += Math.max(0, Math.min(nowMs, interval.to) - Math.max(sinceMs, interval.from));
+  }
+  return credit;
+}
+
 // ── Concurrency governor (t3o-11, D11) ─────────────────────────────────────
 
 /** One card's step competing for a slot. Everything the ordering branches on

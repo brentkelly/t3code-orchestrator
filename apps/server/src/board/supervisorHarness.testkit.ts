@@ -189,6 +189,7 @@ export const makeBoardCard = (input: {
   readonly pinnedWorkerId?: BoardCard["pinnedWorkerId"];
   readonly placedWorkerId?: BoardCard["placedWorkerId"];
   readonly workerMove?: BoardCard["workerMove"];
+  readonly placementOrphaned?: BoardCard["placementOrphaned"];
   /** The cards this one waits on (t3o-13). Absent is nothing. */
   readonly dependsOn?: ReadonlyArray<string>;
   /** The sub-board parent this card is a child of (t3o-23). Absent is
@@ -225,6 +226,7 @@ export const makeBoardCard = (input: {
   pinnedWorkerId: input.pinnedWorkerId ?? null,
   placedWorkerId: input.placedWorkerId ?? null,
   workerMove: input.workerMove ?? null,
+  placementOrphaned: input.placementOrphaned ?? null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],

@@ -366,13 +366,21 @@ function makeBoardRpcHandlers(
         BOARD_WS_METHODS.cardWorkerMove,
         Effect.suspend((): Effect.Effect<BoardCardWorkerMoveAnswer> => {
           if (input.action === "ask-push") return services.mover.askAgentToPush(input.cardId);
+          // T3O-66: a force-move off an offline or removed worker, and its
+          // restart-from-base confirmation.
+          const force = { force: input.force, restartFromBase: input.restartFromBase };
           if (input.action === "move") {
-            return services.mover.move(input.cardId, input.toWorkerId ?? null, services.stampActor);
+            return services.mover.move(
+              input.cardId,
+              input.toWorkerId ?? null,
+              services.stampActor,
+              force,
+            );
           }
           if (input.toWorkerId === undefined) {
             return Effect.succeed({ outcome: "refused", detail: "Pick a worker to move to." });
           }
-          return services.mover.check(input.cardId, input.toWorkerId);
+          return services.mover.check(input.cardId, input.toWorkerId, force);
         }),
       ),
 

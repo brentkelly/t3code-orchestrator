@@ -71,6 +71,7 @@ import {
   BoardCardPlacedPayload,
   BoardCardWorkerMoveRecordedPayload,
   BoardCardWorkerPinnedPayload,
+  BoardCardWorkerRemovalPayload,
   BoardCardIntegrationBranchRecordedPayload,
   BoardPlanWrittenPayload,
   BoardStageCreatedPayload,
@@ -148,6 +149,9 @@ const decodeBoardCardWorkerPinnedPayload = Schema.decodeUnknownEffect(BoardCardW
 const decodeBoardCardPlacedPayload = Schema.decodeUnknownEffect(BoardCardPlacedPayload);
 const decodeBoardCardWorkerMoveRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardWorkerMoveRecordedPayload,
+);
+const decodeBoardCardWorkerRemovalPayload = Schema.decodeUnknownEffect(
+  BoardCardWorkerRemovalPayload,
 );
 const decodeBoardCardBaseRefRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardBaseRefRecordedPayload,
@@ -279,6 +283,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     pinnedWorkerId: payload.pinnedWorkerId ?? null,
     placedWorkerId: null,
     workerMove: null,
+    placementOrphaned: null,
     // A card is never born armed (T3O-24, D2): the arm is a human delegating
     // the D18 build gate on a card they can already see waiting, and there is
     // no create-command field to set it with. Nor born auto-merging (T3O-38,
@@ -830,6 +835,12 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    case "board.card-worker-removal":
+      return decodeBoardCardWorkerRemovalPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     case "board.card-worktree-provisioning":
       return decodeBoardCardWorktreeProvisioningPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
@@ -1093,6 +1104,8 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     case "board.card-worker-pinned":
     case "board.card-placed":
     case "board.card-worker-move-recorded":
+    // T3O-66: Worker removed is a shell field on the card aggregate.
+    case "board.card-worker-removal":
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,

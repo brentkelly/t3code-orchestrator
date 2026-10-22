@@ -1010,6 +1010,7 @@ export function BoardCardDetail({
   const view = (
     <BoardCardDetailView
       stalledReason={cardShell?.stalledReason}
+      workerShell={cardShell}
       nav={nav}
       adoptableThreads={adoptableThreads}
       stageRestart={stageRestart}

@@ -84,6 +84,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     pinnedWorkerId: null,
     placedWorkerId: null,
     workerMove: null,
+    placementOrphaned: null,
     worktree: null,
     blocked: false,
     archivedAt: null,

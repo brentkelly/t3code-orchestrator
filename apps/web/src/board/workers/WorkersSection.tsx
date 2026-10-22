@@ -11,11 +11,13 @@ import {
   BOARD_LOCAL_WORKER_ID,
   canBeDefaultBoardWorker,
   type BoardWorkerId,
+  type BoardWorkerRemovePreview,
+  type BoardWorkerRemovePreviewCard,
   type BoardWorkerView,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   AlertDialog,
@@ -247,6 +249,7 @@ export function WorkersSection(props: {
         onSetUpProjects={props.onSetUpProjects}
       />
       <RemoveWorkerDialog
+        environmentId={environmentId}
         worker={removing}
         onCancel={() => setRemoving(null)}
         onConfirm={(worker) => void confirmRemove(worker)}
@@ -352,16 +355,41 @@ function WorkerMenu(props: {
 }
 
 /**
- * The remove confirmation (1.11). Which cards are affected, and what happens
- * to each, is the removal fallback's (D22) and arrives with it; until then a
- * worker has no cards placed on it, which is what this says.
+ * The remove confirmation (1.11): the cards removal affects, from the board
+ * server — those with no worktree yet move to the default worker, and those
+ * with work there hold until they are moved (D22).
  */
 function RemoveWorkerDialog(props: {
+  readonly environmentId: EnvironmentId;
   readonly worker: BoardWorkerView | null;
   readonly onCancel: () => void;
   readonly onConfirm: (worker: BoardWorkerView) => void;
 }) {
   const worker = props.worker;
+  const { environmentId } = props;
+  const previewRemoval = useAtomCommand(boardEnvironment.previewWorkerRemoval, {
+    reportFailure: false,
+  });
+  const [preview, setPreview] = useState<
+    | { readonly workerId: BoardWorkerId; readonly result: BoardWorkerRemovePreview | null }
+    | undefined
+  >(undefined);
+  const workerId = worker?.id ?? null;
+  useEffect(() => {
+    if (workerId === null) return;
+    let live = true;
+    void previewRemoval({ environmentId, input: { workerId } }).then((result) => {
+      if (live) setPreview({ workerId, result: result._tag === "Success" ? result.value : null });
+    });
+    return () => {
+      live = false;
+    };
+  }, [environmentId, previewRemoval, workerId]);
+  const current = preview !== undefined && preview.workerId === workerId ? preview : undefined;
+  const name = worker?.label ?? "";
+  const affected =
+    current?.result == null ? 0 : current.result.toDefault.length + current.result.byHand.length;
+  const stopsAStep = current?.result?.byHand.some((card) => card.running) ?? false;
   return (
     <AlertDialog
       open={worker !== null}
@@ -371,25 +399,84 @@ function RemoveWorkerDialog(props: {
     >
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Remove {worker?.label}?</AlertDialogTitle>
+          <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
           <AlertDialogDescription>
-            No cards are assigned to {worker?.label}. Nothing on {worker?.label} is deleted. Its
-            worktrees, branches and thread history stay on that machine; this board just stops using
-            it. Removing also revokes the board's access on {worker?.label}, if it can be reached.
+            {current === undefined
+              ? `Checking which cards are on ${name}…`
+              : current.result === null
+                ? `Couldn't list the cards on ${name}.`
+                : affected === 0
+                  ? `No cards are assigned to ${name}.`
+                  : `${affected} ${affected === 1 ? "card is" : "cards are"} assigned to ${name}.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        <div className="flex flex-col gap-3 px-6 pb-4 text-[13px]">
+          {current === undefined ? <Spinner className="size-4" /> : null}
+          {current?.result != null && current.result.toDefault.length > 0 ? (
+            <RemovePreviewGroup
+              title="Will move to the default worker"
+              subtitle={`${current.result.defaultWorkerLabel} · no worktree yet`}
+              cards={current.result.toDefault}
+            />
+          ) : null}
+          {current?.result != null && current.result.byHand.length > 0 ? (
+            <>
+              <RemovePreviewGroup
+                title="Will need moving by hand"
+                subtitle={`work exists on ${name}`}
+                cards={current.result.byHand}
+              />
+              <span className="text-muted-foreground">
+                These cards hold and show “Worker removed — move this card” until you move them.
+                {stopsAStep ? " The running step is stopped." : ""}
+              </span>
+            </>
+          ) : null}
+          <span className="text-muted-foreground">
+            Nothing on {name} is deleted. Its worktrees, branches and thread history stay on that
+            machine; this board just stops using it. Removing also revokes the board's access on{" "}
+            {name}, if it can be reached.
+          </span>
+        </div>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
           <Button
             variant="destructive"
+            disabled={current === undefined}
             onClick={() => {
               if (worker !== null) props.onConfirm(worker);
             }}
           >
-            Remove {worker?.label}
+            Remove {name}
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>
+  );
+}
+
+function RemovePreviewGroup(props: {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly cards: ReadonlyArray<BoardWorkerRemovePreviewCard>;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 rounded-lg border border-border p-2.5">
+      <span>
+        <span className="text-[12.5px] font-semibold">{props.title}</span>
+        <span className="text-[12px] text-muted-foreground"> · {props.subtitle}</span>
+      </span>
+      <ul className="flex flex-col gap-1">
+        {props.cards.map((card) => (
+          <li className="flex min-w-0 items-center gap-2 text-[12.5px]" key={card.cardId}>
+            <span className="shrink-0 font-mono text-[11.5px] text-muted-foreground">
+              {card.key}
+            </span>
+            <span className="min-w-0 flex-1 truncate">{card.title}</span>
+            <span className="shrink-0 text-[11.5px] text-muted-foreground">{card.detail}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

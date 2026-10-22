@@ -39,6 +39,7 @@ import {
   PauseIcon,
   TriangleAlertIcon,
   ArrowRightLeftIcon,
+  ServerOffIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import type { DragEvent, ReactNode } from "react";
@@ -67,7 +68,11 @@ import {
 } from "./BoardCardSummaryRow";
 import { projectAccent } from "./projectAccent";
 import { useBoardWorkersState } from "./workers/BoardWorkersContext";
-import { boardCardMoveNotice, boardCardWorkerChip } from "./workers/cardWorker";
+import {
+  boardCardMoveNotice,
+  boardCardWorkerChip,
+  boardCardWorkerTrouble,
+} from "./workers/cardWorker";
 import { BoardHint } from "./BoardHint";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 
@@ -226,21 +231,31 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
                       ? "text-info-foreground"
                       : "text-warning-foreground",
                 }
-              : notice.kind === "worktree-kept"
+              : notice.kind === "worker"
                 ? {
-                    // T3O-52. Amber: the card is finished but its cleanup is
-                    // blocked, and only a human can clear what is in the way.
-                    icon: <HardDriveIcon className="size-3 shrink-0" />,
-                    label: "Worktree kept",
-                    tooltip: `Worktree kept: ${notice.reason}`,
+                    // T3O-66: amber either way — the card's worker is gone or
+                    // out of reach, and nothing moves until it is back or a
+                    // human moves the card.
+                    icon: <ServerOffIcon className="size-3 shrink-0" />,
+                    label: notice.trouble.label,
+                    tooltip: notice.trouble.tooltip,
                     tint: "text-warning-foreground",
                   }
-                : {
-                    icon: <LockIcon className="size-3 shrink-0" />,
-                    label: "Blocked",
-                    tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
-                    tint: "text-warning-foreground",
-                  };
+                : notice.kind === "worktree-kept"
+                  ? {
+                      // T3O-52. Amber: the card is finished but its cleanup is
+                      // blocked, and only a human can clear what is in the way.
+                      icon: <HardDriveIcon className="size-3 shrink-0" />,
+                      label: "Worktree kept",
+                      tooltip: `Worktree kept: ${notice.reason}`,
+                      tint: "text-warning-foreground",
+                    }
+                  : {
+                      icon: <LockIcon className="size-3 shrink-0" />,
+                      label: "Blocked",
+                      tooltip: `Blocked by ${notice.dependencyCount} ${notice.dependencyCount === 1 ? "dependency" : "dependencies"}`,
+                      tint: "text-warning-foreground",
+                    };
   return (
     <BoardHint label={view.tooltip}>
       <span
@@ -432,6 +447,8 @@ export function BoardCardContent({
     dependencyCount: card.dependencyCount,
     worktreeKeptReason,
     workerMove: boardCardMoveNotice(card, workers),
+    workerTrouble: boardCardWorkerTrouble(card, workers),
+    providerMissing: card.stalled && card.stalledReason === "provider-not-on-worker",
   });
   // The card's scheduled start (T3O-19, D9/D14). Null on a done card and on
   // one whose time has already passed — the server clears the field within a
@@ -608,7 +625,11 @@ export function BoardCardContent({
             </span>
           </BoardHint>
         )}
-        {scheduleLabel === null && autoStartChip === null && queueSlot !== undefined ? (
+        {scheduleLabel === null &&
+        autoStartChip === null &&
+        queueSlot !== undefined &&
+        // A card held by its worker says so in the notice instead (T3O-66).
+        notice?.kind !== "worker" ? (
           // The tooltip carries the WHOLE reason (t3o-33), so why a card is
           // waiting — and that it will start on its own — is readable without
           // opening it.

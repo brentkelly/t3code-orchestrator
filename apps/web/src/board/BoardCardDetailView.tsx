@@ -344,6 +344,14 @@ export interface BoardCardDetailViewProps {
   /** Why the live step stalled, from the card's shell (T3O-65 shows the
       provider-not-on-worker panel off it). */
   readonly stalledReason?: BoardCardStepStalledReason | undefined;
+  /** What the card's shell says of its work and its worker (T3O-66), for the
+      Worker offline / Worker removed panel. */
+  readonly workerShell?:
+    | Pick<
+        BoardCardShell,
+        "workerId" | "placementOrphaned" | "stepRunning" | "queued" | "stepAwaiting"
+      >
+    | undefined;
   readonly detail: BoardCardDetail;
   readonly catalogue: ReadonlyArray<BoardLabel>;
   /** The read-model stage list (D13): column labels, the stage ladder, and the
@@ -1958,6 +1966,7 @@ function InfoSection({
         card={props.detail.card}
         environmentId={props.environmentId}
         onOpenThread={onOpenThread}
+        shell={props.workerShell}
         stalledReason={props.stalledReason}
       />
       <div>Created · {formatRelativeTimeLabel(props.detail.card.createdAt)}</div>

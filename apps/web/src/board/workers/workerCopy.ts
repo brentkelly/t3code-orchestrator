@@ -26,7 +26,7 @@ export interface WorkerStatusPresentation {
 }
 
 /** "09:12", in the reader's own clock. */
-function clockTime(iso: string): string {
+export function clockTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 

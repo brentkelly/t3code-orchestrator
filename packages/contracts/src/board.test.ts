@@ -210,6 +210,7 @@ const typicalCard = (index: number): BoardCard => ({
   pinnedWorkerId: null,
   placedWorkerId: null,
   workerMove: null,
+  placementOrphaned: null,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",

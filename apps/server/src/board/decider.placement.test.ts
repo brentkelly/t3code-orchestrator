@@ -76,6 +76,7 @@ function makeCard(overrides: Partial<BoardCard> = {}): BoardCard {
     pinnedWorkerId: null,
     placedWorkerId: null,
     workerMove: null,
+    placementOrphaned: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],

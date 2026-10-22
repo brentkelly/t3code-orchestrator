@@ -166,6 +166,7 @@ import {
   boardBackgroundCheckInCharged,
   boardBackgroundCheckInDueMs,
   boardBackgroundCheckInNudge,
+  boardOfflineCreditMs,
   boardRecoveryNudge,
   composeStepPrompt,
   orderBoardQueue,
@@ -174,6 +175,7 @@ import {
   recoveryCeilingCrossed,
   recoveryDecision,
   resolveBoardConcurrencyLimit,
+  type BoardOfflineInterval,
   type BoardQueueCandidate,
 } from "./supervisor.ts";
 import { detectorNowMs, UsageLimitDetector } from "./UsageLimitDetector.ts";
@@ -1525,6 +1527,49 @@ const make = Effect.gen(function* () {
       }),
     } as const;
   });
+  // ── Offline workers (T3O-66, D22) ────────────────────────────────────
+  // A worker the board can't reach is unknown, not dead (D4): nothing it ran
+  // may be decided on until it is back and its steps have been reconciled.
+  // In memory, like the slot counts: a restart starts every worker unreconciled,
+  // so the boot pass hands each to `reconcileWorker` once it is online.
+  /** Workers online and reconciled since they last came back. */
+  const reconciledWorkers = new Set<BoardWorkerId>();
+  /** When each registered worker the board can't reach went out of reach. */
+  const unreachableSince = new Map<BoardWorkerId, number>();
+  /** Each worker's finished out-of-reach stretches, which the timeout sweep
+      does not count against a step (`boardOfflineCreditMs`). */
+  const offlineIntervals = new Map<BoardWorkerId, Array<BoardOfflineInterval>>();
+  /** Workers the change feed saw out of reach since `syncWorkerReach` last
+      ran, and when it first did. Recorded as each summary arrives, not when
+      the serial queue reaches it, so a worker that drops and comes back before
+      then is still reconciled, and its time away still credited. */
+  const droppedWorkers = new Map<BoardWorkerId, number>();
+  /** Signals from a worker not yet reconciled, released after it is. */
+  const heldSignals = new Map<BoardWorkerId, Array<ThreadSignal>>();
+  /** Threads a reconcile of each worker settled, recovered or parked, kept
+      across a pass that failed partway until the held signals are released:
+      the retry reads those steps as already handled, so only this remembers
+      that their held signals predate what was decided. */
+  const decidedThreads = new Map<BoardWorkerId, Set<string>>();
+  /** A held-signal backlog's ceiling. Reconcile reads the truth anyway, so a
+      dropped signal costs nothing it would not re-learn. */
+  const HELD_SIGNALS_MAX = 1000;
+  /** Whether a worker's steps are paused: not this server, and not online and
+      reconciled. Read off the live summary, so a worker that dropped a moment
+      ago pauses before its status change has been processed. */
+  const workerReconciled = (workerId: BoardWorkerId) =>
+    reconciledWorkers.has(workerId) && !droppedWorkers.has(workerId);
+  const workerPausedNow = Effect.gen(function* () {
+    if (Option.isNone(placement)) return (_workerId: BoardWorkerId) => false;
+    const online = new Set(
+      (yield* workersNow).workers
+        .filter((worker) => worker.status.state === "online")
+        .map((worker) => worker.id),
+    );
+    return (workerId: BoardWorkerId) =>
+      workerId !== BOARD_LOCAL_WORKER_ID && !(online.has(workerId) && workerReconciled(workerId));
+  });
+
   // T3O-63: the brief's files a thread on a worker reads from where they were
   // staged there.
   const stagedBriefFiles = (card: BoardCard) => ({
@@ -1782,10 +1827,13 @@ const make = Effect.gen(function* () {
   const resumeExistingStepThread = Effect.fn("board-supervisor-resumeExistingStepThread")(
     function* (input: { readonly card: BoardCard; readonly state: BoardCardStepState }) {
       const { card, state } = input;
-      if (state.threadId === null || (yield* threadGone(state.threadId))) return "no-thread";
+      if (state.threadId === null) return "no-thread";
       // A card moved since this thread ran (T3O-65): the thread is on the old
       // worker, in a checkout that was retired. The step starts afresh where
-      // the card is now; the old thread stays linked, on its old worker.
+      // the card is now; the old thread stays linked, on its old worker. This
+      // is checked before the thread is read: the old worker may be offline or
+      // removed (T3O-66), and reading through it would fail after the caller
+      // acquired a slot.
       const board = yield* readBoard;
       const link = card.threadLinks.find((candidate) => candidate.threadId === state.threadId);
       const fresh = board.cards.find((candidate) => candidate.id === card.id) ?? card;
@@ -1795,6 +1843,7 @@ const make = Effect.gen(function* () {
       ) {
         return "no-thread";
       }
+      if (yield* threadGone(state.threadId)) return "no-thread";
       const admitted = yield* dispatchOptional({
         type: "board.card.admit-step",
         commandId: yield* commandId("admit-step"),
@@ -1878,12 +1927,86 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * Put a step stalled for a missing provider back in the queue once its card
-   * can run it (T3O-65): it was pinned elsewhere, or the instance appeared on
-   * the worker. A model change restarts the stage instead, which re-freezes the
-   * step. The scheduling pass that follows re-checks, so a step whose worker
-   * still lacks the instance simply stalls again.
+   * Stall a step its worker can't be asked about any more (T3O-66, D22): the
+   * worker was removed, or the card was force-moved off it. Amber, spending no
+   * recovery budget — the agent did nothing wrong — and its slot is released.
+   * It continues once the card is moved, or the worker is added back
+   * (`requeueResolvedPlacementStalls`).
    */
+  const stallWorkerRemoved = Effect.fn("board-supervisor-stallWorkerRemoved")(function* (
+    state: BoardCardStepState,
+    detail: string,
+  ) {
+    const landed = yield* dispatchOptional({
+      type: "board.card.recover-step",
+      commandId: yield* commandId("worker-removed"),
+      cardId: state.cardId,
+      stepId: state.stepId,
+      threadId: state.threadId,
+      escalateToHuman: true,
+      progressed: false,
+      lastError: detail,
+      stalledReason: "worker-removed",
+      chargeBudget: false,
+      createdAt: yield* nowIso,
+    });
+    if (landed) yield* releaseSlot(state);
+  });
+
+  /**
+   * Whether a step is bound to its thread where that thread is: running on
+   * it, or parked on it — a question, a backoff rung, a usage-limit park —
+   * waiting to be resumed there. A human's Pause is left alone: the decider
+   * refuses to recover it, and their resume starts afresh wherever the card
+   * now is (`resumeExistingStepThread`).
+   */
+  const stepBoundToThread = (state: BoardCardStepState) =>
+    state.threadId !== null &&
+    (state.status === "running" ||
+      state.status === "completing" ||
+      state.status === "awaiting-input" ||
+      (state.status === "stalled" && state.stalledReason !== "worker-removed"));
+
+  /** Every step running or parked on a worker just removed from the board
+      (D22). A card that follows the default from now on restarts there. */
+  const stallStepsOnRemovedWorker = Effect.fn("board-supervisor-stallStepsOnRemovedWorker")(
+    function* (workerId: BoardWorkerId) {
+      reconciledWorkers.delete(workerId);
+      heldSignals.delete(workerId);
+      decidedThreads.delete(workerId);
+      const board = yield* readBoard;
+      for (const state of boardNonTerminalStepStates(board)) {
+        if (!stepBoundToThread(state)) continue;
+        if (slotKeyFor(board, state).workerId !== workerId) continue;
+        yield* stallWorkerRemoved(state, "The worker this step ran on was removed from the board.");
+      }
+      yield* requeueResolvedPlacementStalls();
+    },
+  );
+
+  /**
+   * A card's live step still reads as running, or parked, on a worker the
+   * board can't reach, while the card itself now runs somewhere else — it was
+   * force-moved, or re-pinned off it (T3O-66). Nothing will ever end or resume
+   * that run as the board sees it, so it is stalled, and continues where the
+   * card is now.
+   */
+  const stallStrandedStep = Effect.fn("board-supervisor-stallStrandedStep")(function* (
+    cardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    const state = boardCardStepState(board, cardId);
+    if (card === undefined || state === null || !stepBoundToThread(state)) return;
+    const at = slotKeyFor(board, state).workerId;
+    const runsOn =
+      card.workerMove?.status === "moving"
+        ? card.workerMove.toWorkerId
+        : boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+    if (at === runsOn || !(yield* workerPausedNow)(at)) return;
+    yield* stallWorkerRemoved(state, "The card was moved off the worker this step ran on.");
+  });
+
   /**
    * Provision a freshly selected build step's worktree at stage entry, but only
    * where the step can run now (T3O-65). A card mid-move, or one whose worker
@@ -1904,31 +2027,58 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const requeueResolvedProviderStalls = Effect.fn("board-supervisor-requeueResolvedProviderStalls")(
-    function* (onlyCardId?: BoardCardId) {
-      const board = yield* readBoard;
-      for (const state of board.stepStates ?? []) {
-        if (state.status !== "stalled" || state.stalledReason !== "provider-not-on-worker")
-          continue;
-        if (onlyCardId !== undefined && state.cardId !== onlyCardId) continue;
-        const card = board.cards.find((candidate) => candidate.id === state.cardId);
-        if (card === undefined || card.archivedAt !== null) continue;
-        // Not while the worker is offline: nothing has been fixed, and
-        // requeueing would hide the needs-a-human stall until it reconnects and
-        // stalls again. A worker still cloning the project (a re-pin to one
-        // being set up) requeues, and the pass holds the step as "setting up".
-        const { gate } = yield* placementFor(board, card, state);
-        if (gate.kind === "provider-missing" || gate.kind === "offline") continue;
-        yield* dispatch({
-          type: "board.card.requeue-step",
-          commandId: yield* commandId("requeue-step"),
-          cardId: card.id,
-          preserveBudget: true,
-          createdAt: yield* nowIso,
-        });
+  /**
+   * Put a step stalled for a missing provider back in the queue once its card
+   * can run it (T3O-65): it was pinned elsewhere, or the instance appeared on
+   * the worker. A model change restarts the stage instead, which re-freezes the
+   * step. The scheduling pass that follows re-checks, so a step whose worker
+   * still lacks the instance simply stalls again.
+   *
+   * And one stalled because its worker was removed (T3O-66), once the card
+   * holds no more: it was moved or re-pinned, or the worker was added back.
+   * Requeued, it resumes its thread where that thread still is, or starts
+   * afresh on the card's new worker.
+   */
+  const requeueResolvedPlacementStalls = Effect.fn(
+    "board-supervisor-requeueResolvedPlacementStalls",
+  )(function* (onlyCardId?: BoardCardId) {
+    const board = yield* readBoard;
+    for (const state of board.stepStates ?? []) {
+      if (
+        state.status !== "stalled" ||
+        (state.stalledReason !== "provider-not-on-worker" &&
+          state.stalledReason !== "worker-removed")
+      )
+        continue;
+      if (onlyCardId !== undefined && state.cardId !== onlyCardId) continue;
+      const card = board.cards.find((candidate) => candidate.id === state.cardId);
+      if (card === undefined || card.archivedAt !== null) continue;
+      if (
+        state.stalledReason === "worker-removed" &&
+        (card.placementOrphaned !== null || card.workerMove !== null)
+      ) {
+        continue;
       }
-    },
-  );
+      // Not while the worker is offline: nothing has been fixed, and
+      // requeueing would hide the needs-a-human stall until it reconnects and
+      // stalls again. A worker still cloning the project (a re-pin to one
+      // being set up) requeues, and the pass holds the step as "setting up".
+      const { gate } = yield* placementFor(board, card, state);
+      if (gate.kind === "offline") continue;
+      // A step whose worker went is requeued whatever the new one lacks: the
+      // pass that follows stalls it again for the reason that now applies.
+      if (gate.kind === "provider-missing" && state.stalledReason === "provider-not-on-worker") {
+        continue;
+      }
+      yield* dispatch({
+        type: "board.card.requeue-step",
+        commandId: yield* commandId("requeue-step"),
+        cardId: card.id,
+        preserveBudget: true,
+        createdAt: yield* nowIso,
+      });
+    }
+  });
 
   // Offer one build-mode step to the governor: acquire a slot under the resolved
   // caps and spawn its thread on the card's worktree, or leave it queued (D11).
@@ -2206,7 +2356,12 @@ const make = Effect.gen(function* () {
       // step's provider instance. Ahead of the plan branch: a planning thread
       // needs the checkout as much as a build does.
       const placed = yield* placementFor(board, card, state);
-      if (placed.gate.kind === "offline") continue;
+      if (placed.gate.kind === "offline") {
+        // Held, saying so (T3O-66): the card wears Worker offline until its
+        // worker is back.
+        yield* holdQueued(state, "worker-offline");
+        continue;
+      }
       if (placed.gate.kind === "no-checkout") {
         yield* holdQueued(state, "setup");
         continue;
@@ -7260,16 +7415,21 @@ const make = Effect.gen(function* () {
       if (limit.kind !== "wait") continue;
       const dueMs = Date.parse(limit.until);
       if (Number.isFinite(dueMs) && nowMs < dueMs) continue;
-      const parked = (yield* boardWokenLimitParks(board, limit.providerInstanceId)).filter(
+      const allParked = (yield* boardWokenLimitParks(board, limit.providerInstanceId)).filter(
         (state) => {
           const card = board.cards.find((candidate) => candidate.id === state.cardId);
           return card !== undefined && card.archivedAt === null;
         },
       );
-      if (parked.length === 0) {
+      if (allParked.length === 0) {
         yield* clearProviderLimitAndResume(limit.providerInstanceId);
         continue;
       }
+      // A card on a worker out of reach can't probe (T3O-66, D22): the probe
+      // waits for one that can, or for its worker to come back.
+      const paused = yield* workerPausedNow;
+      const parked = allParked.filter((state) => !paused(slotKeyFor(board, state).workerId));
+      if (parked.length === 0) continue;
       const ordered = orderBoardQueue(
         parked.flatMap((state) => {
           const card = board.cards.find((candidate) => candidate.id === state.cardId);
@@ -8557,6 +8717,240 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * Reconcile one live step against its thread (t3o-10): the boot pass's body,
+   * and a worker's when it comes back (T3O-66). `restoreSlot` is the boot
+   * pass's — its in-memory counts start empty — while a worker coming back
+   * still holds the slots its steps never gave up. Returns the decision, so
+   * the caller re-derives an advanced card's kickoff.
+   */
+  const reconcileStep = Effect.fn("board-supervisor-reconcileStep")(function* (input: {
+    readonly board: BoardState;
+    readonly card: BoardCard;
+    readonly state: BoardCardStepState;
+    readonly restoreSlot: boolean;
+  }) {
+    const { board, card, state } = input;
+    // Re-settle the stance a lost `board.card-updated` never carried onto the
+    // row (T3O-17). `streamDomainEvents` is a LIVE PubSub, not a durable
+    // replay from a watermark, so an edit committed to the log in the instant
+    // before a kill is never re-delivered: the card's override says one thing
+    // and the frozen run row says another, for as long as the step lives.
+    //
+    // Reachable from the ordinary human-in-the-loop toggle, and made common
+    // by the Stop button, which now dispatches exactly that edit — and there
+    // the divergence is the whole defect surviving a crash: a card that says
+    // a human took the wheel, resuming an agent that runs unattended.
+    //
+    // Cheap enough to be unconditional: a field comparison per non-terminal
+    // step, no I/O, and a dispatch only when they actually disagree, which is
+    // never in the ordinary case because the live handler already did it.
+    // Idempotent, so a restart loop re-runs it harmlessly. No turn is sent —
+    // boot is not the moment to message an agent, and `handleCardUpdated`
+    // would not have sent one into a parked step either.
+    yield* reconcileStanceOverride(card, state);
+    const hasSucceeded = boardCardStepCompletions(board, card.id).some(
+      (entry) => entry.stepId === state.stepId && entry.outcome === "succeeded",
+    );
+    const shell = state.threadId === null ? undefined : yield* liveThread(state.threadId);
+    const threadAlive = shell !== undefined && shell.alive;
+    const decision = reconcileStepDecision({
+      status: state.status,
+      threadAlive,
+      // Present but idle is the state a step parked on a human rests in: no
+      // turn, no pending question, and a thread the human can still answer in.
+      threadPresent: shell !== undefined,
+      humanInLoop: state.humanInLoop,
+      hasSucceeded,
+    });
+    // The in-memory slot Ref is empty after a restart, so any step that still
+    // holds a slot must RESTORE it here — whether we go on to watch it
+    // (resume-watch) or recover it (recover keeps the slot, D13) — otherwise
+    // its eventual release would floor at zero and under-count throughput.
+    // Restore is unconditional (never rejected by a cap): the step genuinely
+    // holds the slot, and this must run before `schedule` admits anything, so
+    // the restored steps count against the ceiling the governor then honours.
+    if (input.restoreSlot && state.slotHeld && decision.kind !== "advance") {
+      yield* slots.restore(slotKeyFor(yield* readBoard, state));
+    }
+    switch (decision.kind) {
+      case "advance":
+        yield* settleStep({ card, state, outcome: "succeeded" });
+        // Ask the executor what runs next: advance a finished single-step
+        // stage, or resume the next round-scoped step of a multi-step loop
+        // whose phase settled during downtime (t3o-16).
+        yield* continueStage({ card, state });
+        break;
+      case "recover":
+        yield* recoverStep({ card, state });
+        break;
+      case "park":
+        // The boot-time twin of `handleTurnCompleted`'s human-in-the-loop arm
+        // (t3o-34): say WHICH kind of stop it was, off the same last-message
+        // read, so the card shows "Input needed" or "Needs a human" rather
+        // than claiming the agent is working. The slot restored above is given
+        // straight back (T3O-23) — net zero, and correct: a parked step holds
+        // no capacity. The human's next turn on the thread un-parks it through
+        // `resumeParkedStep`, which re-takes the slot.
+        yield* parkStepForInput({
+          card,
+          state,
+          reason: (yield* endedWithQuestion(state)) ? "question" : "stopped",
+        });
+        break;
+      case "reschedule":
+        // Pending/queued and slotless — placed by the final schedule pass
+        // below, once every restored running step is counted (D11).
+        break;
+      case "resume-watch":
+        // Still running with a live thread — the slot was restored above; let
+        // the live turn-completion path catch its settlement.
+        break;
+    }
+    return decision.kind;
+  });
+
+  /**
+   * The kickoff pass for cards a reconcile advanced: their card-moved events
+   * may have had no live subscriber (the boot pass runs before activation
+   * opens the streams), so the next stage's auto-kickoff is re-derived from
+   * state. `bootPass` restricts it to first entries (or executor-driven
+   * continuations) — a re-entry's clean human thread never opens as a restart
+   * side effect — and beginStageRun's own guards (autoExecute, live thread,
+   * live step) make the pass idempotent.
+   */
+  const kickoffAdvanced = Effect.fn("board-supervisor-kickoffAdvanced")(function* (
+    advanced: ReadonlyArray<BoardCard["id"]>,
+  ) {
+    if (advanced.length === 0) return;
+    const settled = yield* readBoard;
+    for (const cardId of advanced) {
+      const card = settled.cards.find((candidate) => candidate.id === cardId);
+      if (card === undefined || card.archivedAt !== null) continue;
+      const state = boardCardStepState(settled, card.id);
+      if (state !== null && !isBoardTerminalStepStatus(state.status)) continue;
+      yield* beginStageRun({ card, onDemand: false, bootPass: true });
+    }
+  });
+
+  /**
+   * Reconcile the steps placed on one worker, as it comes back (T3O-66, D22):
+   * the boot pass, scoped to that worker, run before any of its held signals.
+   * Threads match by id, so a thread still alive there is watched, never
+   * respawned. False when a step's thread could not be read — the worker went
+   * again — so the caller tries again rather than treat it as reconciled. The
+   * threads whose steps it settled, recovered or parked, whose held signals it
+   * has already accounted for, are added to `decidedThreads` either way.
+   */
+  const reconcileWorker = Effect.fn("board-supervisor-reconcileWorker")(function* (
+    workerId: BoardWorkerId,
+  ) {
+    const board = yield* readBoard;
+    let whole = true;
+    const advanced: BoardCard["id"][] = [];
+    const decided = decidedThreads.get(workerId) ?? new Set<string>();
+    decidedThreads.set(workerId, decided);
+    for (const state of boardNonTerminalStepStates(board)) {
+      if (slotKeyFor(board, state).workerId !== workerId) continue;
+      const card = board.cards.find((candidate) => candidate.id === state.cardId);
+      if (card === undefined) continue;
+      const result = yield* reconcileStep({ board, card, state, restoreSlot: false }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: a worker's step could not be reconciled", {
+            workerId,
+            cardId: card.id,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      if (result === null) {
+        whole = false;
+        continue;
+      }
+      if (result === "advance") advanced.push(card.id);
+      // What the reconcile read is newer than anything held for that thread.
+      if (
+        state.threadId !== null &&
+        (result === "advance" || result === "recover" || result === "park")
+      ) {
+        decided.add(String(state.threadId));
+      }
+    }
+    yield* kickoffAdvanced(advanced);
+    return whole;
+  });
+
+  /**
+   * Bring what the supervisor knows of each worker's reach up to date (T3O-66,
+   * D22). A worker that dropped is unreconciled again, and its time out of
+   * reach starts; one that is back online is reconciled first, then its held
+   * signals are released — already deduped by sequence on the feed, and those
+   * for a thread the reconcile just decided on are dropped, so nothing is
+   * handled twice — and its time out of reach becomes an interval the timeout
+   * sweep does not count. The caller schedules afterwards.
+   */
+  const syncWorkerReach = Effect.gen(function* () {
+    if (Option.isNone(placement)) return;
+    const summary = yield* workersNow;
+    const nowMs = Date.parse(yield* nowIso);
+    const registered = new Set<BoardWorkerId>(summary.workers.map((worker) => worker.id));
+    const online = new Set<BoardWorkerId>(
+      summary.workers
+        .filter((worker) => worker.status.state === "online")
+        .map((worker) => worker.id),
+    );
+    // Drops the feed saw first, with when it saw them: one already back online
+    // is unreconciled all the same.
+    const dropped = [...droppedWorkers];
+    droppedWorkers.clear();
+    for (const [workerId, at] of dropped) {
+      if (!registered.has(workerId)) continue;
+      reconciledWorkers.delete(workerId);
+      if (!unreachableSince.has(workerId)) unreachableSince.set(workerId, at);
+    }
+    for (const workerId of reconciledWorkers) {
+      if (!online.has(workerId)) reconciledWorkers.delete(workerId);
+    }
+    for (const workerId of registered) {
+      if (!online.has(workerId) && !unreachableSince.has(workerId)) {
+        unreachableSince.set(workerId, nowMs);
+      }
+    }
+    // A removed worker is forgotten; its cards are the removal's business.
+    for (const map of [unreachableSince, offlineIntervals, heldSignals, decidedThreads]) {
+      for (const workerId of map.keys()) if (!registered.has(workerId)) map.delete(workerId);
+    }
+    for (const workerId of online) {
+      if (reconciledWorkers.has(workerId)) continue;
+      if (!(yield* reconcileWorker(workerId))) continue;
+      const decided = decidedThreads.get(workerId) ?? new Set<string>();
+      decidedThreads.delete(workerId);
+      const since = unreachableSince.get(workerId);
+      if (since !== undefined) {
+        offlineIntervals.set(workerId, [
+          ...(offlineIntervals.get(workerId) ?? []),
+          { from: since, to: nowMs },
+        ]);
+        unreachableSince.delete(workerId);
+      }
+      reconciledWorkers.add(workerId);
+      const held = heldSignals.get(workerId) ?? [];
+      heldSignals.delete(workerId);
+      for (const signal of held) {
+        if (decided.has(String(signal.threadId))) continue;
+        yield* processThreadSignal(signal).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board supervisor: a held signal failed", {
+              workerId,
+              signal: signal.type,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+      }
+    }
+  });
+
   const reconcile = Effect.gen(function* () {
     // Read the world only once the server is ACTIVATED (t3o-10, D3). This item
     // is enqueued from `start`, which runs in the `reactors.start` startup
@@ -8597,108 +8991,29 @@ const make = Effect.gen(function* () {
     // (forkParked) — so their auto-kickoff must be re-derived from state at
     // the end of this pass instead of riding the stream.
     const advanced: BoardCard["id"][] = [];
+    // T3O-66 (D22): a step on a worker is left for that worker's own reconcile
+    // (`syncWorkerReach`, below), which needs it online — a worker the board
+    // can't reach supplies no evidence. Its slot is restored now all the same:
+    // it is held until that reconcile, or a removal, gives it back.
+    const paused = yield* workerPausedNow;
     for (const state of boardNonTerminalStepStates(board)) {
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
       if (card === undefined) continue;
-      // Re-settle the stance a lost `board.card-updated` never carried onto the
-      // row (T3O-17). `streamDomainEvents` is a LIVE PubSub, not a durable
-      // replay from a watermark, so an edit committed to the log in the instant
-      // before a kill is never re-delivered: the card's override says one thing
-      // and the frozen run row says another, for as long as the step lives.
-      //
-      // Reachable from the ordinary human-in-the-loop toggle, and made common
-      // by the Stop button, which now dispatches exactly that edit — and there
-      // the divergence is the whole defect surviving a crash: a card that says
-      // a human took the wheel, resuming an agent that runs unattended.
-      //
-      // Cheap enough to be unconditional: a field comparison per non-terminal
-      // step, no I/O, and a dispatch only when they actually disagree, which is
-      // never in the ordinary case because the live handler already did it.
-      // Idempotent, so a restart loop re-runs it harmlessly. No turn is sent —
-      // boot is not the moment to message an agent, and `handleCardUpdated`
-      // would not have sent one into a parked step either.
-      yield* reconcileStanceOverride(card, state);
-      const hasSucceeded = boardCardStepCompletions(board, card.id).some(
-        (entry) => entry.stepId === state.stepId && entry.outcome === "succeeded",
-      );
-      const shell = state.threadId === null ? undefined : yield* liveThread(state.threadId);
-      const threadAlive = shell !== undefined && shell.alive;
-      const decision = reconcileStepDecision({
-        status: state.status,
-        threadAlive,
-        // Present but idle is the state a step parked on a human rests in: no
-        // turn, no pending question, and a thread the human can still answer in.
-        threadPresent: shell !== undefined,
-        humanInLoop: state.humanInLoop,
-        hasSucceeded,
-      });
-      // The in-memory slot Ref is empty after a restart, so any step that still
-      // holds a slot must RESTORE it here — whether we go on to watch it
-      // (resume-watch) or recover it (recover keeps the slot, D13) — otherwise
-      // its eventual release would floor at zero and under-count throughput.
-      // Restore is unconditional (never rejected by a cap): the step genuinely
-      // holds the slot, and this must run before `schedule` admits anything, so
-      // the restored steps count against the ceiling the governor then honours.
-      if (state.slotHeld && decision.kind !== "advance") {
-        yield* slots.restore(slotKeyFor(yield* readBoard, state));
+      if (paused(slotKeyFor(board, state).workerId)) {
+        if (state.slotHeld) yield* slots.restore(slotKeyFor(board, state));
+        continue;
       }
-      switch (decision.kind) {
-        case "advance":
-          yield* settleStep({ card, state, outcome: "succeeded" });
-          // Ask the executor what runs next: advance a finished single-step
-          // stage, or resume the next round-scoped step of a multi-step loop
-          // whose phase settled during downtime (t3o-16).
-          yield* continueStage({ card, state });
-          advanced.push(card.id);
-          break;
-        case "recover":
-          yield* recoverStep({ card, state });
-          break;
-        case "park":
-          // The boot-time twin of `handleTurnCompleted`'s human-in-the-loop arm
-          // (t3o-34): say WHICH kind of stop it was, off the same last-message
-          // read, so the card shows "Input needed" or "Needs a human" rather
-          // than claiming the agent is working. The slot restored above is given
-          // straight back (T3O-23) — net zero, and correct: a parked step holds
-          // no capacity. The human's next turn on the thread un-parks it through
-          // `resumeParkedStep`, which re-takes the slot.
-          yield* parkStepForInput({
-            card,
-            state,
-            reason: (yield* endedWithQuestion(state)) ? "question" : "stopped",
-          });
-          break;
-        case "reschedule":
-          // Pending/queued and slotless — placed by the final schedule pass
-          // below, once every restored running step is counted (D11).
-          break;
-        case "resume-watch":
-          // Still running with a live thread — the slot was restored above; let
-          // the live turn-completion path catch its settlement.
-          break;
-      }
+      const decided = yield* reconcileStep({ board, card, state, restoreSlot: true });
+      if (decided === "advance") advanced.push(card.id);
     }
+    // Every worker online now, reconciled before anything else acts on it.
+    yield* syncWorkerReach;
     // With every restored slot counted, offer the queued/pending steps to the
     // governor: re-admit what now fits, re-queue the rest. Slot accounting
     // reconciles to zero once all work drains, including after a forced restart.
     yield* schedule();
-    // Kickoff pass for the cards reconcile itself advanced: their card-moved
-    // events had no live subscriber (see `advanced` above), so the next
-    // stage's auto-kickoff is re-derived from state. `bootPass` restricts it
-    // to first entries (or executor-driven continuations) — a re-entry's
-    // clean human thread never opens as a restart side effect — and
-    // beginStageRun's own guards (autoExecute, live thread, live step) make
-    // the pass idempotent.
-    if (advanced.length > 0) {
-      const settled = yield* readBoard;
-      for (const cardId of advanced) {
-        const card = settled.cards.find((candidate) => candidate.id === cardId);
-        if (card === undefined || card.archivedAt !== null) continue;
-        const state = boardCardStepState(settled, card.id);
-        if (state !== null && !isBoardTerminalStepStatus(state.status)) continue;
-        yield* beginStageRun({ card, onDemand: false, bootPass: true });
-      }
-    }
+    // Kickoff pass for the cards reconcile itself advanced.
+    yield* kickoffAdvanced(advanced);
     // Resume review loops that halted BETWEEN phases (T3O-5). The pass above
     // only walks steps still in flight, but a loop whose phase settled
     // `succeeded` while the dispatch of the next one failed has nothing in
@@ -8988,15 +9303,63 @@ const make = Effect.gen(function* () {
         return handlePlansApproved(event);
       case "board.card-worker-pinned":
         // A re-pin may give a step stalled for a missing provider a worker
-        // that has it, and a held card a worker that is ready (T3O-65).
-        return requeueResolvedProviderStalls(event.payload.cardId).pipe(Effect.andThen(schedule()));
+        // that has it, and a held card a worker that is ready (T3O-65) — and
+        // takes a card off a worker it may have a step stranded on (T3O-66).
+        return stallStrandedStep(event.payload.cardId).pipe(
+          Effect.andThen(requeueResolvedPlacementStalls(event.payload.cardId)),
+          Effect.andThen(schedule()),
+        );
       case "board.card-worker-move-recorded":
-        // A move that landed releases the card's held step (T3O-65).
-        return event.payload.step.phase === "done" ? schedule() : Effect.void;
+        // A force-move's start strands whatever ran on the old worker (T3O-66);
+        // a move that landed releases the card's held step (T3O-65).
+        if (event.payload.step.phase === "start") return stallStrandedStep(event.payload.cardId);
+        return event.payload.step.phase === "done" || event.payload.step.phase === "restarted"
+          ? requeueResolvedPlacementStalls(event.payload.cardId).pipe(Effect.andThen(schedule()))
+          : Effect.void;
+      case "board.worker-removed":
+        return stallStepsOnRemovedWorker(event.payload.workerId).pipe(Effect.andThen(schedule()));
+      case "board.card-worker-removal":
+        // A re-add reattaches the card; whatever its removal stalled resumes
+        // once the worker is online (T3O-66).
+        return event.payload.outcome === "reattached"
+          ? requeueResolvedPlacementStalls(event.payload.cardId).pipe(Effect.andThen(schedule()))
+          : Effect.void;
       default:
         return Effect.void;
     }
   };
+
+  /** The worker a thread lives on, from the card link that names it; null for
+      a thread no card links. */
+  const threadWorkerId = (board: BoardState, threadId: ThreadId): BoardWorkerId | null => {
+    for (const card of board.cards) {
+      const link = card.threadLinks.find((candidate) => candidate.threadId === threadId);
+      if (link !== undefined) return boardThreadLinkWorkerId(link);
+    }
+    return null;
+  };
+
+  /**
+   * A thread signal, unless its worker is not reconciled (T3O-66, D22): then it
+   * is held until `syncWorkerReach` has reconciled that worker, so the boot
+   * reconcile scoped to it acts first. A removed worker's signals are dropped —
+   * its steps were stalled, and nothing it says changes that.
+   */
+  const gateThreadSignal = (signal: ThreadSignal) =>
+    Effect.gen(function* () {
+      if (Option.isNone(placement)) return yield* processThreadSignal(signal);
+      const board = yield* readBoard;
+      if ((board.workers ?? []).length === 0) return yield* processThreadSignal(signal);
+      const workerId = threadWorkerId(board, signal.threadId);
+      if (workerId === null || workerId === BOARD_LOCAL_WORKER_ID || workerReconciled(workerId)) {
+        return yield* processThreadSignal(signal);
+      }
+      if (!(board.workers ?? []).some((worker) => worker.id === workerId)) return;
+      const held = heldSignals.get(workerId) ?? [];
+      held.push(signal);
+      if (held.length > HELD_SIGNALS_MAX) held.shift();
+      heldSignals.set(workerId, held);
+    });
 
   const processThreadSignal = (signal: ThreadSignal) => {
     switch (signal.type) {
@@ -9069,8 +9432,13 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const now = yield* nowIso;
     const nowMs = Date.parse(now);
+    const paused = yield* workerPausedNow;
     for (const state of board.stepStates ?? []) {
       if (state.status !== "running" || state.humanInLoop) continue;
+      // A step on a worker out of reach is not timed (T3O-66, D22): nothing it
+      // does can be seen, and silence from it is not evidence of anything.
+      const workerId = slotKeyFor(board, state).workerId;
+      if (paused(workerId)) continue;
       // Ahead of the `timeoutMs` gate: a background wait runs on its own fixed
       // schedule (T3O-20), and with turn-end recovery suppressed for it, a
       // step with no timeout would otherwise never be checked on at all.
@@ -9130,7 +9498,14 @@ const make = Effect.gen(function* () {
           .map((value) => Date.parse(value))
           .filter((value) => Number.isFinite(value)),
       );
-      if (!Number.isFinite(referenceMs) || nowMs - referenceMs <= state.timeoutMs) continue;
+      // Its worker's time out of reach since that life sign is not counted
+      // (T3O-66): the reference shifts by the offline interval, not resets.
+      const offlineMs = Number.isFinite(referenceMs)
+        ? boardOfflineCreditMs(offlineIntervals.get(workerId) ?? [], referenceMs, nowMs)
+        : 0;
+      if (!Number.isFinite(referenceMs) || nowMs - referenceMs - offlineMs <= state.timeoutMs) {
+        continue;
+      }
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
       if (card === undefined || card.archivedAt !== null) continue;
       const worktreePath = card.worktree?.path ?? null;
@@ -9177,6 +9552,16 @@ const make = Effect.gen(function* () {
     for (const id of backgroundWaits.keys()) {
       if (!runningThreadIds.has(id)) backgroundWaits.delete(id);
     }
+    // An offline interval is only read for a running step on its worker; a
+    // worker with none drops its history so the list stays bounded.
+    const runningWorkers = new Set(
+      (board.stepStates ?? [])
+        .filter((state) => state.status === "running")
+        .map((state) => slotKeyFor(board, state).workerId),
+    );
+    for (const workerId of offlineIntervals.keys()) {
+      if (!runningWorkers.has(workerId)) offlineIntervals.delete(workerId);
+    }
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: timeout sweep failed", { cause: Cause.pretty(cause) }),
@@ -9188,11 +9573,16 @@ const make = Effect.gen(function* () {
       case "domain":
         return processDomainEvent(input.event);
       case "thread":
-        return processThreadSignal(input.signal);
+        return gateThreadSignal(input.signal);
       case "reconcile":
         return reconcile;
       case "workers":
-        return requeueResolvedProviderStalls().pipe(Effect.andThen(schedule()));
+        // T3O-66: a worker back online is reconciled before anything is
+        // scheduled onto it.
+        return syncWorkerReach.pipe(
+          Effect.andThen(requeueResolvedPlacementStalls()),
+          Effect.andThen(schedule()),
+        );
       case "timeout-sweep":
         // The release sweep rides the same tick (t3o-13): it is a board read
         // and an in-memory pass, it must be serialised against the handlers for
@@ -9216,7 +9606,10 @@ const make = Effect.gen(function* () {
         // about". Retries first, so a card whose rung and whose provider both
         // came due in the same tick goes back through the ordinary queue rather
         // than being picked as a prober.
-        return sweepTimeouts.pipe(
+        // And a worker whose reconcile could not finish is tried again here
+        // (T3O-66): nothing else would ask while its status stays the same.
+        return syncWorkerReach.pipe(
+          Effect.andThen(sweepTimeouts),
           Effect.andThen(releaseFinishedThreads),
           Effect.andThen(sweepSchedules),
           Effect.andThen(sweepArmedCards),
@@ -9290,7 +9683,11 @@ const make = Effect.gen(function* () {
           event.type !== "board.plans-approved" &&
           // T3O-65: a re-pin or a finished move can start a held card.
           event.type !== "board.card-worker-pinned" &&
-          event.type !== "board.card-worker-move-recorded"
+          event.type !== "board.card-worker-move-recorded" &&
+          // T3O-66: a worker removed stalls what ran there; a re-add can
+          // resume it.
+          event.type !== "board.worker-removed" &&
+          event.type !== "board.card-worker-removal"
         ) {
           return Effect.void;
         }
@@ -9315,7 +9712,17 @@ const make = Effect.gen(function* () {
     // start a card held for its worker. Absent on a local-only harness.
     if (Option.isSome(placement)) {
       yield* forkParked(
-        Stream.runForEach(placement.value.changes, () => worker.enqueue({ source: "workers" })),
+        Stream.runForEach(placement.value.changes, (summary) =>
+          Effect.gen(function* () {
+            const at = Date.parse(yield* nowIso);
+            for (const view of summary.workers) {
+              if (view.status.state !== "online" && !droppedWorkers.has(view.id)) {
+                droppedWorkers.set(view.id, at);
+              }
+            }
+            yield* worker.enqueue({ source: "workers" });
+          }),
+        ),
       );
     }
     // The server restarts mid-step: reconcile persisted step state, serialised

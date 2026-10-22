@@ -3,10 +3,12 @@ import * as NodeHttp from "node:http";
 
 import {
   BOARD_LOCAL_WORKER_ID,
+  BoardCardId,
   CommandId,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  ThreadId,
   type BoardWorkerAddError,
   type BoardWorkerConnectionState,
   type BoardWorkerSetup,
@@ -26,7 +28,11 @@ import { TestClock } from "effect/testing";
 
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import { GitVcsDriver } from "../../vcs/GitVcsDriver.ts";
-import { boardStackEngine, makeBoardStackTestLayer } from "../boardStack.testkit.ts";
+import {
+  boardStackEngine,
+  boardStackSnapshotQuery,
+  makeBoardStackTestLayer,
+} from "../boardStack.testkit.ts";
 import { makeBoardWorkers, type BoardWorkersShape } from "./BoardWorkers.ts";
 import {
   makeWorkerConnections,
@@ -35,7 +41,12 @@ import {
   type WorkerConnectionsShape,
 } from "./WorkerConnections.ts";
 import { WorkerRpcError } from "./WorkerTransport.ts";
-import { helloFor, makeFakeWorkerLayer, type FakeWorker } from "./workers.testkit.ts";
+import {
+  helloFor,
+  makeFakeWorkerLayer,
+  unsupportedGateway,
+  type FakeWorker,
+} from "./workers.testkit.ts";
 
 const BOARD_ENVIRONMENT_ID = EnvironmentId.make("env-board");
 const WORKER_ID = EnvironmentId.make("env-linux-box");
@@ -419,6 +430,122 @@ describe("BoardWorkers", () => {
         assert.strictEqual(kit.secrets.secrets.size, 0);
         assert.deepStrictEqual((yield* workers.state).workers, []);
         assert.deepStrictEqual(yield* kit.snapshots.list, []);
+      }),
+    ));
+
+  test("removal previews and applies D22: default fallback, holds, and a stopped step", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { http, worker, connections, workers } = yield* setup;
+        const engine = yield* boardStackEngine;
+        // The gateway is bound to each link as it is made.
+        const stopped: Array<string> = [];
+        worker.gateway = {
+          ...unsupportedGateway,
+          stopSession: (input) => Effect.sync(() => void stopped.push(input.threadId)),
+        };
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+        const create = (id: string, title: string) =>
+          engine.dispatch({
+            type: "board.card.create",
+            commandId: CommandId.make(`cmd-create-${id}`),
+            cardId: BoardCardId.make(id),
+            projectId: PROJECT_ID,
+            title,
+            orderKey: `m-${id}`,
+            pinnedWorkerId: WORKER_ID,
+            createdAt: t0,
+          });
+        // Pinned there, nothing on it yet.
+        yield* create("card-idle", "Stream build logs");
+        // A step running there.
+        yield* create("card-busy", "Typed IPC boundaries");
+        const busy = BoardCardId.make("card-busy");
+        const threadId = ThreadId.make("thread-busy");
+        // Its worktree is cut on the worker it is pinned to.
+        yield* engine.dispatch({
+          type: "board.card.provision-worktree",
+          commandId: CommandId.make("cmd-provision"),
+          cardId: busy,
+          branch: "board/card-busy",
+          baseRefName: "main",
+          createdAt: t0,
+        });
+        yield* engine.dispatch({
+          type: "board.card.record-worktree",
+          commandId: CommandId.make("cmd-record"),
+          cardId: busy,
+          path: "/home/linux-box/worktrees/card-busy",
+          createdAt: t0,
+        });
+        yield* engine.dispatch({
+          type: "board.card.select-step",
+          commandId: CommandId.make("cmd-select"),
+          cardId: busy,
+          stepId: "build",
+          stepLabel: "Build",
+          stageLabel: "Building",
+          prompt: "build it",
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude",
+          mode: "build",
+          runtimeMode: "auto",
+          humanInLoop: false,
+          maxAttempts: 3,
+          timeoutMs: 60_000,
+          baseTipAtRoundStart: null,
+          createdAt: t0,
+        });
+        yield* engine.dispatch({
+          type: "board.card.admit-step",
+          commandId: CommandId.make("cmd-admit"),
+          cardId: busy,
+          stepId: "build",
+          admitted: true,
+          threadId,
+          createdAt: t0,
+        });
+
+        const preview = yield* workers.removePreview(WORKER_ID);
+        assert.strictEqual(preview.workerLabel, "linux-box");
+        assert.strictEqual(preview.defaultWorkerLabel, "This server (local)");
+        assert.deepStrictEqual(
+          preview.toDefault.map((card) => [card.cardId, card.title]),
+          [["card-idle", "Stream build logs"]],
+        );
+        assert.deepStrictEqual(
+          preview.byHand.map((card) => [card.cardId, card.detail, card.running]),
+          [["card-busy", "Build step running", true]],
+        );
+        assert.isFalse(preview.toDefault[0]?.running);
+
+        const removed = yield* workers.remove(WORKER_ID);
+        assert.isTrue(removed.revoked);
+        // The running step was stopped on the worker, which still answered.
+        assert.deepStrictEqual(stopped, ["thread-busy"]);
+        // Read back from the board's tables, as a restart would load it.
+        const board = (yield* (yield* boardStackSnapshotQuery).getCommandReadModel()).board!;
+        const idle = board.cards.find((card) => card.id === "card-idle")!;
+        assert.isNull(idle.pinnedWorkerId);
+        assert.isNull(idle.placementOrphaned);
+        const held = board.cards.find((card) => card.id === busy)!;
+        assert.strictEqual(held.placementOrphaned?.workerId, WORKER_ID);
+        assert.strictEqual(held.placementOrphaned?.workerLabel, "linux-box");
+      }),
+    ));
+
+  test("a removal preview with nothing there, and none for the default worker", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { http, connections, workers } = yield* setup;
+        yield* addWithToken(workers, http);
+        yield* waitFor(connections, "online");
+        const preview = yield* workers.removePreview(WORKER_ID);
+        assert.deepStrictEqual([preview.toDefault, preview.byHand], [[], []]);
+        yield* workers.setDefault(WORKER_ID);
+        const refusal = yield* Effect.flip(workers.removePreview(WORKER_ID));
+        assert.strictEqual(refusal.code, "is-default");
       }),
     ));
 

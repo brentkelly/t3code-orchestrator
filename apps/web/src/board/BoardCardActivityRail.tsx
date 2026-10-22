@@ -48,6 +48,7 @@ import {
   XIcon,
   ArrowRightLeftIcon,
   ServerIcon,
+  ServerOffIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
@@ -99,7 +100,13 @@ function ActorName({
   return <span className="font-medium text-muted-foreground">System</span>;
 }
 
-function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] }) {
+function ActivityIcon({
+  kind,
+  payload,
+}: {
+  readonly kind: BoardCardActivityEntry["kind"];
+  readonly payload?: BoardCardActivityEntry["payload"] | undefined;
+}) {
   const className = "size-3 shrink-0";
   switch (kind) {
     case "card-created":
@@ -166,6 +173,14 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
       return <ServerIcon className={className} />;
     case "card-worker-moved":
       return <ArrowRightLeftIcon className={className} />;
+    // T3O-66: a worker removed under the card. Holding for a move is amber —
+    // only a human can move it; falling back or reattaching claims nothing.
+    case "card-worker-removal":
+      return payload?.removalOutcome === "orphaned" ? (
+        <ServerOffIcon className={cn(className, "text-warning-foreground")} />
+      ) : (
+        <ServerIcon className={className} />
+      );
   }
 }
 
@@ -412,9 +427,24 @@ function activitySentence(
       const from = payload.fromWorkerId == null ? null : workerName(payload.fromWorkerId);
       switch (payload.movePhase) {
         case "start":
-          return <>checked for unpushed work and started moving the card to {to}</>;
+          return payload.forced === true ? (
+            <>started force-moving the card to {to}, from its pushed branch</>
+          ) : (
+            <>checked for unpushed work and started moving the card to {to}</>
+          );
         case "retired":
           return <>retired the worktree on {from ?? "the old worker"}</>;
+        case "abandoned":
+          return (
+            <>
+              left the worktree on {from ?? "the old worker"} as abandoned
+              {payload.detail === undefined ? null : (
+                <span className="block font-mono text-muted-foreground">{payload.detail}</span>
+              )}
+            </>
+          );
+        case "restarted":
+          return <>restarted Build on {to} from the base branch; nothing had been pushed</>;
         case "done":
           return <>moved the card to {to}; its next step runs there</>;
         case "failed":
@@ -428,6 +458,19 @@ function activitySentence(
           );
         default:
           return <>moved the card to {to}</>;
+      }
+    }
+    case "card-worker-removal": {
+      const worker = payload.detail ?? "Its worker";
+      switch (payload.removalOutcome) {
+        case "fallback":
+          return <>{worker} was removed from the board; the card now follows the default worker</>;
+        case "orphaned":
+          return <>{worker} was removed from the board while the card had work there</>;
+        case "reattached":
+          return <>{worker} was added back; the card is on it again</>;
+        default:
+          return <>{worker} was removed from the board</>;
       }
     }
   }
@@ -475,7 +518,7 @@ function ActivityRow({
   return (
     <li className="flex items-start gap-1.5 text-[12px]/[1.5] text-muted-foreground">
       <span className="mt-[3px]">
-        <ActivityIcon kind={entry.kind} />
+        <ActivityIcon kind={entry.kind} payload={entry.payload} />
       </span>
       <span className="min-w-0 flex-1 text-pretty">
         <ActorName agents={agents} entry={entry} />{" "}

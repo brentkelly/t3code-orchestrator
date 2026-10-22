@@ -105,10 +105,7 @@ const makePlacement = (initial: BoardWorkersState) =>
     ref,
     placement: {
       workers: SubscriptionRef.get(ref),
-      changes: SubscriptionRef.changes(ref).pipe(
-        Stream.drop(1),
-        Stream.map(() => undefined),
-      ),
+      changes: SubscriptionRef.changes(ref).pipe(Stream.drop(1)),
     } satisfies BoardPlacementShape,
   }));
 
@@ -466,7 +463,10 @@ it.effect("an offline worker holds its cards without spawning anything", () =>
       (h) =>
         Effect.gen(function* () {
           yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
-          assert.strictEqual((yield* step(h, "card-1"))?.status, "pending");
+          // Held queued for its worker (T3O-66), which the card shows as
+          // Worker offline.
+          assert.strictEqual((yield* step(h, "card-1"))?.status, "queued");
+          assert.strictEqual((yield* step(h, "card-1"))?.queuedBy, "worker-offline");
           assert.deepStrictEqual(yield* spawnsOn(h), []);
         }),
     );

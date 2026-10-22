@@ -289,6 +289,14 @@ export function BoardCardMoveDialog(props: {
           content: null,
           actions: <Button onClick={askToPush}>Ask agent to push</Button>,
         };
+      case "no-remote-branch":
+        // Only a force-move asks for this; the Move dialog never does.
+        return {
+          title: `Can't move ${card.key}`,
+          description: `${answer.branch} isn't on the remote, so there is nothing to continue from.`,
+          content: null,
+          actions: null,
+        };
       case "source-unreachable":
         return {
           title: `Can't move ${card.key}`,

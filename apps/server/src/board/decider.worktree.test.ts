@@ -62,6 +62,7 @@ function makeCard(
     pinnedWorkerId: null,
     placedWorkerId: null,
     workerMove: null,
+    placementOrphaned: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],

@@ -76,6 +76,7 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   pinnedWorkerId: null,
   placedWorkerId: null,
   workerMove: null,
+  placementOrphaned: null,
   worktree: null,
   blocked: false,
   archivedAt: null,
@@ -1085,6 +1086,19 @@ describe("boardBuildQueue", () => {
     expect(queue.get("card-b")).toEqual({ position: 1, total: 2, ahead: 0, startsNext: true });
     expect(queue.get("card-c")).toEqual({ position: 2, total: 2, ahead: 1, startsNext: false });
     expect(queue.has("card-a")).toBe(false);
+  });
+
+  it("leaves out a card held for its offline worker: it waits on no slot (T3O-66)", () => {
+    const cards = [
+      {
+        ...queuedCard("card-held", BOARD_SEED_STAGE_IDS.building, "a"),
+        queuedBy: "worker-offline" as const,
+      },
+      queuedCard("card-b", BOARD_SEED_STAGE_IDS.building, "m"),
+    ];
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES, NOW_MS);
+    expect(queue.has("card-held")).toBe(false);
+    expect(queue.get("card-b")).toEqual({ position: 1, total: 1, ahead: 0, startsNext: true });
   });
 
   // The governor admits the LATER stage first, so a Building card queued behind

@@ -10,6 +10,8 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardCardWorkerTrouble,
+  boardWorkersAttention,
   boardCardMoveNotice,
   boardMoveDialogStatus,
   boardThreadMoveDividers,
@@ -417,5 +419,117 @@ describe("boardMoveDialogStatus", () => {
     expect(
       boardMoveDialogStatus({ workerMove: null, worktree, placedWorkerId: LINUX }, input),
     ).toBe("done");
+  });
+});
+
+describe("worker trouble (T3O-66)", () => {
+  type AttentionCard = Parameters<typeof boardWorkersAttention>[0][number];
+  const card = (overrides: Partial<AttentionCard> = {}): AttentionCard => ({
+    cardId: "card-1" as never,
+    key: "T3-191",
+    title: "GPU-backed embeddings",
+    workerId: GPU,
+    stepRunning: true,
+    queued: false,
+    stepAwaiting: null,
+    ...overrides,
+  });
+  const gpuOffline = state([
+    {
+      ...worker(GPU, "gpu-rig", { state: "offline" }),
+      status: {
+        ...worker(GPU, "gpu-rig").status,
+        state: "offline",
+        lastSeenAt: "2026-01-01T09:12:00.000Z",
+      },
+    },
+    worker(LINUX, "linux-box"),
+  ]);
+
+  it("says Worker removed on a held card, whatever its worker's state", () => {
+    const trouble = boardCardWorkerTrouble(
+      card({ placementOrphaned: { workerLabel: "gpu-rig" }, stepRunning: false }),
+      state([]),
+    );
+    expect(trouble?.kind).toBe("removed");
+    expect(trouble?.label).toBe("Move this card");
+    expect(trouble?.tooltip).toBe(
+      "gpu-rig was removed from the board. Move this card to keep going.",
+    );
+  });
+
+  it("says Worker offline on a card with work on an offline worker", () => {
+    const trouble = boardCardWorkerTrouble(card(), gpuOffline);
+    expect(trouble?.kind).toBe("offline");
+    expect(trouble?.label).toBe("Worker offline");
+    expect(trouble?.tooltip).toMatch(
+      /^gpu-rig went offline at .+\. Work is paused; nothing has been restarted\.$/,
+    );
+    // A card waiting to start there, or parked there, too.
+    expect(
+      boardCardWorkerTrouble(card({ stepRunning: false, queued: true }), gpuOffline)?.kind,
+    ).toBe("offline");
+    expect(
+      boardCardWorkerTrouble(card({ stepRunning: false, stepAwaiting: "question" }), gpuOffline)
+        ?.kind,
+    ).toBe("offline");
+  });
+
+  it("tells a revoked or incompatible worker apart from one that will reconnect", () => {
+    const revoked = boardCardWorkerTrouble(
+      card(),
+      state([worker(GPU, "gpu-rig", { state: "unauthorized" })]),
+    );
+    expect(revoked?.panelTitle).toBe("gpu-rig's access was revoked");
+    expect(revoked?.panelBody).toContain("once gpu-rig is paired again");
+    expect(revoked?.panelBody).not.toContain("reconnects");
+    const old = boardCardWorkerTrouble(
+      card(),
+      state([worker(GPU, "gpu-rig", { state: "incompatible" })]),
+    );
+    expect(old?.panelTitle).toBe("gpu-rig needs a newer T3o");
+    expect(old?.panelBody).toContain("once gpu-rig is upgraded");
+    expect(boardCardWorkerTrouble(card(), gpuOffline)?.panelTitle).toBe("gpu-rig is offline");
+    expect(
+      boardWorkersAttention([card()], state([worker(GPU, "gpu-rig", { state: "unauthorized" })]))
+        ?.rows[0]?.resumesWhen,
+    ).toBe("once it is paired again");
+  });
+
+  it("says nothing of an idle card pinned there, a reachable worker, or a first dial", () => {
+    expect(boardCardWorkerTrouble(card({ stepRunning: false }), gpuOffline)).toBeNull();
+    expect(boardCardWorkerTrouble(card({ workerId: LINUX }), gpuOffline)).toBeNull();
+    expect(
+      boardCardWorkerTrouble(card(), state([worker(GPU, "gpu-rig", { state: "connecting" })])),
+    ).toBeNull();
+    // A card following the default reads the default's state.
+    expect(
+      boardCardWorkerTrouble(
+        (({ workerId: _bound, ...following }) => following)(card()),
+        state([worker(GPU, "gpu-rig", { state: "offline" })], { defaultWorkerId: GPU }),
+      )?.kind,
+    ).toBe("offline");
+  });
+
+  it("the header indicator counts workers and lists the cards each has paused", () => {
+    expect(boardWorkersAttention([card()], state([worker(GPU, "gpu-rig")]))).toBeNull();
+    expect(boardWorkersAttention([], state([]))).toBeNull();
+    const one = boardWorkersAttention(
+      [card(), card({ cardId: "card-2" as never, workerId: LINUX })],
+      gpuOffline,
+    );
+    expect(one?.label).toBe("1 worker offline");
+    expect(one?.rows.map((row) => row.label)).toEqual(["gpu-rig"]);
+    expect(one?.rows[0]?.status).toMatch(/^Offline since /);
+    expect(one?.rows[0]?.pausedCards.map((paused) => paused.cardId)).toEqual(["card-1"]);
+    const mixed = boardWorkersAttention(
+      [],
+      state([
+        worker(GPU, "gpu-rig", { state: "offline" }),
+        worker(MBP, "ci-runner-2", { state: "unauthorized" }),
+      ]),
+    );
+    expect(mixed?.label).toBe("2 workers need attention");
+    expect(mixed?.rows.map((row) => row.status)).toEqual(["Offline", "Access revoked"]);
   });
 });
