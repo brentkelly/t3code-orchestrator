@@ -45,8 +45,13 @@ server's own `gh`/`git` calls still get the override.
 
 Covered surfaces:
 
-- **The server's own `gh` calls** — discovery/auth probes, PR find and merge (the board's merge
-  path included).
+- **The server's own `gh` calls** — discovery and auth probes.
+- **The server's own GitHub API calls** — PR reads, PR discovery, actions and the merge (the
+  board's merge path included), which since `v0.1.0` go over HTTP rather than through `gh`
+  (`T3O-67`). Each GitHub provider call runs under its project directory, and the API transport
+  resolves its token in this order: a pinned credential (a page that verified one identity keeps
+  it), then the project's gitenv token, then the Settings token, `GH_TOKEN`, and `gh auth token`.
+  Only requests to `github.com` take the gitenv token.
 - **The server's own `git` fetch/push** — matters only for https remotes using gh's credential
   helper.
 - **Agent sessions** for Claude, Codex, Cursor and Grok — the agent's `gh pr create` in a board
@@ -67,8 +72,9 @@ path works as a key too: keys are resolved to their main checkout exactly as loo
 
 ## Implementation
 
-All logic lives in `apps/server/src/sourceControl/gitenv.ts` (T3o-owned, deliberately synchronous
-and dependency-free so each seam stays a one-line expression). The 15 seams across 7 upstream
+All logic lives in `packages/shared/src/gitenv.ts` (`@t3tools/shared/gitenv`; T3o-owned,
+deliberately synchronous and dependency-free so each seam stays a one-line expression). The API
+transport's side is `packages/source-control-github/src/server/t3oGitenvCredential.ts`. The 15 seams across 7 upstream
 files are listed in the [seam inventory](./seams.md) census. `initGitenv` is wired into
 `resolveServerConfig` — the resolver every `t3` server boot goes through (`start`, `serve`, the
 desktop bootstrap, `vp run dev`) — and into `ServerConfig.make`, which only `pair` still reaches with a hand-built config; it is
