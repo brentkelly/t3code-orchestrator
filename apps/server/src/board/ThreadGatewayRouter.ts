@@ -15,19 +15,20 @@
  */
 import {
   BOARD_LOCAL_WORKER_ID,
+  EnvironmentId,
+  ThreadId,
   type BoardWorkerId,
-  type EnvironmentId,
-  type ThreadId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
-import { makeBoardQueries } from "./projection.ts";
 import {
   LocalThreadGateway,
   ThreadCommandFailedError,
@@ -49,12 +50,22 @@ import { WorkerSignalFeed, type WorkerSignalFeedShape } from "./workers/WorkerSi
     a spawn and its thread link landing. */
 const SPAWNED_MEMORY = 1024;
 
+/** Where a linked thread lives, and whether that worker has since been
+    removed from the board. */
+export interface LinkedThreadWorker {
+  readonly workerId: BoardWorkerId;
+  readonly removed: boolean;
+}
+
 export interface ThreadGatewayRouterDeps {
   readonly local: LocalThreadGatewayShape;
   readonly connections: WorkerConnectionsShape;
   readonly feed: WorkerSignalFeedShape;
-  /** The worker a linked thread lives on, or null for one no card links. */
-  readonly linkedWorker: (threadId: ThreadId) => Effect.Effect<BoardWorkerId | null, Error>;
+  /** Where each linked thread lives, in one read. Ids no card links are
+      absent: they are this server's. */
+  readonly linkedWorkers: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<ReadonlyMap<ThreadId, LinkedThreadWorker>, Error>;
   /** One worker's gateway. */
   readonly remote: (workerId: EnvironmentId) => RemoteThreadGatewayShape;
 }
@@ -70,22 +81,47 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
     }
   };
 
-  /** Where a thread lives. A thread no card links is this server's. */
-  const workerOf = (threadId: ThreadId): Effect.Effect<BoardWorkerId, ThreadReadError> => {
-    const spawned = spawnedOn.get(threadId);
-    if (spawned !== undefined) return Effect.succeed(spawned);
-    return deps.linkedWorker(threadId).pipe(
-      Effect.map((workerId) => workerId ?? BOARD_LOCAL_WORKER_ID),
+  /** Where each thread lives, in one query for every id the spawn memory
+      does not answer. A thread no card links is this server's. */
+  const workersOf = (
+    threadIds: ReadonlyArray<ThreadId>,
+  ): Effect.Effect<ReadonlyMap<ThreadId, LinkedThreadWorker>, ThreadReadError> => {
+    const found = new Map<ThreadId, LinkedThreadWorker>();
+    const unknown: Array<ThreadId> = [];
+    for (const threadId of threadIds) {
+      const spawned = spawnedOn.get(threadId);
+      if (spawned === undefined) unknown.push(threadId);
+      else found.set(threadId, { workerId: spawned, removed: false });
+    }
+    if (unknown.length === 0) return Effect.succeed(found);
+    return deps.linkedWorkers(unknown).pipe(
+      Effect.map((linked) => {
+        for (const threadId of unknown) {
+          found.set(
+            threadId,
+            linked.get(threadId) ?? { workerId: BOARD_LOCAL_WORKER_ID, removed: false },
+          );
+        }
+        return found;
+      }),
       Effect.mapError(
         (cause) =>
           new ThreadReadError({
             operation: "threadWorker",
-            detail: `Couldn't read which worker thread ${threadId} lives on.`,
+            detail:
+              unknown.length === 1
+                ? `Couldn't read which worker thread ${unknown[0]} lives on.`
+                : `Couldn't read which workers ${unknown.length} threads live on.`,
             cause,
           }),
       ),
     );
   };
+
+  const workerOf = (threadId: ThreadId): Effect.Effect<BoardWorkerId, ThreadReadError> =>
+    workersOf([threadId]).pipe(
+      Effect.map((workers) => workers.get(threadId)?.workerId ?? BOARD_LOCAL_WORKER_ID),
+    );
 
   const gatewayFor = (workerId: BoardWorkerId): RemoteThreadGatewayShape =>
     workerId === BOARD_LOCAL_WORKER_ID ? local : deps.remote(workerId);
@@ -144,19 +180,43 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
     lastSignalAt: routedRead((gateway) => gateway.lastSignalAt),
     pendingTurnStartAt: routedRead((gateway) => gateway.pendingTurnStartAt),
 
+    // Best-effort per worker, because the release sweep asks about every
+    // link on the board at once: a removed worker's threads are left out (no
+    // one can answer for them again), and so are those of a worker that
+    // cannot answer right now, so one offline worker never stalls releases
+    // everywhere else. The read fails only when no worker named answered, so
+    // a single thread's lookup (the engine's link and unlink checks) still
+    // fails rather than reading an unreachable thread as one that never
+    // existed.
     threadRecords: (threadIds) =>
       Effect.gen(function* () {
         const byWorker = new Map<BoardWorkerId, Array<ThreadId>>();
-        for (const threadId of threadIds) {
-          const workerId = yield* workerOf(threadId);
-          byWorker.set(workerId, [...(byWorker.get(workerId) ?? []), threadId]);
+        for (const [threadId, { workerId, removed }] of yield* workersOf(threadIds)) {
+          if (removed) continue;
+          const ids = byWorker.get(workerId);
+          if (ids === undefined) byWorker.set(workerId, [threadId]);
+          else ids.push(threadId);
         }
         const found = new Map<ThreadId, BoardThreadRecord>();
+        let failure: ThreadReadError | null = null;
+        let answered = false;
         for (const [workerId, ids] of byWorker) {
-          for (const [threadId, record] of yield* gatewayFor(workerId).threadRecords(ids)) {
-            found.set(threadId, record);
+          if (workerId === BOARD_LOCAL_WORKER_ID) {
+            for (const [threadId, record] of yield* local.threadRecords(ids)) {
+              found.set(threadId, record);
+            }
+            answered = true;
+            continue;
           }
+          const remote = yield* Effect.result(deps.remote(workerId).threadRecords(ids));
+          if (remote._tag === "Failure") {
+            failure = remote.failure;
+            continue;
+          }
+          for (const [threadId, record] of remote.success) found.set(threadId, record);
+          answered = true;
         }
+        if (failure !== null && !answered) return yield* failure;
         return found;
       }),
     // Every live thread anywhere. A registered worker that cannot answer
@@ -191,6 +251,43 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
   };
 };
 
+/** The `linkedWorkers` read over the board's thread links: one query for the
+    whole batch. Tombstoned links included, since a deleted thread still
+    answers where it was. */
+export const makeLinkedThreadWorkers = (sql: SqlClient.SqlClient) => {
+  const find = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Schema.Struct({
+      threadId: ThreadId,
+      workerId: Schema.NullOr(EnvironmentId),
+      removed: Schema.Number,
+    }),
+    execute: (threadIdsJson) => sql`
+      SELECT
+        links.thread_id AS "threadId",
+        links.worker_id AS "workerId",
+        (links.worker_id IS NOT NULL AND workers.worker_id IS NULL) AS "removed"
+      FROM board_card_thread_links AS links
+      LEFT JOIN board_workers AS workers ON workers.worker_id = links.worker_id
+      WHERE links.thread_id IN (SELECT value FROM json_each(${threadIdsJson}))
+    `,
+  });
+  return (
+    threadIds: ReadonlyArray<ThreadId>,
+  ): Effect.Effect<ReadonlyMap<ThreadId, LinkedThreadWorker>, Error> =>
+    find(JSON.stringify(threadIds)).pipe(
+      Effect.map(
+        (rows) =>
+          new Map(
+            rows.map((row): [ThreadId, LinkedThreadWorker] => [
+              row.threadId,
+              { workerId: row.workerId ?? BOARD_LOCAL_WORKER_ID, removed: row.removed !== 0 },
+            ]),
+          ),
+      ),
+    );
+};
+
 /** The router as the board's `ThreadGateway`, over this server's own gateway,
     its worker connections and their signal feed. */
 export const ThreadGatewayRouterLive = Layer.effect(
@@ -199,7 +296,7 @@ export const ThreadGatewayRouterLive = Layer.effect(
     const local = yield* LocalThreadGateway;
     const connections = yield* WorkerConnections;
     const feed = yield* WorkerSignalFeed;
-    const queries = makeBoardQueries(yield* SqlClient.SqlClient);
+    const linkedWorkers = makeLinkedThreadWorkers(yield* SqlClient.SqlClient);
     const centralEnvironmentId = yield* Effect.flatMap(
       ServerEnvironment,
       (environment) => environment.getEnvironmentId,
@@ -211,7 +308,7 @@ export const ThreadGatewayRouterLive = Layer.effect(
       local,
       connections,
       feed,
-      linkedWorker: queries.boardThreadWorker,
+      linkedWorkers,
       remote: (workerId) => {
         const existing = remotes.get(workerId);
         if (existing !== undefined) return existing;

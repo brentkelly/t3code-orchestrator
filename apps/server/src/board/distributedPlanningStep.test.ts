@@ -106,7 +106,7 @@ it.effect("the board spawns, drives and completes a planning step on a worker", 
             local,
             connections: env.connections,
             feed,
-            linkedWorker: () => Effect.succeed(null),
+            linkedWorkers: () => Effect.succeed(new Map()),
             remote: (workerId) =>
               makeRemoteThreadGateway({
                 workerId,

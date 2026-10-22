@@ -115,7 +115,15 @@ const setup = (links: ReadonlyMap<string, BoardWorkerId> = new Map()) =>
       local: central.gateway,
       connections: env.connections,
       feed,
-      linkedWorker: (threadId) => Effect.succeed(links.get(threadId) ?? null),
+      linkedWorkers: () =>
+        Effect.succeed(
+          new Map(
+            [...links].map(([threadId, workerId]) => [
+              ThreadId.make(threadId),
+              { workerId, removed: false },
+            ]),
+          ),
+        ),
       remote: (workerId) =>
         makeRemoteThreadGateway({
           workerId,
