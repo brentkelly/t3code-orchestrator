@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import { BoardPlacement } from "./BoardPlacement.ts";
 import { BoardWorkers } from "./BoardWorkers.ts";
 import { WorkerConnections, WorkerUnavailable } from "./WorkerConnections.ts";
 
@@ -52,4 +53,10 @@ export const WorkerConnectionsNoneTest = Layer.succeed(WorkerConnections, {
   restart: () => Effect.void,
   refresh: () => Effect.void,
   record: () => Effect.void,
+});
+
+/** A local-only board's placement (T3O-65): no workers, and nothing changes. */
+export const BoardPlacementLocalOnlyTest = Layer.succeed(BoardPlacement, {
+  workers: Effect.succeed(EMPTY_BOARD_WORKERS_STATE),
+  changes: Stream.empty,
 });

@@ -14,6 +14,7 @@ import {
   EMPTY_BOARD_STATE,
   resolveBoardWorkerCheckout,
   type BoardCard,
+  type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -47,6 +48,12 @@ export interface BoardWorkspacesOptions {
   ) => Effect.Effect<BoardWorkspacePlacement | null>;
   /** The placed card's workspace on its worker. */
   readonly remote?: (placement: BoardWorkspacePlacement) => Effect.Effect<BoardCardWorkspace>;
+  /** A board project's id on a worker — its checkout of the same repository —
+      or null when the worker has none. */
+  readonly workerProjectOf?: (
+    workerId: BoardWorkspacePlacement["workerId"],
+    projectId: ProjectId,
+  ) => Effect.Effect<ProjectId | null>;
 }
 
 export function makeBoardWorkspaces(
@@ -115,12 +122,25 @@ export function makeBoardWorkspaces(
       return !exists;
     });
 
+  const forWorker: BoardWorkspacesShape["forWorker"] = (workerId, projectId) =>
+    Effect.gen(function* () {
+      if (workerId === BOARD_LOCAL_WORKER_ID || options.remote === undefined) {
+        return yield* localProject(projectId);
+      }
+      const workerProjectId =
+        options.workerProjectOf === undefined
+          ? projectId
+          : ((yield* options.workerProjectOf(workerId, projectId)) ?? projectId);
+      return yield* options.remote({ workerId, projectId: workerProjectId });
+    });
+
   return {
     local,
     forCentral,
     ownsWorktreePath,
     forCard,
     localProject,
+    forWorker,
     groupByWorkspace: (cards) =>
       Effect.gen(function* () {
         const groups = new Map<
@@ -185,6 +205,19 @@ export const BoardWorkspacesLive = Layer.effect(
     const engine = yield* BoardEngine;
     const connections = yield* WorkerConnections;
     const threads = yield* ThreadGateway;
+    const workerProjectOf = (workerId: EnvironmentId, projectId: ProjectId) =>
+      Effect.gen(function* () {
+        const project = yield* threads
+          .project(projectId)
+          .pipe(Effect.catchCause(() => Effect.succeed(null)));
+        const runtime = (yield* connections.current).get(workerId);
+        return (
+          resolveBoardWorkerCheckout(
+            boardRepositoryGroupingKey(project?.repositoryIdentity),
+            runtime?.snapshot?.checkouts ?? [],
+          )?.projectId ?? null
+        );
+      });
     return makeBoardWorkspaces(deps, {
       placementOf: (card) =>
         Effect.gen(function* () {
@@ -193,17 +226,13 @@ export const BoardWorkspacesLive = Layer.effect(
           if (placed === undefined) return null;
           const workerId = boardCardEffectiveWorkerId(placed, board.defaultWorkerId);
           if (workerId === BOARD_LOCAL_WORKER_ID) return null;
-          const project = yield* threads
-            .project(card.projectId)
-            .pipe(Effect.catchCause(() => Effect.succeed(null)));
-          const runtime = (yield* connections.current).get(workerId);
-          const checkout = resolveBoardWorkerCheckout(
-            boardRepositoryGroupingKey(project?.repositoryIdentity),
-            runtime?.snapshot?.checkouts ?? [],
-          );
-          return { workerId, projectId: checkout?.projectId ?? card.projectId };
+          return {
+            workerId,
+            projectId: (yield* workerProjectOf(workerId, card.projectId)) ?? card.projectId,
+          };
         }),
       remote: remoteCardWorkspace(connections),
+      workerProjectOf,
     });
   }),
 );

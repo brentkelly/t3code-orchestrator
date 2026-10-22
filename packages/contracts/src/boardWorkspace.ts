@@ -10,6 +10,7 @@
  * The same shapes back `BoardWorkspace` on the server, so the local and the
  * remote implementation answer in one vocabulary.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 
@@ -55,6 +56,9 @@ export type BoardWorkspaceIntegrationBranch = typeof BoardWorkspaceIntegrationBr
  * and the changed paths drive the reclaim decision; `unpushedCount` and
  * `hasUpstream` are the detail a move-refusal screen shows.
  */
+/** How many unpushed commits a durability probe names. */
+export const BOARD_UNPUSHED_COMMITS_MAX = 10;
+
 export const BoardWorkspaceDurability = Schema.Struct({
   hasWorkingTreeChanges: Schema.Boolean,
   changedPaths: Schema.Array(Schema.String),
@@ -67,6 +71,11 @@ export const BoardWorkspaceDurability = Schema.Struct({
   unpushedCount: NonNegativeInt,
   /** Whether the checked-out branch tracks a remote branch. */
   hasUpstream: Schema.Boolean,
+  /** The newest of those commits, at most `BOARD_UNPUSHED_COMMITS_MAX`, for the
+      move refusal to list (T3O-65). Empty from a worker that predates it. */
+  unpushedCommits: Schema.Array(
+    Schema.Struct({ sha: TrimmedNonEmptyString, subject: Schema.String }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Whether this probe fetched the base branch, so a pass fetches each base
       once rather than once per card. */
   baseFetched: Schema.Boolean,

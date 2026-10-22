@@ -76,7 +76,8 @@ export function boardPlacementGate(input: {
   readonly workers: BoardWorkersState;
   /** The board project's repository grouping key, null when it has none. */
   readonly projectRepositoryKey: string | null;
-  readonly providerInstanceId: ProviderInstanceId;
+  /** Null to ask only about the worker and the checkout. */
+  readonly providerInstanceId: ProviderInstanceId | null;
 }): BoardPlacementGate {
   if (input.workerId === BOARD_LOCAL_WORKER_ID) return { kind: "ready", workerProjectId: null };
   const worker = input.workers.workers.find((candidate) => candidate.id === input.workerId);
@@ -86,6 +87,8 @@ export function boardPlacementGate(input: {
     worker.snapshot?.checkouts ?? [],
   );
   if (checkout === null) return { kind: "no-checkout" };
+  if (input.providerInstanceId === null)
+    return { kind: "ready", workerProjectId: checkout.projectId };
   const provider = (worker.snapshot?.providers ?? []).find(
     (candidate) => candidate.instanceId === input.providerInstanceId,
   );

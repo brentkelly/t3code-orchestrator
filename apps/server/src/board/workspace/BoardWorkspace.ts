@@ -247,6 +247,12 @@ export interface BoardWorkspacesShape {
   ) => Effect.Effect<BoardCardWorkspace>;
   /** A project's workspace on this server — for work that has no card yet. */
   readonly localProject: (projectId: ProjectId) => Effect.Effect<BoardCardWorkspace>;
+  /** A board project's workspace on a given worker, bound to that worker's
+      checkout of it — where a card is about to move (T3O-65). */
+  readonly forWorker: (
+    workerId: BoardWorkerId,
+    projectId: ProjectId,
+  ) => Effect.Effect<BoardCardWorkspace>;
   /**
    * Every distinct workspace the given cards run in, each with the cards
    * placed there — so a sweep runs once per worker and project, and only

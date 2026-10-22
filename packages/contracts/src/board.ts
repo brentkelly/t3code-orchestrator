@@ -71,7 +71,11 @@ import {
   BOARD_WORKER_GATEWAY_RPC_SCOPES,
   BOARD_WORKER_GATEWAY_RPCS,
 } from "./boardWorkerGateway.ts";
-import { BOARD_WORKER_GIT_CALL_RPC_SCOPES, BOARD_WORKER_GIT_CALL_RPCS } from "./boardWorkspace.ts";
+import {
+  BOARD_WORKER_GIT_CALL_RPC_SCOPES,
+  BOARD_WORKER_GIT_CALL_RPCS,
+  BoardWorkspaceRemoteBranchTip,
+} from "./boardWorkspace.ts";
 
 export const BoardCardId = TrimmedNonEmptyString.pipe(Schema.brand("BoardCardId"));
 export type BoardCardId = typeof BoardCardId.Type;
@@ -7645,6 +7649,16 @@ export const BOARD_WS_METHODS = {
       RPC because the git removal must land before the record does. */
   removeCardWorktree: "board.removeCardWorktree",
   checkCardWorktree: "board.checkCardWorktree",
+  /** The Move dialog (T3O-65, D20), one RPC for its three actions:
+      - `check` — whether the card can move now, and what it continues from.
+        Checks the source worker for unpushed work; changes nothing.
+      - `move` — re-check, then retire the old worktree and provision a new
+        one from the remote branch, recording each step on the card. Answers
+        once the move has started.
+      - `ask-push` — ask the agent in the card's latest thread to push.
+      One method rather than three: the server's RPC group sits at the edge of
+      TypeScript's instantiation depth, and each method adds to it. */
+  cardWorkerMove: "board.cardWorkerMove",
   /** Claim a pending upload into the card's folder and record it on the brief
       (t3o-32, K2). An RPC, not a client command: the copy is a filesystem
       side effect that must land before the record does. */
@@ -7873,6 +7887,102 @@ export const BoardRemoveCardWorktreeResult = Schema.Union([
 export type BoardRemoveCardWorktreeResult = typeof BoardRemoveCardWorktreeResult.Type;
 
 /** What "Check again" on a kept worktree did (T3O-52). */
+/**
+ * Whether a card can move to another worker now (T3O-65, prototype 5.1–5.4).
+ *
+ * - `ready` — nothing is left behind: the dialog shows what the card continues
+ *   from (`tip`, the branch's head on the remote; null when it could not be
+ *   read) and the steps that will run. `fromWorkerId` is null when there is no
+ *   worktree left to retire (a retry after a failed move).
+ * - `pin` — the card has no worktree; changing its worker is a pin, not a move.
+ * - `step-running` — a step is running on the source worker (blue, with Open
+ *   thread). Wait for it or stop it.
+ * - `unpushed` — the source worktree has commits the remote lacks or
+ *   uncommitted files. Ask the agent to push.
+ * - `no-upstream` — the card's branch was never pushed.
+ * - `source-unreachable` — the source worker didn't answer, so nothing could
+ *   be checked.
+ * - `refused` — anything else, said in a sentence: the target is offline or has
+ *   no checkout, a move is already running, the card is archived.
+ */
+/** A move to another worker (T3O-65): the card and where it goes. */
+export const BoardCardMoveInput = Schema.Struct({
+  cardId: BoardCardId,
+  toWorkerId: BoardWorkerId,
+});
+export type BoardCardMoveInput = typeof BoardCardMoveInput.Type;
+
+/** Every way a move cannot go ahead now (see `BoardCardMoveCheck`). */
+const BOARD_CARD_MOVE_REFUSALS = [
+  Schema.Struct({ outcome: Schema.Literal("pin") }),
+  Schema.Struct({
+    outcome: Schema.Literal("step-running"),
+    workerId: BoardWorkerId,
+    threadId: Schema.NullOr(ThreadId),
+    stepLabel: Schema.NullOr(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    outcome: Schema.Literal("unpushed"),
+    workerId: BoardWorkerId,
+    branch: TrimmedNonEmptyString,
+    unpushedCount: NonNegativeInt,
+    commits: Schema.Array(Schema.Struct({ sha: TrimmedNonEmptyString, subject: Schema.String })),
+    changedPaths: Schema.Array(Schema.String),
+  }),
+  Schema.Struct({
+    outcome: Schema.Literal("no-upstream"),
+    workerId: BoardWorkerId,
+    branch: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({ outcome: Schema.Literal("source-unreachable"), workerId: BoardWorkerId }),
+  Schema.Struct({ outcome: Schema.Literal("refused"), detail: TrimmedNonEmptyString }),
+] as const;
+
+export const BoardCardMoveCheck = Schema.Union([
+  Schema.Struct({
+    outcome: Schema.Literal("ready"),
+    fromWorkerId: Schema.NullOr(BoardWorkerId),
+    branch: TrimmedNonEmptyString,
+    tip: BoardWorkspaceRemoteBranchTip,
+  }),
+  ...BOARD_CARD_MOVE_REFUSALS,
+]);
+export type BoardCardMoveCheck = typeof BoardCardMoveCheck.Type;
+
+/** A move's answer: `started` (the card now shows Moving), or why not. */
+export const BoardMoveCardToWorkerResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("started") }),
+  ...BOARD_CARD_MOVE_REFUSALS,
+]);
+export type BoardMoveCardToWorkerResult = typeof BoardMoveCardToWorkerResult.Type;
+
+const BOARD_ASK_AGENT_TO_PUSH_RESULTS = [
+  Schema.Struct({ outcome: Schema.Literal("sent"), threadId: ThreadId }),
+  Schema.Struct({ outcome: Schema.Literal("no-thread") }),
+  Schema.Struct({ outcome: Schema.Literal("failed"), detail: TrimmedNonEmptyString }),
+] as const;
+
+/** Ask Agent to Push's answer. */
+export const BoardAskCardAgentToPushResult = Schema.Union(BOARD_ASK_AGENT_TO_PUSH_RESULTS);
+export type BoardAskCardAgentToPushResult = typeof BoardAskCardAgentToPushResult.Type;
+
+/** `board.cardWorkerMove`'s payload: one of the Move dialog's actions, with
+    the worker it moves to for `check` and `move`. */
+export const BoardCardWorkerMoveRequest = Schema.Struct({
+  action: Schema.Literals(["check", "move", "ask-push"]),
+  cardId: BoardCardId,
+  toWorkerId: Schema.optionalKey(BoardWorkerId),
+});
+export type BoardCardWorkerMoveRequest = typeof BoardCardWorkerMoveRequest.Type;
+
+/** `board.cardWorkerMove`'s answer: whichever the action gives. */
+export const BoardCardWorkerMoveAnswer = Schema.Union([
+  ...BoardCardMoveCheck.members,
+  Schema.Struct({ outcome: Schema.Literal("started") }),
+  ...BOARD_ASK_AGENT_TO_PUSH_RESULTS,
+]);
+export type BoardCardWorkerMoveAnswer = typeof BoardCardWorkerMoveAnswer.Type;
+
 export const BoardCheckCardWorktreeResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("removed") }),
   /** Still refused; `reason` is the refusal, recorded on the card. */
@@ -8188,6 +8298,11 @@ export const BOARD_RPCS = [
     success: BoardCheckCardWorktreeResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.cardWorkerMove, {
+    payload: BoardCardWorkerMoveRequest,
+    success: BoardCardWorkerMoveAnswer,
+    error: EnvironmentAuthorizationError,
+  }),
   Rpc.make(BOARD_WS_METHODS.submitCardForMerge, {
     payload: BoardCardPullRequestActionInput,
     success: BoardSubmitCardForMergeResult,
@@ -8254,6 +8369,9 @@ export const BOARD_RPC_SCOPES = {
   [BOARD_WS_METHODS.requestReviewRound]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.removeCardWorktree]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.checkCardWorktree]: AuthOrchestrationOperateScope,
+  // T3O-65: the move reads the source worker's git and then changes where the
+  // card runs; asking the agent to push sends a turn. A board write.
+  [BOARD_WS_METHODS.cardWorkerMove]: AuthOrchestrationOperateScope,
   // Attaching writes a file and a board event; detaching deletes one. Both
   // are the same mutation tier as every other board write.
   [BOARD_WS_METHODS.attachCardFile]: AuthOrchestrationOperateScope,

@@ -14,6 +14,7 @@
  * `ensureLocalBaseBranch` fetches a base this checkout has never seen.
  */
 import {
+  BOARD_UNPUSHED_COMMITS_MAX,
   BOARD_LOCAL_WORKER_ID,
   BoardWorkerGitError,
   type BoardWorkspaceDurability,
@@ -551,7 +552,39 @@ export function makeLocalBoardWorkspace(
           ? ["rev-list", "--count", "@{upstream}..HEAD"]
           : ["rev-list", "--count", "HEAD", "--not", "--remotes"],
       );
-      return { hasUpstream, unpushedCount: Number(count) || 0 };
+      const unpushedCount = Number(count) || 0;
+      const listed =
+        unpushedCount === 0
+          ? ""
+          : yield* gitRef(
+              "boardCardWorktree.durable.unpushedLog",
+              worktreePath,
+              hasUpstream
+                ? [
+                    "log",
+                    `-n${BOARD_UNPUSHED_COMMITS_MAX}`,
+                    "--format=%h%x09%s",
+                    "@{upstream}..HEAD",
+                  ]
+                : [
+                    "log",
+                    `-n${BOARD_UNPUSHED_COMMITS_MAX}`,
+                    "--format=%h%x09%s",
+                    "HEAD",
+                    "--not",
+                    "--remotes",
+                  ],
+            );
+      const unpushedCommits = listed
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => {
+          const tab = line.indexOf("\t");
+          return tab < 0
+            ? { sha: line, subject: "" }
+            : { sha: line.slice(0, tab), subject: line.slice(tab + 1) };
+        });
+      return { hasUpstream, unpushedCount, unpushedCommits };
     });
 
   const probeWorktreeDurability: BoardWorkspace["probeWorktreeDurability"] = (input) =>
