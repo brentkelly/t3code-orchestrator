@@ -373,17 +373,36 @@ export function boardCardWorkerTrouble(
         : lastSeenAt === null
           ? `${name} is offline.`
           : `${name} went offline at ${clockTime(lastSeenAt)}.`;
+  const panelTitle =
+    worker.status.state === "unauthorized"
+      ? `${name}'s access was revoked`
+      : worker.status.state === "incompatible"
+        ? `${name} needs a newer T3o`
+        : `${name} is offline`;
   return {
     kind: "offline",
     workerId,
     workerLabel: name,
     label: "Worker offline",
     tooltip: `${why} Work is paused; nothing has been restarted.`,
-    panelTitle: `${name} is offline`,
-    panelBody: `Work on this card is paused. Nothing was restarted or moved. It carries on from where it stopped when ${name} reconnects.${
+    panelTitle,
+    panelBody: `Work on this card is paused. Nothing was restarted or moved. It carries on from where it stopped ${boardWorkerResumesWhen(worker, name)}.${
       lastSeenAt === null ? "" : ` Last heard from ${clockTime(lastSeenAt)}.`
     }`,
   };
+}
+
+/**
+ * When paused work on an out-of-reach worker carries on: a revoked worker
+ * needs pairing again and an incompatible one an upgrade; only an offline
+ * one comes back by itself.
+ */
+function boardWorkerResumesWhen(worker: BoardWorkerView, subject: string): string {
+  return worker.status.state === "unauthorized"
+    ? `once ${subject} is paired again`
+    : worker.status.state === "incompatible"
+      ? `once ${subject} is upgraded`
+      : `when ${subject} reconnects`;
 }
 
 /** One worker in the board header's indicator popover (prototype 6.3). */
@@ -392,6 +411,8 @@ export interface BoardWorkerAttentionRow {
   readonly label: string;
   /** "Offline since 09:12", "Access revoked", "Needs T3o 0.14.0 or newer". */
   readonly status: string;
+  /** "when it reconnects", "once it is paired again", "once it is upgraded". */
+  readonly resumesWhen: string;
   readonly pausedCards: ReadonlyArray<Pick<BoardCardShell, "cardId" | "key" | "title">>;
 }
 
@@ -430,6 +451,7 @@ export function boardWorkersAttention(
           : worker.status.lastSeenAt === null
             ? "Offline"
             : `Offline since ${clockTime(worker.status.lastSeenAt)}`,
+    resumesWhen: boardWorkerResumesWhen(worker, "it"),
     pausedCards: cards.filter(
       (card) => boardCardWorkerTrouble(card, state)?.workerId === worker.id,
     ),

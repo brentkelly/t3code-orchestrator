@@ -475,6 +475,27 @@ describe("worker trouble (T3O-66)", () => {
     ).toBe("offline");
   });
 
+  it("tells a revoked or incompatible worker apart from one that will reconnect", () => {
+    const revoked = boardCardWorkerTrouble(
+      card(),
+      state([worker(GPU, "gpu-rig", { state: "unauthorized" })]),
+    );
+    expect(revoked?.panelTitle).toBe("gpu-rig's access was revoked");
+    expect(revoked?.panelBody).toContain("once gpu-rig is paired again");
+    expect(revoked?.panelBody).not.toContain("reconnects");
+    const old = boardCardWorkerTrouble(
+      card(),
+      state([worker(GPU, "gpu-rig", { state: "incompatible" })]),
+    );
+    expect(old?.panelTitle).toBe("gpu-rig needs a newer T3o");
+    expect(old?.panelBody).toContain("once gpu-rig is upgraded");
+    expect(boardCardWorkerTrouble(card(), gpuOffline)?.panelTitle).toBe("gpu-rig is offline");
+    expect(
+      boardWorkersAttention([card()], state([worker(GPU, "gpu-rig", { state: "unauthorized" })]))
+        ?.rows[0]?.resumesWhen,
+    ).toBe("once it is paired again");
+  });
+
   it("says nothing of an idle card pinned there, a reachable worker, or a first dial", () => {
     expect(boardCardWorkerTrouble(card({ stepRunning: false }), gpuOffline)).toBeNull();
     expect(boardCardWorkerTrouble(card({ workerId: LINUX }), gpuOffline)).toBeNull();

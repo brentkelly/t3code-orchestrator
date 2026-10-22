@@ -48,7 +48,7 @@ export function BoardWorkersAttentionPill(props: {
             <span className="text-[11.5px] text-muted-foreground">
               {row.pausedCards.length === 0
                 ? "No cards are paused."
-                : `${row.pausedCards.length} ${row.pausedCards.length === 1 ? "card" : "cards"} paused. They carry on when it reconnects.`}
+                : `${row.pausedCards.length} ${row.pausedCards.length === 1 ? "card" : "cards"} paused. They carry on ${row.resumesWhen}.`}
             </span>
             {row.pausedCards.map((card) => (
               <button
