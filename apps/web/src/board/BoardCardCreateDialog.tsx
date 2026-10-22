@@ -87,7 +87,7 @@ import { boardCardCreateShortcutLabel, isBoardCardCreateShortcut } from "./board
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
 import { BoardWorkerPicker } from "./workers/BoardWorkerPicker";
 import {
-  boardDefaultWorkerCheckoutWarning,
+  boardWorkerCheckoutWarning,
   boardWorkerFieldLabel,
   boardWorkerLabel,
 } from "./workers/cardWorker";
@@ -660,6 +660,9 @@ export function BoardCardCreateDialog({
                   // the old project's checkout says nothing about the new one,
                   // so it goes back to that project's default.
                   setBaseBranch(null);
+                  // So does the worker pin (T3O-65): a worker chosen for the
+                  // old project may have no checkout of the new one.
+                  setPinnedWorkerId(null);
                 }}
                 value={projectId ?? ""}
               >
@@ -735,10 +738,11 @@ export function BoardCardCreateDialog({
               </div>
             ) : null}
           </div>
-          {workerField.shown && pinnedWorkerId === null
+          {workerField.shown
             ? (() => {
-                const warning = boardDefaultWorkerCheckoutWarning({
+                const warning = boardWorkerCheckoutWarning({
                   state: workerField.workers,
+                  pinnedWorkerId,
                   projectRepositoryKey: workerField.projectRepositoryKey,
                   projectName: workerField.projectName,
                 });

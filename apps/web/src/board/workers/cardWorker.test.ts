@@ -15,7 +15,7 @@ import {
   boardThreadMoveDividers,
   boardWorkerOnlyProviders,
   boardCardWorkerChip,
-  boardDefaultWorkerCheckoutWarning,
+  boardWorkerCheckoutWarning,
   boardQueueReason,
   boardWorkerChoices,
   boardWorkerFieldLabel,
@@ -195,15 +195,37 @@ describe("the worker field", () => {
       defaultWorkerId: LINUX,
     });
     expect(
-      boardDefaultWorkerCheckoutWarning({
+      boardWorkerCheckoutWarning({
         state: board,
         projectRepositoryKey: KEY,
         projectName: "advisor",
       }),
     ).toBe("linux-box has no checkout of advisor. Set up on worker or pin another.");
     expect(
-      boardDefaultWorkerCheckoutWarning({
+      boardWorkerCheckoutWarning({
         state: state([worker(LINUX, "linux-box")], { defaultWorkerId: LINUX }),
+        projectRepositoryKey: KEY,
+        projectName: "advisor",
+      }),
+    ).toBeNull();
+  });
+
+  it("warns for a pinned worker with no checkout, even when the default has one", () => {
+    const board = state([worker(LINUX, "linux-box"), worker(MBP, "mbp", { checkout: false })], {
+      defaultWorkerId: LINUX,
+    });
+    expect(
+      boardWorkerCheckoutWarning({
+        state: board,
+        pinnedWorkerId: MBP,
+        projectRepositoryKey: KEY,
+        projectName: "advisor",
+      }),
+    ).toContain("mbp has no checkout of advisor. The card waits");
+    expect(
+      boardWorkerCheckoutWarning({
+        state: board,
+        pinnedWorkerId: null,
         projectRepositoryKey: KEY,
         projectName: "advisor",
       }),

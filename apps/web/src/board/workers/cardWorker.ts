@@ -225,21 +225,27 @@ export function boardWorkerFieldLabel(
 }
 
 /**
- * The create dialog's amber line when the default worker has no checkout of
- * the chosen project (prototype 4.1), or null.
+ * The create dialog's amber line when the card's worker — its pin, or the
+ * default when it follows one — has no checkout of the chosen project
+ * (prototype 4.1), or null.
  */
-export function boardDefaultWorkerCheckoutWarning(input: {
+export function boardWorkerCheckoutWarning(input: {
   readonly state: BoardWorkersState;
+  /** The card's pin; null follows the default. */
+  readonly pinnedWorkerId?: BoardWorkerId | null;
   readonly projectRepositoryKey: string | null;
   readonly projectName: string;
 }): string | null {
   const { state } = input;
-  if (state.defaultWorkerId === BOARD_LOCAL_WORKER_ID) return null;
-  const worker = state.workers.find((candidate) => candidate.id === state.defaultWorkerId);
+  const workerId = input.pinnedWorkerId ?? state.defaultWorkerId;
+  if (workerId === BOARD_LOCAL_WORKER_ID) return null;
+  const worker = state.workers.find((candidate) => candidate.id === workerId);
   if (worker === undefined || boardWorkerHasCheckout(worker, input.projectRepositoryKey)) {
     return null;
   }
-  return `${worker.label} has no checkout of ${input.projectName}. Set up on worker or pin another.`;
+  return (input.pinnedWorkerId ?? null) === null
+    ? `${worker.label} has no checkout of ${input.projectName}. Set up on worker or pin another.`
+    : `${worker.label} has no checkout of ${input.projectName}. The card waits until it is set up there. Set up on worker or pick another.`;
 }
 
 // ── Queue reasons (D11, prototype notice copy) ─────────────────────────
