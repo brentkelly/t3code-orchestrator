@@ -34,6 +34,7 @@ import {
   codexStep,
   makeBoardCard,
   movedToBuilding,
+  readyWorktree,
   settingsWith,
   stepCompleted,
   withGovernor,
@@ -363,6 +364,84 @@ it.effect("a card pinned to a worker still cloning the project holds, then start
   }),
 );
 
+it.effect("a build card pinned to a worker still cloning cuts no worktree until the clone lands", () =>
+  Effect.gen(function* () {
+    const { placement, ref } = yield* makePlacement(
+      workersState([workerView(W1, { checkout: false })]),
+    );
+    const building = makeBoardCard({
+      id: "card-1",
+      stage: "building",
+      orderKey: "m",
+      pinnedWorkerId: W1,
+    });
+    yield* withGovernor(
+      {
+        board: { cards: [building], nextCardNumberByProject: {}, workers: registered },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        placement,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(building, 1));
+          // Held as setting up, not stalled for a missing worktree, and no
+          // worktree cut anywhere while the worker has no checkout.
+          const held = yield* step(h, "card-1");
+          assert.strictEqual(held?.status, "queued");
+          assert.strictEqual(held?.queuedBy, "setup");
+          assert.isNull((yield* card(h, "card-1")).worktree);
+          assert.deepStrictEqual(yield* spawnsOn(h), []);
+
+          yield* SubscriptionRef.set(ref, workersState([workerView(W1)]));
+          yield* Effect.yieldNow;
+          yield* h.reactor.drain;
+          assert.strictEqual((yield* step(h, "card-1"))?.status, "running");
+          assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
+        }),
+    );
+  }),
+);
+
+it.effect("a provider stall stays stalled while its worker is offline", () =>
+  Effect.gen(function* () {
+    const { placement, ref } = yield* makePlacement(
+      workersState([workerView(W1, { providers: [claude] })]),
+    );
+    const sprint = makeBoardCard({
+      id: "card-1",
+      stage: "sprint",
+      orderKey: "m",
+      pinnedWorkerId: W1,
+    });
+    yield* withGovernor(
+      {
+        board: { cards: [sprint], nextCardNumberByProject: {}, workers: registered },
+        settings: settingsWith({
+          building: [codexStep],
+          planning: codexStep,
+          globalMaxConcurrent: 3,
+        }),
+        placement,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(cardMoved(inPlanning(sprint), "sprint", "planning", 1));
+          assert.strictEqual((yield* step(h, "card-1"))?.stalledReason, "provider-not-on-worker");
+
+          yield* SubscriptionRef.set(
+            ref,
+            workersState([workerView(W1, { providers: [claude], online: false })]),
+          );
+          yield* Effect.yieldNow;
+          yield* h.reactor.drain;
+          const still = yield* step(h, "card-1");
+          assert.strictEqual(still?.status, "stalled");
+          assert.strictEqual(still?.stalledReason, "provider-not-on-worker");
+        }),
+    );
+  }),
+);
+
 it.effect("an offline worker holds its cards without spawning anything", () =>
   Effect.gen(function* () {
     const { placement } = yield* makePlacement(workersState([workerView(W1, { online: false })]));
@@ -415,6 +494,109 @@ it.effect("a card mid-move holds until the move lands", () =>
       (h) =>
         Effect.gen(function* () {
           yield* h.pumpDomain(movedToBuilding(moving, 1));
+          assert.deepStrictEqual(yield* spawnsOn(h), []);
+        }),
+    );
+  }),
+);
+
+it.effect("a re-planned review round cuts no worktree on a card whose move failed", () =>
+  Effect.gen(function* () {
+    const { placement } = yield* makePlacement(workersState([workerView(W1)]));
+    const cardId = BoardCardId.make("card-1");
+    // Retired here, then provisioning on W1 failed: the old pin still names
+    // this server, and the branch is safe on the remote.
+    const failedMove: BoardCard = {
+      ...makeBoardCard({
+        id: "card-1",
+        stage: String(BOARD_SEED_STAGE_IDS.review),
+        orderKey: "m",
+        worktree: { ...readyWorktree("card-1"), status: "reclaimed" },
+      }),
+      placedWorkerId: BOARD_LOCAL_WORKER_ID,
+      workerMove: {
+        fromWorkerId: BOARD_LOCAL_WORKER_ID,
+        toWorkerId: W1,
+        status: "failed",
+        sha: "abc123",
+        error: "clone failed",
+        startedAt: "2026-01-01T00:00:00.000Z",
+      },
+    };
+    const settled: BoardCardStepState = {
+      cardId,
+      stepId: "review@1",
+      stepLabel: "Review · round 1",
+      stageLabel: "Code review",
+      attempt: 1,
+      stallCount: 0,
+      stageEntryRecoveries: 0,
+      humanTurnAt: null,
+      lastNudgeAt: null,
+      baseTipAtRoundStart: "main",
+      lastError: null,
+      awaitingReason: "question",
+      stalledReason: "gave-up",
+      retryAt: null,
+      prompt: "review it",
+      providerInstanceId: codex,
+      model: "gpt-5-codex",
+      mode: "build",
+      runtimeMode: "auto",
+      humanInLoop: false,
+      maxAttempts: 3,
+      timeoutMs: 600_000,
+      threadId: null,
+      status: "succeeded",
+      slotHeld: false,
+      forceStart: false,
+      queuedBy: null,
+      startedAt: null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    yield* withGovernor(
+      {
+        board: {
+          cards: [failedMove],
+          stepStates: [settled],
+          stepCompletions: [
+            {
+              cardId,
+              stepId: "review@1",
+              outcome: "succeeded",
+              summary: "clean",
+              payload: JSON.stringify({ reviewedSha: "sha-reviewed", findings: [] }),
+              threadId: null,
+              completedAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+          nextCardNumberByProject: {},
+          workers: registered,
+        },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        placement,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          // A human asks for one more round: the edit re-plans the settled loop.
+          const edited: BoardCard = {
+            ...(yield* card(h, "card-1")),
+            reviewOverrides: {
+              rounds: null,
+              stopAfterRound: null,
+              roundModels: {},
+              runThroughRound: PositiveInt.make(2),
+            },
+          };
+          yield* h.pumpDomain({
+            type: "board.card-updated",
+            sequence: 1,
+            payload: { cardId, card: edited },
+          } as unknown as HarnessEvent);
+          yield* h.reactor.drain;
+          assert.strictEqual((yield* step(h, "card-1"))?.stepId, "review@2");
+          // Held for the move: no worktree cut on the old worker, nothing spawned.
+          assert.strictEqual((yield* card(h, "card-1")).worktree?.status, "reclaimed");
           assert.deepStrictEqual(yield* spawnsOn(h), []);
         }),
     );

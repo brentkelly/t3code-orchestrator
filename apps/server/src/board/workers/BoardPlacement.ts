@@ -38,15 +38,46 @@ export class BoardPlacement extends Context.Service<BoardPlacement, BoardPlaceme
   "t3/board/workers/BoardPlacement",
 ) {}
 
+/**
+ * The facts in a worker summary that `boardPlacementGate` reads, as one
+ * comparable key. Clone progress and snapshot timestamps change far more often
+ * than these and can never start a held card, so they are left out.
+ */
+export const boardPlacementFacts = (state: BoardWorkersState): string =>
+  JSON.stringify([
+    state.workers.map((worker) => [
+      worker.id,
+      worker.status.state,
+      (worker.snapshot?.providers ?? []).map((provider) => [provider.instanceId, provider.enabled]),
+      (worker.snapshot?.checkouts ?? []).map((checkout) => [
+        checkout.projectId,
+        checkout.repositoryKey,
+      ]),
+    ]),
+    state.setups.map((setup) => [setup.projectId, setup.workerId, setup.phase]),
+  ]);
+
+/**
+ * A tick for each change to a summary stream that could flip a placement gate,
+ * skipping the first value. Each tick is a full scheduling pass on the
+ * supervisor's serial queue, so a clone's percent updates must not cause one.
+ */
+export const boardPlacementChanges = <E, R>(
+  states: Stream.Stream<BoardWorkersState, E, R>,
+): Stream.Stream<void, E, R> =>
+  states.pipe(
+    Stream.map(boardPlacementFacts),
+    Stream.changes,
+    Stream.drop(1),
+    Stream.map(() => undefined),
+  );
+
 /** The board's worker summary, as `BoardWorkers` keeps it. */
 export const BoardPlacementLive = Layer.effect(
   BoardPlacement,
   Effect.map(BoardWorkers, (workers) => ({
     workers: workers.state,
-    changes: workers.states.pipe(
-      Stream.drop(1),
-      Stream.map(() => undefined),
-    ),
+    changes: boardPlacementChanges(workers.states),
   })),
 );
 

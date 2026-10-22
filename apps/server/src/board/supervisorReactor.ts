@@ -1884,6 +1884,26 @@ const make = Effect.gen(function* () {
    * step. The scheduling pass that follows re-checks, so a step whose worker
    * still lacks the instance simply stalls again.
    */
+  /**
+   * Provision a freshly selected build step's worktree at stage entry, but only
+   * where the step can run now (T3O-65). A card mid-move, or one whose worker
+   * is offline, still cloning or missing the provider, is left to `schedule()`,
+   * whose gates hold or stall it and provision once the worker is ready —
+   * provisioning here would cut the worktree on the wrong worker, or stall a
+   * card that is merely waiting on a clone.
+   */
+  const provisionPlacedBuildStep = Effect.fn("board-supervisor-provisionPlacedBuildStep")(
+    function* (cardId: BoardCardId) {
+      const board = yield* readBoard;
+      const card = board.cards.find((candidate) => candidate.id === cardId);
+      const state = boardCardStepState(board, cardId);
+      if (card === undefined || state === null || card.workerMove !== null) return;
+      const { gate } = yield* placementFor(board, card, state);
+      if (gate.kind !== "ready") return;
+      yield* provisionBuildStep(card);
+    },
+  );
+
   const requeueResolvedProviderStalls = Effect.fn("board-supervisor-requeueResolvedProviderStalls")(
     function* (onlyCardId?: BoardCardId) {
       const board = yield* readBoard;
@@ -1893,8 +1913,12 @@ const make = Effect.gen(function* () {
         if (onlyCardId !== undefined && state.cardId !== onlyCardId) continue;
         const card = board.cards.find((candidate) => candidate.id === state.cardId);
         if (card === undefined || card.archivedAt !== null) continue;
+        // Not while the worker is offline: nothing has been fixed, and
+        // requeueing would hide the needs-a-human stall until it reconnects and
+        // stalls again. A worker still cloning the project (a re-pin to one
+        // being set up) requeues, and the pass holds the step as "setting up".
         const { gate } = yield* placementFor(board, card, state);
-        if (gate.kind === "provider-missing") continue;
+        if (gate.kind === "provider-missing" || gate.kind === "offline") continue;
         yield* dispatch({
           type: "board.card.requeue-step",
           commandId: yield* commandId("requeue-step"),
@@ -3332,7 +3356,7 @@ const make = Effect.gen(function* () {
           baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
           createdAt: yield* nowIso,
         });
-        if (exec.mode === "build") yield* provisionBuildStep(card);
+        if (exec.mode === "build") yield* provisionPlacedBuildStep(card.id);
         return;
       }
       case "complete": {
@@ -3469,7 +3493,7 @@ const make = Effect.gen(function* () {
       baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
       createdAt: yield* nowIso,
     });
-    if (exec.mode === "build") yield* provisionBuildStep(card);
+    if (exec.mode === "build") yield* provisionPlacedBuildStep(card.id);
     yield* schedule();
   });
 
