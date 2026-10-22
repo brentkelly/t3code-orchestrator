@@ -138,7 +138,7 @@ export type BoardWorkspacePullRequest = typeof BoardWorkspacePullRequest.Type;
 /** Why the forge is refusing a merge (`BoardMergeState`). */
 export const BoardWorkspaceMergeState = Schema.Struct({
   mergeable: Schema.Literals(["mergeable", "blocked", "unknown"]),
-  blockedReason: Schema.NullOr(Schema.Literals(["behind", "draft", "conflict", "other"])),
+  blockedReason: Schema.NullOr(Schema.Literals(["behind", "draft", "conflict"])),
   checks: Schema.Struct({
     total: NonNegativeInt,
     passed: NonNegativeInt,
