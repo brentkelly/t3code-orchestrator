@@ -12,11 +12,11 @@ import { BOARD_SEED_STAGE_IDS, BoardCardId, boardCardStepState } from "@t3tools/
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -80,6 +80,9 @@ it.effect("the board spawns, drives and completes a planning step on a worker", 
     );
     const fileSystem = yield* FileSystem.FileSystem;
     const crypto = yield* Crypto.Crypto;
+    /** The step's thread, once spawned, and its read after the turn ends. */
+    const watched = yield* Ref.make<string | null>(null);
+    const turnEndRead = yield* Deferred.make<void>();
 
     yield* withGovernor(
       {
@@ -101,8 +104,8 @@ it.effect("the board spawns, drives and completes a planning step on a worker", 
           globalMaxConcurrent: 3,
         }),
         projectRepository: REPOSITORY,
-        gateway: (local) =>
-          makeThreadGatewayRouter({
+        gateway: (local) => {
+          const router = makeThreadGatewayRouter({
             local,
             connections: env.connections,
             feed,
@@ -116,7 +119,25 @@ it.effect("the board spawns, drives and completes a planning step on a worker", 
                 fileSystem,
                 crypto,
               }),
-          }),
+          });
+          // The supervisor reading the step's thread after its turn ended:
+          // it is handling the signal, and `drain` waits for it to finish.
+          return {
+            ...router,
+            threadState: (id) =>
+              router
+                .threadState(id)
+                .pipe(
+                  Effect.tap(() =>
+                    Ref.get(watched).pipe(
+                      Effect.flatMap((target) =>
+                        target === id ? Deferred.succeed(turnEndRead, undefined) : Effect.void,
+                      ),
+                    ),
+                  ),
+                ),
+          };
+        },
         placement: placementOver(env.connections),
       },
       ({ pumpDomain, board, reactor }) =>
@@ -161,13 +182,9 @@ it.effect("the board spawns, drives and completes a planning step on a worker", 
                 projectId: WORKER_PROJECT_ID,
               }),
             );
-            const signals = yield* feed.subscribeSignals;
+            yield* Ref.set(watched, threadId);
             yield* env.threads.emit(turnCompleted(threadId, "run-1"));
-            // The feed publishes to every subscriber at once: once this one has
-            // it, the supervisor's has too.
-            yield* Stream.runHead(signals);
-            yield* Effect.yieldNow;
-            yield* Effect.yieldNow;
+            yield* Deferred.await(turnEndRead);
             yield* reactor.drain;
             assert.strictEqual(boardCardStepState(yield* board, cardId)?.status, "awaiting-input");
 
