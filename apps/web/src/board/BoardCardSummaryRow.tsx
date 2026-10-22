@@ -41,6 +41,7 @@ import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { cn } from "../lib/utils";
 import { BOARD_CARD_REVIEW_ITEM_KINDS } from "./boardCardProgressBlock";
 import { formatRelativeTime } from "../timestampFormat";
+import type { BoardCardWorkerChip } from "./workers/cardWorker";
 import type { BoardCardMeta, BoardCardSummaryItem } from "./boardCardSummary";
 import { BoardHint } from "./BoardHint";
 
@@ -457,8 +458,16 @@ function MetaCount({
  * nothing at all when the card is tied to nothing, so a bare card keeps its
  * height.
  */
-export function BoardCardMetaRow({ meta }: { readonly meta: BoardCardMeta }) {
-  if (meta.empty) return null;
+export function BoardCardMetaRow({
+  meta,
+  worker,
+}: {
+  readonly meta: BoardCardMeta;
+  /** The worker chip (T3O-65), at the row's right end; null on a board with
+      one worker. */
+  readonly worker?: BoardCardWorkerChip | null | undefined;
+}) {
+  if (meta.empty && worker == null) return null;
   return (
     <div className="flex items-center gap-2.5 text-muted-foreground">
       {meta.dependencyCount === 0 ? null : (
@@ -508,6 +517,22 @@ export function BoardCardMetaRow({ meta }: { readonly meta: BoardCardMeta }) {
           </span>
         </BoardHint>
       ) : null}
+      {worker == null ? null : (
+        // Never a status colour (T3O-65): worker trouble goes in the notice
+        // slot. Solid when the card is bound to its worker, dashed while it
+        // follows the default and hasn't started.
+        <BoardHint label={worker.tooltip}>
+          <span
+            aria-label={worker.tooltip}
+            className={cn(
+              "inline-flex h-4 max-w-[110px] shrink-0 items-center rounded border px-1.5 text-[10px] font-medium text-muted-foreground",
+              worker.bound ? "border-border" : "border-dashed border-border",
+            )}
+          >
+            <span className="truncate">{worker.label}</span>
+          </span>
+        </BoardHint>
+      )}
     </div>
   );
 }

@@ -66,6 +66,7 @@ import {
   type BoardCardReviewOverrides,
   type BoardReviewRoundOverride,
   type RuntimeMode,
+  type BoardCardStepStalledReason,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import {
@@ -125,6 +126,7 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
 import { BoardBaseBranchConfirmDialog } from "./BoardBaseBranchConfirmDialog";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
+import { BoardCardWorkerRow } from "./workers/BoardCardWorkerRow";
 import { boardBriefDisplayText } from "./boardBriefDisplay";
 import { BoardCardProjectConfirmDialog } from "./BoardCardProjectConfirmDialog";
 import { BoardCardProjectRowValue, type BoardProjectOption } from "./BoardCardProjectSelect";
@@ -336,6 +338,9 @@ export interface BoardDetailThreadLink {
 
 export interface BoardCardDetailViewProps {
   readonly environmentId: EnvironmentId;
+  /** Why the live step stalled, from the card's shell (T3O-65 shows the
+      provider-not-on-worker panel off it). */
+  readonly stalledReason?: BoardCardStepStalledReason | undefined;
   readonly detail: BoardCardDetail;
   readonly catalogue: ReadonlyArray<BoardLabel>;
   /** The read-model stage list (D13): column labels, the stage ladder, and the
@@ -1911,7 +1916,13 @@ function humanInLoopDefaultHint(humanInLoop: {
   }
 }
 
-function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
+function InfoSection({
+  props,
+  onOpenThread,
+}: {
+  readonly props: BoardCardDetailViewProps;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+}) {
   const base = props.baseBranch;
   return (
     <div className="border-t border-border p-3.5 text-[11.5px]/[1.7] text-muted-foreground">
@@ -1931,6 +1942,13 @@ function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
           names its parent — not hidden, because someone on a child deserves to
           know what it branches off without hunting for the parent. */}
       <BoardBaseBranchRow props={props} />
+      {/* Worker (T3O-65): where the card runs, and Move. Absent with one worker. */}
+      <BoardCardWorkerRow
+        card={props.detail.card}
+        environmentId={props.environmentId}
+        onOpenThread={onOpenThread}
+        stalledReason={props.stalledReason}
+      />
       <div>Created · {formatRelativeTimeLabel(props.detail.card.createdAt)}</div>
       {base.retargeted && base.effective !== null ? (
         // Derived, never stored (D14): between retargeting and the rebase that
@@ -2866,7 +2884,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 stages={props.stages}
               />
             </div>
-            <InfoSection props={props} />
+            <InfoSection onOpenThread={setSelectedThreadId} props={props} />
           </div>
         </div>
       ) : (
@@ -2959,7 +2977,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   stages={props.stages}
                 />
               </div>
-              <InfoSection props={props} />
+              <InfoSection onOpenThread={setSelectedThreadId} props={props} />
             </div>
           </div>
         </div>

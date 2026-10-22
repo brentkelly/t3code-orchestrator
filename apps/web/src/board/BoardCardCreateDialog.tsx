@@ -29,6 +29,7 @@ import {
   type BoardStageDefinition,
   type BoardStageId,
   type BoardState,
+  type BoardWorkerId,
   type EnvironmentId,
   type ProjectIconOverride,
   type ProjectId,
@@ -84,6 +85,13 @@ import {
 } from "./boardCardDraftStore";
 import { boardCardCreateShortcutLabel, isBoardCardCreateShortcut } from "./boardCardCreateShortcut";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
+import { BoardWorkerPicker } from "./workers/BoardWorkerPicker";
+import {
+  boardDefaultWorkerCheckoutWarning,
+  boardWorkerFieldLabel,
+  boardWorkerLabel,
+} from "./workers/cardWorker";
+import { useBoardWorkerChoices } from "./workers/useBoardWorkerChoices";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import { BoardLabelField } from "./BoardLabelField";
 import { boardStageLabel } from "./boardStages";
@@ -166,6 +174,11 @@ export function BoardCardCreateDialog({
   // The card's base branch (T3O-5, D13): null follows the chosen project's
   // default, which is what the picker reads until someone changes it.
   const [baseBranch, setBaseBranch] = useState<string | null>(null);
+  // The worker the card is pinned to (T3O-65, D20); null follows the default.
+  // Not part of the stored draft: a pin is a choice about the board as it is
+  // now, and a worker can be gone by the time a draft is reopened.
+  const [pinnedWorkerId, setPinnedWorkerId] = useState<BoardWorkerId | null>(null);
+  const workerField = useBoardWorkerChoices(environmentId, projectId);
   /** The card's scheduled start (T3O-19), null until the clock is touched. */
   const [scheduledStartAt, setScheduledStartAt] = useState<string | null>(null);
   const [stage, setStage] = useState<BoardStageId>(defaultStage);
@@ -278,6 +291,7 @@ export function BoardCardCreateDialog({
   const resetFields = useCallback(() => {
     setProjectId(defaultProjectId ?? projects[0]?.id ?? null);
     setBaseBranch(null);
+    setPinnedWorkerId(null);
     setScheduledStartAt(null);
     setStage(defaultStage);
     setTitle("");
@@ -363,6 +377,7 @@ export function BoardCardCreateDialog({
         const fields = restoration.fields;
         setProjectId(fields.projectId);
         setBaseBranch(fields.baseBranch);
+        setPinnedWorkerId(null);
         setScheduledStartAt(fields.scheduledStartAt);
         setStage(fields.stage);
         setTitle(fields.title);
@@ -479,6 +494,9 @@ export function BoardCardCreateDialog({
         // (T3O-5, D12/D16): "no opinion" and "pinned to whatever main is
         // called today" must not collapse into the same stored value.
         ...(baseBranch === null ? {} : { baseBranch }),
+        // The worker pin (T3O-65): absent follows the default — and a child
+        // created here then copies its parent's pin.
+        ...(pinnedWorkerId === null ? {} : { pinnedWorkerId }),
         // The scheduled start (T3O-19, D14). Absent when the clock was never
         // touched, which is nearly every card — and the reason the field is
         // key-optional on the command rather than a nullable one.
@@ -694,7 +712,41 @@ export function BoardCardCreateDialog({
                 />
               </div>
             ) : null}
+
+            {workerField.shown ? (
+              // Where the card runs (T3O-65, prototype 4.1). Only once a second
+              // worker exists.
+              <div className="min-w-0 flex-1">
+                <BoardSectionHeading className="mb-[7px]">
+                  Worker{" "}
+                  <span className="font-normal text-muted-foreground normal-case">
+                    where this card runs
+                  </span>
+                </BoardSectionHeading>
+                <BoardWorkerPicker
+                  choices={workerField.choices}
+                  className="h-8 w-full"
+                  followLabel={`Follow default — ${boardWorkerLabel(workerField.workers.defaultWorkerId, workerField.workers)}`}
+                  onSelect={setPinnedWorkerId}
+                  onSetUp={workerField.setUp}
+                  pinnedWorkerId={pinnedWorkerId}
+                  value={boardWorkerFieldLabel(pinnedWorkerId, workerField.workers)}
+                />
+              </div>
+            ) : null}
           </div>
+          {workerField.shown && pinnedWorkerId === null
+            ? (() => {
+                const warning = boardDefaultWorkerCheckoutWarning({
+                  state: workerField.workers,
+                  projectRepositoryKey: workerField.projectRepositoryKey,
+                  projectName: workerField.projectName,
+                });
+                return warning === null ? null : (
+                  <p className="-mt-2 text-[12px] text-warning-foreground">{warning}</p>
+                );
+              })()
+            : null}
 
           {/* Title and Label share a row (T3O-31). Title comes FIRST and holds
               autofocus: the label control used to be the dialog's first text

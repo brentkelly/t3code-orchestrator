@@ -67,3 +67,72 @@ describe("boardQueueInfo", () => {
     }
   });
 });
+
+describe("boardQueueInfo with workers (T3O-65)", () => {
+  it("names a full worker", () => {
+    const info = boardQueueInfo({
+      slot: slot(2, 3),
+      running: 5,
+      cap: 8,
+      reason: { kind: "worker", worker: "linux-box", running: 4, limit: 4 },
+    })!;
+    expect(info.label).toBe("Queued #2 · worker full");
+    expect(info.headline).toBe("Queued #2 on linux-box");
+    expect(info.detail).toBe(
+      "linux-box is running 4 of 4 agents. This card starts when one finishes.",
+    );
+  });
+
+  it("names a full provider and a full board", () => {
+    expect(
+      boardQueueInfo({
+        slot: slot(1, 1),
+        running: 1,
+        cap: 8,
+        reason: { kind: "provider", worker: "linux-box" },
+      })!.label,
+    ).toBe("Queued #1 · provider full");
+    const board = boardQueueInfo({
+      slot: slot(3, 3),
+      running: 8,
+      cap: 8,
+      reason: { kind: "board", running: 8, limit: 8 },
+    })!;
+    expect(board.label).toBe("Queued #3 · board full");
+    expect(board.detail).toBe(
+      "8 of 8 agents are busy across all workers. This card starts when any of them finishes.",
+    );
+  });
+
+  it("says a card waiting for a checkout is setting up, with the clone's progress", () => {
+    const cloning = boardQueueInfo({
+      slot: slot(1, 1),
+      running: 0,
+      cap: 8,
+      reason: {
+        kind: "setup",
+        worker: "mbp-brent",
+        project: "advisor",
+        percent: 32,
+        failed: false,
+      },
+    })!;
+    expect(cloning.label).toBe("Queued · setting up");
+    expect(cloning.detail).toBe(
+      "advisor is being cloned on mbp-brent (32%). This card starts once it's ready.",
+    );
+    const failed = boardQueueInfo({
+      slot: slot(1, 1),
+      running: 0,
+      cap: 8,
+      reason: {
+        kind: "setup",
+        worker: "mbp-brent",
+        project: "advisor",
+        percent: null,
+        failed: true,
+      },
+    })!;
+    expect(failed.detail).toContain("failed");
+  });
+});

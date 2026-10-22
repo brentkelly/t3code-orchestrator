@@ -7589,6 +7589,20 @@ const make = Effect.gen(function* () {
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
     const state = boardCardStepState(board, event.payload.cardId);
     if (card === undefined || state === null) return;
+    // A step stalled because its worker lacks its provider (T3O-65) never ran,
+    // and its model was frozen at stage entry — so a human's "Change model",
+    // which is a card edit, only lands if the stage starts over and resolves it
+    // again. Any edit does it: there is nothing to lose, and a worker that
+    // still lacks the provider stalls the fresh step the same way.
+    if (state.status === "stalled" && state.stalledReason === "provider-not-on-worker") {
+      yield* dispatch({
+        type: "board.card.start-stage-thread",
+        commandId: yield* commandId("restart-for-model"),
+        cardId: card.id,
+        createdAt: yield* nowIso,
+      });
+      return;
+    }
     // A SETTLED stage may have more to run after an edit (t3o-22, D6). The
     // review loop is why: a loop held at its round cap is terminal, and raising
     // the card's budget from the pane must make it plan the next round — but

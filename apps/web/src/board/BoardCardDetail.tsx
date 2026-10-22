@@ -80,6 +80,7 @@ import { usePaginatedBranches } from "../state/queries";
 import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
 import { usePrimarySettings, useUpdatePrimarySettings } from "../hooks/useSettings";
+import { boardQueueReason } from "./workers/cardWorker";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   boardStageRestartBlockedReason,
@@ -169,6 +170,8 @@ export function BoardCardDetail({
   const detail = useAtomValue(boardEnvironment.cardDetailValueAtom({ environmentId, cardId }));
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
   const stages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
+  // T3O-65: the board's workers, for the queue's reason.
+  const workersState = useAtomValue(boardEnvironment.workersAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
 
   const updateCard = useAtomCommand(boardEnvironment.updateCard);
@@ -558,14 +561,15 @@ export function BoardCardDetail({
             slot: boardBuildQueue(allShellCards, queueStages, Date.now()).get(cardId),
             running: boardRunningStepCount(allShellCards),
             cap: boardSettings.concurrency.globalMaxConcurrent,
+            reason: boardQueueReason({
+              card: cardShell,
+              state: workersState,
+              cards: allShellCards,
+              concurrency: boardSettings.concurrency,
+              projectName: "this project",
+            }),
           }),
-    [
-      allShellCards,
-      boardSettings.concurrency.globalMaxConcurrent,
-      cardId,
-      cardShell?.queued,
-      queueStages,
-    ],
+    [allShellCards, boardSettings.concurrency, cardId, cardShell, queueStages, workersState],
   );
   // Null whenever reordering could not actually improve the card's position —
   // the rail hides the button rather than offering one that does nothing.
@@ -980,6 +984,7 @@ export function BoardCardDetail({
 
   const view = (
     <BoardCardDetailView
+      stalledReason={cardShell?.stalledReason}
       nav={nav}
       adoptableThreads={adoptableThreads}
       stageRestart={stageRestart}

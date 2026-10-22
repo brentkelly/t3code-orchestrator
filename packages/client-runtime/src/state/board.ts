@@ -23,6 +23,7 @@
 import {
   BOARD_WS_METHODS,
   EMPTY_BOARD_WORKERS_STATE,
+  type BoardCardWorkerMoveRequest,
   type BoardWorkerIdInput,
   type BoardWorkersAddInput,
   type BoardWorkersDismissSetupInput,
@@ -98,6 +99,9 @@ import {
   unlinkBoardCardThread,
   updateBoardCard,
   setBoardCardProject,
+  pinBoardCardWorker,
+  boardCardWorkerMove,
+  type PinBoardCardWorkerInput,
   updateBoardLabel,
   type ApproveBoardPlansInput,
   type ArchiveBoardCardInput,
@@ -158,6 +162,7 @@ export type {
   UnlinkBoardCardThreadInput,
   UpdateBoardCardInput,
   SetBoardCardProjectInput,
+  PinBoardCardWorkerInput,
   UpdateBoardLabelInput,
 };
 
@@ -832,6 +837,16 @@ export function createBoardEnvironmentAtoms<R, ER>(
     setCardProject: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:set-card-project",
       execute: (input: SetBoardCardProjectInput) => setBoardCardProject(input),
+    }),
+    /** Pin a card to a worker, or follow the default (T3O-65). */
+    pinCardWorker: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:pin-card-worker",
+      execute: (input: PinBoardCardWorkerInput) => pinBoardCardWorker(input),
+    }),
+    /** The Move dialog's check / move / ask-push (T3O-65). */
+    cardWorkerMove: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:card-worker-move",
+      execute: (input: BoardCardWorkerMoveRequest) => boardCardWorkerMove(input),
     }),
     linkThread: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:link-thread",

@@ -674,3 +674,49 @@ it.effect("after a move, a paused step's next turn starts afresh on the new work
     );
   }),
 );
+
+it.effect("changing the stage's model to one the worker has restarts a provider stall", () =>
+  Effect.gen(function* () {
+    const { placement } = yield* makePlacement(
+      workersState([workerView(W1, { providers: [claude] })]),
+    );
+    const building = placedBuildingCard("card-1", "m", W1);
+    yield* withGovernor(
+      {
+        board: { cards: [building], nextCardNumberByProject: {}, workers: registered },
+        settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+        placement,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(movedToBuilding(building, 1));
+          assert.strictEqual((yield* step(h, "card-1"))?.stalledReason, "provider-not-on-worker");
+
+          // The human picks a model W1 offers for the Building stage.
+          const edited: BoardCard = {
+            ...(yield* card(h, "card-1")),
+            modelOverrides: {
+              [BOARD_SEED_STAGE_IDS.building]: { instanceId: claude, model: "claude-sonnet" },
+            },
+          };
+          yield* h.pumpDomain({
+            type: "board.card-updated",
+            sequence: 2,
+            payload: { cardId: edited.id, card: edited },
+          } as unknown as HarnessEvent);
+          yield* h.reactor.drain;
+          // The engine publishes the restart it decided; the double does not,
+          // so it is delivered here as the live stream would.
+          const requested = (yield* h.decided).find(
+            (event) => event.type === "board.card-stage-thread-requested",
+          );
+          assert.isDefined(requested);
+          yield* h.pumpDomain(requested!);
+          const restarted = yield* step(h, "card-1");
+          assert.strictEqual(restarted?.status, "running");
+          assert.strictEqual(restarted?.providerInstanceId, claude);
+          assert.deepStrictEqual(yield* spawnsOn(h), [W1]);
+        }),
+    );
+  }),
+);
