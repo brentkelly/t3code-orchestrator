@@ -533,6 +533,43 @@ it.layer(NodeServices.layer)("moving a card to another worker (T3O-65)", (it) =>
     }),
   );
 
+  it.effect("a move cut off by a restart is closed when the mover starts", () =>
+    Effect.gen(function* () {
+      const moving = {
+        fromWorkerId: BOARD_LOCAL_WORKER_ID,
+        toWorkerId: W1,
+        status: "moving",
+        sha: "4e1a9c2",
+        error: null,
+        startedAt: NOW,
+      } as const;
+      // Cut off before retire: the card still holds its worktree, so it stays
+      // where it was and can be moved again.
+      yield* withMover({ board: board(makeCard({ workerMove: moving })) }, (mover, f) =>
+        Effect.gen(function* () {
+          expect((yield* f.card).workerMove).toBeNull();
+          expect((yield* mover.check(cardId, W1)).outcome).toBe("ready");
+        }),
+      );
+      // Cut off after retire: Move failed, and a retry provisions on the target.
+      const retired = makeCard({
+        workerMove: moving,
+        placedWorkerId: null,
+        worktree: { ...readyWorktree, path: null, status: "reclaimed" },
+      });
+      yield* withMover({ board: board(retired) }, (mover, f) =>
+        Effect.gen(function* () {
+          const failed = (yield* f.card).workerMove;
+          expect(failed?.status).toBe("failed");
+          expect(failed?.error).toContain("restarted");
+          expect((yield* mover.move(cardId, W1)).outcome).toBe("started");
+          yield* mover.drain;
+          expect((yield* f.card).placedWorkerId).toBe(W1);
+        }),
+      );
+    }),
+  );
+
   it.effect("a retry after a failed move provisions from the remote without retiring", () =>
     withMover(
       {

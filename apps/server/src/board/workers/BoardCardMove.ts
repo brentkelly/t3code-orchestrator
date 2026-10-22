@@ -376,6 +376,20 @@ export const makeBoardCardMover = Effect.gen(function* () {
         );
     });
 
+  // A move runs in this process's memory, so one still `moving` when the
+  // mover is built was cut off by a restart and nothing will ever finish it.
+  // Close it here, before any RPC can start a new one: a card still holding
+  // its worktree just stays where it was, and one already retired gets Move
+  // failed with Retry, its branch safe on the remote.
+  for (const card of (yield* readBoard).cards) {
+    if (card.workerMove?.status !== "moving") continue;
+    yield* record(
+      card.id,
+      { phase: "failed", error: "The server restarted during the move. Retry it." },
+      () => Effect.void,
+    );
+  }
+
   return {
     check,
     move,
