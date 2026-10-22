@@ -30,8 +30,10 @@ import { BoardWorkers } from "./BoardWorkers.ts";
 export interface BoardPlacementShape {
   /** The board's worker summary now: statuses, last-known snapshots, setups. */
   readonly workers: Effect.Effect<BoardWorkersState>;
-  /** Ticks after every change to that summary. Each access subscribes. */
-  readonly changes: Stream.Stream<void>;
+  /** The summary after every change to it, as it was then. Each access
+      subscribes. A worker that drops and returns before the supervisor gets
+      to the change is still seen to have dropped (T3O-66). */
+  readonly changes: Stream.Stream<BoardWorkersState>;
 }
 
 export class BoardPlacement extends Context.Service<BoardPlacement, BoardPlacementShape>()(
@@ -58,18 +60,16 @@ export const boardPlacementFacts = (state: BoardWorkersState): string =>
   ]);
 
 /**
- * A tick for each change to a summary stream that could flip a placement gate,
- * skipping the first value. Each tick is a full scheduling pass on the
- * supervisor's serial queue, so a clone's percent updates must not cause one.
+ * Each summary in a stream that could flip a placement gate, skipping the
+ * first value. Each one is a full scheduling pass on the supervisor's serial
+ * queue, so a clone's percent updates must not cause one.
  */
 export const boardPlacementChanges = <E, R>(
   states: Stream.Stream<BoardWorkersState, E, R>,
-): Stream.Stream<void, E, R> =>
+): Stream.Stream<BoardWorkersState, E, R> =>
   states.pipe(
-    Stream.map(boardPlacementFacts),
-    Stream.changes,
+    Stream.changesWith((a, b) => boardPlacementFacts(a) === boardPlacementFacts(b)),
     Stream.drop(1),
-    Stream.map(() => undefined),
   );
 
 /** The board's worker summary, as `BoardWorkers` keeps it. */

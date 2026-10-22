@@ -15,6 +15,7 @@ import {
   ProviderInstanceId,
   type BoardWorker,
   type BoardWorkerProvider,
+  type BoardWorkersState,
   type RepositoryIdentity,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -34,6 +35,7 @@ import {
   makeWorkerConnections,
   workerSecretName,
   type WorkerConnectionsShape,
+  type WorkerRuntime,
 } from "./WorkerConnections.ts";
 import { makeWorkerGatewayHost } from "./WorkerGatewayHost.ts";
 import { makeFakeWorkerLayer } from "./workers.testkit.ts";
@@ -146,20 +148,21 @@ export const makeInProcessWorker = (
  * Placement over the in-process worker's live connection (T3O-65): the board's
  * worker summary as `BoardWorkers` would build it, with no setups.
  */
-export const placementOver = (connections: WorkerConnectionsShape): BoardPlacementShape => ({
-  workers: connections.current.pipe(
-    Effect.map((runtimes) => ({
-      defaultWorkerId: BOARD_LOCAL_WORKER_ID,
-      workers: [...runtimes].map(([, runtime]) => ({
-        ...registeredWorker,
-        status: runtime.status,
-        snapshot: runtime.snapshot,
-      })),
-      setups: [],
+export const placementOver = (connections: WorkerConnectionsShape): BoardPlacementShape => {
+  const summary = (runtimes: ReadonlyMap<EnvironmentId, WorkerRuntime>): BoardWorkersState => ({
+    defaultWorkerId: BOARD_LOCAL_WORKER_ID,
+    workers: [...runtimes].map(([, runtime]) => ({
+      ...registeredWorker,
+      status: runtime.status,
+      snapshot: runtime.snapshot,
     })),
-  ),
-  changes: connections.changes,
-});
+    setups: [],
+  });
+  return {
+    workers: connections.current.pipe(Effect.map(summary)),
+    changes: connections.states.pipe(Stream.drop(1), Stream.map(summary)),
+  };
+};
 
 /** Resolve once the worker is online — read atomically with subscribing. */
 export const waitOnline = (connections: WorkerConnectionsShape) =>

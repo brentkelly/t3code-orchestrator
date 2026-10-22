@@ -93,10 +93,7 @@ const makePlacement = (online: boolean) =>
     ref,
     placement: {
       workers: SubscriptionRef.get(ref),
-      changes: SubscriptionRef.changes(ref).pipe(
-        Stream.drop(1),
-        Stream.map(() => undefined),
-      ),
+      changes: SubscriptionRef.changes(ref).pipe(Stream.drop(1)),
     } satisfies BoardPlacementShape,
   }));
 
@@ -296,6 +293,30 @@ it.effect("back online after the thread died offline: recovered once, as the boo
           yield* setOnline(h, ref, true);
           // Reconcile recovered it, and the held turn-end it already accounted
           // for is not handled a second time.
+          assert.strictEqual(yield* recoveries(h), 1);
+          assert.strictEqual((yield* step(h))?.attempt, 2);
+          assert.strictEqual(yield* spawns(h), 0);
+        }),
+    );
+  }),
+);
+
+it.effect("a drop and reconnect both landing before the supervisor looks is still reconciled", () =>
+  Effect.gen(function* () {
+    const { ref, placement } = yield* makePlacement(true);
+    yield* withGovernor(
+      { board: board(), settings, placement, initialShells: aliveShells() },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          // Out and back with nothing processed between: the thread died in
+          // the gap, and the summary already reads online again.
+          yield* SubscriptionRef.set(ref, workersState(false));
+          yield* Ref.set(h.shells, new Map([[String(threadId), idleThread(String(threadId))]]));
+          yield* SubscriptionRef.set(ref, workersState(true));
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+          yield* h.reactor.drain;
           assert.strictEqual(yield* recoveries(h), 1);
           assert.strictEqual((yield* step(h))?.attempt, 2);
           assert.strictEqual(yield* spawns(h), 0);

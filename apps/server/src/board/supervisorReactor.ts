@@ -1539,6 +1539,11 @@ const make = Effect.gen(function* () {
   /** Each worker's finished out-of-reach stretches, which the timeout sweep
       does not count against a step (`boardOfflineCreditMs`). */
   const offlineIntervals = new Map<BoardWorkerId, Array<BoardOfflineInterval>>();
+  /** Workers the change feed saw out of reach since `syncWorkerReach` last
+      ran, and when it first did. Recorded as each summary arrives, not when
+      the serial queue reaches it, so a worker that drops and comes back before
+      then is still reconciled, and its time away still credited. */
+  const droppedWorkers = new Map<BoardWorkerId, number>();
   /** Signals from a worker not yet reconciled, released after it is. */
   const heldSignals = new Map<BoardWorkerId, Array<ThreadSignal>>();
   /** A held-signal backlog's ceiling. Reconcile reads the truth anyway, so a
@@ -1547,6 +1552,8 @@ const make = Effect.gen(function* () {
   /** Whether a worker's steps are paused: not this server, and not online and
       reconciled. Read off the live summary, so a worker that dropped a moment
       ago pauses before its status change has been processed. */
+  const workerReconciled = (workerId: BoardWorkerId) =>
+    reconciledWorkers.has(workerId) && !droppedWorkers.has(workerId);
   const workerPausedNow = Effect.gen(function* () {
     if (Option.isNone(placement)) return (_workerId: BoardWorkerId) => false;
     const online = new Set(
@@ -1555,8 +1562,7 @@ const make = Effect.gen(function* () {
         .map((worker) => worker.id),
     );
     return (workerId: BoardWorkerId) =>
-      workerId !== BOARD_LOCAL_WORKER_ID &&
-      !(online.has(workerId) && reconciledWorkers.has(workerId));
+      workerId !== BOARD_LOCAL_WORKER_ID && !(online.has(workerId) && workerReconciled(workerId));
   });
 
   // T3O-63: the brief's files a thread on a worker reads from where they were
@@ -8870,6 +8876,15 @@ const make = Effect.gen(function* () {
         .filter((worker) => worker.status.state === "online")
         .map((worker) => worker.id),
     );
+    // Drops the feed saw first, with when it saw them: one already back online
+    // is unreconciled all the same.
+    const dropped = [...droppedWorkers];
+    droppedWorkers.clear();
+    for (const [workerId, at] of dropped) {
+      if (!registered.has(workerId)) continue;
+      reconciledWorkers.delete(workerId);
+      if (!unreachableSince.has(workerId)) unreachableSince.set(workerId, at);
+    }
     for (const workerId of reconciledWorkers) {
       if (!online.has(workerId)) reconciledWorkers.delete(workerId);
     }
@@ -9312,11 +9327,7 @@ const make = Effect.gen(function* () {
       const board = yield* readBoard;
       if ((board.workers ?? []).length === 0) return yield* processThreadSignal(signal);
       const workerId = threadWorkerId(board, signal.threadId);
-      if (
-        workerId === null ||
-        workerId === BOARD_LOCAL_WORKER_ID ||
-        reconciledWorkers.has(workerId)
-      ) {
+      if (workerId === null || workerId === BOARD_LOCAL_WORKER_ID || workerReconciled(workerId)) {
         return yield* processThreadSignal(signal);
       }
       if (!(board.workers ?? []).some((worker) => worker.id === workerId)) return;
@@ -9677,7 +9688,17 @@ const make = Effect.gen(function* () {
     // start a card held for its worker. Absent on a local-only harness.
     if (Option.isSome(placement)) {
       yield* forkParked(
-        Stream.runForEach(placement.value.changes, () => worker.enqueue({ source: "workers" })),
+        Stream.runForEach(placement.value.changes, (summary) =>
+          Effect.gen(function* () {
+            const at = Date.parse(yield* nowIso);
+            for (const view of summary.workers) {
+              if (view.status.state !== "online" && !droppedWorkers.has(view.id)) {
+                droppedWorkers.set(view.id, at);
+              }
+            }
+            yield* worker.enqueue({ source: "workers" });
+          }),
+        ),
       );
     }
     // The server restarts mid-step: reconcile persisted step state, serialised

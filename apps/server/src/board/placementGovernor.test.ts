@@ -105,10 +105,7 @@ const makePlacement = (initial: BoardWorkersState) =>
     ref,
     placement: {
       workers: SubscriptionRef.get(ref),
-      changes: SubscriptionRef.changes(ref).pipe(
-        Stream.drop(1),
-        Stream.map(() => undefined),
-      ),
+      changes: SubscriptionRef.changes(ref).pipe(Stream.drop(1)),
     } satisfies BoardPlacementShape,
   }));
 
