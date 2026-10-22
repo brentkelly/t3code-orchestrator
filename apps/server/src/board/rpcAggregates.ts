@@ -5,25 +5,29 @@
  */
 import {
   BOARD_WORKER_GATEWAY_WS_METHODS,
+  BOARD_WORKER_GIT_WS_METHODS,
   BOARD_WORKER_WS_METHODS,
   BOARD_WORKERS_WS_METHODS,
   BOARD_WS_METHODS,
 } from "@t3tools/contracts";
 
 // T3O-62: worker management and the worker-side handshake are board RPCs too.
-// T3O-63: so are the worker's thread gateway, the MCP relay and staging.
+// T3O-63: so are the worker's thread gateway, the MCP relay and staging, and
+// T3O-64: the git operations a card's worker runs.
 const BOARD_METHOD_MAPS = [
   BOARD_WS_METHODS,
   BOARD_WORKERS_WS_METHODS,
   BOARD_WORKER_WS_METHODS,
   BOARD_WORKER_GATEWAY_WS_METHODS,
+  BOARD_WORKER_GIT_WS_METHODS,
 ];
 
 type BoardWsMethod =
   | (typeof BOARD_WS_METHODS)[keyof typeof BOARD_WS_METHODS]
   | (typeof BOARD_WORKERS_WS_METHODS)[keyof typeof BOARD_WORKERS_WS_METHODS]
   | (typeof BOARD_WORKER_WS_METHODS)[keyof typeof BOARD_WORKER_WS_METHODS]
-  | (typeof BOARD_WORKER_GATEWAY_WS_METHODS)[keyof typeof BOARD_WORKER_GATEWAY_WS_METHODS];
+  | (typeof BOARD_WORKER_GATEWAY_WS_METHODS)[keyof typeof BOARD_WORKER_GATEWAY_WS_METHODS]
+  | (typeof BOARD_WORKER_GIT_WS_METHODS)[keyof typeof BOARD_WORKER_GIT_WS_METHODS];
 
 export const BOARD_RPC_AGGREGATES = Object.fromEntries(
   BOARD_METHOD_MAPS.flatMap((methods) => Object.values(methods)).map((method) => [method, "board"]),

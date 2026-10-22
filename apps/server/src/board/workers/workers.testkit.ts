@@ -74,6 +74,9 @@ export interface FakeWorker {
   /** What the worker's thread gateway answers (T3O-63): an in-process
       worker's own host, or a worker that has none. */
   gateway: WorkerGatewayRpc;
+  /** How the worker answers `boardWorker.git.*`; by default it has no such
+      calls, as a T3o before T3O-64 does not. */
+  git: WorkerRpc["git"];
 }
 
 /** A worker without the T3O-63 gateway: every call is unsupported. */
@@ -198,6 +201,13 @@ export const makeFakeWorkers = Effect.sync(() => {
         sessionExpiry: new Map(),
         link: null,
         gateway: unsupportedGateway,
+        git: () =>
+          Effect.fail(
+            new WorkerRpcError({
+              message: "The worker doesn't support this board call.",
+              unsupported: true,
+            }),
+          ),
       };
       workers.set(url, worker);
       return worker;
@@ -273,6 +283,7 @@ export const makeFakeWorkers = Effect.sync(() => {
           worker.cloneRetries.push(projectId);
           return worker.retryApplied;
         }),
+      git: (method, payload) => Effect.suspend(() => worker.git(method, payload)),
       // Ends with a failure when the link drops, as a real subscription does.
       // The gateway lives as long as the link: a dropped link ends its
       // streams with a failure and fails its calls, as a real socket does.

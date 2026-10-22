@@ -21,6 +21,11 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION,
   WS_METHODS,
   WsRpcGroup,
+  BoardWorkerGitError,
+  EnvironmentAuthorizationError,
+  type BoardWorkerGitMethod,
+  type BoardWorkerGitPayload,
+  type BoardWorkerGitSuccess,
   type BoardWorkerHello,
   type BoardWorkerProjects,
   type BoardWorkerProviders,
@@ -81,6 +86,12 @@ export interface WorkerRpc {
   /** The worker's own threads, its signals, the MCP relay and attachment
       staging (T3O-63). */
   readonly gateway: WorkerGatewayRpc;
+  /** One named board git or forge operation, run on the worker (T3O-64, D21).
+      A refusal carries the worker's `BoardWorkerGitError` as its `cause`. */
+  readonly git: <Method extends BoardWorkerGitMethod>(
+    method: Method,
+    payload: BoardWorkerGitPayload<Method>,
+  ) => Effect.Effect<BoardWorkerGitSuccess<Method>, WorkerRpcError>;
 }
 
 export interface WorkerLink {
@@ -257,6 +268,18 @@ const connectWorker = ({
           "The worker couldn't retry the clone.",
         ),
       gateway: makeLiveGatewayRpc(client),
+      git: (method, payload) =>
+        call(
+          (
+            client[method] as unknown as (
+              payload: unknown,
+            ) => Effect.Effect<
+              BoardWorkerGitSuccess<typeof method>,
+              BoardWorkerGitError | EnvironmentAuthorizationError
+            >
+          )(payload),
+          "The worker couldn't run the board's git operation.",
+        ),
       projectClones: client[WS_METHODS.subscribeProjectClones]({}).pipe(
         Stream.mapError(
           (cause) =>
