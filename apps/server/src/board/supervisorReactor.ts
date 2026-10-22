@@ -286,21 +286,21 @@ const isThreadCommandFailed = Schema.is(ThreadCommandFailedError);
  * What a failed spawn left behind (T3O-66, D22), read off the remote
  * gateway's cause:
  *
- * - `none`: refused, failed where the board could see it fail, failed before
- *   the spawn call was sent (staging the card's files), or a worker without
- *   the call at all. No thread is left (the gateway deletes one whose first
- *   turn never started).
+ * - `none`: refused, failed where the board could see it fail, or failed
+ *   before the spawn call was sent (staging the card's files). No thread is
+ *   left (the gateway deletes one whose first turn never started).
  * - `worker-offline`: the worker couldn't be reached, so nothing was sent.
- * - `unknown`: the connection went mid-call. The worker may well have
- *   created the thread, so it must not be read as "no thread".
+ * - `unknown`: any `WorkerRpcError` on the spawn call itself. The connection
+ *   went mid-call, or the worker died partway through (a defect, which the
+ *   transport marks `unsupported`; an online worker is past the protocol
+ *   floor, so it does have the call). Either way the worker may have created
+ *   the thread, so it must not be read as "no thread".
  */
 const spawnFailureLeft = (cause: Cause.Cause<unknown>) => {
   const error = Cause.findErrorOption(cause).pipe(Option.getOrUndefined);
   const reason = isThreadCommandFailed(error) ? error.cause : undefined;
   if (Predicate.isTagged(reason, "WorkerUnavailable")) return "worker-offline" as const;
-  if (reason instanceof WorkerRpcError && reason.unsupported !== true) {
-    return "unknown" as const;
-  }
+  if (reason instanceof WorkerRpcError) return "unknown" as const;
   return "none" as const;
 };
 

@@ -12,6 +12,7 @@
 import {
   BOARD_LOCAL_WORKER_ID,
   BoardCardId,
+  BoardWorkerGatewayError,
   boardCardStepState,
   EnvironmentId,
   ProjectId,
@@ -853,7 +854,21 @@ const pendingStep = () =>
   runningStep({ status: "pending", threadId: null, slotHeld: false, startedAt: null });
 const unlinkedCard = (): BoardCard => ({ ...placedCard(), threadLinks: [] });
 
-it.effect("a spawn whose connection drops after the worker took it is run, not stalled", () =>
+it.effect.each([
+  {
+    name: "a spawn whose connection drops after the worker took it",
+    cause: new WorkerRpcError({ message: "The connection to the worker went." }),
+  },
+  {
+    // An online worker is past the protocol floor, so it has the call: a
+    // defect here is the worker dying partway through, not a missing method.
+    name: "a spawn the worker died partway through",
+    cause: new WorkerRpcError({
+      message: "The worker doesn't support this board call.",
+      unsupported: true,
+    }),
+  },
+])("$name is run, not stalled", ({ cause }) =>
   Effect.gen(function* () {
     const { ref, placement } = yield* makePlacement(true);
     yield* withGovernor(
@@ -871,8 +886,8 @@ it.effect("a spawn whose connection drops after the worker took it is run, not s
                   new ThreadCommandFailedError({
                     command: "spawn",
                     threadId: input.threadId,
-                    detail: "The connection to the worker went.",
-                    cause: new WorkerRpcError({ message: "The connection to the worker went." }),
+                    detail: cause.message,
+                    cause,
                   }),
                 ),
               ),
@@ -929,12 +944,17 @@ const failedSpawnBoard = (cause: unknown) =>
 
 it.effect.each([
   {
-    name: "a worker without the spawn call",
-    cause: new WorkerRpcError({ message: "unsupported", unsupported: true }),
-  },
-  {
     name: "a spawn whose card files never reached the worker",
     cause: new CardFilesNotStaged({ cause: new WorkerRpcError({ message: "gone" }) }),
+  },
+  {
+    name: "a spawn the worker refused",
+    cause: new BoardWorkerGatewayError({
+      kind: "failed",
+      operation: "spawn",
+      threadId: null,
+      detail: "refused",
+    }),
   },
 ])("$name leaves no thread: the step stalls, nothing is linked", ({ cause }) =>
   Effect.gen(function* () {
