@@ -2324,7 +2324,12 @@ const make = Effect.gen(function* () {
       // step's provider instance. Ahead of the plan branch: a planning thread
       // needs the checkout as much as a build does.
       const placed = yield* placementFor(board, card, state);
-      if (placed.gate.kind === "offline") continue;
+      if (placed.gate.kind === "offline") {
+        // Held, saying so (T3O-66): the card wears Worker offline until its
+        // worker is back.
+        yield* holdQueued(state, "worker-offline");
+        continue;
+      }
       if (placed.gate.kind === "no-checkout") {
         yield* holdQueued(state, "setup");
         continue;
@@ -8684,8 +8689,8 @@ const make = Effect.gen(function* () {
    * Reconcile one live step against its thread (t3o-10): the boot pass's body,
    * and a worker's when it comes back (T3O-66). `restoreSlot` is the boot
    * pass's — its in-memory counts start empty — while a worker coming back
-   * still holds the slots its steps never gave up. Whether the step advanced,
-   * so the caller re-derives the next stage's kickoff.
+   * still holds the slots its steps never gave up. Returns the decision, so
+   * the caller re-derives an advanced card's kickoff.
    */
   const reconcileStep = Effect.fn("board-supervisor-reconcileStep")(function* (input: {
     readonly board: BoardState;
@@ -8743,7 +8748,7 @@ const make = Effect.gen(function* () {
         // stage, or resume the next round-scoped step of a multi-step loop
         // whose phase settled during downtime (t3o-16).
         yield* continueStage({ card, state });
-        return true;
+        break;
       case "recover":
         yield* recoverStep({ card, state });
         break;
@@ -8770,7 +8775,7 @@ const make = Effect.gen(function* () {
         // the live turn-completion path catch its settlement.
         break;
     }
-    return false;
+    return decision.kind;
   });
 
   /**
@@ -8800,8 +8805,10 @@ const make = Effect.gen(function* () {
    * Reconcile the steps placed on one worker, as it comes back (T3O-66, D22):
    * the boot pass, scoped to that worker, run before any of its held signals.
    * Threads match by id, so a thread still alive there is watched, never
-   * respawned. False when a step's thread could not be read — the worker went
-   * again — so the caller tries again rather than treat it as reconciled.
+   * respawned. Null when a step's thread could not be read — the worker went
+   * again — so the caller tries again rather than treat it as reconciled;
+   * otherwise the threads whose steps it settled, recovered or parked, whose
+   * held signals it has already accounted for.
    */
   const reconcileWorker = Effect.fn("board-supervisor-reconcileWorker")(function* (
     workerId: BoardWorkerId,
@@ -8809,6 +8816,7 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     let whole = true;
     const advanced: BoardCard["id"][] = [];
+    const decidedThreads = new Set<string>();
     for (const state of boardNonTerminalStepStates(board)) {
       if (slotKeyFor(board, state).workerId !== workerId) continue;
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
@@ -8822,21 +8830,31 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.as(null)),
         ),
       );
-      if (result === null) whole = false;
-      else if (result) advanced.push(card.id);
+      if (result === null) {
+        whole = false;
+        continue;
+      }
+      if (result === "advance") advanced.push(card.id);
+      // What the reconcile read is newer than anything held for that thread.
+      if (
+        state.threadId !== null &&
+        (result === "advance" || result === "recover" || result === "park")
+      ) {
+        decidedThreads.add(String(state.threadId));
+      }
     }
     yield* kickoffAdvanced(advanced);
-    return whole;
+    return whole ? decidedThreads : null;
   });
 
   /**
    * Bring what the supervisor knows of each worker's reach up to date (T3O-66,
    * D22). A worker that dropped is unreconciled again, and its time out of
    * reach starts; one that is back online is reconciled first, then its held
-   * signals are released — already deduped by sequence on the feed, and each
-   * handler ignores what the reconcile already settled — and its time out of
-   * reach becomes an interval the timeout sweep does not count. The caller
-   * schedules afterwards.
+   * signals are released — already deduped by sequence on the feed, and those
+   * for a thread the reconcile just decided on are dropped, so nothing is
+   * handled twice — and its time out of reach becomes an interval the timeout
+   * sweep does not count. The caller schedules afterwards.
    */
   const syncWorkerReach = Effect.gen(function* () {
     if (Option.isNone(placement)) return;
@@ -8862,7 +8880,8 @@ const make = Effect.gen(function* () {
     }
     for (const workerId of online) {
       if (reconciledWorkers.has(workerId)) continue;
-      if (!(yield* reconcileWorker(workerId))) continue;
+      const decidedThreads = yield* reconcileWorker(workerId);
+      if (decidedThreads === null) continue;
       const since = unreachableSince.get(workerId);
       if (since !== undefined) {
         offlineIntervals.set(workerId, [
@@ -8875,6 +8894,7 @@ const make = Effect.gen(function* () {
       const held = heldSignals.get(workerId) ?? [];
       heldSignals.delete(workerId);
       for (const signal of held) {
+        if (decidedThreads.has(String(signal.threadId))) continue;
         yield* processThreadSignal(signal).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("board supervisor: a held signal failed", {
@@ -8940,7 +8960,8 @@ const make = Effect.gen(function* () {
         if (state.slotHeld) yield* slots.restore(slotKeyFor(board, state));
         continue;
       }
-      if (yield* reconcileStep({ board, card, state, restoreSlot: true })) advanced.push(card.id);
+      const decided = yield* reconcileStep({ board, card, state, restoreSlot: true });
+      if (decided === "advance") advanced.push(card.id);
     }
     // Every worker online now, reconciled before anything else acts on it.
     yield* syncWorkerReach;

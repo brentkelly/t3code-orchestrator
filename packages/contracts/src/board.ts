@@ -1764,8 +1764,16 @@ export function boardStepParkedReason(
 }
 
 /** The limit that holds a queued step (T3O-65, D11). The narrowest that is
-    full is named, since only a slot freeing there starts the card. */
-export const BoardStepQueuedBy = Schema.Literals(["board", "worker", "provider", "setup"]);
+    full is named, since only a slot freeing there starts the card.
+    `worker-offline` (T3O-66) is no limit at all: the card's worker is out of
+    reach, and the card shows Worker offline until it is back. */
+export const BoardStepQueuedBy = Schema.Literals([
+  "board",
+  "worker",
+  "provider",
+  "setup",
+  "worker-offline",
+]);
 export type BoardStepQueuedBy = typeof BoardStepQueuedBy.Type;
 
 export const BoardCardStepState = Schema.Struct({

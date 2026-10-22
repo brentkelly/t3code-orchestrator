@@ -49,7 +49,7 @@ export interface BoardConcurrencyLimit {
     since only a slot freeing there lets the step start. */
 export type BoardSlotAdmission =
   | { readonly admitted: true }
-  | { readonly admitted: false; readonly blockedBy: Exclude<BoardStepQueuedBy, "setup"> };
+  | { readonly admitted: false; readonly blockedBy: Exclude<BoardStepQueuedBy, "setup" | "worker-offline"> };
 
 export interface BoardStepSlotsShape {
   /**
