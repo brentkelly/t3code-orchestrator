@@ -260,6 +260,13 @@ export interface BoardWorkspacesShape {
    * `deleteCardBranch`, which names no path for `ownsWorktreePath` to check.
    */
   readonly centralMayDeleteBranch: (projectId: ProjectId, branch: string) => Effect.Effect<boolean>;
+  /**
+   * Whether a central server may build on `branch` here: not a branch on this
+   * server's own board's cards. Both boards name branches `board/<key>`, so a
+   * central card could otherwise attach to the worker board's card's commits.
+   * The worker asks it before provisioning a central card's worktree.
+   */
+  readonly centralMayUseBranch: (branch: string) => Effect.Effect<boolean>;
   /** The workspace a card's git and forge work runs in, bound to its checkout. */
   readonly forCard: (
     card: Pick<BoardCard, "id" | "projectId">,

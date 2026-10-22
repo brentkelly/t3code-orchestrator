@@ -134,14 +134,17 @@ export function makeBoardWorkspaces(
       return !exists;
     });
 
+  const centralMayUseBranch: BoardWorkspacesShape["centralMayUseBranch"] = (branch) =>
+    options.ownBoardBranches === undefined
+      ? Effect.succeed(true)
+      : options.ownBoardBranches.pipe(Effect.map((own) => !own.has(branch)));
+
   const centralMayDeleteBranch: BoardWorkspacesShape["centralMayDeleteBranch"] = (
     projectId,
     branch,
   ) =>
     Effect.gen(function* () {
-      if (options.ownBoardBranches !== undefined) {
-        if ((yield* options.ownBoardBranches).has(branch)) return false;
-      }
+      if (!(yield* centralMayUseBranch(branch))) return false;
       const cwd = yield* deps.projectRoot(projectId);
       if (cwd === null) return false;
       const listed = yield* deps.git
@@ -178,6 +181,7 @@ export function makeBoardWorkspaces(
     forCentral,
     ownsWorktreePath,
     centralMayDeleteBranch,
+    centralMayUseBranch,
     forCard,
     localProject,
     forWorker,

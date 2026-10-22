@@ -816,6 +816,34 @@ describe("the worker side of the named operations (T3O-64)", () => {
       }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
+  it.effect("refuses to build a central card on a branch of the worker's own board", () =>
+    Effect.gen(function* () {
+      const env = yield* makeEnv("own-branch");
+      const workspaces = yield* workspacesOver(env.checkout, undefined, true, ["board/K-1"]);
+      const central = remoteOver(makeInProcessWorker(workspaces));
+      // Both boards name branches `board/<key>`. The worker board's card has
+      // commits on its branch and no checkout holds it right now.
+      yield* git(env.checkout, ["branch", "board/K-1", "main"]);
+      yield* git(env.checkout, ["push", "origin", "board/K-1"]);
+      const tip = yield* git(env.checkout, ["rev-parse", "board/K-1"]);
+      for (const provision of [
+        central.provisionWorktree({ projectId, branch: "board/K-1", baseRefName: "main" }),
+        central.provisionWorktreeFromRemoteBranch({
+          projectId,
+          branch: "board/K-1",
+          baseRefName: "main",
+        }),
+      ]) {
+        const refused = yield* Effect.flip(provision);
+        assert.strictEqual(refused._tag, "BoardWorkerGitError");
+        assert.include(detailOf(refused), "own board");
+      }
+      assert.strictEqual(yield* git(env.checkout, ["rev-parse", "board/K-1"]), tip);
+      const listed = yield* central.listBoardWorktrees({ projectId });
+      assert.deepStrictEqual(listed.worktrees, []);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
   it.effect("a worker's own board and the central board each sweep only their own checkouts", () =>
     Effect.gen(function* () {
       const env = yield* makeEnv("owners");
