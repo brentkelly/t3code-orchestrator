@@ -413,7 +413,10 @@ export const makeBoardCardMover = Effect.gen(function* () {
   // mover is built was cut off by a restart and nothing will ever finish it.
   // Close it here, before any RPC can start a new one: a card still holding
   // its worktree just stays where it was, and one already retired gets Move
-  // failed with Retry, its branch safe on the remote.
+  // failed with Retry, its branch safe on the remote. One gap remains: a
+  // restart after `retireWorktree` succeeded but before `retired` was
+  // recorded leaves the card holding a path that no longer exists; nothing
+  // here probes for that.
   for (const card of (yield* readBoard).cards) {
     if (card.workerMove?.status !== "moving") continue;
     yield* record(
