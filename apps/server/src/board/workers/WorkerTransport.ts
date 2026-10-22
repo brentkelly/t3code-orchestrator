@@ -21,8 +21,7 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION,
   WS_METHODS,
   WsRpcGroup,
-  BoardWorkerGitError,
-  EnvironmentAuthorizationError,
+  BOARD_WORKER_GIT_CALL_WS_METHODS,
   type BoardWorkerGitMethod,
   type BoardWorkerGitPayload,
   type BoardWorkerGitSuccess,
@@ -50,6 +49,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 import { RpcClient, RpcClientError, RpcSerialization } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
 
+import { decodeGitSuccess, encodeGitPayload } from "../workspace/gitWire.ts";
 import { decodeGatewayCallResult, type WorkerGatewayRpc } from "./gatewayWire.ts";
 
 /** A worker RPC failed: refused, or the connection went. `unsupported` is a
@@ -270,14 +270,12 @@ const connectWorker = ({
       gateway: makeLiveGatewayRpc(client),
       git: (method, payload) =>
         call(
-          (
-            client[method] as unknown as (
-              payload: unknown,
-            ) => Effect.Effect<
-              BoardWorkerGitSuccess<typeof method>,
-              BoardWorkerGitError | EnvironmentAuthorizationError
-            >
-          )(payload),
+          encodeGitPayload(method, payload).pipe(
+            Effect.flatMap((encoded) =>
+              client[BOARD_WORKER_GIT_CALL_WS_METHODS.call]({ method, payload: encoded }),
+            ),
+            Effect.flatMap((answer) => decodeGitSuccess(method, answer)),
+          ),
           "The worker couldn't run the board's git operation.",
         ),
       projectClones: client[WS_METHODS.subscribeProjectClones]({}).pipe(

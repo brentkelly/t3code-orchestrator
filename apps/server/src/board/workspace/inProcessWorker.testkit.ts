@@ -2,7 +2,7 @@
  * T3o (T3O-64): an in-process worker for the workspace suites.
  *
  * `inProcessWorkerGit` answers `WorkerRpc["git"]` by running the worker's
- * real `boardWorker.git.*` handlers against a `BoardWorkspacesShape` of the
+ * real `boardWorker.git.call` handler against a `BoardWorkspacesShape` of the
  * test's choosing, and round-trips every payload, answer and error through the
  * RPC's own schemas — so a remote workspace under test sees exactly what
  * would have crossed the wire. A refusal arrives as the transport delivers
@@ -14,9 +14,8 @@ import {
   AuthOrchestrationReadScope,
   AuthSessionId,
   AuthSourceControlWriteScope,
-  BOARD_WORKER_GIT_RPCS,
-  type BoardWorkerGitError,
-  type EnvironmentAuthorizationError,
+  BOARD_WORKER_GIT_CALL_RPCS,
+  BOARD_WORKER_GIT_CALL_WS_METHODS,
   EnvironmentId,
   type BoardWorkerGitMethod,
 } from "@t3tools/contracts";
@@ -28,7 +27,8 @@ import { WorkerUnavailable } from "../workers/WorkerConnections.ts";
 import { WorkerRpcError, type WorkerRpc } from "../workers/WorkerTransport.ts";
 import type { BoardWorkspacesShape } from "./BoardWorkspace.ts";
 import { makeRemoteBoardWorkspace } from "./RemoteBoardWorkspace.ts";
-import { boardWorkerGitRpcHandlers } from "./workerGitRpc.ts";
+import { decodeGitSuccess, encodeGitPayload } from "./gitWire.ts";
+import { boardWorkerGitCallRpcHandlers } from "./workerGitRpc.ts";
 
 export const TEST_WORKER_ID = EnvironmentId.make("env-test-worker");
 
@@ -71,32 +71,31 @@ export function makeInProcessWorker(
   workspaces: BoardWorkspacesShape,
   session: AuthenticatedSession = boardSession(),
 ): InProcessWorker {
-  const handlers = boardWorkerGitRpcHandlers(session, workspaces) as unknown as Record<
-    string,
-    (
-      payload: unknown,
-    ) => Effect.Effect<unknown, BoardWorkerGitError | EnvironmentAuthorizationError>
-  >;
+  const handle = boardWorkerGitCallRpcHandlers(session, workspaces)[
+    BOARD_WORKER_GIT_CALL_WS_METHODS.call
+  ];
+  const [callRpc] = BOARD_WORKER_GIT_CALL_RPCS;
   const worker: InProcessWorker = {
     calls: [],
     reachable: true,
     dropOn: new Set(),
-    git: ((method: BoardWorkerGitMethod, payload: unknown) =>
+    git: ((method: BoardWorkerGitMethod, payload: never) =>
       Effect.gen(function* () {
-        const rpc = BOARD_WORKER_GIT_RPCS.find((candidate) => candidate._tag === method)!;
         worker.calls.push(method);
         if (worker.dropOn.has(method)) {
           return yield* new WorkerRpcError({ message: "The connection dropped." });
         }
-        const sent = yield* roundTrip(rpc.payloadSchema, payload);
-        const answer = yield* Effect.exit(handlers[method]!(sent));
+        const encoded = yield* encodeGitPayload(method, payload).pipe(Effect.orDie);
+        const sent = yield* roundTrip(callRpc.payloadSchema, { method, payload: encoded });
+        const answer = yield* Effect.exit(handle(sent));
         if (answer._tag === "Failure") {
           const error = answer.cause.reasons.find((reason) => reason._tag === "Fail");
           if (error === undefined) return yield* Effect.die(answer.cause);
-          const delivered = yield* roundTrip(rpc.errorSchema, error.error);
+          const delivered = yield* roundTrip(callRpc.errorSchema, error.error);
           return yield* new WorkerRpcError({ message: "refused", cause: delivered });
         }
-        return yield* roundTrip(rpc.successSchema, answer.value);
+        const received = yield* roundTrip(callRpc.successSchema, answer.value);
+        return yield* decodeGitSuccess(method, received).pipe(Effect.orDie);
       })) as WorkerRpc["git"],
   };
   return worker;

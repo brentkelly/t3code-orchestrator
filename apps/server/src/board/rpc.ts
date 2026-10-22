@@ -77,7 +77,7 @@ import { BoardWorkers } from "./workers/BoardWorkers.ts";
 import { workerGatewayRpcHandlers } from "./workers/workerGatewayRpc.ts";
 import { boardWorkerRpcHandlers } from "./workers/workerRpc.ts";
 import { BoardWorkspaces, type BoardWorkspacesShape } from "./workspace/BoardWorkspace.ts";
-import { boardWorkerGitRpcHandlers } from "./workspace/workerGitRpc.ts";
+import { boardWorkerGitCallRpcHandlers } from "./workspace/workerGitRpc.ts";
 
 export interface BoardRpcHandlerDeps {
   readonly currentSession: AuthenticatedSession;
@@ -121,7 +121,7 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
       ...workerGatewayRpcHandlers(deps.currentSession),
       // T3O-64: the named git and forge operations, for a central server
       // whose cards run here.
-      ...boardWorkerGitRpcHandlers(deps.currentSession, workspaces),
+      ...boardWorkerGitCallRpcHandlers(deps.currentSession, workspaces),
     };
   });
 
