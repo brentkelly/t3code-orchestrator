@@ -36,6 +36,7 @@ import {
   readyWorktree,
   settingsWith,
   turnCompleted,
+  userInputRequested,
   withGovernor,
   type Harness,
 } from "./supervisorHarness.testkit.ts";
@@ -201,6 +202,23 @@ const recoveries = (h: Harness) =>
           command.type === "board.card.recover-step" && command.stalledReason !== "worker-removed",
       ).length,
   );
+
+/** Put a card into the model as the projection would, before its event. */
+const setCard = (h: Harness, card: BoardCard) =>
+  Ref.update(h.model, (model) => ({
+    ...model,
+    board: {
+      ...model.board!,
+      cards: model.board!.cards.map((candidate) => (candidate.id === card.id ? card : candidate)),
+    },
+  }));
+
+const moveRecorded = (card: BoardCard, step: unknown, sequence: number) =>
+  ({
+    type: "board.card-worker-move-recorded",
+    sequence,
+    payload: { cardId: card.id, step, move: card.workerMove, card },
+  }) as never;
 
 const settings = settingsWith({ building: [codexStep], globalMaxConcurrent: 3 });
 
@@ -410,3 +428,150 @@ it.effect("removing the worker stalls its running step and frees the slot", () =
     );
   }),
 );
+
+it.effect("a signal held while offline, that reconcile didn't decide on, is released after it", () =>
+  Effect.gen(function* () {
+    const { ref, placement } = yield* makePlacement(true);
+    yield* withGovernor(
+      { board: board(), settings, placement, initialShells: aliveShells() },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          yield* setOnline(h, ref, false);
+          // The agent asked a question while the board couldn't see it.
+          yield* Ref.set(
+            h.shells,
+            new Map([
+              [String(threadId), aliveThread(String(threadId), { awaitingUserInput: true })],
+            ]),
+          );
+          yield* h.pumpRuntime(userInputRequested(threadId));
+          assert.strictEqual((yield* step(h))?.status, "running");
+          yield* setOnline(h, ref, true);
+          // Still alive, so reconcile watched it; the held question then parked it.
+          const parked = yield* step(h);
+          assert.strictEqual(parked?.status, "awaiting-input");
+          assert.strictEqual(yield* spawns(h), 0);
+        }),
+    );
+  }),
+);
+
+/** The card as a removal left it, holding on W1 with its step stalled there. */
+const stalledByRemoval = (): BoardCardStepState =>
+  runningStep({ status: "stalled", stalledReason: "worker-removed", slotHeld: false });
+
+it.effect("re-adding a removed worker resumes the step its removal stalled, on its thread", () =>
+  Effect.gen(function* () {
+    const { placement } = yield* makePlacement(true);
+    yield* withGovernor(
+      {
+        board: board(stalledByRemoval()),
+        settings,
+        placement,
+        initialShells: new Map([[String(threadId), idleThread(String(threadId))]]),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          yield* h.pumpDomain({
+            type: "board.card-worker-removal",
+            sequence: 2,
+            payload: {
+              cardId,
+              workerId: W1,
+              workerLabel: "w1",
+              outcome: "reattached",
+              card: placedCard(),
+            },
+          } as never);
+          const resumed = yield* step(h);
+          assert.strictEqual(resumed?.status, "running");
+          // Its own thread, still on W1: nothing respawned.
+          assert.strictEqual(resumed?.threadId, threadId);
+          assert.strictEqual(yield* spawns(h), 0);
+          const sends = (yield* h.commands).filter((command) => command.type === "thread.send");
+          assert.strictEqual(sends.length, 1);
+          assert.strictEqual(yield* h.slots.heldOnWorker(W1), 1);
+        }),
+    );
+  }),
+);
+
+it.effect("a step still held by its worker's removal is not resumed", () =>
+  Effect.gen(function* () {
+    const { placement } = yield* makePlacement(true);
+    yield* withGovernor(
+      {
+        board: {
+          ...board(stalledByRemoval()),
+          cards: [
+            {
+              ...placedCard(),
+              placementOrphaned: { workerId: W1, workerLabel: "w1", orphanedAt: STARTED },
+            },
+          ],
+        },
+        settings,
+        placement,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          yield* h.reactor.sweep;
+          assert.strictEqual((yield* step(h))?.status, "stalled");
+          assert.strictEqual(yield* spawns(h), 0);
+        }),
+    );
+  }),
+);
+
+it.effect("a force-move strands the step on the offline worker, then runs it where it lands", () =>
+  Effect.gen(function* () {
+    const { placement } = yield* makePlacement(false);
+    yield* withGovernor(
+      { board: board(), settings, placement, initialShells: aliveShells() },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.drain;
+          assert.strictEqual(yield* h.slots.heldOnWorker(W1), 1);
+          // The human force-moved it to this server; the move has started.
+          const moving: BoardCard = {
+            ...placedCard(),
+            workerMove: {
+              fromWorkerId: W1,
+              toWorkerId: BOARD_LOCAL_WORKER_ID,
+              status: "moving",
+              sha: "4e1a9c2",
+              error: null,
+              startedAt: "1970-01-01T00:00:00.000Z",
+            },
+          };
+          yield* setCard(h, moving);
+          yield* h.pumpDomain(moveRecorded(moving, { phase: "start", toWorkerId: BOARD_LOCAL_WORKER_ID, sha: "4e1a9c2", force: true }, 2));
+          const stranded = yield* step(h);
+          assert.strictEqual(stranded?.status, "stalled");
+          assert.strictEqual(stranded?.stalledReason, "worker-removed");
+          assert.strictEqual(yield* h.slots.heldOnWorker(W1), 0);
+          // It lands: a worktree here, from the pushed branch.
+          const landed: BoardCard = {
+            ...placedCard(),
+            pinnedWorkerId: BOARD_LOCAL_WORKER_ID,
+            placedWorkerId: BOARD_LOCAL_WORKER_ID,
+            worktree: { ...readyWorktree("card-1"), path: "/tmp/worktrees/card-1-here" },
+          };
+          yield* setCard(h, landed);
+          yield* h.pumpDomain(moveRecorded(landed, { phase: "done", worktreePath: "/tmp/worktrees/card-1-here" }, 3));
+          // A fresh thread here; the old one stays linked, on W1.
+          const spawned = (yield* h.commands).filter((command) => command.type === "thread.spawn");
+          assert.strictEqual(spawned.length, 1);
+          assert.strictEqual(spawned[0]?.type === "thread.spawn" ? spawned[0].workerId : "?", undefined);
+          const running = yield* step(h);
+          assert.strictEqual(running?.status, "running");
+          assert.notStrictEqual(running?.threadId, threadId);
+          assert.strictEqual(yield* h.slots.heldOnWorker(BOARD_LOCAL_WORKER_ID), 1);
+        }),
+    );
+  }),
+);
+
