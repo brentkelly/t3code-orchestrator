@@ -67,7 +67,10 @@ import {
   BoardWorkersState,
   BoardWorkerSetDefaultCommand,
 } from "./boardWorkers.ts";
-import { BOARD_WORKER_GATEWAY_RPC_SCOPES, BOARD_WORKER_GATEWAY_RPCS } from "./boardWorkerGateway.ts";
+import {
+  BOARD_WORKER_GATEWAY_RPC_SCOPES,
+  BOARD_WORKER_GATEWAY_RPCS,
+} from "./boardWorkerGateway.ts";
 import { BOARD_WORKER_GIT_CALL_RPC_SCOPES, BOARD_WORKER_GIT_CALL_RPCS } from "./boardWorkspace.ts";
 
 export const BoardCardId = TrimmedNonEmptyString.pipe(Schema.brand("BoardCardId"));
@@ -475,7 +478,9 @@ export const BoardCardThreadLink = Schema.Struct({
 export type BoardCardThreadLink = typeof BoardCardThreadLink.Type;
 
 /** The worker a thread link's thread lives on. */
-export function boardThreadLinkWorkerId(link: Pick<BoardCardThreadLink, "workerId">): BoardWorkerId {
+export function boardThreadLinkWorkerId(
+  link: Pick<BoardCardThreadLink, "workerId">,
+): BoardWorkerId {
   return link.workerId ?? BOARD_LOCAL_WORKER_ID;
 }
 
