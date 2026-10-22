@@ -3811,16 +3811,21 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             startedAt: command.createdAt,
             updatedAt: command.createdAt,
           }
-        : {
-            ...current,
-            status: "queued",
-            threadId: null,
-            slotHeld: false,
-            // Which limit holds it (T3O-65); absent keeps plain "Queued".
-            queuedBy: command.queuedBy ?? null,
-            startedAt: null,
-            updatedAt: command.createdAt,
-          };
+        : current.status === "queued"
+          ? // Re-recording which limit holds an already-queued step (T3O-65)
+            // touches only that: a resumed step waits queued on its own
+            // thread, and dropping it would spawn a fresh one on admission.
+            { ...current, queuedBy: command.queuedBy ?? null, updatedAt: command.createdAt }
+          : {
+              ...current,
+              status: "queued",
+              threadId: null,
+              slotHeld: false,
+              // Which limit holds it (T3O-65); absent keeps plain "Queued".
+              queuedBy: command.queuedBy ?? null,
+              startedAt: null,
+              updatedAt: command.createdAt,
+            };
       return {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
