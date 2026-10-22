@@ -1177,6 +1177,25 @@ export function boardCardAutoMergeGaveUp(hold: BoardCardAutoMergeHold | null): b
 export const BoardPlanId = TrimmedNonEmptyString.pipe(Schema.brand("BoardPlanId"));
 export type BoardPlanId = typeof BoardPlanId.Type;
 
+/**
+ * A card moving to another worker (T3O-65, D20), from the moment the human
+ * confirmed the move until the new worktree is ready. Cleared when the move
+ * lands. `failed` stays on the card — the old worktree is already retired, and
+ * the branch is safe on the remote — until a retry or another worker succeeds.
+ */
+export const BoardCardWorkerMove = Schema.Struct({
+  /** Where the card ran; null when a retry starts with no worktree left. */
+  fromWorkerId: Schema.NullOr(BoardWorkerId),
+  toWorkerId: BoardWorkerId,
+  status: Schema.Literals(["moving", "failed"]),
+  /** The remote branch tip the move continues from, when it was read. */
+  sha: Schema.NullOr(TrimmedNonEmptyString),
+  /** Why provisioning on the new worker failed; null while moving. */
+  error: Schema.NullOr(TrimmedNonEmptyString),
+  startedAt: IsoDateTime,
+});
+export type BoardCardWorkerMove = typeof BoardCardWorkerMove.Type;
+
 export const BoardCard = Schema.Struct({
   id: BoardCardId,
   /** Generated `<prefix>-<cardNumber>`, e.g. "T3-195" (D14). */
@@ -1408,6 +1427,24 @@ export const BoardCard = Schema.Struct({
       the guarantee `modelOverrides` makes, with migration 043's
       `auto_merge_hold` column defaulting to NULL to the same end. */
   autoMergeHold: Schema.NullOr(BoardCardAutoMergeHold).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** The worker a human pinned this card to (T3O-65, D20), or null to follow
+      the board's default worker. Set at creation, by `board.card.pin-worker`,
+      and by a completed move. Decodes to null on every event written before
+      the distributed board, matching migration 048's NULL column. */
+  pinnedWorkerId: Schema.NullOr(BoardWorkerId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Where the card's threads last spawned (T3O-65, D20), recorded by
+      `board.card.place`; null for a card that has never run. Binding only while
+      the card holds a worktree (`boardCardHoldsWorktree`) — a card with no
+      checkout follows its pin or the default on its next spawn. */
+  placedWorkerId: Schema.NullOr(BoardWorkerId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** A move to another worker in progress, or one that failed (T3O-65). */
+  workerMove: Schema.NullOr(BoardCardWorkerMove).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
@@ -1662,6 +1699,11 @@ export const BOARD_STEP_STALLED_REASONS = [
   // the reason as the step's `lastError` instead of sitting `pending` with no
   // thread and nothing on the card.
   "no-worktree",
+  // The step's provider instance does not exist on the card's worker (T3O-65,
+  // D10): an instance id names an account on one machine, so the board never
+  // runs the step elsewhere or on another provider. Clears when the card is
+  // pinned to a worker that has it, its model changes, or the instance appears.
+  "provider-not-on-worker",
 ] as const;
 export const BoardCardStepStalledReason = Schema.Literals(BOARD_STEP_STALLED_REASONS);
 export type BoardCardStepStalledReason = typeof BoardCardStepStalledReason.Type;
@@ -1692,6 +1734,11 @@ export function boardStepParkedReason(
   if (state.status === "paused") return "paused";
   return state.status === "awaiting-input" ? state.awaitingReason : null;
 }
+
+/** The limit that holds a queued step (T3O-65, D11). The narrowest that is
+    full is named, since only a slot freeing there starts the card. */
+export const BoardStepQueuedBy = Schema.Literals(["board", "worker", "provider", "setup"]);
+export type BoardStepQueuedBy = typeof BoardStepQueuedBy.Type;
 
 export const BoardCardStepState = Schema.Struct({
   cardId: BoardCardId,
@@ -1911,6 +1958,11 @@ export const BoardCardStepState = Schema.Struct({
    * A DECODING DEFAULT for the same replay reason as `stageLabel`: rows and
    * events written before t3o-33 have no key at all. */
   forceStart: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Which limit is holding a `queued` step (T3O-65, D11): the board's, the
+      worker's, the provider instance's on that worker, or the worker still
+      cloning the project (`setup`). Null when not queued, and on every row
+      written before the distributed board — read as plain "Queued". */
+  queuedBy: Schema.NullOr(BoardStepQueuedBy).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** When the step began running; null while pending/queued. */
   startedAt: Schema.NullOr(IsoDateTime),
   updatedAt: IsoDateTime,
@@ -2043,6 +2095,13 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
       work still running (T3O-20). Repeats collapse on the rail, so a long wait
       reads as one row. */
   "card-step-checked-in",
+  /** A human pinned the card to a worker, or unpinned it (T3O-65). */
+  "card-worker-pinned",
+  /** One step of moving the card to another worker (T3O-65): checked for
+      unpushed work and started, old worktree retired, new one ready, or
+      provisioning failed. The thread list draws its "Moved from" divider at
+      the `done` row. */
+  "card-worker-moved",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -2141,6 +2200,14 @@ export const BoardCardActivityPayload = Schema.Struct({
   hookWarning: Schema.optionalKey(TrimmedNonEmptyString),
   /** card-edited (T3O-53): what an incremental edit changed. */
   ...BoardCardEditSummary.fields,
+  /** card-worker-pinned / card-worker-moved (T3O-65): the workers involved —
+      ids, labelled client-side from the board's worker list. A null pin is
+      "follow the default". */
+  workerId: Schema.optionalKey(Schema.NullOr(BoardWorkerId)),
+  fromWorkerId: Schema.optionalKey(Schema.NullOr(BoardWorkerId)),
+  toWorkerId: Schema.optionalKey(BoardWorkerId),
+  /** card-worker-moved: which step of the move this row records. */
+  movePhase: Schema.optionalKey(Schema.Literals(["start", "retired", "done", "failed"])),
 });
 export type BoardCardActivityPayload = typeof BoardCardActivityPayload.Type;
 
@@ -3224,6 +3291,12 @@ function boardStalledWords(
         detail:
           "The board could not prepare this card's branch. Fix the cause shown on the card, then press Continue.",
       };
+    case "provider-not-on-worker":
+      return {
+        label: "Provider missing",
+        detail:
+          "This step's provider isn't on the card's worker. The step hasn't started. Move the card to a worker that has it, or pick a model the worker offers.",
+      };
   }
 }
 
@@ -3884,6 +3957,9 @@ export const BoardCardCreateCommand = Schema.Struct({
       sibling — a child may only depend on siblings, exactly as materialised
       edges are scoped. Absent creates an ordinary top-level card. */
   parentCardId: Schema.optional(BoardCardId),
+  /** Pin the card to a worker at birth (T3O-65, D20). Absent follows the
+      board's default worker. The decider requires a registered worker. */
+  pinnedWorkerId: Schema.optional(BoardWorkerId),
   createdAt: IsoDateTime,
 });
 export type BoardCardCreateCommand = typeof BoardCardCreateCommand.Type;
@@ -4006,6 +4082,26 @@ export const BoardCardUpdateCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
+
+/**
+ * Pin a card to a worker, or unpin it to follow the default (T3O-65, D20).
+ * From the card's Worker field, the RPC and the MCP toolkit.
+ *
+ * Re-pins at once on a card with no worktree, and its next thread spawns on
+ * the new worker; earlier threads stay linked with the worker they ran on. A
+ * card whose worktree is on another worker is refused — that is a move
+ * (`board.moveCardToWorker`), which checks the work is pushed first. Refused
+ * too while a move is in flight or has failed: the move's own Retry and Pick
+ * another worker are the way out of those.
+ */
+export const BoardCardPinWorkerCommand = Schema.Struct({
+  type: Schema.Literal("board.card.pin-worker"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  workerId: Schema.NullOr(BoardWorkerId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardPinWorkerCommand = typeof BoardCardPinWorkerCommand.Type;
 
 export const BoardCardLinkThreadCommand = Schema.Struct({
   type: Schema.Literal("board.card.link-thread"),
@@ -4465,6 +4561,53 @@ export const BoardCardRecordBaseRefCommand = Schema.Struct({
 });
 export type BoardCardRecordBaseRefCommand = typeof BoardCardRecordBaseRefCommand.Type;
 
+/**
+ * Record where a card's thread spawned (T3O-65, D20): its first spawn, or a
+ * later one after the card lost its checkout and followed its pin or the
+ * default somewhere new. Internal — dispatched by the supervisor at spawn and
+ * at provisioning, never by a client. Refused for a card that holds a worktree
+ * on another worker: only a move changes that.
+ */
+export const BoardCardPlaceCommand = Schema.Struct({
+  type: Schema.Literal("board.card.place"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  workerId: BoardWorkerId,
+  createdAt: IsoDateTime,
+});
+export type BoardCardPlaceCommand = typeof BoardCardPlaceCommand.Type;
+
+/**
+ * One step of moving a card to another worker (T3O-65, D20). Internal: the
+ * `board.moveCardToWorker` RPC dispatches each step as the git work behind it
+ * lands, so the card and its activity rail follow the move as it happens.
+ *
+ * - `start` — the source was checked and nothing is unpushed; the card shows
+ *   Moving. Refused while a step is running or another move is in flight.
+ * - `retired` — the old worktree is gone; the card is unassigned.
+ * - `done` — the new worktree is ready on `toWorkerId`, which becomes the
+ *   card's pin and placement.
+ * - `failed` — provisioning failed; the card shows Move failed. The retired
+ *   worktree is not restored: its branch is safe on the remote.
+ */
+export const BoardCardMoveWorkerCommand = Schema.Struct({
+  type: Schema.Literal("board.card.move-worker"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  step: Schema.Union([
+    Schema.Struct({
+      phase: Schema.Literal("start"),
+      toWorkerId: BoardWorkerId,
+      sha: Schema.NullOr(TrimmedNonEmptyString),
+    }),
+    Schema.Struct({ phase: Schema.Literal("retired") }),
+    Schema.Struct({ phase: Schema.Literal("done"), worktreePath: TrimmedNonEmptyString }),
+    Schema.Struct({ phase: Schema.Literal("failed"), error: TrimmedNonEmptyString }),
+  ]),
+  createdAt: IsoDateTime,
+});
+export type BoardCardMoveWorkerCommand = typeof BoardCardMoveWorkerCommand.Type;
+
 export const BoardCardFailWorktreeCommand = Schema.Struct({
   type: Schema.Literal("board.card.fail-worktree"),
   commandId: CommandId,
@@ -4677,6 +4820,9 @@ export const BoardCardAdmitStepCommand = Schema.Struct({
   admitted: Schema.Boolean,
   /** The spawned step thread; null when `admitted` is false (queued). */
   threadId: Schema.NullOr(ThreadId),
+  /** Why a refused step is queued (T3O-65). Re-sent on a step already queued
+      only when the binding limit changed. */
+  queuedBy: Schema.optional(BoardStepQueuedBy),
   createdAt: IsoDateTime,
 });
 export type BoardCardAdmitStepCommand = typeof BoardCardAdmitStepCommand.Type;
@@ -5010,6 +5156,10 @@ export const BoardCardCreatedPayload = Schema.Struct({
       the same null migration 038's column defaults to, so replay equals
       rehydration. */
   scheduledStartAt: Schema.optionalKey(IsoDateTime),
+  /** The worker the card is pinned to at birth (T3O-65, D20) — the create
+      dialog's pick, or a sub-board child copying its parent's pin. Absent
+      follows the default, the same null migration 048's column defaults to. */
+  pinnedWorkerId: Schema.optionalKey(BoardWorkerId),
   /** A child arrives with its plan's BODY as its brief — but the decider has
       no SQL client and bodies never ride the read model (D8), so the created
       payload carries this pointer instead of the text and the SQL projector
@@ -5389,6 +5539,34 @@ export const BoardCardBaseRefRecordedPayload = Schema.Struct({
   card: BoardCard,
 });
 export type BoardCardBaseRefRecordedPayload = typeof BoardCardBaseRefRecordedPayload.Type;
+
+/** A card was pinned to a worker, or unpinned (T3O-65). `card` carries the
+    new pin, and the cleared placement when it had no worktree. */
+export const BoardCardWorkerPinnedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  workerId: Schema.NullOr(BoardWorkerId),
+  card: BoardCard,
+});
+export type BoardCardWorkerPinnedPayload = typeof BoardCardWorkerPinnedPayload.Type;
+
+/** Where a card's thread spawned (T3O-65). */
+export const BoardCardPlacedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  workerId: BoardWorkerId,
+  card: BoardCard,
+});
+export type BoardCardPlacedPayload = typeof BoardCardPlacedPayload.Type;
+
+/** One step of a move to another worker (T3O-65), with the card after it. */
+export const BoardCardWorkerMoveRecordedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  step: BoardCardMoveWorkerCommand.fields.step,
+  /** The move as it stood when this step landed — still set after `done`
+      cleared it from the card, so the rail can name both workers. */
+  move: BoardCardWorkerMove,
+  card: BoardCard,
+});
+export type BoardCardWorkerMoveRecordedPayload = typeof BoardCardWorkerMoveRecordedPayload.Type;
 // Worktree lifecycle payloads (t3o-09). Each carries the whole post-change
 // card, like every other non-created board event, so the shell-delta mapping
 // stays a pure function of the event and the projectors upsert exactly what
@@ -6074,6 +6252,25 @@ export const BoardCardShell = Schema.Struct({
       otherwise. On the aggregate like `prNumber`, so both producers carry it;
       `cardMetaShellFields.test.ts` pins the pair. Draws the neutral Draft tag. */
   prDraft: Schema.optionalKey(Schema.Boolean),
+  /** The worker the card is bound to (T3O-65, D20): its pin, or where it holds
+      a worktree. Absent when it follows the default worker, which the client
+      reads off the board's worker summary — so a default change never
+      rewrites a shell, and a local-only board's shell is unchanged. On the
+      card aggregate, so both producers carry it. The label is the client's
+      to look up, like every other worker name. */
+  workerId: Schema.optionalKey(BoardWorkerId),
+  /** A move to another worker in flight or failed (T3O-65): Moving is blue,
+      Move failed amber. On the aggregate, so both producers carry it. */
+  workerMove: Schema.optionalKey(
+    Schema.Struct({
+      status: Schema.Literals(["moving", "failed"]),
+      toWorkerId: BoardWorkerId,
+    }),
+  ),
+  /** Which limit holds a queued card (T3O-65, D11). Present only beside
+      `queued`; rides the snapshot and the `card-queued` delta like `queued`
+      itself, and card deltas preserve the last known value. */
+  queuedBy: Schema.optionalKey(BoardStepQueuedBy),
   // Review summary — counts, never bodies; absent until the post-MVP
   // review pipeline lands, then populated only in the review stage.
   roundCurrent: Schema.optionalKey(NonNegativeInt),
@@ -6379,6 +6576,14 @@ export function makeBoardCardShell(input: {
       trio, so both producers carry it; `cardMetaShellFields.test.ts` pins it. */
   readonly worktreeReady?: boolean | null | undefined;
   readonly worktreeKeptReason?: string | null | undefined;
+  /** The worker the card is bound to, and its move (T3O-65). On the card
+      aggregate, so both producers carry them; omitted when null so a
+      local-only board's shell is byte-identical. */
+  readonly workerId?: BoardWorkerId | null | undefined;
+  readonly workerMove?: Pick<BoardCardWorkerMove, "status" | "toWorkerId"> | null | undefined;
+  /** Which limit holds a queued card (T3O-65). Real on the snapshot, absent
+      on card deltas (the client keeps the last known value). */
+  readonly queuedBy?: BoardStepQueuedBy | null | undefined;
   /** The card's review-loop summary (t3o-22, D7), or null when it has no
       review history. Absent-means-preserve, like the body/plan slices: a
       producer that cannot see the step-completion ledger omits the key rather
@@ -6466,6 +6671,15 @@ export function makeBoardCardShell(input: {
     ...(input.worktreeReady === true && input.worktreeKeptReason != null
       ? { worktreeKeptReason: input.worktreeKeptReason }
       : {}),
+    // Placement (T3O-65): omitted when the card follows the default and is
+    // not moving, so a local-only board's shell costs what it did before.
+    ...(input.workerId == null ? {} : { workerId: input.workerId }),
+    ...(input.workerMove == null
+      ? {}
+      : {
+          workerMove: { status: input.workerMove.status, toWorkerId: input.workerMove.toWorkerId },
+        }),
+    ...(input.queued === true && input.queuedBy != null ? { queuedBy: input.queuedBy } : {}),
     // The review slice (t3o-22, D7). Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
     // them and let the client blend them with a previous card's other half.
@@ -6550,6 +6764,8 @@ export function boardCardShellFromCard(
     prDraft: boardCardPullRequestIsOpenDraft(card.pullRequest),
     worktreeReady: card.worktree?.status === "ready",
     worktreeKeptReason: card.worktree?.reclaimBlockedReason ?? null,
+    workerId: boardCardBoundWorkerId(card),
+    workerMove: card.workerMove,
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined
@@ -6612,6 +6828,8 @@ export const BoardCardQueuedShellEvent = Schema.Struct({
       running (`stepRunning`). Carried here so the durable "being worked" dot
       flips live on the one delta, never needing a card rebuild. */
   stepRunning: Schema.Boolean,
+  /** Which limit holds the card (T3O-65), present only when `queued`. */
+  queuedBy: Schema.optionalKey(BoardStepQueuedBy),
 });
 export type BoardCardQueuedShellEvent = typeof BoardCardQueuedShellEvent.Type;
 
@@ -6869,6 +7087,8 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardCardUpdateCommand,
   // T3O-33: move a card to another project, before it has ever been built.
   BoardCardSetProjectCommand,
+  // T3O-65: pin a card to a worker, or unpin it to follow the default.
+  BoardCardPinWorkerCommand,
   BoardCardLinkThreadCommand,
   BoardCardUnlinkThreadCommand,
   BoardCardArchiveCommand,
@@ -6938,6 +7158,10 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardWorkerRegisterCommand,
   BoardWorkerRemoveCommand,
   BoardWorkerSetDefaultCommand,
+  // T3O-65: where a card runs, and moving it. Placement lands at spawn; each
+  // move step lands after the git work behind it.
+  BoardCardPlaceCommand,
+  BoardCardMoveWorkerCommand,
 ] as const;
 
 /**
@@ -7005,6 +7229,10 @@ export const BOARD_EVENT_TYPES = [
   "board.worker-registered",
   "board.worker-removed",
   "board.default-worker-set",
+  // T3O-65: card placement and moving between workers.
+  "board.card-worker-pinned",
+  "board.card-placed",
+  "board.card-worker-move-recorded",
 ] as const;
 
 export const BOARD_SHELL_STREAM_EVENTS = [
@@ -7339,6 +7567,21 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.default-worker-set"),
       payload: BoardDefaultWorkerSetPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-worker-pinned"),
+      payload: BoardCardWorkerPinnedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-placed"),
+      payload: BoardCardPlacedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.card-worker-move-recorded"),
+      payload: BoardCardWorkerMoveRecordedPayload,
     }),
   ] as const;
 }
@@ -8068,11 +8311,78 @@ export type BoardProjectSettingsMap = typeof BoardProjectSettingsMap.Type;
     cap for this instance, use the global limit" — clearing a cap is stored as
     null rather than by deleting the key, because settings patches merge through
     the stock `deepMerge`, which cannot delete a map key (see `BoardSettingsPatch`). */
+/** One worker's limits (T3O-65, D11): its own ceiling, and a cap per provider
+    instance ON THAT WORKER — an instance id on one machine is a different
+    account and CPU from the same id on another. `null` means no limit of that
+    kind (the board limit still applies). `maxConcurrent` absent on `local`
+    means it was never set and inherits today's single limit (see
+    `resolveBoardWorkerConcurrency`). */
+export const BoardWorkerConcurrencySettings = Schema.Struct({
+  maxConcurrent: Schema.optionalKey(Schema.NullOr(PositiveInt)),
+  perInstance: Schema.Record(ProviderInstanceId, Schema.NullOr(PositiveInt)).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+});
+export type BoardWorkerConcurrencySettings = typeof BoardWorkerConcurrencySettings.Type;
+
+/**
+ * Concurrency (D11, replaced by T3O-65): a board limit across every worker,
+ * and per worker its own limit and provider-instance caps.
+ *
+ * `perInstance` beside `globalMaxConcurrent` is the single-machine shape that
+ * came before workers. It is kept, not rewritten: it is `local`'s provider
+ * caps, and `globalMaxConcurrent` is both the board limit and — until set on
+ * its own — `local`'s worker limit. So a settings file written before the
+ * distributed board means exactly what it did, and a local-only board's
+ * Settings keep editing these two fields as they always have.
+ */
 export const BoardConcurrencySettings = Schema.Struct({
   perInstance: Schema.Record(ProviderInstanceId, Schema.NullOr(PositiveInt)),
   globalMaxConcurrent: PositiveInt,
+  /** Keyed by `BoardWorkerId`. A plain string key: a record keyed by a union
+      with the `local` literal would make `local` a required entry. */
+  workers: Schema.Record(Schema.String, BoardWorkerConcurrencySettings).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 });
 export type BoardConcurrencySettings = typeof BoardConcurrencySettings.Type;
+
+/** One worker's resolved limits: `null` is no limit of that kind. */
+export interface BoardWorkerConcurrency {
+  readonly maxConcurrent: number | null;
+  readonly perInstance: Readonly<Record<string, number | null>>;
+}
+
+/**
+ * A worker's effective limits (T3O-65). `local` starts from the pre-worker
+ * shape — today's limit as its worker limit, today's caps as its caps — and
+ * anything set under `workers.local` overrides it. Every other worker has only
+ * what was set for it.
+ */
+export function resolveBoardWorkerConcurrency(
+  concurrency: BoardConcurrencySettings,
+  workerId: BoardWorkerId,
+): BoardWorkerConcurrency {
+  const entry = concurrency.workers[workerId];
+  if (workerId !== BOARD_LOCAL_WORKER_ID) {
+    return { maxConcurrent: entry?.maxConcurrent ?? null, perInstance: entry?.perInstance ?? {} };
+  }
+  return {
+    maxConcurrent:
+      entry?.maxConcurrent === undefined ? concurrency.globalMaxConcurrent : entry.maxConcurrent,
+    perInstance: { ...concurrency.perInstance, ...entry?.perInstance },
+  };
+}
+
+/** A provider cap above its worker's limit can never bind: the stepper stops
+    there, and an older file's larger value reads as the worker limit. */
+export function clampBoardInstanceCap(
+  cap: number | null,
+  workerLimit: number | null,
+): number | null {
+  if (cap === null) return null;
+  return workerLimit === null ? cap : Math.min(cap, workerLimit);
+}
 
 /**
  * Worktree reclaim policy.
@@ -9473,6 +9783,7 @@ export const BoardSettings = Schema.Struct({
       Effect.succeed({
         perInstance: {},
         globalMaxConcurrent: DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT,
+        workers: {},
       }),
     ),
   ),
@@ -9506,6 +9817,19 @@ export const DEFAULT_BOARD_SETTINGS: BoardSettings = Schema.decodeSync(BoardSett
 export const BoardConcurrencySettingsPatch = Schema.Struct({
   perInstance: Schema.optionalKey(Schema.Record(ProviderInstanceId, Schema.NullOr(PositiveInt))),
   globalMaxConcurrent: Schema.optionalKey(PositiveInt),
+  /** Per-worker limits (T3O-65). Merged key by key like every other map here:
+      a cleared limit or cap is a retained `null`, never a deleted key. */
+  workers: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        maxConcurrent: Schema.optionalKey(Schema.NullOr(PositiveInt)),
+        perInstance: Schema.optionalKey(
+          Schema.Record(ProviderInstanceId, Schema.NullOr(PositiveInt)),
+        ),
+      }),
+    ),
+  ),
 });
 export type BoardConcurrencySettingsPatch = typeof BoardConcurrencySettingsPatch.Type;
 
@@ -9883,6 +10207,42 @@ export function resolveBoardCardEffectiveBase(input: {
 export function boardCardHasLiveBranch(card: Pick<BoardCard, "worktree">): boolean {
   const status = card.worktree?.status ?? null;
   return status === "branch-only" || status === "provisioning" || status === "ready";
+}
+
+// ── Card placement (T3O-65, D20) ───────────────────────────────────────
+
+/** Whether the card's work lives in a checkout on its worker — the one fact
+    that binds a card to where it was placed. A worktree still being cut
+    counts; a reclaimed, failed or never-provisioned one does not. */
+export function boardCardHoldsWorktree(card: Pick<BoardCard, "worktree">): boolean {
+  const status = card.worktree?.status ?? null;
+  return status === "ready" || status === "provisioning";
+}
+
+type BoardCardPlacementFields = Pick<BoardCard, "worktree" | "pinnedWorkerId" | "placedWorkerId">;
+
+/**
+ * The worker a card's next thread runs on (D20): where it is placed while it
+ * holds a worktree, otherwise its pin, otherwise the board's default. So a
+ * default change moves only cards with no checkout, and a card with one moves
+ * only through Move.
+ */
+export function boardCardEffectiveWorkerId(
+  card: BoardCardPlacementFields,
+  defaultWorkerId: BoardWorkerId | undefined,
+): BoardWorkerId {
+  return boardCardBoundWorkerId(card) ?? defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
+}
+
+/**
+ * The worker a card is bound to regardless of the default — where it holds a
+ * worktree, else its pin — or null when it follows the default. Having a
+ * worktree counts as pinned (the worker chip is solid). A worktree with no
+ * recorded placement predates workers, so it is this server's.
+ */
+export function boardCardBoundWorkerId(card: BoardCardPlacementFields): BoardWorkerId | null {
+  if (boardCardHoldsWorktree(card)) return card.placedWorkerId ?? BOARD_LOCAL_WORKER_ID;
+  return card.pinnedWorkerId;
 }
 
 /**

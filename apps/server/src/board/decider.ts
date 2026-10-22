@@ -100,6 +100,10 @@ import {
   type BoardEvent,
   type ProjectId,
   BOARD_LOCAL_WORKER_ID,
+  boardCardBoundWorkerId,
+  boardCardEffectiveWorkerId,
+  boardCardHoldsWorktree,
+  type BoardCardWorkerMove,
   type BoardWorkerId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -683,6 +687,14 @@ const makeBoardProviderLimitEventBase = Effect.fn("makeBoardProviderLimitEventBa
   },
 );
 
+/** Whether a worker id names a worker this board has: `local`, or registered. */
+function isKnownBoardWorker(board: BoardState, workerId: BoardWorkerId): boolean {
+  return (
+    workerId === BOARD_LOCAL_WORKER_ID ||
+    (board.workers ?? []).some((worker) => worker.id === workerId)
+  );
+}
+
 /** Event base for worker-registry events (T3O-62): aggregates on the worker. */
 const makeBoardWorkerEventBase = Effect.fn("makeBoardWorkerEventBase")(function* (input: {
   readonly workerId: BoardWorkerId;
@@ -1218,6 +1230,22 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
               )
             : yield* validateBaseBranch({ command, proposed: command.baseBranch });
 
+      // The worker pin (T3O-65, D20): a registered worker, or absent to follow
+      // the default. A hand-created child copies its parent's pin unless the
+      // dialog picked one, exactly as a materialised child does.
+      if (
+        command.pinnedWorkerId !== undefined &&
+        !isKnownBoardWorker(board, command.pinnedWorkerId)
+      ) {
+        return yield* invariant(command, `Worker '${command.pinnedWorkerId}' is not registered.`);
+      }
+      const pinnedWorkerId =
+        command.pinnedWorkerId ??
+        (command.parentCardId === undefined
+          ? null
+          : (board.cards.find((existing) => existing.id === command.parentCardId)?.pinnedWorkerId ??
+            null));
+
       const cardNumber = board.nextCardNumberByProject[command.projectId] ?? 1;
       const keyPrefix = command.keyPrefix ?? DEFAULT_BOARD_KEY_PREFIX;
       // Where the card lands (T3O-27). Placed HERE rather than by the caller:
@@ -1264,6 +1292,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           ...(command.scheduledStartAt === undefined
             ? {}
             : { scheduledStartAt: command.scheduledStartAt }),
+          // Key-optional like `baseBranch`: absent IS "follow the default".
+          ...(pinnedWorkerId === null ? {} : { pinnedWorkerId }),
           dependsOn,
           stage,
           orderKey,
@@ -2970,6 +3000,11 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             dependsOn: plan.dependsOn.map((dependency) => childIdByPlan.get(dependency)!),
             parentCardId: card.id,
             sourcePlanId: plan.planId,
+            // A child runs where its parent is bound (T3O-65, D20) — its pin,
+            // or the worker holding its worktree — and can be re-pinned after.
+            ...(boardCardBoundWorkerId(card) === null
+              ? {}
+              : { pinnedWorkerId: boardCardBoundWorkerId(card)! }),
             stage: floor.stageId,
             orderKey,
             createdAt: command.createdAt,
@@ -3068,6 +3103,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           lastError: null,
           reclaimBlockedReason: null,
         },
+        // The worktree binds the card to the worker it is cut on (T3O-65,
+        // D20), so placement is recorded in the same event: the card's pin, or
+        // the default. From here only a move changes it.
+        placedWorkerId: boardCardEffectiveWorkerId(card, board.defaultWorkerId),
         updatedAt: command.createdAt,
       };
       return {
@@ -3648,6 +3687,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         // inheriting the previous entry's "resuming 2:50am".
         stalledReason: "gave-up",
         retryAt: null,
+        queuedBy: null,
         lastNudgeAt: null,
         // No human has typed into a fresh step, so no free turn-ending is owed
         // (T3O-17, D3).
@@ -3767,6 +3807,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             // resume before it.
             stalledReason: "gave-up",
             retryAt: null,
+            queuedBy: null,
             startedAt: command.createdAt,
             updatedAt: command.createdAt,
           }
@@ -3775,6 +3816,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             status: "queued",
             threadId: null,
             slotHeld: false,
+            // Which limit holds it (T3O-65); absent keeps plain "Queued".
+            queuedBy: command.queuedBy ?? null,
             startedAt: null,
             updatedAt: command.createdAt,
           };
@@ -4347,6 +4390,188 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         })),
         type: "board.worker-removed",
         payload: { workerId: command.workerId },
+      };
+    }
+
+    case "board.card.pin-worker": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (command.workerId !== null && !isKnownBoardWorker(board, command.workerId)) {
+        return yield* invariant(command, `Worker '${command.workerId}' is not registered.`);
+      }
+      if (card.workerMove !== null) {
+        return yield* invariant(
+          command,
+          card.workerMove.status === "moving"
+            ? `Card '${card.key}' is moving to another worker; wait for the move to finish.`
+            : `Card '${card.key}''s last move failed; retry it or move it to another worker.`,
+        );
+      }
+      // A card with a worktree is bound to its worker (D20): changing that is a
+      // move, which checks the work is pushed first. A pin that lands where the
+      // worktree already is changes nothing about where the card runs.
+      if (boardCardHoldsWorktree(card)) {
+        const current = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+        const target = command.workerId ?? board.defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
+        if (target !== current) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' has a worktree on worker '${current}'; move it to change where it runs.`,
+          );
+        }
+      }
+      if (card.pinnedWorkerId === command.workerId) return [];
+      const nextCard: BoardCard = {
+        ...card,
+        pinnedWorkerId: command.workerId,
+        // No checkout binds it, so its next thread spawns on the new choice;
+        // earlier threads keep the worker their links name.
+        placedWorkerId: boardCardHoldsWorktree(card) ? card.placedWorkerId : null,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-worker-pinned",
+        payload: { cardId: command.cardId, workerId: command.workerId, card: nextCard },
+      };
+    }
+
+    case "board.card.place": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (!isKnownBoardWorker(board, command.workerId)) {
+        return yield* invariant(command, `Worker '${command.workerId}' is not registered.`);
+      }
+      if (boardCardHoldsWorktree(card)) {
+        const current = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+        if (current !== command.workerId) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' has a worktree on worker '${current}'; only a move places it elsewhere.`,
+          );
+        }
+      }
+      if (card.placedWorkerId === command.workerId) return [];
+      const nextCard: BoardCard = {
+        ...card,
+        placedWorkerId: command.workerId,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-placed",
+        payload: { cardId: command.cardId, workerId: command.workerId, card: nextCard },
+      };
+    }
+
+    case "board.card.move-worker": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      const { step } = command;
+      const move = card.workerMove;
+      let nextCard: BoardCard;
+      let recorded: BoardCardWorkerMove;
+      if (step.phase === "start") {
+        if (!isKnownBoardWorker(board, step.toWorkerId)) {
+          return yield* invariant(command, `Worker '${step.toWorkerId}' is not registered.`);
+        }
+        if (move?.status === "moving") {
+          return yield* invariant(command, `Card '${card.key}' is already moving.`);
+        }
+        const live = boardCardStepState(board, card.id);
+        if (live !== null && (live.status === "running" || live.status === "completing")) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' has a step running; wait for it to finish or stop it, then move the card.`,
+          );
+        }
+        const holds = boardCardHoldsWorktree(card);
+        if (holds && card.worktree?.status !== "ready") {
+          return yield* invariant(
+            command,
+            `Card '${card.key}''s worktree is still being created; move it once it is ready.`,
+          );
+        }
+        // Only a card with work to carry is moved; one without is re-pinned.
+        if (!holds && move === null) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' has no worktree to move; pin it to the worker instead.`,
+          );
+        }
+        const from = holds ? boardCardEffectiveWorkerId(card, board.defaultWorkerId) : null;
+        if (from === step.toWorkerId) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' is already on worker '${step.toWorkerId}'.`,
+          );
+        }
+        recorded = {
+          fromWorkerId: from ?? move?.fromWorkerId ?? null,
+          toWorkerId: step.toWorkerId,
+          status: "moving",
+          sha: step.sha,
+          error: null,
+          startedAt: command.createdAt,
+        };
+        nextCard = { ...card, workerMove: recorded, updatedAt: command.createdAt };
+      } else {
+        if (move === null || move.status !== "moving") {
+          return yield* invariant(command, `Card '${card.key}' is not moving.`);
+        }
+        if (step.phase === "retired") {
+          recorded = move;
+          // The old checkout is gone; the branch is on the remote. Unassigned
+          // until the new worktree is ready.
+          nextCard = {
+            ...card,
+            worktree:
+              card.worktree === null
+                ? null
+                : { ...card.worktree, path: null, status: "reclaimed", reclaimBlockedReason: null },
+            placedWorkerId: null,
+            updatedAt: command.createdAt,
+          };
+        } else if (step.phase === "done") {
+          if (card.worktree === null) {
+            return yield* invariant(
+              command,
+              `Card '${card.key}' has no branch recorded; there is nothing the new worktree carries.`,
+            );
+          }
+          recorded = move;
+          nextCard = {
+            ...card,
+            worktree: {
+              ...card.worktree,
+              path: step.worktreePath,
+              status: "ready",
+              lastError: null,
+              reclaimBlockedReason: null,
+            },
+            pinnedWorkerId: move.toWorkerId,
+            placedWorkerId: move.toWorkerId,
+            workerMove: null,
+            updatedAt: command.createdAt,
+          };
+        } else {
+          recorded = { ...move, status: "failed", error: step.error };
+          nextCard = { ...card, workerMove: recorded, updatedAt: command.createdAt };
+        }
+      }
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-worker-move-recorded",
+        payload: { cardId: command.cardId, step, move: recorded, card: nextCard },
       };
     }
 

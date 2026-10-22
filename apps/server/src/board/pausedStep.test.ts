@@ -188,6 +188,7 @@ const atTheCeiling = (
   // test's slot assertion about the PAUSE and nothing else.
   slotHeld: false,
   forceStart: false,
+  queuedBy: null,
   startedAt: NOW,
   updatedAt: NOW,
 });

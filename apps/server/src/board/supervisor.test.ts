@@ -552,6 +552,7 @@ describe("resolveBoardConcurrencyLimit (t3o-11 D11)", () => {
   ): BoardConcurrencySettings => ({
     perInstance: {},
     globalMaxConcurrent: 3,
+    workers: {},
     ...overrides,
   });
 

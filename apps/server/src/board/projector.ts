@@ -68,6 +68,9 @@ import {
   BoardPlansApprovedPayload,
   BoardPlansProposedPayload,
   BoardCardBaseRefRecordedPayload,
+  BoardCardPlacedPayload,
+  BoardCardWorkerMoveRecordedPayload,
+  BoardCardWorkerPinnedPayload,
   BoardCardIntegrationBranchRecordedPayload,
   BoardPlanWrittenPayload,
   BoardStageCreatedPayload,
@@ -140,6 +143,11 @@ const decodeBoardPlanWrittenPayload = Schema.decodeUnknownEffect(BoardPlanWritte
 const decodeBoardPlansApprovedPayload = Schema.decodeUnknownEffect(BoardPlansApprovedPayload);
 const decodeBoardCardIntegrationBranchRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardIntegrationBranchRecordedPayload,
+);
+const decodeBoardCardWorkerPinnedPayload = Schema.decodeUnknownEffect(BoardCardWorkerPinnedPayload);
+const decodeBoardCardPlacedPayload = Schema.decodeUnknownEffect(BoardCardPlacedPayload);
+const decodeBoardCardWorkerMoveRecordedPayload = Schema.decodeUnknownEffect(
+  BoardCardWorkerMoveRecordedPayload,
 );
 const decodeBoardCardBaseRefRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardBaseRefRecordedPayload,
@@ -265,6 +273,12 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // the same way: absent — every legacy event and every card created without
     // a time — is null, which is "start as soon as the pipeline reaches it".
     scheduledStartAt: payload.scheduledStartAt ?? null,
+    // The worker pin (T3O-65, D20) rides the flat created payload the same
+    // way: absent — every legacy event and every card that follows the
+    // default — is null. Nothing has spawned, so nothing is placed or moving.
+    pinnedWorkerId: payload.pinnedWorkerId ?? null,
+    placedWorkerId: null,
+    workerMove: null,
     // A card is never born armed (T3O-24, D2): the arm is a human delegating
     // the D18 build gate on a card they can already see waiting, and there is
     // no create-command field to set it with. Nor born auto-merging (T3O-38,
@@ -797,6 +811,25 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    // Placement (T3O-65): each carries the whole post-change card.
+    case "board.card-worker-pinned":
+      return decodeBoardCardWorkerPinnedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-placed":
+      return decodeBoardCardPlacedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-worker-move-recorded":
+      return decodeBoardCardWorkerMoveRecordedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     case "board.card-worktree-provisioning":
       return decodeBoardCardWorktreeProvisioningPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
@@ -1055,6 +1088,11 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     // the card aggregate, so this delta carries the real values like any
     // other card field.
     case "board.card-auto-merge-hold-recorded":
+    // Placement (T3O-65): the bound worker and the move are shell fields on
+    // the card aggregate.
+    case "board.card-worker-pinned":
+    case "board.card-placed":
+    case "board.card-worker-move-recorded":
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,
@@ -1121,6 +1159,10 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
         // Admission also settles the durable "being worked" dot: held for a slot
         // (`queued`) means not running; admitted to running lights `stepRunning`.
         stepRunning: event.payload.state.status === "running",
+        // Which limit holds it (T3O-65), only beside `queued`.
+        ...(event.payload.state.status === "queued" && event.payload.state.queuedBy !== null
+          ? { queuedBy: event.payload.state.queuedBy }
+          : {}),
       });
 
     case "board.card-step-recovered":

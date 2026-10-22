@@ -569,6 +569,7 @@ const seededStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepState
   status: "running",
   slotHeld: true,
   forceStart: false,
+  queuedBy: null,
   startedAt: "1969-12-31T00:00:00.000Z",
   updatedAt: "1969-12-31T00:00:00.000Z",
   ...overrides,

@@ -332,6 +332,7 @@ describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
     status: "succeeded",
     slotHeld: false,
     forceStart: false,
+    queuedBy: null,
     startedAt: null,
     updatedAt: NOW,
   });

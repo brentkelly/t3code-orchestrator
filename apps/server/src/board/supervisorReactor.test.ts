@@ -87,6 +87,9 @@ const card: BoardCard = {
   autoStart: false,
   autoMerge: false,
   autoMergeHold: null,
+  pinnedWorkerId: null,
+  placedWorkerId: null,
+  workerMove: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",
@@ -131,6 +134,7 @@ const runningState: BoardCardStepState = {
   status: "running",
   slotHeld: true,
   forceStart: false,
+  queuedBy: null,
   startedAt: NOW,
   updatedAt: NOW,
 };

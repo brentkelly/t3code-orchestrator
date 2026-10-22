@@ -80,6 +80,7 @@ const settledReviewStep = (
   status: "succeeded" as const,
   slotHeld: false,
   forceStart: false,
+  queuedBy: null,
   startedAt: null,
   updatedAt: NOW,
   ...patch,

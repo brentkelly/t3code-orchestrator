@@ -17,6 +17,8 @@
 import {
   BoardCardStepAwaitingReason,
   BoardCardStepStalledReason,
+  BoardCardWorkerMove,
+  type BoardStepQueuedBy,
   BoardProviderLimit,
   BoardWorker,
   BoardWorkerId,
@@ -169,6 +171,12 @@ const BoardCardDbRow = Schema.Struct({
       armed merge has never been refused, and for every card whose hold has
       been cleared — indistinguishable on purpose (T3O-38, D4/D10). */
   autoMergeHold: Schema.NullOr(Schema.fromJsonString(BoardCardAutoMergeHold)),
+  /** NULL for every row written before migration 048 and for every card that
+      follows the default / has never spawned / is not moving (T3O-65) —
+      indistinguishable on purpose, so replay equals rehydration. */
+  pinnedWorkerId: BoardCard.fields.pinnedWorkerId,
+  placedWorkerId: BoardCard.fields.placedWorkerId,
+  workerMove: Schema.NullOr(Schema.fromJsonString(BoardCardWorkerMove)),
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -441,6 +449,9 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // 0/1 like `slotHeld`. Rows written before migration 033 read 0 through the
   // column default, which already means "no override asked for" (t3o-33).
   forceStart: Schema.Int,
+  // NULL for rows written before migration 048 and for any step not queued
+  // (T3O-65) — both read as plain "Queued".
+  queuedBy: BoardCardStepState.fields.queuedBy,
   startedAt: BoardCardStepState.fields.startedAt,
   updatedAt: BoardCardStepState.fields.updatedAt,
 });
@@ -587,6 +598,11 @@ const BoardCardShellDbRow = Schema.Struct({
       `cardMetaShellFields.test.ts` pins the pair. */
   worktreeReady: Schema.Int,
   worktreeKeptReason: Schema.NullOr(Schema.String),
+  /** The placement pair (T3O-65): the bound worker, and a move's status and
+      target. Derived in SQL here and in JS on the delta path. */
+  workerId: BoardCard.fields.pinnedWorkerId,
+  workerMoveStatus: Schema.NullOr(Schema.Literals(["moving", "failed"])),
+  workerMoveTo: BoardCard.fields.pinnedWorkerId,
   /** The review-summary CACHE (t3o-22, D7); NULL for a card with no review
       history. Its `outcome` is provisional — `resolveBoardCardReviewOutcome`
       settles it against the card's live step at assembly. */
@@ -647,6 +663,9 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     autoStart: card.autoStart ? 1 : 0,
     autoMerge: card.autoMerge ? 1 : 0,
     autoMergeHold: card.autoMergeHold,
+    pinnedWorkerId: card.pinnedWorkerId,
+    placedWorkerId: card.placedWorkerId,
+    workerMove: card.workerMove,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
@@ -698,6 +717,9 @@ function rowToBoardCard(
     autoStart: row.autoStart !== 0,
     autoMerge: row.autoMerge !== 0,
     autoMergeHold: row.autoMergeHold,
+    pinnedWorkerId: row.pinnedWorkerId,
+    placedWorkerId: row.placedWorkerId,
+    workerMove: row.workerMove,
     blocked: row.blocked !== 0,
     threadLinks,
     attachments,
@@ -761,6 +783,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_start,
         auto_merge,
         auto_merge_hold,
+        pinned_worker_id,
+        placed_worker_id,
+        worker_move,
         blocked,
         archived_at,
         created_at,
@@ -792,6 +817,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.autoStart},
         ${row.autoMerge},
         ${row.autoMergeHold},
+        ${row.pinnedWorkerId},
+        ${row.placedWorkerId},
+        ${row.workerMove},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -823,6 +851,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_start = excluded.auto_start,
         auto_merge = excluded.auto_merge,
         auto_merge_hold = excluded.auto_merge_hold,
+        pinned_worker_id = excluded.pinned_worker_id,
+        placed_worker_id = excluded.placed_worker_id,
+        worker_move = excluded.worker_move,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -864,6 +895,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_start AS "autoStart",
         auto_merge AS "autoMerge",
         auto_merge_hold AS "autoMergeHold",
+        pinned_worker_id AS "pinnedWorkerId",
+        placed_worker_id AS "placedWorkerId",
+        worker_move AS "workerMove",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -991,6 +1025,16 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         CASE WHEN json_extract(worktree, '$.status') = 'ready' THEN 1 ELSE 0 END
           AS "worktreeReady",
         json_extract(worktree, '$.reclaimBlockedReason') AS "worktreeKeptReason",
+        -- The SECOND producer of the placement pair (T3O-65); the delta path
+        -- reads it through boardCardBoundWorkerId: the placement while the
+        -- card holds a worktree, else its pin.
+        CASE
+          WHEN json_extract(worktree, '$.status') IN ('ready', 'provisioning')
+            THEN COALESCE(placed_worker_id, ${BOARD_LOCAL_WORKER_ID})
+          ELSE pinned_worker_id
+        END AS "workerId",
+        json_extract(worker_move, '$.status') AS "workerMoveStatus",
+        json_extract(worker_move, '$.toWorkerId') AS "workerMoveTo",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -1070,6 +1114,16 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         CASE WHEN json_extract(worktree, '$.status') = 'ready' THEN 1 ELSE 0 END
           AS "worktreeReady",
         json_extract(worktree, '$.reclaimBlockedReason') AS "worktreeKeptReason",
+        -- The SECOND producer of the placement pair (T3O-65); the delta path
+        -- reads it through boardCardBoundWorkerId: the placement while the
+        -- card holds a worktree, else its pin.
+        CASE
+          WHEN json_extract(worktree, '$.status') IN ('ready', 'provisioning')
+            THEN COALESCE(placed_worker_id, ${BOARD_LOCAL_WORKER_ID})
+          ELSE pinned_worker_id
+        END AS "workerId",
+        json_extract(worker_move, '$.status') AS "workerMoveStatus",
+        json_extract(worker_move, '$.toWorkerId') AS "workerMoveTo",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -1165,6 +1219,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_start AS "autoStart",
         auto_merge AS "autoMerge",
         auto_merge_hold AS "autoMergeHold",
+        pinned_worker_id AS "pinnedWorkerId",
+        placed_worker_id AS "placedWorkerId",
+        worker_move AS "workerMove",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -1831,7 +1888,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
         last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
-        started_at, updated_at
+        queued_by, started_at, updated_at
       )
       VALUES (
         ${row.cardId}, ${row.stepId}, ${row.stepLabel}, ${row.stageLabel}, ${row.attempt}, ${row.stallCount},
@@ -1841,7 +1898,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.lastError}, ${row.awaitingReason}, ${row.humanTurnAt}, ${row.stalledReason}, ${row.retryAt},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
-        ${row.startedAt}, ${row.updatedAt}
+        ${row.queuedBy}, ${row.startedAt}, ${row.updatedAt}
       )
       ON CONFLICT (card_id)
       DO UPDATE SET
@@ -1871,6 +1928,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         status = excluded.status,
         slot_held = excluded.slot_held,
         force_start = excluded.force_start,
+        queued_by = excluded.queued_by,
         started_at = excluded.started_at,
         updated_at = excluded.updated_at
     `,
@@ -1908,6 +1966,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         status,
         slot_held AS "slotHeld",
         force_start AS "forceStart",
+        queued_by AS "queuedBy",
         started_at AS "startedAt",
         updated_at AS "updatedAt"
       FROM board_card_step_state
@@ -2520,6 +2579,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         status: state.status,
         slotHeld: state.slotHeld ? 1 : 0,
         forceStart: state.forceStart ? 1 : 0,
+        queuedBy: state.queuedBy,
         startedAt: state.startedAt,
         updatedAt: state.updatedAt,
       })
@@ -3097,6 +3157,42 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         yield* upsertCard(event.payload.card);
         return;
 
+      case "board.card-worker-pinned":
+        // A human choosing where the card runs (T3O-65, D18) earns its row.
+        yield* upsertCard(event.payload.card);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-worker-pinned",
+          payload: { workerId: event.payload.workerId },
+          threadId: null,
+        });
+        return;
+
+      case "board.card-placed":
+        // Placement at spawn is the thread's own row's business: each thread
+        // link already names its worker, so the rail says nothing here.
+        yield* upsertCard(event.payload.card);
+        return;
+
+      case "board.card-worker-move-recorded":
+        // Every step of a move is a row (T3O-65): checked and started, old
+        // worktree retired, new one ready, or provisioning failed.
+        yield* upsertCard(event.payload.card);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "card-worker-moved",
+          payload: {
+            movePhase: event.payload.step.phase,
+            fromWorkerId: event.payload.move.fromWorkerId,
+            toWorkerId: event.payload.move.toWorkerId,
+            ...(event.payload.step.phase === "failed" ? { detail: event.payload.step.error } : {}),
+          },
+          threadId: null,
+        });
+        return;
+
       case "board.plan-written":
         yield* writePlanBody(
           event.payload.planId,
@@ -3301,6 +3397,7 @@ export function loadBoardState(
             status: row.status,
             slotHeld: row.slotHeld !== 0,
             forceStart: row.forceStart !== 0,
+            queuedBy: row.queuedBy,
             startedAt: row.startedAt,
             updatedAt: row.updatedAt,
           }))
@@ -3402,6 +3499,7 @@ function boardShellCards(
       }
       const labelsByCard = groupCardLabels(cardLabelRows);
       const queuedByCard = new Set<BoardCardId>();
+      const queueReasonByCard = new Map<BoardCardId, BoardStepQueuedBy>();
       const stalledByCard = new Set<BoardCardId>();
       const runningByCard = new Set<BoardCardId>();
       const heldByCard = new Set<BoardCardId>();
@@ -3418,6 +3516,10 @@ function boardShellCards(
       const checksFixByCard = new Set<BoardCardId>();
       for (const row of stepStateRows) {
         if (row.status === "queued") queuedByCard.add(row.cardId);
+        // Which limit holds it (T3O-65), the same field `card-queued` carries.
+        if (row.status === "queued" && row.queuedBy !== null) {
+          queueReasonByCard.set(row.cardId, row.queuedBy);
+        }
         // The second step-state field on the bounded shell (t3o-17, D3): a card
         // is `stalled` when recovery gave up on its live step.
         if (row.status === "stalled") stalledByCard.add(row.cardId);
@@ -3501,6 +3603,12 @@ function boardShellCards(
           prDraft: row.prDraft !== 0,
           worktreeReady: row.worktreeReady !== 0,
           worktreeKeptReason: row.worktreeKeptReason,
+          workerId: row.workerId,
+          workerMove:
+            row.workerMoveStatus === null || row.workerMoveTo === null
+              ? null
+              : { status: row.workerMoveStatus, toWorkerId: row.workerMoveTo },
+          queuedBy: queueReasonByCard.get(row.cardId) ?? null,
           // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
           // against `stepRunning`, which every shell already holds — resolving
           // it here as well would give the snapshot and the `card-review`
@@ -3583,6 +3691,11 @@ function boardArchivedShellCards(
             prDraft: row.prDraft !== 0,
             worktreeReady: row.worktreeReady !== 0,
             worktreeKeptReason: row.worktreeKeptReason,
+            workerId: row.workerId,
+            workerMove:
+              row.workerMoveStatus === null || row.workerMoveTo === null
+                ? null
+                : { status: row.workerMoveStatus, toWorkerId: row.workerMoveTo },
             archivedAt: row.archivedAt,
             activeThreadId: null,
           }),
