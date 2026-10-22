@@ -35,6 +35,7 @@ import {
   BoardPullRequestGatewayError,
 } from "./BoardPullRequestGateway.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
+import { WorkerConnectionsNoneTest } from "./workers/boardWorkers.testkit.ts";
 import { BoardWorkspacesLive } from "./workspace/workspaceLayer.ts";
 import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
@@ -310,7 +311,12 @@ function reconcileCommandObjects(input: {
     }).pipe(
       Effect.provide(
         SupervisorReactorLive.pipe(
-          Layer.provide(BoardWorkspacesLive.pipe(Layer.provideMerge(deps))),
+          Layer.provide(
+            BoardWorkspacesLive.pipe(
+              Layer.provideMerge(deps),
+              Layer.provide(WorkerConnectionsNoneTest),
+            ),
+          ),
         ),
       ),
     );

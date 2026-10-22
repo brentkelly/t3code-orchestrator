@@ -18,6 +18,12 @@
  */
 import {
   BOARD_LOCAL_WORKER_ID,
+  boardCardEffectiveWorkerId,
+  boardRepositoryGroupingKey,
+  boardThreadLinkWorkerId,
+  EMPTY_BOARD_WORKERS_STATE,
+  type BoardStepQueuedBy,
+  type BoardWorkerId,
   boardCardAutoStartDue,
   boardCardChildren,
   boardBuildHumanInLoopDefault,
@@ -126,7 +132,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
-import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts";
+import { BoardStepSlots, type BoardConcurrencyLimit, type BoardSlotKey } from "./BoardStepSlots.ts";
 import { BoardEngine } from "./BoardEngine.ts";
 import type { BoardDispatchError } from "./errors.ts";
 import { BoardQueries } from "./BoardQueries.ts";
@@ -147,7 +153,7 @@ import {
   spawnPushesBriefImages,
   stageBoardCardImagesAsPending,
 } from "./attachments.ts";
-import { BoardPlacement } from "./workers/BoardPlacement.ts";
+import { BoardPlacement, boardPlacementGate } from "./workers/BoardPlacement.ts";
 import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
@@ -403,7 +409,10 @@ type SupervisorInput =
   // Periodic timeout sweep (t3o-17): the edge-triggered turn.completed path
   // cannot see a turn that HANGS, so a timer funnels overdue running steps
   // into the same recovery ladder.
-  | { readonly source: "timeout-sweep" };
+  | { readonly source: "timeout-sweep" }
+  // T3O-65: the board's workers changed — a clone finished, a worker came
+  // online, an instance appeared — which may start a held card.
+  | { readonly source: "workers" };
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -509,6 +518,30 @@ const make = Effect.gen(function* () {
   const readBoard = boardEngine.getReadModel.pipe(
     Effect.map((model): BoardState => model.board ?? EMPTY_BOARD_STATE),
   );
+
+  /**
+   * Where a step's slot is held (T3O-65, D11): the worker its thread runs on,
+   * or — before it has one — the worker its card runs on. A release lands on
+   * the worker its acquire did: a move is refused while a step runs, and every
+   * parked status gives its slot back first.
+   */
+  const slotKeyFor = (
+    board: BoardState,
+    state: Pick<BoardCardStepState, "cardId" | "threadId" | "providerInstanceId">,
+  ): BoardSlotKey => {
+    const card = board.cards.find((candidate) => candidate.id === state.cardId);
+    const link =
+      state.threadId === null
+        ? undefined
+        : card?.threadLinks.find((candidate) => candidate.threadId === state.threadId);
+    const workerId: BoardWorkerId =
+      link !== undefined
+        ? boardThreadLinkWorkerId(link)
+        : card === undefined
+          ? BOARD_LOCAL_WORKER_ID
+          : boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+    return { workerId, providerInstanceId: state.providerInstanceId };
+  };
 
   /** The board with every project beside it — the one view a pass that reads
       both cards and project roots decides from. */
@@ -1459,9 +1492,41 @@ const make = Effect.gen(function* () {
             ),
     });
 
-  // T3O-63: the test-only placement seam, and the brief's files a thread on a
-  // worker reads from where they were staged there.
+  // T3O-65 (D20): the board's workers as placement sees them — absent on a
+  // local-only harness, where every card runs here.
   const placement = yield* Effect.serviceOption(BoardPlacement);
+  const workersNow = Option.match(placement, {
+    onNone: () => Effect.succeed(EMPTY_BOARD_WORKERS_STATE),
+    onSome: (service) => service.workers,
+  });
+  /** The board project's repository key, which names its checkout on a worker. */
+  const projectRepositoryKey = (projectId: ProjectId) =>
+    threads.project(projectId).pipe(
+      Effect.map((project) => boardRepositoryGroupingKey(project?.repositoryIdentity)),
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+  /** Where a card's next thread runs, and whether the step can start there now. */
+  const placementFor = Effect.fn("board-supervisor-placementFor")(function* (
+    board: BoardState,
+    card: BoardCard,
+    state: Pick<BoardCardStepState, "providerInstanceId">,
+  ) {
+    const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+    if (workerId === BOARD_LOCAL_WORKER_ID) {
+      return { workerId, gate: { kind: "ready", workerProjectId: null } } as const;
+    }
+    return {
+      workerId,
+      gate: boardPlacementGate({
+        workerId,
+        workers: yield* workersNow,
+        projectRepositoryKey: yield* projectRepositoryKey(card.projectId),
+        providerInstanceId: state.providerInstanceId,
+      }),
+    } as const;
+  });
+  // T3O-63: the brief's files a thread on a worker reads from where they were
+  // staged there.
   const stagedBriefFiles = (card: BoardCard) => ({
     cardId: String(card.id),
     files: Option.match(serverConfig, {
@@ -1519,12 +1584,21 @@ const make = Effect.gen(function* () {
     // needed" and continues once a human approves. Tool access stays
     // `interactionMode: "default"` (the MCP write tools are a separate axis).
     const runtimeMode = step.runtimeMode;
-    // T3O-63: the worker the thread runs on. Always this server until
-    // placement exists (T3O-65); a test places a card on a worker.
-    const workerId = Option.match(placement, {
-      onNone: () => BOARD_LOCAL_WORKER_ID,
-      onSome: (service) => service.workerFor(card),
-    });
+    // T3O-65 (D20): the worker the thread runs on — where the card holds its
+    // worktree, else its pin, else the default — recorded as the card's
+    // placement before anything spawns there.
+    const board = yield* readBoard;
+    const fresh = board.cards.find((candidate) => candidate.id === card.id) ?? card;
+    const workerId = boardCardEffectiveWorkerId(fresh, board.defaultWorkerId);
+    if (fresh.placedWorkerId !== workerId) {
+      yield* dispatch({
+        type: "board.card.place",
+        commandId: yield* commandId("place"),
+        cardId: card.id,
+        workerId,
+        createdAt: yield* nowIso,
+      });
+    }
     const remoteWorker = workerId === BOARD_LOCAL_WORKER_ID ? null : workerId;
     // T3o (T3O-24): pin the agent's gh to origin on every build-mode spawn,
     // not only at provisioning, so a worktree that predates the pin gets it
@@ -1709,6 +1783,18 @@ const make = Effect.gen(function* () {
     function* (input: { readonly card: BoardCard; readonly state: BoardCardStepState }) {
       const { card, state } = input;
       if (state.threadId === null || (yield* threadGone(state.threadId))) return "no-thread";
+      // A card moved since this thread ran (T3O-65): the thread is on the old
+      // worker, in a checkout that was retired. The step starts afresh where
+      // the card is now; the old thread stays linked, on its old worker.
+      const board = yield* readBoard;
+      const link = card.threadLinks.find((candidate) => candidate.threadId === state.threadId);
+      const fresh = board.cards.find((candidate) => candidate.id === card.id) ?? card;
+      if (
+        link !== undefined &&
+        boardThreadLinkWorkerId(link) !== boardCardEffectiveWorkerId(fresh, board.defaultWorkerId)
+      ) {
+        return "no-thread";
+      }
       const admitted = yield* dispatchOptional({
         type: "board.card.admit-step",
         commandId: yield* commandId("admit-step"),
@@ -1743,6 +1829,83 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * Leave a step queued, saying which limit holds it (T3O-65, D11). A pending
+   * step is recorded queued; a queued one is re-recorded only when the limit
+   * changed, so a card waiting on a full worker writes one event, not one per
+   * scheduling pass.
+   */
+  const holdQueued = Effect.fn("board-supervisor-holdQueued")(function* (
+    state: BoardCardStepState,
+    queuedBy: BoardStepQueuedBy,
+  ) {
+    if (state.status !== "pending" && state.queuedBy === queuedBy) return;
+    yield* dispatch({
+      type: "board.card.admit-step",
+      commandId: yield* commandId("admit-step"),
+      cardId: state.cardId,
+      stepId: state.stepId,
+      admitted: false,
+      threadId: null,
+      queuedBy,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
+   * Stall a step whose provider instance its worker does not have (T3O-65,
+   * D10): the board never runs it elsewhere or on another provider. Amber, for
+   * a human — another worker, or a model this one offers — and it spends no
+   * recovery budget, because the agent never ran.
+   */
+  const stallProviderMissing = Effect.fn("board-supervisor-stallProviderMissing")(function* (
+    state: BoardCardStepState,
+    workerId: BoardWorkerId,
+  ) {
+    yield* dispatch({
+      type: "board.card.recover-step",
+      commandId: yield* commandId("recover-step"),
+      cardId: state.cardId,
+      stepId: state.stepId,
+      threadId: state.threadId,
+      escalateToHuman: true,
+      progressed: false,
+      lastError: `The step's provider instance '${state.providerInstanceId}' isn't on worker ${workerId}.`,
+      stalledReason: "provider-not-on-worker",
+      chargeBudget: false,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
+   * Put a step stalled for a missing provider back in the queue once its card
+   * can run it (T3O-65): it was pinned elsewhere, or the instance appeared on
+   * the worker. A model change restarts the stage instead, which re-freezes the
+   * step. The scheduling pass that follows re-checks, so a step whose worker
+   * still lacks the instance simply stalls again.
+   */
+  const requeueResolvedProviderStalls = Effect.fn("board-supervisor-requeueResolvedProviderStalls")(
+    function* (onlyCardId?: BoardCardId) {
+      const board = yield* readBoard;
+      for (const state of board.stepStates ?? []) {
+        if (state.status !== "stalled" || state.stalledReason !== "provider-not-on-worker")
+          continue;
+        if (onlyCardId !== undefined && state.cardId !== onlyCardId) continue;
+        const card = board.cards.find((candidate) => candidate.id === state.cardId);
+        if (card === undefined || card.archivedAt !== null) continue;
+        const { gate } = yield* placementFor(board, card, state);
+        if (gate.kind === "provider-missing") continue;
+        yield* dispatch({
+          type: "board.card.requeue-step",
+          commandId: yield* commandId("requeue-step"),
+          cardId: card.id,
+          preserveBudget: true,
+          createdAt: yield* nowIso,
+        });
+      }
+    },
+  );
+
   // Offer one build-mode step to the governor: acquire a slot under the resolved
   // caps and spawn its thread on the card's worktree, or leave it queued (D11).
   // Enforces the one-writer-per-worktree invariant (t3o-09) BEFORE acquiring, so
@@ -1751,9 +1914,15 @@ const make = Effect.gen(function* () {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
     readonly worktreePath: string;
+    /** The worker the step runs on, whose limits it is offered under. */
+    readonly workerId: BoardWorkerId;
     readonly limits: BoardConcurrencyLimit;
   }) {
     const { card, state } = input;
+    const slotKey: BoardSlotKey = {
+      workerId: input.workerId,
+      providerInstanceId: state.providerInstanceId,
+    };
     // One writer at a time per worktree (t3o-09 invariant). The assertion counts
     // the writer we are ABOUT to spawn, so an existing writer plus the new one
     // fails it; on failure we REFUSE before acquiring a slot, so the invariant
@@ -1797,23 +1966,14 @@ const make = Effect.gen(function* () {
     // ceiling until this step settles and releases it exactly once, like every
     // other step — and the policy in `acquire` is never quietly bypassed on the
     // ordinary path.
-    const admitted = yield* state.forceStart
-      ? slots.restore(state.providerInstanceId).pipe(Effect.as(true))
-      : slots.acquire(state.providerInstanceId, input.limits);
-    if (!admitted) {
+    const admission = yield* state.forceStart
+      ? slots.restore(slotKey).pipe(Effect.as({ admitted: true } as const))
+      : slots.acquire(slotKey, input.limits);
+    if (!admission.admitted) {
       // No slot right now. A fresh (pending) step is recorded queued so the card
-      // shows its badge; a queued step stays put and is re-offered next boundary.
-      if (state.status === "pending") {
-        yield* dispatch({
-          type: "board.card.admit-step",
-          commandId: yield* commandId("admit-step"),
-          cardId: card.id,
-          stepId: state.stepId,
-          admitted: false,
-          threadId: null,
-          createdAt: yield* nowIso,
-        });
-      }
+      // shows its badge; a queued step stays put and is re-offered next
+      // boundary — re-recorded only when the limit holding it changed (T3O-65).
+      yield* holdQueued(state, admission.blockedBy);
       return;
     }
 
@@ -1823,7 +1983,7 @@ const make = Effect.gen(function* () {
     // acquire above leaks capacity nothing will ever release.
     const resumed = yield* resumeExistingStepThread({ card, state });
     if (resumed === "refused") {
-      yield* slots.release(state.providerInstanceId);
+      yield* slots.release(slotKey);
       return;
     }
     if (resumed === "admitted") return;
@@ -1850,7 +2010,7 @@ const make = Effect.gen(function* () {
       // No thread was created, so release the slot this candidate just acquired
       // (the persisted `slotHeld` is still false — admit-step never ran — so
       // `releaseSlot` would decline it) and escalate rather than admit.
-      yield* slots.release(state.providerInstanceId);
+      yield* slots.release(slotKey);
       yield* escalateSpawnFailure({ card, state });
       return;
     }
@@ -1880,7 +2040,7 @@ const make = Effect.gen(function* () {
         ),
       );
     if (!admitLanded) {
-      yield* slots.release(state.providerInstanceId);
+      yield* slots.release(slotKey);
       // The spawn already started an agent turn — interrupt it so the orphan
       // is not left burning tokens against a step the board refused to admit.
       // The immediate dispatch only lands if the provider session has already
@@ -1983,6 +2143,7 @@ const make = Effect.gen(function* () {
         readonly card: BoardCard;
         readonly state: BoardCardStepState;
         readonly worktreePath: string;
+        readonly workerId: BoardWorkerId;
         readonly limits: BoardConcurrencyLimit;
       }
     >();
@@ -2010,6 +2171,24 @@ const make = Effect.gen(function* () {
         !state.forceStart &&
         boardProviderLimitHolds(board.providerLimits, state.providerInstanceId, card.id)
       ) {
+        continue;
+      }
+      // A card moving to another worker holds until its new worktree is
+      // ready, and one whose move failed until a human retries or picks
+      // another worker (T3O-65) — its old worktree is gone.
+      if (card.workerMove !== null) continue;
+      // Placement (T3O-65, D20): the step runs on the card's worker, and only
+      // once that worker is online, has a checkout of the project and has the
+      // step's provider instance. Ahead of the plan branch: a planning thread
+      // needs the checkout as much as a build does.
+      const placed = yield* placementFor(board, card, state);
+      if (placed.gate.kind === "offline") continue;
+      if (placed.gate.kind === "no-checkout") {
+        yield* holdQueued(state, "setup");
+        continue;
+      }
+      if (placed.gate.kind === "provider-missing") {
+        yield* stallProviderMissing(state, placed.workerId);
         continue;
       }
       if (state.mode === "plan") {
@@ -2064,7 +2243,12 @@ const make = Effect.gen(function* () {
         card,
         state,
         worktreePath,
-        limits: resolveBoardConcurrencyLimit(settings.concurrency, state.providerInstanceId),
+        workerId: placed.workerId,
+        limits: resolveBoardConcurrencyLimit(
+          settings.concurrency,
+          state.providerInstanceId,
+          placed.workerId,
+        ),
       });
       // "Started" = the card has begun THIS stage's step (a recorded completion
       // for it), so a re-entered stage never ranks as mid-flight on a fresh run.
@@ -3290,9 +3474,12 @@ const make = Effect.gen(function* () {
   });
 
   // Release the step's slot on settlement — a no-op for a plan-mode step, which
-  // never held one (D5). The provider is read off the frozen run row (D12).
+  // never held one (D5). The provider is read off the frozen run row (D12),
+  // the worker off the step's thread (T3O-65).
   const releaseSlot = (state: BoardCardStepState) =>
-    state.slotHeld ? slots.release(state.providerInstanceId) : Effect.void;
+    state.slotHeld
+      ? readBoard.pipe(Effect.flatMap((board) => slots.release(slotKeyFor(board, state))))
+      : Effect.void;
 
   /**
    * Park a step on the human gate (t3o-34, D3) and give its slot back (T3O-23).
@@ -8244,7 +8431,7 @@ const make = Effect.gen(function* () {
     // sent the turn and the agent is already working, so this is a take, not a
     // request — the `forceStart` and boot-reconcile precedent. The count may sit
     // over the ceiling until the step settles and releases exactly once.
-    if (found.state.mode === "build") yield* slots.restore(found.state.providerInstanceId);
+    if (found.state.mode === "build") yield* slots.restore(slotKeyFor(board, found.state));
     return true;
   });
 
@@ -8409,7 +8596,7 @@ const make = Effect.gen(function* () {
       // holds the slot, and this must run before `schedule` admits anything, so
       // the restored steps count against the ceiling the governor then honours.
       if (state.slotHeld && decision.kind !== "advance") {
-        yield* slots.restore(state.providerInstanceId);
+        yield* slots.restore(slotKeyFor(yield* readBoard, state));
       }
       switch (decision.kind) {
         case "advance":
@@ -8755,6 +8942,13 @@ const make = Effect.gen(function* () {
       case "board.plans-approved":
         // The split's integration branch (t3o-23, D5).
         return handlePlansApproved(event);
+      case "board.card-worker-pinned":
+        // A re-pin may give a step stalled for a missing provider a worker
+        // that has it, and a held card a worker that is ready (T3O-65).
+        return requeueResolvedProviderStalls(event.payload.cardId).pipe(Effect.andThen(schedule()));
+      case "board.card-worker-move-recorded":
+        // A move that landed releases the card's held step (T3O-65).
+        return event.payload.step.phase === "done" ? schedule() : Effect.void;
       default:
         return Effect.void;
     }
@@ -8953,6 +9147,8 @@ const make = Effect.gen(function* () {
         return processThreadSignal(input.signal);
       case "reconcile":
         return reconcile;
+      case "workers":
+        return requeueResolvedProviderStalls().pipe(Effect.andThen(schedule()));
       case "timeout-sweep":
         // The release sweep rides the same tick (t3o-13): it is a board read
         // and an in-memory pass, it must be serialised against the handlers for
@@ -9047,7 +9243,10 @@ const make = Effect.gen(function* () {
           event.type !== "board.card-step-recovered" &&
           event.type !== "board.card-archived" &&
           event.type !== "board.card-deleted" &&
-          event.type !== "board.plans-approved"
+          event.type !== "board.plans-approved" &&
+          // T3O-65: a re-pin or a finished move can start a held card.
+          event.type !== "board.card-worker-pinned" &&
+          event.type !== "board.card-worker-move-recorded"
         ) {
           return Effect.void;
         }
@@ -9068,6 +9267,13 @@ const make = Effect.gen(function* () {
         return worker.enqueue({ source: "thread", signal });
       }),
     );
+    // T3O-65: worker changes — status, providers, checkouts, setups — can
+    // start a card held for its worker. Absent on a local-only harness.
+    if (Option.isSome(placement)) {
+      yield* forkParked(
+        Stream.runForEach(placement.value.changes, () => worker.enqueue({ source: "workers" })),
+      );
+    }
     // The server restarts mid-step: reconcile persisted step state, serialised
     // ahead of the live events now flowing into the same worker queue.
     yield* worker.enqueue({ source: "reconcile" });

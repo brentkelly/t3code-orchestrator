@@ -1147,7 +1147,10 @@ export function withGovernor(
           // prove the opposite of what the test says. The projector's update
           // path is an idempotent upsert of the card the payload carries, so
           // a fixture must build the event from the card it currently holds.
-          event.type === "board.card-updated"
+          event.type === "board.card-updated" ||
+          // And a pin (T3O-65): a client command whose card the placement
+          // pass re-reads from the model.
+          event.type === "board.card-worker-pinned"
             ? Ref.get(model).pipe(
                 Effect.flatMap((m) => projectBoardEvent(m, event)),
                 Effect.flatMap((next) => Ref.set(model, next)),

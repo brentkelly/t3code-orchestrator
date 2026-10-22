@@ -2,8 +2,8 @@
  * T3o (T3O-63) acceptance: the board runs a planning step on a worker.
  *
  * The live supervisor, over the real router, remote gateway and signal feed,
- * with an in-process worker behind the fake transport and a test-only
- * placement that puts the card on it (placement proper is T3O-65). The step's
+ * with an in-process worker behind the fake transport and the card pinned to
+ * it (T3O-65). The step's
  * thread is spawned in the worker's checkout, a turn ending there reaches the
  * supervisor, which decides on the thread as the worker reports it, and the
  * step completes.
@@ -36,6 +36,7 @@ import { BoardRelayStoreLive } from "./workers/BoardRelayStore.ts";
 import {
   CENTRAL_ID,
   makeInProcessWorker,
+  placementOver,
   registeredWorker,
   REPOSITORY,
   waitOnline,
@@ -83,8 +84,16 @@ it.effect("the board spawns, drives and completes a planning step on a worker", 
     yield* withGovernor(
       {
         board: {
-          cards: [makeBoardCard({ id: "card-1", stage: "sprint", orderKey: "m" })],
+          cards: [
+            makeBoardCard({
+              id: "card-1",
+              stage: "sprint",
+              orderKey: "m",
+              pinnedWorkerId: WORKER_ID,
+            }),
+          ],
           nextCardNumberByProject: {},
+          workers: [registeredWorker],
         },
         settings: settingsWith({
           building: [codexStep],
@@ -108,14 +117,19 @@ it.effect("the board spawns, drives and completes a planning step on a worker", 
                 crypto,
               }),
           }),
-        placement: { workerFor: () => WORKER_ID },
+        placement: placementOver(env.connections),
       },
       ({ pumpDomain, board, reactor }) =>
         Effect.scoped(
           Effect.gen(function* () {
             yield* pumpDomain(
               cardMoved(
-                makeBoardCard({ id: "card-1", stage: "planning", orderKey: "m" }),
+                makeBoardCard({
+                  id: "card-1",
+                  stage: "planning",
+                  orderKey: "m",
+                  pinnedWorkerId: WORKER_ID,
+                }),
                 "sprint",
                 "planning",
                 1,

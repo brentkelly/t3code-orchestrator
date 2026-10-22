@@ -25,6 +25,7 @@ import { LocalThreadGatewayV2Live } from "./ThreadGatewayV2.ts";
 import { UsageLimitDetectorLive } from "./UsageLimitDetector.ts";
 import { WorktreeRetirerLive } from "./worktreeRetire.ts";
 import { BoardRelayStoreLive } from "./workers/BoardRelayStore.ts";
+import { BoardPlacementLive } from "./workers/BoardPlacement.ts";
 import { BoardWorkersLive } from "./workers/BoardWorkers.ts";
 import { McpRelayHostLive } from "./workers/McpRelayHost.ts";
 import { WorkerConnectionsLive } from "./workers/WorkerConnections.ts";
@@ -61,10 +62,13 @@ export const BoardServerLive = BoardMcpRelayClientLive.pipe(
   Layer.provideMerge(SupervisorReactorLive),
   Layer.provide(BoardStepSlotsLive),
   Layer.provide(UsageLimitDetectorLive),
+  // T3O-65: the workers' state placement gates a step on (D20).
+  Layer.provide(BoardPlacementLive),
   Layer.provideMerge(BoardWorkersLive),
-  Layer.provideMerge(BoardRuntimeLive),
-  // T3O-64: where each card's git and forge work runs (D21).
+  // T3O-64: where each card's git and forge work runs (D21) — on the worker
+  // the card is placed on, read off the board's engine (T3O-65).
   Layer.provideMerge(BoardWorkspacesLive),
+  Layer.provideMerge(BoardRuntimeLive),
   Layer.provideMerge(BoardPullRequestGatewayLive),
   Layer.provideMerge(WorktreeRetirerLive),
   Layer.provideMerge(BoardThreadsLive),

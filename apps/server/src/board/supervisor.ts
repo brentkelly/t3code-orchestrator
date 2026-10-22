@@ -17,11 +17,17 @@
  *   answer to "is its thread still alive / did it complete while we were
  *   down", decide resume / recover / advance.
  */
-import { BOARD_ENVELOPE_QUESTION_MECHANISM } from "@t3tools/contracts";
+import {
+  BOARD_ENVELOPE_QUESTION_MECHANISM,
+  BOARD_LOCAL_WORKER_ID,
+  clampBoardInstanceCap,
+  resolveBoardWorkerConcurrency,
+} from "@t3tools/contracts";
 import type {
   BoardCardId,
   BoardCardStepState,
   BoardConcurrencySettings,
+  BoardWorkerId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 
@@ -514,18 +520,30 @@ export function orderBoardQueue(
 }
 
 /**
- * Resolve the concurrency caps for a provider instance (D11). A per-instance
- * value of `null` — or an absent entry, which is observationally identical
- * (see `BoardConcurrencySettings`) — means "no instance-specific cap": bound
- * only by the global ceiling, expressed as a null per-instance limit so
- * `acquire` applies the global one alone.
+ * Resolve the three ceilings for a step on a worker (D11, T3O-65): the board
+ * limit, the worker's own limit, and the instance's cap on that worker. A
+ * `null` worker limit or cap — or an absent entry, which is observationally
+ * identical (see `BoardConcurrencySettings`) — means no limit of that kind. A
+ * cap above its worker's limit reads as the worker limit, so `acquire` names
+ * the worker, not the provider, as what is full.
  */
 export function resolveBoardConcurrencyLimit(
   concurrency: BoardConcurrencySettings,
   providerInstanceId: ProviderInstanceId,
-): { readonly perInstance: number | null; readonly global: number } {
+  workerId: BoardWorkerId = BOARD_LOCAL_WORKER_ID,
+): {
+  readonly global: number;
+  readonly worker: number | null;
+  readonly perInstance: number | null;
+} {
+  const onWorker = resolveBoardWorkerConcurrency(concurrency, workerId);
+  const cap = clampBoardInstanceCap(
+    onWorker.perInstance[providerInstanceId] ?? null,
+    onWorker.maxConcurrent,
+  );
   return {
-    perInstance: concurrency.perInstance[providerInstanceId] ?? null,
     global: concurrency.globalMaxConcurrent,
+    worker: onWorker.maxConcurrent,
+    perInstance: cap !== null && cap === onWorker.maxConcurrent ? null : cap,
   };
 }
