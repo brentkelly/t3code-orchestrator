@@ -51,6 +51,9 @@ import {
 } from "./BoardSettingsPanel.logic";
 import { BoardPipelineSection, NumberStepper } from "./BoardPipelineSection";
 import { BoardWorkerSettings } from "../../board/workers/BoardWorkerSettings";
+import { useBoardWorkers } from "../../board/workers/boardWorkersState";
+import { boardShowsWorkers } from "../../board/workers/cardWorker";
+import { WorkerConcurrencySection } from "../../board/workers/WorkerConcurrencySection";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
@@ -81,7 +84,16 @@ export function BoardSettingsPanel() {
     <SettingsPageContainer>
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
       <BoardPipelineSection />
-      <ConcurrencySection board={board} instanceIds={instanceIds} update={update} />
+      {environmentId === null ? (
+        <ConcurrencySection board={board} instanceIds={instanceIds} update={update} />
+      ) : (
+        <BoardConcurrencySettings
+          board={board}
+          environmentId={environmentId}
+          instanceIds={instanceIds}
+          update={update}
+        />
+      )}
       {/* T3O-62: the board's workers, and which projects each has checked out. */}
       {environmentId === null ? null : <BoardWorkerSettings environmentId={environmentId} />}
       <LifecycleSection board={board} update={update} />
@@ -338,6 +350,39 @@ function ConcurrencySection({
           );
         })}
       </CardListContainer>
+    </SettingsSection>
+  );
+}
+
+/**
+ * Concurrency, per worker once the board has any (T3O-65, D11). A local-only
+ * board keeps the section exactly as it was.
+ */
+function BoardConcurrencySettings(props: {
+  board: BoardSettings;
+  environmentId: EnvironmentId;
+  instanceIds: ReadonlyArray<string>;
+  update: UpdateFn;
+}) {
+  const workers = useBoardWorkers(props.environmentId);
+  if (!boardShowsWorkers(workers.state)) {
+    return (
+      <ConcurrencySection
+        board={props.board}
+        instanceIds={props.instanceIds}
+        update={props.update}
+      />
+    );
+  }
+  const anchor = searchableSetting("board-concurrency");
+  return (
+    <SettingsSection id="board-concurrency" title={anchor.title} variant="plain">
+      <WorkerConcurrencySection
+        concurrency={props.board.concurrency}
+        localInstanceIds={props.instanceIds}
+        onChange={(patch) => props.update({ board: { concurrency: patch } })}
+        workers={workers.state}
+      />
     </SettingsSection>
   );
 }
