@@ -194,6 +194,8 @@ interface Fixture {
   readonly retireFails?: "error" | "blocked";
   /** The card's branch was never pushed (T3O-66). */
   readonly noRemoteBranch?: boolean;
+  /** The target can't reach the remote to ask about the branch. */
+  readonly remoteUnreachable?: boolean;
 }
 
 /** Every git operation the move ran, with the worker it ran on. */
@@ -252,10 +254,18 @@ const makeLayer = (fixture: Fixture) =>
           ),
         remoteBranchTip: () =>
           log("remoteBranchTip").pipe(
-            Effect.as(
-              fixture.noRemoteBranch === true
-                ? null
-                : { sha: "4e1a9c2", subject: "Wire it", committedAt: NOW, author: "agent" },
+            Effect.andThen(
+              fixture.remoteUnreachable === true
+                ? Effect.fail({
+                    _tag: "BoardWorkerGitError",
+                    operation: "remoteBranchTip",
+                    detail: "The remote origin couldn't be reached.",
+                  })
+                : Effect.succeed(
+                    fixture.noRemoteBranch === true
+                      ? null
+                      : { sha: "4e1a9c2", subject: "Wire it", committedAt: NOW, author: "agent" },
+                  ),
             ),
           ),
         retireWorktree: () =>
@@ -763,6 +773,79 @@ it.layer(NodeServices.layer)("moving a card to another worker (T3O-65)", (it) =>
           expect(card.pinnedWorkerId).toBe(BOARD_LOCAL_WORKER_ID);
           expect(card.workerMove).toBeNull();
           expect(card.title).toBe("Card");
+        }),
+    ),
+  );
+
+  it.effect("a remote that can't be asked refuses the force-move rather than offer a restart", () =>
+    withMover({ ...onOfflineW1(), remoteUnreachable: true }, (mover, f) =>
+      Effect.gen(function* () {
+        const checked = yield* mover.check(cardId, BOARD_LOCAL_WORKER_ID, { force: true });
+        assert.strictEqual(checked.outcome, "refused");
+        const moved = yield* mover.move(cardId, BOARD_LOCAL_WORKER_ID, undefined, {
+          force: true,
+          restartFromBase: true,
+        });
+        assert.strictEqual(moved.outcome, "refused");
+        expect(yield* f.events).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("with no remote branch, a Done card is not restarted", () =>
+    withMover(
+      {
+        ...onOfflineW1(),
+        board: board(
+          makeCard({
+            stage: BoardStageId.make("done"),
+            placedWorkerId: W1,
+            worktree: readyWorktree,
+          }),
+        ),
+        noRemoteBranch: true,
+      },
+      (mover, f) =>
+        Effect.gen(function* () {
+          assert.strictEqual(
+            (yield* mover.check(cardId, BOARD_LOCAL_WORKER_ID, { force: true })).outcome,
+            "refused",
+          );
+          const moved = yield* mover.move(cardId, BOARD_LOCAL_WORKER_ID, undefined, {
+            force: true,
+            restartFromBase: true,
+          });
+          assert.strictEqual(moved.outcome, "refused");
+          expect(yield* f.events).toEqual([]);
+          expect((yield* f.card).stage).toBe("done");
+        }),
+    ),
+  );
+
+  it.effect("with no remote branch, a card not yet at Build restarts in its own stage", () =>
+    withMover(
+      {
+        ...onOfflineW1(),
+        board: board(
+          makeCard({
+            stage: BoardStageId.make("planning"),
+            placedWorkerId: W1,
+            worktree: readyWorktree,
+          }),
+        ),
+        noRemoteBranch: true,
+      },
+      (mover, f) =>
+        Effect.gen(function* () {
+          const restarted = yield* mover.move(cardId, BOARD_LOCAL_WORKER_ID, undefined, {
+            force: true,
+            restartFromBase: true,
+          });
+          expect(restarted).toEqual({ outcome: "started" });
+          const card = yield* f.card;
+          expect(card.stage).toBe("planning");
+          expect(card.worktree).toBeNull();
+          expect(card.workerMove).toBeNull();
         }),
     ),
   );

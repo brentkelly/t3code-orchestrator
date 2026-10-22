@@ -774,14 +774,31 @@ export function makeLocalBoardWorkspace(
     });
 
   /** The branch's tip on the remote, freshly fetched; null when the remote
-      does not have it (or cannot be reached). */
+      does not have it, or there is no remote. A remote that can't be asked
+      fails instead (T3O-66): "not there" offers a restart from base, which
+      forgets pushed work, so it must not be guessed from a network error. */
   const remoteBranchTip: BoardWorkspace["remoteBranchTip"] = ({ projectId, branch }) =>
     Effect.gen(function* () {
       const cwd = yield* rootOf("remoteBranchTip", projectId);
       const remoteName = yield* primaryRemote(cwd);
       if (remoteName === null) return null;
+      const unreachable = new BoardWorkerGitError({
+        operation: "remoteBranchTip",
+        detail: `The remote ${remoteName} couldn't be reached.`,
+      });
+      const listed = yield* git
+        .execute({
+          operation: "boardRemoteBranchTip.lsRemote",
+          cwd,
+          args: ["ls-remote", "--heads", remoteName, `refs/heads/${branch}`],
+          timeoutMs: 60_000,
+          allowNonZeroExit: true,
+        })
+        .pipe(Effect.catchCause(() => Effect.succeed(null)));
+      if (listed === null || listed.exitCode !== 0) return yield* unreachable;
+      if (listed.stdout.trim().length === 0) return null;
       if (!(yield* fetchRemoteBranch("boardRemoteBranchTip.fetch", cwd, remoteName, branch))) {
-        return null;
+        return yield* unreachable;
       }
       const line = yield* gitRef("boardRemoteBranchTip.log", cwd, [
         "log",

@@ -32,6 +32,7 @@ import {
   boardCardStepState,
   boardRepositoryGroupingKey,
   boardStageWithRole,
+  isBoardStageAtOrAfterBuild,
   CommandId,
   EMPTY_BOARD_STATE,
   type BoardAskCardAgentToPushResult,
@@ -168,6 +169,14 @@ export const makeBoardCardMover = Effect.gen(function* () {
     return worker === undefined || worker.status.state !== "online" ? workerId : null;
   });
 
+  /** Why a move refuses when the remote can't be asked about its branch. */
+  const remoteUnreachable = Effect.fn("BoardCardMover.remoteUnreachable")(function* (
+    workerId: BoardWorkerId,
+    branch: string,
+  ) {
+    return `${yield* workerName(workerId)} couldn't reach the remote to look for ${branch}. Try again once it can.`;
+  });
+
   /** A force-move's check (T3O-66): nothing on the source can be read, so the
       remote branch on the target is all there is to continue from. */
   const checkForced = Effect.fn("BoardCardMover.checkForced")(function* (
@@ -190,10 +199,23 @@ export const makeBoardCardMover = Effect.gen(function* () {
     }
     if (worktree === null) return refused("This card has no branch to move.");
     const target = yield* workspaces.forWorker(toWorkerId, card.projectId);
-    const tip = yield* target
-      .remoteBranchTip({ branch: worktree.branch })
-      .pipe(Effect.orElseSucceed(() => null));
+    // A remote that couldn't be asked is not one without the branch: only the
+    // latter offers a restart from base, which forgets pushed work.
+    const read = yield* target.remoteBranchTip({ branch: worktree.branch }).pipe(
+      Effect.map((tip) => ({ tip })),
+      Effect.orElseSucceed(() => null),
+    );
+    if (read === null) return refused(yield* remoteUnreachable(toWorkerId, worktree.branch));
+    const tip = read.tip;
     if (tip === null) {
+      // A restart sends the card back to Build: a Done card has nothing to
+      // go back to.
+      const done = boardStageWithRole(yield* readBoard, "done");
+      if (done !== null && card.stage === done.stageId) {
+        return refused(
+          `${worktree.branch} isn't on the remote, and a Done card isn't restarted from its base.`,
+        );
+      }
       return {
         outcome: "no-remote-branch",
         workerId: from,
@@ -281,9 +303,15 @@ export const makeBoardCardMover = Effect.gen(function* () {
       } else {
         tipFrom = yield* workspaces.forWorker(toWorkerId, card.projectId);
       }
-      const tip = yield* tipFrom
-        .remoteBranchTip({ branch: worktree.branch })
-        .pipe(Effect.orElseSucceed(() => null));
+      const read = yield* tipFrom.remoteBranchTip({ branch: worktree.branch }).pipe(
+        Effect.map((tip) => ({ tip })),
+        Effect.orElseSucceed(() => null),
+      );
+      // With the source's worktree to move from, the remote is only a cross-check.
+      if (from === null && read === null) {
+        return refused(yield* remoteUnreachable(toWorkerId, worktree.branch));
+      }
+      const tip = read?.tip ?? null;
       if (from === null && tip === null) {
         return refused(
           `${worktree.branch} isn't on the remote, so there is nothing to continue from.`,
@@ -432,7 +460,9 @@ export const makeBoardCardMover = Effect.gen(function* () {
    * nothing on the remote to continue from. A card past Build goes back to it
    * first — while it still holds its old placement, so nothing starts on the
    * old branch — then its branch is forgotten and the move ends on the target,
-   * where Build cuts a fresh one from the base.
+   * where Build cuts a fresh one from the base. A card not yet at Build keeps
+   * its stage and cuts the branch when it gets there. Whether it restarted:
+   * a refused stage move fails the move instead.
    */
   const restartFromBase = Effect.fn("BoardCardMover.restartFromBase")(function* (
     cardId: BoardCardId,
@@ -441,8 +471,12 @@ export const makeBoardCardMover = Effect.gen(function* () {
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === cardId)!;
     const build = boardStageWithRole(board, "build");
-    if (build !== null && card.stage !== build.stageId) {
-      yield* dispatchStamped(
+    if (
+      build !== null &&
+      card.stage !== build.stageId &&
+      isBoardStageAtOrAfterBuild(board, card.stage)
+    ) {
+      const backToBuild = yield* dispatchStamped(
         {
           type: "board.card.move",
           commandId: yield* commandId("move-restart-build"),
@@ -453,6 +487,17 @@ export const makeBoardCardMover = Effect.gen(function* () {
         },
         stamp,
       );
+      if (!backToBuild) {
+        yield* record(
+          cardId,
+          {
+            phase: "failed",
+            error: `The card couldn't go back to ${build.label}, so it wasn't restarted.`,
+          },
+          stamp,
+        );
+        return false;
+      }
     }
     return yield* record(cardId, { phase: "restarted" }, stamp);
   });

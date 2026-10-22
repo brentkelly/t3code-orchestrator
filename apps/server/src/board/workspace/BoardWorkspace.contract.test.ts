@@ -259,6 +259,13 @@ const scenario = (ws: BoardWorkspace, env: Env, forgeAsked: Array<string>) =>
     });
     out.remoteTip = yield* ws.remoteBranchTip({ ...p, branch: "board/t-p" });
     out.remoteTipMissing = yield* ws.remoteBranchTip({ ...p, branch: "board/none" });
+    // A remote that can't be asked fails, rather than reading as "not there".
+    const originUrl = yield* git(env.checkout, ["remote", "get-url", "origin"]);
+    yield* git(env.checkout, ["remote", "set-url", "origin", `${originUrl}-gone`]);
+    out.remoteTipUnreachable = yield* ws
+      .remoteBranchTip({ ...p, branch: "board/t-p" })
+      .pipe(Effect.match({ onFailure: (error) => error._tag, onSuccess: () => "answered" }));
+    yield* git(env.checkout, ["remote", "set-url", "origin", originUrl]);
     out.mergeConflict = yield* ws.probeLocalMergeConflict({
       ...p,
       headBranch: "board/t-p",
@@ -347,6 +354,7 @@ describe("BoardWorkspace contract (T3O-64)", () => {
       assert.notStrictEqual(localTranscript.tipBefore.tip, localTranscript.tipAfter.tip);
       assert.deepStrictEqual(localTranscript.integration, { outcome: "ready", pushed: true });
       assert.isNull(localTranscript.remoteTipMissing);
+      assert.strictEqual(localTranscript.remoteTipUnreachable, "BoardWorkerGitError");
       assert.strictEqual(localTranscript.remoteTip.author, "Board Tester");
       assert.strictEqual(localTranscript.mergeConflict.result, "clean");
       assert.deepStrictEqual(localTranscript.pullMergedBase, {
