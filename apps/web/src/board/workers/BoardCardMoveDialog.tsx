@@ -69,6 +69,8 @@ export function BoardCardMoveDialog(props: {
   readonly workers: BoardWorkersState;
   /** Where the card is moving; null closes the dialog. */
   readonly toWorkerId: BoardWorkerId | null;
+  /** The human chose Follow default, so the card lands unpinned. */
+  readonly followDefault: boolean;
   readonly onClose: () => void;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
@@ -109,7 +111,9 @@ export function BoardCardMoveDialog(props: {
     });
     void move({
       environmentId: props.environmentId,
-      input: { action: "move", cardId: card.id, toWorkerId },
+      // No worker is Follow default: the server moves to the board's default
+      // and leaves the card unpinned.
+      input: { action: "move", cardId: card.id, ...(props.followDefault ? {} : { toWorkerId }) },
     }).then((result) => {
       if (result._tag === "Failure") {
         setPhase({ kind: "failed", detail: "The board server didn't answer. Try again." });

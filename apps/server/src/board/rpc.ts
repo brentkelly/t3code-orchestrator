@@ -366,12 +366,13 @@ function makeBoardRpcHandlers(
         BOARD_WS_METHODS.cardWorkerMove,
         Effect.suspend((): Effect.Effect<BoardCardWorkerMoveAnswer> => {
           if (input.action === "ask-push") return services.mover.askAgentToPush(input.cardId);
+          if (input.action === "move") {
+            return services.mover.move(input.cardId, input.toWorkerId ?? null, services.stampActor);
+          }
           if (input.toWorkerId === undefined) {
             return Effect.succeed({ outcome: "refused", detail: "Pick a worker to move to." });
           }
-          return input.action === "check"
-            ? services.mover.check(input.cardId, input.toWorkerId)
-            : services.mover.move(input.cardId, input.toWorkerId, services.stampActor);
+          return services.mover.check(input.cardId, input.toWorkerId);
         }),
       ),
 

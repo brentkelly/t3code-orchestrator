@@ -478,6 +478,20 @@ it.layer(NodeServices.layer)("moving a card to another worker (T3O-65)", (it) =>
     ),
   );
 
+  it.effect("Follow default moves to the board's default and lands the card unpinned", () =>
+    withMover({ board: { ...board(makeCard()), defaultWorkerId: W1 } }, (mover, f) =>
+      Effect.gen(function* () {
+        expect(yield* mover.move(cardId, null)).toEqual({ outcome: "started" });
+        yield* mover.drain;
+        const landed = yield* f.card;
+        expect(landed.placedWorkerId).toBe(W1);
+        expect(landed.worktree?.path).toBe(`/home/${W1}/worktrees/t3-1`);
+        // Following, not pinned: once the worktree goes, a default change moves it.
+        expect(landed.pinnedWorkerId).toBeNull();
+      }),
+    ),
+  );
+
   it.effect("a failed provision leaves Move failed and does not restore the old worktree", () =>
     withMover(
       { board: board(makeCard()), provisionFails: "fatal: couldn't find remote ref board/t3-1" },

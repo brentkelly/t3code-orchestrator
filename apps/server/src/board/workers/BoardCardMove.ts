@@ -55,10 +55,12 @@ export interface BoardCardMoverShape {
     cardId: BoardCardId,
     toWorkerId: BoardWorkerId,
   ) => Effect.Effect<BoardCardMoveCheck>;
-  /** Check again, then start the move; the git work runs on after the answer. */
+  /** Check again, then start the move; the git work runs on after the answer.
+      A null worker is the human's Follow default: the board's default worker,
+      and the card lands unpinned. */
   readonly move: (
     cardId: BoardCardId,
-    toWorkerId: BoardWorkerId,
+    toWorkerId: BoardWorkerId | null,
     stamp?: BoardMoveStamp,
   ) => Effect.Effect<BoardMoveCardToWorkerResult>;
   /** Ask the agent in the card's latest thread to push its work. */
@@ -289,6 +291,7 @@ export const makeBoardCardMover = Effect.gen(function* () {
   const provision = Effect.fn("BoardCardMover.provision")(function* (input: {
     readonly card: BoardCard;
     readonly toWorkerId: BoardWorkerId;
+    readonly followDefault: boolean;
     readonly stamp: BoardMoveStamp;
   }) {
     const { card, stamp } = input;
@@ -311,16 +314,46 @@ export const makeBoardCardMover = Effect.gen(function* () {
         stamp,
       );
     }
-    yield* record(card.id, { phase: "done", worktreePath: provisioned.success.path }, stamp);
+    const done = yield* record(
+      card.id,
+      { phase: "done", worktreePath: provisioned.success.path },
+      stamp,
+    );
+    // `done` pins the card where it landed; the human's Follow default takes
+    // the pin off again, so the card follows the default once its worktree goes.
+    if (done && input.followDefault) {
+      const unpin: BoardCommand = {
+        type: "board.card.pin-worker",
+        commandId: yield* commandId("move-unpin"),
+        cardId: card.id,
+        workerId: null,
+        createdAt: yield* nowIso,
+      };
+      yield* stamp(unpin);
+      yield* engine.dispatch(unpin).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board move: Follow default not restored", {
+            cardId: card.id,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+    }
   });
 
-  const move: BoardCardMoverShape["move"] = (cardId, toWorkerId, stamp = () => Effect.void) =>
+  const move: BoardCardMoverShape["move"] = (cardId, choice, stamp = () => Effect.void) =>
     Effect.gen(function* () {
+      const followDefault = choice === null;
+      const toWorkerId = choice ?? (yield* readBoard).defaultWorkerId ?? BOARD_LOCAL_WORKER_ID;
       const checked = yield* check(cardId, toWorkerId);
       if (checked.outcome !== "ready") return checked;
       const started = yield* record(
         cardId,
-        { phase: "start", toWorkerId, sha: checked.tip?.sha ?? null },
+        {
+          phase: "start",
+          toWorkerId,
+          sha: checked.tip?.sha ?? null,
+        },
         stamp,
       );
       if (!started) return refused("The move could not be started. See the server log.");
@@ -345,7 +378,7 @@ export const makeBoardCardMover = Effect.gen(function* () {
         );
         if (refusal !== null) return refusal;
       }
-      yield* provision({ card, toWorkerId, stamp }).pipe(
+      yield* provision({ card, toWorkerId, followDefault, stamp }).pipe(
         Effect.catchCause(stopped),
         FiberSet.run(running),
       );

@@ -37,6 +37,8 @@ export function BoardCardWorkerRow(props: {
   const field = useBoardWorkerChoices(environmentId, card.projectId);
   const pin = useAtomCommand(boardEnvironment.pinCardWorker);
   const [moveTo, setMoveTo] = useState<BoardWorkerId | null>(null);
+  // Follow default is a Move to the default that lands the card unpinned.
+  const [followDefault, setFollowDefault] = useState(false);
   if (!field.shown) return null;
   const { workers } = field;
 
@@ -56,6 +58,7 @@ export function BoardCardWorkerRow(props: {
     // worker the worktree is already on moves nothing, so it is just a pin.
     const staysPut = holds && move === null && (workerId ?? workers.defaultWorkerId) === bound;
     if ((holds || move !== null) && !staysPut) {
+      setFollowDefault(workerId === null);
       setMoveTo(workerId ?? workers.defaultWorkerId);
       return;
     }
@@ -104,7 +107,17 @@ export function BoardCardWorkerRow(props: {
             worktree is already retired, so pick a worker to try again.
           </span>
           <span className="flex gap-1.5">
-            <Button onClick={() => setMoveTo(move.toWorkerId)} size="xs" variant="outline">
+            <Button
+              onClick={() => {
+                // A following card retrying to the default keeps following.
+                setFollowDefault(
+                  card.pinnedWorkerId === null && move.toWorkerId === workers.defaultWorkerId,
+                );
+                setMoveTo(move.toWorkerId);
+              }}
+              size="xs"
+              variant="outline"
+            >
               Retry
             </Button>
           </span>
@@ -121,6 +134,7 @@ export function BoardCardWorkerRow(props: {
         key={moveTo ?? "closed"}
         card={card}
         environmentId={environmentId}
+        followDefault={followDefault}
         onClose={() => setMoveTo(null)}
         onOpenThread={(threadId) => {
           setMoveTo(null);
