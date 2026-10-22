@@ -174,10 +174,13 @@ const scriptedForge = (asked: Array<string>) =>
       }),
   }) satisfies BoardPullRequestGateway["Service"];
 
-/** This server's workspaces over the real driver, with `checkout` as the project. */
+/** This server's workspaces over the real driver, with `checkout` as the project.
+    Its own board has workers unless `boardHasWorkers` says otherwise, so its
+    local workspace measures a base the way a worker's does. */
 const workspacesOver = (
   checkout: string,
   pullRequests: BoardPullRequestGateway["Service"] = scriptedForge([]),
+  boardHasWorkers = true,
 ) =>
   Effect.gen(function* () {
     const config = yield* ServerConfig;
@@ -190,6 +193,7 @@ const workspacesOver = (
       path: pathService,
       projectRoot: (id) => Effect.succeed(id === projectId ? checkout : null),
       worktreeRoots: Effect.succeed([pathService.resolve(config.worktreesDir)]),
+      boardHasWorkers: Effect.succeed(boardHasWorkers),
     });
   });
 
@@ -402,6 +406,35 @@ describe("BoardWorkspace contract (T3O-64)", () => {
         yield* git(env.checkout, ["rev-parse", "refs/heads/main"]),
         localMainBefore,
       );
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("a board with no workers measures its local base without fetching", () =>
+    Effect.gen(function* () {
+      const env = yield* makeEnv("localonly");
+      const workspaces = yield* workspacesOver(env.checkout, scriptedForge([]), false);
+      const localMain = yield* git(env.checkout, ["rev-parse", "refs/heads/main"]);
+      const trackedBefore = yield* git(env.checkout, ["rev-parse", "refs/remotes/origin/main"]);
+
+      // The remote moves on and nothing pulls it here: a base that is merely
+      // behind is not movement, so a tip recorded before workers existed
+      // still compares equal.
+      yield* commitFile(env.pusher, "elsewhere.txt", "x\n", "pushed elsewhere");
+      yield* git(env.pusher, ["push", "origin", "main"]);
+
+      const measured = yield* workspaces.local.measureBaseTip({ projectId, baseRefName: "main" });
+      assert.strictEqual(measured.tip, localMain);
+      // No fetch ran: the remote-tracking ref has not moved.
+      assert.strictEqual(
+        yield* git(env.checkout, ["rev-parse", "refs/remotes/origin/main"]),
+        trackedBefore,
+      );
+      // The same server, working for a central board, does read the remote.
+      const forCentral = yield* workspaces.forCentral.measureBaseTip({
+        projectId,
+        baseRefName: "main",
+      });
+      assert.strictEqual(forCentral.tip, yield* git(env.pusher, ["rev-parse", "HEAD"]));
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
@@ -677,6 +710,56 @@ describe("the worker side of the named operations (T3O-64)", () => {
         baseRefName: "main",
       });
       assert.isNull(heartbeat.committedAt);
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
+  it.effect("refuses to change or remove a worktree the central board did not make", () =>
+    Effect.gen(function* () {
+      const env = yield* makeEnv("owned");
+      const workspaces = yield* workspacesOver(env.checkout);
+      const central = remoteOver(makeInProcessWorker(workspaces));
+      const fileSystem = yield* FileSystem.FileSystem;
+      // The worker's own board's checkout, and a user's thread worktree: both
+      // registered with the project's repository, neither the central board's.
+      const own = yield* workspaces.local.provisionWorktree({
+        projectId,
+        branch: "board/own-w",
+        baseRefName: "main",
+      });
+      const thread = NodePath.join(env.root, "thread-worktree");
+      yield* git(env.checkout, ["worktree", "add", "-b", "feature/thread", thread]);
+      for (const worktreePath of [own.path, thread]) {
+        for (const write of [
+          central.retireWorktree({ projectId, worktreePath, kind: "forced", verifiedClean: false }),
+          central.pruneWorktree({ projectId, worktreePath }),
+          central.pinGhDefault({ projectId, worktreePath }),
+        ]) {
+          const refused = yield* Effect.flip(write);
+          assert.strictEqual(refused._tag, "BoardWorkerGitError");
+          assert.include(detailOf(refused), "that the board made");
+        }
+        assert.isTrue(yield* fileSystem.exists(worktreePath));
+        // Reading it is still fine.
+        const heartbeat = yield* central.branchHeartbeat({
+          projectId,
+          worktreePath,
+          baseRefName: "main",
+        });
+        assert.isNull(heartbeat.committedAt);
+      }
+
+      // The central board's own checkout is removed, and once its folder is
+      // gone, a retry may still drop the registration.
+      const placed = yield* central.provisionWorktree({
+        projectId,
+        branch: "board/central-w",
+        baseRefName: "main",
+      });
+      yield* central.pinGhDefault({ projectId, worktreePath: placed.path });
+      yield* fileSystem.remove(placed.path, { recursive: true });
+      yield* central.pruneWorktree({ projectId, worktreePath: placed.path });
+      const listed = yield* git(env.checkout, ["worktree", "list", "--porcelain"]);
+      assert.notInclude(listed, placed.path);
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 

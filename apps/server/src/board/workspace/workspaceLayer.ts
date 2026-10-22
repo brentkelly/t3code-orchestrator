@@ -38,7 +38,11 @@ import {
   type BoardWorkspacePlacement,
   type BoardWorkspacesShape,
 } from "./BoardWorkspace.ts";
-import { makeLocalBoardWorkspace, type LocalBoardWorkspaceDeps } from "./LocalBoardWorkspace.ts";
+import {
+  boardWorktreeOwner,
+  makeLocalBoardWorkspace,
+  type LocalBoardWorkspaceDeps,
+} from "./LocalBoardWorkspace.ts";
 import { remoteCardWorkspace } from "./RemoteBoardWorkspace.ts";
 
 export interface BoardWorkspacesOptions {
@@ -96,9 +100,10 @@ export function makeBoardWorkspaces(
    * gone from disk and from git, which a reclaim or forced removal may still
    * name on retry — a missing path under the worktrees directory. A folder
    * that exists there but is not the project's (another project's checkout,
-   * the per-repository container) is refused.
+   * the per-repository container) is refused. With `owner`, a registered
+   * checkout still on disk must carry that board's marker too.
    */
-  const ownsWorktreePath: BoardWorkspacesShape["ownsWorktreePath"] = (projectId, path) =>
+  const ownsWorktreePath: BoardWorkspacesShape["ownsWorktreePath"] = (projectId, path, owner) =>
     Effect.gen(function* () {
       const resolved = pathService.resolve(path);
       const cwd = yield* deps.projectRoot(projectId);
@@ -115,10 +120,14 @@ export function makeBoardWorkspaces(
       const registered = parseRegisteredWorktrees(listed.stdout)
         .slice(1)
         .some((worktree) => pathService.resolve(worktree.path) === resolved);
-      if (registered) return true;
+      const exists = yield* deps.fileSystem.exists(resolved).pipe(Effect.orElseSucceed(() => true));
+      if (registered) {
+        return (
+          owner === undefined || !exists || (yield* boardWorktreeOwner(deps, resolved)) === owner
+        );
+      }
       const roots = yield* deps.worktreeRoots;
       if (!roots.some((root) => isWithinRoot(resolved, root))) return false;
-      const exists = yield* deps.fileSystem.exists(resolved).pipe(Effect.orElseSucceed(() => true));
       return !exists;
     });
 
@@ -201,8 +210,13 @@ export const localBoardWorkspaceDeps = Effect.gen(function* () {
 export const BoardWorkspacesLive = Layer.effect(
   BoardWorkspaces,
   Effect.gen(function* () {
-    const deps = yield* localBoardWorkspaceDeps;
     const engine = yield* BoardEngine;
+    const deps: LocalBoardWorkspaceDeps = {
+      ...(yield* localBoardWorkspaceDeps),
+      boardHasWorkers: engine.getReadModel.pipe(
+        Effect.map((model) => (model.board?.workers ?? []).length > 0),
+      ),
+    };
     const connections = yield* WorkerConnections;
     const threads = yield* ThreadGateway;
     const workerProjectOf = (workerId: EnvironmentId, projectId: ProjectId) =>

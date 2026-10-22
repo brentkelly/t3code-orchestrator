@@ -37,6 +37,7 @@ import {
   boardCardWorktreeReclaimDecision,
   type BoardCardWorktreeReclaimResult,
 } from "../worktree.ts";
+import type { BoardWorktreeOwner } from "./LocalBoardWorkspace.ts";
 
 type Method<Op extends BoardWorkerGitOperation> = (typeof BOARD_WORKER_GIT_WS_METHODS)[Op];
 
@@ -239,8 +240,18 @@ export interface BoardWorkspacesShape {
    * Whether `path` is one of `projectId`'s worktrees on this server: under its
    * worktrees directory, or registered with the checkout's git (never the
    * checkout itself). The worker checks every path a central server names.
+   *
+   * With `owner`, a checkout still on disk must also be that board's
+   * (`BoardWorktreeOwner`): the worker asks it before anything that changes or
+   * removes a checkout, so a central server can never touch the worker's own
+   * board's checkouts or a user's thread worktree. A checkout already gone
+   * has no owner to read and is still allowed, for a retry to finish.
    */
-  readonly ownsWorktreePath: (projectId: ProjectId, path: string) => Effect.Effect<boolean>;
+  readonly ownsWorktreePath: (
+    projectId: ProjectId,
+    path: string,
+    owner?: BoardWorktreeOwner,
+  ) => Effect.Effect<boolean>;
   /** The workspace a card's git and forge work runs in, bound to its checkout. */
   readonly forCard: (
     card: Pick<BoardCard, "id" | "projectId">,

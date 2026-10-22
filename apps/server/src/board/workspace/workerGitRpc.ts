@@ -10,7 +10,9 @@
  *
  * - the session holds the operation's scope (`BOARD_WORKER_GIT_RPC_SCOPES`);
  * - a path the caller names is one of the project's worktrees on THIS server,
- *   so no operation reaches outside the checkouts the board made.
+ *   and, for an operation that changes or removes a checkout, one the central
+ *   board made (its owner marker), so no write reaches this server's own
+ *   board's checkouts or a user's thread worktree.
  *
  * Anything that goes wrong comes back as `BoardWorkerGitError`, a defect
  * included, so the central server never mistakes a broken operation for a
@@ -51,25 +53,34 @@ const pathsOf = (input: Record<string, unknown>): ReadonlyArray<string> => {
   return typeof path === "string" ? [path] : [];
 };
 
+/** The operations that change or remove the checkout they name. */
+const WRITES_TO_PATH: ReadonlySet<BoardWorkerGitOperation> = new Set([
+  "pinGhDefault",
+  "pruneWorktree",
+  "retireWorktree",
+]);
+
 const guardPaths = (
   workspaces: BoardWorkspacesShape,
-  operation: string,
+  operation: BoardWorkerGitOperation,
   projectId: ProjectId,
   paths: ReadonlyArray<string>,
 ) =>
   Effect.forEach(paths, (path) =>
-    workspaces.ownsWorktreePath(projectId, path).pipe(
-      Effect.flatMap((owned) =>
-        owned
-          ? Effect.void
-          : Effect.fail(
-              new BoardWorkerGitError({
-                operation,
-                detail: `${path} is not one of this project's worktrees on this server.`,
-              }),
-            ),
+    workspaces
+      .ownsWorktreePath(projectId, path, WRITES_TO_PATH.has(operation) ? "central" : undefined)
+      .pipe(
+        Effect.flatMap((owned) =>
+          owned
+            ? Effect.void
+            : Effect.fail(
+                new BoardWorkerGitError({
+                  operation,
+                  detail: `${path} is not one of this project's worktrees on this server${WRITES_TO_PATH.has(operation) ? " that the board made" : ""}.`,
+                }),
+              ),
+        ),
       ),
-    ),
   );
 
 export const boardWorkerGitRpcHandlers = (

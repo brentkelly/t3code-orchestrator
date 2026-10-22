@@ -10,8 +10,9 @@
  * Each operation resolves its project id to this server's checkout. The
  * bodies are the board's git code as it was — moved here from the supervisor
  * reactor, `worktree.ts` and the leaf helpers — with two changes for more than
- * one worker: `measureBaseTip` fetches and reads the remote base, and
- * `ensureLocalBaseBranch` fetches a base this checkout has never seen.
+ * one worker: on a board that has workers, `measureBaseTip` fetches and reads
+ * the remote base, and `ensureLocalBaseBranch` fetches a base this checkout
+ * has never seen.
  */
 import {
   BOARD_UNPUSHED_COMMITS_MAX,
@@ -54,6 +55,10 @@ export interface LocalBoardWorkspaceDeps {
   /** This server's worktrees directory, as spelled and as resolved through
       symlinks; empty when there is none to sweep (a test without a config). */
   readonly worktreeRoots: Effect.Effect<ReadonlyArray<string>>;
+  /** Whether this server's own board has workers other than itself. Only then
+      can a base move without this checkout seeing it, so only then does
+      `measureBaseTip` go to the remote. Absent reads as no. */
+  readonly boardHasWorkers?: Effect.Effect<boolean>;
 }
 
 /**
@@ -93,6 +98,46 @@ const forgeFailed = (operation: string) => (error: BoardPullRequestGatewayError)
     detail: error.detail,
     ...(error.refusal === undefined ? {} : { refusal: error.refusal }),
   });
+
+/** The worktree's private git dir, or null when git cannot say. */
+const worktreePrivateGitDir = (git: LocalBoardWorkspaceDeps["git"], worktreePath: string) =>
+  git
+    .execute({
+      operation: "boardCardWorktree.gitDir",
+      cwd: worktreePath,
+      args: ["rev-parse", "--absolute-git-dir"],
+      timeoutMs: 10_000,
+      allowNonZeroExit: true,
+    })
+    .pipe(
+      Effect.map((result) => {
+        const dir = result.exitCode === 0 ? result.stdout.trim() : "";
+        return dir === "" ? null : dir;
+      }),
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+
+/**
+ * Which board the checkout belongs to, or null when that cannot be read.
+ * Unknown is never guessed as either: both orphan sweeps skip it, a provision
+ * will not adopt it, and the worker refuses a central server's write to it
+ * (`workerGitRpc.ts`), so a failed read can't hand one board's checkout to the
+ * other.
+ */
+export const boardWorktreeOwner = (
+  deps: Pick<LocalBoardWorkspaceDeps, "git" | "fileSystem" | "path">,
+  worktreePath: string,
+) =>
+  worktreePrivateGitDir(deps.git, worktreePath).pipe(
+    Effect.flatMap((dir) =>
+      dir === null
+        ? Effect.succeed(null)
+        : deps.fileSystem.exists(deps.path.join(dir, CENTRAL_OWNER_MARKER)).pipe(
+            Effect.map((marked): BoardWorktreeOwner => (marked ? "central" : "self")),
+            Effect.orElseSucceed(() => null),
+          ),
+    ),
+  );
 
 export function makeLocalBoardWorkspace(
   deps: LocalBoardWorkspaceDeps,
@@ -246,29 +291,8 @@ export function makeLocalBoardWorkspace(
       return { exists: yield* localExists() };
     });
 
-  /** The worktree's private git dir, or null when git cannot say. */
-  const privateGitDir = (worktreePath: string) =>
-    gitRef("boardCardWorktree.gitDir", worktreePath, ["rev-parse", "--absolute-git-dir"]).pipe(
-      Effect.map((dir) => (dir === "" ? null : dir)),
-    );
-
-  /**
-   * Which board the checkout belongs to, or null when that cannot be read.
-   * Unknown is never guessed as either: both orphan sweeps skip it and a
-   * provision will not adopt it, so a failed read can't hand one board's
-   * checkout to the other's reclaim.
-   */
-  const ownerOf = (worktreePath: string) =>
-    privateGitDir(worktreePath).pipe(
-      Effect.flatMap((dir) =>
-        dir === null
-          ? Effect.succeed(null)
-          : fileSystem.exists(pathService.join(dir, CENTRAL_OWNER_MARKER)).pipe(
-              Effect.map((marked): BoardWorktreeOwner => (marked ? "central" : "self")),
-              Effect.orElseSucceed(() => null),
-            ),
-      ),
-    );
+  const privateGitDir = (worktreePath: string) => worktreePrivateGitDir(git, worktreePath);
+  const ownerOf = (worktreePath: string) => boardWorktreeOwner(deps, worktreePath);
 
   const markCentralOwned = (worktreePath: string) =>
     Effect.gen(function* () {
@@ -463,13 +487,26 @@ export function makeLocalBoardWorkspace(
       );
 
   /**
-   * The base branch's tip as the REMOTE has it (t3o-24, D1; D21). Measured in
-   * the project root, never the card's worktree, whose HEAD is the card's
-   * branch. The base is fetched first, so a merge landed from another worker
-   * counts as movement here without anything pulling it locally. A checkout
-   * with no remote, or a base the remote does not have, reads its local
-   * branch as it always did. Null is the honest failure signal: staleness is
-   * measured, never assumed.
+   * Whether `measureBaseTip` reads the remote: always for a central board
+   * this server works for, since it has at least this worker; for this
+   * server's own board, only once it has workers.
+   */
+  const baseTipFromRemote =
+    owner === "central" ? Effect.succeed(true) : (deps.boardHasWorkers ?? Effect.succeed(false));
+
+  /**
+   * The base branch's tip (t3o-24, D1; D21), measured in the project root,
+   * never the card's worktree, whose HEAD is the card's branch. Null is the
+   * honest failure signal: staleness is measured, never assumed.
+   *
+   * On a board with workers it is the tip as the REMOTE has it: the base is
+   * fetched first, so a merge landed from another worker counts as movement
+   * here without anything pulling it locally. A checkout with no remote, or a
+   * base the remote does not have, reads its local branch. A board with no
+   * workers reads its local branch with no fetch, as it always did: its own
+   * merges reach the local base through `pullMergedBaseBranch`, and
+   * every tip it recorded before workers existed is a local one, so reading
+   * the remote would see a base that is merely behind as movement.
    *
    * Never cached: it answers the merge gate, where a sibling's merge a moment
    * ago is exactly what it must see. The reactor only asks for a sub-board
@@ -481,7 +518,7 @@ export function makeLocalBoardWorkspace(
     Effect.gen(function* () {
       const cwd = yield* deps.projectRoot(projectId);
       if (cwd === null) return { tip: null };
-      const remoteName = yield* primaryRemote(cwd);
+      const remoteName = (yield* baseTipFromRemote) ? yield* primaryRemote(cwd) : null;
       if (remoteName !== null) {
         yield* fetchRemoteBranch(
           "boardBaseTip.fetch",
