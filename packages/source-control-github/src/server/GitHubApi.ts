@@ -16,7 +16,7 @@ import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 // T3o (t3o-34, T3O-67): the server's own GitHub API calls honour gitenv.
-import { t3oGitenvCredential } from "./t3oGitenvCredential.ts";
+import { t3oGitenvCredential, t3oInvalidateAmbientUnlessGitenv } from "./t3oGitenvCredential.ts";
 
 const DEFAULT_TIMEOUT = Duration.seconds(30);
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -487,9 +487,10 @@ export const make = Effect.gen(function* () {
             }),
           // The source may hold a newer token than the one that was refused.
           Unauthorized: () =>
-            credentials
-              .invalidate(host)
-              .pipe(Effect.andThen(Effect.fail(new GitHubApiAuthenticationError(context)))),
+            // T3o (T3O-67): a refused gitenv token leaves the ambient credential cache alone.
+            t3oInvalidateAmbientUnlessGitenv(host, fingerprint, credentials.invalidate(host)).pipe(
+              Effect.andThen(Effect.fail(new GitHubApiAuthenticationError(context))),
+            ),
           NotFound: () => Effect.fail(new GitHubApiNotFoundError(context)),
           Failed: ({ messages }) =>
             Effect.fail(

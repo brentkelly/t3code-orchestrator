@@ -51,7 +51,9 @@ Covered surfaces:
   (`T3O-67`). Each GitHub provider call runs under its project directory, and the API transport
   resolves its token in this order: a pinned credential (a page that verified one identity keeps
   it), then the project's gitenv token, then the Settings token, `GH_TOKEN`, and `gh auth token`.
-  Only requests to `github.com` take the gitenv token.
+  Only requests to `github.com` take the gitenv token. Batched reads never mix identities, but the
+  PR listing still asks each host once who you are, so its "mine" and "review requested" filters
+  follow one identity per host.
 - **The server's own `git` fetch/push** — matters only for https remotes using gh's credential
   helper.
 - **Agent sessions** for Claude, Codex, Cursor and Grok — the agent's `gh pr create` in a board

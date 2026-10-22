@@ -2,6 +2,11 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
+// T3o (T3O-67): batched reads are split by the project's gitenv identity.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { initGitenv, resetGitenvForTesting } from "@t3tools/shared/gitenv";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import { assert, it } from "@effect/vitest";
@@ -4597,6 +4602,48 @@ it.effect("reads a host's repositories in one search, and files the rows back un
       ],
     );
   }),
+);
+// T3o (T3O-67): one search carries one project's gitenv token, so identities never share it.
+it.effect("searches a gitenv project's repositories apart from the ambient ones", () =>
+  Effect.gen(function* () {
+    const base = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-67-search-")),
+    );
+    const roots = ["a", "b", "c"].map((name) => NodePath.join(base, name));
+    for (const root of roots) NodeFS.mkdirSync(NodePath.join(root, ".git"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(base, "gitenv"), `${roots[1]}=github_pat_t3o67search\n`, {
+      mode: 0o600,
+    });
+    initGitenv(base);
+    const asked: Array<readonly [string, ReadonlyArray<string>]> = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "t3code",
+          workspaceRoot: roots[0]!,
+          repository: "pingdotgg/t3code",
+        }),
+        project({ id: "p2", title: "web", workspaceRoot: roots[1]!, repository: "acme/web" }),
+        project({ id: "p3", title: "docs", workspaceRoot: roots[2]!, repository: "acme/docs" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequestsAcross: (input) => {
+            asked.push([input.cwd, input.repositories]);
+            return Effect.succeed({ items: [], truncated: false });
+          },
+        }),
+      ],
+    });
+
+    yield* service.list({ state: "open" });
+
+    assert.sameDeepMembers(asked, [
+      [roots[0]!, ["pingdotgg/t3code", "acme/docs"]],
+      [roots[1]!, ["acme/web"]],
+    ]);
+  }).pipe(Effect.ensuring(Effect.sync(resetGitenvForTesting))),
 );
 it.effect("carries every repository of a slice on from the oldest row in it", () =>
   Effect.gen(function* () {

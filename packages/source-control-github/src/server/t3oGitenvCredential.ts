@@ -39,6 +39,22 @@ export const t3oGitenvCredential = Effect.fnUntraced(function* (host: string) {
 });
 
 /**
+ * Runs `invalidate` (the ambient credential cache's reset) unless the refused request carried
+ * the project's gitenv token: that token never came from the cache, so dropping the cache would
+ * only force a needless re-read.
+ */
+export const t3oInvalidateAmbientUnlessGitenv = <E, R>(
+  host: string,
+  refusedFingerprint: string,
+  invalidate: Effect.Effect<void, E, R>,
+) =>
+  t3oGitenvCredential(host).pipe(
+    Effect.flatMap((gitenv) =>
+      gitenv?.fingerprint === refusedFingerprint ? Effect.void : invalidate,
+    ),
+  );
+
+/**
  * The gitenv project a batched read was asked under: the matched main checkout, or "" when no
  * entry applies. Lookups grouped into one request share one token, so this belongs in the group
  * key.

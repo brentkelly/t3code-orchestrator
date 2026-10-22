@@ -91,6 +91,8 @@ import {
   type PullRequestProviderApi,
   PullRequestProviderError,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
+// T3o (T3O-67): batched reads are split by the project's gitenv identity.
+import { gitenvToken } from "@t3tools/shared/gitenv";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as ViewedFiles from "./pullRequestViewedFiles.ts";
@@ -1562,7 +1564,10 @@ export const make = Effect.gen(function* () {
           separate.push(project);
           continue;
         }
-        const key = `${project.host}\n${cursorOf(project)?.updatedBefore ?? ""}`;
+        const key =
+          `${project.host}\n${cursorOf(project)?.updatedBefore ?? ""}` +
+          // T3o (T3O-67): one search carries one project's gitenv token, so identities never share it.
+          `\n${gitenvToken(project.project.workspaceRoot)?.root ?? ""}`;
         const group = together.get(key);
         if (group === undefined) together.set(key, [project]);
         else group.push(project);
@@ -2649,8 +2654,10 @@ export const make = Effect.gen(function* () {
       }
       const byHost = new Map<string, Array<{ project: SupportedProject; number: number }>>();
       for (const entry of wanted.values()) {
-        const held = byHost.get(entry.project.host);
-        if (held === undefined) byHost.set(entry.project.host, [entry]);
+        // T3o (T3O-67): one stats read carries one project's gitenv token, so split by it too.
+        const hostKey = `${entry.project.host}\n${gitenvToken(entry.project.project.workspaceRoot)?.root ?? ""}`;
+        const held = byHost.get(hostKey);
+        if (held === undefined) byHost.set(hostKey, [entry]);
         else held.push(entry);
       }
       const stats = yield* Effect.forEach(

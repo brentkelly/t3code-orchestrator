@@ -40,8 +40,9 @@ function makeFixture() {
   return { project, other };
 }
 
-function harness() {
+function harness(status = 200) {
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+  const invalidated: Array<string> = [];
   const credentials = Layer.succeed(
     GitHubCredentials.GitHubCredentials,
     GitHubCredentials.GitHubCredentials.of({
@@ -52,7 +53,7 @@ function harness() {
           source: "gh" as const,
           fingerprint: `${host}:ambient`,
         }),
-      invalidate: () => Effect.void,
+      invalidate: (host) => Effect.sync(() => void invalidated.push(host)),
     }),
   );
   const http = Layer.succeed(
@@ -63,6 +64,7 @@ function harness() {
         HttpClientResponse.fromWeb(
           request,
           new Response(JSON.stringify({ data: {} }), {
+            status,
             headers: { "content-type": "application/json" },
           }),
         ),
@@ -74,7 +76,7 @@ function harness() {
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
   );
-  return { layer, requests };
+  return { layer, requests, invalidated };
 }
 
 const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
@@ -137,6 +139,22 @@ describe("GitHubApi.credential under gitenv", () => {
         }),
       );
       expect(Redacted.value(held.token)).toBe("pinned");
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("a refused token", () => {
+  it.effect("keeps the ambient cache when GitHub refuses the gitenv token", () => {
+    const { project } = makeFixture();
+    const { layer, invalidated } = harness(401);
+    return Effect.gen(function* () {
+      const api = yield* GitHubApi.GitHubApi;
+      const read = api.graphql({ host: "github.com", operation: "read", query: "query {}" });
+      yield* Effect.flip(read.pipe(Effect.provideService(T3oGitenvProject, project)));
+      expect(invalidated).toEqual([]);
+      // The ambient token itself refused still drops the cache, as upstream intends.
+      yield* Effect.flip(read);
+      expect(invalidated).toEqual(["github.com"]);
     }).pipe(Effect.provide(layer));
   });
 });

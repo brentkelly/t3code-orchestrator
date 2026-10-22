@@ -773,11 +773,16 @@ agent-session spawn). All the logic lives in the new `sourceControl/gitenv.ts`; 
 import or a one-expression env merge.
 
 `T3O-67` extended gitenv to the server's own GitHub API calls, which since `v0.1.0` carry the merge
-and every PR read over HTTP rather than through `gh`. It added 7 markers across 3 upstream-owned
-files in `packages/source-control-github`: `GitHubApi.ts` 2 (import + the delegating check in
-`credential`), `GitHubPullRequestProvider.ts` 2 (import + the wrapped return) and
-`GitHubSourceControlProvider.ts` 3 (import, wrapped return, batch-key entry). The logic lives in the
-new `t3oGitenvCredential.ts`; the token lookup is `gitenvToken` in `@t3tools/shared/gitenv`.
+and every PR read over HTTP rather than through `gh`. It added 14 markers across 5 upstream-owned
+files: in `packages/source-control-github`, `GitHubApi.ts` 3 (import, the delegating check in
+`credential`, and a 401 that leaves the ambient cache alone when the gitenv token was refused),
+`GitHubPullRequestProvider.ts` 2 (import + the wrapped return), `GitHubSourceControlProvider.ts` 3
+(import, wrapped return, batch-key entry) and `GitHubPullRequestApi.ts` 3 (import + the summary and
+watch-fingerprint batch keys); in `apps/server`, `pullRequest/PullRequestService.ts` 3 (import + the
+cross-repository search and stats batches split by gitenv identity). The logic lives in the new
+`t3oGitenvCredential.ts`; the token lookup is `gitenvToken` in `@t3tools/shared/gitenv`. The
+listing's viewer is still resolved once per host, so with a gitenv project on github.com the
+involvement filter ("mine", "review requested") uses whichever identity answered first.
 
 Making the board primary (`T3O-34`) added 7 markers across 3 upstream-owned files:
 `__root.tsx` 2 (import + the cold-start guard), `pair.tsx` 3 (import + the two pairing exits) and
@@ -863,7 +868,9 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/vcs/GitVcsDriverCore.ts`                                       | `t3o-34`          | Import `gitenvTokenEnv`; git subprocesses take the project's token, merged last                                                                      | import + one env spread                                                   |
 | `packages/source-control-github/src/server/gitHubRepositoryResolution.ts`       | `T3O-48`          | Import `t3oOriginRepository`; act on `origin`, never gh's `upstream` preference                                                                      | import + one delegating early return                                      |
 | `packages/source-control-github/src/server/GitHubPullRequestApi.ts`             | `T3O-8`, `T3O-54` | Import the scope fallback; the core detail read runs through `readCoreWithScopeFallback`, the summary reads through `readSummariesWithScopeFallback` | import + three wrapped reads                                              |
-| `packages/source-control-github/src/server/GitHubApi.ts`                        | `T3O-67`          | Import `t3oGitenvCredential`; `credential` asks gitenv (`t3o-34`) after a pinned credential, before any ambient source                               | import + one delegating early return                                      |
+| `packages/source-control-github/src/server/GitHubApi.ts`                        | `T3O-67`          | Import the gitenv helpers; `credential` asks gitenv after a pinned credential; a refused gitenv token keeps the ambient cache                        | import + early return + wrapped invalidate                                |
+| `packages/source-control-github/src/server/GitHubPullRequestApi.ts`             | `T3O-67`          | Import `t3oGitenvBatchKey`; the summary and watch-fingerprint batch keys separate gitenv projects                                                    | import + two key entries                                                  |
+| `apps/server/src/pullRequest/PullRequestService.ts`                             | `T3O-67`          | Import `gitenvToken`; cross-repository search and stats batches are split by gitenv identity                                                         | import + two key suffixes                                                 |
 | `packages/source-control-github/src/server/GitHubPullRequestProvider.ts`        | `T3O-67`          | Import `t3oWithGitenvProject`; every provider call runs under its `cwd`'s gitenv project                                                             | import + one wrapped return                                               |
 | `packages/source-control-github/src/server/GitHubSourceControlProvider.ts`      | `T3O-67`          | Import the gitenv helpers; calls run under their `cwd`'s gitenv project, and the head-lookup batch key separates projects                            | import + wrapped return + key entry                                       |
 | `packages/source-control-github/src/server/GitHubSourceControlProvider.test.ts` | `T3O-48`          | Three upstream assertions expect `origin` where gh would pick `upstream`                                                                             | marked fork expectation                                                   |
