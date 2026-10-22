@@ -344,9 +344,9 @@ export function makeLocalBoardWorkspace(
 
   /**
    * Provision a card's worktree from its branch on the REMOTE (T3O-65's move):
-   * the branch is fetched and, when this checkout has no local copy of it,
-   * created from the remote one, so the worktree carries exactly what was
-   * pushed. Nothing is copied worker to worker (D21).
+   * the branch is fetched and its local copy created from, or fast-forwarded
+   * to, the remote one, so the worktree carries exactly what was pushed.
+   * Nothing is copied worker to worker (D21).
    */
   const provisionWorktreeFromRemoteBranch: BoardWorkspace["provisionWorktreeFromRemoteBranch"] = ({
     projectId,
@@ -381,12 +381,41 @@ export function makeLocalBoardWorkspace(
         "--quiet",
         `refs/heads/${branch}`,
       ]);
-      if (local === "") {
+      const remoteTip = yield* gitRef("boardCardWorktree.fromRemote.remoteRef", cwd, [
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `refs/remotes/${remoteName}/${branch}`,
+      ]);
+      if (local !== "" && local !== remoteTip) {
+        // A local copy left behind by an earlier placement here (A→B→A keeps
+        // the branch ref on retire) is behind what was pushed since. Bring it
+        // up to the remote tip, but never past commits only it holds.
+        const behind = yield* git
+          .execute({
+            operation: "boardCardWorktree.fromRemote.ancestor",
+            cwd,
+            args: ["merge-base", "--is-ancestor", local, `refs/remotes/${remoteName}/${branch}`],
+            timeoutMs: 10_000,
+            allowNonZeroExit: true,
+          })
+          .pipe(
+            Effect.map((result) => result.exitCode === 0),
+            Effect.mapError(gitFailed(operation)),
+          );
+        if (!behind) {
+          return yield* new BoardWorkerGitError({
+            operation,
+            detail: `This checkout's '${branch}' has commits ${remoteName} does not. Push or delete them here, then retry.`,
+          });
+        }
+      }
+      if (local !== remoteTip) {
         yield* git
           .execute({
             operation: "boardCardWorktree.fromRemote.branch",
             cwd,
-            args: ["branch", "--track", branch, `${remoteName}/${branch}`],
+            args: ["branch", "--force", "--track", branch, `${remoteName}/${branch}`],
             timeoutMs: 10_000,
           })
           .pipe(Effect.mapError(gitFailed(operation)));

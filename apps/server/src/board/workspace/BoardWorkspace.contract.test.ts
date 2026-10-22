@@ -436,6 +436,46 @@ describe("BoardWorkspace contract (T3O-64)", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
+  it.effect("a card moved A→B→A lands on what B pushed, not A's stale local branch", () =>
+    Effect.gen(function* () {
+      const env = yield* makeEnv("roundtrip");
+      const workerA = (yield* workspacesOver(env.checkout)).local;
+      const workerB = (yield* workspacesOver(env.pusher)).local;
+      const branch = "board/t-rt";
+      const retire = (ws: BoardWorkspace, worktreePath: string) =>
+        ws.retireWorktree({ projectId, worktreePath, kind: "forced", verifiedClean: false });
+
+      const onA = yield* workerA.provisionWorktree({ projectId, branch, baseRefName: "main" });
+      yield* commitFile(onA.path, "a.txt", "a\n", "on A");
+      yield* git(onA.path, ["push", "-u", "origin", branch]);
+      yield* retire(workerA, onA.path);
+
+      const onB = yield* workerB.provisionWorktreeFromRemoteBranch({
+        projectId,
+        branch,
+        baseRefName: "main",
+      });
+      const pushedFromB = yield* commitFile(onB.path, "b.txt", "b\n", "on B");
+      yield* git(onB.path, ["push", "origin", branch]);
+      yield* retire(workerB, onB.path);
+
+      const backOnA = yield* workerA.provisionWorktreeFromRemoteBranch({
+        projectId,
+        branch,
+        baseRefName: "main",
+      });
+      assert.strictEqual(yield* git(backOnA.path, ["rev-parse", "HEAD"]), pushedFromB);
+
+      // Commits only A's copy holds are never thrown away to match the remote.
+      yield* commitFile(backOnA.path, "only-a.txt", "a\n", "not pushed");
+      yield* retire(workerA, backOnA.path);
+      const diverged = yield* Effect.flip(
+        workerA.provisionWorktreeFromRemoteBranch({ projectId, branch, baseRefName: "main" }),
+      );
+      assert.include(detailOf(diverged), "has commits origin does not");
+    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
   it.effect(
     "the durability probe reports uncommitted files, unpushed commits and the upstream",
     () =>
