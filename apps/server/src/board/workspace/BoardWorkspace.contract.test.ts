@@ -833,6 +833,9 @@ describe("the worker side of the named operations (T3O-64)", () => {
           branch: "board/K-1",
           baseRefName: "main",
         }),
+        // A central split parent of the same key would adopt the worker
+        // board's integration branch as its own.
+        central.createIntegrationBranch({ projectId, branch: "board/K-1", base: "main" }),
       ]) {
         const refused = yield* Effect.flip(provision);
         assert.strictEqual(refused._tag, "BoardWorkerGitError");

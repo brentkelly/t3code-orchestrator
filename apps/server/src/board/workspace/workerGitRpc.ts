@@ -13,8 +13,8 @@
  *   and, for an operation that changes or removes a checkout, one the central
  *   board made (its owner marker), so no write reaches this server's own
  *   board's checkouts or a user's thread worktree;
- * - a branch it provisions a worktree on is not on this server's own
- *   board's cards, and one it deletes is not either, nor checked out in a
+ * - a branch it provisions a worktree or integration branch on is not on
+ *   this server's own board's cards, and one it deletes is not either, nor checked out in a
  *   worktree the central board didn't make.
  *
  * Anything that goes wrong comes back as `BoardWorkerGitError`, a defect
@@ -86,10 +86,12 @@ const guardPaths = (
       ),
   );
 
-/** The operations that create a checkout on the branch they name. */
+/** The operations that create, or adopt as the card's own, the branch they
+    name: a checkout on it, or a split parent's integration branch. */
 const PROVISIONS_BRANCH: ReadonlySet<BoardWorkerGitOperation> = new Set([
   "provisionWorktree",
   "provisionWorktreeFromRemoteBranch",
+  "createIntegrationBranch",
 ]);
 
 /** A branch the call names, not a path: one it provisions must not be this
