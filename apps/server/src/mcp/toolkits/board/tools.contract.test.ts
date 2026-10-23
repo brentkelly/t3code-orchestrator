@@ -55,6 +55,11 @@ it("advertises the card lifecycle verbs, delete included (T3O-2)", () => {
   expect(boardToolNames).toContain("board_delete_card");
 });
 
+it("advertises board_manage_labels so agents can manage the label catalogue (T3O-68)", () => {
+  const boardToolNames = Object.values(BoardToolkit.tools).map((tool) => tool.name);
+  expect(boardToolNames).toContain("board_manage_labels");
+});
+
 it("no longer advertises the deleted agent-activity tools (t3o-18, D13)", () => {
   const boardToolNames = Object.values(BoardToolkit.tools).map((tool) => tool.name);
   // `tools/list` is all-or-nothing to a client, so this is also the tripwire for

@@ -522,9 +522,17 @@ const resolveManagedLabel = (
   const live = catalogue.filter((label) => label.deletedAt === null);
   const tombstones = catalogue.filter((label) => label.deletedAt !== null);
   if (deleted) {
+    // Catalogue order is creation order, so `>=` breaks a deletedAt tie
+    // toward the newer label.
     const match = tombstones
       .filter((label) => sameLabelName(label, name))
-      .toSorted((left, right) => (right.deletedAt ?? "").localeCompare(left.deletedAt ?? ""))[0];
+      .reduce<BoardLabel | undefined>(
+        (latest, label) =>
+          latest === undefined || (label.deletedAt ?? "") >= (latest.deletedAt ?? "")
+            ? label
+            : latest,
+        undefined,
+      );
     if (match !== undefined) return Effect.succeed(match);
     return Effect.fail(
       new BoardToolError({

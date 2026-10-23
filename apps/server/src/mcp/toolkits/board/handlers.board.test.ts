@@ -11,6 +11,7 @@
  */
 import {
   BoardCardAttachmentId,
+  BoardLabelColour,
   BoardCardId,
   boardPlanId,
   BoardStageId,
@@ -24,8 +25,11 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { ServerConfig } from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -2568,3 +2572,295 @@ it.layer(makeLayer("t3o-board-mcp-link-pr-test-"))(
     );
   },
 );
+
+it.layer(makeLayer("t3o-board-mcp-labels-test-"))("board mcp toolkit — labels (T3O-68)", (it) => {
+  const manage = (input: Parameters<typeof boardHandlers.board_manage_labels>[0]) =>
+    boardHandlers.board_manage_labels(input).pipe(withScope(orphanThread));
+  const newCard = (title: string, labels: ReadonlyArray<string> = []) =>
+    boardHandlers.board_create_card({ projectId, title, labels }).pipe(withScope(orphanThread));
+  const labelNamesOf = (card: string) =>
+    boardHandlers.board_get_card({ card }).pipe(
+      withScope(orphanThread),
+      Effect.map((read) => read.labels),
+    );
+
+  it.effect("list returns the catalogue with card counts; includeDeleted shows tombstones", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* newCard("Counted", ["Bug"]);
+      const listed = yield* manage({ action: "list" });
+      const bug = listed.labels.find((label) => label.name === "bug");
+      assert.isDefined(bug);
+      assert.strictEqual(bug?.deleted, false);
+      assert.isAtLeast(bug?.cardCount ?? 0, 1);
+      assert.includeMembers(
+        listed.labels.map((label) => label.name),
+        ["feature", "bug", "chore"],
+      );
+
+      yield* manage({ action: "create", name: "list-gone" });
+      yield* manage({ action: "delete", name: "list-gone" });
+      const live = yield* manage({ action: "list" });
+      assert.notInclude(
+        live.labels.map((label) => label.name),
+        "list-gone",
+      );
+      const all = yield* manage({ action: "list", includeDeleted: true });
+      assert.strictEqual(all.labels.find((label) => label.name === "list-gone")?.deleted, true);
+    }),
+  );
+
+  it.effect("create picks a colour when none is given and keeps an explicit one", () =>
+    Effect.gen(function* () {
+      const auto = yield* manage({ action: "create", name: "auto-colour" });
+      assert.strictEqual(auto.labels.length, 1);
+      assert.strictEqual(auto.labels[0]?.name, "auto-colour");
+      assert.match(auto.labels[0]?.colour ?? "", /^#[0-9a-fA-F]{6}$/);
+      assert.strictEqual(auto.labels[0]?.cardCount, 0);
+      const explicit = yield* manage({
+        action: "create",
+        name: "explicit-colour",
+        colour: BoardLabelColour.make("#123abc"),
+      });
+      assert.strictEqual(explicit.labels[0]?.colour, "#123abc");
+    }),
+  );
+
+  it.effect("create rejects a duplicate name case-insensitively", () =>
+    Effect.gen(function* () {
+      yield* manage({ action: "create", name: "dupe" });
+      const failure = yield* Effect.flip(manage({ action: "create", name: "DUPE" }));
+      assert.strictEqual(failure.code, "rejected");
+      assert.include(failure.message, "already exists");
+    }),
+  );
+
+  it.effect("the tool schema rejects a colour that is not a 6-digit hex", () =>
+    Effect.sync(() => {
+      const params = BoardToolkit.tools.board_manage_labels.parametersSchema;
+      const decode = Schema.decodeUnknownExit(params);
+      assert.isTrue(Exit.isFailure(decode({ action: "create", name: "x", colour: "blue" })));
+      assert.isTrue(Exit.isFailure(decode({ action: "create", name: "x", colour: "#abc" })));
+      assert.isTrue(Exit.isSuccess(decode({ action: "create", name: "x", colour: "#aabbcc" })));
+    }),
+  );
+
+  it.effect("flags that do not belong to the action, or a missing name, are invalid input", () =>
+    Effect.gen(function* () {
+      const misplaced = yield* Effect.flip(
+        manage({ action: "create", name: "flagged", newName: "other" }),
+      );
+      assert.strictEqual(misplaced.code, "invalid-input");
+      assert.include(misplaced.message, "newName");
+      const forced = yield* Effect.flip(manage({ action: "list", force: true }));
+      assert.strictEqual(forced.code, "invalid-input");
+      const nameless = yield* Effect.flip(manage({ action: "delete" }));
+      assert.strictEqual(nameless.code, "invalid-input");
+      const empty = yield* Effect.flip(manage({ action: "update", name: "feature" }));
+      assert.strictEqual(empty.code, "invalid-input");
+    }),
+  );
+
+  it.effect("update renames and recolours, addressed case-insensitively", () =>
+    Effect.gen(function* () {
+      yield* manage({ action: "create", name: "to-rename" });
+      const renamed = yield* manage({
+        action: "update",
+        name: "TO-RENAME",
+        newName: "renamed",
+        colour: BoardLabelColour.make("#00ff00"),
+      });
+      assert.deepStrictEqual(renamed.labels, [
+        { name: "renamed", colour: "#00ff00", deleted: false, cardCount: 0 },
+      ]);
+      const gone = yield* Effect.flip(
+        manage({ action: "update", name: "to-rename", newName: "x" }),
+      );
+      assert.strictEqual(gone.code, "unknown-label");
+      assert.include(gone.message, "renamed");
+    }),
+  );
+
+  it.effect("update rejects a rename onto another live label's name", () =>
+    Effect.gen(function* () {
+      yield* manage({ action: "create", name: "collide-a" });
+      yield* manage({ action: "create", name: "collide-b" });
+      const failure = yield* Effect.flip(
+        manage({ action: "update", name: "collide-a", newName: "Collide-B" }),
+      );
+      assert.strictEqual(failure.code, "rejected");
+    }),
+  );
+
+  it.effect("update on a deleted label says to restore it first", () =>
+    Effect.gen(function* () {
+      yield* manage({ action: "create", name: "retired" });
+      yield* manage({ action: "delete", name: "retired" });
+      const failure = yield* Effect.flip(
+        manage({ action: "update", name: "retired", newName: "revived" }),
+      );
+      assert.strictEqual(failure.code, "unknown-label");
+      assert.include(failure.message, "restore");
+    }),
+  );
+
+  it.effect("delete is refused while a live card carries the label, naming the card", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* manage({ action: "create", name: "in-use" });
+      const card = yield* newCard("Carrier", ["in-use"]);
+      const failure = yield* Effect.flip(manage({ action: "delete", name: "in-use" }));
+      assert.strictEqual(failure.code, "rejected");
+      assert.include(failure.message, card.key);
+      assert.include(failure.message, "force: true");
+      const listed = yield* manage({ action: "list" });
+      assert.strictEqual(listed.labels.find((label) => label.name === "in-use")?.deleted, false);
+    }),
+  );
+
+  it.effect("delete with force tombstones the label and the card keeps it", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* manage({ action: "create", name: "forced" });
+      const card = yield* newCard("Keeps it", ["forced"]);
+      const deleted = yield* manage({ action: "delete", name: "forced", force: true });
+      assert.strictEqual(deleted.labels[0]?.deleted, true);
+      assert.strictEqual(deleted.labels[0]?.cardCount, 1);
+      assert.deepStrictEqual(yield* labelNamesOf(card.key), ["forced"]);
+    }),
+  );
+
+  it.effect("delete is allowed when only archived cards carry the label", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* manage({ action: "create", name: "archived-only" });
+      const card = yield* newCard("Archived carrier", ["archived-only"]);
+      yield* boardHandlers
+        .board_archive_card({ cardId: card.cardId })
+        .pipe(withScope(orphanThread));
+      const deleted = yield* manage({ action: "delete", name: "archived-only" });
+      assert.strictEqual(deleted.labels[0]?.deleted, true);
+      assert.strictEqual(deleted.labels[0]?.cardCount, 0);
+    }),
+  );
+
+  it.effect("the refusal names at most ten cards and counts the rest", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* manage({ action: "create", name: "popular" });
+      yield* Effect.forEach(
+        Array.from({ length: 12 }, (_, index) => index),
+        (index) => newCard(`Popular ${index}`, ["popular"]),
+      );
+      const failure = yield* Effect.flip(manage({ action: "delete", name: "popular" }));
+      assert.include(failure.message, "12 non-archived cards");
+      assert.include(failure.message, "and 2 more");
+    }),
+  );
+
+  it.effect("restore brings a deleted label back; a live-name collision is refused", () =>
+    Effect.gen(function* () {
+      yield* manage({ action: "create", name: "comeback" });
+      yield* manage({ action: "delete", name: "comeback" });
+      const restored = yield* manage({ action: "restore", name: "COMEBACK" });
+      assert.strictEqual(restored.labels[0]?.deleted, false);
+      const notDeleted = yield* Effect.flip(manage({ action: "restore", name: "comeback" }));
+      assert.strictEqual(notDeleted.code, "unknown-label");
+
+      yield* manage({ action: "delete", name: "comeback" });
+      yield* manage({ action: "create", name: "comeback" });
+      const collision = yield* Effect.flip(manage({ action: "restore", name: "comeback" }));
+      assert.strictEqual(collision.code, "rejected");
+      const unknown = yield* Effect.flip(manage({ action: "restore", name: "never-existed" }));
+      assert.strictEqual(unknown.code, "unknown-label");
+    }),
+  );
+
+  it.effect("restore takes the most recently deleted of several same-named labels", () =>
+    Effect.gen(function* () {
+      yield* manage({ action: "create", name: "twice", colour: BoardLabelColour.make("#111111") });
+      yield* manage({ action: "delete", name: "twice" });
+      // A tombstone's deletedAt is the clock; move it past the first one.
+      yield* TestClock.adjust("1 second");
+      yield* manage({ action: "create", name: "twice", colour: BoardLabelColour.make("#222222") });
+      yield* manage({ action: "delete", name: "twice" });
+      const restored = yield* manage({ action: "restore", name: "twice" });
+      assert.strictEqual(restored.labels[0]?.colour, "#222222");
+    }),
+  );
+
+  it.effect("addLabels adds a live label and keeps the rest; unknown or deleted is rejected", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const card = yield* newCard("Tag me", ["feature"]);
+      yield* boardHandlers
+        .board_update_card({ cardId: card.key, addLabels: ["BUG", "feature"] })
+        .pipe(withScope(orphanThread));
+      assert.deepStrictEqual(yield* labelNamesOf(card.key), ["feature", "bug"]);
+
+      const unknown = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: card.key, addLabels: ["nope"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(unknown.code, "unknown-label");
+      assert.include(unknown.message, "board_manage_labels");
+
+      yield* manage({ action: "create", name: "dead-tag" });
+      yield* manage({ action: "delete", name: "dead-tag" });
+      const deleted = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: card.key, addLabels: ["dead-tag"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(deleted.code, "unknown-label");
+    }),
+  );
+
+  it.effect("removeLabels removes live and deleted labels; a label not carried is a no-op", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* manage({ action: "create", name: "to-retire" });
+      const card = yield* newCard("Untag me", ["feature", "chore", "to-retire"]);
+      yield* manage({ action: "delete", name: "to-retire", force: true });
+      yield* boardHandlers
+        .board_update_card({ cardId: card.key, removeLabels: ["Feature", "to-retire", "bug"] })
+        .pipe(withScope(orphanThread));
+      assert.deepStrictEqual(yield* labelNamesOf(card.key), ["chore"]);
+
+      // Removing only labels the card does not carry still succeeds.
+      yield* boardHandlers
+        .board_update_card({ cardId: card.key, removeLabels: ["bug"] })
+        .pipe(withScope(orphanThread));
+      assert.deepStrictEqual(yield* labelNamesOf(card.key), ["chore"]);
+    }),
+  );
+
+  it.effect("labels with addLabels/removeLabels is rejected; the five-label cap holds", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const card = yield* newCard("Capped", ["feature"]);
+      const both = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: card.key, labels: ["bug"], addLabels: ["chore"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(both.code, "rejected");
+      assert.include(both.message, "addLabels");
+
+      yield* Effect.forEach(["cap-1", "cap-2", "cap-3", "cap-4", "cap-5"], (name) =>
+        manage({ action: "create", name }),
+      );
+      yield* boardHandlers
+        .board_update_card({ cardId: card.key, addLabels: ["cap-1", "cap-2", "cap-3", "cap-4"] })
+        .pipe(withScope(orphanThread));
+      const capped = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: card.key, addLabels: ["cap-5"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(capped.code, "rejected");
+      assert.include(capped.message, "at most");
+    }),
+  );
+});

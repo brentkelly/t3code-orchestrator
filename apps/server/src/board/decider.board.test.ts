@@ -2521,6 +2521,149 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
+  // ── Incremental labels (T3O-68) ──────────────────────────────────────
+
+  const labelUpdate = (fields: {
+    readonly labels?: ReadonlyArray<string>;
+    readonly addLabels?: ReadonlyArray<string>;
+    readonly removeLabels?: ReadonlyArray<string>;
+  }) =>
+    ({
+      type: "board.card.update",
+      commandId: CommandId.make("cmd-label-edit"),
+      cardId: BoardCardId.make("card-tagged"),
+      ...(fields.labels === undefined
+        ? {}
+        : { labels: fields.labels.map((id) => BoardLabelId.make(id)) }),
+      ...(fields.addLabels === undefined
+        ? {}
+        : { addLabels: fields.addLabels.map((id) => BoardLabelId.make(id)) }),
+      ...(fields.removeLabels === undefined
+        ? {}
+        : { removeLabels: fields.removeLabels.map((id) => BoardLabelId.make(id)) }),
+      createdAt: NOW,
+    }) as const;
+
+  const retiredLabel: BoardLabel = {
+    labelId: BoardLabelId.make("label-retired"),
+    name: "retired",
+    colour: "#3b82f6",
+    deletedAt: NOW,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+
+  /** A card tagged with `labels`, against the seeds plus one tombstone. */
+  const taggedModel = (labels: ReadonlyArray<string>) =>
+    makeReadModel({
+      board: {
+        cards: [makeCard({ id: "card-tagged", labels: labels.map((id) => BoardLabelId.make(id)) })],
+        labels: [...BOARD_SEED_LABELS, retiredLabel],
+        nextCardNumberByProject: {},
+      },
+    });
+
+  const updatedLabels = (event: Effect.Success<ReturnType<typeof decide>>) => {
+    assert.strictEqual(event.type, "board.card-updated");
+    return event.type === "board.card-updated" ? event.payload.card.labels : [];
+  };
+
+  it.effect("addLabels/removeLabels apply to the card as the update lands", () =>
+    Effect.gen(function* () {
+      // The agent read [feature]; someone tagged bug before its update landed.
+      // An incremental edit keeps bug, where a whole-set replace would drop it.
+      const event = yield* decide(
+        labelUpdate({
+          addLabels: [BOARD_SEED_LABEL_IDS.chore],
+          removeLabels: [BOARD_SEED_LABEL_IDS.feature],
+        }),
+        taggedModel([BOARD_SEED_LABEL_IDS.feature, BOARD_SEED_LABEL_IDS.bug]),
+      );
+      assert.deepStrictEqual(updatedLabels(event), [
+        BOARD_SEED_LABEL_IDS.bug,
+        BOARD_SEED_LABEL_IDS.chore,
+      ]);
+    }),
+  );
+
+  it.effect("adding a carried label or removing an absent one changes nothing", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        labelUpdate({
+          addLabels: [BOARD_SEED_LABEL_IDS.feature],
+          removeLabels: [BOARD_SEED_LABEL_IDS.chore],
+        }),
+        taggedModel([BOARD_SEED_LABEL_IDS.feature]),
+      );
+      assert.deepStrictEqual(updatedLabels(event), [BOARD_SEED_LABEL_IDS.feature]);
+    }),
+  );
+
+  it.effect("a carried tombstoned label survives an add and can be removed", () =>
+    Effect.gen(function* () {
+      const kept = yield* decide(
+        labelUpdate({ addLabels: [BOARD_SEED_LABEL_IDS.bug] }),
+        taggedModel(["label-retired"]),
+      );
+      assert.deepStrictEqual(updatedLabels(kept), [
+        BoardLabelId.make("label-retired"),
+        BOARD_SEED_LABEL_IDS.bug,
+      ]);
+      const removed = yield* decide(
+        labelUpdate({ removeLabels: ["label-retired"] }),
+        taggedModel(["label-retired"]),
+      );
+      assert.deepStrictEqual(updatedLabels(removed), []);
+    }),
+  );
+
+  it.effect("addLabels rejects a tombstoned or unknown label", () =>
+    Effect.gen(function* () {
+      const tombstoned = yield* decideFail(
+        labelUpdate({ addLabels: ["label-retired"] }),
+        taggedModel([]),
+      );
+      assert.include(String(tombstoned), "is deleted");
+      const unknown = yield* decideFail(
+        labelUpdate({ addLabels: ["label-nope"] }),
+        taggedModel([]),
+      );
+      assert.include(String(unknown), "does not exist");
+    }),
+  );
+
+  it.effect("rejects labels with addLabels, a label both added and removed, and the cap", () =>
+    Effect.gen(function* () {
+      const mixed = yield* decideFail(
+        labelUpdate({
+          labels: [BOARD_SEED_LABEL_IDS.bug],
+          addLabels: [BOARD_SEED_LABEL_IDS.chore],
+        }),
+        taggedModel([]),
+      );
+      assert.include(String(mixed), "not both");
+      const both = yield* decideFail(
+        labelUpdate({
+          addLabels: [BOARD_SEED_LABEL_IDS.bug],
+          removeLabels: [BOARD_SEED_LABEL_IDS.bug],
+        }),
+        taggedModel([]),
+      );
+      assert.include(String(both), "both added and removed");
+      const capped = yield* decideFail(
+        labelUpdate({ addLabels: [BOARD_SEED_LABEL_IDS.chore] }),
+        taggedModel([
+          BOARD_SEED_LABEL_IDS.feature,
+          BOARD_SEED_LABEL_IDS.bug,
+          "label-retired",
+          "label-x",
+          "label-y",
+        ]),
+      );
+      assert.include(String(capped), "at most");
+    }),
+  );
+
   // ── Brief and dependencies at creation (t3o-06) ──────────────────────
 
   it.effect("carries a brief through the created payload; body is not in the read model", () =>
