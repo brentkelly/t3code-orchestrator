@@ -1181,12 +1181,31 @@ export const boardHandlers = {
       const labels =
         input.labels === undefined ? undefined : yield* resolveLabelIds(board, input.labels);
       // Single-label edits by name (T3O-68). An added label must be live. A
-      // removed one resolves against the target's own labels, deleted ones
-      // included, so a retired label can still be taken off; a name the card
-      // does not carry is dropped, which is the no-op it would be anyway.
+      // removed one must name a catalogue label, deleted ones included, so a
+      // typo is reported rather than passed as a no-op. It resolves against the
+      // target's own labels, so a retired label can still be taken off; a
+      // catalogue label the card does not carry is dropped, the no-op it is.
+      const overlap = input.addLabels?.find((name) =>
+        input.removeLabels?.some((other) => other.toLowerCase() === name.toLowerCase()),
+      );
+      if (overlap !== undefined) {
+        return yield* new BoardToolError({
+          code: "invalid-input",
+          message: `Label '${overlap}' is in both addLabels and removeLabels; pass it to only one of them.`,
+        });
+      }
       const addLabels =
         input.addLabels === undefined ? undefined : yield* resolveLabelIds(board, input.addLabels);
       const catalogue = boardLabelCatalogue(board);
+      const unknownRemoval = input.removeLabels?.find(
+        (name) => !catalogue.some((label) => sameLabelName(label, name)),
+      );
+      if (unknownRemoval !== undefined) {
+        return yield* new BoardToolError({
+          code: "unknown-label",
+          message: `No label named '${unknownRemoval}' to remove. Labels: ${formatLabelNames(catalogue)}.`,
+        });
+      }
       const removeLabels = input.removeLabels?.flatMap((name) =>
         target.labels.filter((id) => {
           const label = catalogue.find((candidate) => candidate.labelId === id);

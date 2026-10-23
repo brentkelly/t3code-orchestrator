@@ -842,10 +842,11 @@ function resolveCardUpdateLabels(input: {
   const removing = new Set(command.removeLabels ?? []);
   const both = adding.find((id) => removing.has(id));
   if (both !== undefined) {
+    const name = boardLabelCatalogue(board).find((label) => label.labelId === both)?.name ?? both;
     return Effect.fail(
       invariant(
         command,
-        `Label '${both}' is both added and removed in one update; pass it to only one of them.`,
+        `Label '${name}' is both added and removed in one update; pass it to only one of them.`,
       ),
     );
   }

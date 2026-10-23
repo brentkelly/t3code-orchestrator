@@ -2650,6 +2650,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         taggedModel([]),
       );
       assert.include(String(both), "both added and removed");
+      // Named by the label's name, not its id.
+      assert.include(String(both), "Label 'bug'");
       const capped = yield* decideFail(
         labelUpdate({ addLabels: [BOARD_SEED_LABEL_IDS.chore] }),
         taggedModel([

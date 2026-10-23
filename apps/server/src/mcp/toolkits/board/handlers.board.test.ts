@@ -2836,6 +2836,37 @@ it.layer(makeLayer("t3o-board-mcp-labels-test-"))("board mcp toolkit — labels 
     }),
   );
 
+  it.effect("removeLabels rejects a name that is no label at all", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const card = yield* newCard("Typo", ["feature"]);
+      const typo = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: card.key, removeLabels: ["featrue"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(typo.code, "unknown-label");
+      assert.include(typo.message, "featrue");
+      assert.deepStrictEqual(yield* labelNamesOf(card.key), ["feature"]);
+    }),
+  );
+
+  it.effect("a label in both addLabels and removeLabels is rejected by name", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // The card does not carry 'bug', so the removal alone would be a no-op.
+      const card = yield* newCard("Both", ["feature"]);
+      const both = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: card.key, addLabels: ["bug"], removeLabels: ["BUG"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(both.code, "invalid-input");
+      assert.include(both.message, "'bug'");
+      assert.deepStrictEqual(yield* labelNamesOf(card.key), ["feature"]);
+    }),
+  );
+
   it.effect("labels with addLabels/removeLabels is rejected; the five-label cap holds", () =>
     Effect.gen(function* () {
       yield* seed();
