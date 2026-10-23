@@ -811,6 +811,50 @@ function validateCardLabels(input: {
 }
 
 /**
+ * A card update's resulting label set (t3o-06a, T3O-68). `labels` replaces the
+ * whole set; `addLabels`/`removeLabels` are applied to the card as it is when
+ * the update lands, so a label another writer added in between is kept. Either
+ * way the result goes through `validateCardLabels`, so the cap holds, an unknown
+ * or tombstoned label cannot be added, and a retired label the card already
+ * carries survives. Adding a label the card has, or removing one it lacks, is a
+ * no-op, as with `addDependsOn`/`removeDependsOn`.
+ */
+function resolveCardUpdateLabels(input: {
+  readonly board: BoardState;
+  readonly card: BoardCard;
+  readonly command: BoardCardUpdateCommand;
+}): Effect.Effect<ReadonlyArray<BoardLabelId>, BoardCommandInvariantError> {
+  const { board, card, command } = input;
+  const incremental = command.addLabels !== undefined || command.removeLabels !== undefined;
+  if (command.labels !== undefined && incremental) {
+    return Effect.fail(
+      invariant(
+        command,
+        "labels replaces the whole label set; pass it or addLabels/removeLabels, not both.",
+      ),
+    );
+  }
+  if (command.labels !== undefined) {
+    return validateCardLabels({ board, command, proposed: command.labels, existing: card.labels });
+  }
+  if (!incremental) return Effect.succeed(card.labels);
+  const adding = command.addLabels ?? [];
+  const removing = new Set(command.removeLabels ?? []);
+  const both = adding.find((id) => removing.has(id));
+  if (both !== undefined) {
+    const name = boardLabelCatalogue(board).find((label) => label.labelId === both)?.name ?? both;
+    return Effect.fail(
+      invariant(
+        command,
+        `Label '${name}' is both added and removed in one update; pass it to only one of them.`,
+      ),
+    );
+  }
+  const proposed = [...card.labels, ...adding].filter((id) => !removing.has(id));
+  return validateCardLabels({ board, command, proposed, existing: card.labels });
+}
+
+/**
  * The card face's review summary AFTER a completion lands (t3o-22, D7).
  *
  * It has to ride the event. The summary is a fold over the whole
@@ -1701,20 +1745,14 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.briefAppend === undefined &&
         command.briefSection === undefined &&
         command.addDependsOn === undefined &&
-        command.removeDependsOn === undefined
+        command.removeDependsOn === undefined &&
+        command.addLabels === undefined &&
+        command.removeLabels === undefined
       ) {
         return yield* invariant(command, `Update for card '${command.cardId}' carries no changes.`);
       }
 
-      const nextLabels =
-        command.labels === undefined
-          ? card.labels
-          : yield* validateCardLabels({
-              board,
-              command,
-              proposed: command.labels,
-              existing: card.labels,
-            });
+      const nextLabels = yield* resolveCardUpdateLabels({ board, card, command });
 
       // Brief and dependency edits, whole-value or incremental (T3O-53).
       const edits = yield* resolveCardUpdateEdits({ board, card, command, context });

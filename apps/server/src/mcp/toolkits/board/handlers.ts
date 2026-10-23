@@ -38,7 +38,12 @@ import {
   type BoardCard,
   type BoardCardPullRequest,
   type BoardCardPullRequestTarget,
-  type BoardLabelId,
+  BoardLabelId,
+  type BoardLabel,
+  type BoardLabelCreateCommand,
+  type BoardLabelDeleteCommand,
+  type BoardLabelUndeleteCommand,
+  type BoardLabelUpdateCommand,
   type BoardPlansProposeCommand,
   type BoardPlanWriteCommand,
   BOARD_SEED_STAGE_IDS,
@@ -474,7 +479,7 @@ const resolveLabelIds = (
       return Effect.fail(
         new BoardToolError({
           code: "unknown-label",
-          message: `No label named '${name}'. Existing labels: ${catalogue}. Ask a human to create it — tagging does not create labels.`,
+          message: `No label named '${name}'. Existing labels: ${catalogue}. Create it with board_manage_labels (action 'create') first — tagging does not create labels.`,
         }),
       );
     }
@@ -482,6 +487,82 @@ const resolveLabelIds = (
   }
   return Effect.succeed(ids);
 };
+
+/** The non-archived cards carrying a label (T3O-68). */
+const labelCarriers = (board: BoardState, labelId: BoardLabelId): ReadonlyArray<BoardCard> =>
+  board.cards.filter((card) => card.archivedAt === null && card.labels.includes(labelId));
+
+/** A catalogue entry as `board_manage_labels` returns it: by name, never id. */
+const managedLabel = (board: BoardState, label: BoardLabel) => ({
+  name: label.name,
+  colour: label.colour,
+  deleted: label.deletedAt !== null,
+  cardCount: labelCarriers(board, label.labelId).length,
+});
+
+const sameLabelName = (label: BoardLabel, name: string): boolean =>
+  label.name.toLowerCase() === name.toLowerCase();
+
+const formatLabelNames = (labels: ReadonlyArray<BoardLabel>): string =>
+  labels.map((label) => label.name).join(", ") || "(none)";
+
+/**
+ * Resolve a `board_manage_labels` target by case-insensitive name (T3O-68).
+ * Every action but restore acts on a LIVE label; restore acts on a deleted
+ * one, and when several tombstones share the name it takes the most recently
+ * deleted. A live-only miss that matches a deleted label says so, since the
+ * fix there is restore rather than a typo.
+ */
+const resolveManagedLabel = (
+  board: BoardState,
+  name: string,
+  deleted: boolean,
+): Effect.Effect<BoardLabel, BoardToolError> => {
+  const catalogue = boardLabelCatalogue(board);
+  const live = catalogue.filter((label) => label.deletedAt === null);
+  const tombstones = catalogue.filter((label) => label.deletedAt !== null);
+  if (deleted) {
+    // Catalogue order is creation order, so `>=` breaks a deletedAt tie
+    // toward the newer label.
+    const match = tombstones
+      .filter((label) => sameLabelName(label, name))
+      .reduce<BoardLabel | undefined>(
+        (latest, label) =>
+          latest === undefined || (label.deletedAt ?? "") >= (latest.deletedAt ?? "")
+            ? label
+            : latest,
+        undefined,
+      );
+    if (match !== undefined) return Effect.succeed(match);
+    return Effect.fail(
+      new BoardToolError({
+        code: "unknown-label",
+        message: live.some((label) => sameLabelName(label, name))
+          ? `Label '${name}' is not deleted, so there is nothing to restore.`
+          : `No deleted label named '${name}'. Deleted labels: ${formatLabelNames(tombstones)}.`,
+      }),
+    );
+  }
+  const match = live.find((label) => sameLabelName(label, name));
+  if (match !== undefined) return Effect.succeed(match);
+  return Effect.fail(
+    new BoardToolError({
+      code: "unknown-label",
+      message: tombstones.some((label) => sameLabelName(label, name))
+        ? `Label '${name}' is deleted. Restore it with action 'restore' first.`
+        : `No label named '${name}'. Existing labels: ${formatLabelNames(live)}.`,
+    }),
+  );
+};
+
+type BoardLabelCommand =
+  | BoardLabelCreateCommand
+  | BoardLabelUpdateCommand
+  | BoardLabelDeleteCommand
+  | BoardLabelUndeleteCommand;
+
+/** At most this many carrying cards are named when a delete is refused. */
+const LABEL_CARRIERS_NAMED_MAX = 10;
 
 /** The non-deleted projects the caller can target. */
 const listProjects = (
@@ -1099,6 +1180,38 @@ export const boardHandlers = {
       const cardId = target.id;
       const labels =
         input.labels === undefined ? undefined : yield* resolveLabelIds(board, input.labels);
+      // Single-label edits by name (T3O-68). An added label must be live. A
+      // removed one must name a catalogue label, deleted ones included, so a
+      // typo is reported rather than passed as a no-op. It resolves against the
+      // target's own labels, so a retired label can still be taken off; a
+      // catalogue label the card does not carry is dropped, the no-op it is.
+      const overlap = input.addLabels?.find((name) =>
+        input.removeLabels?.some((other) => other.toLowerCase() === name.toLowerCase()),
+      );
+      if (overlap !== undefined) {
+        return yield* new BoardToolError({
+          code: "invalid-input",
+          message: `Label '${overlap}' is in both addLabels and removeLabels; pass it to only one of them.`,
+        });
+      }
+      const addLabels =
+        input.addLabels === undefined ? undefined : yield* resolveLabelIds(board, input.addLabels);
+      const catalogue = boardLabelCatalogue(board);
+      const unknownRemoval = input.removeLabels?.find(
+        (name) => !catalogue.some((label) => sameLabelName(label, name)),
+      );
+      if (unknownRemoval !== undefined) {
+        return yield* new BoardToolError({
+          code: "unknown-label",
+          message: `No label named '${unknownRemoval}' to remove. Labels: ${formatLabelNames(catalogue)}.`,
+        });
+      }
+      const removeLabels = input.removeLabels?.flatMap((name) =>
+        target.labels.filter((id) => {
+          const label = catalogue.find((candidate) => candidate.labelId === id);
+          return label !== undefined && sameLabelName(label, name);
+        }),
+      );
       // Single-dependency edits take keys as readily as ids (T3O-53). An added
       // card must exist. A removed one resolves against the target's own
       // dependencies, so a key shared across projects finds the right edge; one
@@ -1135,6 +1248,8 @@ export const boardHandlers = {
         input.dependsOn,
         input.addDependsOn,
         input.removeDependsOn,
+        input.addLabels,
+        input.removeLabels,
         input.externalRef,
       ].some((value) => value !== undefined);
       if (updatesFields || input.pullRequest === undefined) {
@@ -1151,6 +1266,8 @@ export const boardHandlers = {
           dependsOn: input.dependsOn,
           addDependsOn,
           removeDependsOn,
+          addLabels,
+          removeLabels,
           externalRef: input.externalRef,
           createdAt: yield* nowIso,
         };
@@ -1239,6 +1356,108 @@ export const boardHandlers = {
       };
       yield* dispatch(deps, command);
       return { cardId: card.id, key: card.key };
+    }),
+
+  board_manage_labels: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      const board = yield* readBoardState(deps);
+      // Flags are checked against the action, so a misplaced one is reported
+      // rather than silently ignored (an agent passing force to create would
+      // otherwise believe it did something).
+      const allowed: Record<typeof input.action, ReadonlyArray<string>> = {
+        list: ["includeDeleted"],
+        create: ["name", "colour"],
+        update: ["name", "newName", "colour"],
+        delete: ["name", "force"],
+        restore: ["name"],
+      };
+      const misplaced = (["name", "newName", "colour", "force", "includeDeleted"] as const).filter(
+        (field) => input[field] !== undefined && !allowed[input.action].includes(field),
+      );
+      if (misplaced.length > 0) {
+        return yield* new BoardToolError({
+          code: "invalid-input",
+          message: `action '${input.action}' does not take ${misplaced.join(", ")}.`,
+        });
+      }
+      if (input.action === "list") {
+        const labels = boardLabelCatalogue(board).filter(
+          (label) => input.includeDeleted === true || label.deletedAt === null,
+        );
+        return { labels: labels.map((label) => managedLabel(board, label)) };
+      }
+      const name = input.name;
+      if (name === undefined) {
+        return yield* new BoardToolError({
+          code: "invalid-input",
+          message: `action '${input.action}' needs name: the label to ${input.action}.`,
+        });
+      }
+
+      let command: BoardLabelCommand;
+      const commandId = yield* mintCommandId;
+      const createdAt = yield* nowIso;
+      switch (input.action) {
+        case "create": {
+          command = {
+            type: "board.label.create",
+            commandId,
+            labelId: BoardLabelId.make(yield* mintUuid),
+            name,
+            ...(input.colour === undefined ? {} : { colour: input.colour }),
+            createdAt,
+          };
+          break;
+        }
+        case "update": {
+          if (input.newName === undefined && input.colour === undefined) {
+            return yield* new BoardToolError({
+              code: "invalid-input",
+              message: "action 'update' needs newName, colour, or both.",
+            });
+          }
+          const label = yield* resolveManagedLabel(board, name, false);
+          command = {
+            type: "board.label.update",
+            commandId,
+            labelId: label.labelId,
+            ...(input.newName === undefined ? {} : { name: input.newName }),
+            ...(input.colour === undefined ? {} : { colour: input.colour }),
+            createdAt,
+          };
+          break;
+        }
+        case "delete": {
+          const label = yield* resolveManagedLabel(board, name, false);
+          // MCP-only guard: the board UI deletes freely, but an agent tidying
+          // the catalogue must not silently retire a label people are using.
+          const carriers = labelCarriers(board, label.labelId);
+          if (input.force !== true && carriers.length > 0) {
+            const named = carriers.slice(0, LABEL_CARRIERS_NAMED_MAX).map((card) => card.key);
+            const more = carriers.length - named.length;
+            return yield* new BoardToolError({
+              code: "rejected",
+              message: `Label '${label.name}' is on ${carriers.length} non-archived card${carriers.length === 1 ? "" : "s"}: ${named.join(", ")}${more > 0 ? ` and ${more} more` : ""}. Remove it from them with board_update_card removeLabels, or pass force: true to delete it anyway (the cards keep it, shown muted).`,
+            });
+          }
+          command = { type: "board.label.delete", commandId, labelId: label.labelId, createdAt };
+          break;
+        }
+        case "restore": {
+          const label = yield* resolveManagedLabel(board, name, true);
+          command = { type: "board.label.undelete", commandId, labelId: label.labelId, createdAt };
+          break;
+        }
+      }
+      yield* dispatch(deps, command);
+      // Re-read so an auto-picked colour (create) is what the agent sees.
+      const after = yield* readBoardState(deps);
+      const written = boardLabelCatalogue(after).find((label) => label.labelId === command.labelId);
+      if (written === undefined) {
+        return yield* internalError({ message: `Label '${name}' was not found after writing it.` });
+      }
+      return { labels: [managedLabel(after, written)] };
     }),
 
   board_propose_plans: (input) =>
@@ -1352,6 +1571,9 @@ export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
   ),
   board_delete_card: McpToolAccess.writesWithCapability(
     relayable("board_delete_card", boardHandlers.board_delete_card),
+  ),
+  board_manage_labels: McpToolAccess.writesWithCapability(
+    relayable("board_manage_labels", boardHandlers.board_manage_labels),
   ),
   board_propose_plans: McpToolAccess.writesWithCapability(
     relayable("board_propose_plans", boardHandlers.board_propose_plans),

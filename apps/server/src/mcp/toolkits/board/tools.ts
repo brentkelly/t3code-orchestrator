@@ -26,6 +26,8 @@ import {
   BoardCardPullRequestState,
   BoardCardPullRequestTarget,
   BoardBriefSectionEdit,
+  BoardLabelColour,
+  BoardLabelName,
   BoardPlan,
   BoardPlanWithBody,
   BoardProposedPlanInput,
@@ -369,7 +371,7 @@ export const BoardListProjectsTool = Tool.make("board_list_projects", {
 
 export const BoardCreateCardTool = Tool.make("board_create_card", {
   description:
-    "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. Omit projectId to create the card in this thread's own project (the common case); pass one only to target a different project. A projectId is matched first as a project id, then leniently against a project's title or workspace-root folder name, so a name from the app usually resolves — but the id from board_list_projects is unambiguous. An unresolvable projectId is rejected with the live project list. A card may be created into ANY existing stage (omit stage for Backlog). CAUTION: creating into an auto-executing stage (e.g. Building) starts an unattended agent run immediately, with a worktree and a concurrency slot — default to the early stages unless a human asked for mid-pipeline work; the build-onward dependency gate still applies. When you make a card for an existing pull request, pass pullRequest so the card tracks it (status, merge, settling) from the start — a url, or repository and number; it must be on the card's project repository, and a pull request the forge cannot find rejects the call before any card is made. NOT idempotent: a retried call creates a second card, so on a timeout list cards before retrying. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created. dependsOn lists card ids this card waits on. A dependency must sit at the card's own level: a top-level card depends on top-level cards, and a sub-board child only on its siblings. To wait on another card's child, depend on that child's parent instead, because the child merges into its parent's branch, not the base.",
+    "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. Omit projectId to create the card in this thread's own project (the common case); pass one only to target a different project. A projectId is matched first as a project id, then leniently against a project's title or workspace-root folder name, so a name from the app usually resolves — but the id from board_list_projects is unambiguous. An unresolvable projectId is rejected with the live project list. A card may be created into ANY existing stage (omit stage for Backlog). CAUTION: creating into an auto-executing stage (e.g. Building) starts an unattended agent run immediately, with a worktree and a concurrency slot — default to the early stages unless a human asked for mid-pipeline work; the build-onward dependency gate still applies. When you make a card for an existing pull request, pass pullRequest so the card tracks it (status, merge, settling) from the start — a url, or repository and number; it must be on the card's project repository, and a pull request the forge cannot find rejects the call before any card is made. NOT idempotent: a retried call creates a second card, so on a timeout list cards before retrying. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created, so create a new label with board_manage_labels first. dependsOn lists card ids this card waits on. A dependency must sit at the card's own level: a top-level card depends on top-level cards, and a sub-board child only on its siblings. To wait on another card's child, depend on that child's parent instead, because the child merges into its parent's branch, not the base.",
   parameters: Schema.Struct({
     projectId: Schema.optional(ProjectId),
     title: TrimmedNonEmptyString,
@@ -401,7 +403,7 @@ export const BoardMoveCardTool = Tool.make("board_move_card", {
 
 export const BoardUpdateCardTool = Tool.make("board_update_card", {
   description:
-    "Update a card's title, brief, labels, dependencies, external reference, or linked pull request. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (named against the catalogue, unknown names rejected); dependsOn (the whole dependency set); externalRef (null clears); pullRequest links a pull request to the card so it tracks its status, merge and settling just as if the card's own branch had opened it — a url, or repository and number, on the card's project repository, checked with the forge first. Use it to link a pull request to ANY card, not only your own, instead of setting externalRef. Linking the pull request the card already has changes nothing; pullRequest null removes an explicit link only, and a pull request found on the card's own branch reappears on the next refresh. ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, and not dependsOn together with addDependsOn/removeDependsOn. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. A dependency must sit at the card's own level: a top-level card depends on top-level cards, and a sub-board child only on its siblings. To wait on another card's child, depend on that child's parent instead, because the child merges into its parent's branch, not the base.",
+    "Update a card's title, brief, labels, dependencies, external reference, or linked pull request. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (the whole label set, named against the catalogue; unknown names are rejected, so create a new label with board_manage_labels first); dependsOn (the whole dependency set); externalRef (null clears); pullRequest links a pull request to the card so it tracks its status, merge and settling just as if the card's own branch had opened it — a url, or repository and number, on the card's project repository, checked with the forge first. Use it to link a pull request to ANY card, not only your own, instead of setting externalRef. Linking the pull request the card already has changes nothing; pullRequest null removes an explicit link only, and a pull request found on the card's own branch reappears on the next refresh. ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing); addLabels and removeLabels add or remove single labels by name, leaving the rest alone (adding one the card has, or removing one it does not, does nothing; a name that is no label at all is rejected; a deleted label can be removed but not added; a name in both is rejected). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, not dependsOn together with addDependsOn/removeDependsOn, and not labels together with addLabels/removeLabels. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. A dependency must sit at the card's own level: a top-level card depends on top-level cards, and a sub-board child only on its siblings. To wait on another card's child, depend on that child's parent instead, because the child merges into its parent's branch, not the base.",
   parameters: Schema.Struct({
     /** Card key or id. */
     cardId: TrimmedNonEmptyString,
@@ -416,6 +418,10 @@ export const BoardUpdateCardTool = Tool.make("board_update_card", {
     addDependsOn: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
     /** Card keys or ids. */
     removeDependsOn: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+    /** Label names to add; unknown or deleted names are rejected. */
+    addLabels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+    /** Label names to remove; names the card does not carry are no-ops. */
+    removeLabels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
     externalRef: Schema.optional(Schema.NullOr(BoardCardExternalRef)),
     pullRequest: Schema.optional(Schema.NullOr(BoardCardPullRequestTarget)),
   }),
@@ -461,6 +467,39 @@ export const BoardDeleteCardTool = Tool.make("board_delete_card", {
   failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Delete board card");
+
+// ── Label tools (T3O-68) ───────────────────────────────────────────────
+
+/** One catalogue entry as an agent sees it: addressed by name, never by id. */
+const BoardManagedLabel = Schema.Struct({
+  name: BoardLabelName,
+  colour: BoardLabelColour,
+  /** True for a tombstoned label (only listed with includeDeleted). */
+  deleted: Schema.Boolean,
+  /** Non-archived cards carrying the label. */
+  cardCount: Schema.Number,
+});
+
+export const BoardManageLabelsTool = Tool.make("board_manage_labels", {
+  description:
+    "List and manage the board's label catalogue. Labels are board-wide, shared by every project, and named case-insensitively: no two live labels share a name. action 'list' returns the catalogue (pass includeDeleted to see deleted labels too). action 'create' adds a label called name, with colour as a 6-digit hex such as '#3b82f6' or omitted to have one picked for you. To tag a card, create the label first if it does not exist, then pass it to board_update_card's addLabels. action 'update' renames a live label (newName) and/or recolours it (colour); a deleted label cannot be updated, so restore it first. action 'delete' retires a label: it leaves the catalogue, cards that carry it keep it shown muted, and it can be restored. Delete is refused while any non-archived card carries the label, naming those cards; pass force: true only when you mean to retire it from them too. action 'restore' brings a deleted label back, and is refused if a live label now has its name; prefer restore over creating a deleted name again. Every action returns labels: the whole catalogue for list, or the one label it touched, each with its colour and how many non-archived cards carry it. Every action, list included, is a board write: it needs your thread's live run and a client allowed to write.",
+  parameters: Schema.Struct({
+    action: Schema.Literals(["list", "create", "update", "delete", "restore"]),
+    /** The label to create, update, delete or restore. Required except for list. */
+    name: Schema.optional(BoardLabelName),
+    /** update only: the new name. */
+    newName: Schema.optional(BoardLabelName),
+    /** create or update: a 6-digit hex colour. */
+    colour: Schema.optional(BoardLabelColour),
+    /** delete only: delete even while non-archived cards carry the label. */
+    force: Schema.optional(Schema.Boolean),
+    /** list only: include deleted labels. */
+    includeDeleted: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Struct({ labels: Schema.Array(BoardManagedLabel) }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Manage board labels");
 
 // ── Plan tools ─────────────────────────────────────────────────────────
 
@@ -521,6 +560,7 @@ export const BoardToolkit = Toolkit.make(
   BoardArchiveCardTool,
   BoardUnarchiveCardTool,
   BoardDeleteCardTool,
+  BoardManageLabelsTool,
   BoardProposePlansTool,
   BoardGetPlanTool,
   BoardWritePlanTool,
