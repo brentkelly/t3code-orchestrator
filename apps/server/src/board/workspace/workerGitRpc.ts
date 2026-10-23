@@ -6,16 +6,17 @@
  * Every T3o server answers them, for the central server that dialed it, by
  * running its own `LocalBoardWorkspace`: the same code the central server runs
  * for a card of its own, marking the checkouts it makes as the central board's
- * so this server's own board never sweeps them. Two checks stand between the call and git:
+ * so this server's own board never sweeps them. Three checks stand between the
+ * call and git:
  *
  * - the session holds the operation's scope (`BOARD_WORKER_GIT_RPC_SCOPES`);
  * - a path the caller names is one of the project's worktrees on THIS server,
  *   and, for an operation that changes or removes a checkout, one the central
  *   board made (its owner marker), so no write reaches this server's own
  *   board's checkouts or a user's thread worktree;
- * - a branch it provisions a worktree or integration branch on is not on
- *   this server's own board's cards, and one it deletes is not either, nor checked out in a
- *   worktree the central board didn't make.
+ * - a branch it provisions a worktree or integration branch on is not on this
+ *   server's own board's cards, and one it deletes is not either, nor checked
+ *   out in a worktree the central board didn't make.
  *
  * Anything that goes wrong comes back as `BoardWorkerGitError`, a defect
  * included, so the central server never mistakes a broken operation for a
