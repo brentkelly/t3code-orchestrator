@@ -4134,6 +4134,15 @@ export const BoardCardUpdateCommand = Schema.Struct({
       a dependency is a no-op, so a repeated removal is harmless. Mutually
       exclusive with `dependsOn`. */
   removeDependsOn: Schema.optional(Schema.Array(BoardCardId)),
+  /** Add these labels, keeping the existing ones (T3O-68). Applied against the
+      card's labels when the command is decided, so a concurrent tag is kept.
+      Already-present ids are no-ops; the cap and live-label rule apply to the
+      result. Mutually exclusive with `labels`. */
+  addLabels: Schema.optional(Schema.Array(BoardLabelId)),
+  /** Remove these labels, keeping the rest (T3O-68). An id the card does not
+      carry is a no-op; a tombstoned label can be removed. Mutually exclusive
+      with `labels`. */
+  removeLabels: Schema.optional(Schema.Array(BoardLabelId)),
   createdAt: IsoDateTime,
 });
 export type BoardCardUpdateCommand = typeof BoardCardUpdateCommand.Type;
