@@ -20,6 +20,7 @@ import {
   type BoardProviderLimitActionInput,
   type BoardProviderLimitResumeAtInput,
   type BoardClientCommand,
+  type BoardCardWorkerMoveRequest,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -48,6 +49,7 @@ export type MoveBoardCardInput = CommandInput<"board.card.move">;
 export type ReorderBoardCardInput = CommandInput<"board.card.reorder">;
 export type UpdateBoardCardInput = CommandInput<"board.card.update">;
 export type SetBoardCardProjectInput = CommandInput<"board.card.set-project">;
+export type PinBoardCardWorkerInput = CommandInput<"board.card.pin-worker">;
 export type ForceStartBoardCardStepInput = CommandInput<"board.card.force-start-step">;
 export type RequeueBoardCardStepInput = CommandInput<"board.card.requeue-step">;
 export type ReopenBoardCardStepInput = CommandInput<"board.card.reopen-step">;
@@ -138,6 +140,11 @@ export const removeBoardCardWorktree = (input: { readonly cardId: BoardCardId })
 /** Re-run a kept worktree's cleanup (T3O-52), answering what it did. */
 export const checkBoardCardWorktree = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.checkCardWorktree, input);
+
+/** The Move dialog (T3O-65): check a move, start it, or ask the card's agent
+    to push. Answers what the action gives. */
+export const boardCardWorkerMove = (input: BoardCardWorkerMoveRequest) =>
+  request(BOARD_WS_METHODS.cardWorkerMove, input);
 
 /** Claim a pending upload onto a card's brief (t3o-32): the server copies the
     file into the card's folder and records it, in that order. */
@@ -259,6 +266,21 @@ export const setBoardCardProject: (input: SetBoardCardProjectInput) => CommandEf
   return yield* dispatch({
     ...input,
     type: "board.card.set-project",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** Pin a card to a worker, or null to follow the default (T3O-65). Refused by
+    the decider for a card whose worktree is on another worker — that is a
+    move (`boardCardWorkerMove`). */
+export const pinBoardCardWorker: (input: PinBoardCardWorkerInput) => CommandEffect = Effect.fn(
+  "BoardCommands.pinBoardCardWorker",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.pin-worker",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

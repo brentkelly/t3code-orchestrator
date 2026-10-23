@@ -17,11 +17,17 @@
  *   answer to "is its thread still alive / did it complete while we were
  *   down", decide resume / recover / advance.
  */
-import { BOARD_ENVELOPE_QUESTION_MECHANISM } from "@t3tools/contracts";
+import {
+  BOARD_ENVELOPE_QUESTION_MECHANISM,
+  BOARD_LOCAL_WORKER_ID,
+  clampBoardInstanceCap,
+  resolveBoardWorkerConcurrency,
+} from "@t3tools/contracts";
 import type {
   BoardCardId,
   BoardCardStepState,
   BoardConcurrencySettings,
+  BoardWorkerId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 
@@ -464,6 +470,33 @@ export function reconcileStepDecision(input: {
   return { kind: "recover" };
 }
 
+// ── Offline workers (T3O-66, D22) ──────────────────────────────────────────
+
+/** A stretch of time a worker was out of the board's reach, in epoch millis. */
+export interface BoardOfflineInterval {
+  readonly from: number;
+  readonly to: number;
+}
+
+/**
+ * How much of `(sinceMs, nowMs]` a step's worker spent out of reach — the time
+ * the timeout sweep does not count. A step paused by an offline worker resumes
+ * with its reference time shifted by the offline interval, not reset: only the
+ * part of each interval after the step's latest life sign is credited, so a
+ * life sign that arrives after the worker came back is not extended again.
+ */
+export function boardOfflineCreditMs(
+  intervals: ReadonlyArray<BoardOfflineInterval>,
+  sinceMs: number,
+  nowMs: number,
+): number {
+  let credit = 0;
+  for (const interval of intervals) {
+    credit += Math.max(0, Math.min(nowMs, interval.to) - Math.max(sinceMs, interval.from));
+  }
+  return credit;
+}
+
 // ── Concurrency governor (t3o-11, D11) ─────────────────────────────────────
 
 /** One card's step competing for a slot. Everything the ordering branches on
@@ -514,18 +547,30 @@ export function orderBoardQueue(
 }
 
 /**
- * Resolve the concurrency caps for a provider instance (D11). A per-instance
- * value of `null` — or an absent entry, which is observationally identical
- * (see `BoardConcurrencySettings`) — means "no instance-specific cap": bound
- * only by the global ceiling, expressed as a null per-instance limit so
- * `acquire` applies the global one alone.
+ * Resolve the three ceilings for a step on a worker (D11, T3O-65): the board
+ * limit, the worker's own limit, and the instance's cap on that worker. A
+ * `null` worker limit or cap — or an absent entry, which is observationally
+ * identical (see `BoardConcurrencySettings`) — means no limit of that kind. A
+ * cap above its worker's limit reads as the worker limit, so `acquire` names
+ * the worker, not the provider, as what is full.
  */
 export function resolveBoardConcurrencyLimit(
   concurrency: BoardConcurrencySettings,
   providerInstanceId: ProviderInstanceId,
-): { readonly perInstance: number | null; readonly global: number } {
+  workerId: BoardWorkerId = BOARD_LOCAL_WORKER_ID,
+): {
+  readonly global: number;
+  readonly worker: number | null;
+  readonly perInstance: number | null;
+} {
+  const onWorker = resolveBoardWorkerConcurrency(concurrency, workerId);
+  const cap = clampBoardInstanceCap(
+    onWorker.perInstance[providerInstanceId] ?? null,
+    onWorker.maxConcurrent,
+  );
   return {
-    perInstance: concurrency.perInstance[providerInstanceId] ?? null,
     global: concurrency.globalMaxConcurrent,
+    worker: onWorker.maxConcurrent,
+    perInstance: cap !== null && cap === onWorker.maxConcurrent ? null : cap,
   };
 }

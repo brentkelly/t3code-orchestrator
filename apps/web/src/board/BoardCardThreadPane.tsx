@@ -17,6 +17,7 @@
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  BOARD_LOCAL_WORKER_ID,
   isBoardCardAwaitingPermission,
   type BoardCardThreadShell,
   type EnvironmentId,
@@ -45,6 +46,8 @@ import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
 import { BoardHint } from "./BoardHint";
 import type { BoardQueueInfo } from "./boardQueueInfo";
+import { BoardThreadWorkerGate } from "./workers/BoardThreadWorkerGate";
+import { threadWorkerOpensOn } from "./workers/threadWorker";
 
 /** The live chat for one linked thread. Split out so the thread-detail
     subscription hooks are keyed by the mounted thread and unmount with it. */
@@ -76,7 +79,6 @@ function BoardCardChat({
 }
 
 export function BoardCardThreadPane({
-  environmentId,
   cardKey,
   threadLinks,
   selectedThreadId,
@@ -94,7 +96,6 @@ export function BoardCardThreadPane({
   queueForceStartPending,
   onQueueForceStart,
 }: {
-  readonly environmentId: EnvironmentId;
   readonly cardKey: string;
   readonly threadLinks: ReadonlyArray<BoardDetailThreadLink>;
   readonly selectedThreadId: ThreadId | null;
@@ -193,7 +194,15 @@ export function BoardCardThreadPane({
                 )}
                 key={link.threadId}
               >
-                <BoardHint label={link.tombstoned ? "Deleted thread" : link.role}>
+                <BoardHint
+                  label={
+                    link.tombstoned
+                      ? "Deleted thread"
+                      : link.ranOn === null
+                        ? link.role
+                        : `${link.role} · ${link.ranOn}`
+                  }
+                >
                   <button
                     className="inline-flex min-w-0 items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-ring"
                     onClick={() => onSelectThread(link.threadId)}
@@ -301,8 +310,12 @@ export function BoardCardThreadPane({
         {selected !== null && !selected.tombstoned ? (
           <Link
             className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
-            params={{ environmentId, threadId: selected.threadId }}
-            title="Open in the threads view"
+            params={{ environmentId: selected.worker.environmentId, threadId: selected.threadId }}
+            title={
+              selected.worker.workerId === BOARD_LOCAL_WORKER_ID
+                ? "Open in the threads view"
+                : threadWorkerOpensOn(selected.worker)
+            }
             to="/$environmentId/$threadId"
           >
             <SquareArrowOutUpRightIcon className="size-3" />
@@ -322,8 +335,8 @@ export function BoardCardThreadPane({
             <span className="font-semibold text-foreground">{queueInfo.headline}.</span> No agent
             has picked this up yet.
           </p>
-          {onQueueForceStart === undefined ? null : (
-            <BoardHint label="Run this task now, over the agent limit.">
+          {onQueueForceStart === undefined || queueInfo.waitingForCheckout === true ? null : (
+            <BoardHint label="Run this task now, past every agent limit: the board's, its worker's and its provider's.">
               <button
                 className={cn(
                   "inline-flex h-[24px] shrink-0 items-center gap-[5px] rounded-[7px] border border-input bg-popover px-2 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent",
@@ -377,11 +390,12 @@ export function BoardCardThreadPane({
             threadId={selected.threadId}
             todo={threadTodos?.get(selected.threadId)}
           />
-          <BoardCardChat
-            environmentId={environmentId}
-            key={selected.threadId}
-            threadId={selected.threadId}
-          />
+          {/* A thread on a worker opens in that worker's environment (T3O-63). */}
+          <BoardThreadWorkerGate key={selected.threadId} worker={selected.worker}>
+            {(threadEnvironmentId) => (
+              <BoardCardChat environmentId={threadEnvironmentId} threadId={selected.threadId} />
+            )}
+          </BoardThreadWorkerGate>
         </div>
       )}
     </section>

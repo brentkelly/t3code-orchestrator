@@ -202,6 +202,8 @@ import {
   threadJumpCommandForIndex,
   threadJumpIndexFromCommand,
 } from "../../keybindings";
+// T3o: the board's "Connect to worker" prefill (T3O-63).
+import { useConnectionsAddHostPrefill } from "../../board/workers/connectionsPrefill";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -2188,6 +2190,12 @@ export function ConnectionsSettings() {
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
+  // T3o: a board thread on a worker opens Add environment for it (T3O-63).
+  useConnectionsAddHostPrefill((host) => {
+    setSavedBackendMode("remote");
+    setSavedBackendHost(host);
+    setAddBackendDialogOpen(true);
+  });
   const [sshHostSuggestionsOpen, setSshHostSuggestionsOpen] = useState(false);
   // Tracks the arrow-key/hover highlight so Enter selects it instead of submitting the typed text.
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);

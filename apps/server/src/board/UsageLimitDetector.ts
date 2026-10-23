@@ -18,7 +18,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { ThreadGateway } from "./ThreadGateway.ts";
+import { ThreadGateway, ThreadReadError, UNKNOWN_THREAD_STATE } from "./ThreadGateway.ts";
 
 /** Added to a provider's reset time before anything is retried against it,
     as the catalogue's matches always carried (D5). */
@@ -27,7 +27,10 @@ const RESUME_MARGIN_MS = 60_000;
 export interface UsageLimitDetectorShape {
   /**
    * Classify a turn that has just ended: a `wait` when the thread's latest run
-   * failed on a usage limit, otherwise `null`. `turnErrorMessage`, `nowMs`
+   * failed on a usage limit, otherwise `null`. A thread on a worker the board
+   * can't reach fails instead (T3O-66, D22): unknown is no answer, and reading
+   * it as "no limit" would recover a limited turn or lift a cooldown on it.
+   * `turnErrorMessage`, `nowMs`
    * and `since` are what the text catalogue needed; the v2 failure class needs
    * none of them, and they stay so the stubbed suites keep their shape.
    */
@@ -42,7 +45,7 @@ export interface UsageLimitDetectorShape {
         nothing leaves an older message newest, and re-reading it would park the
         card on a limit that has already passed. Null means no bound. */
     readonly since: string | null;
-  }) => Effect.Effect<BoardUsageLimitMatch | null>;
+  }) => Effect.Effect<BoardUsageLimitMatch | null, ThreadReadError>;
 }
 
 export class UsageLimitDetector extends Context.Service<
@@ -55,6 +58,18 @@ const make = Effect.gen(function* () {
 
   const classifyTurn: UsageLimitDetectorShape["classifyTurn"] = (input) =>
     threads.threadState(input.threadId).pipe(
+      // A read failure answers "no match", leaving recovery as it was.
+      Effect.orElseSucceed(() => null),
+      Effect.flatMap((state) =>
+        state === UNKNOWN_THREAD_STATE
+          ? Effect.fail(
+              new ThreadReadError({
+                operation: "threadState",
+                detail: `Thread ${input.threadId} is on a worker the board cannot reach.`,
+              }),
+            )
+          : Effect.succeed(state),
+      ),
       Effect.map((state): BoardUsageLimitMatch | null => {
         const limit = state?.usageLimit ?? null;
         if (limit === null) return null;
@@ -72,8 +87,6 @@ const make = Effect.gen(function* () {
           ruleId: "orchestration-v2-usage-limit",
         };
       }),
-      // A read failure answers "no match", leaving recovery as it was.
-      Effect.orElseSucceed(() => null),
     );
 
   return { classifyTurn } satisfies UsageLimitDetectorShape;

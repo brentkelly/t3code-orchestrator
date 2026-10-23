@@ -14,6 +14,7 @@ import {
   BoardLabelId,
   boardPlanId,
   CommandId,
+  EnvironmentId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -69,6 +70,10 @@ function makeCard(
     autoStart: false,
     autoMerge: false,
     autoMergeHold: null,
+    pinnedWorkerId: null,
+    placedWorkerId: null,
+    workerMove: null,
+    placementOrphaned: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -113,6 +118,7 @@ function makeStepStateFor(cardId: string): BoardCardStepState {
     status: "running",
     slotHeld: true,
     forceStart: false,
+    queuedBy: null,
     startedAt: NOW,
     updatedAt: NOW,
   };
@@ -663,6 +669,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
                   status: "running" as const,
                   slotHeld: true,
                   forceStart: false,
+                  queuedBy: null,
                   startedAt: NOW,
                   updatedAt: NOW,
                 },
@@ -845,6 +852,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       assert.deepStrictEqual(event.payload.card.modelOverrides, {
         [BOARD_SEED_STAGE_IDS.building]: opusOverride,
       });
+      // T3O-65: the marker that lets Change model restart a provider stall.
+      assert.strictEqual(event.payload.modelOverridesEdited, true);
     }),
   );
 
@@ -1787,6 +1796,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         status,
         slotHeld: status === "running" || status === "awaiting-input",
         forceStart: false,
+        queuedBy: null,
         startedAt: status === "running" || status === "awaiting-input" ? NOW : null,
         updatedAt: NOW,
       });
@@ -1860,6 +1870,15 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             // complete-step validates against the card's LIVE step, so the
             // catalog's completion needs one to succeed against.
             makeStepState("card-ready", "running", "build"),
+          ],
+          // T3O-62: a registered worker for the registry commands to act on.
+          workers: [
+            {
+              id: EnvironmentId.make("env-worker-a"),
+              label: "worker-a",
+              url: "http://worker-a:3773",
+              addedAt: NOW,
+            },
           ],
           stepCompletions: [
             {
@@ -2303,6 +2322,51 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           type: "board.provider-limit.clear",
           commandId: CommandId.make("cmd-limit-clear"),
           providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          createdAt: NOW,
+        },
+        "board.worker.register": {
+          type: "board.worker.register",
+          commandId: CommandId.make("cmd-worker-register"),
+          mode: "add",
+          worker: {
+            id: EnvironmentId.make("env-worker-b"),
+            label: "worker-b",
+            url: "http://worker-b:3773",
+            addedAt: NOW,
+          },
+          createdAt: NOW,
+        },
+        "board.worker.remove": {
+          type: "board.worker.remove",
+          commandId: CommandId.make("cmd-worker-remove"),
+          workerId: EnvironmentId.make("env-worker-a"),
+          createdAt: NOW,
+        },
+        "board.worker.set-default": {
+          type: "board.worker.set-default",
+          commandId: CommandId.make("cmd-worker-default"),
+          workerId: EnvironmentId.make("env-worker-a"),
+          createdAt: NOW,
+        },
+        "board.card.pin-worker": {
+          type: "board.card.pin-worker",
+          commandId: CommandId.make("cmd-pin-worker"),
+          cardId: BoardCardId.make("card-ready"),
+          workerId: EnvironmentId.make("env-worker-a"),
+          createdAt: NOW,
+        },
+        "board.card.place": {
+          type: "board.card.place",
+          commandId: CommandId.make("cmd-place"),
+          cardId: BoardCardId.make("card-ready"),
+          workerId: EnvironmentId.make("env-worker-a"),
+          createdAt: NOW,
+        },
+        "board.card.move-worker": {
+          type: "board.card.move-worker",
+          commandId: CommandId.make("cmd-move-worker"),
+          cardId: BoardCardId.make("card-worktree"),
+          step: { phase: "start", toWorkerId: EnvironmentId.make("env-worker-a"), sha: null },
           createdAt: NOW,
         },
       };
@@ -2983,6 +3047,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       status,
       slotHeld: status === "running",
       forceStart: false,
+      queuedBy: null,
       startedAt: status === "running" ? NOW : null,
       updatedAt: NOW,
     }) as const satisfies BoardCardStepState;

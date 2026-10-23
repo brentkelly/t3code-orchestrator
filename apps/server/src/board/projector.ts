@@ -48,6 +48,14 @@ import {
   BoardCardStepCheckedInPayload,
   BoardProviderLimitRecordedPayload,
   BoardProviderLimitClearedPayload,
+  BoardDefaultWorkerSetPayload,
+  BoardWorkerRegisteredPayload,
+  BoardWorkerRemovedPayload,
+  BOARD_LOCAL_WORKER_ID,
+  compareBoardWorkers,
+  type BoardWorker,
+  type BoardWorkerId,
+  type EnvironmentId,
   BoardCardStageThreadRequestedPayload,
   BoardCardUpdatedPayload,
   boardBriefHasImage,
@@ -60,6 +68,10 @@ import {
   BoardPlansApprovedPayload,
   BoardPlansProposedPayload,
   BoardCardBaseRefRecordedPayload,
+  BoardCardPlacedPayload,
+  BoardCardWorkerMoveRecordedPayload,
+  BoardCardWorkerPinnedPayload,
+  BoardCardWorkerRemovalPayload,
   BoardCardIntegrationBranchRecordedPayload,
   BoardPlanWrittenPayload,
   BoardStageCreatedPayload,
@@ -133,6 +145,14 @@ const decodeBoardPlansApprovedPayload = Schema.decodeUnknownEffect(BoardPlansApp
 const decodeBoardCardIntegrationBranchRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardIntegrationBranchRecordedPayload,
 );
+const decodeBoardCardWorkerPinnedPayload = Schema.decodeUnknownEffect(BoardCardWorkerPinnedPayload);
+const decodeBoardCardPlacedPayload = Schema.decodeUnknownEffect(BoardCardPlacedPayload);
+const decodeBoardCardWorkerMoveRecordedPayload = Schema.decodeUnknownEffect(
+  BoardCardWorkerMoveRecordedPayload,
+);
+const decodeBoardCardWorkerRemovalPayload = Schema.decodeUnknownEffect(
+  BoardCardWorkerRemovalPayload,
+);
 const decodeBoardCardBaseRefRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardBaseRefRecordedPayload,
 );
@@ -185,6 +205,9 @@ const decodeBoardProviderLimitRecordedPayload = Schema.decodeUnknownEffect(
 const decodeBoardProviderLimitClearedPayload = Schema.decodeUnknownEffect(
   BoardProviderLimitClearedPayload,
 );
+const decodeBoardWorkerRegisteredPayload = Schema.decodeUnknownEffect(BoardWorkerRegisteredPayload);
+const decodeBoardWorkerRemovedPayload = Schema.decodeUnknownEffect(BoardWorkerRemovedPayload);
+const decodeBoardDefaultWorkerSetPayload = Schema.decodeUnknownEffect(BoardDefaultWorkerSetPayload);
 
 // Canonical card order: (createdAt, id), needed because createdAt is
 // client-supplied, so dispatch order ≠ createdAt order in general. Compared
@@ -254,6 +277,13 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // the same way: absent — every legacy event and every card created without
     // a time — is null, which is "start as soon as the pipeline reaches it".
     scheduledStartAt: payload.scheduledStartAt ?? null,
+    // The worker pin (T3O-65, D20) rides the flat created payload the same
+    // way: absent — every legacy event and every card that follows the
+    // default — is null. Nothing has spawned, so nothing is placed or moving.
+    pinnedWorkerId: payload.pinnedWorkerId ?? null,
+    placedWorkerId: null,
+    workerMove: null,
+    placementOrphaned: null,
     // A card is never born armed (T3O-24, D2): the arm is a human delegating
     // the D18 build gate on a card they can already see waiting, and there is
     // no create-command field to set it with. Nor born auto-merging (T3O-38,
@@ -530,6 +560,37 @@ function clearProviderLimit<M extends BoardReadModel>(
   };
 }
 
+/** Add or replace one registered worker (T3O-62), in `compareBoardWorkers`
+    order on both sides of replay-equals-rehydration. */
+function upsertWorker<M extends BoardReadModel>(model: M, worker: BoardWorker): M {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const workers = [
+    ...(board.workers ?? []).filter((existing) => existing.id !== worker.id),
+    worker,
+  ].toSorted(compareBoardWorkers);
+  return { ...model, board: { ...board, workers } };
+}
+
+/** Drop one worker. The slice goes when the last one does, so a board whose
+    workers were all removed decodes exactly as one that never had any. */
+function removeWorker<M extends BoardReadModel>(model: M, workerId: EnvironmentId): M {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const remaining = (board.workers ?? []).filter((existing) => existing.id !== workerId);
+  const { workers: _dropped, ...rest } = board;
+  return { ...model, board: remaining.length === 0 ? rest : { ...board, workers: remaining } };
+}
+
+/** Record the default worker. `local` is the absent default, so choosing it
+    again drops the field rather than storing the value that absence means. */
+function setDefaultWorker<M extends BoardReadModel>(model: M, workerId: BoardWorkerId): M {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const { defaultWorkerId: _dropped, ...rest } = board;
+  return {
+    ...model,
+    board: workerId === BOARD_LOCAL_WORKER_ID ? rest : { ...board, defaultWorkerId: workerId },
+  };
+}
+
 function upsertStepState<M extends BoardReadModel>(model: M, state: BoardCardStepState): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   const current = board.stepStates ?? [];
@@ -755,6 +816,31 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    // Placement (T3O-65): each carries the whole post-change card.
+    case "board.card-worker-pinned":
+      return decodeBoardCardWorkerPinnedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-placed":
+      return decodeBoardCardPlacedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-worker-move-recorded":
+      return decodeBoardCardWorkerMoveRecordedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-worker-removal":
+      return decodeBoardCardWorkerRemovalPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     case "board.card-worktree-provisioning":
       return decodeBoardCardWorktreeProvisioningPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
@@ -906,6 +992,25 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => clearProviderLimit(model, payload.providerInstanceId)),
       );
 
+    // T3o (T3O-62): the worker registry. Touches no card.
+    case "board.worker-registered":
+      return decodeBoardWorkerRegisteredPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertWorker(model, payload.worker)),
+      );
+
+    case "board.worker-removed":
+      return decodeBoardWorkerRemovedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => removeWorker(model, payload.workerId)),
+      );
+
+    case "board.default-worker-set":
+      return decodeBoardDefaultWorkerSetPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => setDefaultWorker(model, payload.workerId)),
+      );
+
     default: {
       event satisfies never;
       // Runtime backstop for an undecoded event: leave the model unchanged.
@@ -994,6 +1099,13 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     // the card aggregate, so this delta carries the real values like any
     // other card field.
     case "board.card-auto-merge-hold-recorded":
+    // Placement (T3O-65): the bound worker and the move are shell fields on
+    // the card aggregate.
+    case "board.card-worker-pinned":
+    case "board.card-placed":
+    case "board.card-worker-move-recorded":
+    // T3O-66: Worker removed is a shell field on the card aggregate.
+    case "board.card-worker-removal":
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,
@@ -1060,6 +1172,10 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
         // Admission also settles the durable "being worked" dot: held for a slot
         // (`queued`) means not running; admitted to running lights `stepRunning`.
         stepRunning: event.payload.state.status === "running",
+        // Which limit holds it (T3O-65), only beside `queued`.
+        ...(event.payload.state.status === "queued" && event.payload.state.queuedBy !== null
+          ? { queuedBy: event.payload.state.queuedBy }
+          : {}),
       });
 
     case "board.card-step-recovered":
@@ -1214,6 +1330,14 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
         sequence: event.sequence,
         providerInstanceId: event.payload.providerInstanceId,
       });
+
+    // T3o (T3O-62): the worker summary mixes registry facts with runtime
+    // connection status, so it is not a pure function of one event. The board
+    // subscription re-sends the whole `workers` state instead.
+    case "board.worker-registered":
+    case "board.worker-removed":
+    case "board.default-worker-set":
+      return Option.none();
 
     case "board.card-step-paused":
       // A human stopped the step (T3O-23) — the fourth step transition that is

@@ -66,6 +66,7 @@ import {
   type BoardCardReviewOverrides,
   type BoardReviewRoundOverride,
   type RuntimeMode,
+  type BoardCardStepStalledReason,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import {
@@ -97,7 +98,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
 
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
@@ -125,6 +126,7 @@ import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
 import { BoardBaseBranchConfirmDialog } from "./BoardBaseBranchConfirmDialog";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
+import { BoardCardWorkerRow } from "./workers/BoardCardWorkerRow";
 import { boardBriefDisplayText } from "./boardBriefDisplay";
 import { BoardCardProjectConfirmDialog } from "./BoardCardProjectConfirmDialog";
 import { BoardCardProjectRowValue, type BoardProjectOption } from "./BoardCardProjectSelect";
@@ -174,6 +176,7 @@ import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
 import { BoardHint } from "./BoardHint";
+import { threadWorkerOpensOn, type BoardThreadWorker } from "./workers/threadWorker";
 import {
   boardForwardShownBesideRecovery,
   boardReviewPaneStopped,
@@ -327,10 +330,28 @@ export interface BoardDetailThreadLink {
   readonly title: string | null;
   readonly threadState: BoardCardThreadState;
   readonly awaitingInput: boolean;
+  /** The worker the thread lives on, which is where it opens (T3O-63). */
+  readonly worker: BoardThreadWorker;
+  /** "ran on {worker}", only on a board with more than one worker. */
+  readonly ranOn: string | null;
+  /** "Moved from {worker} · {time}" when this is the first thread after a
+      move (T3O-65), drawn as a divider above it. */
+  readonly movedFrom?: string | null | undefined;
 }
 
 export interface BoardCardDetailViewProps {
   readonly environmentId: EnvironmentId;
+  /** Why the live step stalled, from the card's shell (T3O-65 shows the
+      provider-not-on-worker panel off it). */
+  readonly stalledReason?: BoardCardStepStalledReason | undefined;
+  /** What the card's shell says of its work and its worker (T3O-66), for the
+      Worker offline / Worker removed panel. */
+  readonly workerShell?:
+    | Pick<
+        BoardCardShell,
+        "workerId" | "placementOrphaned" | "stepRunning" | "queued" | "stepAwaiting"
+      >
+    | undefined;
   readonly detail: BoardCardDetail;
   readonly catalogue: ReadonlyArray<BoardLabel>;
   /** The read-model stage list (D13): column labels, the stage ladder, and the
@@ -1004,8 +1025,10 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
       <p className="mt-1 text-[11.5px] leading-[1.45] text-muted-foreground">{info.detail}</p>
       {props.onQueueForceStart === undefined && props.onQueueMoveToFront === undefined ? null : (
         <div className="mt-2.5 flex items-center gap-1.5">
-          {props.onQueueForceStart === undefined ? null : (
-            <BoardHint label="Run this task now, over the agent limit.">
+          {/* A card waiting for its worker's checkout has no limit to start
+              past (T3O-65): nothing can run until the clone lands. */}
+          {props.onQueueForceStart === undefined || info.waitingForCheckout === true ? null : (
+            <BoardHint label="Run this task now, past every agent limit: the board's, its worker's and its provider's.">
               <button
                 className={cn(
                   "inline-flex h-[28px] items-center justify-center gap-[6px] rounded-lg border border-primary bg-primary px-2.5 text-[12px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90",
@@ -1070,57 +1093,64 @@ function ThreadsSection(props: BoardCardDetailViewProps) {
       ) : (
         <ul className="flex flex-col gap-1.5">
           {props.threadLinks.map((link) => (
-            <li
-              className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]"
-              key={link.threadId}
-            >
-              <div className="flex min-w-0 flex-1 flex-col">
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={cn(
-                      "min-w-0 truncate text-[13px] text-foreground",
-                      link.tombstoned && "text-muted-foreground line-through",
-                    )}
-                  >
-                    {link.title ?? "Deleted thread"}
-                  </span>
-                  {/* A permission prompt (T3O-16) needs the human as much as a
+            <Fragment key={link.threadId}>
+              {link.movedFrom == null ? null : (
+                <li className="flex items-center gap-2 text-[10.5px] text-muted-foreground">
+                  <span className="h-px flex-1 bg-border" />
+                  {link.movedFrom}
+                  <span className="h-px flex-1 bg-border" />
+                </li>
+              )}
+              <li className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]">
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "min-w-0 truncate text-[13px] text-foreground",
+                        link.tombstoned && "text-muted-foreground line-through",
+                      )}
+                    >
+                      {link.title ?? "Deleted thread"}
+                    </span>
+                    {/* A permission prompt (T3O-16) needs the human as much as a
                       question does. */}
-                  {link.awaitingInput || isBoardCardAwaitingPermission(link) ? (
-                    <CircleAlertIcon className="size-3 shrink-0 text-attention-foreground" />
-                  ) : null}
+                    {link.awaitingInput || isBoardCardAwaitingPermission(link) ? (
+                      <CircleAlertIcon className="size-3 shrink-0 text-attention-foreground" />
+                    ) : null}
+                  </div>
+                  <span className="text-[10.5px] text-muted-foreground">
+                    {link.role}
+                    {link.tombstoned
+                      ? " · deleted"
+                      : isBoardCardAwaitingPermission(link)
+                        ? " · Waiting for permission"
+                        : ` · ${THREAD_STATE_LABEL[link.threadState]}`}
+                    {link.threadId === activeThreadId && !link.tombstoned ? " · active" : ""}
+                    {link.ranOn === null ? "" : ` · ${link.ranOn}`}
+                  </span>
                 </div>
-                <span className="text-[10.5px] text-muted-foreground">
-                  {link.role}
-                  {link.tombstoned
-                    ? " · deleted"
-                    : isBoardCardAwaitingPermission(link)
-                      ? " · Waiting for permission"
-                      : ` · ${THREAD_STATE_LABEL[link.threadState]}`}
-                  {link.threadId === activeThreadId && !link.tombstoned ? " · active" : ""}
-                </span>
-              </div>
-              {link.tombstoned ? null : (
-                <Link
-                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                  params={{ environmentId: props.environmentId, threadId: link.threadId }}
-                  title="Open thread"
-                  to="/$environmentId/$threadId"
-                >
-                  <ExternalLinkIcon className="size-3.5" />
-                </Link>
-              )}
-              {link.tombstoned ? null : (
-                <Button
-                  onClick={() => props.onUnlinkThread(link.threadId)}
-                  size="icon-xs"
-                  title="Unlink thread"
-                  variant="ghost"
-                >
-                  <XIcon />
-                </Button>
-              )}
-            </li>
+                {link.tombstoned ? null : (
+                  <Link
+                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    params={{ environmentId: link.worker.environmentId, threadId: link.threadId }}
+                    title={threadWorkerOpensOn(link.worker)}
+                    to="/$environmentId/$threadId"
+                  >
+                    <ExternalLinkIcon className="size-3.5" />
+                  </Link>
+                )}
+                {link.tombstoned ? null : (
+                  <Button
+                    onClick={() => props.onUnlinkThread(link.threadId)}
+                    size="icon-xs"
+                    title="Unlink thread"
+                    variant="ghost"
+                  >
+                    <XIcon />
+                  </Button>
+                )}
+              </li>
+            </Fragment>
           ))}
         </ul>
       )}
@@ -1905,7 +1935,13 @@ function humanInLoopDefaultHint(humanInLoop: {
   }
 }
 
-function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
+function InfoSection({
+  props,
+  onOpenThread,
+}: {
+  readonly props: BoardCardDetailViewProps;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+}) {
   const base = props.baseBranch;
   return (
     <div className="border-t border-border p-3.5 text-[11.5px]/[1.7] text-muted-foreground">
@@ -1925,6 +1961,14 @@ function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
           names its parent — not hidden, because someone on a child deserves to
           know what it branches off without hunting for the parent. */}
       <BoardBaseBranchRow props={props} />
+      {/* Worker (T3O-65): where the card runs, and Move. Absent with one worker. */}
+      <BoardCardWorkerRow
+        card={props.detail.card}
+        environmentId={props.environmentId}
+        onOpenThread={onOpenThread}
+        shell={props.workerShell}
+        stalledReason={props.stalledReason}
+      />
       <div>Created · {formatRelativeTimeLabel(props.detail.card.createdAt)}</div>
       {base.retargeted && base.effective !== null ? (
         // Derived, never stored (D14): between retargeting and the rebase that
@@ -2783,7 +2827,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               <BoardCardThreadPane
                 adoptableThreads={props.adoptableThreads}
                 cardKey={card.key}
-                environmentId={props.environmentId}
                 maximised={props.maximised}
                 onCreateBlankThread={props.onCreateBlankThread}
                 onLinkThread={props.onLinkThread}
@@ -2861,7 +2904,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 stages={props.stages}
               />
             </div>
-            <InfoSection props={props} />
+            <InfoSection onOpenThread={setSelectedThreadId} props={props} />
           </div>
         </div>
       ) : (
@@ -2954,7 +2997,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   stages={props.stages}
                 />
               </div>
-              <InfoSection props={props} />
+              <InfoSection onOpenThread={setSelectedThreadId} props={props} />
             </div>
           </div>
         </div>

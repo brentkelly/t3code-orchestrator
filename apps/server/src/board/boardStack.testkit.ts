@@ -58,6 +58,7 @@ import { BoardThreadTail } from "./boardThreadTail.ts";
 import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
 import { BoardRuntimeLive } from "./runtimeLayer.ts";
 import { ThreadGatewayV2Live } from "./ThreadGatewayV2.ts";
+import { BoardWorkersLocalOnlyTest } from "./workers/boardWorkers.testkit.ts";
 
 export const STACK_PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex");
 
@@ -123,6 +124,8 @@ export const makeBoardStackTestLayer = (prefix: string) =>
   BoardRuntimeLive.pipe(
     Layer.provideMerge(ThreadGatewayV2Live),
     Layer.provideMerge(orchestrationStack(prefix)),
+    // T3O-62: a local-only board, for the subscription.
+    Layer.provideMerge(BoardWorkersLocalOnlyTest),
   );
 
 /** The same, without the board's tail of upstream's log — for a suite that

@@ -13,6 +13,7 @@ import {
   boardCardNotice,
   type BoardCardNoticeAttention,
 } from "./boardCardNotice";
+import type { BoardCardWorkerTrouble } from "./workers/cardWorker";
 
 const attention = (
   overrides: Partial<BoardCardNoticeAttention> = {},
@@ -248,5 +249,64 @@ describe("the worktree-kept notice (T3O-52)", () => {
       "blocked",
     );
     expect(notice({ worktreeKeptReason: "kept", attention: attention() })?.kind).toBe("attention");
+  });
+
+  // ── The card's worker (T3O-66) ──────────────────────────────────────
+
+  const removed: BoardCardWorkerTrouble = {
+    kind: "removed",
+    workerId: null,
+    workerLabel: "gpu-rig",
+    label: "Move this card",
+    tooltip: "gpu-rig was removed from the board. Move this card to keep going.",
+    panelTitle: "Worker removed — move this card",
+    panelBody: "…",
+  };
+  const offline: BoardCardWorkerTrouble = {
+    ...removed,
+    kind: "offline",
+    label: "Worker offline",
+    tooltip: "gpu-rig is offline. Work is paused; nothing has been restarted.",
+  };
+  const providerMissing = attention({
+    reason: "stalled",
+    label: "Provider missing",
+    tooltip: "This step's provider isn't on the card's worker.",
+  });
+
+  it("ranks Worker removed and Worker offline above everything, a question included", () => {
+    expect(
+      notice({
+        workerTrouble: removed,
+        attention: question,
+        conflictFix: conflicts,
+        autoMergeHold: mergeGaveUp,
+        blocked: true,
+        dependencyCount: 1,
+      }),
+    ).toEqual({ kind: "worker", trouble: removed });
+    expect(notice({ workerTrouble: offline, attention: question })).toEqual({
+      kind: "worker",
+      trouble: offline,
+    });
+  });
+
+  it("ranks Worker offline above Provider not on worker", () => {
+    expect(
+      notice({ workerTrouble: offline, attention: providerMissing, providerMissing: true }),
+    ).toEqual({ kind: "worker", trouble: offline });
+  });
+
+  it("ranks Provider not on worker above the holds, Conflicts and Blocked", () => {
+    expect(
+      notice({
+        attention: providerMissing,
+        providerMissing: true,
+        conflictFix: conflicts,
+        autoMergeHold: mergeGaveUp,
+        blocked: true,
+        dependencyCount: 2,
+      }),
+    ).toEqual({ kind: "attention", attention: providerMissing });
   });
 });

@@ -67,9 +67,15 @@ export class BoardToolError extends Schema.TaggedError<BoardToolError>()("BoardT
     "invalid-input",
     "rejected",
     "internal",
+    // T3O-63: the calling thread runs on a worker whose board server is not
+    // connected right now. Temporary: the same call succeeds once it is.
+    "board-unreachable",
   ]),
   message: TrimmedNonEmptyString,
 }) {}
+
+/** The codes a `BoardToolError` can carry. */
+export const BOARD_TOOL_ERROR_CODES = BoardToolError.fields.code.literals;
 
 /**
  * What a board tool can fail with: its own error, or upstream's refusal of the

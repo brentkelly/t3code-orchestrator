@@ -22,6 +22,14 @@
  */
 import {
   BOARD_WS_METHODS,
+  EMPTY_BOARD_WORKERS_STATE,
+  type BoardCardWorkerMoveRequest,
+  type BoardWorkerIdInput,
+  type BoardWorkersAddInput,
+  type BoardWorkersDismissSetupInput,
+  type BoardWorkersRepairInput,
+  type BoardWorkersSetDefaultInput,
+  type BoardWorkersSetupProjectInput,
   type BoardAttachCardFileInput,
   type BoardDetachCardFileInput,
   type BoardProviderLimitActionInput,
@@ -49,6 +57,15 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import {
+  addBoardWorker,
+  dismissBoardWorkerSetup,
+  previewBoardWorkerRemoval,
+  removeBoardWorker,
+  repairBoardWorker,
+  setDefaultBoardWorker,
+  setupBoardWorkerProject,
+} from "../operations/boardWorkers.ts";
 import {
   approveBoardPlans,
   archiveBoardCard,
@@ -83,6 +100,9 @@ import {
   unlinkBoardCardThread,
   updateBoardCard,
   setBoardCardProject,
+  pinBoardCardWorker,
+  boardCardWorkerMove,
+  type PinBoardCardWorkerInput,
   updateBoardLabel,
   type ApproveBoardPlansInput,
   type ArchiveBoardCardInput,
@@ -143,6 +163,7 @@ export type {
   UnlinkBoardCardThreadInput,
   UpdateBoardCardInput,
   SetBoardCardProjectInput,
+  PinBoardCardWorkerInput,
   UpdateBoardLabelInput,
 };
 
@@ -445,8 +466,13 @@ export function boardBuildQueue(
       silently number a scheduled card into the queue. */
   nowMs: number,
 ): ReadonlyMap<string, BoardQueueSlot> {
+  // A card held for its offline worker (T3O-66) waits on no slot, so it takes
+  // no place in the queue; its notice says Worker offline instead.
   const queued = cards.filter(
-    (card) => card.queued && isBoardCardScheduleDue(card.scheduledStartAt, nowMs),
+    (card) =>
+      card.queued &&
+      card.queuedBy !== "worker-offline" &&
+      isBoardCardScheduleDue(card.scheduledStartAt, nowMs),
   );
   if (queued.length === 0) return EMPTY_QUEUE;
   const stageOrder = new Map(stages.map((stage, index) => [stage.stageId, index]));
@@ -621,6 +647,15 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }).pipe(Atom.withLabel(`environment-board-provider-limits:${environmentId}`)),
   );
 
+  /** The board's workers (T3O-62, D19), or the local-only summary when the
+      board has none — which is every board until a worker is added. */
+  const workersAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(
+      (get) =>
+        get(options.boardSnapshotValueAtom(environmentId))?.workers ?? EMPTY_BOARD_WORKERS_STATE,
+    ).pipe(Atom.withLabel(`environment-board-workers:${environmentId}`)),
+  );
+
   /** The archive page's cards (t3o-13), read when the page opens. */
   const archivedCardsAtom = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:board:archived-cards",
@@ -674,6 +709,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
     labelCatalogueAtom,
     stageListAtom,
     providerLimitsAtom,
+    workersAtom,
     /** Raw subscription state (loading/failure visible), keyed like
         `cardDetailValueAtom`. */
     cardDetailStateAtom,
@@ -751,6 +787,36 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:set-provider-limit-resume-at",
       execute: (input: BoardProviderLimitResumeAtInput) => setBoardProviderLimitResumeAt(input),
     }),
+    // T3O-62: managing the board's workers. Each answers with what the
+    // Workers settings show: the add summary, or a refusal to read inline.
+    addWorker: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:add-worker",
+      execute: (input: BoardWorkersAddInput) => addBoardWorker(input),
+    }),
+    repairWorker: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:repair-worker",
+      execute: (input: BoardWorkersRepairInput) => repairBoardWorker(input),
+    }),
+    removeWorker: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:remove-worker",
+      execute: (input: BoardWorkerIdInput) => removeBoardWorker(input),
+    }),
+    previewWorkerRemoval: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:preview-worker-removal",
+      execute: (input: BoardWorkerIdInput) => previewBoardWorkerRemoval(input),
+    }),
+    setDefaultWorker: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-default-worker",
+      execute: (input: BoardWorkersSetDefaultInput) => setDefaultBoardWorker(input),
+    }),
+    setupWorkerProject: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:setup-worker-project",
+      execute: (input: BoardWorkersSetupProjectInput) => setupBoardWorkerProject(input),
+    }),
+    dismissWorkerSetup: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:dismiss-worker-setup",
+      execute: (input: BoardWorkersDismissSetupInput) => dismissBoardWorkerSetup(input),
+    }),
     reorderCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reorder-card",
       execute: (input: ReorderBoardCardInput) => reorderBoardCard(input),
@@ -781,6 +847,16 @@ export function createBoardEnvironmentAtoms<R, ER>(
     setCardProject: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:set-card-project",
       execute: (input: SetBoardCardProjectInput) => setBoardCardProject(input),
+    }),
+    /** Pin a card to a worker, or follow the default (T3O-65). */
+    pinCardWorker: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:pin-card-worker",
+      execute: (input: PinBoardCardWorkerInput) => pinBoardCardWorker(input),
+    }),
+    /** The Move dialog's check / move / ask-push (T3O-65). */
+    cardWorkerMove: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:card-worker-move",
+      execute: (input: BoardCardWorkerMoveRequest) => boardCardWorkerMove(input),
     }),
     linkThread: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:link-thread",
@@ -861,3 +937,4 @@ function parseBoardCardDetailKey(key: string): {
   ];
   return { environmentId, cardId: input.cardId };
 }
+export * from "./boardWorkerPairing.ts";

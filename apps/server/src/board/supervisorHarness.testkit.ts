@@ -47,6 +47,7 @@ import {
   type BoardState,
   type BoardEvent,
   type BoardUsageLimitMatch,
+  type BoardConcurrencySettings,
 } from "@t3tools/contracts";
 
 import type { BoardMergeState } from "./boardMergeState.ts";
@@ -74,10 +75,21 @@ import { BoardQueries } from "./BoardQueries.ts";
 import { boardRepositoryOf } from "./boardRepository.ts";
 import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
+import { BoardWorkspaces, type BoardWorkspacesShape } from "./workspace/BoardWorkspace.ts";
+import type { LocalBoardWorkspaceDeps } from "./workspace/LocalBoardWorkspace.ts";
+import { localBoardWorkspaceDeps, makeBoardWorkspaces } from "./workspace/workspaceLayer.ts";
 import { UsageLimitDetector, type UsageLimitDetectorShape } from "./UsageLimitDetector.ts";
 import type { WorktreeRetirer } from "./worktreeRetire.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
-import type { BoardProject, BoardThreadState, ThreadSignal } from "./ThreadGateway.ts";
+import {
+  ThreadGateway,
+  type BoardProject,
+  type BoardThreadState,
+  type LocalThreadGatewayShape,
+  type ThreadGatewayShape,
+  type ThreadSignal,
+} from "./ThreadGateway.ts";
+import { BoardPlacement, type BoardPlacementShape } from "./workers/BoardPlacement.ts";
 import {
   aliveThread,
   failedThread,
@@ -172,6 +184,12 @@ export const makeBoardCard = (input: {
   /** A recorded auto-merge hold (T3O-38, D4) — the state a refused armed
       merge leaves behind. */
   readonly autoMergeHold?: BoardCard["autoMergeHold"];
+  /** Where the card is pinned and placed (T3O-65). Absent follows the default
+      and has never run, as every fixture written before workers reads. */
+  readonly pinnedWorkerId?: BoardCard["pinnedWorkerId"];
+  readonly placedWorkerId?: BoardCard["placedWorkerId"];
+  readonly workerMove?: BoardCard["workerMove"];
+  readonly placementOrphaned?: BoardCard["placementOrphaned"];
   /** The cards this one waits on (t3o-13). Absent is nothing. */
   readonly dependsOn?: ReadonlyArray<string>;
   /** The sub-board parent this card is a child of (t3o-23). Absent is
@@ -205,6 +223,10 @@ export const makeBoardCard = (input: {
   autoStart: input.autoStart ?? false,
   autoMerge: input.autoMerge ?? false,
   autoMergeHold: input.autoMergeHold ?? null,
+  pinnedWorkerId: input.pinnedWorkerId ?? null,
+  placedWorkerId: input.placedWorkerId ?? null,
+  workerMove: input.workerMove ?? null,
+  placementOrphaned: input.placementOrphaned ?? null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],
@@ -310,6 +332,9 @@ export const settingsWith = (input: {
   readonly building: ReadonlyArray<TestBuildStep>;
   readonly globalMaxConcurrent: number;
   readonly perInstance?: Record<string, number | null>;
+  /** Per-worker limits (T3O-65). Absent is none: `local` inherits the two
+      fields above, as a settings file written before workers does. */
+  readonly workers?: BoardConcurrencySettings["workers"];
   /** Pass a step to make Planning auto-execute too — the plan-mode counterpart
       of `building`, for the suites that drive a card into Planning. */
   readonly planning?: TestBuildStep;
@@ -370,6 +395,7 @@ export const settingsWith = (input: {
   concurrency: {
     perInstance: input.perInstance ?? {},
     globalMaxConcurrent: input.globalMaxConcurrent,
+    workers: input.workers ?? {},
   },
   lifecycle: { reclaimWorktreeOnDone: input.reclaimWorktreeOnDone ?? true },
 });
@@ -616,6 +642,14 @@ export function withGovernor(
         the real one with nothing running and no remove scripts, so it only
         removes — what every fixture written before it expects. */
     readonly worktreeRetirer?: Layer.Layer<WorktreeRetirer, never, GitVcsDriver.GitVcsDriver>;
+    /** The board's gateway over the harness's own threads (T3O-63): a router
+        that also reaches a worker. Absent: the threads are the fake alone. */
+    readonly gateway?: (local: LocalThreadGatewayShape) => ThreadGatewayShape;
+    /** Where the supervisor spawns each card's threads (T3O-63). */
+    readonly placement?: BoardPlacementShape;
+    /** Where cards' git runs (T3O-64), built from this harness's own local
+        workspace services. By default every card is local. */
+    readonly workspaces?: (local: LocalBoardWorkspaceDeps) => BoardWorkspacesShape;
   },
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
@@ -691,6 +725,7 @@ export function withGovernor(
       pendingTurnStartAt: (threadId) => threadPendingTurnStarts.get(String(threadId)) ?? null,
     });
     const shells = fake.states;
+    const gateway = input.gateway?.(fake.gateway) ?? fake.gateway;
 
     const boardQueriesStub = {
       // The reactor's todo signal + boot sweep have something to call;
@@ -702,6 +737,7 @@ export function withGovernor(
       boardCardThreads: () => Effect.succeed([]),
       boardAllCardThreads: () => Effect.succeed([]),
       boardCardIdForThread: () => Effect.succeed(null),
+      boardThreadWorker: () => Effect.succeed(null),
       boardThreadTodo: (threadId: ThreadId) => {
         const todo = threadTodos.get(String(threadId));
         return Effect.succeed(
@@ -724,7 +760,7 @@ export function withGovernor(
       recordCommand(command).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const context = yield* loadDecisionContext(command, boardQueriesStub, fake.gateway);
+            const context = yield* loadDecisionContext(command, boardQueriesStub, gateway);
             const outcome = yield* decideBoardCommand({
               command,
               readModel: yield* Ref.get(model),
@@ -1057,7 +1093,8 @@ export function withGovernor(
       (input.worktreeRetirer ?? worktreeRetirerTestLayer()).pipe(Layer.provide(gitLayer)),
       Layer.succeed(BoardEngine, boardEngineStub),
       Layer.succeed(BoardQueries, boardQueriesStub),
-      fake.layer,
+      Layer.succeed(ThreadGateway, gateway),
+      input.placement === undefined ? Layer.empty : Layer.succeed(BoardPlacement, input.placement),
       Layer.succeed(ServerSettingsService, settingsStub),
       gitLayer,
       Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),
@@ -1112,7 +1149,10 @@ export function withGovernor(
           // prove the opposite of what the test says. The projector's update
           // path is an idempotent upsert of the card the payload carries, so
           // a fixture must build the event from the card it currently holds.
-          event.type === "board.card-updated"
+          event.type === "board.card-updated" ||
+          // And a pin (T3O-65): a client command whose card the placement
+          // pass re-reads from the model.
+          event.type === "board.card-worker-pinned"
             ? Ref.get(model).pipe(
                 Effect.flatMap((m) => projectBoardEvent(m, event)),
                 Effect.flatMap((next) => Ref.set(model, next)),
@@ -1164,7 +1204,25 @@ export function withGovernor(
           gitInvocations: Effect.sync(() => [...gitInvocationLog]),
           setUsageVerdict: (threadId, verdict) => void usageVerdicts.set(threadId, verdict),
         });
-      }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provideMerge(deps)))),
+      }).pipe(
+        Effect.provide(
+          SupervisorReactorLive.pipe(
+            Layer.provideMerge(
+              Layer.effect(
+                BoardWorkspaces,
+                localBoardWorkspaceDeps.pipe(
+                  Effect.map((local) =>
+                    input.workspaces === undefined
+                      ? makeBoardWorkspaces(local)
+                      : input.workspaces(local),
+                  ),
+                ),
+              ),
+            ),
+            Layer.provideMerge(deps),
+          ),
+        ),
+      ),
     );
   }).pipe(Effect.provide(NodeServices.layer));
 }

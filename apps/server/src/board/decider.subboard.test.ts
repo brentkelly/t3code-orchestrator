@@ -15,6 +15,7 @@ import {
   type BoardCard,
   type BoardPlan,
   type BoardState,
+  EnvironmentId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
@@ -58,6 +59,10 @@ function makeCard(
     autoStart: false,
     autoMerge: false,
     autoMergeHold: null,
+    pinnedWorkerId: null,
+    placedWorkerId: null,
+    workerMove: null,
+    placementOrphaned: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -194,6 +199,7 @@ const liveStep = (
   status: "running",
   slotHeld: true,
   forceStart: false,
+  queuedBy: null,
   startedAt: NOW,
   updatedAt: NOW,
   ...overrides,
@@ -249,6 +255,37 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
       assert.ok(approved!.type === "board.plans-approved");
       expect(approved.payload.childCardIds).toEqual([first.payload.cardId, second.payload.cardId]);
       expect(approved.payload.card.stage).toBe(BOARD_SEED_STAGE_IDS.planning);
+    }),
+  );
+
+  it.effect("children copy the parent's worker pin (T3O-65, D20)", () =>
+    Effect.gen(function* () {
+      const workerId = EnvironmentId.make("env-worker-a");
+      const pinnedBoard = makeBoard({ parent: { pinnedWorkerId: workerId } });
+      const pinned = yield* decideEvents(
+        approve(),
+        makeReadModel({
+          ...pinnedBoard,
+          workers: [{ id: workerId, label: "worker-a", url: "http://worker-a:3773", addedAt: NOW }],
+        }),
+      );
+      for (const event of pinned.slice(0, 2)) {
+        assert.ok(event.type === "board.card-created");
+        expect(event.payload.pinnedWorkerId).toBe(workerId);
+      }
+      // A parent still bound to a removed worker (orphaned, say) doesn't hand
+      // that worker on: its children follow the default, never wait unseen.
+      const orphaned = yield* decideEvents(approve(), makeReadModel(pinnedBoard));
+      for (const event of orphaned.slice(0, 2)) {
+        assert.ok(event.type === "board.card-created");
+        expect(event.payload.pinnedWorkerId).toBeUndefined();
+      }
+      // A parent following the default leaves its children following it too.
+      const following = yield* decideEvents(approve(), makeReadModel(makeBoard()));
+      for (const event of following.slice(0, 2)) {
+        assert.ok(event.type === "board.card-created");
+        expect(event.payload.pinnedWorkerId).toBeUndefined();
+      }
     }),
   );
 

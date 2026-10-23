@@ -20,6 +20,7 @@ import {
   boardBriefHasImage,
   boardCardShellFromCard,
   CommandId,
+  EnvironmentId,
   ProjectId,
   ProviderInstanceId,
   type BoardCardShell,
@@ -27,6 +28,7 @@ import {
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
+import { BoardEngine } from "./BoardEngine.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import {
   boardStackEngine,
@@ -948,6 +950,97 @@ it.layer(makeTestLayer("t3o-card-worktree-kept-"))(
             'Remove script "park" exited with code 1',
           );
         }),
+    );
+  },
+);
+
+it.layer(makeTestLayer("t3o-card-worker-shell-"))(
+  "the card's worker on the shell (T3O-65)",
+  (it) => {
+    it.effect("carries the bound worker and a move on the SNAPSHOT, the same as on deltas", () =>
+      Effect.gen(function* () {
+        const engine = yield* seedCard();
+        const snapshotQuery = yield* boardStackSnapshotQuery;
+        const worker = EnvironmentId.make("env-linux-box");
+        const both = Effect.gen(function* () {
+          const snapshot = cardsOf(yield* snapshotQuery.getBoardSnapshot()).find(
+            (entry) => entry.cardId === cardId,
+          )!;
+          const model = yield* (yield* BoardEngine).getReadModel;
+          const card = model.board!.cards.find((entry) => entry.id === cardId)!;
+          return { snapshot, delta: boardCardShellFromCard(card) };
+        });
+
+        // Following the default: no producer carries a worker, so a local-only
+        // board's shell is what it was.
+        const following = yield* both;
+        assert.isFalse("workerId" in following.snapshot);
+        assert.isFalse("workerId" in following.delta);
+
+        yield* engine.dispatch({
+          type: "board.worker.register",
+          commandId: CommandId.make("cmd-register"),
+          mode: "add",
+          worker: {
+            id: worker,
+            label: "linux-box",
+            url: "http://linux-box:3773",
+            addedAt: createdAt,
+          },
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "board.card.pin-worker",
+          commandId: CommandId.make("cmd-pin"),
+          cardId,
+          workerId: worker,
+          createdAt,
+        });
+        const pinned = yield* both;
+        assert.strictEqual(pinned.snapshot.workerId, worker);
+        assert.strictEqual(pinned.delta.workerId, worker);
+
+        // A worktree cut there, then a move back to this server.
+        yield* engine.dispatch({
+          type: "board.card.provision-worktree",
+          commandId: CommandId.make("cmd-provision"),
+          cardId,
+          branch: "board/card-meta",
+          baseRefName: "main",
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "board.card.record-worktree",
+          commandId: CommandId.make("cmd-record"),
+          cardId,
+          path: "/home/linux-box/worktrees/card-meta",
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "board.card.move-worker",
+          commandId: CommandId.make("cmd-move-start"),
+          cardId,
+          step: { phase: "start", toWorkerId: "local", sha: "4e1a9c2" },
+          createdAt,
+        });
+        const moving = yield* both;
+        const expected = { status: "moving", toWorkerId: "local" };
+        assert.deepStrictEqual(moving.snapshot.workerMove, expected);
+        assert.deepStrictEqual(moving.delta.workerMove, expected);
+        assert.strictEqual(moving.snapshot.workerId, worker);
+        assert.strictEqual(moving.delta.workerId, worker);
+
+        // The rail: the pin, then the move's first step.
+        const board = yield* BoardQueries;
+        const activity = yield* board.boardCardActivity(cardId);
+        const rows = activity
+          .filter(
+            (entry) => entry.kind === "card-worker-pinned" || entry.kind === "card-worker-moved",
+          )
+          .map((entry) => `${entry.kind}:${entry.payload.movePhase ?? "-"}`)
+          .toSorted();
+        assert.deepStrictEqual(rows, ["card-worker-moved:start", "card-worker-pinned:-"]);
+      }),
     );
   },
 );

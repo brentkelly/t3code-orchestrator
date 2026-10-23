@@ -63,6 +63,11 @@ it("no longer advertises the deleted agent-activity tools (t3o-18, D13)", () => 
   expect(boardToolNames).not.toContain("board_request_input");
 });
 
+it("gives agents no tool to choose a card's worker (D20: a human act)", () => {
+  const boardToolNames = Object.values(BoardToolkit.tools).map((tool) => tool.name);
+  expect(boardToolNames).not.toContain("board_pin_card_worker");
+});
+
 it("gives every advertised tool an MCP-valid object inputSchema", () => {
   const invalid = advertisedTools
     .map((tool) => {

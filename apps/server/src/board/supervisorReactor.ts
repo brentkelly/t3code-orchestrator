@@ -17,6 +17,13 @@
  * server will restart mid-step.
  */
 import {
+  BOARD_LOCAL_WORKER_ID,
+  boardCardEffectiveWorkerId,
+  boardRepositoryGroupingKey,
+  boardThreadLinkWorkerId,
+  EMPTY_BOARD_WORKERS_STATE,
+  type BoardStepQueuedBy,
+  type BoardWorkerId,
   boardCardAutoStartDue,
   boardCardChildren,
   boardBuildHumanInLoopDefault,
@@ -89,6 +96,8 @@ import {
   ThreadId,
   type ChatAttachment,
   type BoardCard,
+  type BoardWorkerGitError,
+  type BoardWorkspaceIntegrationBranch,
   type BoardCardId,
   type BoardCheckCardWorktreeResult,
   type BoardCardPullRequest,
@@ -115,7 +124,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Random from "effect/Random";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -123,36 +134,33 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { BoardStepSlots, type BoardConcurrencyLimit } from "./BoardStepSlots.ts";
+import { BoardStepSlots, type BoardConcurrencyLimit, type BoardSlotKey } from "./BoardStepSlots.ts";
 import { BoardEngine } from "./BoardEngine.ts";
 import type { BoardDispatchError } from "./errors.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import {
+  ThreadCommandFailedError,
   ThreadGateway,
+  ThreadReadError,
+  UNKNOWN_THREAD_STATE,
   type BoardProject,
   type BoardTurnOutcome,
   type ThreadCommandError,
   type ThreadSignal,
 } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
-import { BoardPullRequestGateway } from "./BoardPullRequestGateway.ts";
 import { resolveCardPullRequestTarget } from "./cardPullRequestTarget.ts";
-import { pullMergedBaseBranch } from "./baseBranchSync.ts";
 import {
   removeBoardCardAttachmentsDir,
+  resolveBoardCardAttachmentPath,
   spawnPushesBriefImages,
   stageBoardCardImagesAsPending,
 } from "./attachments.ts";
-import { deleteCardBranch } from "./branchCleanup.ts";
+import { BoardPlacement, boardPlacementGate } from "./workers/BoardPlacement.ts";
+import { WorkerRpcError } from "./workers/WorkerTransport.ts";
 import {
   assertSingleBoardWorktreeWriter,
   boardCardWorktreeBranchName,
-  provisionBoardCardWorktree,
-  forceRemoveBoardCardWorktree,
-  parseRegisteredWorktrees,
-  pinBoardWorktreeGhDefault,
-  reclaimBoardCardWorktree,
   resolveBoardCardBaseRef,
   runBoardCardWorktreeSetup,
 } from "./worktree.ts";
@@ -162,6 +170,7 @@ import {
   boardBackgroundCheckInCharged,
   boardBackgroundCheckInDueMs,
   boardBackgroundCheckInNudge,
+  boardOfflineCreditMs,
   boardRecoveryNudge,
   composeStepPrompt,
   orderBoardQueue,
@@ -170,6 +179,7 @@ import {
   recoveryCeilingCrossed,
   recoveryDecision,
   resolveBoardConcurrencyLimit,
+  type BoardOfflineInterval,
   type BoardQueueCandidate,
 } from "./supervisor.ts";
 import { detectorNowMs, UsageLimitDetector } from "./UsageLimitDetector.ts";
@@ -185,9 +195,8 @@ import {
   LOCAL_CONFLICT_MERGE_STATE,
   type BoardMergeState,
 } from "./boardMergeState.ts";
-import { probeLocalMergeConflict } from "./localMergeConflict.ts";
 import { stageExecutorForRole } from "./stageExecutor.ts";
-import { WorktreeRetirer } from "./worktreeRetire.ts";
+import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorkspace.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
@@ -270,6 +279,30 @@ type BoardCardReclaimAttempt =
   | { readonly outcome: "kept"; readonly reason: string | null }
   | { readonly outcome: "busy" }
   | { readonly outcome: "failed" };
+
+const isThreadCommandFailed = Schema.is(ThreadCommandFailedError);
+
+/**
+ * What a failed spawn left behind (T3O-66, D22), read off the remote
+ * gateway's cause:
+ *
+ * - `none`: refused, failed where the board could see it fail, or failed
+ *   before the spawn call was sent (staging the card's files). No thread is
+ *   left (the gateway deletes one whose first turn never started).
+ * - `worker-offline`: the worker couldn't be reached, so nothing was sent.
+ * - `unknown`: any `WorkerRpcError` on the spawn call itself. The connection
+ *   went mid-call, or the worker died partway through (a defect, which the
+ *   transport marks `unsupported`; an online worker is past the protocol
+ *   floor, so it does have the call). Either way the worker may have created
+ *   the thread, so it must not be read as "no thread".
+ */
+const spawnFailureLeft = (cause: Cause.Cause<unknown>) => {
+  const error = Cause.findErrorOption(cause).pipe(Option.getOrUndefined);
+  const reason = isThreadCommandFailed(error) ? error.cause : undefined;
+  if (Predicate.isTagged(reason, "WorkerUnavailable")) return "worker-offline" as const;
+  if (reason instanceof WorkerRpcError) return "unknown" as const;
+  return "none" as const;
+};
 
 // Consecutive git failures provisioning one card's branch before the build
 // step parks for a human instead of retrying again (T3O-15).
@@ -406,7 +439,10 @@ type SupervisorInput =
   // Periodic timeout sweep (t3o-17): the edge-triggered turn.completed path
   // cannot see a turn that HANGS, so a timer funnels overdue running steps
   // into the same recovery ladder.
-  | { readonly source: "timeout-sweep" };
+  | { readonly source: "timeout-sweep" }
+  // T3O-65: the board's workers changed — a clone finished, a worker came
+  // online, an instance appeared — which may start a held card.
+  | { readonly source: "workers" };
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -490,11 +526,11 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettingsService;
   const slots = yield* BoardStepSlots;
   const usageLimits = yield* UsageLimitDetector;
-  const git = yield* GitVcsDriver.GitVcsDriver;
-  const pullRequests = yield* BoardPullRequestGateway;
+  // T3O-64 (D21): every git and forge operation for a card runs in the card's
+  // workspace — this server's, or the worker it is placed on.
+  const workspaces = yield* BoardWorkspaces;
+  const workspaceFor = (card: Pick<BoardCard, "id" | "projectId">) => workspaces.forCard(card);
   const setupRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-  // T3O-23: every removal stops the worktree's processes and runs its remove scripts first.
-  const retirer = yield* WorktreeRetirer;
   // The activation boundary the boot reconcile waits on (t3o-10, D3). Captured
   // at CONSTRUCTION, where the reference is in scope (`activationLayer` is
   // provided to the runtime services layer), because `reconcile` itself runs on
@@ -513,6 +549,30 @@ const make = Effect.gen(function* () {
     Effect.map((model): BoardState => model.board ?? EMPTY_BOARD_STATE),
   );
 
+  /**
+   * Where a step's slot is held (T3O-65, D11): the worker its thread runs on,
+   * or — before it has one — the worker its card runs on. A release lands on
+   * the worker its acquire did: a move is refused while a step runs, and every
+   * parked status gives its slot back first.
+   */
+  const slotKeyFor = (
+    board: BoardState,
+    state: Pick<BoardCardStepState, "cardId" | "threadId" | "providerInstanceId">,
+  ): BoardSlotKey => {
+    const card = board.cards.find((candidate) => candidate.id === state.cardId);
+    const link =
+      state.threadId === null
+        ? undefined
+        : card?.threadLinks.find((candidate) => candidate.threadId === state.threadId);
+    const workerId: BoardWorkerId =
+      link !== undefined
+        ? boardThreadLinkWorkerId(link)
+        : card === undefined
+          ? BOARD_LOCAL_WORKER_ID
+          : boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+    return { workerId, providerInstanceId: state.providerInstanceId };
+  };
+
   /** The board with every project beside it — the one view a pass that reads
       both cards and project roots decides from. */
   const readModel = Effect.all([threads.projects(), boardEngine.getReadModel]).pipe(
@@ -522,9 +582,21 @@ const make = Effect.gen(function* () {
   /** A thread the board can still act on — present and not deleted — or
       undefined. */
   const liveThread = (threadId: ThreadId) =>
-    threads
-      .threadState(threadId)
-      .pipe(Effect.map((state) => (state === null || state.deleted ? undefined : state)));
+    threads.threadState(threadId).pipe(
+      Effect.flatMap((state) =>
+        // T3o (T3O-63): a thread on a worker the board cannot reach is neither
+        // gone nor alive, so no decision may be taken on it: surfaced as a
+        // read failure until offline handling (T3O-66) owns it.
+        state === UNKNOWN_THREAD_STATE
+          ? Effect.fail(
+              new ThreadReadError({
+                operation: "threadState",
+                detail: `Thread ${threadId} is on a worker the board cannot reach.`,
+              }),
+            )
+          : Effect.succeed(state === null || state.deleted ? undefined : state),
+      ),
+    );
 
   const dispatchAny = (command: BoardCommand) => boardEngine.dispatch(command);
 
@@ -758,7 +830,10 @@ const make = Effect.gen(function* () {
     const records = released.length === 0 ? new Map() : yield* threads.threadRecords(released);
     for (const threadId of released) {
       const thread = records.get(threadId);
-      if (thread === undefined || thread.deleted || thread.archived || thread.settlementDecided) {
+      // No record is no answer: the thread's worker couldn't be asked
+      // (T3O-66), so an abandoned thread there is kept for the next pass.
+      if (thread === undefined) continue;
+      if (thread.deleted || thread.archived || thread.settlementDecided) {
         // Nothing left to ask about — and an abandoned thread that reaches this
         // is finished business, so stop carrying it.
         abandonedThreads.delete(String(threadId));
@@ -809,21 +884,12 @@ const make = Effect.gen(function* () {
       the step falls back to the todo-advance signal and the nudge ladder. That
       direction is deliberate — the alternative, reading the tip when the scoped
       read fails, is the exact defect this replaced. */
-  const latestBranchCommitIso = (cwd: string, baseRefName: string) =>
-    git
-      .execute({
-        operation: "boardSupervisor.progressCommit",
-        cwd,
-        args: ["log", "-1", "--format=%cI", "HEAD", "--not", `refs/heads/${baseRefName}`],
-        allowNonZeroExit: true,
-      })
-      .pipe(
-        Effect.map((result): string | null => {
-          const iso = result.stdout.trim();
-          return iso.length > 0 ? iso : null;
-        }),
-        Effect.catchCause(() => Effect.succeed(null as string | null)),
-      );
+  const latestBranchCommitIso = (card: BoardCard, worktreePath: string, baseRefName: string) =>
+    workspaceFor(card).pipe(
+      Effect.flatMap((workspace) => workspace.branchHeartbeat({ worktreePath, baseRefName })),
+      Effect.map((heartbeat) => heartbeat.committedAt),
+      Effect.catchCause(() => Effect.succeed(null as string | null)),
+    );
 
   /** The step thread's cached todo row, or null (t3o-18). Best-effort: a
       snapshot query built without the board factory (upstream test mocks) or a
@@ -938,7 +1004,7 @@ const make = Effect.gen(function* () {
     const worktreePath = card.worktree?.path ?? null;
     const baseRefName = card.worktree?.baseRefName ?? null;
     if (state.mode !== "build" || worktreePath === null || baseRefName === null) return false;
-    const committedAt = yield* latestBranchCommitIso(worktreePath, baseRefName);
+    const committedAt = yield* latestBranchCommitIso(card, worktreePath, baseRefName);
     return committedAt !== null && isAfter(committedAt, since);
   });
 
@@ -1068,51 +1134,34 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // The project checkout's DEFAULT branch — not whatever it happens to have
-  // checked out. origin/HEAD names it when a remote exists; a purely local
-  // repo falls back to the current branch, with a detached HEAD (`rev-parse`
-  // answers the literal string 'HEAD') treated as a resolution failure rather
-  // than a branch. Shared by worktree provisioning and integration-branch
-  // creation; `defaultBranch === ""` is the failure signal, `detachedHead` and
-  // `unbornBranch` (a repository with no commits) disambiguate the message.
-  const resolveDefaultBranch = Effect.fn("board-supervisor-resolveDefaultBranch")(function* (
-    cwd: string,
-  ) {
-    const gitRef = (args: ReadonlyArray<string>) =>
-      git
-        .execute({
-          operation: "boardCardWorktree.defaultBranch",
-          cwd,
-          args: [...args],
-          timeoutMs: 10_000,
-          allowNonZeroExit: true,
-        })
-        .pipe(
-          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
-          Effect.catchCause(() => Effect.succeed("")),
-        );
-    const originHead = yield* gitRef([
-      "symbolic-ref",
-      "--quiet",
-      "--short",
-      "refs/remotes/origin/HEAD",
-    ]);
-    const currentBranch = yield* gitRef(["rev-parse", "--abbrev-ref", "HEAD"]);
-    const defaultBranch =
-      originHead.startsWith("origin/") && originHead.length > "origin/".length
-        ? originHead.slice("origin/".length)
-        : currentBranch === "HEAD"
-          ? ""
-          : currentBranch;
-    // A repository with no commits yet (T3O-15): HEAD names a branch that does
-    // not exist, so `rev-parse` answers nothing while `symbolic-ref` still does.
-    // Only read on failure — it shapes the message, not the resolution.
-    const unbornBranch =
-      defaultBranch === "" && currentBranch === ""
-        ? yield* gitRef(["symbolic-ref", "--quiet", "--short", "HEAD"])
-        : "";
-    return { defaultBranch, detachedHead: currentBranch === "HEAD", unbornBranch };
-  });
+  // The project checkout's DEFAULT branch (resolved in the card's workspace,
+  // `LocalBoardWorkspace.resolveDefaultBranch`). Shared by worktree
+  // provisioning and integration-branch creation; `defaultBranch === ""` is
+  // the failure signal, `detachedHead` and `unbornBranch` (a repository with
+  // no commits) disambiguate the message, and `unavailable` is a worker the
+  // board cannot reach — not a repository fault, so nothing is reported for it.
+  const resolveDefaultBranch = (workspace: BoardCardWorkspace) =>
+    workspace.resolveDefaultBranch({}).pipe(
+      Effect.map((resolved) => ({ ...resolved, unavailable: false })),
+      Effect.catch((error) =>
+        Effect.succeed({
+          defaultBranch: "",
+          detachedHead: false,
+          unbornBranch: "",
+          checkoutPath: workspace.checkoutPath ?? "",
+          unavailable: error._tag === "WorkerUnavailable",
+        }),
+      ),
+      Effect.catchCause(() =>
+        Effect.succeed({
+          defaultBranch: "",
+          detachedHead: false,
+          unbornBranch: "",
+          checkoutPath: workspace.checkoutPath ?? "",
+          unavailable: false,
+        }),
+      ),
+    );
 
   // Why `resolveDefaultBranch` found nothing, in words that name the fix.
   // Shared by card and integration-branch provisioning so both say the same.
@@ -1128,57 +1177,22 @@ const make = Effect.gen(function* () {
         : `${cwd} is not a git repository, or has no commits yet, so there is no branch to cut ${what} from.`;
 
   /**
-   * Make sure `base` names a LOCAL branch in `cwd` (T3O-5, D7), creating it
-   * from `<remote>/<base>` when it exists only on the remote. Answers whether
-   * the caller may go on to cut from it.
-   *
-   * Why this and not "just use origin/develop": three call sites re-qualify the
-   * recorded base as a local ref and each fails SILENTLY on a remote-qualified
-   * one — `measureBaseTip` stops measuring staleness with no error,
-   * `pullMergedBaseBranch` creates a local branch literally named
-   * `origin/develop`, and the retarget rebase targets a ref that drifts under
-   * the branch. Materialising once here keeps every reader honest.
-   *
-   * Idempotent: a base that already exists locally is the desired state, and a
-   * raced creation is re-checked rather than treated as fatal.
+   * Make sure `base` names a LOCAL branch in the card's checkout (T3O-5, D7),
+   * creating it from `<remote>/<base>` when it exists only on the remote
+   * (`LocalBoardWorkspace.ensureLocalBaseBranch`). Answers whether the caller
+   * may go on to cut from it, or `unavailable` for a worker the board cannot
+   * reach.
    */
-  const ensureLocalBaseBranch = Effect.fn("board-supervisor-ensureLocalBaseBranch")(function* (
-    cwd: string,
-    base: string,
-  ) {
-    const gitRef = (args: ReadonlyArray<string>) =>
-      git
-        .execute({
-          operation: "boardCardWorktree.baseRef",
-          cwd,
-          args: [...args],
-          timeoutMs: 10_000,
-          allowNonZeroExit: true,
-        })
-        .pipe(
-          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
-          Effect.catchCause(() => Effect.succeed("")),
-        );
-    if ((yield* gitRef(["rev-parse", "--verify", "--quiet", `refs/heads/${base}`])) !== "") {
-      return true;
-    }
-    const remoteName = yield* git
-      .resolvePrimaryRemoteName(cwd)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
-    if (remoteName === null) return false;
-    if (
-      (yield* gitRef([
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        `refs/remotes/${remoteName}/${base}`,
-      ])) === ""
-    ) {
-      return false;
-    }
-    yield* gitRef(["branch", base, `${remoteName}/${base}`]);
-    return (yield* gitRef(["rev-parse", "--verify", "--quiet", `refs/heads/${base}`])) !== "";
-  });
+  const ensureLocalBaseBranch = (workspace: BoardCardWorkspace, base: string) =>
+    workspace.ensureLocalBaseBranch({ base }).pipe(
+      Effect.map((result): boolean | "unavailable" => result.exists),
+      Effect.catch((error) =>
+        Effect.succeed<boolean | "unavailable">(
+          error._tag === "WorkerUnavailable" ? "unavailable" : false,
+        ),
+      ),
+      Effect.catchCause(() => Effect.succeed<boolean | "unavailable">(false)),
+    );
 
   // Provision the card's branch + worktree (t3o-09 effects), reporting every
   // failure arm through `failWorktree` so the card carries a visible reason.
@@ -1193,20 +1207,37 @@ const make = Effect.gen(function* () {
     }
     const stuck = (reason: string) =>
       failWorktree(card, reason).pipe(Effect.as<WorktreeOutcome>({ kind: "stuck", reason }));
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
+    // T3O-64: a worker the board cannot reach is no fault of the repository.
+    // Nothing is reported, no attempt is spent, and the next pass retries.
+    const unreachable = { kind: "transient" } as WorktreeOutcome;
+    const workspace = yield* workspaceFor(card);
+    const cwd = workspace.checkoutPath;
     // Every pre-flight failure below reports through `fail-worktree` rather
     // than a server-side log: the card is the only place the human is looking,
     // and a build that cannot start must say so THERE (the activity rail's
     // "could not prepare the worktree: …" row) instead of leaving the card
     // parked in its stage with nothing running and no explanation.
     if (cwd === null) {
-      return yield* stuck("The card's project has no workspace folder on this server.");
+      return yield* stuck(noWorkspaceFolderReason(workspace));
+    }
+    // A provision the worker dropped mid-way (T3O-64) resumes on the slice it
+    // already recorded: `provision-worktree` would be refused for a worktree
+    // still `provisioning`, and re-dispatching it would count an attempt.
+    const resuming =
+      card.worktree !== null &&
+      card.worktree.status === "provisioning" &&
+      interruptedProvisions.has(String(card.id));
+    if (resuming && card.worktree !== null) {
+      return yield* provisionOnWorkspace(card, workspace, {
+        branch: card.worktree.branch,
+        baseRefName: card.worktree.baseRefName,
+      });
     }
     const branch = boardCardWorktreeBranchName(card);
     // A sub-board plan card branches off its parent's integration branch
     // (D12); a top-level card off the project default.
-    const resolved = yield* resolveDefaultBranch(cwd);
+    const resolved = yield* resolveDefaultBranch(workspace);
+    if (resolved.unavailable) return unreachable;
     const { defaultBranch } = resolved;
     // A child of a LIVE split retries the integration-branch creation HERE,
     // BEFORE resolving its base (t3o-23, D5): approval fires the creation
@@ -1246,6 +1277,8 @@ const make = Effect.gen(function* () {
         !branchLive
       ) {
         const failure = yield* ensureIntegrationBranch(parent);
+        // The parent's worker is out of reach: retried next pass, unreported.
+        if (failure?.unavailable === true) return unreachable;
         if (failure !== null) parentFailure = { key: parent.key, ...failure };
       }
     }
@@ -1282,7 +1315,9 @@ const make = Effect.gen(function* () {
     // rebase target — each breaks silently on a remote-qualified name. So a
     // base that exists only on the remote is materialised first, exactly as
     // `ensureIntegrationBranch` materialises its own branch below.
-    if (!(yield* ensureLocalBaseBranch(cwd, baseRefName))) {
+    const baseExists = yield* ensureLocalBaseBranch(workspace, baseRefName);
+    if (baseExists === "unavailable") return unreachable;
+    if (!baseExists) {
       // Never fall back to the default. A card pinned to `release/2.4` that
       // silently builds off `main` is worse than a card that does not build,
       // and this path is card-visible and retryable.
@@ -1312,21 +1347,70 @@ const make = Effect.gen(function* () {
         ),
       );
     if (!provisionAccepted) return { kind: "transient" } as WorktreeOutcome;
-    const provisioned = yield* provisionBoardCardWorktree({
-      projectCwd: cwd,
-      branch,
-      baseRefName,
-    }).pipe(
-      Effect.provideService(GitVcsDriver.GitVcsDriver, git),
-      Effect.map(Option.some),
+    return yield* provisionOnWorkspace(card, workspace, { branch, baseRefName });
+  });
+
+  /** Why a card's checkout cannot be found, naming where it was looked for. */
+  const noWorkspaceFolderReason = (workspace: BoardCardWorkspace) =>
+    workspace.workerId === BOARD_LOCAL_WORKER_ID
+      ? "The card's project has no workspace folder on this server."
+      : "The card's project has no checkout on its worker.";
+
+  /**
+   * Cards whose provision the worker dropped mid-way (T3O-64): their worktree
+   * is recorded `provisioning`, and the next pass finishes the provision on
+   * that slice instead of starting another. In memory — after a restart the
+   * boot reconcile sees the slice as it always did.
+   */
+  const interruptedProvisions = new Set<string>();
+
+  /** Drop the entries whose card is gone or no longer provisioning — deleted,
+      archived, failed or reset since — so the set holds only live resumes. */
+  const forgetSettledProvisions = (board: BoardState) => {
+    const provisioning = new Set(
+      board.cards
+        .filter((card) => card.worktree?.status === "provisioning")
+        .map((card) => String(card.id)),
+    );
+    for (const id of interruptedProvisions) {
+      if (!provisioning.has(id)) interruptedProvisions.delete(id);
+    }
+  };
+
+  /** The git half of a provision, once `provision-worktree` is recorded:
+      create the worktree in the card's workspace, then `record-worktree`. */
+  const provisionOnWorkspace = Effect.fn("board-supervisor-provisionOnWorkspace")(function* (
+    card: BoardCard,
+    workspace: BoardCardWorkspace,
+    slice: { readonly branch: string; readonly baseRefName: string },
+  ) {
+    type Provisioned =
+      | { readonly kind: "ok"; readonly path: string }
+      | { readonly kind: "unavailable" }
+      | { readonly kind: "failed" };
+    const provisioned = yield* workspace.provisionWorktree(slice).pipe(
+      Effect.map((worktree): Provisioned => ({ kind: "ok", path: worktree.path })),
+      Effect.catch((error): Effect.Effect<Provisioned> =>
+        error._tag === "WorkerUnavailable"
+          ? Effect.succeed({ kind: "unavailable" } as const)
+          : Effect.logWarning("board supervisor: worktree provisioning failed", {
+              cardId: card.id,
+              detail: error.detail,
+            }).pipe(Effect.as({ kind: "failed" } as const)),
+      ),
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: worktree provisioning failed", {
           cardId: card.id,
           cause: Cause.pretty(cause),
-        }).pipe(Effect.as(Option.none<{ readonly path: string }>())),
+        }).pipe(Effect.as({ kind: "failed" } as const)),
       ),
     );
-    if (Option.isNone(provisioned)) {
+    if (provisioned.kind === "unavailable") {
+      interruptedProvisions.add(String(card.id));
+      return { kind: "transient" } as WorktreeOutcome;
+    }
+    interruptedProvisions.delete(String(card.id));
+    if (provisioned.kind === "failed") {
       yield* failWorktree(card, "git worktree add failed; retry the build.");
       return { kind: "transient", reason: "git worktree add failed." } as WorktreeOutcome;
     }
@@ -1334,10 +1418,10 @@ const make = Effect.gen(function* () {
       type: "board.card.record-worktree",
       commandId: yield* commandId("record-worktree"),
       cardId: card.id,
-      path: provisioned.value.path,
+      path: provisioned.path,
       createdAt: yield* nowIso,
     });
-    return { kind: "ready", path: provisioned.value.path } as WorktreeOutcome;
+    return { kind: "ready", path: provisioned.path } as WorktreeOutcome;
   });
 
   // Provision a build step's worktree, parking the step `stalled` with reason
@@ -1441,6 +1525,101 @@ const make = Effect.gen(function* () {
             ),
     });
 
+  // T3O-65 (D20): the board's workers as placement sees them — absent on a
+  // local-only harness, where every card runs here.
+  const placement = yield* Effect.serviceOption(BoardPlacement);
+  const workersNow = Option.match(placement, {
+    onNone: () => Effect.succeed(EMPTY_BOARD_WORKERS_STATE),
+    onSome: (service) => service.workers,
+  });
+  /** The board project's repository key, which names its checkout on a worker. */
+  const projectRepositoryKey = (projectId: ProjectId) =>
+    threads.project(projectId).pipe(
+      Effect.map((project) => boardRepositoryGroupingKey(project?.repositoryIdentity)),
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+  /** Where a card's next thread runs, and whether the step can start there now. */
+  const placementFor = Effect.fn("board-supervisor-placementFor")(function* (
+    board: BoardState,
+    card: BoardCard,
+    state: Pick<BoardCardStepState, "providerInstanceId">,
+  ) {
+    const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+    if (workerId === BOARD_LOCAL_WORKER_ID) {
+      return { workerId, gate: { kind: "ready", workerProjectId: null } } as const;
+    }
+    return {
+      workerId,
+      gate: boardPlacementGate({
+        workerId,
+        workers: yield* workersNow,
+        projectRepositoryKey: yield* projectRepositoryKey(card.projectId),
+        providerInstanceId: state.providerInstanceId,
+      }),
+    } as const;
+  });
+  // ── Offline workers (T3O-66, D22) ────────────────────────────────────
+  // A worker the board can't reach is unknown, not dead (D4): nothing it ran
+  // may be decided on until it is back and its steps have been reconciled.
+  // In memory, like the slot counts: a restart starts every worker unreconciled,
+  // so the boot pass hands each to `reconcileWorker` once it is online.
+  /** Workers online and reconciled since they last came back. */
+  const reconciledWorkers = new Set<BoardWorkerId>();
+  /** When each registered worker the board can't reach went out of reach. */
+  const unreachableSince = new Map<BoardWorkerId, number>();
+  /** Each worker's finished out-of-reach stretches, which the timeout sweep
+      does not count against a step (`boardOfflineCreditMs`). */
+  const offlineIntervals = new Map<BoardWorkerId, Array<BoardOfflineInterval>>();
+  /** Workers the change feed saw out of reach since `syncWorkerReach` last
+      ran, and when it first did. Recorded as each summary arrives, not when
+      the serial queue reaches it, so a worker that drops and comes back before
+      then is still reconciled, and its time away still credited. */
+  const droppedWorkers = new Map<BoardWorkerId, number>();
+  /** Signals from a worker not yet reconciled, released after it is. */
+  const heldSignals = new Map<BoardWorkerId, Array<ThreadSignal>>();
+  /** Threads a reconcile of each worker settled, recovered or parked, kept
+      across a pass that failed partway until the held signals are released:
+      the retry reads those steps as already handled, so only this remembers
+      that their held signals predate what was decided. */
+  const decidedThreads = new Map<BoardWorkerId, Set<string>>();
+  /** A held-signal backlog's ceiling. Reconcile reads the truth anyway, so a
+      dropped signal costs nothing it would not re-learn. */
+  const HELD_SIGNALS_MAX = 1000;
+  /** Whether a worker's steps are paused: not this server, and not online and
+      reconciled. Read off the live summary, so a worker that dropped a moment
+      ago pauses before its status change has been processed. */
+  const workerReconciled = (workerId: BoardWorkerId) =>
+    reconciledWorkers.has(workerId) && !droppedWorkers.has(workerId);
+  const workerPausedNow = Effect.gen(function* () {
+    if (Option.isNone(placement)) return (_workerId: BoardWorkerId) => false;
+    const online = new Set(
+      (yield* workersNow).workers
+        .filter((worker) => worker.status.state === "online")
+        .map((worker) => worker.id),
+    );
+    return (workerId: BoardWorkerId) =>
+      workerId !== BOARD_LOCAL_WORKER_ID && !(online.has(workerId) && workerReconciled(workerId));
+  });
+
+  // T3O-63: the brief's files a thread on a worker reads from where they were
+  // staged there.
+  const stagedBriefFiles = (card: BoardCard) => ({
+    cardId: String(card.id),
+    files: Option.match(serverConfig, {
+      onNone: () => [],
+      onSome: (config) =>
+        card.attachments.flatMap((attachment) => {
+          const filePath = resolveBoardCardAttachmentPath({
+            path: pathService,
+            stateDir: config.stateDir,
+            cardId: card.id,
+            name: attachment.name,
+          });
+          return filePath === null ? [] : [{ name: attachment.name, path: filePath }];
+        }),
+    }),
+  });
+
   const spawnStepThread = Effect.fn("board-supervisor-spawnStepThread")(function* (input: {
     readonly card: BoardCard;
     /** The frozen run-row fields a spawn needs (D12). */
@@ -1481,20 +1660,40 @@ const make = Effect.gen(function* () {
     // needed" and continues once a human approves. Tool access stays
     // `interactionMode: "default"` (the MCP write tools are a separate axis).
     const runtimeMode = step.runtimeMode;
+    // T3O-65 (D20): the worker the thread runs on — where the card holds its
+    // worktree, else its pin, else the default — recorded as the card's
+    // placement before anything spawns there.
+    const board = yield* readBoard;
+    const fresh = board.cards.find((candidate) => candidate.id === card.id) ?? card;
+    const workerId = boardCardEffectiveWorkerId(fresh, board.defaultWorkerId);
+    if (fresh.placedWorkerId !== workerId) {
+      yield* dispatch({
+        type: "board.card.place",
+        commandId: yield* commandId("place"),
+        cardId: card.id,
+        workerId,
+        createdAt: yield* nowIso,
+      });
+    }
+    const remoteWorker = workerId === BOARD_LOCAL_WORKER_ID ? null : workerId;
     // T3o (T3O-24): pin the agent's gh to origin on every build-mode spawn,
     // not only at provisioning, so a worktree that predates the pin gets it
     // before its next agent runs. Idempotent and never fails the spawn.
     if (input.branch !== null) {
-      yield* pinBoardWorktreeGhDefault(input.worktreePath).pipe(
-        Effect.provideService(GitVcsDriver.GitVcsDriver, git),
+      yield* workspaceFor(card).pipe(
+        Effect.flatMap((workspace) => workspace.pinGhDefault({ worktreePath: input.worktreePath })),
+        Effect.catchCause(() => Effect.void),
       );
     }
     // A spawn whose create or first turn is refused leaves no thread behind
-    // (the gateway deletes a thread whose first turn never started), so a
-    // failure here is simply "no thread".
-    const spawned = yield* landed(
-      "thread.spawn",
-      threads.spawn({
+    // (the gateway deletes a thread whose first turn never started), so such
+    // a failure is simply "no thread". A worker that couldn't be reached was
+    // sent nothing, and the step waits for it (D22). One that dropped
+    // mid-call may have created the thread: it is linked and run as spawned,
+    // so the worker's reconcile when it is back watches it if it is alive and
+    // recovers the step if it isn't — never a second agent in the worktree.
+    const spawned = yield* threads
+      .spawn({
         commandId: yield* commandId("spawn-thread"),
         threadId,
         projectId: card.projectId,
@@ -1510,20 +1709,36 @@ const make = Effect.gen(function* () {
         worktreePath: input.worktreePath,
         text: input.text,
         attachments: input.attachments,
-      }),
-    );
-    if (!spawned) return null;
+        ...(remoteWorker === null
+          ? {}
+          : { workerId: remoteWorker, stageAttachments: stagedBriefFiles(card) }),
+      })
+      .pipe(
+        Effect.as("spawned" as const),
+        Effect.catchCause((cause) =>
+          // An interrupt-only cause is a teardown, as in `landed`.
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("board supervisor dispatch failed", {
+                commandType: "thread.spawn",
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(spawnFailureLeft(cause))),
+        ),
+      );
+    if (spawned === "none") return null;
+    if (spawned === "worker-offline") return "worker-offline" as const;
     yield* dispatch({
       type: "board.card.link-thread",
       commandId: yield* commandId("link-thread"),
       cardId: card.id,
       threadId,
       role: step.stepId,
+      ...(remoteWorker === null ? {} : { workerId: remoteWorker }),
       createdAt: yield* nowIso,
     });
     // Run the worktree setup script in the build thread's terminal (t3o-09).
     // Build-mode only — a plan-mode step has no worktree. Best-effort.
-    if (input.runSetup) {
+    if (input.runSetup && remoteWorker === null) {
       yield* runBoardCardWorktreeSetup({
         threadId,
         projectId: card.projectId,
@@ -1628,10 +1843,9 @@ const make = Effect.gen(function* () {
     const recorded = card.worktree?.baseRefName ?? null;
     if (recorded !== null) return recorded;
     if (card.baseBranch !== null) return card.baseBranch;
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
-    if (cwd === null) return null;
-    const { defaultBranch } = yield* resolveDefaultBranch(cwd);
+    const workspace = yield* workspaceFor(card);
+    if (workspace.checkoutPath === null) return null;
+    const { defaultBranch } = yield* resolveDefaultBranch(workspace);
     return resolveBoardCardEffectiveBase({
       card,
       cards: (yield* readBoard).cards,
@@ -1659,7 +1873,23 @@ const make = Effect.gen(function* () {
   const resumeExistingStepThread = Effect.fn("board-supervisor-resumeExistingStepThread")(
     function* (input: { readonly card: BoardCard; readonly state: BoardCardStepState }) {
       const { card, state } = input;
-      if (state.threadId === null || (yield* threadGone(state.threadId))) return "no-thread";
+      if (state.threadId === null) return "no-thread";
+      // A card moved since this thread ran (T3O-65): the thread is on the old
+      // worker, in a checkout that was retired. The step starts afresh where
+      // the card is now; the old thread stays linked, on its old worker. This
+      // is checked before the thread is read: the old worker may be offline or
+      // removed (T3O-66), and reading through it would fail after the caller
+      // acquired a slot.
+      const board = yield* readBoard;
+      const link = card.threadLinks.find((candidate) => candidate.threadId === state.threadId);
+      const fresh = board.cards.find((candidate) => candidate.id === card.id) ?? card;
+      if (
+        link !== undefined &&
+        boardThreadLinkWorkerId(link) !== boardCardEffectiveWorkerId(fresh, board.defaultWorkerId)
+      ) {
+        return "no-thread";
+      }
+      if (yield* threadGone(state.threadId)) return "no-thread";
       const admitted = yield* dispatchOptional({
         type: "board.card.admit-step",
         commandId: yield* commandId("admit-step"),
@@ -1694,6 +1924,208 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * Leave a step queued, saying which limit holds it (T3O-65, D11). A pending
+   * step is recorded queued; a queued one is re-recorded only when the limit
+   * changed, so a card waiting on a full worker writes one event, not one per
+   * scheduling pass.
+   */
+  const holdQueued = Effect.fn("board-supervisor-holdQueued")(function* (
+    state: BoardCardStepState,
+    queuedBy: BoardStepQueuedBy,
+  ) {
+    if (state.status !== "pending" && state.queuedBy === queuedBy) return;
+    yield* dispatch({
+      type: "board.card.admit-step",
+      commandId: yield* commandId("admit-step"),
+      cardId: state.cardId,
+      stepId: state.stepId,
+      admitted: false,
+      threadId: null,
+      queuedBy,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
+   * Stall a step whose provider instance its worker does not have (T3O-65,
+   * D10): the board never runs it elsewhere or on another provider. Amber, for
+   * a human — another worker, or a model this one offers — and it spends no
+   * recovery budget, because the agent never ran.
+   */
+  const stallProviderMissing = Effect.fn("board-supervisor-stallProviderMissing")(function* (
+    state: BoardCardStepState,
+    workerId: BoardWorkerId,
+  ) {
+    yield* dispatch({
+      type: "board.card.recover-step",
+      commandId: yield* commandId("recover-step"),
+      cardId: state.cardId,
+      stepId: state.stepId,
+      threadId: state.threadId,
+      escalateToHuman: true,
+      progressed: false,
+      lastError: `The step's provider instance '${state.providerInstanceId}' isn't on worker ${workerId}.`,
+      stalledReason: "provider-not-on-worker",
+      chargeBudget: false,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
+   * Stall a step its worker can't be asked about any more (T3O-66, D22): the
+   * worker was removed, or the card was force-moved off it. Amber, spending no
+   * recovery budget — the agent did nothing wrong — and its slot is released.
+   * It continues once the card is moved, or the worker is added back
+   * (`requeueResolvedPlacementStalls`).
+   */
+  const stallWorkerRemoved = Effect.fn("board-supervisor-stallWorkerRemoved")(function* (
+    state: BoardCardStepState,
+    detail: string,
+  ) {
+    const landed = yield* dispatchOptional({
+      type: "board.card.recover-step",
+      commandId: yield* commandId("worker-removed"),
+      cardId: state.cardId,
+      stepId: state.stepId,
+      threadId: state.threadId,
+      escalateToHuman: true,
+      progressed: false,
+      lastError: detail,
+      stalledReason: "worker-removed",
+      chargeBudget: false,
+      createdAt: yield* nowIso,
+    });
+    if (landed) yield* releaseSlot(state);
+  });
+
+  /**
+   * Whether a step is bound to its thread where that thread is: running on
+   * it, or parked on it — a question, a backoff rung, a usage-limit park —
+   * waiting to be resumed there. A human's Pause is left alone: the decider
+   * refuses to recover it, and their resume starts afresh wherever the card
+   * now is (`resumeExistingStepThread`).
+   */
+  const stepBoundToThread = (state: BoardCardStepState) =>
+    state.threadId !== null &&
+    (state.status === "running" ||
+      state.status === "completing" ||
+      state.status === "awaiting-input" ||
+      (state.status === "stalled" && state.stalledReason !== "worker-removed"));
+
+  /** Every step running or parked on a worker just removed from the board
+      (D22). A card that follows the default from now on restarts there. */
+  const stallStepsOnRemovedWorker = Effect.fn("board-supervisor-stallStepsOnRemovedWorker")(
+    function* (workerId: BoardWorkerId) {
+      reconciledWorkers.delete(workerId);
+      heldSignals.delete(workerId);
+      decidedThreads.delete(workerId);
+      const board = yield* readBoard;
+      for (const state of boardNonTerminalStepStates(board)) {
+        if (!stepBoundToThread(state)) continue;
+        if (slotKeyFor(board, state).workerId !== workerId) continue;
+        yield* stallWorkerRemoved(state, "The worker this step ran on was removed from the board.");
+      }
+      yield* requeueResolvedPlacementStalls();
+    },
+  );
+
+  /**
+   * A card's live step still reads as running, or parked, on a worker the
+   * board can't reach, while the card itself now runs somewhere else — it was
+   * force-moved, or re-pinned off it (T3O-66). Nothing will ever end or resume
+   * that run as the board sees it, so it is stalled, and continues where the
+   * card is now.
+   */
+  const stallStrandedStep = Effect.fn("board-supervisor-stallStrandedStep")(function* (
+    cardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    const state = boardCardStepState(board, cardId);
+    if (card === undefined || state === null || !stepBoundToThread(state)) return;
+    const at = slotKeyFor(board, state).workerId;
+    const runsOn =
+      card.workerMove?.status === "moving"
+        ? card.workerMove.toWorkerId
+        : boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+    if (at === runsOn || !(yield* workerPausedNow)(at)) return;
+    yield* stallWorkerRemoved(state, "The card was moved off the worker this step ran on.");
+  });
+
+  /**
+   * Provision a freshly selected build step's worktree at stage entry, but only
+   * where the step can run now (T3O-65). A card mid-move, or one whose worker
+   * is offline, still cloning or missing the provider, is left to `schedule()`,
+   * whose gates hold or stall it and provision once the worker is ready —
+   * provisioning here would cut the worktree on the wrong worker, or stall a
+   * card that is merely waiting on a clone.
+   */
+  const provisionPlacedBuildStep = Effect.fn("board-supervisor-provisionPlacedBuildStep")(
+    function* (cardId: BoardCardId) {
+      const board = yield* readBoard;
+      const card = board.cards.find((candidate) => candidate.id === cardId);
+      const state = boardCardStepState(board, cardId);
+      if (card === undefined || state === null || card.workerMove !== null) return;
+      const { gate } = yield* placementFor(board, card, state);
+      if (gate.kind !== "ready") return;
+      yield* provisionBuildStep(card);
+    },
+  );
+
+  /**
+   * Put a step stalled for a missing provider back in the queue once its card
+   * can run it (T3O-65): it was pinned elsewhere, or the instance appeared on
+   * the worker. A model change restarts the stage instead, which re-freezes the
+   * step. The scheduling pass that follows re-checks, so a step whose worker
+   * still lacks the instance simply stalls again.
+   *
+   * And one stalled because its worker was removed (T3O-66), once the card
+   * holds no more: it was moved or re-pinned, or the worker was added back.
+   * Requeued, it resumes its thread where that thread still is, or starts
+   * afresh on the card's new worker.
+   */
+  const requeueResolvedPlacementStalls = Effect.fn(
+    "board-supervisor-requeueResolvedPlacementStalls",
+  )(function* (onlyCardId?: BoardCardId) {
+    const board = yield* readBoard;
+    for (const state of board.stepStates ?? []) {
+      if (
+        state.status !== "stalled" ||
+        (state.stalledReason !== "provider-not-on-worker" &&
+          state.stalledReason !== "worker-removed")
+      )
+        continue;
+      if (onlyCardId !== undefined && state.cardId !== onlyCardId) continue;
+      const card = board.cards.find((candidate) => candidate.id === state.cardId);
+      if (card === undefined || card.archivedAt !== null) continue;
+      if (
+        state.stalledReason === "worker-removed" &&
+        (card.placementOrphaned !== null || card.workerMove !== null)
+      ) {
+        continue;
+      }
+      // Not while the worker is offline: nothing has been fixed, and
+      // requeueing would hide the needs-a-human stall until it reconnects and
+      // stalls again. A worker still cloning the project (a re-pin to one
+      // being set up) requeues, and the pass holds the step as "setting up".
+      const { gate } = yield* placementFor(board, card, state);
+      if (gate.kind === "offline") continue;
+      // A step whose worker went is requeued whatever the new one lacks: the
+      // pass that follows stalls it again for the reason that now applies.
+      if (gate.kind === "provider-missing" && state.stalledReason === "provider-not-on-worker") {
+        continue;
+      }
+      yield* dispatch({
+        type: "board.card.requeue-step",
+        commandId: yield* commandId("requeue-step"),
+        cardId: card.id,
+        preserveBudget: true,
+        createdAt: yield* nowIso,
+      });
+    }
+  });
+
   // Offer one build-mode step to the governor: acquire a slot under the resolved
   // caps and spawn its thread on the card's worktree, or leave it queued (D11).
   // Enforces the one-writer-per-worktree invariant (t3o-09) BEFORE acquiring, so
@@ -1702,9 +2134,15 @@ const make = Effect.gen(function* () {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
     readonly worktreePath: string;
+    /** The worker the step runs on, whose limits it is offered under. */
+    readonly workerId: BoardWorkerId;
     readonly limits: BoardConcurrencyLimit;
   }) {
     const { card, state } = input;
+    const slotKey: BoardSlotKey = {
+      workerId: input.workerId,
+      providerInstanceId: state.providerInstanceId,
+    };
     // One writer at a time per worktree (t3o-09 invariant). The assertion counts
     // the writer we are ABOUT to spawn, so an existing writer plus the new one
     // fails it; on failure we REFUSE before acquiring a slot, so the invariant
@@ -1748,109 +2186,118 @@ const make = Effect.gen(function* () {
     // ceiling until this step settles and releases it exactly once, like every
     // other step — and the policy in `acquire` is never quietly bypassed on the
     // ordinary path.
-    const admitted = yield* state.forceStart
-      ? slots.restore(state.providerInstanceId).pipe(Effect.as(true))
-      : slots.acquire(state.providerInstanceId, input.limits);
-    if (!admitted) {
+    const admission = yield* state.forceStart
+      ? slots.restore(slotKey).pipe(Effect.as({ admitted: true } as const))
+      : slots.acquire(slotKey, input.limits);
+    if (!admission.admitted) {
       // No slot right now. A fresh (pending) step is recorded queued so the card
-      // shows its badge; a queued step stays put and is re-offered next boundary.
-      if (state.status === "pending") {
-        yield* dispatch({
+      // shows its badge; a queued step stays put and is re-offered next
+      // boundary — re-recorded only when the limit holding it changed (T3O-65).
+      yield* holdQueued(state, admission.blockedBy);
+      return;
+    }
+
+    // Until an admit lands, the slot just taken is this candidate's alone:
+    // the persisted `slotHeld` is still false, so no settle path would ever
+    // give it back. Any failure before then — the step's worker dropping
+    // between the placement gate and the read of its thread (T3O-66) — returns
+    // it here. Nothing after an admit lands can fail, so this never releases
+    // a slot the step row holds.
+    yield* Effect.gen(function* () {
+      // A step that already owns a live thread is being RESUMED, not started
+      // (T3O-23): it was paused, a human pressed Resume, and the governor has just
+      // admitted it. A refused resume must give the slot straight back, or the
+      // acquire above leaks capacity nothing will ever release.
+      const resumed = yield* resumeExistingStepThread({ card, state });
+      if (resumed === "refused") {
+        yield* slots.release(slotKey);
+        return;
+      }
+      if (resumed === "admitted") return;
+      const spawnAttachments = yield* stageSpawnAttachments(card);
+      const threadId = yield* spawnStepThread({
+        card,
+        attachments: spawnAttachments,
+        step: {
+          stepId: state.stepId,
+          stepLabel: state.stepLabel,
+          stageLabel: state.stageLabel,
+          providerInstanceId: state.providerInstanceId,
+          model: state.model,
+          mode: state.mode,
+          runtimeMode: state.runtimeMode,
+          modelOptions: state.modelOptions,
+        },
+        worktreePath: input.worktreePath,
+        branch: card.worktree?.branch ?? null,
+        runSetup: true,
+        text: yield* stepPromptFor(card, state),
+      });
+      if (threadId === null) {
+        // No thread was created, so release the slot this candidate just acquired
+        // (the persisted `slotHeld` is still false — admit-step never ran — so
+        // `releaseSlot` would decline it) and escalate rather than admit.
+        yield* slots.release(slotKey);
+        yield* escalateSpawnFailure({ card, state });
+        return;
+      }
+      if (threadId === "worker-offline") {
+        // Its worker went between the placement gate and the spawn, and was
+        // sent nothing: the step waits for it, as the gate would have held it.
+        yield* slots.release(slotKey);
+        yield* holdQueued(state, "worker-offline");
+        return;
+      }
+      // Observe the admit dispatch (the generic `dispatch` helper swallows
+      // rejections): if admit-step does not land, the persisted `slotHeld` stays
+      // false and the settle path can never release the slot just acquired — a
+      // permanent under-capacity leak. Release it here and unlink the orphaned
+      // thread instead.
+      const admitLanded = yield* boardEngine
+        .dispatch({
           type: "board.card.admit-step",
           commandId: yield* commandId("admit-step"),
           cardId: card.id,
           stepId: state.stepId,
-          admitted: false,
-          threadId: null,
+          admitted: true,
+          threadId,
+          createdAt: yield* nowIso,
+        })
+        .pipe(
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            Effect.logWarning(
+              "board supervisor: admit-step rejected after acquire; releasing slot",
+              {
+                cardId: card.id,
+                stepId: state.stepId,
+                cause: Cause.pretty(cause),
+              },
+            ).pipe(Effect.as(false)),
+          ),
+        );
+      if (!admitLanded) {
+        yield* slots.release(slotKey);
+        // The spawn already started an agent turn — interrupt it so the orphan
+        // is not left burning tokens against a step the board refused to admit.
+        // The immediate dispatch only lands if the provider session has already
+        // bound (a slow admit); the usual case is caught durably by the
+        // orphanedThreads set — the runtime `session.started` for this thread
+        // re-dispatches the interrupt once there is a session to interrupt.
+        orphanedThreads.add(String(threadId));
+        yield* interruptOrphan(threadId);
+        yield* dispatch({
+          type: "board.card.unlink-thread",
+          commandId: yield* commandId("unlink-orphan"),
+          cardId: card.id,
+          threadId,
           createdAt: yield* nowIso,
         });
+        // Unlinked while alive, so no card derives it any more (t3o-13). It is a
+        // thread for a step the board refused to admit — nothing will use it.
+        abandonedThreads.add(String(threadId));
       }
-      return;
-    }
-
-    // A step that already owns a live thread is being RESUMED, not started
-    // (T3O-23): it was paused, a human pressed Resume, and the governor has just
-    // admitted it. A refused resume must give the slot straight back, or the
-    // acquire above leaks capacity nothing will ever release.
-    const resumed = yield* resumeExistingStepThread({ card, state });
-    if (resumed === "refused") {
-      yield* slots.release(state.providerInstanceId);
-      return;
-    }
-    if (resumed === "admitted") return;
-    const spawnAttachments = yield* stageSpawnAttachments(card);
-    const threadId = yield* spawnStepThread({
-      card,
-      attachments: spawnAttachments,
-      step: {
-        stepId: state.stepId,
-        stepLabel: state.stepLabel,
-        stageLabel: state.stageLabel,
-        providerInstanceId: state.providerInstanceId,
-        model: state.model,
-        mode: state.mode,
-        runtimeMode: state.runtimeMode,
-        modelOptions: state.modelOptions,
-      },
-      worktreePath: input.worktreePath,
-      branch: card.worktree?.branch ?? null,
-      runSetup: true,
-      text: yield* stepPromptFor(card, state),
-    });
-    if (threadId === null) {
-      // No thread was created, so release the slot this candidate just acquired
-      // (the persisted `slotHeld` is still false — admit-step never ran — so
-      // `releaseSlot` would decline it) and escalate rather than admit.
-      yield* slots.release(state.providerInstanceId);
-      yield* escalateSpawnFailure({ card, state });
-      return;
-    }
-    // Observe the admit dispatch (the generic `dispatch` helper swallows
-    // rejections): if admit-step does not land, the persisted `slotHeld` stays
-    // false and the settle path can never release the slot just acquired — a
-    // permanent under-capacity leak. Release it here and unlink the orphaned
-    // thread instead.
-    const admitLanded = yield* boardEngine
-      .dispatch({
-        type: "board.card.admit-step",
-        commandId: yield* commandId("admit-step"),
-        cardId: card.id,
-        stepId: state.stepId,
-        admitted: true,
-        threadId,
-        createdAt: yield* nowIso,
-      })
-      .pipe(
-        Effect.as(true),
-        Effect.catchCause((cause) =>
-          Effect.logWarning("board supervisor: admit-step rejected after acquire; releasing slot", {
-            cardId: card.id,
-            stepId: state.stepId,
-            cause: Cause.pretty(cause),
-          }).pipe(Effect.as(false)),
-        ),
-      );
-    if (!admitLanded) {
-      yield* slots.release(state.providerInstanceId);
-      // The spawn already started an agent turn — interrupt it so the orphan
-      // is not left burning tokens against a step the board refused to admit.
-      // The immediate dispatch only lands if the provider session has already
-      // bound (a slow admit); the usual case is caught durably by the
-      // orphanedThreads set — the runtime `session.started` for this thread
-      // re-dispatches the interrupt once there is a session to interrupt.
-      orphanedThreads.add(String(threadId));
-      yield* interruptOrphan(threadId);
-      yield* dispatch({
-        type: "board.card.unlink-thread",
-        commandId: yield* commandId("unlink-orphan"),
-        cardId: card.id,
-        threadId,
-        createdAt: yield* nowIso,
-      });
-      // Unlinked while alive, so no card derives it any more (t3o-13). It is a
-      // thread for a step the board refused to admit — nothing will use it.
-      abandonedThreads.add(String(threadId));
-    }
+    }).pipe(Effect.onError(() => slots.release(slotKey)));
   });
 
   // A plan-mode step holds no slot and needs no worktree (D5): spawn it directly
@@ -1906,6 +2353,10 @@ const make = Effect.gen(function* () {
       yield* escalateSpawnFailure({ card, state });
       return;
     }
+    if (threadId === "worker-offline") {
+      yield* holdQueued(state, "worker-offline");
+      return;
+    }
     yield* dispatch({
       type: "board.card.admit-step",
       commandId: yield* commandId("admit-step"),
@@ -1934,6 +2385,7 @@ const make = Effect.gen(function* () {
         readonly card: BoardCard;
         readonly state: BoardCardStepState;
         readonly worktreePath: string;
+        readonly workerId: BoardWorkerId;
         readonly limits: BoardConcurrencyLimit;
       }
     >();
@@ -1961,6 +2413,29 @@ const make = Effect.gen(function* () {
         !state.forceStart &&
         boardProviderLimitHolds(board.providerLimits, state.providerInstanceId, card.id)
       ) {
+        continue;
+      }
+      // A card moving to another worker holds until its new worktree is
+      // ready, and one whose move failed until a human retries or picks
+      // another worker (T3O-65) — its old worktree is gone.
+      if (card.workerMove !== null) continue;
+      // Placement (T3O-65, D20): the step runs on the card's worker, and only
+      // once that worker is online, has a checkout of the project and has the
+      // step's provider instance. Ahead of the plan branch: a planning thread
+      // needs the checkout as much as a build does.
+      const placed = yield* placementFor(board, card, state);
+      if (placed.gate.kind === "offline") {
+        // Held, saying so (T3O-66): the card wears Worker offline until its
+        // worker is back.
+        yield* holdQueued(state, "worker-offline");
+        continue;
+      }
+      if (placed.gate.kind === "no-checkout") {
+        yield* holdQueued(state, "setup");
+        continue;
+      }
+      if (placed.gate.kind === "provider-missing") {
+        yield* stallProviderMissing(state, placed.workerId);
         continue;
       }
       if (state.mode === "plan") {
@@ -2003,7 +2478,9 @@ const make = Effect.gen(function* () {
         card.worktree !== null && card.worktree.status === "ready" ? card.worktree.path : null;
       if (
         worktreePath === null &&
-        (card.worktree === null || card.worktree.status !== "provisioning")
+        (card.worktree === null ||
+          card.worktree.status !== "provisioning" ||
+          interruptedProvisions.has(String(card.id)))
       ) {
         worktreePath = yield* provisionBuildStep(card);
       }
@@ -2013,7 +2490,12 @@ const make = Effect.gen(function* () {
         card,
         state,
         worktreePath,
-        limits: resolveBoardConcurrencyLimit(settings.concurrency, state.providerInstanceId),
+        workerId: placed.workerId,
+        limits: resolveBoardConcurrencyLimit(
+          settings.concurrency,
+          state.providerInstanceId,
+          placed.workerId,
+        ),
       });
       // "Started" = the card has begun THIS stage's step (a recorded completion
       // for it), so a re-entered stage never ranks as mid-flight on a fresh run.
@@ -2048,31 +2530,22 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // ── Base-tip measurement (t3o-24, D1) ──────────────────────────────────
-  // One `rev-parse` in the PROJECT ROOT — never the card's worktree, whose
-  // HEAD is the card branch — against the card's recorded base ref. Null is
-  // the honest failure signal (no worktree slice, no workspace root, an
-  // unresolvable ref): staleness is measured, never assumed, so an
+  // ── Base-tip measurement (t3o-24, D1; T3O-64, D21) ─────────────────────
+  // The base's tip as the REMOTE has it, fetched first, in the card's
+  // workspace (`LocalBoardWorkspace.measureBaseTip`): a merge landed from
+  // another worker is base movement here too. Null is the honest failure
+  // signal (no worktree slice, no checkout, an unresolvable ref, an
+  // unreachable worker): staleness is measured, never assumed, so an
   // unmeasurable tip records nothing and intercepts nothing.
   const measureBaseTip = Effect.fn("board-supervisor-measureBaseTip")(function* (card: BoardCard) {
     const baseRefName = card.worktree?.baseRefName ?? null;
     if (baseRefName === null) return null;
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
-    if (cwd === null) return null;
-    const tip = yield* git
-      .execute({
-        operation: "boardBaseTip.resolve",
-        cwd,
-        args: ["rev-parse", "--verify", "--quiet", `refs/heads/${baseRefName}`],
-        timeoutMs: 10_000,
-        allowNonZeroExit: true,
-      })
-      .pipe(
-        Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
-        Effect.catchCause(() => Effect.succeed("")),
-      );
-    return tip.length > 0 ? tip : null;
+    const workspace = yield* workspaceFor(card);
+    if (workspace.checkoutPath === null) return null;
+    return yield* workspace.measureBaseTip({ baseRefName }).pipe(
+      Effect.map((measured) => measured.tip),
+      Effect.catchCause(() => Effect.succeed(null as string | null)),
+    );
   });
 
   // Whether the card's base has MOVED since the run row's recorded
@@ -2136,10 +2609,9 @@ const make = Effect.gen(function* () {
       const needsDefault = card.parentCardId === null && card.baseBranch === null;
       const defaultBranch = needsDefault
         ? yield* Effect.gen(function* () {
-            const model = yield* readModel;
-            const cwd = projectCwd(model, card);
-            if (cwd === null) return null;
-            const resolved = yield* resolveDefaultBranch(cwd);
+            const workspace = yield* workspaceFor(card);
+            if (workspace.checkoutPath === null) return null;
+            const resolved = yield* resolveDefaultBranch(workspace);
             return resolved.defaultBranch === "" ? null : resolved.defaultBranch;
           })
         : null;
@@ -3107,7 +3579,7 @@ const make = Effect.gen(function* () {
           baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
           createdAt: yield* nowIso,
         });
-        if (exec.mode === "build") yield* provisionBuildStep(card);
+        if (exec.mode === "build") yield* provisionPlacedBuildStep(card.id);
         return;
       }
       case "complete": {
@@ -3244,14 +3716,17 @@ const make = Effect.gen(function* () {
       baseTipAtRoundStart: yield* baseTipForPlan(card, plan.recordBaseTip),
       createdAt: yield* nowIso,
     });
-    if (exec.mode === "build") yield* provisionBuildStep(card);
+    if (exec.mode === "build") yield* provisionPlacedBuildStep(card.id);
     yield* schedule();
   });
 
   // Release the step's slot on settlement — a no-op for a plan-mode step, which
-  // never held one (D5). The provider is read off the frozen run row (D12).
+  // never held one (D5). The provider is read off the frozen run row (D12),
+  // the worker off the step's thread (T3O-65).
   const releaseSlot = (state: BoardCardStepState) =>
-    state.slotHeld ? slots.release(state.providerInstanceId) : Effect.void;
+    state.slotHeld
+      ? readBoard.pipe(Effect.flatMap((board) => slots.release(slotKeyFor(board, state))))
+      : Effect.void;
 
   /**
    * Park a step on the human gate (t3o-34, D3) and give its slot back (T3O-23).
@@ -3634,7 +4109,10 @@ const make = Effect.gen(function* () {
       state.threadId === null
         ? Effect.succeed(true)
         : threads.threadState(state.threadId).pipe(
-            Effect.map((thread) => thread?.usageLimit?.resumeArmed !== true),
+            Effect.map(
+              (thread) =>
+                thread === UNKNOWN_THREAD_STATE || thread?.usageLimit?.resumeArmed !== true,
+            ),
             Effect.orElseSucceed(() => true),
           ),
     );
@@ -4238,9 +4716,8 @@ const make = Effect.gen(function* () {
         // automatic trigger takes the cached read, so a burst of triggers
         // costs one forge call per cache window. Failures are not cached, so
         // a forge that keeps failing is asked again on the next trigger.
-        const found = yield* pullRequests
-          .get({
-            projectId: card.projectId,
+        const found = yield* (yield* workspaceFor(card))
+          .getPullRequest({
             number: recorded.number,
             force: options?.force === true,
           })
@@ -4324,20 +4801,21 @@ const make = Effect.gen(function* () {
         return boardRefreshOutcomeOf(held);
       }
 
-      const model = yield* readModel;
-      const cwd = worktree.path ?? projectCwd(model, card);
-      if (cwd === null) return { outcome: "no-branch" } as const;
+      const workspace = yield* workspaceFor(card);
+      if (worktree.path === null && workspace.checkoutPath === null) {
+        return { outcome: "no-branch" } as const;
+      }
 
       // T3o (T3O-48): a failure carries the forge's own words out rather than
       // only logging them. "We looked and there is none" and "we could not
       // look" are different answers, and a refresh that cannot tell them apart
       // is what this card was filed about. Recording is unchanged: neither
       // branch below writes anything, so the card's last known link stands.
-      const found = yield* pullRequests
-        .find({
-          cwd,
+      const found = yield* workspace
+        .pullRequestByBranch({
           branch: worktree.branch,
-          ...(options?.force === true ? { force: true } : {}),
+          worktreePath: worktree.path,
+          force: options?.force === true,
         })
         .pipe(
           Effect.catch((error) =>
@@ -4520,19 +4998,19 @@ const make = Effect.gen(function* () {
    * creating a card can check its pull request before the card exists.
    */
   const resolvePullRequestLink = Effect.fn("board-supervisor-resolvePullRequestLink")(function* (
-    projectId: ProjectId,
+    workspace: BoardCardWorkspace,
     target: BoardCardPullRequestTarget,
   ) {
     // T3o (T3O-24): the board's repository — `origin` — not the project
     // identity, which in a fork names upstream.
-    const repository = yield* pullRequests
-      .repository(projectId)
+    const repository = yield* workspace
+      .pullRequestRepository({})
       .pipe(Effect.orElseSucceed(() => null));
     const resolved = resolveCardPullRequestTarget(target, repository);
     if ("refused" in resolved) {
       return { outcome: "refused", detail: resolved.refused } as const;
     }
-    const found = yield* pullRequests.get({ projectId, number: resolved.number, force: true }).pipe(
+    const found = yield* workspace.getPullRequest({ number: resolved.number, force: true }).pipe(
       Effect.map((summary) => ({ summary }) as const),
       Effect.catch((error) =>
         Effect.succeed({
@@ -4581,7 +5059,7 @@ const make = Effect.gen(function* () {
       if (options?.resolved !== undefined) {
         pullRequest = options.resolved;
       } else {
-        const resolution = yield* resolvePullRequestLink(card.projectId, target);
+        const resolution = yield* resolvePullRequestLink(yield* workspaceFor(card), target);
         if (resolution.outcome === "refused") return resolution;
         pullRequest = resolution.pullRequest;
       }
@@ -4646,9 +5124,8 @@ const make = Effect.gen(function* () {
     const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
     if (!isBoardMergeStageExecution(exec) || !exec.deleteBranchOnDone) return;
 
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
-    if (cwd === null) return;
+    const workspace = yield* workspaceFor(card);
+    if (workspace.checkoutPath === null) return;
 
     // T3O-18: a linked pull request can live on another branch (a stack
     // layer). Its merge says nothing about the card's own branch, which may
@@ -4665,7 +5142,7 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const result = yield* deleteCardBranch({ git, cwd, branch: worktree.branch }).pipe(
+    const result = yield* workspace.deleteCardBranch({ branch: worktree.branch }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("board supervisor: branch cleanup failed", {
           cardId: card.id,
@@ -4755,9 +5232,8 @@ const make = Effect.gen(function* () {
   ) {
     const worktree = card.worktree;
     if (worktree === null || worktree.status !== "ready" || worktree.path === null) return null;
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
-    if (cwd === null) {
+    const workspace = yield* workspaceFor(card);
+    if (workspace.checkoutPath === null) {
       // A failure, not a quiet skip: the card IS finished, and Check again
       // must not answer that it isn't.
       yield* Effect.logWarning("board supervisor: worktree reclaim has no project checkout", {
@@ -4772,38 +5248,39 @@ const make = Effect.gen(function* () {
       ...card.pullRequestHistory,
       ...(card.pullRequest === null ? [] : [card.pullRequest]),
     ];
-    const reclaimed = yield* reclaimBoardCardWorktree(
-      {
-        projectCwd: cwd,
-        worktreePath: worktree.path,
-        baseRefName: worktree.baseRefName,
-        branch: worktree.branch,
-        mergedPullRequestNumbers: pullRequests
-          .filter(
-            (pullRequest) =>
-              pullRequest.state === "merged" &&
-              // T3o (T3O-24): an earlier card's merge on a reused branch name
-              // proves nothing about this card's work.
-              (pullRequest.linked === true ||
-                !boardPullRequestPredatesCard(pullRequest, card.createdAt)),
-          )
-          .map((pullRequest) => pullRequest.number),
-        openPullRequestNumber: card.pullRequest?.state === "open" ? card.pullRequest.number : null,
-        fetchedBases,
-      },
-      cardStillFinished(card, worktree.path),
-    ).pipe(
-      Effect.provideService(GitVcsDriver.GitVcsDriver, git),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(WorktreeRetirer, retirer),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("board supervisor: worktree reclaim failed", {
-          cardId: card.id,
-          cause: Cause.pretty(cause),
-        }).pipe(Effect.as("failed" as const)),
-      ),
-      Effect.ensuring(Effect.sync(() => reclaimingCards.delete(key))),
-    );
+    // An unreachable worker reads as "failed" here, which records nothing:
+    // the next sweep asks again (T3O-64).
+    const reclaimed = yield* workspace
+      .reclaimWorktree(
+        {
+          worktreePath: worktree.path,
+          baseRefName: worktree.baseRefName,
+          branch: worktree.branch,
+          mergedPullRequestNumbers: pullRequests
+            .filter(
+              (pullRequest) =>
+                pullRequest.state === "merged" &&
+                // T3o (T3O-24): an earlier card's merge on a reused branch name
+                // proves nothing about this card's work.
+                (pullRequest.linked === true ||
+                  !boardPullRequestPredatesCard(pullRequest, card.createdAt)),
+            )
+            .map((pullRequest) => pullRequest.number),
+          openPullRequestNumber:
+            card.pullRequest?.state === "open" ? card.pullRequest.number : null,
+          fetchedBases,
+        },
+        cardStillFinished(card, worktree.path),
+      )
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: worktree reclaim failed", {
+            cardId: card.id,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as("failed" as const)),
+        ),
+        Effect.ensuring(Effect.sync(() => reclaimingCards.delete(key))),
+      );
     if (reclaimed === "failed") return { outcome: "failed" } satisfies BoardCardReclaimAttempt;
     // Abandoned: the card was no longer finished by the time the probe ended.
     if (reclaimed === null) return null;
@@ -4999,27 +5476,6 @@ const make = Effect.gen(function* () {
   };
 
   /**
-   * This server's own worktrees directory, as spelled and as resolved through
-   * symlinks — git reports a checkout by either. Empty without a config (the
-   * test harness), which leaves the orphan sweep nothing to claim.
-   */
-  const ownWorktreeRoots = Option.match(serverConfig, {
-    onNone: () => Effect.succeed([] as ReadonlyArray<string>),
-    onSome: (config) => {
-      const spelled = pathService.resolve(config.worktreesDir);
-      return fileSystem.realPath(spelled).pipe(
-        Effect.map((real) => [...new Set([spelled, pathService.resolve(real)])]),
-        Effect.orElseSucceed(() => [spelled]),
-      );
-    },
-  });
-
-  const isWithinRoot = (candidate: string, root: string) => {
-    const relative = pathService.relative(root, candidate);
-    return relative !== "" && !relative.startsWith("..") && !pathService.isAbsolute(relative);
-  };
-
-  /**
    * Remove `board/*` worktrees no card owns any more (T3O-52, D4): the card
    * was deleted while its removal failed, or the card's worktree record moved
    * on (reclaimed, or re-provisioned at another path) while the old checkout
@@ -5029,70 +5485,75 @@ const make = Effect.gen(function* () {
    * is no card to name a pull request. Anything else is logged: there is no
    * card to flag. A card that is mid-provisioning, failed or branch-only owns
    * its branch's checkout and is left alone.
+   *
+   * Once per workspace — per worker and project (T3O-64) — and judged only
+   * against the cards placed on that worker. Each workspace lists only the checkouts
+   * under ITS OWN worktrees directory: another T3 environment on the same
+   * repository — a dev server seeded with a copy of the live database, say —
+   * has its own board, and its in-use `board/*` checkouts are no orphans of
+   * ours.
    */
   const sweepOrphanWorktrees = Effect.fn("board-supervisor-sweepOrphanWorktrees")(function* (
     board: BoardState,
-    model: BoardWorld,
     fetchedBases: Set<string>,
   ) {
-    // Only checkouts under THIS server's worktrees directory are ours to
-    // judge. Another T3 environment on the same repository — a dev server
-    // seeded with a copy of the live database, say — has its own board, and
-    // its in-use `board/*` checkouts are no orphans of ours.
-    const roots = yield* ownWorktreeRoots;
-    if (roots.length === 0) return;
-    const projectIds = new Set(board.cards.map((card) => card.projectId));
-    for (const projectId of projectIds) {
-      const project = model.projects.find((entry) => entry.id === projectId);
-      const cwd = project?.workspaceRoot ?? null;
-      if (cwd === null) continue;
-      const listed = yield* git
-        .execute({
-          operation: "board.sweep.worktrees",
-          cwd,
-          args: ["worktree", "list", "--porcelain"],
-          allowNonZeroExit: true,
-        })
-        .pipe(Effect.catch(() => Effect.succeed(null)));
-      if (listed === null || listed.exitCode !== 0) continue;
-      // The first block is the repository's own checkout, never a worktree
-      // to remove — git refuses anyway, but it is not ours to ask about.
-      for (const registered of parseRegisteredWorktrees(listed.stdout).slice(1)) {
-        if (registered.branch === null || !registered.branch.startsWith("board/")) continue;
-        if (registered.prunable) continue;
-        const registeredPath = pathService.resolve(registered.path);
-        if (!roots.some((root) => isWithinRoot(registeredPath, root))) continue;
+    const groups = yield* workspaces.groupByWorkspace(board.cards);
+    // Ownership is judged per WORKER, across its projects: two board projects
+    // can share one repository, and one's live checkout is no orphan of the
+    // other's.
+    const idsOnWorker = new Map<string, Set<string>>();
+    for (const { workspace, cards } of groups) {
+      const ids = idsOnWorker.get(workspace.workerId) ?? new Set<string>();
+      for (const card of cards) ids.add(card.id);
+      idsOnWorker.set(workspace.workerId, ids);
+    }
+    for (const { workspace } of groups) {
+      const ids = idsOnWorker.get(workspace.workerId) ?? new Set<string>();
+      const placedHere = (fresh: BoardState): BoardState => ({
+        ...fresh,
+        cards: fresh.cards.filter((card) => ids.has(card.id)),
+      });
+      const listed = yield* workspace
+        .listBoardWorktrees({})
+        .pipe(Effect.catchCause(() => Effect.succeed({ worktrees: [] })));
+      for (const registered of listed.worktrees) {
         const candidate = { path: registered.path, branch: registered.branch };
-        if (!isOrphanWorktree(board, candidate)) continue;
-        const owner = board.cards.find((card) => card.worktree?.branch === registered.branch);
-        const outcome = yield* reclaimBoardCardWorktree(
-          {
-            projectCwd: cwd,
-            worktreePath: registered.path,
-            baseRefName: owner?.worktree?.baseRefName ?? (yield* projectDefaultBranch(cwd)),
-            branch: registered.branch,
-            mergedPullRequestNumbers: [],
-            fetchedBases,
-          },
-          // Ownership is re-judged on a FRESH board right before removal. The
-          // pass's snapshot is minutes old by now, and a card that started
-          // provisioning in between owns a checkout cut at the base tip —
-          // clean and durable, and anything but an orphan.
-          readBoard.pipe(
-            Effect.map((fresh) => isOrphanWorktree(fresh, candidate)),
-            Effect.orElseSucceed(() => false),
-          ),
-        ).pipe(
-          Effect.provideService(GitVcsDriver.GitVcsDriver, git),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(WorktreeRetirer, retirer),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("board supervisor: orphan worktree check failed", {
-              path: registered.path,
-              cause: Cause.pretty(cause),
-            }).pipe(Effect.as(null)),
-          ),
+        if (!isOrphanWorktree(placedHere(board), candidate)) continue;
+        const owner = placedHere(board).cards.find(
+          (card) => card.worktree?.branch === registered.branch,
         );
+        const baseRefName =
+          owner?.worktree?.baseRefName ??
+          (yield* workspace.remoteDefaultBranch({}).pipe(
+            Effect.map((result) => result.branch),
+            Effect.orElseSucceed(() => "main"),
+          ));
+        const outcome = yield* workspace
+          .reclaimWorktree(
+            {
+              worktreePath: registered.path,
+              baseRefName,
+              branch: registered.branch,
+              mergedPullRequestNumbers: [],
+              fetchedBases,
+            },
+            // Ownership is re-judged on a FRESH board right before removal. The
+            // pass's snapshot is minutes old by now, and a card that started
+            // provisioning in between owns a checkout cut at the base tip —
+            // clean and durable, and anything but an orphan.
+            readBoard.pipe(
+              Effect.map((fresh) => isOrphanWorktree(placedHere(fresh), candidate)),
+              Effect.orElseSucceed(() => false),
+            ),
+          )
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("board supervisor: orphan worktree check failed", {
+                path: registered.path,
+                cause: Cause.pretty(cause),
+              }).pipe(Effect.as(null)),
+            ),
+          );
         if (outcome === null) continue;
         if (outcome.outcome === "removed") {
           yield* Effect.logInfo("board supervisor: removed orphan worktree", {
@@ -5109,15 +5570,6 @@ const make = Effect.gen(function* () {
       }
     }
   });
-
-  /** The project's default branch, for an orphan with no card to name its
-      base; `main` when the remote cannot say. */
-  const projectDefaultBranch = (cwd: string) =>
-    git.resolvePrimaryRemoteName(cwd).pipe(
-      Effect.flatMap((remote) => git.resolveDefaultBranchName(cwd, remote)),
-      Effect.map((name) => name ?? "main"),
-      Effect.catch(() => Effect.succeed("main")),
-    );
 
   /**
    * One worktree-cleanup pass (T3O-52, D4). Candidates:
@@ -5138,7 +5590,7 @@ const make = Effect.gen(function* () {
   }) {
     const settings = yield* boardSettings;
     const board = yield* readBoard;
-    const model = yield* readModel;
+    forgetSettledProvisions(board);
     const fetchedBases = new Set<string>();
     for (const card of board.cards) {
       // T3o (T3O-18): a linked pull request settles its card whether or not
@@ -5171,7 +5623,7 @@ const make = Effect.gen(function* () {
       }
       yield* settleCardAtDone(card, { branchCleanup: "after-reclaim", fetchedBases });
     }
-    yield* sweepOrphanWorktrees(board, model, fetchedBases);
+    yield* sweepOrphanWorktrees(board, fetchedBases);
   });
 
   /**
@@ -5184,21 +5636,21 @@ const make = Effect.gen(function* () {
   const retireDeletedCardWorktree = Effect.fn("board-supervisor-retireDeletedCardWorktree")(
     function* (request: {
       readonly cardId: BoardCardId;
-      readonly projectCwd: string;
+      /** Resolved when the card was deleted: the card is gone by now. */
+      readonly workspace: BoardCardWorkspace;
       readonly worktreePath: string | null;
       readonly branch: string;
     }) {
       if (request.worktreePath !== null) {
-        const { hookWarning } = yield* forceRemoveBoardCardWorktree({
-          projectCwd: request.projectCwd,
-          worktreePath: request.worktreePath,
-        }).pipe(
-          Effect.provideService(WorktreeRetirer, retirer),
+        const hookWarning = yield* forceRemoveWorktree(
+          request.workspace,
+          request.worktreePath,
+        ).pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("board supervisor: worktree removal on card delete failed", {
               cardId: request.cardId,
               cause: Cause.pretty(cause),
-            }).pipe(Effect.as({ hookWarning: null })),
+            }).pipe(Effect.as(null)),
           ),
         );
         if (hookWarning !== null) {
@@ -5211,7 +5663,7 @@ const make = Effect.gen(function* () {
       // Attempted whatever the worktree's state — a card can carry a branch
       // whose worktree was already reclaimed (at an earlier archive, or at
       // Done), and that branch is exactly the one nothing else will collect.
-      yield* deleteCardBranch({ git, cwd: request.projectCwd, branch: request.branch }).pipe(
+      yield* request.workspace.deleteCardBranch({ branch: request.branch }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("board supervisor: branch cleanup on card delete failed", {
             cardId: request.cardId,
@@ -5222,6 +5674,16 @@ const make = Effect.gen(function* () {
       );
     },
   );
+
+  /**
+   * Remove a worktree whatever it holds (`forceRemoveBoardCardWorktree`), in
+   * the card's workspace: forced, so survivors are killed rather than holding
+   * it back. Answers any remove-script failure.
+   */
+  const forceRemoveWorktree = (workspace: BoardCardWorkspace, worktreePath: string) =>
+    workspace
+      .retireWorktree({ worktreePath, kind: "forced", verifiedClean: false })
+      .pipe(Effect.map((retired) => (retired?.outcome === "removed" ? retired.hookWarning : null)));
 
   /**
    * Per-card cleanup the reactor's own worker asks for (T3O-52): the settle on
@@ -5325,19 +5787,27 @@ const make = Effect.gen(function* () {
     const finished =
       card.archivedAt !== null || (stage !== null && effectiveBoardStageRole(stage) === "done");
     if (!finished) return { outcome: "not-finished" } as const;
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
-    if (cwd === null) {
+    const workspace = yield* workspaceFor(card);
+    if (workspace.checkoutPath === null) {
       // The card does hold a worktree; it is the project that cannot be found.
       yield* Effect.logWarning("board supervisor: forced removal has no project checkout", {
         cardId: card.id,
       });
       return { outcome: "failed" } as const;
     }
-    const { hookWarning } = yield* forceRemoveBoardCardWorktree({
-      projectCwd: cwd,
-      worktreePath: worktree.path,
-    }).pipe(Effect.provideService(WorktreeRetirer, retirer));
+    const removed = yield* forceRemoveWorktree(workspace, worktree.path).pipe(
+      Effect.map((hookWarning) => ({ hookWarning })),
+      Effect.catch(
+        (
+          error,
+        ): Effect.Effect<{ readonly hookWarning: string | null } | null, BoardWorkerGitError> =>
+          error._tag === "WorkerUnavailable" ? Effect.succeed(null) : Effect.fail(error),
+      ),
+    );
+    // The worker is out of reach: nothing was removed, and saying so beats
+    // recording a removal that did not happen (T3O-64).
+    if (removed === null) return { outcome: "failed" } as const;
+    const { hookWarning } = removed;
     yield* dispatchOptional({
       type: "board.card.reclaim-worktree",
       commandId: yield* commandId("force-reclaim-worktree"),
@@ -5466,8 +5936,8 @@ const make = Effect.gen(function* () {
       const pullRequest = card.pullRequest;
       if (pullRequest === null || pullRequest.state !== "open") return false;
       if (!options.forMerge && !(yield* draftPullRequestsOn)) return false;
-      const result = yield* pullRequests
-        .markReady({ projectId: card.projectId, number: pullRequest.number })
+      const result = yield* (yield* workspaceFor(card))
+        .markPullRequestReady({ number: pullRequest.number })
         .pipe(Effect.catch((error) => Effect.succeed({ failure: error.detail } as const)));
       if (result === "not-draft") return false;
       if (result === "readied") {
@@ -5530,8 +6000,8 @@ const make = Effect.gen(function* () {
   ) {
     const pullRequest = card.pullRequest;
     if (pullRequest === null) return { state: null, failure: undefined };
-    return yield* pullRequests
-      .mergeState({ projectId: card.projectId, number: pullRequest.number })
+    return yield* (yield* workspaceFor(card))
+      .pullRequestMergeState({ number: pullRequest.number })
       .pipe(
         Effect.map((state) => ({ state, failure: undefined })),
         // The probe's own words go on the card (T3O-8): a probe that failed is
@@ -5669,15 +6139,14 @@ const make = Effect.gen(function* () {
       };
     }
 
-    const model = yield* readModel;
     // T3o (T3O-47): the PROJECT's checkout, not the card's worktree. The merge
     // is a forge operation addressed by `{ projectId, repository }`, and
     // `PullRequestService` runs the host's CLI in the project's own workspace
     // root — so that is the one path whose absence makes a card unmergeable. A
     // reclaimed worktree is irrelevant to it, which is what this guard used to
     // have to say explicitly.
-    const root = projectCwd(model, fresh);
-    if (root === null) return { outcome: "no-workspace" } as const;
+    const workspace = yield* workspaceFor(fresh);
+    if (workspace.checkoutPath === null) return { outcome: "no-workspace" } as const;
 
     const settings = yield* boardSettings;
     // Resolved from the MERGE-ROLE stage, not from `fresh.stage`. They are the
@@ -5688,8 +6157,8 @@ const make = Effect.gen(function* () {
     const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
     const strategy = isBoardMergeStageExecution(exec) ? exec.strategy : "squash";
 
-    const failure = yield* pullRequests
-      .merge({ projectId: fresh.projectId, number: pullRequest.number, method: strategy })
+    const failure = yield* workspace
+      .mergePullRequest({ number: pullRequest.number, method: strategy })
       .pipe(
         Effect.as(null),
         Effect.catch((error) => Effect.succeed(error)),
@@ -5724,12 +6193,15 @@ const make = Effect.gen(function* () {
       // conflict, because starting a fix agent is the expensive mistake.
       const state =
         probe.state === null &&
-        (yield* probeLocalMergeConflict({
-          git,
-          cwd: root,
-          headBranch: pullRequest.headBranch,
-          baseBranch: pullRequest.baseRef,
-        })) === "conflict"
+        (yield* workspace
+          .probeLocalMergeConflict({
+            headBranch: pullRequest.headBranch,
+            baseBranch: pullRequest.baseRef,
+          })
+          .pipe(
+            Effect.map((probe) => probe.result),
+            Effect.orElseSucceed(() => "unknown" as const),
+          )) === "conflict"
           ? LOCAL_CONFLICT_MERGE_STATE
           : probe.state;
       // T3O-67: the host's own words ride along. Without them a clean pull
@@ -5859,7 +6331,9 @@ const make = Effect.gen(function* () {
     // a reason to fail a merge that already landed.
     const baseBranch = merged.pullRequest?.baseRef ?? null;
     if (baseBranch !== null) {
-      yield* pullMergedBaseBranch({ git, cwd: root, baseBranch }).pipe(
+      // Only on this card's worker (T3O-64): every other worker sees the merge
+      // through the fetch `measureBaseTip` makes.
+      yield* workspace.pullMergedBaseBranch({ baseBranch }).pipe(
         Effect.flatMap((sync) =>
           sync.updated || sync.skippedReason === null
             ? Effect.void
@@ -7010,16 +7484,21 @@ const make = Effect.gen(function* () {
       if (limit.kind !== "wait") continue;
       const dueMs = Date.parse(limit.until);
       if (Number.isFinite(dueMs) && nowMs < dueMs) continue;
-      const parked = (yield* boardWokenLimitParks(board, limit.providerInstanceId)).filter(
+      const allParked = (yield* boardWokenLimitParks(board, limit.providerInstanceId)).filter(
         (state) => {
           const card = board.cards.find((candidate) => candidate.id === state.cardId);
           return card !== undefined && card.archivedAt === null;
         },
       );
-      if (parked.length === 0) {
+      if (allParked.length === 0) {
         yield* clearProviderLimitAndResume(limit.providerInstanceId);
         continue;
       }
+      // A card on a worker out of reach can't probe (T3O-66, D22): the probe
+      // waits for one that can, or for its worker to come back.
+      const paused = yield* workerPausedNow;
+      const parked = allParked.filter((state) => !paused(slotKeyFor(board, state).workerId));
+      if (parked.length === 0) continue;
       const ordered = orderBoardQueue(
         parked.flatMap((state) => {
           const card = board.cards.find((candidate) => candidate.id === state.cardId);
@@ -7363,6 +7842,26 @@ const make = Effect.gen(function* () {
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
     const state = boardCardStepState(board, event.payload.cardId);
     if (card === undefined || state === null) return;
+    // A step stalled because its worker lacks its provider (T3O-65) never ran,
+    // and its model was frozen at stage entry — so a human's "Change model",
+    // which is a card edit, only lands if the stage starts over and resolves it
+    // again. Only an edit to the model overrides does it — a title edit must
+    // not restart a stage — and a worker that still lacks the provider stalls
+    // the fresh step the same way. Optional: a restart the decider refuses
+    // (say, a dependency now unmet) leaves the stall for a human.
+    if (
+      event.payload.modelOverridesEdited === true &&
+      state.status === "stalled" &&
+      state.stalledReason === "provider-not-on-worker"
+    ) {
+      yield* dispatchOptional({
+        type: "board.card.start-stage-thread",
+        commandId: yield* commandId("restart-for-model"),
+        cardId: card.id,
+        createdAt: yield* nowIso,
+      });
+      return;
+    }
     // A SETTLED stage may have more to run after an edit (t3o-22, D6). The
     // review loop is why: a loop held at its round cap is terminal, and raising
     // the card's budget from the pane must make it plan the next round — but
@@ -7525,9 +8024,8 @@ const make = Effect.gen(function* () {
 
     const worktree = card.worktree;
     if (worktree !== null) {
-      const model = yield* readModel;
-      const cwd = projectCwd(model, card);
-      if (cwd !== null) {
+      const workspace = yield* workspaceFor(card);
+      if (workspace.checkoutPath !== null) {
         // T3O-23: retiring runs the remove scripts, which can take minutes, so
         // it goes to its own worker and the delete handler moves on. The queue
         // is in memory: a restart before it runs leaves the branch behind, so
@@ -7539,7 +8037,7 @@ const make = Effect.gen(function* () {
         });
         yield* cardRetireWorker.enqueue({
           cardId: card.id,
-          projectCwd: cwd,
+          workspace,
           worktreePath: worktree.status === "ready" ? worktree.path : null,
           branch: worktree.branch,
         });
@@ -7592,29 +8090,30 @@ const make = Effect.gen(function* () {
     ) {
       return null;
     }
-    type Failure = { readonly reason: string; readonly transient: boolean } | null;
+    type Failure = {
+      readonly reason: string;
+      readonly transient: boolean;
+      /** The parent's worker is out of reach (T3O-64): nothing was recorded,
+          and the child retries on its next pass. */
+      readonly unavailable?: boolean;
+    } | null;
     const fail = (reason: string, transient = false) =>
       failWorktree(card, reason).pipe(Effect.as<Failure>({ reason, transient }));
-    const model = yield* readModel;
-    const cwd = projectCwd(model, card);
+    const unreachable: Failure = {
+      reason: "The card's worker is unreachable.",
+      transient: true,
+      unavailable: true,
+    };
+    // Cut on the PARENT's worker and pushed (D12): a child placed elsewhere
+    // cuts its own branch from the remote copy.
+    const workspace = yield* workspaceFor(card);
+    const cwd = workspace.checkoutPath;
     if (cwd === null) {
-      return yield* fail("The card's project has no workspace folder on this server.");
+      return yield* fail(noWorkspaceFolderReason(workspace));
     }
     const branch = boardCardWorktreeBranchName(card);
-    const gitRef = (args: ReadonlyArray<string>) =>
-      git
-        .execute({
-          operation: "boardIntegrationBranch.ref",
-          cwd,
-          args: [...args],
-          timeoutMs: 10_000,
-          allowNonZeroExit: true,
-        })
-        .pipe(
-          Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")),
-          Effect.catchCause(() => Effect.succeed("")),
-        );
-    const resolved = yield* resolveDefaultBranch(cwd);
+    const resolved = yield* resolveDefaultBranch(workspace);
+    if (resolved.unavailable) return unreachable;
     const { defaultBranch } = resolved;
     if (defaultBranch === "") {
       return yield* fail(noDefaultBranchReason(cwd, resolved, "the integration branch"));
@@ -7631,64 +8130,42 @@ const make = Effect.gen(function* () {
         cards: (yield* readBoard).cards,
         defaultBranch,
       }) ?? defaultBranch;
-    if (!(yield* ensureLocalBaseBranch(cwd, integrationBase))) {
+    const baseExists = yield* ensureLocalBaseBranch(workspace, integrationBase);
+    if (baseExists === "unavailable") return unreachable;
+    if (!baseExists) {
       return yield* fail(
         `The card's base branch '${integrationBase}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the integration branch from.`,
       );
     }
     // Idempotent on retry: an existing branch is the desired state, not an
     // error (an earlier attempt may have created it and died before the
-    // record landed).
-    const exists = yield* gitRef(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
-    if (exists === "") {
-      const created = yield* git
-        .execute({
-          operation: "boardIntegrationBranch.create",
-          cwd,
-          args: ["branch", branch, integrationBase],
-          timeoutMs: 10_000,
-          allowNonZeroExit: true,
-        })
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("board supervisor: integration branch creation failed", {
+    // record landed, or a raced sibling created it a moment ago).
+    type Cut = BoardWorkspaceIntegrationBranch | "unavailable";
+    const cut = yield* workspace.createIntegrationBranch({ branch, base: integrationBase }).pipe(
+      Effect.map((result): Cut => result),
+      Effect.catch((error): Effect.Effect<Cut> =>
+        error._tag === "WorkerUnavailable"
+          ? Effect.succeed("unavailable" as const)
+          : Effect.logWarning("board supervisor: integration branch creation failed", {
               cardId: card.id,
-              cause: Cause.pretty(cause),
-            }).pipe(Effect.as(null)),
-          ),
-        );
-      if (created === null || created.exitCode !== 0) {
-        // A raced sibling (two children retrying at once) may have created the
-        // branch between the check above and this create — `git branch` then
-        // exits non-zero with "already exists". Re-check rather than treat it
-        // as fatal: an existing branch IS the desired state (idempotent).
-        const nowExists = yield* gitRef([
-          "rev-parse",
-          "--verify",
-          "--quiet",
-          `refs/heads/${branch}`,
-        ]);
-        if (nowExists === "") {
-          return yield* fail(
-            `Could not create the integration branch '${branch}' from '${integrationBase}'.`,
-            true,
-          );
-        }
-      }
-    }
-    const pushed = yield* git.resolvePrimaryRemoteName(cwd).pipe(
-      Effect.flatMap((remoteName) =>
-        git.execute({
-          operation: "boardIntegrationBranch.push",
-          cwd,
-          args: ["push", remoteName, branch],
-          timeoutMs: 60_000,
-          allowNonZeroExit: true,
-        }),
+              detail: error.detail,
+            }).pipe(Effect.as({ outcome: "create-failed" } as const)),
       ),
-      Effect.map((result) => result.exitCode === 0),
-      Effect.catch(() => Effect.succeed(false)),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: integration branch creation failed", {
+          cardId: card.id,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as({ outcome: "create-failed" } as const)),
+      ),
     );
+    if (cut === "unavailable") return unreachable;
+    if (cut.outcome === "create-failed") {
+      return yield* fail(
+        `Could not create the integration branch '${branch}' from '${integrationBase}'.`,
+        true,
+      );
+    }
+    const pushed = cut.pushed;
     if (!pushed) {
       yield* dispatch({
         type: "board.card.record-note",
@@ -8227,7 +8704,7 @@ const make = Effect.gen(function* () {
     // sent the turn and the agent is already working, so this is a take, not a
     // request — the `forceStart` and boot-reconcile precedent. The count may sit
     // over the ceiling until the step settles and releases exactly once.
-    if (found.state.mode === "build") yield* slots.restore(found.state.providerInstanceId);
+    if (found.state.mode === "build") yield* slots.restore(slotKeyFor(board, found.state));
     return true;
   });
 
@@ -8309,6 +8786,240 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * Reconcile one live step against its thread (t3o-10): the boot pass's body,
+   * and a worker's when it comes back (T3O-66). `restoreSlot` is the boot
+   * pass's — its in-memory counts start empty — while a worker coming back
+   * still holds the slots its steps never gave up. Returns the decision, so
+   * the caller re-derives an advanced card's kickoff.
+   */
+  const reconcileStep = Effect.fn("board-supervisor-reconcileStep")(function* (input: {
+    readonly board: BoardState;
+    readonly card: BoardCard;
+    readonly state: BoardCardStepState;
+    readonly restoreSlot: boolean;
+  }) {
+    const { board, card, state } = input;
+    // Re-settle the stance a lost `board.card-updated` never carried onto the
+    // row (T3O-17). `streamDomainEvents` is a LIVE PubSub, not a durable
+    // replay from a watermark, so an edit committed to the log in the instant
+    // before a kill is never re-delivered: the card's override says one thing
+    // and the frozen run row says another, for as long as the step lives.
+    //
+    // Reachable from the ordinary human-in-the-loop toggle, and made common
+    // by the Stop button, which now dispatches exactly that edit — and there
+    // the divergence is the whole defect surviving a crash: a card that says
+    // a human took the wheel, resuming an agent that runs unattended.
+    //
+    // Cheap enough to be unconditional: a field comparison per non-terminal
+    // step, no I/O, and a dispatch only when they actually disagree, which is
+    // never in the ordinary case because the live handler already did it.
+    // Idempotent, so a restart loop re-runs it harmlessly. No turn is sent —
+    // boot is not the moment to message an agent, and `handleCardUpdated`
+    // would not have sent one into a parked step either.
+    yield* reconcileStanceOverride(card, state);
+    const hasSucceeded = boardCardStepCompletions(board, card.id).some(
+      (entry) => entry.stepId === state.stepId && entry.outcome === "succeeded",
+    );
+    const shell = state.threadId === null ? undefined : yield* liveThread(state.threadId);
+    const threadAlive = shell !== undefined && shell.alive;
+    const decision = reconcileStepDecision({
+      status: state.status,
+      threadAlive,
+      // Present but idle is the state a step parked on a human rests in: no
+      // turn, no pending question, and a thread the human can still answer in.
+      threadPresent: shell !== undefined,
+      humanInLoop: state.humanInLoop,
+      hasSucceeded,
+    });
+    // The in-memory slot Ref is empty after a restart, so any step that still
+    // holds a slot must RESTORE it here — whether we go on to watch it
+    // (resume-watch) or recover it (recover keeps the slot, D13) — otherwise
+    // its eventual release would floor at zero and under-count throughput.
+    // Restore is unconditional (never rejected by a cap): the step genuinely
+    // holds the slot, and this must run before `schedule` admits anything, so
+    // the restored steps count against the ceiling the governor then honours.
+    if (input.restoreSlot && state.slotHeld && decision.kind !== "advance") {
+      yield* slots.restore(slotKeyFor(yield* readBoard, state));
+    }
+    switch (decision.kind) {
+      case "advance":
+        yield* settleStep({ card, state, outcome: "succeeded" });
+        // Ask the executor what runs next: advance a finished single-step
+        // stage, or resume the next round-scoped step of a multi-step loop
+        // whose phase settled during downtime (t3o-16).
+        yield* continueStage({ card, state });
+        break;
+      case "recover":
+        yield* recoverStep({ card, state });
+        break;
+      case "park":
+        // The boot-time twin of `handleTurnCompleted`'s human-in-the-loop arm
+        // (t3o-34): say WHICH kind of stop it was, off the same last-message
+        // read, so the card shows "Input needed" or "Needs a human" rather
+        // than claiming the agent is working. The slot restored above is given
+        // straight back (T3O-23) — net zero, and correct: a parked step holds
+        // no capacity. The human's next turn on the thread un-parks it through
+        // `resumeParkedStep`, which re-takes the slot.
+        yield* parkStepForInput({
+          card,
+          state,
+          reason: (yield* endedWithQuestion(state)) ? "question" : "stopped",
+        });
+        break;
+      case "reschedule":
+        // Pending/queued and slotless — placed by the final schedule pass
+        // below, once every restored running step is counted (D11).
+        break;
+      case "resume-watch":
+        // Still running with a live thread — the slot was restored above; let
+        // the live turn-completion path catch its settlement.
+        break;
+    }
+    return decision.kind;
+  });
+
+  /**
+   * The kickoff pass for cards a reconcile advanced: their card-moved events
+   * may have had no live subscriber (the boot pass runs before activation
+   * opens the streams), so the next stage's auto-kickoff is re-derived from
+   * state. `bootPass` restricts it to first entries (or executor-driven
+   * continuations) — a re-entry's clean human thread never opens as a restart
+   * side effect — and beginStageRun's own guards (autoExecute, live thread,
+   * live step) make the pass idempotent.
+   */
+  const kickoffAdvanced = Effect.fn("board-supervisor-kickoffAdvanced")(function* (
+    advanced: ReadonlyArray<BoardCard["id"]>,
+  ) {
+    if (advanced.length === 0) return;
+    const settled = yield* readBoard;
+    for (const cardId of advanced) {
+      const card = settled.cards.find((candidate) => candidate.id === cardId);
+      if (card === undefined || card.archivedAt !== null) continue;
+      const state = boardCardStepState(settled, card.id);
+      if (state !== null && !isBoardTerminalStepStatus(state.status)) continue;
+      yield* beginStageRun({ card, onDemand: false, bootPass: true });
+    }
+  });
+
+  /**
+   * Reconcile the steps placed on one worker, as it comes back (T3O-66, D22):
+   * the boot pass, scoped to that worker, run before any of its held signals.
+   * Threads match by id, so a thread still alive there is watched, never
+   * respawned. False when a step's thread could not be read — the worker went
+   * again — so the caller tries again rather than treat it as reconciled. The
+   * threads whose steps it settled, recovered or parked, whose held signals it
+   * has already accounted for, are added to `decidedThreads` either way.
+   */
+  const reconcileWorker = Effect.fn("board-supervisor-reconcileWorker")(function* (
+    workerId: BoardWorkerId,
+  ) {
+    const board = yield* readBoard;
+    let whole = true;
+    const advanced: BoardCard["id"][] = [];
+    const decided = decidedThreads.get(workerId) ?? new Set<string>();
+    decidedThreads.set(workerId, decided);
+    for (const state of boardNonTerminalStepStates(board)) {
+      if (slotKeyFor(board, state).workerId !== workerId) continue;
+      const card = board.cards.find((candidate) => candidate.id === state.cardId);
+      if (card === undefined) continue;
+      const result = yield* reconcileStep({ board, card, state, restoreSlot: false }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: a worker's step could not be reconciled", {
+            workerId,
+            cardId: card.id,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      if (result === null) {
+        whole = false;
+        continue;
+      }
+      if (result === "advance") advanced.push(card.id);
+      // What the reconcile read is newer than anything held for that thread.
+      if (
+        state.threadId !== null &&
+        (result === "advance" || result === "recover" || result === "park")
+      ) {
+        decided.add(String(state.threadId));
+      }
+    }
+    yield* kickoffAdvanced(advanced);
+    return whole;
+  });
+
+  /**
+   * Bring what the supervisor knows of each worker's reach up to date (T3O-66,
+   * D22). A worker that dropped is unreconciled again, and its time out of
+   * reach starts; one that is back online is reconciled first, then its held
+   * signals are released — already deduped by sequence on the feed, and those
+   * for a thread the reconcile just decided on are dropped, so nothing is
+   * handled twice — and its time out of reach becomes an interval the timeout
+   * sweep does not count. The caller schedules afterwards.
+   */
+  const syncWorkerReach = Effect.gen(function* () {
+    if (Option.isNone(placement)) return;
+    const summary = yield* workersNow;
+    const nowMs = Date.parse(yield* nowIso);
+    const registered = new Set<BoardWorkerId>(summary.workers.map((worker) => worker.id));
+    const online = new Set<BoardWorkerId>(
+      summary.workers
+        .filter((worker) => worker.status.state === "online")
+        .map((worker) => worker.id),
+    );
+    // Drops the feed saw first, with when it saw them: one already back online
+    // is unreconciled all the same.
+    const dropped = [...droppedWorkers];
+    droppedWorkers.clear();
+    for (const [workerId, at] of dropped) {
+      if (!registered.has(workerId)) continue;
+      reconciledWorkers.delete(workerId);
+      if (!unreachableSince.has(workerId)) unreachableSince.set(workerId, at);
+    }
+    for (const workerId of reconciledWorkers) {
+      if (!online.has(workerId)) reconciledWorkers.delete(workerId);
+    }
+    for (const workerId of registered) {
+      if (!online.has(workerId) && !unreachableSince.has(workerId)) {
+        unreachableSince.set(workerId, nowMs);
+      }
+    }
+    // A removed worker is forgotten; its cards are the removal's business.
+    for (const map of [unreachableSince, offlineIntervals, heldSignals, decidedThreads]) {
+      for (const workerId of map.keys()) if (!registered.has(workerId)) map.delete(workerId);
+    }
+    for (const workerId of online) {
+      if (reconciledWorkers.has(workerId)) continue;
+      if (!(yield* reconcileWorker(workerId))) continue;
+      const decided = decidedThreads.get(workerId) ?? new Set<string>();
+      decidedThreads.delete(workerId);
+      const since = unreachableSince.get(workerId);
+      if (since !== undefined) {
+        offlineIntervals.set(workerId, [
+          ...(offlineIntervals.get(workerId) ?? []),
+          { from: since, to: nowMs },
+        ]);
+        unreachableSince.delete(workerId);
+      }
+      reconciledWorkers.add(workerId);
+      const held = heldSignals.get(workerId) ?? [];
+      heldSignals.delete(workerId);
+      for (const signal of held) {
+        if (decided.has(String(signal.threadId))) continue;
+        yield* processThreadSignal(signal).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board supervisor: a held signal failed", {
+              workerId,
+              signal: signal.type,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+      }
+    }
+  });
+
   const reconcile = Effect.gen(function* () {
     // Read the world only once the server is ACTIVATED (t3o-10, D3). This item
     // is enqueued from `start`, which runs in the `reactors.start` startup
@@ -8349,108 +9060,29 @@ const make = Effect.gen(function* () {
     // (forkParked) — so their auto-kickoff must be re-derived from state at
     // the end of this pass instead of riding the stream.
     const advanced: BoardCard["id"][] = [];
+    // T3O-66 (D22): a step on a worker is left for that worker's own reconcile
+    // (`syncWorkerReach`, below), which needs it online — a worker the board
+    // can't reach supplies no evidence. Its slot is restored now all the same:
+    // it is held until that reconcile, or a removal, gives it back.
+    const paused = yield* workerPausedNow;
     for (const state of boardNonTerminalStepStates(board)) {
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
       if (card === undefined) continue;
-      // Re-settle the stance a lost `board.card-updated` never carried onto the
-      // row (T3O-17). `streamDomainEvents` is a LIVE PubSub, not a durable
-      // replay from a watermark, so an edit committed to the log in the instant
-      // before a kill is never re-delivered: the card's override says one thing
-      // and the frozen run row says another, for as long as the step lives.
-      //
-      // Reachable from the ordinary human-in-the-loop toggle, and made common
-      // by the Stop button, which now dispatches exactly that edit — and there
-      // the divergence is the whole defect surviving a crash: a card that says
-      // a human took the wheel, resuming an agent that runs unattended.
-      //
-      // Cheap enough to be unconditional: a field comparison per non-terminal
-      // step, no I/O, and a dispatch only when they actually disagree, which is
-      // never in the ordinary case because the live handler already did it.
-      // Idempotent, so a restart loop re-runs it harmlessly. No turn is sent —
-      // boot is not the moment to message an agent, and `handleCardUpdated`
-      // would not have sent one into a parked step either.
-      yield* reconcileStanceOverride(card, state);
-      const hasSucceeded = boardCardStepCompletions(board, card.id).some(
-        (entry) => entry.stepId === state.stepId && entry.outcome === "succeeded",
-      );
-      const shell = state.threadId === null ? undefined : yield* liveThread(state.threadId);
-      const threadAlive = shell !== undefined && shell.alive;
-      const decision = reconcileStepDecision({
-        status: state.status,
-        threadAlive,
-        // Present but idle is the state a step parked on a human rests in: no
-        // turn, no pending question, and a thread the human can still answer in.
-        threadPresent: shell !== undefined,
-        humanInLoop: state.humanInLoop,
-        hasSucceeded,
-      });
-      // The in-memory slot Ref is empty after a restart, so any step that still
-      // holds a slot must RESTORE it here — whether we go on to watch it
-      // (resume-watch) or recover it (recover keeps the slot, D13) — otherwise
-      // its eventual release would floor at zero and under-count throughput.
-      // Restore is unconditional (never rejected by a cap): the step genuinely
-      // holds the slot, and this must run before `schedule` admits anything, so
-      // the restored steps count against the ceiling the governor then honours.
-      if (state.slotHeld && decision.kind !== "advance") {
-        yield* slots.restore(state.providerInstanceId);
+      if (paused(slotKeyFor(board, state).workerId)) {
+        if (state.slotHeld) yield* slots.restore(slotKeyFor(board, state));
+        continue;
       }
-      switch (decision.kind) {
-        case "advance":
-          yield* settleStep({ card, state, outcome: "succeeded" });
-          // Ask the executor what runs next: advance a finished single-step
-          // stage, or resume the next round-scoped step of a multi-step loop
-          // whose phase settled during downtime (t3o-16).
-          yield* continueStage({ card, state });
-          advanced.push(card.id);
-          break;
-        case "recover":
-          yield* recoverStep({ card, state });
-          break;
-        case "park":
-          // The boot-time twin of `handleTurnCompleted`'s human-in-the-loop arm
-          // (t3o-34): say WHICH kind of stop it was, off the same last-message
-          // read, so the card shows "Input needed" or "Needs a human" rather
-          // than claiming the agent is working. The slot restored above is given
-          // straight back (T3O-23) — net zero, and correct: a parked step holds
-          // no capacity. The human's next turn on the thread un-parks it through
-          // `resumeParkedStep`, which re-takes the slot.
-          yield* parkStepForInput({
-            card,
-            state,
-            reason: (yield* endedWithQuestion(state)) ? "question" : "stopped",
-          });
-          break;
-        case "reschedule":
-          // Pending/queued and slotless — placed by the final schedule pass
-          // below, once every restored running step is counted (D11).
-          break;
-        case "resume-watch":
-          // Still running with a live thread — the slot was restored above; let
-          // the live turn-completion path catch its settlement.
-          break;
-      }
+      const decided = yield* reconcileStep({ board, card, state, restoreSlot: true });
+      if (decided === "advance") advanced.push(card.id);
     }
+    // Every worker online now, reconciled before anything else acts on it.
+    yield* syncWorkerReach;
     // With every restored slot counted, offer the queued/pending steps to the
     // governor: re-admit what now fits, re-queue the rest. Slot accounting
     // reconciles to zero once all work drains, including after a forced restart.
     yield* schedule();
-    // Kickoff pass for the cards reconcile itself advanced: their card-moved
-    // events had no live subscriber (see `advanced` above), so the next
-    // stage's auto-kickoff is re-derived from state. `bootPass` restricts it
-    // to first entries (or executor-driven continuations) — a re-entry's
-    // clean human thread never opens as a restart side effect — and
-    // beginStageRun's own guards (autoExecute, live thread, live step) make
-    // the pass idempotent.
-    if (advanced.length > 0) {
-      const settled = yield* readBoard;
-      for (const cardId of advanced) {
-        const card = settled.cards.find((candidate) => candidate.id === cardId);
-        if (card === undefined || card.archivedAt !== null) continue;
-        const state = boardCardStepState(settled, card.id);
-        if (state !== null && !isBoardTerminalStepStatus(state.status)) continue;
-        yield* beginStageRun({ card, onDemand: false, bootPass: true });
-      }
-    }
+    // Kickoff pass for the cards reconcile itself advanced.
+    yield* kickoffAdvanced(advanced);
     // Resume review loops that halted BETWEEN phases (T3O-5). The pass above
     // only walks steps still in flight, but a loop whose phase settled
     // `succeeded` while the dispatch of the next one failed has nothing in
@@ -8738,10 +9370,65 @@ const make = Effect.gen(function* () {
       case "board.plans-approved":
         // The split's integration branch (t3o-23, D5).
         return handlePlansApproved(event);
+      case "board.card-worker-pinned":
+        // A re-pin may give a step stalled for a missing provider a worker
+        // that has it, and a held card a worker that is ready (T3O-65) — and
+        // takes a card off a worker it may have a step stranded on (T3O-66).
+        return stallStrandedStep(event.payload.cardId).pipe(
+          Effect.andThen(requeueResolvedPlacementStalls(event.payload.cardId)),
+          Effect.andThen(schedule()),
+        );
+      case "board.card-worker-move-recorded":
+        // A force-move's start strands whatever ran on the old worker (T3O-66);
+        // a move that landed releases the card's held step (T3O-65).
+        if (event.payload.step.phase === "start") return stallStrandedStep(event.payload.cardId);
+        return event.payload.step.phase === "done" || event.payload.step.phase === "restarted"
+          ? requeueResolvedPlacementStalls(event.payload.cardId).pipe(Effect.andThen(schedule()))
+          : Effect.void;
+      case "board.worker-removed":
+        return stallStepsOnRemovedWorker(event.payload.workerId).pipe(Effect.andThen(schedule()));
+      case "board.card-worker-removal":
+        // A re-add reattaches the card; whatever its removal stalled resumes
+        // once the worker is online (T3O-66).
+        return event.payload.outcome === "reattached"
+          ? requeueResolvedPlacementStalls(event.payload.cardId).pipe(Effect.andThen(schedule()))
+          : Effect.void;
       default:
         return Effect.void;
     }
   };
+
+  /** The worker a thread lives on, from the card link that names it; null for
+      a thread no card links. */
+  const threadWorkerId = (board: BoardState, threadId: ThreadId): BoardWorkerId | null => {
+    for (const card of board.cards) {
+      const link = card.threadLinks.find((candidate) => candidate.threadId === threadId);
+      if (link !== undefined) return boardThreadLinkWorkerId(link);
+    }
+    return null;
+  };
+
+  /**
+   * A thread signal, unless its worker is not reconciled (T3O-66, D22): then it
+   * is held until `syncWorkerReach` has reconciled that worker, so the boot
+   * reconcile scoped to it acts first. A removed worker's signals are dropped —
+   * its steps were stalled, and nothing it says changes that.
+   */
+  const gateThreadSignal = (signal: ThreadSignal) =>
+    Effect.gen(function* () {
+      if (Option.isNone(placement)) return yield* processThreadSignal(signal);
+      const board = yield* readBoard;
+      if ((board.workers ?? []).length === 0) return yield* processThreadSignal(signal);
+      const workerId = threadWorkerId(board, signal.threadId);
+      if (workerId === null || workerId === BOARD_LOCAL_WORKER_ID || workerReconciled(workerId)) {
+        return yield* processThreadSignal(signal);
+      }
+      if (!(board.workers ?? []).some((worker) => worker.id === workerId)) return;
+      const held = heldSignals.get(workerId) ?? [];
+      held.push(signal);
+      if (held.length > HELD_SIGNALS_MAX) held.shift();
+      heldSignals.set(workerId, held);
+    });
 
   const processThreadSignal = (signal: ThreadSignal) => {
     switch (signal.type) {
@@ -8814,8 +9501,13 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const now = yield* nowIso;
     const nowMs = Date.parse(now);
+    const paused = yield* workerPausedNow;
     for (const state of board.stepStates ?? []) {
       if (state.status !== "running" || state.humanInLoop) continue;
+      // A step on a worker out of reach is not timed (T3O-66, D22): nothing it
+      // does can be seen, and silence from it is not evidence of anything.
+      const workerId = slotKeyFor(board, state).workerId;
+      if (paused(workerId)) continue;
       // Ahead of the `timeoutMs` gate: a background wait runs on its own fixed
       // schedule (T3O-20), and with turn-end recovery suppressed for it, a
       // step with no timeout would otherwise never be checked on at all.
@@ -8875,13 +9567,20 @@ const make = Effect.gen(function* () {
           .map((value) => Date.parse(value))
           .filter((value) => Number.isFinite(value)),
       );
-      if (!Number.isFinite(referenceMs) || nowMs - referenceMs <= state.timeoutMs) continue;
+      // Its worker's time out of reach since that life sign is not counted
+      // (T3O-66): the reference shifts by the offline interval, not resets.
+      const offlineMs = Number.isFinite(referenceMs)
+        ? boardOfflineCreditMs(offlineIntervals.get(workerId) ?? [], referenceMs, nowMs)
+        : 0;
+      if (!Number.isFinite(referenceMs) || nowMs - referenceMs - offlineMs <= state.timeoutMs) {
+        continue;
+      }
       const card = board.cards.find((candidate) => candidate.id === state.cardId);
       if (card === undefined || card.archivedAt !== null) continue;
       const worktreePath = card.worktree?.path ?? null;
       const baseRefName = card.worktree?.baseRefName ?? null;
       if (state.mode === "build" && worktreePath !== null && baseRefName !== null) {
-        const committedAt = yield* latestBranchCommitIso(worktreePath, baseRefName);
+        const committedAt = yield* latestBranchCommitIso(card, worktreePath, baseRefName);
         const committedMs = committedAt === null ? Number.NaN : Date.parse(committedAt);
         if (Number.isFinite(committedMs) && nowMs - committedMs <= state.timeoutMs) continue;
       }
@@ -8922,6 +9621,31 @@ const make = Effect.gen(function* () {
     for (const id of backgroundWaits.keys()) {
       if (!runningThreadIds.has(id)) backgroundWaits.delete(id);
     }
+    // An offline interval is only read for a running step on its worker, and
+    // only from that step's reference time, which is never before its last
+    // nudge or start. So a worker with no running step drops its history, and
+    // an interval that ended before its earliest running step's nudge or start
+    // can never count again — a flapping worker's list stays bounded.
+    const earliestReference = new Map<BoardWorkerId, number>();
+    for (const state of board.stepStates ?? []) {
+      if (state.status !== "running") continue;
+      const workerId = slotKeyFor(board, state).workerId;
+      const at = Date.parse(state.lastNudgeAt ?? state.startedAt ?? "");
+      earliestReference.set(
+        workerId,
+        Math.min(
+          earliestReference.get(workerId) ?? Number.POSITIVE_INFINITY,
+          Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY,
+        ),
+      );
+    }
+    for (const [workerId, intervals] of offlineIntervals) {
+      const earliest = earliestReference.get(workerId);
+      const kept =
+        earliest === undefined ? [] : intervals.filter((interval) => interval.to > earliest);
+      if (kept.length === 0) offlineIntervals.delete(workerId);
+      else if (kept.length !== intervals.length) offlineIntervals.set(workerId, kept);
+    }
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: timeout sweep failed", { cause: Cause.pretty(cause) }),
@@ -8933,9 +9657,16 @@ const make = Effect.gen(function* () {
       case "domain":
         return processDomainEvent(input.event);
       case "thread":
-        return processThreadSignal(input.signal);
+        return gateThreadSignal(input.signal);
       case "reconcile":
         return reconcile;
+      case "workers":
+        // T3O-66: a worker back online is reconciled before anything is
+        // scheduled onto it.
+        return syncWorkerReach.pipe(
+          Effect.andThen(requeueResolvedPlacementStalls()),
+          Effect.andThen(schedule()),
+        );
       case "timeout-sweep":
         // The release sweep rides the same tick (t3o-13): it is a board read
         // and an in-memory pass, it must be serialised against the handlers for
@@ -8959,7 +9690,10 @@ const make = Effect.gen(function* () {
         // about". Retries first, so a card whose rung and whose provider both
         // came due in the same tick goes back through the ordinary queue rather
         // than being picked as a prober.
-        return sweepTimeouts.pipe(
+        // And a worker whose reconcile could not finish is tried again here
+        // (T3O-66): nothing else would ask while its status stays the same.
+        return syncWorkerReach.pipe(
+          Effect.andThen(sweepTimeouts),
           Effect.andThen(releaseFinishedThreads),
           Effect.andThen(sweepSchedules),
           Effect.andThen(sweepArmedCards),
@@ -9030,7 +9764,14 @@ const make = Effect.gen(function* () {
           event.type !== "board.card-step-recovered" &&
           event.type !== "board.card-archived" &&
           event.type !== "board.card-deleted" &&
-          event.type !== "board.plans-approved"
+          event.type !== "board.plans-approved" &&
+          // T3O-65: a re-pin or a finished move can start a held card.
+          event.type !== "board.card-worker-pinned" &&
+          event.type !== "board.card-worker-move-recorded" &&
+          // T3O-66: a worker removed stalls what ran there; a re-add can
+          // resume it.
+          event.type !== "board.worker-removed" &&
+          event.type !== "board.card-worker-removal"
         ) {
           return Effect.void;
         }
@@ -9051,6 +9792,23 @@ const make = Effect.gen(function* () {
         return worker.enqueue({ source: "thread", signal });
       }),
     );
+    // T3O-65: worker changes — status, providers, checkouts, setups — can
+    // start a card held for its worker. Absent on a local-only harness.
+    if (Option.isSome(placement)) {
+      yield* forkParked(
+        Stream.runForEach(placement.value.changes, (summary) =>
+          Effect.gen(function* () {
+            const at = Date.parse(yield* nowIso);
+            for (const view of summary.workers) {
+              if (view.status.state !== "online" && !droppedWorkers.has(view.id)) {
+                droppedWorkers.set(view.id, at);
+              }
+            }
+            yield* worker.enqueue({ source: "workers" });
+          }),
+        ),
+      );
+    }
     // The server restarts mid-step: reconcile persisted step state, serialised
     // ahead of the live events now flowing into the same worker queue.
     yield* worker.enqueue({ source: "reconcile" });
@@ -9115,20 +9873,25 @@ const make = Effect.gen(function* () {
     // click.
     // T3o (T3O-18): TOTAL for the same reason — an agent's tool call and the
     // card's "Link one" both owe their caller an answer.
+    // A card being created has no placement yet, so its project's own
+    // checkout on this server answers.
     resolvePullRequestLink: (projectId, target) =>
-      resolvePullRequestLink(projectId, target).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("board supervisor: pull request link lookup failed", {
-            projectId,
-            cause: Cause.pretty(cause),
-          }).pipe(
-            Effect.as({
-              outcome: "refused",
-              detail: "The pull request could not be looked up. See the server log for details.",
-            } as const),
+      workspaces
+        .localProject(projectId)
+        .pipe(Effect.flatMap((workspace) => resolvePullRequestLink(workspace, target)))
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("board supervisor: pull request link lookup failed", {
+              projectId,
+              cause: Cause.pretty(cause),
+            }).pipe(
+              Effect.as({
+                outcome: "refused",
+                detail: "The pull request could not be looked up. See the server log for details.",
+              } as const),
+            ),
           ),
         ),
-      ),
     linkPullRequest: (cardId, target, options) =>
       linkPullRequest(cardId, target, options).pipe(
         Effect.catchCause((cause) =>

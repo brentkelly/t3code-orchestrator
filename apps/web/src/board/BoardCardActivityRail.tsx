@@ -21,6 +21,7 @@ import type {
   BoardCardActivityEntry,
   BoardStageDefinition,
   BoardStepOutcome,
+  BoardWorkerId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import {
@@ -45,6 +46,9 @@ import {
   ScissorsIcon,
   TriangleAlertIcon,
   XIcon,
+  ArrowRightLeftIcon,
+  ServerIcon,
+  ServerOffIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
@@ -57,6 +61,8 @@ import {
   toggleBoardActivityGroup,
 } from "./boardActivityGroups";
 import { boardStageLabel } from "./boardStages";
+import { useBoardWorkersState } from "./workers/BoardWorkersContext";
+import { boardWorkerLabel } from "./workers/cardWorker";
 import { BoardHint } from "./BoardHint";
 
 /** How the rail resolves an agent's display name and accent (D11): from the
@@ -94,7 +100,13 @@ function ActorName({
   return <span className="font-medium text-muted-foreground">System</span>;
 }
 
-function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] }) {
+function ActivityIcon({
+  kind,
+  payload,
+}: {
+  readonly kind: BoardCardActivityEntry["kind"];
+  readonly payload?: BoardCardActivityEntry["payload"] | undefined;
+}) {
   const className = "size-3 shrink-0";
   switch (kind) {
     case "card-created":
@@ -155,6 +167,20 @@ function ActivityIcon({ kind }: { readonly kind: BoardCardActivityEntry["kind"] 
     // T3O-20: a check-in on a background wait claims nothing — neutral.
     case "card-step-checked-in":
       return <HourglassIcon className={className} />;
+    // T3O-65: choosing a worker and each step of a move claim nothing — a
+    // failed move is the one amber row, because only a human can retry it.
+    case "card-worker-pinned":
+      return <ServerIcon className={className} />;
+    case "card-worker-moved":
+      return <ArrowRightLeftIcon className={className} />;
+    // T3O-66: a worker removed under the card. Holding for a move is amber —
+    // only a human can move it; falling back or reattaching claims nothing.
+    case "card-worker-removal":
+      return payload?.removalOutcome === "orphaned" ? (
+        <ServerOffIcon className={cn(className, "text-warning-foreground")} />
+      ) : (
+        <ServerIcon className={className} />
+      );
   }
 }
 
@@ -213,6 +239,8 @@ function activitySentence(
       (deleted, or another environment's) falls back to the reissued key alone,
       which is still a true sentence. */
   projectNames: ReadonlyMap<string, string> | undefined,
+  /** A worker's name for the T3O-65 rows. */
+  workerName: (workerId: BoardWorkerId) => string,
 ): ReactNode {
   const payload = entry.payload;
   switch (entry.kind) {
@@ -387,6 +415,64 @@ function activitySentence(
       ) : (
         <>checked on a background task in {payload.stepLabel}</>
       );
+    case "card-worker-pinned":
+      return payload.workerId == null ? (
+        <>set the card to follow the default worker</>
+      ) : (
+        <>pinned the card to {workerName(payload.workerId)}</>
+      );
+    case "card-worker-moved": {
+      const to =
+        payload.toWorkerId === undefined ? "another worker" : workerName(payload.toWorkerId);
+      const from = payload.fromWorkerId == null ? null : workerName(payload.fromWorkerId);
+      switch (payload.movePhase) {
+        case "start":
+          return payload.forced === true ? (
+            <>started force-moving the card to {to}, from its pushed branch</>
+          ) : (
+            <>checked for unpushed work and started moving the card to {to}</>
+          );
+        case "retired":
+          return <>retired the worktree on {from ?? "the old worker"}</>;
+        case "abandoned":
+          return (
+            <>
+              left the worktree on {from ?? "the old worker"} as abandoned
+              {payload.detail === undefined ? null : (
+                <span className="block font-mono text-muted-foreground">{payload.detail}</span>
+              )}
+            </>
+          );
+        case "restarted":
+          return <>restarted Build on {to} from the base branch; nothing had been pushed</>;
+        case "done":
+          return <>moved the card to {to}; its next step runs there</>;
+        case "failed":
+          return (
+            <>
+              couldn't move the card to {to}
+              {payload.detail === undefined ? null : (
+                <span className="block text-warning-foreground">{payload.detail}</span>
+              )}
+            </>
+          );
+        default:
+          return <>moved the card to {to}</>;
+      }
+    }
+    case "card-worker-removal": {
+      const worker = payload.detail ?? "Its worker";
+      switch (payload.removalOutcome) {
+        case "fallback":
+          return <>{worker} was removed from the board; the card now follows the default worker</>;
+        case "orphaned":
+          return <>{worker} was removed from the board while the card had work there</>;
+        case "reattached":
+          return <>{worker} was added back; the card is on it again</>;
+        default:
+          return <>{worker} was removed from the board</>;
+      }
+    }
   }
 }
 
@@ -427,13 +513,16 @@ function ActivityRow({
   readonly projectNames: ReadonlyMap<string, string> | undefined;
   readonly toggle: ReactNode;
 }) {
+  const workers = useBoardWorkersState();
+  const workerName = (workerId: BoardWorkerId) => boardWorkerLabel(workerId, workers);
   return (
     <li className="flex items-start gap-1.5 text-[12px]/[1.5] text-muted-foreground">
       <span className="mt-[3px]">
-        <ActivityIcon kind={entry.kind} />
+        <ActivityIcon kind={entry.kind} payload={entry.payload} />
       </span>
       <span className="min-w-0 flex-1 text-pretty">
-        <ActorName agents={agents} entry={entry} /> {activitySentence(entry, stages, projectNames)}
+        <ActorName agents={agents} entry={entry} />{" "}
+        {activitySentence(entry, stages, projectNames, workerName)}
         {toggle}
       </span>
       <BoardHint label={entry.createdAt}>

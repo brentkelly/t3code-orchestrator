@@ -76,6 +76,10 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     autoStart: false,
     autoMerge: false,
     autoMergeHold: null,
+    pinnedWorkerId: null,
+    placedWorkerId: null,
+    workerMove: null,
+    placementOrphaned: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -118,6 +122,7 @@ function makeStepState(id: string): BoardCardStepState {
     status: "succeeded",
     slotHeld: false,
     forceStart: false,
+    queuedBy: null,
     startedAt: null,
     updatedAt: NOW,
   };
@@ -641,6 +646,7 @@ describe("board projector", () => {
         status: "running" as const,
         slotHeld: true,
         forceStart: false,
+        queuedBy: null,
         startedAt: NOW,
         updatedAt: NOW,
       };
@@ -655,6 +661,7 @@ describe("board projector", () => {
             threadId: null,
             slotHeld: false,
             forceStart: false,
+            queuedBy: null,
             startedAt: null,
           },
         },
@@ -808,6 +815,7 @@ describe("board projector", () => {
         status: "queued" as const,
         slotHeld: false,
         forceStart: false,
+        queuedBy: null,
         startedAt: null,
         updatedAt: NOW,
       };
@@ -855,6 +863,7 @@ describe("board projector", () => {
         threadId: ThreadId.make("thread-1"),
         slotHeld: false,
         forceStart: false,
+        queuedBy: null,
         startedAt: NOW,
         updatedAt: NOW,
       };
@@ -952,6 +961,7 @@ describe("board projector", () => {
         status: "pending" as const,
         slotHeld: false,
         forceStart: false,
+        queuedBy: null,
         startedAt: null,
         updatedAt: NOW,
       };
@@ -1045,6 +1055,7 @@ describe("board projector", () => {
         status: "pending" as const,
         slotHeld: false,
         forceStart: false,
+        queuedBy: null,
         startedAt: null,
         updatedAt: NOW,
       };

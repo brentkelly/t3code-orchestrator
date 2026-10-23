@@ -1677,6 +1677,7 @@ function parkedByLimit(id: string): BoardCardStepState {
     status: "stalled",
     slotHeld: false,
     forceStart: false,
+    queuedBy: null,
     threadId: null,
     startedAt: null,
     updatedAt: "1970-01-01T00:00:00.000Z",

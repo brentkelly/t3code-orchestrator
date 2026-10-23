@@ -107,6 +107,9 @@ import { BoardCardFilterField, BoardTopBar } from "./BoardTopBar";
 import { BoardProviderUsagePill } from "./BoardProviderUsagePill";
 import { isBoardColumnCollapsed, useBoardUiStore } from "./boardUiStore";
 import { projectAccent, projectIconColorOf } from "./projectAccent";
+import { BoardWorkersContext, useBoardWorkersCardView } from "./workers/BoardWorkersContext";
+import { boardQueueReason } from "./workers/cardWorker";
+import { BoardWorkersAttentionPill } from "./workers/BoardWorkersAttentionPill";
 import { validateBoardSearch, type BoardSearch } from "../routes/board";
 
 const EMPTY_COLUMNS: BoardStageColumns = mergeBoardStageColumns([]);
@@ -577,18 +580,38 @@ function EnvironmentBoard({
   // The queued cards' pills and their tooltips. One derivation for the whole
   // board — positions are a view over the queue, so they are recomputed
   // together or not at all — and it costs a single pass when nothing is queued.
+  // T3O-65: the board's workers, for the queue's reasons and every card below.
+  const workersState = useAtomValue(boardEnvironment.workersAtom(environmentId));
+  // What the cards and the queue read: the same object across a clone's
+  // progress ticks, so those don't rebuild the queue or re-render the columns.
+  const cardWorkersState = useBoardWorkersCardView(workersState);
   const queueSlots = useMemo(() => {
     const queue = boardBuildQueue(everyCard, orderedStages, Date.now());
     if (queue.size === 0) return EMPTY_QUEUE_INFO;
     const running = boardRunningStepCount(everyCard);
     const cap = boardSettings.concurrency.globalMaxConcurrent;
+    const cardsById = new Map(everyCard.map((card) => [card.cardId, card] as const));
+    const projectNames = new Map(
+      allProjects.map((project) => [project.id, project.title] as const),
+    );
     const info = new Map<string, BoardQueueInfo>();
     for (const [cardId, slot] of queue) {
-      const resolved = boardQueueInfo({ slot, running, cap });
+      const card = cardsById.get(cardId as BoardCardShell["cardId"]);
+      const reason =
+        card === undefined
+          ? null
+          : boardQueueReason({
+              card,
+              state: cardWorkersState,
+              cards: everyCard,
+              concurrency: boardSettings.concurrency,
+              projectName: projectNames.get(card.projectId) ?? "this project",
+            });
+      const resolved = boardQueueInfo({ slot, running, cap, reason });
       if (resolved !== null) info.set(cardId, resolved);
     }
     return info;
-  }, [boardSettings.concurrency.globalMaxConcurrent, everyCard, orderedStages]);
+  }, [allProjects, boardSettings.concurrency, everyCard, orderedStages, cardWorkersState]);
 
   // ── Card todo strips (t3o-18) ────────────────────────────────────────
   // The card→thread links and their cached lists ride the shell snapshot as
@@ -1202,249 +1225,257 @@ function EnvironmentBoard({
   const canCreate = addProjects.length > 0 && firstStageId !== null;
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <BoardTopBar>
-        {/* T3o (T3O-22, D14): a usage limit is a fact about a provider ACCOUNT
+    <BoardWorkersContext.Provider value={cardWorkersState}>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <BoardTopBar>
+          {/* T3o (T3O-22, D14): a usage limit is a fact about a provider ACCOUNT
             and holds every card on it, so it belongs in the board's own header
             rather than on whichever card happened to notice. Renders nothing
             unless something is limited. */}
-        <BoardProviderUsagePill
-          cards={everyCard}
-          limits={providerLimits}
-          nameFor={providerDisplayName}
-          onOpenCard={(cardId) => patchSearch((previous) => ({ ...previous, card: cardId }))}
-          onResumeNow={(providerInstanceId) => {
-            void probeProviderLimit({ environmentId, input: { providerInstanceId } });
-          }}
-          onSetResumeAt={(providerInstanceId, resumeAt) => {
-            void setProviderLimitResumeAt({
-              environmentId,
-              input: { providerInstanceId, resumeAt },
-            });
-          }}
-        />
-        <BoardCardFilterField onQueryChange={setQuery} query={query} />
-        {canCreate ? (
-          <Button onClick={() => openCreate(firstStageId)} size="xs">
-            <PlusIcon />
-            {/* Same treatment as the mode tabs: on a phone the icon carries it. */}
-            <span className="max-sm:sr-only">New card</span>
-          </Button>
-        ) : null}
-      </BoardTopBar>
-      <div className="flex shrink-0 items-center gap-3 px-3 py-2 sm:px-5">
-        {scope.kind === "sub-board" ? (
-          <>
-            {/* Breadcrumb back (t3o-25): the sub-board is a place, so leaving
-                it is navigation, not closing something. */}
-            <Button
-              onClick={() => openRootBoard()}
-              size="xs"
-              variant="ghost"
-              title="Back to the board"
-            >
-              <ChevronLeftIcon />
-              Board
+          {/* T3o (T3O-66): workers that are offline, revoked or incompatible,
+            and the cards they hold. Renders nothing otherwise. */}
+          <BoardWorkersAttentionPill
+            cards={everyCard}
+            onOpenCard={(cardId) => patchSearch((previous) => ({ ...previous, card: cardId }))}
+            workers={cardWorkersState}
+          />
+          <BoardProviderUsagePill
+            cards={everyCard}
+            limits={providerLimits}
+            nameFor={providerDisplayName}
+            onOpenCard={(cardId) => patchSearch((previous) => ({ ...previous, card: cardId }))}
+            onResumeNow={(providerInstanceId) => {
+              void probeProviderLimit({ environmentId, input: { providerInstanceId } });
+            }}
+            onSetResumeAt={(providerInstanceId, resumeAt) => {
+              void setProviderLimitResumeAt({
+                environmentId,
+                input: { providerInstanceId, resumeAt },
+              });
+            }}
+          />
+          <BoardCardFilterField onQueryChange={setQuery} query={query} />
+          {canCreate ? (
+            <Button onClick={() => openCreate(firstStageId)} size="xs">
+              <PlusIcon />
+              {/* Same treatment as the mode tabs: on a phone the icon carries it. */}
+              <span className="max-sm:sr-only">New card</span>
             </Button>
-            <BoardSubBoardHeader
-              accentName={parentShell === null ? null : accentNameFor(parentShell.projectId)}
-              chartOpen={subBoardChartOpen}
-              environmentId={environmentId}
-              onOpenParentCard={() => openRootBoard(scope.parentCardId)}
-              onToggleChart={() => setSubBoardChartOpen((open) => !open)}
-              parentCardId={scope.parentCardId}
-              parentShell={parentShell}
-            />
-          </>
-        ) : (
-          <>
-            <Select
-              items={[
-                { value: ALL_PROJECTS, label: "All projects" },
-                ...projects.map((project) => ({
-                  value: project.id as string,
-                  label: project.title,
-                })),
-                ...(scopeIsStale
-                  ? [
-                      {
-                        value: scopeProjectId,
-                        label: scopeIsHidden ? "Hidden project" : "Unknown project",
-                      },
-                    ]
-                  : []),
-              ]}
-              modal={false}
-              onValueChange={(value: string | null) => {
-                patchSearch((previous) => {
-                  const { project: _project, ...rest } = previous;
-                  return value === null || value === ALL_PROJECTS
-                    ? rest
-                    : { ...rest, project: value };
-                });
-              }}
-              value={scopeProjectId ?? ALL_PROJECTS}
-            >
-              <SelectTrigger aria-label="Project scope" size="xs" variant="ghost">
-                <span
-                  className={cn(
-                    "size-2 rounded-full",
-                    scopeProjectId === null
-                      ? "bg-muted-foreground/40"
-                      : projectAccent(scopeProjectId, accentNameFor(scopeProjectId)).dot,
-                  )}
-                />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectPopup>
-                <SelectItem value={ALL_PROJECTS}>All projects</SelectItem>
-                {projects.map((project) => (
-                  <SelectItem key={project.id} value={project.id}>
-                    <span className="inline-flex items-center gap-1.5">
+          ) : null}
+        </BoardTopBar>
+        <div className="flex shrink-0 items-center gap-3 px-3 py-2 sm:px-5">
+          {scope.kind === "sub-board" ? (
+            <>
+              {/* Breadcrumb back (t3o-25): the sub-board is a place, so leaving
+                it is navigation, not closing something. */}
+              <Button
+                onClick={() => openRootBoard()}
+                size="xs"
+                variant="ghost"
+                title="Back to the board"
+              >
+                <ChevronLeftIcon />
+                Board
+              </Button>
+              <BoardSubBoardHeader
+                accentName={parentShell === null ? null : accentNameFor(parentShell.projectId)}
+                chartOpen={subBoardChartOpen}
+                environmentId={environmentId}
+                onOpenParentCard={() => openRootBoard(scope.parentCardId)}
+                onToggleChart={() => setSubBoardChartOpen((open) => !open)}
+                parentCardId={scope.parentCardId}
+                parentShell={parentShell}
+              />
+            </>
+          ) : (
+            <>
+              <Select
+                items={[
+                  { value: ALL_PROJECTS, label: "All projects" },
+                  ...projects.map((project) => ({
+                    value: project.id as string,
+                    label: project.title,
+                  })),
+                  ...(scopeIsStale
+                    ? [
+                        {
+                          value: scopeProjectId,
+                          label: scopeIsHidden ? "Hidden project" : "Unknown project",
+                        },
+                      ]
+                    : []),
+                ]}
+                modal={false}
+                onValueChange={(value: string | null) => {
+                  patchSearch((previous) => {
+                    const { project: _project, ...rest } = previous;
+                    return value === null || value === ALL_PROJECTS
+                      ? rest
+                      : { ...rest, project: value };
+                  });
+                }}
+                value={scopeProjectId ?? ALL_PROJECTS}
+              >
+                <SelectTrigger aria-label="Project scope" size="xs" variant="ghost">
+                  <span
+                    className={cn(
+                      "size-2 rounded-full",
+                      scopeProjectId === null
+                        ? "bg-muted-foreground/40"
+                        : projectAccent(scopeProjectId, accentNameFor(scopeProjectId)).dot,
+                    )}
+                  />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value={ALL_PROJECTS}>All projects</SelectItem>
+                  {projects.map((project) => (
+                    <SelectItem key={project.id} value={project.id}>
+                      <span className="inline-flex items-center gap-1.5">
+                        <span
+                          className={cn(
+                            "size-2 rounded-full",
+                            projectAccent(project.id, accentNameFor(project.id)).dot,
+                          )}
+                        />
+                        {project.title}
+                      </span>
+                    </SelectItem>
+                  ))}
+                  {scopeIsStale ? (
+                    <SelectItem value={scopeProjectId}>
+                      {scopeIsHidden ? "Hidden project" : "Unknown project"}
+                    </SelectItem>
+                  ) : null}
+                </SelectPopup>
+              </Select>
+              {/* The legend: which colour is which project, for as long as the board
+                is showing more than one project's cards. The prototype's swatch is
+                a short bar, not the scope picker's dot — the two never read as the
+                same control. Shown for a single project too: its colour is on every
+                card, so the board still owes you the key to it. */}
+              {scopeProjectId === null && projects.length > 0 ? (
+                <div className="flex min-w-0 items-center gap-3 overflow-hidden">
+                  {projects.map((project) => (
+                    <span
+                      className="inline-flex shrink-0 items-center gap-1.5 text-[11.5px] font-medium text-muted-foreground"
+                      key={project.id}
+                    >
                       <span
                         className={cn(
-                          "size-2 rounded-full",
+                          "h-[3px] w-[9px] shrink-0 rounded-[2px]",
                           projectAccent(project.id, accentNameFor(project.id)).dot,
                         )}
                       />
                       {project.title}
                     </span>
-                  </SelectItem>
-                ))}
-                {scopeIsStale ? (
-                  <SelectItem value={scopeProjectId}>
-                    {scopeIsHidden ? "Hidden project" : "Unknown project"}
-                  </SelectItem>
-                ) : null}
-              </SelectPopup>
-            </Select>
-            {/* The legend: which colour is which project, for as long as the board
-                is showing more than one project's cards. The prototype's swatch is
-                a short bar, not the scope picker's dot — the two never read as the
-                same control. Shown for a single project too: its colour is on every
-                card, so the board still owes you the key to it. */}
-            {scopeProjectId === null && projects.length > 0 ? (
-              <div className="flex min-w-0 items-center gap-3 overflow-hidden">
-                {projects.map((project) => (
-                  <span
-                    className="inline-flex shrink-0 items-center gap-1.5 text-[11.5px] font-medium text-muted-foreground"
-                    key={project.id}
-                  >
-                    <span
-                      className={cn(
-                        "h-[3px] w-[9px] shrink-0 rounded-[2px]",
-                        projectAccent(project.id, accentNameFor(project.id)).dot,
-                      )}
-                    />
-                    {project.title}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-          </>
-        )}
-        <span className="flex-1" />
-        {showStalledOnly || stalledCount > 0 ? (
-          <Button
-            onClick={() =>
-              patchSearch((previous) => {
-                const { stalled: _stalled, ...rest } = previous;
-                return showStalledOnly ? rest : { ...rest, stalled: true };
-              })
-            }
-            size="xs"
-            variant={showStalledOnly ? "secondary" : "ghost"}
-            title="Show only stalled cards — recovery gave up and a human is needed"
-          >
-            <TriangleAlertIcon />
-            {showStalledOnly ? "Stalled only" : `Stalled ${stalledCount}`}
-          </Button>
+                  ))}
+                </div>
+              ) : null}
+            </>
+          )}
+          <span className="flex-1" />
+          {showStalledOnly || stalledCount > 0 ? (
+            <Button
+              onClick={() =>
+                patchSearch((previous) => {
+                  const { stalled: _stalled, ...rest } = previous;
+                  return showStalledOnly ? rest : { ...rest, stalled: true };
+                })
+              }
+              size="xs"
+              variant={showStalledOnly ? "secondary" : "ghost"}
+              title="Show only stalled cards — recovery gave up and a human is needed"
+            >
+              <TriangleAlertIcon />
+              {showStalledOnly ? "Stalled only" : `Stalled ${stalledCount}`}
+            </Button>
+          ) : null}
+          {scope.kind === "root" ? (
+            <Button onClick={() => setArchiveOpen(true)} size="xs" variant="ghost">
+              <ArchiveIcon />
+              Archived
+            </Button>
+          ) : null}
+        </div>
+        {noQueryMatches ? (
+          <p className="shrink-0 px-3 pb-1 text-[12.5px] text-muted-foreground sm:px-5">
+            No cards match “{query.trim()}”.
+          </p>
         ) : null}
-        {scope.kind === "root" ? (
-          <Button onClick={() => setArchiveOpen(true)} size="xs" variant="ghost">
-            <ArchiveIcon />
-            Archived
-          </Button>
-        ) : null}
-      </div>
-      {noQueryMatches ? (
-        <p className="shrink-0 px-3 pb-1 text-[12.5px] text-muted-foreground sm:px-5">
-          No cards match “{query.trim()}”.
-        </p>
-      ) : null}
-      {/* The chart and the final-review footer sit between the header row and
+        {/* The chart and the final-review footer sit between the header row and
           the columns (t3o-29), the order the prototype's drill-in uses. */}
-      {scope.kind === "sub-board" ? (
-        <BoardSubBoardPlanStrip
-          cards={allCards}
-          chartOpen={subBoardChartOpen}
-          environmentId={environmentId}
-          onOpenChild={(childCardId) =>
-            patchSearch((previous) => ({ ...previous, card: childCardId }))
-          }
-          parentCardId={scope.parentCardId}
-          stages={orderedStages}
-        />
-      ) : null}
-      <div className="flex min-h-0 flex-1">
-        {/* `items-start` lets each column size to its cards; a collapsed rail
+        {scope.kind === "sub-board" ? (
+          <BoardSubBoardPlanStrip
+            cards={allCards}
+            chartOpen={subBoardChartOpen}
+            environmentId={environmentId}
+            onOpenChild={(childCardId) =>
+              patchSearch((previous) => ({ ...previous, card: childCardId }))
+            }
+            parentCardId={scope.parentCardId}
+            stages={orderedStages}
+          />
+        ) : null}
+        <div className="flex min-h-0 flex-1">
+          {/* `items-start` lets each column size to its cards; a collapsed rail
             opts back into full height with `self-stretch`. The row scrolls in
             both axes, so a column taller than the viewport is reachable. */}
-        <div
-          className={cn(
-            "flex min-h-0 flex-1 items-start gap-2.5 overflow-auto px-3 sm:px-5",
-            // Reserved unconditionally (T3O-34, D5): no card comes to rest
-            // under the corner menu, and collapsing it does not reflow the
-            // columns under the user's cursor.
-            BOARD_UTILITY_MENU_RESERVED_SPACE,
-          )}
-        >
-          {renderedStages.map((stage, index) => (
-            <BoardColumn
-              accentNameFor={accentNameFor}
-              parentKeyFor={parentKeyFor}
-              attentionFor={attentionFor}
-              childAttentionFor={childAttentionFor}
-              childRunningFor={childRunningFor}
-              addProjects={addProjects}
-              cards={visibleColumns[stage.stageId] ?? EMPTY_CARDS}
-              labelsById={labelsById}
-              collapsed={isBoardColumnCollapsed(
-                collapsedByStage,
-                collapseKeyOf(stage.stageId),
-                scope.kind === "root" && index === 0,
-              )}
-              draggedCardId={drag?.cardId ?? null}
-              dragHeight={drag?.height ?? 0}
-              dragOverIndex={
-                drag !== null && dragOver !== null && dragOver.stage === stage.stageId
-                  ? dragOver.index
-                  : null
-              }
-              key={stage.stageId}
-              label={stage.label}
-              atMergeStage={stage.stageId === mergeStageId}
-              noPullRequestFor={noPullRequestFor}
-              worktreeKeptFor={worktreeKeptFor}
-              autoMergeBoardWide={boardWideAutoMerge}
-              onCardDragEnd={handleCardDragEnd}
-              onCardReorder={handleCardReorder}
-              onCardDragStart={handleCardDragStart}
-              onColumnDragOver={handleColumnDragOver}
-              onColumnDrop={handleColumnDrop}
-              onOpenSubBoard={scope.kind === "root" ? handleOpenSubBoard : undefined}
-              onRequestCreate={openCreate}
-              onSelectCard={handleSelectCard}
-              onSetCollapsed={handleSetCollapsed}
-              queueSlots={queueSlots}
-              selectedCardId={selectedCardId}
-              todosFor={todosFor}
-              stage={stage.stageId}
-            />
-          ))}
+          <div
+            className={cn(
+              "flex min-h-0 flex-1 items-start gap-2.5 overflow-auto px-3 sm:px-5",
+              // Reserved unconditionally (T3O-34, D5): no card comes to rest
+              // under the corner menu, and collapsing it does not reflow the
+              // columns under the user's cursor.
+              BOARD_UTILITY_MENU_RESERVED_SPACE,
+            )}
+          >
+            {renderedStages.map((stage, index) => (
+              <BoardColumn
+                accentNameFor={accentNameFor}
+                parentKeyFor={parentKeyFor}
+                attentionFor={attentionFor}
+                childAttentionFor={childAttentionFor}
+                childRunningFor={childRunningFor}
+                addProjects={addProjects}
+                cards={visibleColumns[stage.stageId] ?? EMPTY_CARDS}
+                labelsById={labelsById}
+                collapsed={isBoardColumnCollapsed(
+                  collapsedByStage,
+                  collapseKeyOf(stage.stageId),
+                  scope.kind === "root" && index === 0,
+                )}
+                draggedCardId={drag?.cardId ?? null}
+                dragHeight={drag?.height ?? 0}
+                dragOverIndex={
+                  drag !== null && dragOver !== null && dragOver.stage === stage.stageId
+                    ? dragOver.index
+                    : null
+                }
+                key={stage.stageId}
+                label={stage.label}
+                atMergeStage={stage.stageId === mergeStageId}
+                noPullRequestFor={noPullRequestFor}
+                worktreeKeptFor={worktreeKeptFor}
+                autoMergeBoardWide={boardWideAutoMerge}
+                onCardDragEnd={handleCardDragEnd}
+                onCardReorder={handleCardReorder}
+                onCardDragStart={handleCardDragStart}
+                onColumnDragOver={handleColumnDragOver}
+                onColumnDrop={handleColumnDrop}
+                onOpenSubBoard={scope.kind === "root" ? handleOpenSubBoard : undefined}
+                onRequestCreate={openCreate}
+                onSelectCard={handleSelectCard}
+                onSetCollapsed={handleSetCollapsed}
+                queueSlots={queueSlots}
+                selectedCardId={selectedCardId}
+                todosFor={todosFor}
+                stage={stage.stageId}
+              />
+            ))}
+          </div>
         </div>
-      </div>
-      {/* The card opens as a centred modal over the board (t3o-06), not a
+        {/* The card opens as a centred modal over the board (t3o-06), not a
           rail beside it — so it never squeezes the columns.
 
           `key` is what gives every per-card view state its reset on a step
@@ -1459,69 +1490,70 @@ function EnvironmentBoard({
           step swaps the sheet's contents in one commit and the frame under it
           does not flinch. Hoisting the Dialog above the key would buy nothing
           and cost the reset. */}
-      {selectedCardId !== null ? (
-        <BoardCardDetail
-          cardId={BoardCardId.make(selectedCardId)}
+        {selectedCardId !== null ? (
+          <BoardCardDetail
+            cardId={BoardCardId.make(selectedCardId)}
+            environmentId={environmentId}
+            key={selectedCardId}
+            nav={cardNav}
+            onClose={handleCloseDetail}
+            onOpenSubBoard={openSubBoard}
+          />
+        ) : null}
+        <BoardArchivedCardsSheet
           environmentId={environmentId}
-          key={selectedCardId}
-          nav={cardNav}
-          onClose={handleCloseDetail}
-          onOpenSubBoard={openSubBoard}
+          liveCardKeyById={cardKeyById}
+          onDelete={handleDeleteCard}
+          onOpenChange={setArchiveOpen}
+          onRestore={handleRestoreCard}
+          onSelectCard={(cardId) => {
+            setArchiveOpen(false);
+            patchSearch((previous) => ({ ...previous, card: cardId }));
+          }}
+          open={archiveOpen}
+          scopeProjectId={scopeProjectId}
         />
-      ) : null}
-      <BoardArchivedCardsSheet
-        environmentId={environmentId}
-        liveCardKeyById={cardKeyById}
-        onDelete={handleDeleteCard}
-        onOpenChange={setArchiveOpen}
-        onRestore={handleRestoreCard}
-        onSelectCard={(cardId) => {
-          setArchiveOpen(false);
-          patchSearch((previous) => ({ ...previous, card: cardId }));
-        }}
-        open={archiveOpen}
-        scopeProjectId={scopeProjectId}
-      />
-      <BoardPlanningExitConfirmDialog
-        open={unplannedDrop !== null}
-        onOpenChange={(open) => {
-          if (!open) setUnplannedDrop(null);
-        }}
-        cardKey={unplannedDrop?.source.card.key ?? ""}
-        fromStageLabel={
-          unplannedDrop === null ? "" : boardStageLabel(orderedStages, unplannedDrop.source.stage)
-        }
-        toStageLabel={
-          unplannedDrop === null ? "" : boardStageLabel(orderedStages, unplannedDrop.targetStage)
-        }
-        onConfirm={() => {
-          if (unplannedDrop === null) return;
-          const cardId = unplannedDrop.source.card.cardId as string;
-          const source = findBoardCard(columns, cardId);
-          if (source === null) return;
-          const list = (columns[unplannedDrop.targetStage] ?? EMPTY_CARDS)
-            .map((card) => card.cardId as string)
-            .filter((id) => id !== cardId);
-          const anchor =
-            unplannedDrop.beforeId === null ? -1 : list.indexOf(unplannedDrop.beforeId);
-          list.splice(anchor < 0 ? list.length : anchor, 0, cardId);
-          performDrop(unplannedDrop.targetStage, list, source);
-        }}
-      />
-      <BoardCardCreateDialog
-        defaultProjectId={
-          scope.kind === "sub-board" ? (parentShell?.projectId ?? null) : scopeProjectId
-        }
-        defaultStage={createStage ?? firstStageId ?? BOARD_SEED_STAGES[0]!.stageId}
-        environmentId={environmentId}
-        onOpenChange={(open) => {
-          if (!open) setCreateStage(null);
-        }}
-        open={createStage !== null}
-        projects={addProjects}
-        subBoardParentId={scope.kind === "sub-board" ? scope.parentCardId : null}
-      />
-    </div>
+        <BoardPlanningExitConfirmDialog
+          open={unplannedDrop !== null}
+          onOpenChange={(open) => {
+            if (!open) setUnplannedDrop(null);
+          }}
+          cardKey={unplannedDrop?.source.card.key ?? ""}
+          fromStageLabel={
+            unplannedDrop === null ? "" : boardStageLabel(orderedStages, unplannedDrop.source.stage)
+          }
+          toStageLabel={
+            unplannedDrop === null ? "" : boardStageLabel(orderedStages, unplannedDrop.targetStage)
+          }
+          onConfirm={() => {
+            if (unplannedDrop === null) return;
+            const cardId = unplannedDrop.source.card.cardId as string;
+            const source = findBoardCard(columns, cardId);
+            if (source === null) return;
+            const list = (columns[unplannedDrop.targetStage] ?? EMPTY_CARDS)
+              .map((card) => card.cardId as string)
+              .filter((id) => id !== cardId);
+            const anchor =
+              unplannedDrop.beforeId === null ? -1 : list.indexOf(unplannedDrop.beforeId);
+            list.splice(anchor < 0 ? list.length : anchor, 0, cardId);
+            performDrop(unplannedDrop.targetStage, list, source);
+          }}
+        />
+        <BoardCardCreateDialog
+          defaultProjectId={
+            scope.kind === "sub-board" ? (parentShell?.projectId ?? null) : scopeProjectId
+          }
+          defaultStage={createStage ?? firstStageId ?? BOARD_SEED_STAGES[0]!.stageId}
+          environmentId={environmentId}
+          onOpenChange={(open) => {
+            if (!open) setCreateStage(null);
+          }}
+          open={createStage !== null}
+          projects={addProjects}
+          subBoardParentId={scope.kind === "sub-board" ? scope.parentCardId : null}
+        />
+      </div>
+    </BoardWorkersContext.Provider>
   );
 }
 

@@ -2,6 +2,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
   BoardStageId,
+  EnvironmentId,
   PositiveInt,
   ProviderInstanceId,
   type BoardCardStepState,
@@ -552,6 +553,7 @@ describe("resolveBoardConcurrencyLimit (t3o-11 D11)", () => {
   ): BoardConcurrencySettings => ({
     perInstance: {},
     globalMaxConcurrent: 3,
+    workers: {},
     ...overrides,
   });
 
@@ -562,7 +564,7 @@ describe("resolveBoardConcurrencyLimit (t3o-11 D11)", () => {
       }),
       ProviderInstanceId.make("codex"),
     );
-    assert.deepStrictEqual(limit, { perInstance: 1, global: 3 });
+    assert.deepStrictEqual(limit, { global: 3, worker: 3, perInstance: 1 });
   });
 
   it("falls back to the global ceiling (null per-instance) for an uncapped instance", () => {
@@ -572,7 +574,7 @@ describe("resolveBoardConcurrencyLimit (t3o-11 D11)", () => {
       }),
       ProviderInstanceId.make("claude"),
     );
-    assert.deepStrictEqual(limit, { perInstance: null, global: 3 });
+    assert.deepStrictEqual(limit, { global: 3, worker: 3, perInstance: null });
   });
 
   it("treats an explicit null cap the same as an absent one (clearing an override)", () => {
@@ -582,7 +584,83 @@ describe("resolveBoardConcurrencyLimit (t3o-11 D11)", () => {
       }),
       ProviderInstanceId.make("codex"),
     );
-    assert.deepStrictEqual(limit, { perInstance: null, global: 3 });
+    assert.deepStrictEqual(limit, { global: 3, worker: 3, perInstance: null });
+  });
+});
+
+describe("resolveBoardConcurrencyLimit per worker (T3O-65)", () => {
+  const linuxBox = EnvironmentId.make("env-linux-box");
+  const settings: BoardConcurrencySettings = {
+    perInstance: { [ProviderInstanceId.make("codex")]: PositiveInt.make(2) },
+    globalMaxConcurrent: 8,
+    workers: {
+      [linuxBox]: {
+        maxConcurrent: PositiveInt.make(4),
+        perInstance: { [ProviderInstanceId.make("claude")]: PositiveInt.make(3) },
+      },
+    },
+  };
+
+  it("migrates today's limit and caps to this server", () => {
+    // The global limit is both the board limit and local's worker limit; the
+    // per-instance caps are local's.
+    assert.deepStrictEqual(
+      resolveBoardConcurrencyLimit(settings, ProviderInstanceId.make("codex")),
+      {
+        global: 8,
+        worker: 8,
+        perInstance: 2,
+      },
+    );
+  });
+
+  it("reads a worker's own limit and caps, and nothing of local's", () => {
+    assert.deepStrictEqual(
+      resolveBoardConcurrencyLimit(settings, ProviderInstanceId.make("claude"), linuxBox),
+      { global: 8, worker: 4, perInstance: 3 },
+    );
+    assert.deepStrictEqual(
+      resolveBoardConcurrencyLimit(settings, ProviderInstanceId.make("codex"), linuxBox),
+      { global: 8, worker: 4, perInstance: null },
+    );
+  });
+
+  it("an explicit local limit overrides the inherited one, and null removes it", () => {
+    const set = (maxConcurrent: number | null): BoardConcurrencySettings => ({
+      ...settings,
+      workers: {
+        local: {
+          maxConcurrent: maxConcurrent === null ? null : PositiveInt.make(maxConcurrent),
+          perInstance: { [ProviderInstanceId.make("codex")]: null },
+        },
+      },
+    });
+    assert.deepStrictEqual(resolveBoardConcurrencyLimit(set(2), ProviderInstanceId.make("codex")), {
+      global: 8,
+      worker: 2,
+      // The local entry's null clears the legacy cap.
+      perInstance: null,
+    });
+    assert.strictEqual(
+      resolveBoardConcurrencyLimit(set(null), ProviderInstanceId.make("codex")).worker,
+      null,
+    );
+  });
+
+  it("a provider cap above its worker limit reads as the worker limit", () => {
+    const capped: BoardConcurrencySettings = {
+      ...settings,
+      workers: {
+        [linuxBox]: {
+          maxConcurrent: PositiveInt.make(2),
+          perInstance: { [ProviderInstanceId.make("claude")]: PositiveInt.make(5) },
+        },
+      },
+    };
+    assert.deepStrictEqual(
+      resolveBoardConcurrencyLimit(capped, ProviderInstanceId.make("claude"), linuxBox),
+      { global: 8, worker: 2, perInstance: null },
+    );
   });
 });
 

@@ -73,6 +73,10 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   autoStart: false,
   autoMerge: false,
   autoMergeHold: null,
+  pinnedWorkerId: null,
+  placedWorkerId: null,
+  workerMove: null,
+  placementOrphaned: null,
   worktree: null,
   blocked: false,
   archivedAt: null,
@@ -156,6 +160,48 @@ describe("board shell reducer", () => {
       stepRunning: true,
     });
     expect(cleared.cards?.[0]?.queued).toBe(false);
+  });
+
+  it("card-queued carries which limit holds the card, card deltas keep it, and leaving the queue clears it (T3O-65)", () => {
+    const held = snapshot({
+      cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })],
+    });
+    const queued = applyBoardShellStreamEvent(held, {
+      kind: "card-queued",
+      sequence: 2,
+      cardId: BoardCardId.make("card-1"),
+      queued: true,
+      stepRunning: false,
+      queuedBy: "worker",
+    });
+    expect(queued.cards?.[0]?.queuedBy).toBe("worker");
+    // A drag re-upserts the card without step state: the reason stays.
+    const dragged = applyBoardShellStreamEvent(queued, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "zz" }),
+    });
+    expect(dragged.cards?.[0]?.queued).toBe(true);
+    expect(dragged.cards?.[0]?.queuedBy).toBe("worker");
+    // A different limit takes over.
+    const board = applyBoardShellStreamEvent(dragged, {
+      kind: "card-queued",
+      sequence: 4,
+      cardId: BoardCardId.make("card-1"),
+      queued: true,
+      stepRunning: false,
+      queuedBy: "board",
+    });
+    expect(board.cards?.[0]?.queuedBy).toBe("board");
+    // Admitted: no longer queued, no reason left behind.
+    const admitted = applyBoardShellStreamEvent(board, {
+      kind: "card-queued",
+      sequence: 5,
+      cardId: BoardCardId.make("card-1"),
+      queued: false,
+      stepRunning: true,
+    });
+    expect(admitted.cards?.[0]?.queuedBy).toBeUndefined();
   });
 
   it("card-queued admitted-to-running lights stepRunning; holding for a slot clears it", () => {
@@ -1040,6 +1086,19 @@ describe("boardBuildQueue", () => {
     expect(queue.get("card-b")).toEqual({ position: 1, total: 2, ahead: 0, startsNext: true });
     expect(queue.get("card-c")).toEqual({ position: 2, total: 2, ahead: 1, startsNext: false });
     expect(queue.has("card-a")).toBe(false);
+  });
+
+  it("leaves out a card held for its offline worker: it waits on no slot (T3O-66)", () => {
+    const cards = [
+      {
+        ...queuedCard("card-held", BOARD_SEED_STAGE_IDS.building, "a"),
+        queuedBy: "worker-offline" as const,
+      },
+      queuedCard("card-b", BOARD_SEED_STAGE_IDS.building, "m"),
+    ];
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES, NOW_MS);
+    expect(queue.has("card-held")).toBe(false);
+    expect(queue.get("card-b")).toEqual({ position: 1, total: 1, ahead: 0, startsNext: true });
   });
 
   // The governor admits the LATER stage first, so a Building card queued behind

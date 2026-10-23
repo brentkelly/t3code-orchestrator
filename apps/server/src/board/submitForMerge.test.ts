@@ -83,6 +83,7 @@ const settledBuildStep: BoardCardStepState = {
   status: "succeeded",
   slotHeld: false,
   forceStart: false,
+  queuedBy: null,
   startedAt: NOW,
   updatedAt: NOW,
 };
