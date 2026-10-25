@@ -705,7 +705,7 @@ function TitleBody({
     setEditing(false);
   };
   const frame = compact
-    ? "min-w-0 max-w-[min(40%,14rem)] rounded-[7px] px-1 text-[13.5px]/[18px] font-semibold tracking-[-0.01em] text-foreground"
+    ? "min-w-16 max-w-[min(40%,14rem)] rounded-[7px] px-1 text-[13.5px]/[18px] font-semibold tracking-[-0.01em] text-foreground"
     : "mx-2.5 mt-2 shrink-0 rounded-[7px] px-1.5 text-[21px]/[1.25] font-semibold tracking-[-0.015em] text-pretty text-foreground";
   const editingFrame = compact
     ? "min-w-[10rem] max-w-none flex-1 rounded-[7px] px-1 text-[13.5px]/[18px] font-semibold tracking-[-0.01em] text-foreground"
@@ -761,7 +761,7 @@ function TitleBody({
   }
   return (
     <h2
-      className={cn(frame, compact && "flex min-w-0 items-center", "cursor-text hover:bg-accent")}
+      className={cn(frame, compact && "flex min-w-16 items-center", "cursor-text hover:bg-accent")}
       id={CARD_TITLE_ID}
     >
       <BoardHint label={compact ? title : "Click to edit"}>
@@ -2594,16 +2594,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       <div
         className={cn(
           "relative z-10 flex min-w-0 shrink-0 items-center gap-[9px] px-4",
-          compactChrome
-            ? "overflow-x-auto py-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-            : "pt-4",
+          compactChrome ? "py-2" : "pt-4",
         )}
       >
         <div
           className={cn(
             "flex items-center gap-[9px]",
             compactChrome
-              ? "min-w-0 flex-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              ? "min-w-0 flex-auto overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               : "shrink-0",
           )}
           onScroll={compactChrome ? syncCompactScrollAffordance : undefined}
@@ -2705,11 +2703,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               </button>
             </BoardHint>
           ) : null}
+          {compactChrome ? paneTabs : null}
         </div>
-        {/* Title and chips scroll; pane tabs, the thread trigger, and Open in
-            Threads stay pinned ahead of the kebab so the switcher cannot sit
-            off-screen. A chevron is the same affordance the tab strip uses
-            when this cluster still overflows. */}
+        {/* Title, chips, and pane tabs scroll in the cluster. The thread
+            trigger, Exit, kebab, and Close stay pinned so a 320px sheet
+            cannot hide them. A chevron is the same affordance the tab strip
+            uses when this cluster still overflows. */}
         {compactChrome && compactCanScrollRight ? (
           <BoardHint label="Show more">
             <button
@@ -2727,7 +2726,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </button>
           </BoardHint>
         ) : null}
-        {compactChrome ? paneTabs : null}
         {compactChrome && activePane === "thread" ? (
           <BoardCardThreadCompactControls
             adoptableThreads={props.adoptableThreads}
@@ -2841,10 +2839,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         <BoardHint label="Close">
           <button
             aria-label="Close"
-            className={cn(
-              "inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground",
-              compactChrome && "sticky right-0 z-20 bg-popover",
-            )}
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
             onClick={props.onClose}
             type="button"
           >

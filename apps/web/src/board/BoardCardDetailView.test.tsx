@@ -1699,12 +1699,16 @@ describe("BoardCardDetailPanel compact fullscreen chrome", () => {
     expect(rowEnd).toBeGreaterThan(rowStart);
     const row = html.slice(rowStart, rowEnd);
     expect(row).toContain("overflow-x-auto");
+    expect(row).toContain("flex-auto");
     expect(row).toContain('aria-label="Close"');
     expect(row.indexOf('aria-label="Close"')).toBeGreaterThan(row.indexOf("overflow-x-auto"));
     expect(row.indexOf('aria-label="Threads')).toBeGreaterThan(row.indexOf("overflow-x-auto"));
     expect(
       row.indexOf(">Thread<") === -1 ? row.indexOf("Thread") : row.indexOf(">Thread<"),
     ).toBeGreaterThan(row.indexOf("overflow-x-auto"));
+    expect(
+      row.indexOf(">Thread<") === -1 ? row.indexOf("Thread") : row.indexOf(">Thread<"),
+    ).toBeLessThan(row.indexOf('aria-label="Threads'));
     expect(row.indexOf('aria-label="Exit fullscreen"')).toBeGreaterThan(
       row.indexOf('aria-label="Threads'),
     );

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 /**
- * Compact identity-row layout (T3O-17 round 2): Close stays clear of shrinking
- * thread controls on a narrow maximised sheet. jsdom does not run the browser
- * flex algorithm, so this walks the row's flex items and their Tailwind shrink
+ * Compact identity-row layout (T3O-17): on a narrow maximised sheet the title
+ * keeps a floor, pane tabs scroll inside the chip cluster, and the thread
+ * trigger / Exit / Close stay pinned. jsdom does not run the browser flex
+ * algorithm, so this walks the row's flex items and their Tailwind shrink
  * classes and assigns used widths the way the sheet's row does.
  */
 import {
@@ -226,32 +227,24 @@ const baseProps = {
 
 const ROW_WIDTH = 320;
 const GAP = 9;
+const TITLE_FLOOR = 64;
+const TRIGGER_FLOOR = 64;
+
+const PANE_TAB_WIDTH: Record<string, number> = {
+  Thread: 72,
+  Review: 78,
+  Summary: 86,
+  Plan: 64,
+  Brief: 68,
+};
 
 function hasClass(className: string, token: string) {
   return new RegExp(`(?:^|\\s)${token}(?:\\s|$)`).test(className);
 }
 
-function estimateContentWidth(el: HTMLElement): number {
-  const label = el.getAttribute("aria-label") ?? "";
-  if (label === "Close") return 28;
-  if (label === "More actions") return 28;
-  if (label === "Exit fullscreen") return 24;
-  if (label === "Show more") return 24;
-  if (label.startsWith("Threads")) return 192;
-  if (label === "Open in Threads") return 24;
-  if (hasClass(el.className, "overflow-x-auto")) return 720;
-  if (hasClass(el.className, "size-7")) return 28;
-  if (el.querySelector('[aria-label="Close"]') != null) return 28;
-  if (el.querySelector('[aria-label="More actions"]') != null) return 28;
-  if (el.querySelector('[aria-label="Exit fullscreen"]') != null) return 24;
-  if (el.querySelector('[aria-label="Show more"]') != null) return 24;
-  if (el.querySelector('[aria-label^="Threads"]') != null) return 192;
-  if (
-    [...el.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Thread")
-  ) {
-    return 140;
-  }
-  return 48;
+function paneTabLabel(el: HTMLElement): string | null {
+  const text = el.textContent?.replace(/\s+/g, " ").trim() ?? "";
+  return text in PANE_TAB_WIDTH ? text : null;
 }
 
 function flexItems(row: HTMLElement): HTMLElement[] {
@@ -265,38 +258,107 @@ function flexItems(row: HTMLElement): HTMLElement[] {
   });
 }
 
+function estimateContentWidth(el: HTMLElement): number {
+  const label = el.getAttribute("aria-label") ?? "";
+  if (label === "Close") return 28;
+  if (label === "More actions") return 28;
+  if (label === "Exit fullscreen") return 24;
+  if (label === "Show more") return 24;
+  if (label.startsWith("Threads")) return 192;
+  if (label === "Open in Threads") return 24;
+  if (el.id === "board-card-detail-title") return 160;
+  const tab = paneTabLabel(el);
+  if (tab !== null && el.tagName === "BUTTON") return PANE_TAB_WIDTH[tab]!;
+  const allButtons = [...el.querySelectorAll("button")];
+  const paneButtons = allButtons.filter((button) => paneTabLabel(button as HTMLElement) !== null);
+  if (
+    paneButtons.length > 0 &&
+    paneButtons.length === allButtons.length &&
+    !hasClass(el.className, "overflow-x-auto")
+  ) {
+    return (
+      paneButtons.reduce(
+        (sum, button) => sum + PANE_TAB_WIDTH[paneTabLabel(button as HTMLElement)!]!,
+        0,
+      ) +
+      Math.max(0, paneButtons.length - 1) * 2 +
+      8
+    );
+  }
+  if (hasClass(el.className, "overflow-x-auto")) {
+    const kids = flexItems(el);
+    if (kids.length > 0) {
+      return (
+        kids.reduce((sum, child) => sum + estimateContentWidth(child), 0) +
+        Math.max(0, kids.length - 1) * GAP
+      );
+    }
+    return 720;
+  }
+  if (hasClass(el.className, "size-7")) return 28;
+  if (el.querySelector('[aria-label="Close"]') != null) return 28;
+  if (el.querySelector('[aria-label="More actions"]') != null) return 28;
+  if (el.querySelector('[aria-label="Exit fullscreen"]') != null) return 24;
+  if (el.querySelector('[aria-label="Show more"]') != null) return 24;
+  if (el.querySelector('[aria-label^="Threads"]') != null) return 192;
+  return 48;
+}
+
 function layoutRow(row: HTMLElement, rowWidth: number) {
   const items = flexItems(row);
   const models = items.map((el) => {
     const className = el.className;
     const shrink0 = hasClass(className, "shrink-0");
     const flex1 = hasClass(className, "flex-1");
+    const flexAuto = hasClass(className, "flex-auto");
     const minW0 = hasClass(className, "min-w-0");
+    const minW16 = hasClass(className, "min-w-16");
     const clipOverflow =
       hasClass(className, "overflow-x-auto") || hasClass(className, "overflow-hidden");
-    const content = estimateContentWidth(el);
+    let content = estimateContentWidth(el);
+    if (hasClass(className, "max-w-48")) content = Math.min(content, 192);
+    if (className.includes("max-w-[min(40%,14rem)]")) {
+      content = Math.min(content, Math.min(rowWidth * 0.4, 224));
+    }
+    let min = content;
+    if (minW16) min = 64;
+    else if (minW0 || flex1) min = 0;
     return {
       el,
-      grow: flex1 ? 1 : 0,
+      grow: flex1 || flexAuto ? 1 : 0,
       shrink: shrink0 ? 0 : 1,
       basis: flex1 ? 0 : content,
-      min: minW0 || flex1 ? 0 : content,
+      min,
       content,
       clipOverflow,
     };
   });
-  const used = models.map((model) => model.basis);
-  const total = used.reduce((sum, width) => sum + width, 0) + Math.max(0, items.length - 1) * GAP;
-  if (total > rowWidth) {
+  const used = models.map((model) => Math.max(model.basis, model.min));
+  const gaps = Math.max(0, items.length - 1) * GAP;
+  for (let pass = 0; pass < 4; pass++) {
+    const total = used.reduce((sum, width) => sum + width, 0) + gaps;
+    if (total <= rowWidth) break;
     const extra = total - rowWidth;
-    const weights = models.map((model, index) => model.shrink * used[index]!);
+    const weights = models.map((model, index) =>
+      used[index]! > model.min ? model.shrink * used[index]! : 0,
+    );
     const weightSum = weights.reduce((sum, weight) => sum + weight, 0);
-    if (weightSum > 0) {
+    if (weightSum <= 0) break;
+    for (let index = 0; index < used.length; index++) {
+      if (weights[index] === 0) continue;
+      used[index] = Math.max(
+        models[index]!.min,
+        used[index]! - extra * (weights[index]! / weightSum),
+      );
+    }
+  }
+  const usedTotal = used.reduce((sum, width) => sum + width, 0) + gaps;
+  if (usedTotal < rowWidth) {
+    const leftover = rowWidth - usedTotal;
+    const growSum = models.reduce((sum, model) => sum + model.grow, 0);
+    if (growSum > 0) {
       for (let index = 0; index < used.length; index++) {
-        used[index] = Math.max(
-          models[index]!.min,
-          used[index]! - extra * (weights[index]! / weightSum),
-        );
+        used[index] = (used[index] ?? 0) + leftover * (models[index]!.grow / growSum);
       }
     }
   }
@@ -351,13 +413,14 @@ describe("BoardCardDetailPanel compact identity-row layout", () => {
     expect(threadTab).toBeInstanceOf(HTMLElement);
 
     expect(scroller!.contains(trigger)).toBe(false);
-    expect(scroller!.contains(threadTab!)).toBe(false);
+    expect(scroller!.contains(threadTab!)).toBe(true);
     expect(scroller!.contains(close)).toBe(false);
     expect(scroller!.contains(exit)).toBe(false);
-    expect(hasClass(scroller!.className, "flex-1")).toBe(true);
+    expect(hasClass(scroller!.className, "flex-auto")).toBe(true);
     expect(hasClass(scroller!.className, "min-w-0")).toBe(true);
     expect(hasClass(close!.className, "shrink-0")).toBe(true);
     expect(hasClass(exit!.className, "shrink-0")).toBe(true);
+    expect(hasClass(row!.className, "overflow-x-auto")).toBe(false);
 
     const boxes = layoutRow(row as HTMLElement, ROW_WIDTH);
     const closeBox = boxes.find((box) => box.el === close || box.el.contains(close));
@@ -372,18 +435,65 @@ describe("BoardCardDetailPanel compact identity-row layout", () => {
     expect(closeBox!.start + closeBox!.width).toBeLessThanOrEqual(ROW_WIDTH + GAP);
   });
 
+  it("keeps the compact title and Exit on a 320px sheet", async () => {
+    await act(() => root.render(<BoardCardDetailPanel {...baseProps} />));
+    await act(() => Promise.resolve());
+
+    const close = container.querySelector('[aria-label="Close"]') as HTMLElement;
+    const row = close.closest('[class*="relative z-10"]') as HTMLElement;
+    const title = container.querySelector("#board-card-detail-title") as HTMLElement;
+    const trigger = container.querySelector('[aria-label^="Threads"]') as HTMLElement;
+    const exit = container.querySelector('[aria-label="Exit fullscreen"]') as HTMLElement;
+    const threadTab = [...row.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("Thread"),
+    ) as HTMLElement;
+    const scroller = [...row.querySelectorAll('[class*="overflow-x-auto"]')].find((node) =>
+      hasClass((node as HTMLElement).className, "flex-auto"),
+    ) as HTMLElement;
+
+    expect(title).toBeInstanceOf(HTMLElement);
+    expect(scroller).toBeInstanceOf(HTMLElement);
+    expect(scroller.contains(title)).toBe(true);
+    expect(scroller.contains(threadTab)).toBe(true);
+    expect(scroller.contains(trigger)).toBe(false);
+    expect(scroller.contains(exit)).toBe(false);
+    expect(hasClass(row.className, "overflow-x-auto")).toBe(false);
+    expect(hasClass(trigger.parentElement!.className, "min-w-0")).toBe(false);
+    expect(hasClass(trigger.parentElement!.className, "min-w-16")).toBe(true);
+
+    const boxes = layoutRow(row, ROW_WIDTH);
+    const clusterBox = boxes.find((box) => box.el === scroller);
+    const triggerBox = boxes.find(
+      (box) => box.el === trigger || box.el.contains(trigger) || trigger.contains(box.el),
+    );
+    const exitBox = boxes.find((box) => box.el === exit || box.el.contains(exit));
+    const closeBox = boxes.find((box) => box.el === close || box.el.contains(close));
+    expect(clusterBox).toBeDefined();
+    expect(triggerBox).toBeDefined();
+    expect(exitBox).toBeDefined();
+    expect(closeBox).toBeDefined();
+    expect(triggerBox!.width).toBeGreaterThanOrEqual(TRIGGER_FLOOR);
+    expect(exitBox!.paintEnd).toBeLessThanOrEqual(closeBox!.start + 0.5);
+    expect(closeBox!.start + closeBox!.width).toBeLessThanOrEqual(ROW_WIDTH + GAP);
+
+    const inner = layoutRow(scroller, clusterBox!.width);
+    const titleBox = inner.find((box) => box.el === title || box.el.contains(title));
+    expect(titleBox).toBeDefined();
+    expect(titleBox!.width).toBeGreaterThanOrEqual(TITLE_FLOOR);
+  });
+
   it("shows a chevron when the compact identity cluster overflows", async () => {
     vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (
       this: HTMLElement,
     ) {
-      return hasClass(this.className, "flex-1") && hasClass(this.className, "overflow-x-auto")
+      return hasClass(this.className, "flex-auto") && hasClass(this.className, "overflow-x-auto")
         ? 400
         : 100;
     });
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
       this: HTMLElement,
     ) {
-      return hasClass(this.className, "flex-1") && hasClass(this.className, "overflow-x-auto")
+      return hasClass(this.className, "flex-auto") && hasClass(this.className, "overflow-x-auto")
         ? 80
         : 100;
     });
@@ -396,7 +506,7 @@ describe("BoardCardDetailPanel compact identity-row layout", () => {
     const close = container.querySelector('[aria-label="Close"]');
     const row = close!.closest('[class*="relative z-10"]') as HTMLElement;
     const scroller = [...row.querySelectorAll('[class*="overflow-x-auto"]')].find((node) =>
-      hasClass((node as HTMLElement).className, "flex-1"),
+      hasClass((node as HTMLElement).className, "flex-auto"),
     ) as HTMLElement;
     const trigger = container.querySelector('[aria-label^="Threads"]');
     const chevron = container.querySelector('[aria-label="Show more"]');
