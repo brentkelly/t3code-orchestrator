@@ -16,24 +16,8 @@
  * thread joins a card.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import {
-  BOARD_LOCAL_WORKER_ID,
-  isBoardCardAwaitingPermission,
-  type BoardCardThreadShell,
-  type EnvironmentId,
-  type ThreadId,
-} from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
-import {
-  ChevronRightIcon,
-  ClockIcon,
-  MaximizeIcon,
-  MessageSquareIcon,
-  MinimizeIcon,
-  PlayIcon,
-  SquareArrowOutUpRightIcon,
-  XIcon,
-} from "lucide-react";
+import { type BoardCardThreadShell, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
+import { ChevronRightIcon, ClockIcon, PlayIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import ChatView from "../components/ChatView";
@@ -41,13 +25,17 @@ import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
 import { useThreadShell } from "../state/entities";
 import { BoardCardThreadAddMenu, type BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
+import {
+  BoardCardThreadExitFullscreenButton,
+  BoardCardThreadOpenInThreadsButton,
+  BoardCardThreadStatusGlyph,
+} from "./BoardCardThreadChrome";
 import { BoardCardThreadTodosStrip } from "./BoardCardThreadTodosStrip";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
 import { BoardHint } from "./BoardHint";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 import { BoardThreadWorkerGate } from "./workers/BoardThreadWorkerGate";
-import { threadWorkerOpensOn } from "./workers/threadWorker";
 
 /** The live chat for one linked thread. Split out so the thread-detail
     subscription hooks are keyed by the mounted thread and unmount with it. */
@@ -91,6 +79,7 @@ export function BoardCardThreadPane({
   onUnlinkThread,
   maximised,
   onToggleMaximised,
+  compactChrome = false,
   threadTodos,
   queueInfo,
   queueForceStartPending,
@@ -112,6 +101,8 @@ export function BoardCardThreadPane({
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   readonly maximised: boolean;
   readonly onToggleMaximised: () => void;
+  /** When true the tab strip is gone — its controls live in the identity row. */
+  readonly compactChrome?: boolean | undefined;
   /** Each live-linked thread's cached todo list (t3o-18, D3/D5). The modal
       always shows what is STORED — unlike the card strip, which hides a finished
       list on a stopped thread — so a thread that succeeded still reads `5/5`
@@ -159,169 +150,114 @@ export function BoardCardThreadPane({
 
   return (
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-2.5 pr-3">
-        <BoardCardThreadAddMenu
-          adoptableThreads={adoptableThreads}
-          label=""
-          onAdoptThread={(id) => onLinkThread(id as ThreadId, "linked")}
-          onCreateBlankThread={createBlankThreadAndSelect}
-          onRestartStage={onRestartStage}
-          stageRestart={stageRestart}
-        />
-        <div
-          className="flex min-w-0 items-center gap-0.5 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          onScroll={syncScrollAffordance}
-          ref={stripRef}
-        >
-          {orderedLinks.map((link) => {
-            const active = link.threadId === selectedThreadId;
-            return (
-              // The pill is a GROUP, not one button: nesting the unlink control
-              // inside the select button would be invalid HTML and made it
-              // keyboard-unreachable (it was a presentation-role span). The
-              // wrapper draws the pill; select and unlink are real sibling
-              // buttons, each focusable in its own right.
-              <span
-                className={cn(
-                  // The tab strip scrolls, so its overflow clips anything drawn
-                  // outside a pill's border box — an outer ring shadow loses its
-                  // top and bottom edges. The border has to be a real border.
-                  "inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[12px]",
-                  active
-                    ? "border-border bg-card font-medium text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground",
-                  link.tombstoned && "line-through",
-                )}
-                key={link.threadId}
-              >
-                <BoardHint
-                  label={
-                    link.tombstoned
-                      ? "Deleted thread"
-                      : link.ranOn === null
-                        ? link.role
-                        : `${link.role} · ${link.ranOn}`
-                  }
+      {compactChrome ? null : (
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-2.5 pr-3">
+          <BoardCardThreadAddMenu
+            adoptableThreads={adoptableThreads}
+            label=""
+            onAdoptThread={(id) => onLinkThread(id as ThreadId, "linked")}
+            onCreateBlankThread={createBlankThreadAndSelect}
+            onRestartStage={onRestartStage}
+            stageRestart={stageRestart}
+          />
+          <div
+            className="flex min-w-0 items-center gap-0.5 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            onScroll={syncScrollAffordance}
+            ref={stripRef}
+          >
+            {orderedLinks.map((link) => {
+              const active = link.threadId === selectedThreadId;
+              return (
+                // The pill is a GROUP, not one button: nesting the unlink control
+                // inside the select button would be invalid HTML and made it
+                // keyboard-unreachable (it was a presentation-role span). The
+                // wrapper draws the pill; select and unlink are real sibling
+                // buttons, each focusable in its own right.
+                <span
+                  className={cn(
+                    // The tab strip scrolls, so its overflow clips anything drawn
+                    // outside a pill's border box — an outer ring shadow loses its
+                    // top and bottom edges. The border has to be a real border.
+                    "inline-flex h-[26px] shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[12px]",
+                    active
+                      ? "border-border bg-card font-medium text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground",
+                    link.tombstoned && "line-through",
+                  )}
+                  key={link.threadId}
                 >
-                  <button
-                    className="inline-flex min-w-0 items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-ring"
-                    onClick={() => onSelectThread(link.threadId)}
-                    type="button"
+                  <BoardHint
+                    label={
+                      link.tombstoned
+                        ? "Deleted thread"
+                        : link.ranOn === null
+                          ? link.role
+                          : `${link.role} · ${link.ranOn}`
+                    }
                   >
-                    {link.awaitingInput ? (
-                      <BoardHint label="Awaiting your input">
-                        <span
-                          aria-label="Awaiting your input"
-                          role="img"
-                          className="size-2 shrink-0 rounded-full bg-attention"
-                        />
-                      </BoardHint>
-                    ) : isBoardCardAwaitingPermission(link) ? (
-                      // Blocked on a permission prompt (T3O-16): as answerable
-                      // as a question, so the same violet, not the idle glyph.
-                      <BoardHint label="Waiting for permission">
-                        <span
-                          aria-label="Waiting for permission"
-                          role="img"
-                          className="size-2 shrink-0 rounded-full bg-attention"
-                        />
-                      </BoardHint>
-                    ) : link.threadState === "working" ? (
-                      <BoardHint label="Working">
-                        <span
-                          aria-label="Working"
-                          role="img"
-                          className="size-2 shrink-0 rounded-full bg-info"
-                        />
-                      </BoardHint>
-                    ) : link.threadState === "failed" ? (
-                      // A dead provider session (t3o-10) reads as idle if it
-                      // falls through to the generic glyph, which is the lie
-                      // this card set out to remove. Red, the colour the thread
-                      // list and the activity rail already give a failure — not
-                      // a work-state colour, because no work is happening.
-                      <BoardHint label="Failed">
-                        <span
-                          aria-label="Failed"
-                          role="img"
-                          className="size-2 shrink-0 rounded-full bg-destructive"
-                        />
-                      </BoardHint>
-                    ) : (
-                      <MessageSquareIcon className="size-3 shrink-0 opacity-70" />
-                    )}
-                    <span className="max-w-40 truncate whitespace-nowrap">
-                      {link.title ?? "Deleted thread"}
-                    </span>
-                    {(() => {
-                      // Per-tab todo counts (t3o-18): the point of tabs is choosing
-                      // between threads, and "3/9" answers that better than a title.
-                      const todo = threadTodos?.get(link.threadId);
-                      const total = todo?.todoTotal ?? 0;
-                      return total === 0 ? null : (
-                        <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
-                          {todo?.todoDone ?? 0}/{total}
-                        </span>
-                      );
-                    })()}
-                  </button>
-                </BoardHint>
-                {active && !link.tombstoned ? (
-                  <BoardHint label="Unlink thread">
                     <button
-                      aria-label="Unlink thread"
-                      className="-mr-1 inline-flex size-[15px] shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onUnlinkThread(link.threadId);
-                      }}
+                      className="inline-flex min-w-0 items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-ring"
+                      onClick={() => onSelectThread(link.threadId)}
                       type="button"
                     >
-                      <XIcon className="size-2.5" />
+                      <BoardCardThreadStatusGlyph link={link} />
+                      <span className="max-w-40 truncate whitespace-nowrap">
+                        {link.title ?? "Deleted thread"}
+                      </span>
+                      {(() => {
+                        // Per-tab todo counts (t3o-18): the point of tabs is choosing
+                        // between threads, and "3/9" answers that better than a title.
+                        const todo = threadTodos?.get(link.threadId);
+                        const total = todo?.todoTotal ?? 0;
+                        return total === 0 ? null : (
+                          <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
+                            {todo?.todoDone ?? 0}/{total}
+                          </span>
+                        );
+                      })()}
                     </button>
                   </BoardHint>
-                ) : null}
-              </span>
-            );
-          })}
+                  {active && !link.tombstoned ? (
+                    <BoardHint label="Unlink thread">
+                      <button
+                        aria-label="Unlink thread"
+                        className="-mr-1 inline-flex size-[15px] shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onUnlinkThread(link.threadId);
+                        }}
+                        type="button"
+                      >
+                        <XIcon className="size-2.5" />
+                      </button>
+                    </BoardHint>
+                  ) : null}
+                </span>
+              );
+            })}
+          </div>
+          {canScrollRight ? (
+            <BoardHint label="Show older threads">
+              <button
+                aria-label="Show older threads"
+                className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                onClick={scrollOlderIntoView}
+                type="button"
+              >
+                <ChevronRightIcon className="size-3.5" />
+              </button>
+            </BoardHint>
+          ) : null}
+          <span className="flex-1" />
+          <BoardCardThreadExitFullscreenButton maximised={maximised} onToggle={onToggleMaximised} />
+          {selected !== null && !selected.tombstoned ? (
+            <BoardCardThreadOpenInThreadsButton
+              threadId={selected.threadId}
+              worker={selected.worker}
+            />
+          ) : null}
         </div>
-        {canScrollRight ? (
-          <BoardHint label="Show older threads">
-            <button
-              aria-label="Show older threads"
-              className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-              onClick={scrollOlderIntoView}
-              type="button"
-            >
-              <ChevronRightIcon className="size-3.5" />
-            </button>
-          </BoardHint>
-        ) : null}
-        <span className="flex-1" />
-        <BoardHint label={maximised ? "Exit fullscreen" : "Fullscreen"}>
-          <button
-            className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
-            onClick={onToggleMaximised}
-            type="button"
-          >
-            {maximised ? <MinimizeIcon className="size-3" /> : <MaximizeIcon className="size-3" />}
-          </button>
-        </BoardHint>
-        {selected !== null && !selected.tombstoned ? (
-          <Link
-            className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
-            params={{ environmentId: selected.worker.environmentId, threadId: selected.threadId }}
-            title={
-              selected.worker.workerId === BOARD_LOCAL_WORKER_ID
-                ? "Open in the threads view"
-                : threadWorkerOpensOn(selected.worker)
-            }
-            to="/$environmentId/$threadId"
-          >
-            <SquareArrowOutUpRightIcon className="size-3" />
-          </Link>
-        ) : null}
-      </div>
+      )}
 
       {/* Queued for a build slot (t3o-33). PANE-LEVEL, above whichever thread is
           selected, because a queued card has no build thread to put it in — the

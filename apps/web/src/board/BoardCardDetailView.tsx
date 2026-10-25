@@ -100,6 +100,8 @@ import {
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
 
+import { useMediaQuery } from "../hooks/useMediaQuery";
+
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
 import { Button } from "../components/ui/button";
@@ -176,6 +178,11 @@ import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
 import { BoardHint } from "./BoardHint";
+import { BOARD_CARD_COMPACT_CHROME_QUERY, boardCardCompactChrome } from "./boardCardCompactChrome";
+import {
+  BoardCardThreadCompactControls,
+  BoardCardThreadExitFullscreenButton,
+} from "./BoardCardThreadChrome";
 import { threadWorkerOpensOn, type BoardThreadWorker } from "./workers/threadWorker";
 import {
   boardForwardShownBesideRecovery,
@@ -664,7 +671,8 @@ const THREAD_STATE_LABEL: Record<BoardCardThreadState, string> = {
 /**
  * The card's title, click-to-edit in place — the prototype's affordance, the
  * same one `BriefBody` has. The heading keeps `CARD_TITLE_ID` in both states so
- * the dialog stays labelled while the title is being typed.
+ * the dialog stays labelled while the title is being typed, including the
+ * compact identity-row heading used on a short maximised sheet (T3O-17).
  *
  * A blank title is a cancel, not a clear: `board.card.update` takes a non-empty
  * title, and a card with no title is nothing anyone can find again.
@@ -677,10 +685,12 @@ function TitleBody({
   title,
   done,
   onSave,
+  compact = false,
 }: {
   readonly title: string;
   readonly done: boolean;
   readonly onSave: (title: string) => void;
+  readonly compact?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
@@ -689,42 +699,69 @@ function TitleBody({
     if (trimmed.length > 0 && trimmed !== title) onSave(trimmed);
     setEditing(false);
   };
-  const frame =
-    "mx-2.5 mt-2 shrink-0 rounded-[7px] px-1.5 text-[21px]/[1.25] font-semibold tracking-[-0.015em] text-pretty text-foreground";
+  const frame = compact
+    ? "min-w-0 max-w-[min(40%,14rem)] rounded-[7px] px-1 text-[13.5px]/[18px] font-semibold tracking-[-0.01em] text-foreground"
+    : "mx-2.5 mt-2 shrink-0 rounded-[7px] px-1.5 text-[21px]/[1.25] font-semibold tracking-[-0.015em] text-pretty text-foreground";
+  const editingFrame = compact
+    ? "min-w-[10rem] max-w-none flex-1 rounded-[7px] px-1 text-[13.5px]/[18px] font-semibold tracking-[-0.01em] text-foreground"
+    : frame;
   if (editing) {
     return (
       <h2
-        className={cn(frame, "flex bg-muted shadow-[0_0_0_1px_var(--primary)]")}
+        className={cn(editingFrame, "flex bg-muted shadow-[0_0_0_1px_var(--primary)]")}
         id={CARD_TITLE_ID}
       >
-        {/* A textarea, not an input: long titles wrap here exactly as they do
-            at rest, so committing never reflows the sheet. */}
-        <textarea
-          autoFocus
-          className="field-sizing-content w-full resize-none bg-transparent text-inherit outline-none"
-          onBlur={commit}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              setDraft(title);
-              setEditing(false);
-            }
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              commit();
-            }
-          }}
-          rows={1}
-          value={draft}
-        />
+        {compact ? (
+          <input
+            autoFocus
+            className="w-full bg-transparent text-inherit outline-none"
+            onBlur={commit}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setDraft(title);
+                setEditing(false);
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commit();
+              }
+            }}
+            value={draft}
+          />
+        ) : (
+          /* A textarea, not an input: long titles wrap here exactly as they do
+              at rest, so committing never reflows the sheet. */
+          <textarea
+            autoFocus
+            className="field-sizing-content w-full resize-none bg-transparent text-inherit outline-none"
+            onBlur={commit}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setDraft(title);
+                setEditing(false);
+              }
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                commit();
+              }
+            }}
+            rows={1}
+            value={draft}
+          />
+        )}
       </h2>
     );
   }
   return (
-    <h2 className={cn(frame, "cursor-text hover:bg-accent")} id={CARD_TITLE_ID}>
-      <BoardHint label="Click to edit">
+    <h2
+      className={cn(frame, compact && "truncate", "cursor-text hover:bg-accent")}
+      id={CARD_TITLE_ID}
+    >
+      <BoardHint label={compact ? title : "Click to edit"}>
         <button
-          className="block w-full cursor-text text-left"
+          className={cn("block w-full cursor-text text-left", compact && "truncate")}
           onClick={() => {
             setDraft(title);
             setEditing(true);
@@ -735,7 +772,10 @@ function TitleBody({
           {done ? (
             <CheckIcon
               aria-hidden
-              className="ml-[9px] inline-block size-[21px] align-[-3px]"
+              className={cn(
+                "ml-[9px] inline-block align-[-3px]",
+                compact ? "size-3.5" : "size-[21px]",
+              )}
               strokeWidth={3.2}
             />
           ) : null}
@@ -2339,6 +2379,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           nowMs: Date.now(),
         });
   const wide = boardCardDetailIsWide(props.stages, card.stage, props.paneChoice);
+  const shortViewport = useMediaQuery(BOARD_CARD_COMPACT_CHROME_QUERY);
+  const compactChrome = boardCardCompactChrome(wide && props.maximised, shortViewport);
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
   // count at all (t3o-13, D1), and everything else must be done.
@@ -2501,7 +2543,15 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       {/* Identity row: key, the card's labels, its stage. `relative z-10` lifts
           it (and the × / ⋯ / fullscreen buttons it carries) above the nav
           rails' band, which would otherwise sit over them (T3O-37, D8). */}
-      <div className="relative z-10 flex shrink-0 items-center gap-[9px] px-4 pt-4">
+      <div
+        className={cn(
+          "relative z-10 flex min-w-0 shrink-0 items-center gap-[9px] px-4",
+          compactChrome ? "py-2" : "pt-4",
+        )}
+      >
+        {compactChrome ? (
+          <TitleBody compact done={done} onSave={props.onSaveTitle} title={card.title} />
+        ) : null}
         <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">{card.key}</span>
         {props.parentCard != null ? (
           // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
@@ -2602,6 +2652,21 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           pane={activePane}
           planCount={planRows === null ? null : planRows.rows.length}
         />
+        {compactChrome && activePane === "thread" ? (
+          <BoardCardThreadCompactControls
+            adoptableThreads={props.adoptableThreads}
+            onCreateBlankThread={props.onCreateBlankThread}
+            onLinkThread={props.onLinkThread}
+            onRestartStage={props.onRestartStage}
+            onSelectThread={setSelectedThreadId}
+            onToggleMaximised={props.onToggleMaximised}
+            onUnlinkThread={props.onUnlinkThread}
+            selectedThreadId={selectedThread}
+            stageRestart={props.stageRestart}
+            threadLinks={props.threadLinks}
+            threadTodos={props.threadTodos}
+          />
+        ) : null}
         <Menu>
           <MenuTrigger
             aria-label="More actions"
@@ -2684,6 +2749,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           open={deleteConfirmOpen}
           threadCount={card.threadLinks.length}
         />
+        {compactChrome && activePane !== "thread" ? (
+          <BoardCardThreadExitFullscreenButton maximised onToggle={props.onToggleMaximised} />
+        ) : null}
         <BoardHint label="Close">
           <button
             className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -2695,7 +2763,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         </BoardHint>
       </div>
 
-      <TitleBody done={done} onSave={props.onSaveTitle} title={card.title} />
+      {compactChrome ? null : (
+        <TitleBody done={done} onSave={props.onSaveTitle} title={card.title} />
+      )}
 
       {/* One insertion above the layout split covers both forms (T3O-9). Only
           the wide one offers `View thread`: the narrow layout has no thread
@@ -2827,6 +2897,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               <BoardCardThreadPane
                 adoptableThreads={props.adoptableThreads}
                 cardKey={card.key}
+                compactChrome={compactChrome}
                 maximised={props.maximised}
                 onCreateBlankThread={props.onCreateBlankThread}
                 onLinkThread={props.onLinkThread}

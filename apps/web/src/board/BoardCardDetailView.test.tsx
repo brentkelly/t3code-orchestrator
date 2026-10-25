@@ -29,7 +29,9 @@ import { Menu } from "../components/ui/menu";
 import { boardAutoMergeToggleCopy } from "./boardAutoMergeHold";
 import { boardConflictFix } from "./boardConflictFix";
 import { boardThreadWorker } from "./workers/threadWorker";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { BOARD_CARD_COMPACT_CHROME_QUERY } from "./boardCardCompactChrome";
 
 // The Threads section deep-links with TanStack Router's <Link>, which needs a
 // router context; a plain anchor is all the markup assertions need.
@@ -38,6 +40,16 @@ vi.mock("@tanstack/react-router", () => ({
     <a {...props}>{children}</a>
   ),
 }));
+
+const compactViewport = vi.hoisted(() => ({ short: false }));
+vi.mock("../hooks/useMediaQuery", async () => {
+  const { BOARD_CARD_COMPACT_CHROME_QUERY } = await import("./boardCardCompactChrome");
+  return {
+    useIsMobile: () => false,
+    useMediaQuery: (query: string) =>
+      query === BOARD_CARD_COMPACT_CHROME_QUERY ? compactViewport.short : false,
+  };
+});
 
 const {
   BoardCardAutoMergeMenuItem,
@@ -1570,5 +1582,103 @@ describe("BoardCardDetailPanel done marks", () => {
       />,
     );
     expect(html).not.toContain("No pull request found for");
+  });
+});
+
+describe("BoardCardDetailPanel compact fullscreen chrome", () => {
+  afterEach(() => {
+    compactViewport.short = false;
+  });
+
+  const threadLink = {
+    threadId: ThreadId.make("thread-live"),
+    role: "planning",
+    tombstoned: false,
+    title: "Live planning thread",
+    threadState: "stopped" as const,
+    awaitingInput: false,
+    worker: localWorker,
+    ranOn: null,
+  };
+  const planning = () =>
+    detail({
+      stage: BOARD_SEED_STAGE_IDS.planning,
+      threadLinks: [
+        {
+          threadId: threadLink.threadId,
+          role: "planning",
+          linkedAt: NOW,
+          tombstonedAt: null,
+        },
+      ],
+    });
+
+  it("collapses the large title into the identity row when maximised on a short viewport", () => {
+    compactViewport.short = true;
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={planning()}
+        maximised
+        projectName="P"
+        threadLinks={[threadLink]}
+      />,
+    );
+    expect(html).toContain('id="board-card-detail-title"');
+    expect(html).toContain("text-[13.5px]/[18px]");
+    expect(html).not.toContain("text-[21px]/[1.25]");
+    expect(html).toContain("Wire the widget");
+    expect(html.indexOf("Wire the widget")).toBeLessThan(html.indexOf(">T3-7<"));
+    expect(html).toContain('aria-label="Threads"');
+    expect(html).toContain("planning · Live planning thread");
+    expect(html).toContain('aria-label="Exit fullscreen"');
+    expect(html).toContain('aria-label="Open in Threads"');
+  });
+
+  it("keeps the large title when maximised on a tall viewport", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={planning()}
+        maximised
+        projectName="P"
+        threadLinks={[threadLink]}
+      />,
+    );
+    expect(html).toContain("text-[21px]/[1.25]");
+    expect(html).not.toContain("text-[13.5px]/[18px]");
+    expect(html).not.toContain('aria-label="Threads"');
+    expect(html).not.toContain('aria-label="Exit fullscreen"');
+  });
+
+  it("keeps the large title on a short viewport that is not maximised", () => {
+    compactViewport.short = true;
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel {...baseProps} detail={planning()} projectName="P" />,
+    );
+    expect(html).toContain("text-[21px]/[1.25]");
+    expect(html).not.toContain('aria-label="Exit fullscreen"');
+  });
+
+  it("omits the folded thread dropdown off the Thread pane, and still offers Exit fullscreen", () => {
+    compactViewport.short = true;
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={planning()}
+        maximised
+        paneChoice="brief"
+        projectName="P"
+        threadLinks={[threadLink]}
+      />,
+    );
+    expect(html).toContain("text-[13.5px]/[18px]");
+    expect(html).toContain('aria-label="Exit fullscreen"');
+    expect(html).not.toContain('aria-label="Threads"');
+    expect(html).not.toContain('aria-label="Open in Threads"');
+  });
+
+  it("uses the same short-viewport query the compact helper documents", () => {
+    expect(BOARD_CARD_COMPACT_CHROME_QUERY).toBe("(max-height: 999.98px)");
   });
 });
