@@ -176,7 +176,6 @@ describe("BoardCardThreadCompactControls", () => {
         onLinkThread={noop}
         onRestartStage={noop}
         onSelectThread={noop}
-        onToggleMaximised={noop}
         onUnlinkThread={noop}
         selectedThreadId={planning.threadId}
         stageRestart={null}
@@ -195,7 +194,6 @@ describe("BoardCardThreadCompactControls", () => {
         onLinkThread={noop}
         onRestartStage={noop}
         onSelectThread={noop}
-        onToggleMaximised={noop}
         onUnlinkThread={noop}
         selectedThreadId={null}
         stageRestart={null}
@@ -204,5 +202,24 @@ describe("BoardCardThreadCompactControls", () => {
     );
     expect(html).toContain('aria-label="Threads"');
     expect(html).not.toContain("Threads,");
+  });
+
+  it("is only the thread trigger, so Exit fullscreen can stay pinned on the sheet", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardThreadCompactControls
+        adoptableThreads={[]}
+        onCreateBlankThread={() => Promise.resolve(null)}
+        onLinkThread={noop}
+        onRestartStage={noop}
+        onSelectThread={noop}
+        onUnlinkThread={noop}
+        selectedThreadId={planning.threadId}
+        stageRestart={null}
+        threadLinks={[planning]}
+      />,
+    );
+    expect(html).toContain('aria-label="Threads, planning · T3-7 · Planning"');
+    expect(html).not.toContain('aria-label="Exit fullscreen"');
+    expect(html).not.toContain('aria-label="Open in Threads"');
   });
 });

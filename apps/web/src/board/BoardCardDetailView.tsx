@@ -203,6 +203,7 @@ import { BOARD_CARD_COMPACT_CHROME_QUERY, boardCardCompactChrome } from "./board
 import {
   BoardCardThreadCompactControls,
   BoardCardThreadExitFullscreenButton,
+  BoardCardThreadOpenInThreadsButton,
 } from "./BoardCardThreadChrome";
 import { BoardDecisionLog } from "./BoardDecisionLog";
 import { boardDecisionFollowUp, boardDecisionLogView } from "./boardDecisionLog";
@@ -812,10 +813,10 @@ const THREAD_STATE_LABEL: Record<BoardCardThreadState, string> = {
  * title, and a card with no title is nothing anyone can find again.
  *
  * A done card gets a check glyph after the title, in the title's own size and
- * colour: completion reads off the heading without tinting the sheet. It is a
- * sibling of the text, not a badge, so a wrapping title carries it along.
- *
- * Compact identity-row heading is used on a short maximised sheet (T3O-17).
+ * colour: completion reads off the heading without tinting the sheet. On the
+ * wrapping title it is a sibling of the text, not a badge, so it travels with
+ * the last line. On the compact identity-row title it sits outside the
+ * truncate box so a long heading cannot clip it.
  */
 function TitleBody({
   title,
@@ -892,12 +893,15 @@ function TitleBody({
   }
   return (
     <h2
-      className={cn(frame, compact && "truncate", "cursor-text hover:bg-accent")}
+      className={cn(frame, compact && "flex min-w-0 items-center", "cursor-text hover:bg-accent")}
       id={CARD_TITLE_ID}
     >
       <BoardHint label={compact ? title : "Click to edit"}>
         <button
-          className={cn("block w-full cursor-text text-left", compact && "truncate")}
+          className={cn(
+            "cursor-text text-left",
+            compact ? "min-w-0 flex-1 truncate" : "block w-full",
+          )}
           onClick={() => {
             setDraft(title);
             setEditing(true);
@@ -905,18 +909,18 @@ function TitleBody({
           type="button"
         >
           {title}
-          {done ? (
+          {done && !compact ? (
             <CheckIcon
               aria-hidden
-              className={cn(
-                "ml-[9px] inline-block align-[-3px]",
-                compact ? "size-3.5" : "size-[21px]",
-              )}
+              className="ml-[9px] inline-block size-[21px] align-[-3px]"
               strokeWidth={3.2}
             />
           ) : null}
         </button>
       </BoardHint>
+      {done && compact ? (
+        <CheckIcon aria-hidden className="ml-[9px] size-3.5 shrink-0" strokeWidth={3.2} />
+      ) : null}
     </h2>
   );
 }
@@ -2948,6 +2952,21 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         completion.stepId === buildStage.stageId &&
         completion.outcome === "succeeded",
     );
+  const selectedLink = props.threadLinks.find((link) => link.threadId === shownThread) ?? null;
+  const paneTabs = (
+    <PaneTabs
+      ciLive={inCi && isBoardCiLive(card.ci)}
+      hasCi={hasCi}
+      hasPlan={hasPlan}
+      hasReview={hasReview}
+      hasSummary={hasSummary}
+      onSelect={setPane}
+      hasPlanning={planningLink !== undefined}
+      pane={activePane}
+      planCount={planRows === null ? null : planRows.rows.length}
+      plansLabel={group === null || planRows === null ? null : "Cards"}
+    />
+  );
 
   return (
     <>
@@ -2965,10 +2984,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             chrome they scroll instead, so Close stays pinned (T3O-17). */}
         <div
           className={cn(
-            "flex min-h-7 min-w-0 flex-1 items-center gap-x-[9px] gap-y-1.5",
+            "flex min-h-7 items-center gap-[9px]",
             compactChrome
-              ? "overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-              : "flex-wrap",
+              ? "min-w-0 flex-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              : "shrink-0 flex-wrap",
           )}
         >
           {compactChrome ? (
@@ -3093,20 +3112,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               </button>
             </BoardHint>
           )}
-        </div>
-        <div className="flex shrink-0 items-center gap-[9px]">
-          <PaneTabs
-            ciLive={inCi && isBoardCiLive(card.ci)}
-            hasCi={hasCi}
-            hasPlan={hasPlan}
-            hasReview={hasReview}
-            hasSummary={hasSummary}
-            onSelect={setPane}
-            hasPlanning={planningLink !== undefined}
-            pane={activePane}
-            planCount={planRows === null ? null : planRows.rows.length}
-            plansLabel={group === null || planRows === null ? null : "Cards"}
-          />
+          {compactChrome ? paneTabs : null}
           {compactChrome && activePane === "thread" ? (
             <BoardCardThreadCompactControls
               adoptableThreads={props.adoptableThreads}
@@ -3114,7 +3120,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               onLinkThread={props.onLinkThread}
               onRestartStage={props.onRestartStage}
               onSelectThread={selectThread}
-              onToggleMaximised={props.onToggleMaximised}
               onUnlinkThread={props.onUnlinkThread}
               selectedThreadId={shownThread}
               stageRestart={props.stageRestart}
@@ -3122,6 +3127,19 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               threadTodos={props.threadTodos}
             />
           ) : null}
+          {compactChrome &&
+          activePane === "thread" &&
+          selectedLink !== null &&
+          !selectedLink.tombstoned ? (
+            <BoardCardThreadOpenInThreadsButton
+              threadId={selectedLink.threadId}
+              worker={selectedLink.worker}
+            />
+          ) : null}
+        </div>
+        {compactChrome ? null : <span className="flex-1" />}
+        <div className="flex shrink-0 items-center gap-[9px]">
+          {compactChrome ? null : paneTabs}
           <Menu>
             <MenuTrigger
               aria-label="More actions"
@@ -3228,13 +3246,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             open={deleteConfirmOpen}
             threadCount={card.threadLinks.length}
           />
-          {compactChrome && activePane !== "thread" ? (
+          {compactChrome ? (
             <BoardCardThreadExitFullscreenButton maximised onToggle={props.onToggleMaximised} />
           ) : null}
           <BoardHint label="Close">
             <button
               aria-label="Close"
-              className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+              className={cn(
+                "inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground",
+                compactChrome && "sticky right-0 z-20 bg-popover",
+              )}
               onClick={props.onClose}
               type="button"
             >
