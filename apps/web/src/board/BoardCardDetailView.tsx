@@ -2956,13 +2956,21 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           rails' band, which would otherwise sit over them (T3O-37, D8). */}
       <div
         className={cn(
-          "relative z-10 flex shrink-0 items-start gap-[9px] px-4",
+          "relative z-10 flex min-w-0 shrink-0 items-start gap-[9px] px-4",
           compactChrome ? "py-2" : "pt-4",
         )}
       >
         {/* The key and its chips wrap onto a second line rather than pushing
-            the tabs and the kebab off a narrow modal (T3O-80). */}
-        <div className="flex min-h-7 min-w-0 flex-1 flex-wrap items-center gap-x-[9px] gap-y-1.5">
+            the tabs and the kebab off a narrow modal (T3O-80). On compact
+            chrome they scroll instead, so Close stays pinned (T3O-17). */}
+        <div
+          className={cn(
+            "flex min-h-7 min-w-0 flex-1 items-center gap-x-[9px] gap-y-1.5",
+            compactChrome
+              ? "overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              : "flex-wrap",
+          )}
+        >
           {compactChrome ? (
             <TitleBody compact done={done} onSave={props.onSaveTitle} title={card.title} />
           ) : null}
@@ -3225,6 +3233,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           ) : null}
           <BoardHint label="Close">
             <button
+              aria-label="Close"
               className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={props.onClose}
               type="button"

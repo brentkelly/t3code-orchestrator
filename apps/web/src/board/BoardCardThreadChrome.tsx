@@ -25,7 +25,7 @@ import { useState } from "react";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import { cn } from "../lib/utils";
-import { boardCardCompactThreadLabel } from "./boardCardCompactChrome";
+import { boardCardCompactThreadLabel, boardCardThreadLinkHint } from "./boardCardCompactChrome";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
 import { BoardHint } from "./BoardHint";
 import { BoardCardThreadAddMenuBody, type BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
@@ -172,25 +172,32 @@ export function BoardCardThreadCompactMenuBody({
         const total = todo?.todoTotal ?? 0;
         return (
           <span className="flex min-w-0 items-center gap-0.5" key={link.threadId}>
-            <button
-              className={cn(
-                "flex min-w-0 flex-1 items-center gap-2 rounded px-1.5 py-1.5 text-left hover:bg-accent",
-                active && "bg-accent/60",
-                link.tombstoned && "line-through",
-              )}
-              onClick={() => onSelectThread(link.threadId)}
-              type="button"
-            >
-              <BoardCardThreadStatusGlyph link={link} />
-              <span className="min-w-0 flex-1 truncate text-[12.5px] text-foreground">
-                {boardCardCompactThreadLabel(link.role, link.title)}
-              </span>
-              {total === 0 ? null : (
-                <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
-                  {todo?.todoDone ?? 0}/{total}
+            <BoardHint label={boardCardThreadLinkHint(link)}>
+              <button
+                className={cn(
+                  "flex min-w-0 flex-1 items-center gap-2 rounded px-1.5 py-1.5 text-left hover:bg-accent",
+                  active && "bg-accent/60",
+                  link.tombstoned && "line-through",
+                )}
+                onClick={() => onSelectThread(link.threadId)}
+                type="button"
+              >
+                <BoardCardThreadStatusGlyph link={link} />
+                <span className="min-w-0 flex-1 truncate text-[12.5px] text-foreground">
+                  {boardCardCompactThreadLabel(link.role, link.title)}
                 </span>
-              )}
-            </button>
+                {link.ranOn === null ? null : (
+                  <span className="min-w-0 max-w-[40%] truncate text-[10.5px] text-muted-foreground">
+                    {link.ranOn}
+                  </span>
+                )}
+                {total === 0 ? null : (
+                  <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
+                    {todo?.todoDone ?? 0}/{total}
+                  </span>
+                )}
+              </button>
+            </BoardHint>
             {active && !link.tombstoned ? (
               <BoardHint label="Unlink thread">
                 <button
@@ -258,7 +265,7 @@ export function BoardCardThreadCompactControls({
   };
   const close = () => setOpen(false);
   return (
-    <span className="flex shrink-0 items-center gap-1.5">
+    <span className="flex min-w-0 items-center gap-1.5">
       <Popover
         onOpenChange={(next) => {
           setOpen(next);
@@ -270,7 +277,7 @@ export function BoardCardThreadCompactControls({
         open={open}
       >
         <PopoverTrigger
-          aria-label="Threads"
+          aria-label={selected === null ? "Threads" : `Threads, ${triggerLabel}`}
           className="inline-flex h-[26px] max-w-48 min-w-0 items-center gap-1 rounded-lg border border-border bg-card px-2.5 text-[12px] font-medium text-foreground"
         >
           <span className="min-w-0 truncate">{triggerLabel}</span>

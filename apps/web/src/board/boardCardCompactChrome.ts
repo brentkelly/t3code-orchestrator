@@ -20,3 +20,14 @@ export function boardCardCompactChrome(maximised: boolean, shortViewport: boolea
 export function boardCardCompactThreadLabel(role: string, title: string | null): string {
   return `${role} · ${title ?? "Deleted thread"}`;
 }
+
+/** Tab-strip hover and compact-row hint: role, plus the worker when the board has more than one. */
+export function boardCardThreadLinkHint(link: {
+  readonly tombstoned: boolean;
+  readonly role: string;
+  readonly ranOn: string | null;
+}): string {
+  if (link.tombstoned) return "Deleted thread";
+  if (link.ranOn === null) return link.role;
+  return `${link.role} · ${link.ranOn}`;
+}
