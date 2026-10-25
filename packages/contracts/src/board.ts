@@ -9507,10 +9507,12 @@ export const DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT =
 /** How a conflict-resolving agent verifies its work (T3O-69), shared by the
     sync step's rebase and the merge stage's conflict fix. Proportionate on
     purpose: a clean rebase or a docs-only conflict used to re-run every check
-    the repository defines. A review round or the pull request's CI follows
-    either way, and that catches breakage that produced no textual conflict. */
+    the repository defines. The rule states no reason for skipping checks,
+    because what follows differs: the sync step is followed by a review round,
+    but the merge stage re-attempts the merge at once. Scoped by file rather
+    than by package so it reads the same in a single-package repository. */
 export const BOARD_CONFLICT_VERIFICATION =
-  "Verify in proportion to what you changed by hand. List the files whose conflicts you resolved. If there were no conflicts, or every file you resolved is non-code (docs, markdown, AGENTS.md or CLAUDE.md, `.plans/`, changelogs), run no checks and say so in your summary: a review round and the pull request's CI still follow. Code means anything that affects the build or runtime: source, tests, `package.json`, lockfiles, tsconfig, and build or CI config. If you resolved any code, run only the checks that cover it: the typecheck, lint and tests of the package or packages containing those files. Never run the repository-wide suite. Fix whatever those checks catch, because a conflict resolved wrongly usually compiles and still breaks behaviour.";
+  "Verify in proportion to what you changed by hand. List the files whose conflicts you resolved. If there were no conflicts, or every file you resolved is non-code (docs, markdown, AGENTS.md or CLAUDE.md, `.plans/`, changelogs), run no checks and say so in your summary. Code means anything that affects the build or runtime: source, tests, `package.json`, lockfiles, tsconfig, and build or CI config. If you resolved any code, run only the checks that cover the files you resolved: the tests that exercise those files, plus the typecheck and lint of the project they belong to, limited to those files where the tool allows it. A resolved lockfile or dependency manifest needs a reinstall that succeeds; CI or workflow config has no local check, so read it through instead. Never run the repository-wide test suite. Fix whatever those checks catch, because a conflict resolved wrongly usually compiles and still breaks behaviour.";
 
 /** The `sync` step's prompt (t3o-24, D2). COMPILED-IN, unlike the three phase
     prompts above: sync-base is machinery — rebase the card branch onto the base

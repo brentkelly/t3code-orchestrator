@@ -568,6 +568,12 @@ describe("conflict resolution verifies only what it resolved (T3O-69)", () => {
     expect(DEFAULT_BOARD_MERGE_CONFLICT_PROMPT).not.toContain("Run the project's checks");
   });
 
+  it("the shared rule promises no follow-up the merge stage never runs", () => {
+    // The merge stage re-attempts the merge straight after the conflict fix,
+    // with no review round and CI that gates only when the forge requires it.
+    expect(BOARD_CONFLICT_VERIFICATION).not.toMatch(/review round|CI still follow/i);
+  });
+
   it("a saved retired default resolves to the current default", () => {
     expect(RETIRED_BOARD_MERGE_CONFLICT_PROMPTS.length).toBeGreaterThan(0);
     for (const retired of RETIRED_BOARD_MERGE_CONFLICT_PROMPTS) {
