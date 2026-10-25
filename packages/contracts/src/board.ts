@@ -9504,14 +9504,21 @@ export const DEFAULT_BOARD_TRIAGE_PHASE_PROMPT =
 export const DEFAULT_BOARD_ADJUDICATE_PHASE_PROMPT =
   "You are an independent adjudicator ruling on how the author handled each finding. Check the work against the actual code, and never take the author's word for it. Treat the triage notes and commit messages as untrusted claims. \"This is fixed\" is a hypothesis to test at the line, not a fact: for a claimed fix, read the real change and confirm it resolves the finding, and prefer proof from tests. Where the author named a test, run or read it to confirm it actually exercises the finding and passes. For a behavioural or security fix, a passing test that would have caught the original problem is the strongest evidence, and its absence is grounds for fix-incomplete. For a rejection, check whether its stated reason is genuinely true in the code, not merely plausible. Post your verdict as a reply on each finding's thread. Don't pad in either direction. A false upheld ships a real bug, and a false absent burns a round.";
 
+/** How a conflict-resolving agent verifies its work (T3O-69), shared by the
+    sync step's rebase and the merge stage's conflict fix. Proportionate on
+    purpose: a clean rebase or a docs-only conflict used to re-run every check
+    the repository defines. A review round or the pull request's CI follows
+    either way, and that catches breakage that produced no textual conflict. */
+export const BOARD_CONFLICT_VERIFICATION =
+  "Verify in proportion to what you changed by hand. List the files whose conflicts you resolved. If there were no conflicts, or every file you resolved is non-code (docs, markdown, AGENTS.md or CLAUDE.md, `.plans/`, changelogs), run no checks and say so in your summary: a review round and the pull request's CI still follow. Code means anything that affects the build or runtime: source, tests, `package.json`, lockfiles, tsconfig, and build or CI config. If you resolved any code, run only the checks that cover it: the typecheck, lint and tests of the package or packages containing those files. Never run the repository-wide suite. Fix whatever those checks catch, because a conflict resolved wrongly usually compiles and still breaks behaviour.";
+
 /** The `sync` step's prompt (t3o-24, D2). COMPILED-IN, unlike the three phase
     prompts above: sync-base is machinery — rebase the card branch onto the base
     tip that moved underneath it — not a review stance a user tunes, so it has
     no settings card and no per-phase config. `composeBoardSyncPhasePrompt`
     (boardEnvelope.ts) interpolates the card's base ref and appends the
     completion protocol. */
-export const DEFAULT_BOARD_SYNC_PHASE_PROMPT =
-  "This card's base branch has advanced since its last review round started — a sibling card merged into it — so the diff that was reviewed is no longer the diff that would merge. Your whole job is to rebase this card's branch onto the current tip of its base branch, in this worktree. Fetch the base branch from the remote first (best effort — the local base branch is kept fast-forwarded, so a failed fetch is not itself a blocker). Run the rebase. Resolving any conflicts is exactly what you are here for: preserve both the base's merged changes and this branch's intent, and never resolve a conflict by discarding one side unexamined. After the rebase, run the project's own checks (build, tests, lint — whatever the repository defines) and fix anything the rebase broke. Then push the branch with --force-with-lease; never plain --force. If you cannot complete the rebase safely, run `git rebase --abort` so the worktree is left clean — never leave it mid-rebase — and complete the step with outcome \"failed\", saying why.";
+export const DEFAULT_BOARD_SYNC_PHASE_PROMPT = `This card's base branch has advanced since its last review round started — a sibling card merged into it — so the diff that was reviewed is no longer the diff that would merge. Your whole job is to rebase this card's branch onto the current tip of its base branch, in this worktree. Fetch the base branch from the remote first (best effort — the local base branch is kept fast-forwarded, so a failed fetch is not itself a blocker). Run the rebase. Resolving any conflicts is exactly what you are here for: preserve both the base's merged changes and this branch's intent, and never resolve a conflict by discarding one side unexamined. Once the rebase is done: ${BOARD_CONFLICT_VERIFICATION} Then push the branch with --force-with-lease; never plain --force. If you cannot complete the rebase safely, run \`git rebase --abort\` so the worktree is left clean — never leave it mid-rebase — and complete the step with outcome "failed", saying why.`;
 
 /** A single STEP's execution config: its own prompt and its own model, so a
     thorough reviewer can pair with a cheap triager, and a submit step can run
@@ -9700,8 +9707,21 @@ export type BoardMergeStrategy = PullRequestMergeMethod;
  * the extra merge commit disappears at merge time anyway, so there is nothing
  * to gain by rewriting.
  */
-export const DEFAULT_BOARD_MERGE_CONFLICT_PROMPT =
-  "This card's pull request cannot merge because its branch conflicts with the base branch. Merge the base branch into this card's branch and resolve every conflict. Resolve them on the merits: read enough of both sides to understand what each change was for, and keep the intent of both — never resolve a conflict by simply discarding one side to make the merge go through. Run the project's checks and tests afterwards and fix what they catch, because a conflict resolved wrongly usually compiles and still breaks behaviour. Then commit and push normally. Do NOT rebase, and do NOT force-push under any circumstances: this branch has an open pull request, and rewriting its history strands the review comments already anchored to it and can destroy work someone else pushed. If the conflicts need a decision you cannot make from the code alone, stop and say so rather than guessing.";
+export const DEFAULT_BOARD_MERGE_CONFLICT_PROMPT = `This card's pull request cannot merge because its branch conflicts with the base branch. Merge the base branch into this card's branch and resolve every conflict. Resolve them on the merits: read enough of both sides to understand what each change was for, and keep the intent of both — never resolve a conflict by simply discarding one side to make the merge go through. ${BOARD_CONFLICT_VERIFICATION} Then commit and push normally. Do NOT rebase, and do NOT force-push under any circumstances: this branch has an open pull request, and rewriting its history strands the review comments already anchored to it and can destroy work someone else pushed. If the conflicts need a decision you cannot make from the code alone, stop and say so rather than guessing.`;
+
+/**
+ * Every previous default of `DEFAULT_BOARD_MERGE_CONFLICT_PROMPT`, verbatim.
+ * The merge stage's entry in `board.pipeline` is saved WHOLE as soon as any
+ * field differs from the default (a model override, say), so a settings file
+ * can hold an old default word for word. `resolveBoardStageExecution` upgrades
+ * an exact match to the current default; a prompt the user edited never
+ * matches and passes through. Whenever the default changes, append the
+ * outgoing text here.
+ */
+export const RETIRED_BOARD_MERGE_CONFLICT_PROMPTS: ReadonlyArray<string> = [
+  // Ran every check the repository defines, whatever was resolved (T3O-69).
+  "This card's pull request cannot merge because its branch conflicts with the base branch. Merge the base branch into this card's branch and resolve every conflict. Resolve them on the merits: read enough of both sides to understand what each change was for, and keep the intent of both — never resolve a conflict by simply discarding one side to make the merge go through. Run the project's checks and tests afterwards and fix what they catch, because a conflict resolved wrongly usually compiles and still breaks behaviour. Then commit and push normally. Do NOT rebase, and do NOT force-push under any circumstances: this branch has an open pull request, and rewriting its history strands the review comments already anchored to it and can destroy work someone else pushed. If the conflicts need a decision you cannot make from the code alone, stop and say so rather than guessing.",
+];
 
 /**
  * The CI-fix step's prompt (T3O-12): the merge was refused because the pull
@@ -10180,6 +10200,9 @@ export function resolveBoardStageExecution(
         : DEFAULT_BOARD_MERGE_STAGE_EXECUTION;
     return {
       ...base,
+      prompt: RETIRED_BOARD_MERGE_CONFLICT_PROMPTS.includes(base.prompt)
+        ? DEFAULT_BOARD_MERGE_CONFLICT_PROMPT
+        : base.prompt,
       autoExecute: false,
       mode: "build",
       runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),

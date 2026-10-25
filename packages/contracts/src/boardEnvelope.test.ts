@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  BOARD_CONFLICT_VERIFICATION,
   BOARD_SEED_STAGE_IDS,
   BoardStageId,
   boardRunLabel,
@@ -589,6 +590,14 @@ describe("composeBoardSyncPhasePrompt retarget wording (T3O-5, D10)", () => {
     expect(moved).not.toContain("has CHANGED");
   });
 
+  it("verifies only what the rebase resolved, never the whole suite (T3O-69)", () => {
+    // A clean rebase, or one that only touched docs, used to re-run every check
+    // the repository defines. The review round and CI that follow cover that.
+    const moved = composeBoardSyncPhasePrompt({ round: 2, baseRefName: "board/T3-1" });
+    expect(moved).toContain(BOARD_CONFLICT_VERIFICATION);
+    expect(moved).not.toContain("run the project's own checks");
+  });
+
   it("names both the old and the new base on a retarget, and drops the sibling claim", () => {
     // "A sibling card merged into it" is simply false for a retarget, and the
     // agent acting on it would go looking for a merge that never happened.
@@ -616,7 +625,7 @@ describe("composeBoardSyncPhasePrompt retarget wording (T3O-5, D10)", () => {
       "Fetch the base branch",
       "--force-with-lease",
       "git rebase --abort",
-      "run the project's own checks",
+      BOARD_CONFLICT_VERIFICATION,
     ]) {
       expect(retargeted).toContain(clause);
     }

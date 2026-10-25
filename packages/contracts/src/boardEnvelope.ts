@@ -445,7 +445,7 @@ function boardSyncPhasePullRequestRetarget(retargetedTo: string): string {
 }
 
 /** The rebase MECHANICS half of `DEFAULT_BOARD_SYNC_PHASE_PROMPT` — fetch,
-    rebase, resolve preserving both sides, run the checks, force-with-lease,
+    rebase, resolve preserving both sides, verify what it resolved, force-with-lease,
     abort clean and complete `failed` if unsafe. Correct verbatim for both
     triggers, so a retarget swaps only the opening sentence rather than forking
     the prompt (T3O-5, D10). Split by locating the first sentence boundary: the
