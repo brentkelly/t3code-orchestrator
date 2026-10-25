@@ -2396,28 +2396,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     if (el === null) return;
     setCompactCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 1);
   }, []);
-  // Chip fields are listed so a same-sized cluster that gains chips remeasures
-  // scrollWidth. ResizeObserver only sees the box.
-  useEffect(() => {
-    if (!compactChrome) return undefined;
-    const el = compactClusterRef.current;
-    if (el === null) return undefined;
-    syncCompactScrollAffordance();
-    return observeResize(el, syncCompactScrollAffordance);
-  }, [
-    archived,
-    card.autoMerge,
-    card.labels,
-    card.modelOverrides,
-    card.scheduledStartAt,
-    card.stage,
-    card.title,
-    compactChrome,
-    done,
-    props.parentCard,
-    props.queueInfo,
-    syncCompactScrollAffordance,
-  ]);
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
   // count at all (t3o-13, D1), and everything else must be done.
@@ -2585,6 +2563,32 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       planCount={planRows === null ? null : planRows.rows.length}
     />
   );
+  // Chip fields and pane-tab inputs are listed so a same-sized cluster that
+  // gains chips or tabs remeasures scrollWidth. ResizeObserver only sees the box.
+  useEffect(() => {
+    if (!compactChrome) return undefined;
+    const el = compactClusterRef.current;
+    if (el === null) return undefined;
+    syncCompactScrollAffordance();
+    return observeResize(el, syncCompactScrollAffordance);
+  }, [
+    archived,
+    card.autoMerge,
+    card.labels,
+    card.modelOverrides,
+    card.pullRequest,
+    card.scheduledStartAt,
+    card.stage,
+    card.title,
+    compactChrome,
+    done,
+    planRows,
+    props.detail.plans,
+    props.detail.stepCompletions,
+    props.parentCard,
+    props.queueInfo,
+    syncCompactScrollAffordance,
+  ]);
 
   return (
     <>
@@ -2599,133 +2603,138 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       >
         <div
           className={cn(
-            "flex items-center gap-[9px]",
             compactChrome
-              ? "min-w-0 flex-auto overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-              : "shrink-0",
+              ? "relative min-w-0 flex-auto overflow-hidden"
+              : "flex shrink-0 items-center gap-[9px]",
           )}
-          onScroll={compactChrome ? syncCompactScrollAffordance : undefined}
-          ref={compactChrome ? compactClusterRef : undefined}
         >
-          {compactChrome ? (
-            <TitleBody compact done={done} onSave={props.onSaveTitle} title={card.title} />
-          ) : null}
-          <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">
-            {card.key}
-          </span>
-          {props.parentCard != null ? (
-            // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
-            // back into the sub-board it lives on, with this sheet still open.
-            <BoardHint label={`Part of ${props.parentCard.key}'s sub-board — open it`}>
-              <button
-                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
-                disabled={props.onOpenParentSubBoard === undefined}
-                onClick={props.onOpenParentSubBoard}
-                type="button"
-              >
-                <LayersIcon className="size-2.5" />
-                {props.parentCard.key}
-              </button>
-            </BoardHint>
-          ) : null}
-          <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
-          {/* On a done card the stage chip IS the completion badge, cut to the
+          <div
+            className={cn(
+              "flex items-center gap-[9px]",
+              compactChrome &&
+                "min-w-0 w-full overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            )}
+            onScroll={compactChrome ? syncCompactScrollAffordance : undefined}
+            ref={compactChrome ? compactClusterRef : undefined}
+          >
+            {compactChrome ? (
+              <TitleBody compact done={done} onSave={props.onSaveTitle} title={card.title} />
+            ) : null}
+            <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">
+              {card.key}
+            </span>
+            {props.parentCard != null ? (
+              // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
+              // back into the sub-board it lives on, with this sheet still open.
+              <BoardHint label={`Part of ${props.parentCard.key}'s sub-board — open it`}>
+                <button
+                  className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
+                  disabled={props.onOpenParentSubBoard === undefined}
+                  onClick={props.onOpenParentSubBoard}
+                  type="button"
+                >
+                  <LayersIcon className="size-2.5" />
+                  {props.parentCard.key}
+                </button>
+              </BoardHint>
+            ) : null}
+            <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
+            {/* On a done card the stage chip IS the completion badge, cut to the
             same block as the label chips beside it (t3o-36): the sheet no
             longer wears a wash, so this and the title's check carry "done".
             Green means done and only done — docs/t3o/status-colours.md. */}
-          <span
-            className={cn(
-              "inline-flex shrink-0 items-center font-medium",
-              done
-                ? "h-4 rounded-[5px] bg-success/16 px-1.5 text-[10px] tracking-[0.03em] text-success-foreground uppercase"
-                : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
-            )}
-          >
-            {boardStageLabel(props.stages, card.stage)}
-          </span>
-          {archived ? (
-            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-              Archived
+            <span
+              className={cn(
+                "inline-flex shrink-0 items-center font-medium",
+                done
+                  ? "h-4 rounded-[5px] bg-success/16 px-1.5 text-[10px] tracking-[0.03em] text-success-foreground uppercase"
+                  : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
+              )}
+            >
+              {boardStageLabel(props.stages, card.stage)}
             </span>
-          ) : null}
-          {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
+            {archived ? (
+              <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+                Archived
+              </span>
+            ) : null}
+            {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
             is set, then the clock plus its label. Hidden on a done-role card
             and on an archived one — neither is going to move again on a timer.
             Beside the stage chip, because what it holds is the stage. */}
-          {archived || done ? null : (
-            <BoardCardSchedulePopover
-              // Sized to the chip row it sits in, not to a button row.
-              className="h-[18px]"
-              kind={props.scheduleKind}
-              onChange={props.onSetScheduledStartAt}
-              scheduledStartAt={card.scheduledStartAt}
-              stageLabel={boardStageLabel(props.stages, card.stage)}
-            />
-          )}
-          {/* The auto-merge arm, read-only (T3O-38, D13). NAMES THE SOURCE:
+            {archived || done ? null : (
+              <BoardCardSchedulePopover
+                // Sized to the chip row it sits in, not to a button row.
+                className="h-[18px]"
+                kind={props.scheduleKind}
+                onChange={props.onSetScheduledStartAt}
+                scheduledStartAt={card.scheduledStartAt}
+                stageLabel={boardStageLabel(props.stages, card.stage)}
+              />
+            )}
+            {/* The auto-merge arm, read-only (T3O-38, D13). NAMES THE SOURCE:
             with the board-wide setting on the per-card switch is hidden, so a
             user who goes looking for it needs to be told where the decision
             actually lives. Neutral, like the queue chip below — an armed card
             is not running, not done, and asking nothing of anyone. */}
-          {archived || done || autoMergeChip === null ? null : (
-            <BoardHint label={autoMergeChip.tooltip}>
-              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-                <PullRequestGlyph.merged className="size-2.5" />
-                {autoMergeChip.label}
-              </span>
-            </BoardHint>
-          )}
-          {/* Queued for a build slot (t3o-33). Beside the stage badge, because
+            {archived || done || autoMergeChip === null ? null : (
+              <BoardHint label={autoMergeChip.tooltip}>
+                <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+                  <PullRequestGlyph.merged className="size-2.5" />
+                  {autoMergeChip.label}
+                </span>
+              </BoardHint>
+            )}
+            {/* Queued for a build slot (t3o-33). Beside the stage badge, because
             "Building" alone is what made a queued card look mid-build. Neutral,
             not `--attention`: nothing is waiting on the user here — see
             docs/t3o/status-colours.md. */}
-          {props.queueInfo != null ? (
-            <BoardHint label={props.queueInfo.detail}>
-              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-                <ClockIcon className="size-2.5" />
-                {props.queueInfo.label}
-              </span>
-            </BoardHint>
-          ) : null}
-          {/* Shown only once this card actually overrides something (t3o-29, D7).
+            {props.queueInfo != null ? (
+              <BoardHint label={props.queueInfo.detail}>
+                <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+                  <ClockIcon className="size-2.5" />
+                  {props.queueInfo.label}
+                </span>
+              </BoardHint>
+            ) : null}
+            {/* Shown only once this card actually overrides something (t3o-29, D7).
             An override changes what the card spends and what authority it runs
             under; that should not be invisible from the card. It costs nothing
             on a card that has not set one. */}
-          {modelOverridden ? (
-            <BoardHint label={modelPillTitle}>
+            {modelOverridden ? (
+              <BoardHint label={modelPillTitle}>
+                <button
+                  className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={() => setModelsOpen(true)}
+                  type="button"
+                >
+                  <SlidersHorizontalIcon className="size-2.5" />
+                  {modelPillLabel}
+                </button>
+              </BoardHint>
+            ) : null}
+            {compactChrome ? paneTabs : null}
+          </div>
+          {/* Overlay, not a flex sibling: mounting Show more must not shrink
+              the scrollport below the title's 4rem floor on a 320px sheet. */}
+          {compactChrome && compactCanScrollRight ? (
+            <BoardHint label="Show more">
               <button
-                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-                onClick={() => setModelsOpen(true)}
+                aria-label="Show more"
+                className="absolute top-1/2 right-0 z-10 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-[7px] bg-card text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                onClick={() => {
+                  compactClusterRef.current?.scrollBy({
+                    left: compactClusterRef.current.clientWidth * 0.7,
+                    behavior: "smooth",
+                  });
+                }}
                 type="button"
               >
-                <SlidersHorizontalIcon className="size-2.5" />
-                {modelPillLabel}
+                <ChevronRightIcon className="size-3.5" />
               </button>
             </BoardHint>
           ) : null}
-          {compactChrome ? paneTabs : null}
         </div>
-        {/* Title, chips, and pane tabs scroll in the cluster. The thread
-            trigger, Exit, kebab, and Close stay pinned so a 320px sheet
-            cannot hide them. A chevron is the same affordance the tab strip
-            uses when this cluster still overflows. */}
-        {compactChrome && compactCanScrollRight ? (
-          <BoardHint label="Show more">
-            <button
-              aria-label="Show more"
-              className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-              onClick={() => {
-                compactClusterRef.current?.scrollBy({
-                  left: compactClusterRef.current.clientWidth * 0.7,
-                  behavior: "smooth",
-                });
-              }}
-              type="button"
-            >
-              <ChevronRightIcon className="size-3.5" />
-            </button>
-          </BoardHint>
-        ) : null}
         {compactChrome && activePane === "thread" ? (
           <BoardCardThreadCompactControls
             adoptableThreads={props.adoptableThreads}
