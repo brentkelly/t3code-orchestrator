@@ -1,7 +1,8 @@
 /**
  * Shared thread-pane chrome (T3O-17): status glyph, fullscreen / open-in-Threads
- * icon buttons, and the compact identity-row dropdown that replaces the tab
- * strip on a short maximised sheet.
+ * icon buttons, and the compact identity-row thread trigger that replaces the
+ * tab strip on a short maximised sheet. Exit fullscreen stays pinned on the
+ * sheet so the trigger can live in the scrolling cluster.
  *
  * Lives next to `BoardCardThreadPane` rather than inside it so the card detail
  * view can host the folded controls without eagerly loading `ChatView`.
@@ -237,7 +238,6 @@ export function BoardCardThreadCompactControls({
   onRestartStage,
   onCreateBlankThread,
   onUnlinkThread,
-  onToggleMaximised,
   threadTodos,
 }: {
   readonly threadLinks: ReadonlyArray<BoardDetailThreadLink>;
@@ -249,7 +249,6 @@ export function BoardCardThreadCompactControls({
   readonly onRestartStage: () => void;
   readonly onCreateBlankThread: () => Promise<ThreadId | null>;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
-  readonly onToggleMaximised: () => void;
   readonly threadTodos?: ReadonlyMap<ThreadId, BoardCardThreadShell> | undefined;
 }) {
   const [open, setOpen] = useState(false);
@@ -265,7 +264,7 @@ export function BoardCardThreadCompactControls({
   };
   const close = () => setOpen(false);
   return (
-    <span className="flex min-w-0 items-center gap-1.5">
+    <span className="shrink-0">
       <Popover
         onOpenChange={(next) => {
           setOpen(next);
@@ -278,7 +277,7 @@ export function BoardCardThreadCompactControls({
       >
         <PopoverTrigger
           aria-label={selected === null ? "Threads" : `Threads, ${triggerLabel}`}
-          className="inline-flex h-[26px] max-w-48 min-w-0 items-center gap-1 rounded-lg border border-border bg-card px-2.5 text-[12px] font-medium text-foreground"
+          className="inline-flex h-[26px] max-w-48 shrink-0 items-center gap-1 rounded-lg border border-border bg-card px-2.5 text-[12px] font-medium text-foreground"
         >
           <span className="min-w-0 truncate">{triggerLabel}</span>
           <ChevronDownIcon className="size-3 shrink-0 opacity-70" />
@@ -316,10 +315,6 @@ export function BoardCardThreadCompactControls({
           />
         </PopoverPopup>
       </Popover>
-      <BoardCardThreadExitFullscreenButton maximised onToggle={onToggleMaximised} />
-      {selected !== null && !selected.tombstoned ? (
-        <BoardCardThreadOpenInThreadsButton worker={selected.worker} threadId={selected.threadId} />
-      ) : null}
     </span>
   );
 }

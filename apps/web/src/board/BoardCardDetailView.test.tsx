@@ -1701,5 +1701,61 @@ describe("BoardCardDetailPanel compact fullscreen chrome", () => {
     expect(row).toContain("overflow-x-auto");
     expect(row).toContain('aria-label="Close"');
     expect(row.indexOf('aria-label="Close"')).toBeGreaterThan(row.indexOf("overflow-x-auto"));
+    expect(row.indexOf('aria-label="Threads')).toBeGreaterThan(row.indexOf("overflow-x-auto"));
+    expect(
+      row.indexOf(">Thread<") === -1 ? row.indexOf("Thread") : row.indexOf(">Thread<"),
+    ).toBeGreaterThan(row.indexOf("overflow-x-auto"));
+    expect(row.indexOf('aria-label="Exit fullscreen"')).toBeGreaterThan(
+      row.indexOf('aria-label="Threads'),
+    );
+    expect(row.indexOf('aria-label="Close"')).toBeGreaterThan(
+      row.indexOf('aria-label="Exit fullscreen"'),
+    );
+  });
+
+  it("keeps windowed identity chips from shrinking over the pane tabs", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={planning()}
+        projectName="P"
+        threadLinks={[threadLink]}
+      />,
+    );
+    const rowStart = html.indexOf("relative z-10 flex min-w-0 shrink-0");
+    const rowEnd = html.indexOf("mt-3 grid");
+    expect(rowStart).toBeGreaterThan(-1);
+    expect(rowEnd).toBeGreaterThan(rowStart);
+    const row = html.slice(rowStart, rowEnd);
+    expect(row).not.toContain("overflow-x-auto");
+    const clusterClass =
+      /<div class="(flex [^"]*items-center gap-\[9px\][^"]*)"/.exec(row)?.[1] ?? "";
+    expect(clusterClass).toContain("shrink-0");
+    expect(clusterClass).not.toContain("min-w-0");
+    expect(row).toContain('class="flex-1"');
+    expect(row.indexOf('class="flex-1"')).toBeLessThan(row.indexOf("Thread"));
+  });
+
+  it("keeps the done check outside the compact title truncate", () => {
+    compactViewport.short = true;
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={detail({
+          stage: BOARD_SEED_STAGE_IDS.done,
+          title: "A very long done card title that should truncate in compact chrome",
+        })}
+        maximised
+        projectName="P"
+      />,
+    );
+    const start = html.indexOf('id="board-card-detail-title"');
+    expect(start).toBeGreaterThan(-1);
+    const heading = html.slice(start, html.indexOf("</h2>", start));
+    expect(heading).toContain("lucide-check");
+    const buttonEnd = heading.indexOf("</button>");
+    expect(buttonEnd).toBeGreaterThan(-1);
+    expect(heading.indexOf("lucide-check")).toBeGreaterThan(buttonEnd);
+    expect(heading).toContain("shrink-0");
   });
 });
