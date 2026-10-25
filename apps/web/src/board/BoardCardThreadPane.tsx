@@ -30,6 +30,7 @@ import {
   BoardCardThreadOpenInThreadsButton,
   BoardCardThreadStatusGlyph,
 } from "./BoardCardThreadChrome";
+import { boardCardThreadLinkHint } from "./boardCardCompactChrome";
 import { BoardCardThreadTodosStrip } from "./BoardCardThreadTodosStrip";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
@@ -139,11 +140,12 @@ export function BoardCardThreadPane({
     setCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 1);
   }, []);
   useEffect(() => {
+    if (compactChrome) return undefined;
     const el = stripRef.current;
     if (el === null) return undefined;
     syncScrollAffordance();
     return observeResize(el, syncScrollAffordance);
-  }, [syncScrollAffordance, threadLinks]);
+  }, [compactChrome, syncScrollAffordance, threadLinks]);
   const scrollOlderIntoView = () => {
     stripRef.current?.scrollBy({ left: stripRef.current.clientWidth * 0.7, behavior: "smooth" });
   };
@@ -186,15 +188,7 @@ export function BoardCardThreadPane({
                   )}
                   key={link.threadId}
                 >
-                  <BoardHint
-                    label={
-                      link.tombstoned
-                        ? "Deleted thread"
-                        : link.ranOn === null
-                          ? link.role
-                          : `${link.role} · ${link.ranOn}`
-                    }
-                  >
+                  <BoardHint label={boardCardThreadLinkHint(link)}>
                     <button
                       className="inline-flex min-w-0 items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-ring"
                       onClick={() => onSelectThread(link.threadId)}

@@ -1629,7 +1629,7 @@ describe("BoardCardDetailPanel compact fullscreen chrome", () => {
     expect(html).not.toContain("text-[21px]/[1.25]");
     expect(html).toContain("Wire the widget");
     expect(html.indexOf("Wire the widget")).toBeLessThan(html.indexOf(">T3-7<"));
-    expect(html).toContain('aria-label="Threads"');
+    expect(html).toContain('aria-label="Threads, planning · Live planning thread"');
     expect(html).toContain("planning · Live planning thread");
     expect(html).toContain('aria-label="Exit fullscreen"');
     expect(html).toContain('aria-label="Open in Threads"');
@@ -1680,5 +1680,26 @@ describe("BoardCardDetailPanel compact fullscreen chrome", () => {
 
   it("uses the same short-viewport query the compact helper documents", () => {
     expect(BOARD_CARD_COMPACT_CHROME_QUERY).toBe("(max-height: 999.98px)");
+  });
+
+  it("keeps Close pinned outside the scrolling identity chips while compact", () => {
+    compactViewport.short = true;
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        detail={planning()}
+        maximised
+        projectName="P"
+        threadLinks={[threadLink]}
+      />,
+    );
+    const rowStart = html.indexOf("relative z-10 flex min-w-0 shrink-0");
+    const rowEnd = html.indexOf("mt-3 grid");
+    expect(rowStart).toBeGreaterThan(-1);
+    expect(rowEnd).toBeGreaterThan(rowStart);
+    const row = html.slice(rowStart, rowEnd);
+    expect(row).toContain("overflow-x-auto");
+    expect(row).toContain('aria-label="Close"');
+    expect(row.indexOf('aria-label="Close"')).toBeGreaterThan(row.indexOf("overflow-x-auto"));
   });
 });

@@ -4,11 +4,20 @@
  */
 import { EMPTY_BOARD_WORKERS_STATE, ThreadId, type BoardCardThreadShell } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
-import { BoardCardThreadCompactMenuBody } from "./BoardCardThreadChrome";
+import {
+  BoardCardThreadCompactControls,
+  BoardCardThreadCompactMenuBody,
+} from "./BoardCardThreadChrome";
 import { boardThreadWorker } from "./workers/threadWorker";
+
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children, ...props }: { readonly children?: React.ReactNode }) => (
+    <a {...props}>{children}</a>
+  ),
+}));
 
 const noop = () => {};
 const worker = boardThreadWorker({
@@ -128,5 +137,72 @@ describe("BoardCardThreadCompactMenuBody", () => {
     );
     expect(html).toContain("An existing thread");
     expect(html).not.toContain("planning · T3-7 · Planning");
+  });
+
+  it("keeps the worker hint on a compact row that ran on another worker", () => {
+    const remote = link({
+      threadId: ThreadId.make("thread-remote"),
+      role: "building",
+      title: "T3-7 · Building",
+      ranOn: "ran on linux-box",
+    });
+    const html = renderToStaticMarkup(
+      <BoardCardThreadCompactMenuBody
+        adoptableThreads={[]}
+        mode="menu"
+        onAdoptThread={noop}
+        onCreateBlankThread={noop}
+        onEnterAdoptMode={noop}
+        onRestartStage={noop}
+        onSelectThread={noop}
+        onUnlinkThread={noop}
+        selectedThreadId={planning.threadId}
+        stageRestart={null}
+        threadLinks={[planning, remote]}
+        threadTodos={undefined}
+      />,
+    );
+    expect(html).toContain("building · T3-7 · Building");
+    expect(html).toContain("ran on linux-box");
+  });
+});
+
+describe("BoardCardThreadCompactControls", () => {
+  it("names the trigger with the selected thread", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardThreadCompactControls
+        adoptableThreads={[]}
+        onCreateBlankThread={() => Promise.resolve(null)}
+        onLinkThread={noop}
+        onRestartStage={noop}
+        onSelectThread={noop}
+        onToggleMaximised={noop}
+        onUnlinkThread={noop}
+        selectedThreadId={planning.threadId}
+        stageRestart={null}
+        threadLinks={[planning]}
+      />,
+    );
+    expect(html).toContain('aria-label="Threads, planning · T3-7 · Planning"');
+    expect(html).toContain("planning · T3-7 · Planning");
+  });
+
+  it("names the trigger Threads when nothing is selected", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardThreadCompactControls
+        adoptableThreads={[]}
+        onCreateBlankThread={() => Promise.resolve(null)}
+        onLinkThread={noop}
+        onRestartStage={noop}
+        onSelectThread={noop}
+        onToggleMaximised={noop}
+        onUnlinkThread={noop}
+        selectedThreadId={null}
+        stageRestart={null}
+        threadLinks={[]}
+      />,
+    );
+    expect(html).toContain('aria-label="Threads"');
+    expect(html).not.toContain("Threads,");
   });
 });

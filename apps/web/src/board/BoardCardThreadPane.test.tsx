@@ -1,10 +1,13 @@
+// @vitest-environment jsdom
 /**
  * Card thread pane chrome (T3O-17): the tab strip hides while compact, and
  * the queue / todos / empty states stay.
  */
 import { EMPTY_BOARD_WORKERS_STATE, ThreadId } from "@t3tools/contracts";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
 import { boardThreadWorker } from "./workers/threadWorker";
@@ -138,5 +141,61 @@ describe("BoardCardThreadPane compact chrome", () => {
     );
     expect(html).toContain("1/3");
     expect(html).toContain("embedded-chat");
+  });
+});
+
+describe("BoardCardThreadPane older-threads chevron after compact", () => {
+  let root: Root;
+  let container: HTMLDivElement;
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.className.includes("gap-0.5") && this.className.includes("overflow-x-auto")
+        ? 400
+        : 100;
+    });
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.className.includes("gap-0.5") && this.className.includes("overflow-x-auto")
+        ? 80
+        : 100;
+    });
+  });
+
+  afterEach(async () => {
+    await act(() => root.unmount());
+    container.remove();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows the chevron after compact chrome turns off while the strip overflows", async () => {
+    const overflowingLinks = [
+      live,
+      { ...live, threadId: ThreadId.make("thread-2"), title: "Older" },
+    ];
+    await act(() =>
+      root.render(
+        <BoardCardThreadPane
+          {...paneProps}
+          compactChrome
+          maximised
+          threadLinks={overflowingLinks}
+        />,
+      ),
+    );
+    expect(container.querySelector('[aria-label="Show older threads"]')).toBeNull();
+
+    await act(() =>
+      root.render(<BoardCardThreadPane {...paneProps} maximised threadLinks={overflowingLinks} />),
+    );
+    expect(container.querySelector('[aria-label="Show older threads"]')).not.toBeNull();
   });
 });

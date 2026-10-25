@@ -2549,101 +2549,111 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           compactChrome ? "py-2" : "pt-4",
         )}
       >
-        {compactChrome ? (
-          <TitleBody compact done={done} onSave={props.onSaveTitle} title={card.title} />
-        ) : null}
-        <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">{card.key}</span>
-        {props.parentCard != null ? (
-          // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
-          // back into the sub-board it lives on, with this sheet still open.
-          <BoardHint label={`Part of ${props.parentCard.key}'s sub-board — open it`}>
-            <button
-              className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
-              disabled={props.onOpenParentSubBoard === undefined}
-              onClick={props.onOpenParentSubBoard}
-              type="button"
-            >
-              <LayersIcon className="size-2.5" />
-              {props.parentCard.key}
-            </button>
-          </BoardHint>
-        ) : null}
-        <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
-        {/* On a done card the stage chip IS the completion badge, cut to the
+        <div
+          className={cn(
+            "flex min-w-0 items-center gap-[9px]",
+            compactChrome &&
+              "flex-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+          )}
+        >
+          {compactChrome ? (
+            <TitleBody compact done={done} onSave={props.onSaveTitle} title={card.title} />
+          ) : null}
+          <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">
+            {card.key}
+          </span>
+          {props.parentCard != null ? (
+            // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
+            // back into the sub-board it lives on, with this sheet still open.
+            <BoardHint label={`Part of ${props.parentCard.key}'s sub-board — open it`}>
+              <button
+                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
+                disabled={props.onOpenParentSubBoard === undefined}
+                onClick={props.onOpenParentSubBoard}
+                type="button"
+              >
+                <LayersIcon className="size-2.5" />
+                {props.parentCard.key}
+              </button>
+            </BoardHint>
+          ) : null}
+          <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
+          {/* On a done card the stage chip IS the completion badge, cut to the
             same block as the label chips beside it (t3o-36): the sheet no
             longer wears a wash, so this and the title's check carry "done".
             Green means done and only done — docs/t3o/status-colours.md. */}
-        <span
-          className={cn(
-            "inline-flex shrink-0 items-center font-medium",
-            done
-              ? "h-4 rounded-[5px] bg-success/16 px-1.5 text-[10px] tracking-[0.03em] text-success-foreground uppercase"
-              : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
-          )}
-        >
-          {boardStageLabel(props.stages, card.stage)}
-        </span>
-        {archived ? (
-          <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-            Archived
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center font-medium",
+              done
+                ? "h-4 rounded-[5px] bg-success/16 px-1.5 text-[10px] tracking-[0.03em] text-success-foreground uppercase"
+                : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
+            )}
+          >
+            {boardStageLabel(props.stages, card.stage)}
           </span>
-        ) : null}
-        {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
+          {archived ? (
+            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+              Archived
+            </span>
+          ) : null}
+          {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
             is set, then the clock plus its label. Hidden on a done-role card
             and on an archived one — neither is going to move again on a timer.
             Beside the stage chip, because what it holds is the stage. */}
-        {archived || done ? null : (
-          <BoardCardSchedulePopover
-            // Sized to the chip row it sits in, not to a button row.
-            className="h-[18px]"
-            kind={props.scheduleKind}
-            onChange={props.onSetScheduledStartAt}
-            scheduledStartAt={card.scheduledStartAt}
-            stageLabel={boardStageLabel(props.stages, card.stage)}
-          />
-        )}
-        {/* The auto-merge arm, read-only (T3O-38, D13). NAMES THE SOURCE:
+          {archived || done ? null : (
+            <BoardCardSchedulePopover
+              // Sized to the chip row it sits in, not to a button row.
+              className="h-[18px]"
+              kind={props.scheduleKind}
+              onChange={props.onSetScheduledStartAt}
+              scheduledStartAt={card.scheduledStartAt}
+              stageLabel={boardStageLabel(props.stages, card.stage)}
+            />
+          )}
+          {/* The auto-merge arm, read-only (T3O-38, D13). NAMES THE SOURCE:
             with the board-wide setting on the per-card switch is hidden, so a
             user who goes looking for it needs to be told where the decision
             actually lives. Neutral, like the queue chip below — an armed card
             is not running, not done, and asking nothing of anyone. */}
-        {archived || done || autoMergeChip === null ? null : (
-          <BoardHint label={autoMergeChip.tooltip}>
-            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-              <PullRequestGlyph.merged className="size-2.5" />
-              {autoMergeChip.label}
-            </span>
-          </BoardHint>
-        )}
-        {/* Queued for a build slot (t3o-33). Beside the stage badge, because
+          {archived || done || autoMergeChip === null ? null : (
+            <BoardHint label={autoMergeChip.tooltip}>
+              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+                <PullRequestGlyph.merged className="size-2.5" />
+                {autoMergeChip.label}
+              </span>
+            </BoardHint>
+          )}
+          {/* Queued for a build slot (t3o-33). Beside the stage badge, because
             "Building" alone is what made a queued card look mid-build. Neutral,
             not `--attention`: nothing is waiting on the user here — see
             docs/t3o/status-colours.md. */}
-        {props.queueInfo != null ? (
-          <BoardHint label={props.queueInfo.detail}>
-            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-              <ClockIcon className="size-2.5" />
-              {props.queueInfo.label}
-            </span>
-          </BoardHint>
-        ) : null}
-        {/* Shown only once this card actually overrides something (t3o-29, D7).
+          {props.queueInfo != null ? (
+            <BoardHint label={props.queueInfo.detail}>
+              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+                <ClockIcon className="size-2.5" />
+                {props.queueInfo.label}
+              </span>
+            </BoardHint>
+          ) : null}
+          {/* Shown only once this card actually overrides something (t3o-29, D7).
             An override changes what the card spends and what authority it runs
             under; that should not be invisible from the card. It costs nothing
             on a card that has not set one. */}
-        {modelOverridden ? (
-          <BoardHint label={modelPillTitle}>
-            <button
-              className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={() => setModelsOpen(true)}
-              type="button"
-            >
-              <SlidersHorizontalIcon className="size-2.5" />
-              {modelPillLabel}
-            </button>
-          </BoardHint>
-        ) : null}
-        <span className="flex-1" />
+          {modelOverridden ? (
+            <BoardHint label={modelPillTitle}>
+              <button
+                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => setModelsOpen(true)}
+                type="button"
+              >
+                <SlidersHorizontalIcon className="size-2.5" />
+                {modelPillLabel}
+              </button>
+            </BoardHint>
+          ) : null}
+        </div>
+        {compactChrome ? null : <span className="flex-1" />}
         <PaneTabs
           hasPlan={hasPlan}
           hasReview={hasReview}
@@ -2754,6 +2764,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         ) : null}
         <BoardHint label="Close">
           <button
+            aria-label="Close"
             className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
             onClick={props.onClose}
             type="button"
