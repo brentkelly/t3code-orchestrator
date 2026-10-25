@@ -1,8 +1,9 @@
 /**
  * Shared thread-pane chrome (T3O-17): status glyph, fullscreen / open-in-Threads
  * icon buttons, and the compact identity-row thread trigger that replaces the
- * tab strip on a short maximised sheet. Exit fullscreen stays pinned on the
- * sheet so the trigger can live in the scrolling cluster.
+ * tab strip on a short maximised sheet. The trigger sits with the pane tabs
+ * outside the scrolling chip cluster so it cannot scroll away; its label
+ * truncates instead. Exit fullscreen stays pinned on the sheet.
  *
  * Lives next to `BoardCardThreadPane` rather than inside it so the card detail
  * view can host the folded controls without eagerly loading `ChatView`.
@@ -264,7 +265,7 @@ export function BoardCardThreadCompactControls({
   };
   const close = () => setOpen(false);
   return (
-    <span className="shrink-0">
+    <span className="min-w-0 max-w-48 overflow-hidden">
       <Popover
         onOpenChange={(next) => {
           setOpen(next);
@@ -277,8 +278,9 @@ export function BoardCardThreadCompactControls({
       >
         <PopoverTrigger
           aria-label={selected === null ? "Threads" : `Threads, ${triggerLabel}`}
-          className="inline-flex h-[26px] max-w-48 shrink-0 items-center gap-1 rounded-lg border border-border bg-card px-2.5 text-[12px] font-medium text-foreground"
+          className="inline-flex h-[26px] max-w-full min-w-0 items-center gap-1 rounded-lg border border-border bg-card px-2.5 text-[12px] font-medium text-foreground"
         >
+          {selected === null ? null : <BoardCardThreadStatusGlyph link={selected} />}
           <span className="min-w-0 truncate">{triggerLabel}</span>
           <ChevronDownIcon className="size-3 shrink-0 opacity-70" />
         </PopoverTrigger>

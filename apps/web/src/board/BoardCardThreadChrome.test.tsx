@@ -222,4 +222,45 @@ describe("BoardCardThreadCompactControls", () => {
     expect(html).not.toContain('aria-label="Exit fullscreen"');
     expect(html).not.toContain('aria-label="Open in Threads"');
   });
+
+  it("shows the selected thread's status on the compact trigger", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardThreadCompactControls
+        adoptableThreads={[]}
+        onCreateBlankThread={() => Promise.resolve(null)}
+        onLinkThread={noop}
+        onRestartStage={noop}
+        onSelectThread={noop}
+        onUnlinkThread={noop}
+        selectedThreadId={building.threadId}
+        stageRestart={null}
+        threadLinks={[building]}
+      />,
+    );
+    expect(html).toContain('aria-label="Working"');
+    expect(html).toContain("building · T3-7 · Building");
+  });
+
+  it("shows awaiting-input on the compact trigger", () => {
+    const waiting = link({
+      threadId: ThreadId.make("thread-wait"),
+      role: "building",
+      title: "T3-7 · Building",
+      awaitingInput: true,
+    });
+    const html = renderToStaticMarkup(
+      <BoardCardThreadCompactControls
+        adoptableThreads={[]}
+        onCreateBlankThread={() => Promise.resolve(null)}
+        onLinkThread={noop}
+        onRestartStage={noop}
+        onSelectThread={noop}
+        onUnlinkThread={noop}
+        selectedThreadId={waiting.threadId}
+        stageRestart={null}
+        threadLinks={[waiting]}
+      />,
+    );
+    expect(html).toContain('aria-label="Awaiting your input"');
+  });
 });

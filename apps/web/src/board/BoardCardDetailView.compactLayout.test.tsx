@@ -236,6 +236,7 @@ function estimateContentWidth(el: HTMLElement): number {
   if (label === "Close") return 28;
   if (label === "More actions") return 28;
   if (label === "Exit fullscreen") return 24;
+  if (label === "Show more") return 24;
   if (label.startsWith("Threads")) return 192;
   if (label === "Open in Threads") return 24;
   if (hasClass(el.className, "overflow-x-auto")) return 720;
@@ -243,7 +244,13 @@ function estimateContentWidth(el: HTMLElement): number {
   if (el.querySelector('[aria-label="Close"]') != null) return 28;
   if (el.querySelector('[aria-label="More actions"]') != null) return 28;
   if (el.querySelector('[aria-label="Exit fullscreen"]') != null) return 24;
-  if (el.querySelector('[aria-label^="Threads"]') != null) return 240;
+  if (el.querySelector('[aria-label="Show more"]') != null) return 24;
+  if (el.querySelector('[aria-label^="Threads"]') != null) return 192;
+  if (
+    [...el.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Thread")
+  ) {
+    return 140;
+  }
   return 48;
 }
 
@@ -318,6 +325,7 @@ describe("BoardCardDetailPanel compact identity-row layout", () => {
   afterEach(async () => {
     await act(() => root.unmount());
     container.remove();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -342,8 +350,8 @@ describe("BoardCardDetailPanel compact identity-row layout", () => {
     );
     expect(threadTab).toBeInstanceOf(HTMLElement);
 
-    expect(scroller!.contains(trigger)).toBe(true);
-    expect(scroller!.contains(threadTab!)).toBe(true);
+    expect(scroller!.contains(trigger)).toBe(false);
+    expect(scroller!.contains(threadTab!)).toBe(false);
     expect(scroller!.contains(close)).toBe(false);
     expect(scroller!.contains(exit)).toBe(false);
     expect(hasClass(scroller!.className, "flex-1")).toBe(true);
@@ -362,5 +370,43 @@ describe("BoardCardDetailPanel compact identity-row layout", () => {
     );
     expect(overlapping).toEqual([]);
     expect(closeBox!.start + closeBox!.width).toBeLessThanOrEqual(ROW_WIDTH + GAP);
+  });
+
+  it("shows a chevron when the compact identity cluster overflows", async () => {
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return hasClass(this.className, "flex-1") && hasClass(this.className, "overflow-x-auto")
+        ? 400
+        : 100;
+    });
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return hasClass(this.className, "flex-1") && hasClass(this.className, "overflow-x-auto")
+        ? 80
+        : 100;
+    });
+
+    await act(() => root.render(<BoardCardDetailPanel {...baseProps} />));
+    await act(() => Promise.resolve());
+
+    expect(container.querySelector('[aria-label="Show more"]')).not.toBeNull();
+
+    const close = container.querySelector('[aria-label="Close"]');
+    const row = close!.closest('[class*="relative z-10"]') as HTMLElement;
+    const scroller = [...row.querySelectorAll('[class*="overflow-x-auto"]')].find((node) =>
+      hasClass((node as HTMLElement).className, "flex-1"),
+    ) as HTMLElement;
+    const trigger = container.querySelector('[aria-label^="Threads"]');
+    const chevron = container.querySelector('[aria-label="Show more"]');
+    expect(scroller.contains(trigger)).toBe(false);
+    expect(scroller.contains(chevron)).toBe(false);
+  });
+
+  it("hides the compact identity chevron when the cluster fits", async () => {
+    await act(() => root.render(<BoardCardDetailPanel {...baseProps} />));
+    await act(() => Promise.resolve());
+    expect(container.querySelector('[aria-label="Show more"]')).toBeNull();
   });
 });

@@ -76,6 +76,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   ClockIcon,
   EllipsisVerticalIcon,
@@ -98,7 +99,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useMediaQuery } from "../hooks/useMediaQuery";
 
@@ -123,6 +124,7 @@ import {
 } from "./boardCardModelRows";
 import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
+import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
@@ -2387,6 +2389,35 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const wide = boardCardDetailIsWide(props.stages, card.stage, props.paneChoice);
   const shortViewport = useMediaQuery(BOARD_CARD_COMPACT_CHROME_QUERY);
   const compactChrome = boardCardCompactChrome(wide && props.maximised, shortViewport);
+  const compactClusterRef = useRef<HTMLDivElement | null>(null);
+  const [compactCanScrollRight, setCompactCanScrollRight] = useState(false);
+  const syncCompactScrollAffordance = useCallback(() => {
+    const el = compactClusterRef.current;
+    if (el === null) return;
+    setCompactCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 1);
+  }, []);
+  // Chip fields are listed so a same-sized cluster that gains chips remeasures
+  // scrollWidth. ResizeObserver only sees the box.
+  useEffect(() => {
+    if (!compactChrome) return undefined;
+    const el = compactClusterRef.current;
+    if (el === null) return undefined;
+    syncCompactScrollAffordance();
+    return observeResize(el, syncCompactScrollAffordance);
+  }, [
+    archived,
+    card.autoMerge,
+    card.labels,
+    card.modelOverrides,
+    card.scheduledStartAt,
+    card.stage,
+    card.title,
+    compactChrome,
+    done,
+    props.parentCard,
+    props.queueInfo,
+    syncCompactScrollAffordance,
+  ]);
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
   // count at all (t3o-13, D1), and everything else must be done.
@@ -2575,6 +2606,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               ? "min-w-0 flex-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               : "shrink-0",
           )}
+          onScroll={compactChrome ? syncCompactScrollAffordance : undefined}
+          ref={compactChrome ? compactClusterRef : undefined}
         >
           {compactChrome ? (
             <TitleBody compact done={done} onSave={props.onSaveTitle} title={card.title} />
@@ -2672,31 +2705,52 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               </button>
             </BoardHint>
           ) : null}
-          {compactChrome ? paneTabs : null}
-          {compactChrome && activePane === "thread" ? (
-            <BoardCardThreadCompactControls
-              adoptableThreads={props.adoptableThreads}
-              onCreateBlankThread={props.onCreateBlankThread}
-              onLinkThread={props.onLinkThread}
-              onRestartStage={props.onRestartStage}
-              onSelectThread={setSelectedThreadId}
-              onUnlinkThread={props.onUnlinkThread}
-              selectedThreadId={selectedThread}
-              stageRestart={props.stageRestart}
-              threadLinks={props.threadLinks}
-              threadTodos={props.threadTodos}
-            />
-          ) : null}
-          {compactChrome &&
-          activePane === "thread" &&
-          selectedLink !== null &&
-          !selectedLink.tombstoned ? (
-            <BoardCardThreadOpenInThreadsButton
-              threadId={selectedLink.threadId}
-              worker={selectedLink.worker}
-            />
-          ) : null}
         </div>
+        {/* Title and chips scroll; pane tabs, the thread trigger, and Open in
+            Threads stay pinned ahead of the kebab so the switcher cannot sit
+            off-screen. A chevron is the same affordance the tab strip uses
+            when this cluster still overflows. */}
+        {compactChrome && compactCanScrollRight ? (
+          <BoardHint label="Show more">
+            <button
+              aria-label="Show more"
+              className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+              onClick={() => {
+                compactClusterRef.current?.scrollBy({
+                  left: compactClusterRef.current.clientWidth * 0.7,
+                  behavior: "smooth",
+                });
+              }}
+              type="button"
+            >
+              <ChevronRightIcon className="size-3.5" />
+            </button>
+          </BoardHint>
+        ) : null}
+        {compactChrome ? paneTabs : null}
+        {compactChrome && activePane === "thread" ? (
+          <BoardCardThreadCompactControls
+            adoptableThreads={props.adoptableThreads}
+            onCreateBlankThread={props.onCreateBlankThread}
+            onLinkThread={props.onLinkThread}
+            onRestartStage={props.onRestartStage}
+            onSelectThread={setSelectedThreadId}
+            onUnlinkThread={props.onUnlinkThread}
+            selectedThreadId={selectedThread}
+            stageRestart={props.stageRestart}
+            threadLinks={props.threadLinks}
+            threadTodos={props.threadTodos}
+          />
+        ) : null}
+        {compactChrome &&
+        activePane === "thread" &&
+        selectedLink !== null &&
+        !selectedLink.tombstoned ? (
+          <BoardCardThreadOpenInThreadsButton
+            threadId={selectedLink.threadId}
+            worker={selectedLink.worker}
+          />
+        ) : null}
         {compactChrome ? null : <span className="flex-1" />}
         {compactChrome ? null : paneTabs}
         <Menu>
