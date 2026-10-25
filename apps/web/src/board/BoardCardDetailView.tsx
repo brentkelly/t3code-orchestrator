@@ -2717,30 +2717,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     if (el === null) return;
     setCompactCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 1);
   }, []);
-  // Chip fields are listed so a same-sized cluster that gains chips remeasures
-  // scrollWidth. ResizeObserver only sees the box.
-  useEffect(() => {
-    if (!compactChrome) return undefined;
-    const el = compactClusterRef.current;
-    if (el === null) return undefined;
-    syncCompactScrollAffordance();
-    return observeResize(el, syncCompactScrollAffordance);
-  }, [
-    archived,
-    autoMergeChip,
-    card.labels,
-    card.mergeStrategy,
-    card.modelOverrides,
-    card.scheduledStartAt,
-    card.stage,
-    card.title,
-    compactChrome,
-    done,
-    props.group,
-    props.parentCard,
-    props.queueInfo,
-    syncCompactScrollAffordance,
-  ]);
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
   // count at all (t3o-13, D1), and everything else must be done.
@@ -3001,6 +2977,39 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       plansLabel={group === null || planRows === null ? null : "Cards"}
     />
   );
+  // Chip fields and pane-tab inputs are listed so a same-sized cluster that
+  // gains chips or tabs remeasures scrollWidth. ResizeObserver only sees the box.
+  useEffect(() => {
+    if (!compactChrome) return undefined;
+    const el = compactClusterRef.current;
+    if (el === null) return undefined;
+    syncCompactScrollAffordance();
+    return observeResize(el, syncCompactScrollAffordance);
+  }, [
+    archived,
+    autoMergeChip,
+    card.labels,
+    card.mergeStrategy,
+    card.modelOverrides,
+    card.pullRequest,
+    card.scheduledStartAt,
+    card.stage,
+    card.title,
+    compactChrome,
+    done,
+    hasCi,
+    hasPlan,
+    hasReview,
+    hasSummary,
+    planRows,
+    planningLink,
+    props.detail.plans,
+    props.detail.stepCompletions,
+    props.group,
+    props.parentCard,
+    props.queueInfo,
+    syncCompactScrollAffordance,
+  ]);
 
   return (
     <>
@@ -3015,17 +3024,25 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       >
         {/* The key and its chips wrap onto a second line rather than pushing
             the tabs and the kebab off a narrow modal (T3O-80). On compact
-            chrome they scroll instead, so Close stays pinned (T3O-17). */}
+            chrome they scroll instead, so Close stays pinned (T3O-17). Show
+            more overlays the scrollport so it cannot steal the title's floor. */}
         <div
           className={cn(
-            "flex min-h-7 items-center gap-[9px]",
             compactChrome
-              ? "min-w-0 flex-auto overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-              : "shrink-0 flex-wrap",
+              ? "relative min-h-7 min-w-0 flex-auto overflow-hidden"
+              : "flex min-h-7 shrink-0 flex-wrap items-center gap-[9px]",
           )}
-          onScroll={compactChrome ? syncCompactScrollAffordance : undefined}
-          ref={compactChrome ? compactClusterRef : undefined}
         >
+          <div
+            className={cn(
+              "flex min-h-7 items-center gap-[9px]",
+              compactChrome
+                ? "min-w-0 w-full overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                : "shrink-0",
+            )}
+            onScroll={compactChrome ? syncCompactScrollAffordance : undefined}
+            ref={compactChrome ? compactClusterRef : undefined}
+          >
           {compactChrome ? (
             <TitleBody compact done={done} onSave={props.onSaveTitle} title={card.title} />
           ) : null}
@@ -3149,28 +3166,27 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </BoardHint>
           )}
           {compactChrome ? paneTabs : null}
+          </div>
+          {/* Overlay, not a flex sibling: mounting Show more must not shrink
+              the scrollport below the title's 4rem floor on a 320px sheet. */}
+          {compactChrome && compactCanScrollRight ? (
+            <BoardHint label="Show more">
+              <button
+                aria-label="Show more"
+                className="absolute top-1/2 right-0 z-10 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-[7px] bg-card text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                onClick={() => {
+                  compactClusterRef.current?.scrollBy({
+                    left: compactClusterRef.current.clientWidth * 0.7,
+                    behavior: "smooth",
+                  });
+                }}
+                type="button"
+              >
+                <ChevronRightIcon className="size-3.5" />
+              </button>
+            </BoardHint>
+          ) : null}
         </div>
-        {/* Title, chips, and pane tabs scroll in the cluster. The thread
-            trigger, Exit, kebab, and Close stay pinned so a 320px sheet
-            cannot hide them. A chevron is the same affordance the tab strip
-            uses when this cluster still overflows. */}
-        {compactChrome && compactCanScrollRight ? (
-          <BoardHint label="Show more">
-            <button
-              aria-label="Show more"
-              className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-              onClick={() => {
-                compactClusterRef.current?.scrollBy({
-                  left: compactClusterRef.current.clientWidth * 0.7,
-                  behavior: "smooth",
-                });
-              }}
-              type="button"
-            >
-              <ChevronRightIcon className="size-3.5" />
-            </button>
-          </BoardHint>
-        ) : null}
         {compactChrome && activePane === "thread" ? (
           <BoardCardThreadCompactControls
             adoptableThreads={props.adoptableThreads}
