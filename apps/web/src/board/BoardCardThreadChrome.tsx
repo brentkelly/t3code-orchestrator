@@ -1,9 +1,9 @@
 /**
  * Shared thread-pane chrome (T3O-17): status glyph, fullscreen / open-in-Threads
  * icon buttons, and the compact identity-row thread trigger that replaces the
- * tab strip on a short maximised sheet. The trigger sits with the pane tabs
- * outside the scrolling chip cluster so it cannot scroll away; its label
- * truncates instead. Exit fullscreen stays pinned on the sheet.
+ * tab strip on a short maximised sheet. The trigger sits in the pinned tail
+ * with a min-width so its label cannot collapse to 0; pane tabs scroll with
+ * the chip cluster. Exit fullscreen stays pinned on the sheet.
  *
  * Lives next to `BoardCardThreadPane` rather than inside it so the card detail
  * view can host the folded controls without eagerly loading `ChatView`.
@@ -265,7 +265,7 @@ export function BoardCardThreadCompactControls({
   };
   const close = () => setOpen(false);
   return (
-    <span className="min-w-0 max-w-48 overflow-hidden">
+    <span className="min-w-16 max-w-48 overflow-hidden">
       <Popover
         onOpenChange={(next) => {
           setOpen(next);

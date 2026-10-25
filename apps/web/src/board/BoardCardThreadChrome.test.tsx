@@ -219,6 +219,8 @@ describe("BoardCardThreadCompactControls", () => {
       />,
     );
     expect(html).toContain('aria-label="Threads, planning · T3-7 · Planning"');
+    expect(html).toContain("min-w-16 max-w-48");
+    expect(html).not.toContain("min-w-0 max-w-48");
     expect(html).not.toContain('aria-label="Exit fullscreen"');
     expect(html).not.toContain('aria-label="Open in Threads"');
   });
