@@ -16,24 +16,9 @@
  * thread joins a card.
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import {
-  BOARD_LOCAL_WORKER_ID,
-  isBoardCardAwaitingPermission,
-  type BoardCardThreadShell,
-  type EnvironmentId,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { type BoardCardThreadShell, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import {
-  ChevronRightIcon,
-  ClockIcon,
-  MaximizeIcon,
-  MessageSquareIcon,
-  MinimizeIcon,
-  PlayIcon,
-  SquareArrowOutUpRightIcon,
-  XIcon,
-} from "lucide-react";
+import { ChevronRightIcon, ClockIcon, PlayIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import ChatView from "../components/ChatView";
@@ -54,13 +39,17 @@ import {
   type BoardAdoptSearch,
   type BoardThreadStageRestart,
 } from "./BoardCardThreadAddMenu";
+import {
+  BoardCardThreadExitFullscreenButton,
+  BoardCardThreadOpenInThreadsButton,
+  BoardCardThreadStatusGlyph,
+} from "./BoardCardThreadChrome";
 import { BoardCardThreadTodosStrip } from "./BoardCardThreadTodosStrip";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
 import { BoardHint } from "./BoardHint";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 import { BoardThreadWorkerGate } from "./workers/BoardThreadWorkerGate";
-import { threadWorkerOpensOn } from "./workers/threadWorker";
 
 const NO_THREAD_IDS: ReadonlyArray<ThreadId> = [];
 
@@ -164,6 +153,7 @@ export function BoardCardThreadPane({
   onUnlinkThread,
   maximised,
   onToggleMaximised,
+  compactChrome = false,
   threadTodos,
   queueInfo,
   queueForceStartPending,
@@ -187,6 +177,8 @@ export function BoardCardThreadPane({
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   readonly maximised: boolean;
   readonly onToggleMaximised: () => void;
+  /** When true the tab strip is gone — its controls live in the identity row. */
+  readonly compactChrome?: boolean | undefined;
   /** Each live-linked thread's cached todo list (t3o-18, D3/D5). The modal
       always shows what is STORED — unlike the card strip, which hides a finished
       list on a stopped thread — so a thread that succeeded still reads `5/5`
@@ -236,6 +228,7 @@ export function BoardCardThreadPane({
 
   return (
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
+      {compactChrome ? null : (
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-2.5 pr-3">
         <BoardCardThreadAddMenu
           adoptSearch={adoptSearch}
@@ -286,48 +279,7 @@ export function BoardCardThreadPane({
                     onClick={() => onSelectThread(link.threadId)}
                     type="button"
                   >
-                    {link.awaitingInput ? (
-                      <BoardHint label="Awaiting your input">
-                        <span
-                          aria-label="Awaiting your input"
-                          role="img"
-                          className="size-2 shrink-0 rounded-full bg-attention"
-                        />
-                      </BoardHint>
-                    ) : isBoardCardAwaitingPermission(link) ? (
-                      // Blocked on a permission prompt (T3O-16): as answerable
-                      // as a question, so the same violet, not the idle glyph.
-                      <BoardHint label="Waiting for permission">
-                        <span
-                          aria-label="Waiting for permission"
-                          role="img"
-                          className="size-2 shrink-0 rounded-full bg-attention"
-                        />
-                      </BoardHint>
-                    ) : link.threadState === "working" ? (
-                      <BoardHint label="Working">
-                        <span
-                          aria-label="Working"
-                          role="img"
-                          className="size-2 shrink-0 rounded-full bg-info"
-                        />
-                      </BoardHint>
-                    ) : link.threadState === "failed" ? (
-                      // A dead provider session (t3o-10) reads as idle if it
-                      // falls through to the generic glyph, which is the lie
-                      // this card set out to remove. Red, the colour the thread
-                      // list and the activity rail already give a failure — not
-                      // a work-state colour, because no work is happening.
-                      <BoardHint label="Failed">
-                        <span
-                          aria-label="Failed"
-                          role="img"
-                          className="size-2 shrink-0 rounded-full bg-destructive"
-                        />
-                      </BoardHint>
-                    ) : (
-                      <MessageSquareIcon className="size-3 shrink-0 opacity-70" />
-                    )}
+                    <BoardCardThreadStatusGlyph link={link} />
                     <span className="max-w-40 truncate whitespace-nowrap">
                       {link.title ?? "Deleted thread"}
                     </span>
@@ -376,30 +328,15 @@ export function BoardCardThreadPane({
           </BoardHint>
         ) : null}
         <span className="flex-1" />
-        <BoardHint label={maximised ? "Exit fullscreen" : "Fullscreen"}>
-          <button
-            className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
-            onClick={onToggleMaximised}
-            type="button"
-          >
-            {maximised ? <MinimizeIcon className="size-3" /> : <MaximizeIcon className="size-3" />}
-          </button>
-        </BoardHint>
+        <BoardCardThreadExitFullscreenButton maximised={maximised} onToggle={onToggleMaximised} />
         {selected !== null && !selected.tombstoned ? (
-          <Link
-            className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
-            params={{ environmentId: selected.worker.environmentId, threadId: selected.threadId }}
-            title={
-              selected.worker.workerId === BOARD_LOCAL_WORKER_ID
-                ? "Open in the threads view"
-                : threadWorkerOpensOn(selected.worker)
-            }
-            to="/$environmentId/$threadId"
-          >
-            <SquareArrowOutUpRightIcon className="size-3" />
-          </Link>
+          <BoardCardThreadOpenInThreadsButton
+            threadId={selected.threadId}
+            worker={selected.worker}
+          />
         ) : null}
       </div>
+      )}
 
       {/* Queued for a build slot (t3o-33). PANE-LEVEL, above whichever thread is
           selected, because a queued card has no build thread to put it in — the
