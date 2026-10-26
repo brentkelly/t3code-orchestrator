@@ -60,10 +60,10 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
     }
     // Chromium databases require their own profile for each running version.
     if (input.platform !== "win32") return destinationPath;
-    // T3o: legacy equals current, so there is no older profile to migrate from.
-    if (names.legacy === names.current) return destinationPath;
     const destinationState = path.join(destinationPath, "Local State");
     if (yield* inspect(destinationState)) return destinationPath;
+    // T3o: legacy equals current, so there is no older profile to migrate from.
+    if (names.legacy === names.current) return destinationPath;
     const legacyState = path.join(legacyPath, "Local State");
     const sourceState = (yield* inspect(legacyState))
       ? legacyState
