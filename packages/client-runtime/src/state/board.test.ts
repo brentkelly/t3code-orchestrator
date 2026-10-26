@@ -11,7 +11,6 @@ import {
   BoardLabelId,
   BoardStageId,
   ProjectId,
-  ProviderInstanceId,
   ThreadId,
   type BoardCard,
   type BoardCardShell,
@@ -103,7 +102,6 @@ const snapshot = (input?: Partial<BoardShellSnapshot>): BoardShellSnapshot => ({
   labels: [],
   stages: [],
   cardThreads: [],
-  providerLimits: [],
   ...input,
 });
 
@@ -539,12 +537,11 @@ describe("board shell reducer", () => {
         queued: false,
         stalledReason: "usage-limit",
         retryAt: "2026-01-01T02:50:00.000Z",
-        limitedByInstanceId: ProviderInstanceId.make("claudeAgent"),
       },
     );
     expect(parked.cards?.[0]?.stalledReason).toBe("usage-limit");
     // A parked card sits for HOURS, so a drag or a rename inside that window is
-    // likely. The `stalled` flag is preserved above; without the three keys
+    // likely. The `stalled` flag is preserved above; without the stall keys
     // riding with it the face's words revert to the gave-up phrasing and the
     // detail modal paints its red "stopped" banner over a card that is calmly
     // counting down to its own resume.
@@ -556,7 +553,6 @@ describe("board shell reducer", () => {
     expect(reordered.cards?.[0]?.stalled).toBe(true);
     expect(reordered.cards?.[0]?.stalledReason).toBe("usage-limit");
     expect(reordered.cards?.[0]?.retryAt).toBe("2026-01-01T02:50:00.000Z");
-    expect(reordered.cards?.[0]?.limitedByInstanceId).toBe("claudeAgent");
     // …and the window reopening still clears the whole slice, because
     // `card-stalled` deletes the keys rather than spreading over what is held.
     const resumed = applyBoardShellStreamEvent(reordered, {
@@ -572,7 +568,6 @@ describe("board shell reducer", () => {
     });
     expect(resumed.cards?.[0]?.stalledReason).toBeUndefined();
     expect(resumed.cards?.[0]?.retryAt).toBeUndefined();
-    expect(resumed.cards?.[0]?.limitedByInstanceId).toBeUndefined();
     expect(resumed.cards?.[0]?.queued).toBe(true);
   });
 

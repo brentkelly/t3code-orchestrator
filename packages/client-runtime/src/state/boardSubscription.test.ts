@@ -49,7 +49,6 @@ const SNAPSHOT: BoardShellSnapshot = {
   labels: [label("label-1", "Bug")],
   stages: [],
   cardThreads: [],
-  providerLimits: [],
 };
 
 const labelUpserted = (sequence: number, name: string): BoardShellStreamItem => ({

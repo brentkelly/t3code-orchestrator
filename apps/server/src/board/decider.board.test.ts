@@ -2297,33 +2297,6 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           stageId: BoardStageId.make("backlog"),
           createdAt: NOW,
         },
-        // Provider cooldowns (T3O-22): the third aggregate that carries no
-        // card at all.
-        "board.provider-limit.record": {
-          type: "board.provider-limit.record",
-          commandId: CommandId.make("cmd-limit-record"),
-          limit: {
-            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-            kind: "wait",
-            until: NOW,
-            detectedAt: NOW,
-            lastCheckedAt: NOW,
-            reason: "You've hit your session limit",
-            ruleId: "claude-code.session-limit",
-            sourceCardId: BoardCardId.make("card-ready"),
-            knownTime: true,
-            blindSince: null,
-            probeCardId: null,
-            setByHuman: false,
-          },
-          createdAt: NOW,
-        },
-        "board.provider-limit.clear": {
-          type: "board.provider-limit.clear",
-          commandId: CommandId.make("cmd-limit-clear"),
-          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-          createdAt: NOW,
-        },
         "board.worker.register": {
           type: "board.worker.register",
           commandId: CommandId.make("cmd-worker-register"),

@@ -28,7 +28,6 @@ export const inertBoardQueries = (overrides?: Partial<BoardQueriesShape>): Board
       labels: [],
       stages: [],
       cardThreads: [],
-      providerLimits: [],
     }),
   boardArchivedCards: () => Effect.succeed([]),
   boardCardDetail: () => Effect.succeed(null),

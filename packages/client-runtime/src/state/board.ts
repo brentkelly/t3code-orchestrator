@@ -32,8 +32,6 @@ import {
   type BoardWorkersSetupProjectInput,
   type BoardAttachCardFileInput,
   type BoardDetachCardFileInput,
-  type BoardProviderLimitActionInput,
-  type BoardProviderLimitResumeAtInput,
   compareBoardStages,
   deriveBoardCardThreadState,
   type BoardCardDetail,
@@ -41,7 +39,6 @@ import {
   type BoardCardShell,
   type BoardCardThreadShell,
   type BoardLabel,
-  type BoardProviderLimit,
   type BoardStageDefinition,
   type BoardStageId,
   isBoardCardScheduleDue,
@@ -78,8 +75,6 @@ import {
   linkBoardCardThread,
   attachBoardCardFile,
   detachBoardCardFile,
-  probeBoardProviderLimit,
-  setBoardProviderLimitResumeAt,
   mergeBoardCardPullRequest,
   moveBoardCard,
   refreshBoardCardPullRequest,
@@ -636,17 +631,6 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }).pipe(Atom.withLabel(`environment-board-stages:${environmentId}`)),
   );
 
-  /** The board's provider cooldowns (T3O-22, D14). Empty on the overwhelming
-      majority of boards, which is why it rides its own array rather than a
-      field on every card. */
-  const EMPTY_PROVIDER_LIMITS: ReadonlyArray<BoardProviderLimit> = [];
-  const providerLimitsAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get) => {
-      const limits = get(options.boardSnapshotValueAtom(environmentId))?.providerLimits ?? [];
-      return limits.length === 0 ? EMPTY_PROVIDER_LIMITS : limits;
-    }).pipe(Atom.withLabel(`environment-board-provider-limits:${environmentId}`)),
-  );
-
   /** The board's workers (T3O-62, D19), or the local-only summary when the
       board has none — which is every board until a worker is added. */
   const workersAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -708,7 +692,6 @@ export function createBoardEnvironmentAtoms<R, ER>(
     archivedCardsAtom,
     labelCatalogueAtom,
     stageListAtom,
-    providerLimitsAtom,
     workersAtom,
     /** Raw subscription state (loading/failure visible), keyed like
         `cardDetailValueAtom`. */
@@ -775,17 +758,6 @@ export function createBoardEnvironmentAtoms<R, ER>(
     detachCardFile: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:detach-card-file",
       execute: (input: BoardDetachCardFileInput) => detachBoardCardFile(input),
-    }),
-    /** Probe a limited provider now (T3O-22, D14) — "Resume now". */
-    probeProviderLimit: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:board:probe-provider-limit",
-      execute: (input: BoardProviderLimitActionInput) => probeBoardProviderLimit(input),
-    }),
-    /** Set a limited provider's resume time by hand (T3O-22, D14), or clear it
-        with null to hand the schedule back to the blind poll. */
-    setProviderLimitResumeAt: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:board:set-provider-limit-resume-at",
-      execute: (input: BoardProviderLimitResumeAtInput) => setBoardProviderLimitResumeAt(input),
     }),
     // T3O-62: managing the board's workers. Each answers with what the
     // Workers settings show: the add summary, or a refusal to read inline.

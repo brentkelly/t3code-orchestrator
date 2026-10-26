@@ -174,39 +174,14 @@ describe("makeSignalReader", () => {
       type: "turn-ended",
       threadId,
       turnRef: "run-1",
-      outcome: "completed",
-      errorMessage: null,
     });
     assert.isNull(read(stored("run.updated", run("completed"))));
   });
 
-  it("carries the provider's failure text onto the failed turn's end", () => {
-    const read = singleSignalReader();
-    const failure = {
-      id: TurnItemId.make("item-error"),
-      runId: RunId.make("run-1"),
-      type: "error",
-      failure: { class: "usage_limit", message: "Grok prompt request failed: quota." },
-    };
-    assert.isNull(read(stored("turn-item.updated", failure)));
-    assert.deepStrictEqual(read(stored("run.updated", run("failed"))), {
-      type: "turn-ended",
-      threadId,
-      turnRef: "run-1",
-      outcome: "failed",
-      errorMessage: "Grok prompt request failed: quota.",
-    });
-  });
-
-  it("reads each terminal status in the board's outcome vocabulary", () => {
-    for (const [status, outcome] of [
-      ["failed", "failed"],
-      ["interrupted", "interrupted"],
-      ["cancelled", "cancelled"],
-      ["rolled_back", "cancelled"],
-    ] as const) {
+  it("ends the turn on every terminal status", () => {
+    for (const status of ["failed", "interrupted", "cancelled", "rolled_back"] as const) {
       const signal = singleSignalReader()(stored("run.updated", run(status)));
-      assert.include(signal, { type: "turn-ended", outcome });
+      assert.include(signal, { type: "turn-ended", turnRef: "run-1" });
     }
   });
 
@@ -284,8 +259,6 @@ describe("makeSignalReader", () => {
         type: "turn-ended",
         threadId,
         turnRef: "run-1",
-        outcome: "interrupted",
-        errorMessage: null,
       },
     ]);
     // The board's own interrupt is already tracked by the board.
@@ -526,7 +499,7 @@ describe("followStoredEvents", () => {
 });
 
 describe("readSignalLog", () => {
-  effectIt.effect("a resume between an error item and its run's end keeps the failure text", () => {
+  effectIt.effect("a resume reads from before its cursor and still reports the run's end", () => {
     const failure = {
       id: TurnItemId.make("item-error-resume"),
       runId: RunId.make("run-resume"),
@@ -558,8 +531,6 @@ describe("readSignalLog", () => {
                 type: "turn-ended",
                 threadId,
                 turnRef: "run-resume",
-                outcome: "failed",
-                errorMessage: "Grok prompt request failed: quota.",
               },
             ],
           },

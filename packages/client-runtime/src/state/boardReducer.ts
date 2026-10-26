@@ -33,15 +33,13 @@ const REVIEW_SHELL_FIELDS = [
   "issuesDisputed",
 ] as const satisfies ReadonlyArray<keyof BoardCardShell>;
 
-/** The stall slice (T3O-22, D10/D14) — carried as a group for the same reason
-    the review slice is: the reason, the retry time and the provider holding the
-    card describe ONE stop, and half of them left behind would put a stale
-    "resuming 2:50am" under a card that is running again. */
-const STALL_SHELL_FIELDS = [
-  "stalledReason",
-  "retryAt",
-  "limitedByInstanceId",
-] as const satisfies ReadonlyArray<keyof BoardCardShell>;
+/** The stall slice (T3O-22, D10) — carried as a group for the same reason
+    the review slice is: the reason and the retry time describe ONE stop, and
+    half of them left behind would put a stale "resuming 2:50am" under a card
+    that is running again. */
+const STALL_SHELL_FIELDS = ["stalledReason", "retryAt"] as const satisfies ReadonlyArray<
+  keyof BoardCardShell
+>;
 
 /**
  * Carry forward the key-optional shell fields a card-carrying delta cannot
@@ -298,7 +296,6 @@ export function applyBoardShellStreamEvent(
         // "preserve", as it does for every other step-derived field.
         const nextStalledReason = event.stalledReason;
         const nextRetryAt = event.retryAt;
-        const nextLimitedBy = event.limitedByInstanceId;
         if (
           card.stalled === event.stalled &&
           card.queued === event.queued &&
@@ -308,12 +305,11 @@ export function applyBoardShellStreamEvent(
           card.stepConflictFix === event.stepConflictFix &&
           card.stepChecksFix === event.stepChecksFix &&
           card.stalledReason === nextStalledReason &&
-          card.retryAt === nextRetryAt &&
-          card.limitedByInstanceId === nextLimitedBy
+          card.retryAt === nextRetryAt
         ) {
           return card;
         }
-        // The three stall keys are DELETED first, then re-applied from the
+        // The stall keys are DELETED first, then re-applied from the
         // delta. Spreading them conditionally over `...card` would preserve a
         // stale reason on the delta that says the step is no longer stalled —
         // and this delta is the only thing that ever clears the chip.
@@ -335,7 +331,6 @@ export function applyBoardShellStreamEvent(
           ...(event.stepChecksFix === true ? { stepChecksFix: true } : {}),
           ...(nextStalledReason === undefined ? {} : { stalledReason: nextStalledReason }),
           ...(nextRetryAt === undefined ? {} : { retryAt: nextRetryAt }),
-          ...(nextLimitedBy === undefined ? {} : { limitedByInstanceId: nextLimitedBy }),
         };
       });
       return { ...snapshot, cards: nextCards };
@@ -428,29 +423,6 @@ export function applyBoardShellStreamEvent(
       ].sort(compareBoardStages);
       return { ...snapshot, stages: nextStages };
     }
-    case "card-provider-limit-upserted": {
-      // The provider-cooldown slice (T3O-22, D14): one fact per provider
-      // ACCOUNT, riding once like the label catalogue rather than denormalised
-      // onto every card that shares it — which is also what lets the top bar
-      // say "Anthropic limit · 1:00 AM" with no card on screen.
-      const limits = snapshot.providerLimits;
-      const nextLimits = limits.some(
-        (existing) => existing.providerInstanceId === event.limit.providerInstanceId,
-      )
-        ? Arr.map(limits, (existing) =>
-            existing.providerInstanceId === event.limit.providerInstanceId ? event.limit : existing,
-          )
-        : Arr.append(limits, event.limit);
-      return { ...snapshot, providerLimits: nextLimits };
-    }
-    case "card-provider-limit-cleared":
-      return {
-        ...snapshot,
-        providerLimits: Arr.filter(
-          snapshot.providerLimits,
-          (existing) => existing.providerInstanceId !== event.providerInstanceId,
-        ),
-      };
     case "workers":
       // The whole worker summary, replaced wholesale (T3O-62).
       return { ...snapshot, workers: event.state };

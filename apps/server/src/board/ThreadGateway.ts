@@ -198,9 +198,6 @@ export interface BoardAssistantMessage {
 
 // ── Signals ────────────────────────────────────────────────────────────
 
-/** How a turn ended (T3O-22, D9). */
-export type BoardTurnOutcome = "completed" | "failed" | "interrupted" | "cancelled";
-
 export interface BoardTodoItem {
   readonly step: string;
   readonly status: string;
@@ -230,8 +227,6 @@ export type ThreadSignal =
       readonly type: "turn-ended";
       readonly threadId: ThreadId;
       readonly turnRef: string | undefined;
-      readonly outcome: BoardTurnOutcome | undefined;
-      readonly errorMessage: string | null;
     }
   | { readonly type: "turn-start-failed"; readonly threadId: ThreadId; readonly detail: string }
   | {

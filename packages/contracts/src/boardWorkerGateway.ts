@@ -114,8 +114,6 @@ export const BoardGatewayAssistantMessage = Schema.Struct({
 
 // ── Signals ────────────────────────────────────────────────────────────
 
-const TurnOutcome = Schema.Literals(["completed", "failed", "interrupted", "cancelled"]);
-
 export const BoardGatewayTodoSignal = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("todos-changed"),
@@ -131,8 +129,9 @@ export const BoardGatewaySignal = Schema.Union([
     type: Schema.Literal("turn-ended"),
     threadId: ThreadId,
     turnRef: Schema.optionalKey(Schema.String),
-    outcome: Schema.optionalKey(TurnOutcome),
-    errorMessage: Schema.NullOr(Schema.String),
+    // Retired, always null. Kept so a central on the previous protocol-1 build, which
+    // required this key, still decodes turn ends from a newer worker.
+    errorMessage: Schema.optionalKey(Schema.NullOr(Schema.String)),
   }),
   Schema.Struct({
     type: Schema.Literal("turn-start-failed"),
