@@ -23,7 +23,6 @@ import {
   type BoardStepCompletion,
   type ThreadId,
 } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
 import { ChevronDownIcon, ChevronLeftIcon, MessageSquareIcon } from "lucide-react";
 import { useState } from "react";
 

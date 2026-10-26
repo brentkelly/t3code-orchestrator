@@ -20,8 +20,6 @@
  */
 import { useMemo, type ReactNode } from "react";
 
-import { useAtomValue } from "@effect/atom-react";
-
 import {
   type BoardCardModelOverrides,
   type BoardCardStageModelOverride,
