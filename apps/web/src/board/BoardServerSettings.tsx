@@ -119,6 +119,8 @@ export function BoardServerSection() {
  */
 export function BoardServerUnavailableNotice(props: { readonly label: string | null }) {
   const updateClientSettings = useUpdateClientSettings();
+  // The hosted app has no server of its own to fall back to, as the picker's options agree.
+  const hasThisServer = usePrimaryEnvironmentId() !== null;
   return (
     <Alert variant="warning">
       <AlertTitle>
@@ -127,20 +129,22 @@ export function BoardServerUnavailableNotice(props: { readonly label: string | n
           : `Board server ${props.label} is not connected`}
       </AlertTitle>
       <AlertDescription>
-        This device shows the board of the server chosen in Settings → Board. Reconnect it, or show
-        this server's board instead.
+        This device shows the board of the server chosen in Settings → Board.{" "}
+        {hasThisServer ? "Reconnect it, or show this server's board instead." : "Reconnect it."}
       </AlertDescription>
       <AlertAction>
         <Button render={<Link to="/settings/connections" />} size="sm" variant="outline">
           Open Connections
         </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void updateClientSettings({ boardEnvironmentId: null })}
-        >
-          Use this server
-        </Button>
+        {hasThisServer ? (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void updateClientSettings({ boardEnvironmentId: null })}
+          >
+            Use this server
+          </Button>
+        ) : null}
       </AlertAction>
     </Alert>
   );

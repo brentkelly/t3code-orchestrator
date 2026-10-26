@@ -126,13 +126,12 @@ export function useBoardSettings<T = UnifiedSettings>(
       : serverEnvironment.settingsValueAtom(environmentId),
   );
   const clientSettings = useClientSettings();
-  return useMemo(() => {
-    const merged = mergeEnvironmentSettings(
-      serverSettings ?? DEFAULT_SERVER_SETTINGS,
-      clientSettings,
-    );
-    return selector ? selector(merged) : (merged as T);
-  }, [clientSettings, selector, serverSettings]);
+  // Merged apart from the selector, which call sites pass inline, as `useMergedSettings` does.
+  const merged = useMemo(
+    () => mergeEnvironmentSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, clientSettings),
+    [clientSettings, serverSettings],
+  );
+  return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
 }
 
 /** Writes settings to the board server (board settings live on the server that hosts the board). */
