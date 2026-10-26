@@ -234,7 +234,9 @@ links stay behind, so T3o never picks up upstream's running agents. Board cards 
 are not imported.
 
 It refuses to run while T3o's server is running, when your T3 Code is newer than this T3o build
-("update T3o first"), and when `~/.t3o` already has threads. `--replace` discards those after asking.
+("update T3o first"), and when `~/.t3o` already has threads, projects or board cards. `--replace`
+discards its threads and projects after asking; board cards stay, but their links to discarded
+threads no longer open.
 
 ### Optional: the desktop's server as a worker
 

@@ -54,10 +54,21 @@ export class ImportThreadsDestinationNotEmptyError extends Schema.TaggedError<Im
   {
     databasePath: Schema.String,
     threads: Schema.Number,
+    projects: Schema.Number,
+    boardCards: Schema.Number,
   },
 ) {
   override get message(): string {
-    return `${this.databasePath} already holds ${this.threads} thread${this.threads === 1 ? "" : "s"}. Import only into an empty T3o home, or pass --replace to discard them.`;
+    const held = [
+      [this.threads, "thread"],
+      [this.projects, "project"],
+      [this.boardCards, "board card"],
+    ] as const;
+    const contents = held
+      .filter(([count]) => count > 0)
+      .map(([count, noun]) => `${count} ${noun}${count === 1 ? "" : "s"}`)
+      .join(", ");
+    return `This T3o home already holds ${contents} (${this.databasePath}). Import only into an empty T3o home, or pass --replace to discard its threads and projects.`;
   }
 }
 
@@ -91,7 +102,7 @@ export interface RunImportThreadsInput {
   /** Keep only projects at these workspace roots. Empty keeps every project. */
   readonly workspaceRoots: ReadonlyArray<string>;
   readonly threadsPerProject: number;
-  /** Discard threads already in the destination. */
+  /** Discard threads and projects already in the destination. */
   readonly replace: boolean;
 }
 
@@ -131,13 +142,22 @@ const unknownSourceMigrations = (sourcePath: string) =>
     }),
   );
 
-const countThreads = (databasePath: string) =>
+/** What an import would discard: the destination's threads and live projects. */
+const countThreadsAndProjects = (databasePath: string) =>
   readOnly(databasePath, (sql) =>
     Effect.gen(function* () {
-      if (!(yield* tableExists(sql, "orchestration_v2_projection_threads"))) return 0;
-      const rows = yield* sql<{ count: number }>`
-        SELECT COUNT(*) AS count FROM src.orchestration_v2_projection_threads`;
-      return Number(rows[0]?.count ?? 0);
+      const threads = (yield* tableExists(sql, "orchestration_v2_projection_threads"))
+        ? yield* sql<{ count: number }>`
+            SELECT COUNT(*) AS count FROM src.orchestration_v2_projection_threads`
+        : [];
+      const projects = (yield* tableExists(sql, "projection_projects"))
+        ? yield* sql<{ count: number }>`
+            SELECT COUNT(*) AS count FROM src.projection_projects WHERE deleted_at IS NULL`
+        : [];
+      return {
+        threads: Number(threads[0]?.count ?? 0),
+        projects: Number(projects[0]?.count ?? 0),
+      };
     }),
   );
 
@@ -201,10 +221,24 @@ export const runImportThreads = Effect.fn("runImportThreads")(function* (
   if (unknownMigrationIds.length > 0) {
     return yield* new ImportThreadsSourceNewerError({ sourcePath, unknownMigrationIds });
   }
-  if (yield* fs.exists(databasePath)) {
-    const threads = yield* countThreads(databasePath);
-    if (threads > 0 && !input.replace) {
-      return yield* new ImportThreadsDestinationNotEmptyError({ databasePath, threads });
+  // The import replaces the thread database wholesale, so its projects go too, and board cards
+  // would be left pointing at projects and threads that no longer exist.
+  const boardDatabasePath = resolveBoardDatabasePath(databasePath);
+  const countBoard = Effect.fn("importThreads.countBoard")(function* () {
+    return (yield* fs.exists(boardDatabasePath)) ? yield* countBoardCards(boardDatabasePath) : 0;
+  });
+  if (!input.replace) {
+    const { threads, projects } = (yield* fs.exists(databasePath))
+      ? yield* countThreadsAndProjects(databasePath)
+      : { threads: 0, projects: 0 };
+    const boardCards = yield* countBoard();
+    if (threads > 0 || projects > 0 || boardCards > 0) {
+      return yield* new ImportThreadsDestinationNotEmptyError({
+        databasePath,
+        threads,
+        projects,
+        boardCards,
+      });
     }
   }
 
@@ -235,10 +269,7 @@ export const runImportThreads = Effect.fn("runImportThreads")(function* (
     destinationDir: path.join(baseDir, "userdata", "attachments"),
     threadIds,
   });
-  const boardDatabasePath = resolveBoardDatabasePath(databasePath);
-  const boardCards = (yield* fs.exists(boardDatabasePath))
-    ? yield* countBoardCards(boardDatabasePath)
-    : 0;
+  const boardCards = yield* countBoard();
 
   return {
     databasePath,
@@ -269,7 +300,9 @@ export const importThreadsCommand = Command.make(
     ),
     replace: Flag.Boolean("replace").pipe(
       Flag.withDefault(false),
-      Flag.withDescription("Discard the threads already in this T3o home. Asks first."),
+      Flag.withDescription(
+        "Discard the threads and projects already in this T3o home. Asks first.",
+      ),
     ),
   },
   (flags) =>
@@ -291,12 +324,13 @@ export const importThreadsCommand = Command.make(
       if (flags.replace) {
         if (!(process.stdin.isTTY && process.stdout.isTTY)) {
           return yield* new ImportThreadsCancelledError({
-            reason: "--replace asks before discarding threads, and this is not a terminal.",
+            reason:
+              "--replace asks before discarding threads and projects, and this is not a terminal.",
           });
         }
         const confirmed = yield* Prompt.run(
           Prompt.Confirm({
-            message: `Discard the threads in ${baseDir} and import from ${from}?`,
+            message: `Discard the threads and projects in ${baseDir} and import from ${from}?`,
             initial: false,
           }),
         ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) }));

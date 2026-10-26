@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { resolveBoardDatabasePath } from "../board/boardDatabase.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import { runImportThreads } from "./importThreads.ts";
 
@@ -221,6 +222,65 @@ it.layer(NodeServices.layer)("runImportThreads", (it) => {
         "thread-beta",
         "thread-settled",
       ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a destination that has projects but no threads", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const { from, baseDir } = yield* makeHomes;
+      const databasePath = path.join(baseDir, "userdata", "statev2.sqlite");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      yield* withDatabase(
+        databasePath,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* runMigrations();
+          yield* sql`INSERT INTO projection_projects
+            (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
+            VALUES ('project-own', 'Own', '/work/own', '[]', '2026-08-01', '2026-08-01', NULL)`;
+        }),
+      );
+
+      const error = yield* runImportThreads({ ...defaults, from, baseDir }).pipe(Effect.flip);
+      assert.equal(error._tag, "ImportThreadsDestinationNotEmptyError");
+      assert.include(error.message, "1 project");
+      const projects = yield* withDatabase(
+        databasePath,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return yield* sql<{ project_id: string }>`SELECT project_id FROM projection_projects`;
+        }),
+      );
+      assert.deepStrictEqual(
+        projects.map((row) => row.project_id),
+        ["project-own"],
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a destination whose board already has cards", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const { from, baseDir } = yield* makeHomes;
+      const databasePath = path.join(baseDir, "userdata", "statev2.sqlite");
+      const boardDatabasePath = resolveBoardDatabasePath(databasePath);
+      yield* fs.makeDirectory(path.dirname(boardDatabasePath), { recursive: true });
+      yield* withDatabase(
+        boardDatabasePath,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`CREATE TABLE board_cards (id TEXT PRIMARY KEY)`;
+          yield* sql`INSERT INTO board_cards (id) VALUES ('card-1')`;
+        }),
+      );
+
+      const error = yield* runImportThreads({ ...defaults, from, baseDir }).pipe(Effect.flip);
+      assert.equal(error._tag, "ImportThreadsDestinationNotEmptyError");
+      assert.include(error.message, "1 board card");
+      assert.isFalse(yield* fs.exists(databasePath));
     }).pipe(Effect.scoped),
   );
 
