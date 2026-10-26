@@ -4,7 +4,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-import { resolveT3oUserDataNames } from "../t3oIdentity.ts";
+import { resolveT3oUserDataNames } from "../../../../scripts/lib/t3o-desktop-identity.ts";
 
 export class DesktopUserDataInitializationError extends Schema.TaggedError<DesktopUserDataInitializationError>()(
   "DesktopUserDataInitializationError",

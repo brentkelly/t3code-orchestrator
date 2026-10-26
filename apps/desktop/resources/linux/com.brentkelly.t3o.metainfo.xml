@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.brentkelly.t3o</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>T3o</name>
+  <summary>Desktop GUI for coding agents, with a supervised engineering board</summary>
+  <developer id="com.brentkelly">
+    <name>brentkelly</name>
+  </developer>
+  <description>
+    <p>
+      T3o is a fork of T3 Code, the open-source desktop app for coding agents. Work with your
+      existing agent subscriptions, review code changes, and run commands in
+      your projects.
+    </p>
+    <p>
+      Connect from desktop, web, or mobile to continue working remotely.
+    </p>
+  </description>
+  <launchable type="desktop-id">t3o.desktop</launchable>
+  <icon type="stock">t3o</icon>
+  <provides>
+    <binary>t3o</binary>
+  </provides>
+  <categories>
+    <category>Development</category>
+  </categories>
+  <url type="homepage">https://github.com/brentkelly/t3code-orchestrator</url>
+  <url type="bugtracker">https://github.com/brentkelly/t3code-orchestrator/issues</url>
+  <url type="vcs-browser">https://github.com/brentkelly/t3code-orchestrator</url>
+</component>

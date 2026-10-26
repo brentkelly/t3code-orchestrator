@@ -12,7 +12,7 @@ import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 // T3o: desktop identity.
-import { T3O_DESKTOP_IDENTITY } from "../t3oIdentity.ts";
+import { T3O_DESKTOP_IDENTITY } from "../../../../scripts/lib/t3o-desktop-identity.ts";
 
 // Linux ships as an AppImage, so the .desktop entry users end up with is
 // created by whatever integration tool they use (AppImageLauncher names it

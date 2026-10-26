@@ -1,6 +1,6 @@
 import * as Option from "effect/Option";
 
-import { T3O_DESKTOP_IDENTITY } from "../t3oIdentity.ts";
+import { T3O_DESKTOP_IDENTITY } from "../../../../scripts/lib/t3o-desktop-identity.ts";
 
 export type JoinPath = (first: string, ...segments: string[]) => string;
 

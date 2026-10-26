@@ -15,7 +15,11 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
 // T3o: desktop identity.
-import { T3O_DESKTOP_IDENTITY, resolveT3oAppId, resolveT3oLinuxWmClass } from "../t3oIdentity.ts";
+import {
+  T3O_DESKTOP_IDENTITY,
+  resolveT3oAppId,
+  resolveT3oLinuxWmClass,
+} from "../../../../scripts/lib/t3o-desktop-identity.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import type { OtlpProtocol } from "@t3tools/shared/observability";

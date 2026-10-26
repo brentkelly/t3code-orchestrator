@@ -19,8 +19,9 @@ import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
 
 // T3o: upstream's tests run with the scheme claim on; the T3o suite below turns it off.
 const t3oIdentity = vi.hoisted(() => ({ registersUrlScheme: true }));
-vi.mock("../t3oIdentity.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../t3oIdentity.ts")>();
+vi.mock("../../../../scripts/lib/t3o-desktop-identity.ts", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../../scripts/lib/t3o-desktop-identity.ts")>();
   return {
     ...actual,
     T3O_DESKTOP_IDENTITY: new Proxy(actual.T3O_DESKTOP_IDENTITY, {
