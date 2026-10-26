@@ -11,6 +11,8 @@ import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
+// T3o: desktop identity.
+import { T3O_DESKTOP_IDENTITY } from "../t3oIdentity.ts";
 
 // Linux ships as an AppImage, so the .desktop entry users end up with is
 // created by whatever integration tool they use (AppImageLauncher names it
@@ -98,7 +100,10 @@ export function renderUrlHandlerDesktopEntry(input: {
     "Terminal=false",
     "NoDisplay=true",
     "StartupNotify=false",
-    `MimeType=x-scheme-handler/${input.scheme};`,
+    // T3o: no x-scheme-handler; the entry stays only as the portal identity.
+    ...(T3O_DESKTOP_IDENTITY.registersUrlScheme
+      ? [`MimeType=x-scheme-handler/${input.scheme};`]
+      : []),
     "",
   ].join("\n");
 }
@@ -237,6 +242,8 @@ export const make = Effect.gen(function* () {
         logWarning("URL handler icon copy failed", { iconPath, category: error.reason._tag }),
       ),
     );
+    // T3o: never claim the scheme default; upstream T3 Code owns t3code://.
+    if (!T3O_DESKTOP_IDENTITY.registersUrlScheme) return;
 
     yield* updateDesktopDatabase.pipe(
       // Some MIME implementations, including GIO, use mimeinfo.cache to verify

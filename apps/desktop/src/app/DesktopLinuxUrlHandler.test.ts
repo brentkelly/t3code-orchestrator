@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -15,6 +16,21 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
+
+// T3o: upstream's tests run with the scheme claim on; the T3o suite below turns it off.
+const t3oIdentity = vi.hoisted(() => ({ registersUrlScheme: true }));
+vi.mock("../t3oIdentity.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../t3oIdentity.ts")>();
+  return {
+    ...actual,
+    T3O_DESKTOP_IDENTITY: new Proxy(actual.T3O_DESKTOP_IDENTITY, {
+      get: (target, key) =>
+        key === "registersUrlScheme"
+          ? t3oIdentity.registersUrlScheme
+          : target[key as keyof typeof target],
+    }),
+  };
+});
 
 interface RecordedRegistration {
   readonly directories: string[];
@@ -391,4 +407,28 @@ describe("DesktopLinuxUrlHandler", () => {
       );
     }),
   );
+});
+
+// T3o: the fork never claims t3code://, which upstream T3 Code owns.
+describe("DesktopLinuxUrlHandler (T3o)", () => {
+  it.effect("writes the portal identity entry but never claims the URL scheme", () => {
+    const recorded = emptyRecording();
+    t3oIdentity.registersUrlScheme = false;
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, { iconSource: "/tmp/.mount_T3/resources/icon.png" });
+
+      assert.equal(recorded.files.length, 1);
+      assert.notInclude(recorded.files[0]?.content, "MimeType=");
+      assert.include(recorded.files[0]?.content, "NoDisplay=true");
+      assert.equal(recorded.copies.length, 1);
+      assert.deepEqual(recorded.commands, []);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          t3oIdentity.registersUrlScheme = true;
+        }),
+      ),
+    );
+  });
 });
