@@ -4,6 +4,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
+// T3o: the fork's own Electron profile names.
 import { resolveT3oUserDataNames } from "../../../../scripts/lib/t3o-desktop-identity.ts";
 
 export class DesktopUserDataInitializationError extends Schema.TaggedError<DesktopUserDataInitializationError>()(
@@ -59,13 +60,14 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
     }
     // Chromium databases require their own profile for each running version.
     if (input.platform !== "win32") return destinationPath;
+    // T3o: legacy equals current, so there is no older profile to migrate from.
+    if (names.legacy === names.current) return destinationPath;
     const destinationState = path.join(destinationPath, "Local State");
     if (yield* inspect(destinationState)) return destinationPath;
     const legacyState = path.join(legacyPath, "Local State");
     const sourceState = (yield* inspect(legacyState))
       ? legacyState
-      : // T3o: never fall back to upstream T3 Code's V1 profile.
-        path.join(input.appDataDirectory, names.legacy, "Local State");
+      : path.join(input.appDataDirectory, "t3code", "Local State");
     if (!(yield* inspect(sourceState))) return destinationPath;
     // Windows safeStorage keys live here. Copy only these preferences, never locked databases.
     const state = yield* fs

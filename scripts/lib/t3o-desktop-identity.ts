@@ -24,6 +24,11 @@ export const T3O_DESKTOP_IDENTITY = {
   userDataDirName: "t3o",
   devUserDataDirName: "t3o-dev",
   homeDirName: ".t3o",
+  /**
+   * The text the `t3` launcher carries so Install/Remove recognise their own links. Upstream's
+   * marker differs, so T3o never repoints or deletes upstream T3 Code's `t3` and vice versa.
+   */
+  cliShimMarker: "Written by T3o: runs the desktop app's bundled t3 CLI.",
   /** Upstream T3 Code owns `t3code://`; T3o never claims it, at build time or at runtime. */
   registersUrlScheme: false,
 } as const;

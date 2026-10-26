@@ -1,5 +1,6 @@
 import * as Option from "effect/Option";
 
+// T3o: the fork's own default home directory name.
 import { T3O_DESKTOP_IDENTITY } from "../../../../scripts/lib/t3o-desktop-identity.ts";
 
 export type JoinPath = (first: string, ...segments: string[]) => string;
