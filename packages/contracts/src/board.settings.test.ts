@@ -12,6 +12,7 @@ import { ProjectId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   assignBoardKeyPrefix,
+  BOARD_CONFLICT_VERIFICATION,
   BOARD_SEED_STAGE_IDS,
   BoardSettings,
   boardProjectAcronym,
@@ -19,6 +20,7 @@ import {
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_SUBMIT_PROMPT,
   DEFAULT_BOARD_KEY_PREFIX,
+  DEFAULT_BOARD_MERGE_CONFLICT_PROMPT,
   DEFAULT_BOARD_PIPELINE,
   DEFAULT_BOARD_SETTINGS,
   DEFAULT_BOARD_STAGE_EXECUTION,
@@ -26,6 +28,7 @@ import {
   isBoardProjectHidden,
   isBoardBuildStageExecution,
   isBoardReviewStageExecution,
+  RETIRED_BOARD_MERGE_CONFLICT_PROMPTS,
   resolveBoardKeyPrefix,
   resolveBoardStageExecution,
   resolveBoardDefaultModelSelection,
@@ -548,5 +551,50 @@ describe("agent access level is the user's, never forced (t3o-21)", () => {
     expect(resolved.phases.review.runtimeMode).toBe("full-access");
     expect(resolved.phases.triage.runtimeMode).toBeUndefined();
     expect(effectiveBoardRuntimeMode(resolved.phases.triage.runtimeMode, "build")).toBe("auto");
+  });
+});
+
+describe("conflict resolution verifies only what it resolved (T3O-69)", () => {
+  // Live settings hold the merge stage entry whole as soon as any field in it
+  // is overridden (a model, say), so its prompt is the OLD default verbatim.
+  // Changing the default alone would never reach those users.
+  const withMergePrompt = (prompt: string) =>
+    decodeSettings({
+      pipeline: { [BOARD_SEED_STAGE_IDS.merge]: { kind: "merge", prompt } },
+    });
+
+  it("the default conflict prompt carries the scoped verification rule", () => {
+    expect(DEFAULT_BOARD_MERGE_CONFLICT_PROMPT).toContain(BOARD_CONFLICT_VERIFICATION);
+    expect(DEFAULT_BOARD_MERGE_CONFLICT_PROMPT).not.toContain("Run the project's checks");
+  });
+
+  it("the shared rule promises no follow-up the merge stage never runs", () => {
+    // The merge stage re-attempts the merge straight after the conflict fix,
+    // with no review round and CI that gates only when the forge requires it.
+    expect(BOARD_CONFLICT_VERIFICATION).not.toMatch(/review round|CI still follow/i);
+  });
+
+  it("a saved retired default resolves to the current default", () => {
+    expect(RETIRED_BOARD_MERGE_CONFLICT_PROMPTS.length).toBeGreaterThan(0);
+    for (const retired of RETIRED_BOARD_MERGE_CONFLICT_PROMPTS) {
+      const resolved = resolveBoardStageExecution(
+        withMergePrompt(retired),
+        BOARD_SEED_STAGE_IDS.merge,
+      );
+      expect(resolved.prompt).toBe(DEFAULT_BOARD_MERGE_CONFLICT_PROMPT);
+    }
+  });
+
+  it("a customised conflict prompt passes through unchanged", () => {
+    const custom = `${RETIRED_BOARD_MERGE_CONFLICT_PROMPTS[0]} Also run the e2e suite.`;
+    const resolved = resolveBoardStageExecution(
+      withMergePrompt(custom),
+      BOARD_SEED_STAGE_IDS.merge,
+    );
+    expect(resolved.prompt).toBe(custom);
+  });
+
+  it("the retired list never contains the current default", () => {
+    expect(RETIRED_BOARD_MERGE_CONFLICT_PROMPTS).not.toContain(DEFAULT_BOARD_MERGE_CONFLICT_PROMPT);
   });
 });
