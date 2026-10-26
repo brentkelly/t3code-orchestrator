@@ -49,7 +49,6 @@ import {
   makeFakeThreadGateway,
   type ThreadGatewayCall,
 } from "./threadGateway.testkit.ts";
-import { UsageLimitDetector } from "./UsageLimitDetector.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -282,13 +281,6 @@ function reconcileCommandObjects(input: {
         }),
       ),
       BoardStepSlotsLive,
-      // Boot reconcile classifies no turn (T3O-22): it reconciles step state
-      // against the world, and a stub that says "the catalogue matched nothing"
-      // is what leaves every reconcile decision exactly as it was.
-      Layer.succeed(
-        UsageLimitDetector,
-        UsageLimitDetector.of({ classifyTurn: () => Effect.succeed(null) }),
-      ),
       Layer.succeed(
         ServerActivation,
         input.gateOnActivation === undefined

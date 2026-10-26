@@ -114,12 +114,10 @@ export type BoardRecoveryCeiling = "stage-entry" | "stall-streak";
  * Ask the two ceilings on their own (T3O-22), given the totals a stop WOULD
  * reach — one definition, so nothing enforces half of them.
  *
- * `recoveryDecision` below is the usual caller, but it is not the only stop
- * that spends the retry budget: a lone LOOSE usage-limit match parks its card
- * itself (D6) and never reaches recovery at all, so without asking here it
- * would back the same card off every rung for ever, charging a budget nobody
- * reads. Ceilings are what turn "try again later" into "and eventually tell a
- * human", and every path that charges the budget owes the card that.
+ * `recoveryDecision` below is the usual caller, but not every stop that spends
+ * the retry budget goes through it. Ceilings are what turn "try again later"
+ * into "and eventually tell a human", and every path that charges the budget
+ * owes the card that.
  */
 export function recoveryCeilingCrossed(input: {
   /** The consecutive-stall count this stop would reach, this stop included. */
@@ -356,7 +354,8 @@ export function boardBackgroundCheckInNudge(): string {
 
 /**
  * What the board says to an agent when a provider's usage window reopens
- * (T3O-22, D9) — sent into the parked step's thread when the cooldown lifts.
+ * (T3O-22) — sent into a `usage-limit` park's thread when the board's own retry
+ * sweep wakes it, because the engine's resume never arrived (T3O-72).
  *
  * Deliberately not a recovery nudge: nothing stalled, nothing failed, and no
  * attempt was consumed (D12). The agent was refused by a provider that has since

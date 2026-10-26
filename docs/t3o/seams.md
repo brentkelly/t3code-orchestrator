@@ -117,7 +117,7 @@ A core seam may contain **only** one of these four shapes:
 
 > **The board has its own client protocol (`T3O-57`).** Clients send board commands on
 > `board.dispatchCommand` and hold the board through `board.subscribeBoard`: a `BoardShellSnapshot`
-> (cards, labels, stages, card threads, provider limits) stamped with the board log's sequence,
+> (cards, labels, stages, card threads) stamped with the board log's sequence,
 > then that log's deltas, resuming from the client's cursor like upstream's shell does
 > (`board/boardSubscription.ts`, client `state/boardSubscription.ts`). The orchestration shell
 > snapshot, its stream, `ClientOrchestrationCommand` and the client shell reducer carry nothing
@@ -530,14 +530,18 @@ reaches it only through `board/ThreadGatewayV2.ts`; everything else here is wiri
   built from, so the runtime builds one `EventSinkV2` and the gateway hears its live events.
 - **The supervisor starts after v2's restart recovery** (`board.supervisor.start`, after
   `orchestration-v2.recovery`), so the boot reconcile reads a run the restart killed as dead.
-- **Usage limits are v2's failure class.** `UsageLimitDetector` stays as the stubbable seam the
-  supervisor suites drive, but reads `class: "usage_limit"` and `resetAt` off the thread instead of
-  matching provider prose. A limited board step parks as before and arms v2's own
+- **Usage limits are v2's (T3O-72).** v2 detects them (`usageLimit` on the thread state) and
+  resumes a limited thread itself. The board only bridges: an unattended step whose turn ends on a
+  limit with a reset time parks `usage-limit` without spending its retry budget and arms v2's
   `limitRecovery` with `autoResume` on its thread (`armLimitRecovery`), so v2's recovery worker
-  resumes it whatever the user's global setting; `boardWokenLimitParks` keeps the board's probe
-  and cooldown lift from waking a park v2 will resume, so it is resumed once. A limit with no reset
-  time is never armed by v2, and the board's blind poll still covers it. Provider-limit records
-  still hold new spawns and colour the card.
+  resumes it whatever the user's global setting; the `limit-resumed` signal un-parks the step. The
+  park's `retryAt` sits a grace past the reset, and the generic retry sweep wakes it if v2 never
+  does. There is no account-wide cooldown: a sibling card hits the limit on its own turn and parks
+  the same way. A limit with no reset time, or a reset already past, takes the ordinary recovery ladder.
+  A park charges nothing and consecutive parks are not counted, so a provider that refuses again
+  after every resume, each time with a new future reset, keeps the card waiting without ever
+  escalating. That is deliberate: each cycle costs one turn per usage window, and it is how v2
+  treats an interactive thread. T3O-22's seven-day ceiling went with the rest of its machinery.
 - **Board MCP tools are declared through `McpToolAccess`.** Reads are `readsAsCaller`, writes
   `writesWithCapability`; every tool needs a T3 thread caller, resolved with `requireThreadScope`,
   and its failure schema admits `OrchestratorMcpFailure`. Registration is

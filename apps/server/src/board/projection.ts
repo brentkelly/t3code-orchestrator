@@ -20,7 +20,6 @@ import {
   BoardCardWorkerMove,
   BoardCardPlacementOrphan,
   type BoardStepQueuedBy,
-  BoardProviderLimit,
   BoardWorker,
   BoardWorkerId,
   compareBoardWorkers,
@@ -67,7 +66,6 @@ import {
   isBoardChecksFixLive,
   isBoardTerminalStepStatus,
   makeBoardCardShell,
-  ProviderInstanceId,
   BoardCardAttachment,
   BoardCardAutoMergeHold,
   sortBoardCardAttachments,
@@ -98,7 +96,6 @@ import {
   compareBoardCards,
   compareBoardPlans,
   compareBoardStepCompletions,
-  compareBoardProviderLimits,
   compareBoardStepStates,
   type BoardEvent,
 } from "./projector.ts";
@@ -461,24 +458,6 @@ const BoardCardStepStateDbRow = Schema.Struct({
 });
 type BoardCardStepStateDbRow = typeof BoardCardStepStateDbRow.Type;
 
-/** The `board_provider_limits` row (T3O-22). Booleans are 0/1 integers, the
-    same convention `slotHeld`/`forceStart` follow above. */
-const BoardProviderLimitDbRow = Schema.Struct({
-  providerInstanceId: BoardProviderLimit.fields.providerInstanceId,
-  kind: BoardProviderLimit.fields.kind,
-  until: BoardProviderLimit.fields.until,
-  detectedAt: BoardProviderLimit.fields.detectedAt,
-  lastCheckedAt: BoardProviderLimit.fields.lastCheckedAt,
-  reason: BoardProviderLimit.fields.reason,
-  ruleId: BoardProviderLimit.fields.ruleId,
-  sourceCardId: BoardProviderLimit.fields.sourceCardId,
-  knownTime: Schema.Int,
-  blindSince: BoardProviderLimit.fields.blindSince,
-  probeCardId: BoardProviderLimit.fields.probeCardId,
-  setByHuman: Schema.Int,
-});
-type BoardProviderLimitDbRow = typeof BoardProviderLimitDbRow.Type;
-
 /** The `board_workers` row (T3O-62): the registry, one row per worker. */
 const BoardWorkerDbRow = Schema.Struct({
   id: BoardWorker.fields.id,
@@ -521,26 +500,6 @@ function rowToBoardPlan(row: BoardPlanDbRow): BoardPlan {
 
 function rowToBoardPlanWithBody(row: BoardPlanDbRow): BoardPlanWithBody {
   return { ...rowToBoardPlan(row), body: row.body };
-}
-
-// Row → cooldown mapping, spelled once (T3O-22): the read-model rehydrator and
-// the shell-snapshot enricher both need it, and the two must agree about the
-// 0/1 coercions or a reload would disagree with a replay.
-function rowToBoardProviderLimit(row: BoardProviderLimitDbRow): BoardProviderLimit {
-  return {
-    providerInstanceId: row.providerInstanceId,
-    kind: row.kind,
-    until: row.until,
-    detectedAt: row.detectedAt,
-    lastCheckedAt: row.lastCheckedAt,
-    reason: row.reason,
-    ruleId: row.ruleId,
-    sourceCardId: row.sourceCardId,
-    knownTime: row.knownTime !== 0,
-    blindSince: row.blindSince,
-    probeCardId: row.probeCardId,
-    setByHuman: row.setByHuman !== 0,
-  };
 }
 
 /**
@@ -1988,65 +1947,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
-  // One row per provider INSTANCE (T3O-22): the board's cooldowns. Upsert on
-  // the instance id so a re-detection, a reschedule and a probe hand-off all
-  // replace the same row.
-  const upsertBoardProviderLimitRow = SqlSchema.void({
-    Request: BoardProviderLimitDbRow,
-    execute: (row) => sql`
-      INSERT INTO board_provider_limits (
-        provider_instance_id, kind, until, detected_at, last_checked_at,
-        reason, rule_id, source_card_id, known_time, blind_since, probe_card_id, set_by_human
-      )
-      VALUES (
-        ${row.providerInstanceId}, ${row.kind}, ${row.until}, ${row.detectedAt}, ${row.lastCheckedAt},
-        ${row.reason}, ${row.ruleId}, ${row.sourceCardId}, ${row.knownTime}, ${row.blindSince},
-        ${row.probeCardId}, ${row.setByHuman}
-      )
-      ON CONFLICT (provider_instance_id)
-      DO UPDATE SET
-        kind = excluded.kind,
-        until = excluded.until,
-        detected_at = excluded.detected_at,
-        last_checked_at = excluded.last_checked_at,
-        reason = excluded.reason,
-        rule_id = excluded.rule_id,
-        source_card_id = excluded.source_card_id,
-        known_time = excluded.known_time,
-        blind_since = excluded.blind_since,
-        probe_card_id = excluded.probe_card_id,
-        set_by_human = excluded.set_by_human
-    `,
-  });
-
-  const deleteBoardProviderLimitRow = SqlSchema.void({
-    Request: ProviderInstanceId,
-    execute: (providerInstanceId) => sql`
-      DELETE FROM board_provider_limits WHERE provider_instance_id = ${providerInstanceId}
-    `,
-  });
-
-  const listBoardProviderLimitRows = SqlSchema.findAll({
-    Request: Schema.Void,
-    Result: BoardProviderLimitDbRow,
-    execute: () => sql`
-      SELECT
-        provider_instance_id AS "providerInstanceId",
-        kind,
-        until,
-        detected_at AS "detectedAt",
-        last_checked_at AS "lastCheckedAt",
-        reason,
-        rule_id AS "ruleId",
-        source_card_id AS "sourceCardId",
-        known_time AS "knownTime",
-        blind_since AS "blindSince",
-        probe_card_id AS "probeCardId",
-        set_by_human AS "setByHuman"
-      FROM board_provider_limits
-    `,
-  });
-
   // The worker registry (T3O-62). Upsert on the worker id: a re-pair replaces
   // the same row.
   const upsertBoardWorkerRow = SqlSchema.void({
@@ -2274,9 +2174,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardStepRows,
     upsertBoardCardStepStateRow,
     listBoardCardStepStateRows,
-    upsertBoardProviderLimitRow,
-    deleteBoardProviderLimitRow,
-    listBoardProviderLimitRows,
     upsertBoardWorkerRow,
     deleteBoardWorkerRow,
     listBoardWorkerRows,
@@ -2599,31 +2496,6 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         updatedAt: state.updatedAt,
       })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.stepState:query")));
-
-  const upsertProviderLimit = (limit: BoardProviderLimit) =>
-    queries
-      .upsertBoardProviderLimitRow({
-        providerInstanceId: limit.providerInstanceId,
-        kind: limit.kind,
-        until: limit.until,
-        detectedAt: limit.detectedAt,
-        lastCheckedAt: limit.lastCheckedAt,
-        reason: limit.reason,
-        ruleId: limit.ruleId,
-        sourceCardId: limit.sourceCardId,
-        knownTime: limit.knownTime ? 1 : 0,
-        blindSince: limit.blindSince,
-        probeCardId: limit.probeCardId,
-        setByHuman: limit.setByHuman ? 1 : 0,
-      })
-      .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.providerLimit:query")));
-
-  const deleteProviderLimit = (providerInstanceId: ProviderInstanceId) =>
-    queries
-      .deleteBoardProviderLimitRow(providerInstanceId)
-      .pipe(
-        Effect.mapError(toPersistenceSqlError("BoardCardsProjection.providerLimitDelete:query")),
-      );
 
   const upsertWorker = (worker: BoardWorker) =>
     queries
@@ -3250,18 +3122,6 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         });
         return;
 
-      // T3o (T3O-22): the provider-cooldown table. Not a card event at all —
-      // no `upsertCard`, and deliberately no activity row: a cooldown is a
-      // provider fact, and writing it onto the rail of whichever card happened
-      // to discover it would claim the card did something.
-      case "board.provider-limit-recorded":
-        yield* upsertProviderLimit(event.payload.limit);
-        return;
-
-      case "board.provider-limit-cleared":
-        yield* deleteProviderLimit(event.payload.providerInstanceId);
-        return;
-
       // T3o (T3O-62): the worker registry. No card, so no activity row; what
       // removal does to the cards on a worker belongs to D22's fallback.
       case "board.worker-registered":
@@ -3310,7 +3170,6 @@ export function loadBoardState(
     queries.listBoardCardStepRows(),
     queries.listBoardCardStepStateRows(),
     queries.listBoardPlanRows(),
-    queries.listBoardProviderLimitRows(),
     queries.listBoardWorkerRows(),
     queries.findBoardDefaultWorkerRow(),
   ]).pipe(
@@ -3326,7 +3185,6 @@ export function loadBoardState(
         stepRows,
         stepStateRows,
         planRows,
-        providerLimitRows,
         workerRows,
         defaultWorkerRow,
       ]) => {
@@ -3442,12 +3300,6 @@ export function loadBoardState(
           }))
           .sort(compareBoardStepStates);
         const plans = planRows.map(rowToBoardPlan).sort(compareBoardPlans);
-        // Provider cooldowns (T3O-22). Omitted, not empty, when nothing is
-        // limited — the same absent-vs-empty rule every slice above follows, so
-        // an ordinary board rehydrates exactly as a from-empty replay.
-        const providerLimits = providerLimitRows
-          .map(rowToBoardProviderLimit)
-          .sort(compareBoardProviderLimits);
         // The worker registry (T3O-62): absent when empty, and the default
         // absent when it is `local`, matching the projector's fold.
         const workers = [...workerRows].sort(compareBoardWorkers);
@@ -3470,7 +3322,6 @@ export function loadBoardState(
           ...(stepCompletions.length > 0 ? { stepCompletions } : {}),
           ...(stepStates.length > 0 ? { stepStates } : {}),
           ...(plans.length > 0 ? { plans } : {}),
-          ...(providerLimits.length > 0 ? { providerLimits } : {}),
           ...(workers.length > 0 ? { workers } : {}),
           ...(defaultWorkerId !== null && defaultWorkerId !== BOARD_LOCAL_WORKER_ID
             ? { defaultWorkerId }
@@ -3548,7 +3399,6 @@ function boardShellCards(
         {
           readonly stalledReason: BoardCardStepStalledReason;
           readonly retryAt: string | null;
-          readonly limitedByInstanceId: ProviderInstanceId | null;
         }
       >();
       const conflictFixByCard = new Set<BoardCardId>();
@@ -3587,17 +3437,13 @@ function boardShellCards(
           awaitingReason: row.awaitingReason ?? "question",
         });
         if (parked !== null) awaitingByCard.set(row.cardId, parked);
-        // Why the step stalled, when it next tries, and which provider account
-        // is holding it (T3O-22, D10/D14). Read off the persisted row through
-        // the same rule the delta uses, so a reconnect renders identically to
-        // the live stream — which matters most here, because a cooldown outlives
-        // any one connection.
+        // Why the step stalled and when it next tries (T3O-22, D10). Read off
+        // the persisted row through the same rule the delta uses, so a
+        // reconnect renders identically to the live stream.
         if (row.status === "stalled") {
           stallByCard.set(row.cardId, {
             stalledReason: row.stalledReason ?? "gave-up",
             retryAt: row.retryAt,
-            limitedByInstanceId:
-              (row.stalledReason ?? "gave-up") === "usage-limit" ? row.providerInstanceId : null,
           });
         }
         // Whether the live step is a merge conflict fix (T3O-9). Read off the
@@ -3773,23 +3619,6 @@ function boardShellLabels(
   );
 }
 
-/**
- * Provider cooldowns ride the board snapshot ONCE (T3O-22, D14) — one fact per
- * provider ACCOUNT, never denormalised onto the cards that share it.
- *
- * The snapshot is the ONLY producer a reconnecting client has: a cooldown is a
- * multi-hour fact, and the client that reloads in the middle of one replays no
- * delta at all.
- */
-function boardShellProviderLimits(
-  queries: BoardCardQueries,
-): Effect.Effect<ReadonlyArray<BoardProviderLimit>, ProjectionRepositoryError> {
-  return queries.listBoardProviderLimitRows().pipe(
-    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellProviderLimits:query")),
-    Effect.map((rows) => rows.map(rowToBoardProviderLimit).sort(compareBoardProviderLimits)),
-  );
-}
-
 /** The user-defined stage list (t3o-15), so the board reads column order and
     labels from it (D13). */
 function boardShellStages(
@@ -3826,14 +3655,13 @@ export function loadBoardShellSnapshot(
 ): Effect.Effect<BoardShellSnapshot, ProjectionRepositoryError> {
   return Effect.gen(function* () {
     const snapshotSequence = yield* latestSequence;
-    const [cards, labels, stages, cardThreads, providerLimits] = yield* Effect.all([
+    const [cards, labels, stages, cardThreads] = yield* Effect.all([
       boardShellCards(queries),
       boardShellLabels(queries),
       boardShellStages(queries),
       boardShellCardThreads(queries),
-      boardShellProviderLimits(queries),
     ]);
-    return { snapshotSequence, cards, labels, stages, cardThreads, providerLimits };
+    return { snapshotSequence, cards, labels, stages, cardThreads };
   });
 }
 

@@ -276,9 +276,7 @@ it.layer(makeBoardStackTestLayer("t3o-thread-gateway-contract-"))(
         // A run interrupted before its provider started ends there and then.
         assert.isTrue(
           signals.some(
-            (signal) =>
-              (signal.type === "turn-ended" && signal.outcome === "interrupted") ||
-              signal.type === "interrupt-requested",
+            (signal) => signal.type === "turn-ended" || signal.type === "interrupt-requested",
           ),
           JSON.stringify(signals),
         );

@@ -249,6 +249,37 @@ it.layer(makeBoardStackTestLayer("t3o-board-engine-"))("BoardEngine", (it) => {
       }),
   );
 
+  it.effect("streams past a retired provider-limit event in the log (T3O-72)", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      const sql = yield* SqlClient.SqlClient;
+      yield* engine.dispatch(createProject("retired"));
+      yield* engine.dispatch(createCard("retired-1"));
+      const cursor = yield* engine.boardEngine.latestSequence;
+      // A board that ran T3O-22's cooldowns has these in its permanent log.
+      yield* sql`
+        INSERT INTO boards.board_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          command_id, causation_event_id, correlation_id, actor_kind, payload_json, metadata_json
+        ) VALUES (
+          'event-retired-limit', 'provider-limit', 'claudeAgent', 0,
+          'board.provider-limit-recorded', ${t0}, NULL, NULL, NULL, 'server',
+          '{"limit":{"providerInstanceId":"claudeAgent","kind":"wait"}}', '{}'
+        )`;
+      yield* engine.dispatch(moveCard("retired-1", 1, "sprint"));
+
+      const events = Array.from(
+        yield* Stream.runCollect(
+          engine.boardEngine.streamBoardEvents({ afterSequence: cursor }).pipe(Stream.take(1)),
+        ),
+      );
+      assert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["board.card-moved"],
+      );
+    }),
+  );
+
   it.effect("writes nothing to upstream's log or receipts", () =>
     Effect.gen(function* () {
       const engine = yield* boardStackEngine;

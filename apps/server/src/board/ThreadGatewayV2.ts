@@ -57,7 +57,6 @@ import {
   type BoardThreadRecord,
   type BoardThreadState,
   type BoardTodoItem,
-  type BoardTurnOutcome,
   type ThreadGatewayShape,
   type ThreadSignal,
   type ThreadSignalBatch,
@@ -142,7 +141,10 @@ export const boardThreadStateFromShell = (
 
 // ── Signals ────────────────────────────────────────────────────────────
 
-const turnOutcomeOf = (status: OrchestrationV2Run["status"]): BoardTurnOutcome | null => {
+/** How a run ended, or null while it is still going. */
+type TurnOutcome = "completed" | "failed" | "interrupted" | "cancelled";
+
+const turnOutcomeOf = (status: OrchestrationV2Run["status"]): TurnOutcome | null => {
   switch (status) {
     // A provider turn that finished persists as `waiting` until its checkpoint
     // lands, then `completed`; the board's turn ended at the first of the two.
@@ -255,25 +257,12 @@ export const makeSignalReader = () => {
   };
   const one = (signal: ThreadSignal | null): ReadonlyArray<ThreadSignal> =>
     signal === null ? [] : [signal];
-  // The provider's own failure text, by run, until that run ends: v2 records it
-  // as an `error` turn item ahead of the run's terminal update, and a refusal
-  // that arrives only this way (Grok's quota sentence) is what the board's
-  // usage-limit classifier reads off the turn end.
-  const failures = new Map<string, string>();
   // Runs nobody on the board asked for, by their message, until that message
   // says who wrote it (`run.created` above).
   const awaitingMessage = new Map<
     string,
     { readonly run: OrchestrationV2Run; readonly commandId: CommandId | null }
   >();
-  const noteFailure = (runId: string, message: string) => {
-    failures.delete(runId);
-    failures.set(runId, message);
-    if (failures.size > SEEN_LIMIT) {
-      const oldest = failures.keys().next().value;
-      if (oldest !== undefined) failures.delete(oldest);
-    }
-  };
 
   return (stored: OrchestrationV2StoredEvent): ReadonlyArray<ThreadSignal> => {
     const event = stored.event;
@@ -326,8 +315,6 @@ export const makeSignalReader = () => {
         const run = event.payload;
         const outcome = turnOutcomeOf(run.status);
         if (outcome === null || !firstTime(`run:${run.id}`)) return [];
-        const failure = failures.get(String(run.id)) ?? null;
-        failures.delete(String(run.id));
         // A run that failed without ever starting is a turn that never began
         // (t3o-30, D2) — workspace preparation, or the provider refusing it.
         if (outcome === "failed" && run.startedAt === null) {
@@ -343,8 +330,6 @@ export const makeSignalReader = () => {
           type: "turn-ended",
           threadId: event.threadId,
           turnRef: String(run.id),
-          outcome,
-          errorMessage: outcome === "failed" ? failure : null,
         };
         // v2 records no interrupt request for a run its provider never
         // started, so a human's Stop during start-up arrives only as this end,
@@ -363,10 +348,6 @@ export const makeSignalReader = () => {
       }
       case "turn-item.updated": {
         const item = event.payload;
-        if (item.type === "error" && item.runId !== null) {
-          noteFailure(String(item.runId), item.failure.message);
-          return [];
-        }
         if (item.type !== "run_interrupt_request" || !firstTime(`interrupt:${item.id}`)) return [];
         // The run's end then needs no Stop of its own (below).
         if (item.runId !== null) firstTime(`interrupt-run:${item.runId}`);
@@ -451,16 +432,16 @@ export const followStoredEvents = (
 
 /** How far before a resume cursor `readSignalLog` starts reading, so the reader
     holds most of the memory it would have had at the cursor. A bounded best
-    effort: a live reader keeps a run's failure text until the run ends, so a
-    resume whose error item lies further back than this still loses that text. */
+    effort: a live reader remembers a run until its message says who wrote it,
+    so a resume whose run started further back than this loses that memory. */
 export const SIGNAL_READER_WARMUP_EVENTS = 4096;
 
 /**
  * The signals after `afterSequence` (from now on when null), batched by the log
- * position that produced them. The reader is stateful (a run's failure text, a
- * run awaiting its message, the dedupe set), so a resume replays the events
- * before the cursor through it with their signals discarded: a stream that
- * drops between an error item and its run's end still reports the failure.
+ * position that produced them. The reader is stateful (a run awaiting its
+ * message, the dedupe set), so a resume replays the events before the cursor
+ * through it with their signals discarded: a stream that drops between a run's
+ * start and its end still reports it once, and correctly attributed.
  */
 export const readSignalLog = (
   sink: Pick<EventSink.EventSinkV2["Service"], "stream" | "latestSequence">,
