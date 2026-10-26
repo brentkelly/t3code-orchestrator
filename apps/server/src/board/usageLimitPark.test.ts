@@ -187,6 +187,24 @@ it.effect("a refusal that ends with a monitor still live parks rather than waits
   ),
 );
 
+it.effect("a limit whose reset has already passed takes the ordinary recovery ladder", () =>
+  withGovernor(unattended, (harness) =>
+    Effect.gen(function* () {
+      // The provider reports a reset an hour behind the clock. Parking it would
+      // be due at once, and v2 refuses to arm an expired window, so every sweep
+      // would wake, refuse and re-park without ever charging the budget.
+      yield* TestClock.adjust(Duration.hours(2));
+      const threadId = yield* stopCard(harness, limitAt());
+
+      const parked = yield* stepOf(harness, "a");
+      assert.strictEqual(parked?.status, "stalled");
+      assert.strictEqual(parked?.stalledReason, "waiting-retry");
+      assert.strictEqual(parked?.attempt, 2, "a stale limit spends the budget");
+      assert.strictEqual(yield* armsFor(harness, threadId), 0);
+    }),
+  ),
+);
+
 it.effect("a limit with no reset time takes the ordinary recovery ladder", () =>
   withGovernor(unattended, (harness) =>
     Effect.gen(function* () {

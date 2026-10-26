@@ -537,7 +537,7 @@ reaches it only through `board/ThreadGatewayV2.ts`; everything else here is wiri
   resumes it whatever the user's global setting; the `limit-resumed` signal un-parks the step. The
   park's `retryAt` sits a grace past the reset, and the generic retry sweep wakes it if v2 never
   does. There is no account-wide cooldown: a sibling card hits the limit on its own turn and parks
-  the same way. A limit with no reset time takes the ordinary recovery ladder.
+  the same way. A limit with no reset time, or a reset already past, takes the ordinary recovery ladder.
 - **Board MCP tools are declared through `McpToolAccess`.** Reads are `readsAsCaller`, writes
   `writesWithCapability`; every tool needs a T3 thread caller, resolved with `requireThreadScope`,
   and its failure schema admits `OrchestratorMcpFailure`. Registration is

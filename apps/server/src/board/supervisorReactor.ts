@@ -4013,8 +4013,9 @@ const make = Effect.gen(function* () {
    * comes, the retry sweep wakes the step at `retryAt`. Whichever lands first
    * wins and the other finds the step no longer parked.
    *
-   * Answers whether it parked. A limit with no reset time is not parked here:
-   * there is nothing to wait for, so it takes the ordinary recovery ladder.
+   * Answers whether it parked. A limit with no reset time, or one whose reset
+   * has already passed, is not parked here: there is nothing to wait for, so
+   * it takes the ordinary recovery ladder.
    * There is no account-wide hold either — a sibling card on the same account
    * hits the limit on its own turn and parks the same way.
    */
@@ -4037,6 +4038,10 @@ const make = Effect.gen(function* () {
     const limit = thread?.usageLimit ?? null;
     const resetMs = limit?.resetAt == null ? Number.NaN : Date.parse(limit.resetAt);
     if (limit === null || !Number.isFinite(resetMs)) return false;
+    // A reset already behind us has nothing to wait for either. Parked, it
+    // would be due at once, v2 refuses to arm an expired window, and each wake
+    // would hit the same stale limit and re-park free of charge, forever.
+    if (resetMs <= (yield* clockNowMs)) return false;
     const message = limit.message?.trim() ?? "";
     const landed = yield* parkStepForRetry({
       card: found.card,
