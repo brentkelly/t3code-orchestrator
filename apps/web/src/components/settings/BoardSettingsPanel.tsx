@@ -29,11 +29,7 @@ import { useMemo } from "react";
 import * as Option from "effect/Option";
 
 import { projectAccent, projectIconColorOf } from "../../board/projectAccent";
-import {
-  useClientSettings,
-  usePrimarySettings,
-  useUpdatePrimarySettings,
-} from "../../hooks/useSettings";
+import { useClientSettings } from "../../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
