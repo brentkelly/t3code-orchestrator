@@ -54,7 +54,7 @@ import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { BoardServerSection, BoardServerStatusNotice } from "../../board/BoardServerSettings";
 import {
-  useBoardEnvironmentId,
+  useBoardEnvironment,
   useBoardServerProviders,
   useBoardSettings,
   useUpdateBoardSettings,
@@ -78,32 +78,45 @@ function useProviderInstanceIds(): ReadonlyArray<string> {
 }
 
 export function BoardSettingsPanel() {
-  const board = useBoardSettings((settings) => settings.board);
-  const update = useUpdateBoardSettings();
-  const instanceIds = useProviderInstanceIds();
-  const environmentId = useBoardEnvironmentId();
-
+  const resolution = useBoardEnvironment();
   return (
     <SettingsPageContainer>
       {/* T3O-71: which server's board this device shows, and whether it is reachable. */}
       <BoardServerStatusNotice className="mx-3 sm:mx-4" />
       <BoardServerSection />
+      {/* Without a reachable board server there are no settings to show or save; the sections
+          would only read defaults and drop every edit. */}
+      {resolution.kind === "ready" ? (
+        <BoardSettingsSections environmentId={resolution.environmentId} />
+      ) : resolution.kind === "none" ? (
+        <p className="px-3 text-sm text-muted-foreground sm:px-4">
+          Connect an environment to configure its board.
+        </p>
+      ) : null}
+    </SettingsPageContainer>
+  );
+}
+
+/** The board server's own settings; rendered only once that server resolves. */
+function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId }) {
+  const board = useBoardSettings((settings) => settings.board);
+  const update = useUpdateBoardSettings();
+  const instanceIds = useProviderInstanceIds();
+
+  return (
+    <>
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
       <BoardPipelineSection />
-      {environmentId === null ? (
-        <ConcurrencySection board={board} instanceIds={instanceIds} update={update} />
-      ) : (
-        <BoardConcurrencySettings
-          board={board}
-          environmentId={environmentId}
-          instanceIds={instanceIds}
-          update={update}
-        />
-      )}
+      <BoardConcurrencySettings
+        board={board}
+        environmentId={environmentId}
+        instanceIds={instanceIds}
+        update={update}
+      />
       {/* T3O-62: the board's workers, and which projects each has checked out. */}
-      {environmentId === null ? null : <BoardWorkerSettings environmentId={environmentId} />}
+      <BoardWorkerSettings environmentId={environmentId} />
       <LifecycleSection board={board} update={update} />
-    </SettingsPageContainer>
+    </>
   );
 }
 
@@ -150,7 +163,7 @@ function ProjectsSection({
   update,
 }: {
   board: BoardSettings;
-  environmentId: EnvironmentId | null;
+  environmentId: EnvironmentId;
   update: UpdateFn;
 }) {
   const anchor = searchableSetting("board-projects");
@@ -161,13 +174,7 @@ function ProjectsSection({
         project's icon; open a project's settings to change it. The eye hides a project and its
         cards from the board without touching them.
       </p>
-      {environmentId === null ? (
-        <p className="px-3 text-sm text-muted-foreground sm:px-4">
-          Connect an environment to configure its projects.
-        </p>
-      ) : (
-        <ProjectRows board={board} environmentId={environmentId} update={update} />
-      )}
+      <ProjectRows board={board} environmentId={environmentId} update={update} />
     </SettingsSection>
   );
 }
