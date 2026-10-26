@@ -66,7 +66,6 @@ import {
   isBoardChecksFixLive,
   isBoardTerminalStepStatus,
   makeBoardCardShell,
-  ProviderInstanceId,
   BoardCardAttachment,
   BoardCardAutoMergeHold,
   sortBoardCardAttachments,

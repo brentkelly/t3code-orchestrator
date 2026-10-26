@@ -61,12 +61,7 @@ const BoardEventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: BoardAggregateKind,
-  aggregateId: Schema.Union([
-    BoardCardId,
-    BoardLabelId,
-    BoardStageId,
-    BoardWorkerId,
-  ]),
+  aggregateId: Schema.Union([BoardCardId, BoardLabelId, BoardStageId, BoardWorkerId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),

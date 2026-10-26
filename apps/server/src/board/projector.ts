@@ -87,7 +87,6 @@ import {
   type BoardCard,
   type BoardCardId,
   type BoardCardStepState,
-  type ProviderInstanceId,
   type BoardLabel,
   type BoardPlan,
   type BoardStageDefinition,

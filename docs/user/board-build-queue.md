@@ -42,7 +42,13 @@ any other card.
 
 ## Cards held by a usage limit
 
-A card parked because its provider ran out of usage is not in the queue either, and holds no agent
-slot while it waits — see [usage limits](board-usage-limits.md). The same is true of a card between
-retries: it hands its slot back rather than holding one idle, and rejoins the queue when its turn
-comes round, ahead of work that has not started.
+A card whose provider runs out of usage waits for the limit to reset, reading **Usage limit —
+resuming 2:50am**, and starts again by itself when it does. The wait spends none of its retries, and
+you do not have to be awake for it. A limit the provider gives no reset time for is treated like any
+other stop.
+
+When an agent stops without finishing, the board nudges it to carry on — after two minutes, then
+four, eight, sixteen and thirty-two — and the card says when the next nudge is due.
+
+Either way the card is not in the queue and holds no agent slot while it waits. It rejoins the queue
+when its time comes round, ahead of work that has not started.

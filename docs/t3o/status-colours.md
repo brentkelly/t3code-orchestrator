@@ -66,22 +66,17 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   its card instead of overflowing the column. The neutral informational pills — a queue position, a
   scheduled start, the auto-start arm, the grey `Auto` glyph — keep their own right-hand slot, because
   they assert that nothing is needed from the human, which is the opposite claim.
-- **A card waiting on a provider is amber, and so is the header pill (T3O-22).** A usage limit is
-  the same fact as blocked, one level up: nobody is working, the board cannot make it work, and it
-  is waiting on something outside itself. All five readings of `stalled` — waiting to resume on a
-  usage limit, out of credits, waiting for a retry rung, recovery having given up, and a branch the
-  board could not prepare (T3O-15) — are amber and are the same chip; only the words differ, because
-  the colour is answering "is work happening" and the answer is no in every one of them. Green would
-  be a lie in all five, and blue in all five.
+- **A card waiting on a provider is amber (T3O-22).** A usage limit is the same fact as blocked,
+  one level up: nobody is working, the board cannot make it work, and it is waiting on something
+  outside itself. Every reading of `stalled` — waiting to resume on a usage limit, waiting for a
+  retry rung, recovery having given up, a branch the board could not prepare (T3O-15) — is amber
+  and is the same chip; only the words differ, because the colour is answering "is work happening"
+  and the answer is no in every one of them. Green would be a lie in all of them, and blue too.
   The card modal's stalled banner splits where the chip does not: the two readings the board will
   end by itself (a usage-limit park, a retry rung) are amber and read "waiting to resume", while the
-  three that stay put until a human acts keep the red failure treatment they have had since t3o-30 —
+  ones that stay put until a human acts keep the red failure treatment they have had since t3o-30 —
   the banner asserts "this needs you", which is exactly the half of `stalled` it is still true of.
   `boardStallIsWaiting` is that split, so the banner cannot drift from the chip beside it.
-  The provider-usage pill in the board header takes the same amber for the same reason. It carries
-  no spinner and no ticking countdown: its numbers are coarse (`in 1h 38m`) and repaint only when
-  the board does, because a header is on screen all the time and a per-second repaint there is the
-  GPU cost this document exists to refuse.
 - **A worker the board can't use is amber, and online stays grey (T3O-60).** Worker offline, Worker
   removed, Access revoked and Incompatible all say the same thing: the cards on that worker are
   held, and only a human (or the worker coming back) frees them. A failed Move is amber for the same

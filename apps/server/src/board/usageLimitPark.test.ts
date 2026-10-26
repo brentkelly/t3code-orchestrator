@@ -273,7 +273,10 @@ it.effect("with no resume from v2, the retry sweep wakes the step once its time 
       assert.strictEqual(woken?.status, "running");
       // Woken with its budget intact, and told why it stopped.
       assert.strictEqual(woken?.attempt, 1);
-      assert.strictEqual((yield* turnTextsFor(harness, threadId)).at(-1), BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE);
+      assert.strictEqual(
+        (yield* turnTextsFor(harness, threadId)).at(-1),
+        BOARD_STEP_USAGE_LIMIT_RESUME_NUDGE,
+      );
     }),
   ),
 );

@@ -76,5 +76,6 @@ being instant. A card scheduled for a moment when every agent is busy queues nor
 ## When a provider runs out of usage
 
 A time you set is yours. If a provider hits a usage limit, the board parks the affected cards and
-resumes them on its own schedule — see [usage limits](board-usage-limits.md) — but it never
-overwrites a time you set, and clearing a usage-limit hold does not clear your own clock.
+resumes them when the limit resets — see
+[the build queue](board-build-queue.md#cards-held-by-a-usage-limit) — but it never overwrites a time
+you set, and a card resuming from a usage limit does not clear your own clock.

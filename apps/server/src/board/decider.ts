@@ -50,7 +50,6 @@ import {
   boardCardStepCompletions,
   boardStepPayloadDefect,
   boardCardStepState,
-  type ProviderInstanceId,
   boardReviewRoundsStarted,
   boardRunLabel,
   deriveBoardCardReviewSummary,
