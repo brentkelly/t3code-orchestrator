@@ -155,9 +155,7 @@ export const failedThreadShell = (
     a release the decider refused mid-turn can finally land (t3o-13). */
 export const idleThreadShell = (
   threadId: string,
-  /** Which provider instance the thread runs on (T3O-22). The cooldown paths
-      read it — that is how a clean turn on ANY thread, including a human's own
-      non-board one, lifts a limit. */
+  /** Which provider instance the thread runs on. */
   instanceId: ProviderInstanceId = codexStep.providerInstanceId,
 ): BoardThreadState => idleThread(threadId, instanceId);
 
