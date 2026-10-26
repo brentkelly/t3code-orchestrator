@@ -684,7 +684,9 @@ export const migrateDevDbCommand = Command.make(
   ),
 );
 
-if (import.meta.main) {
+// T3o: `t3 import-threads` bundles this module into the server CLI, where `import.meta.main` is
+// true for whichever chunk is the entry; run only when this script file is itself the entry.
+if (import.meta.main && import.meta.url.endsWith("/migrate-dev-db.ts")) {
   Command.run(migrateDevDbCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,
