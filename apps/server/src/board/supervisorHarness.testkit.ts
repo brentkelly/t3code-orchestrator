@@ -46,7 +46,6 @@ import {
   type BoardStageExecution,
   type BoardState,
   type BoardEvent,
-  type BoardUsageLimitMatch,
   type BoardConcurrencySettings,
 } from "@t3tools/contracts";
 
@@ -78,7 +77,6 @@ import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts
 import { BoardWorkspaces, type BoardWorkspacesShape } from "./workspace/BoardWorkspace.ts";
 import type { LocalBoardWorkspaceDeps } from "./workspace/LocalBoardWorkspace.ts";
 import { localBoardWorkspaceDeps, makeBoardWorkspaces } from "./workspace/workspaceLayer.ts";
-import { UsageLimitDetector, type UsageLimitDetectorShape } from "./UsageLimitDetector.ts";
 import type { WorktreeRetirer } from "./worktreeRetire.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
 import {
@@ -459,16 +457,6 @@ export type Harness = {
       remote-only base was MATERIALISED (T3O-5, D7) has nowhere else to read it:
       `git branch develop origin/develop` leaves no trace on the card. */
   readonly gitInvocations: Effect.Effect<ReadonlyArray<ReadonlyArray<string>>>;
-  /** What the STUBBED usage-limit detector answers for a thread from now on
-      (T3O-22, criterion 25).
-   *
-      The behavioural suite drives `wait` / `exhausted` / `slow-down` / null
-      through this rather than by crafting provider prose and hoping the
-      classifier agrees — those tests are about the SUPERVISOR, and the
-      classifier has three suites of its own. A thread with no verdict set
-      answers null, which is every fixture written before T3O-22 and leaves them
-      behaving exactly as they did. */
-  readonly setUsageVerdict: (threadId: string, verdict: BoardUsageLimitMatch | null) => void;
 };
 
 /** Run `body` against a live reactor wired to the stateful engine double. */
@@ -634,10 +622,6 @@ export function withGovernor(
         the card's brief images from `<stateDir>/board/attachments`; without
         one the reactor stages nothing, as the other tests expect. */
     readonly serverConfig?: Layer.Layer<ServerConfig.ServerConfig>;
-    /** The stubbed usage-limit verdict per thread id (T3O-22). Absent threads
-        answer null — "the catalogue says nothing" — so every fixture written
-        before this behaves identically. See `setUsageVerdict`. */
-    readonly usageVerdicts?: ReadonlyMap<string, BoardUsageLimitMatch | null>;
     /** The worktree retirer (T3O-23), over the stubbed git driver. By default
         the real one with nothing running and no remove scripts, so it only
         removes — what every fixture written before it expects. */
@@ -1079,15 +1063,6 @@ export function withGovernor(
         ),
     });
 
-    // The usage-limit detector, STUBBED (T3O-22, criterion 25). Mutable so a
-    // test can change a thread's verdict mid-run — which is exactly the probe
-    // story: the same thread refuses once, then answers cleanly.
-    const usageVerdicts = new Map<string, BoardUsageLimitMatch | null>(input.usageVerdicts ?? []);
-    const usageLimitStub: UsageLimitDetectorShape = {
-      classifyTurn: (classifyInput) =>
-        Effect.succeed(usageVerdicts.get(String(classifyInput.threadId)) ?? null),
-    };
-
     const gitLayer = Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub);
     const deps = Layer.mergeAll(
       (input.worktreeRetirer ?? worktreeRetirerTestLayer()).pipe(Layer.provide(gitLayer)),
@@ -1099,7 +1074,6 @@ export function withGovernor(
       gitLayer,
       Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),
       Layer.succeed(BoardPullRequestGateway, pullRequestStub),
-      Layer.succeed(UsageLimitDetector, usageLimitStub),
       BoardStepSlotsLive,
       input.serverConfig ?? Layer.empty,
     );
@@ -1202,7 +1176,6 @@ export function withGovernor(
           setBoardSettings: (settings) => void (boardSettings = settings),
           setWorktreeUndurable: (undurable) => void (worktreeUndurable = undurable),
           gitInvocations: Effect.sync(() => [...gitInvocationLog]),
-          setUsageVerdict: (threadId, verdict) => void usageVerdicts.set(threadId, verdict),
         });
       }).pipe(
         Effect.provide(
@@ -1431,26 +1404,11 @@ export const cardDeleted = (
  * A turn ending on a thread. `turnId` names the turn that ENDED — pass it
  * whenever the fixture also gives the thread a state, because that is the pair
  * the turn-end handler compares to tell a lagging read from a live second turn.
- *
- * The board reads `errorMessage` (T3O-22, D4): Grok's quota refusal arrives
- * ONLY that way, on a `failed` turn with no assistant message anywhere.
  */
-export const turnCompleted = (
-  threadId: ThreadId,
-  turnId?: string,
-  /** A failed turn's own error text, for the Grok-shaped refusal path. */
-  errorMessage?: string,
-  /** How the turn ended. Defaults to the pair that always travels together — an
-      error text means `failed`, its absence means `completed` — and is passed
-      explicitly only to build the odd shapes: an interrupted turn (a human
-      pressed Stop) or a failure that named nothing. */
-  state?: "completed" | "failed" | "interrupted" | "cancelled",
-): ThreadSignal => ({
+export const turnCompleted = (threadId: ThreadId, turnId?: string): ThreadSignal => ({
   type: "turn-ended",
   threadId,
   turnRef: turnId,
-  outcome: state ?? (errorMessage === undefined ? "completed" : "failed"),
-  errorMessage: errorMessage ?? null,
 });
 
 /** A structured question being ANSWERED (t3o-34, D5). It is raised from inside a

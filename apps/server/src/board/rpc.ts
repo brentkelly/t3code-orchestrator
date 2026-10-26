@@ -38,8 +38,6 @@ import {
   // T3o: the refresh's own payload (T3O-48).
   type BoardRefreshCardPullRequestInput,
   type BoardLinkCardPullRequestInput,
-  type BoardProviderLimitActionInput,
-  type BoardProviderLimitResumeAtInput,
   type BoardClientCommand,
   type BoardSubscribeBoardInput,
   type BoardSubscribeCardInput,
@@ -283,32 +281,6 @@ function makeBoardRpcHandlers(
      * "the forge refused because a check is failing" is the system working
      * correctly, and the caller renders each outcome differently.
      */
-    /**
-     * "Resume now" on a limited provider (T3O-22, D14). One click, one prober —
-     * the same single-card wake the reset time performs, because ten cards
-     * arriving at once is exactly as bad whether a clock or a human chose the
-     * moment.
-     */
-    [BOARD_WS_METHODS.probeProviderLimit]: (input: BoardProviderLimitActionInput) =>
-      authorized(
-        BOARD_WS_METHODS.probeProviderLimit,
-        deps.boardSupervisor.probeProviderLimit(input.providerInstanceId),
-      ),
-
-    /**
-     * "Set resume time" on a provider that named none (T3O-22, D14) — a human
-     * reading the provider's own dashboard knows something the board's blind
-     * poll does not. Null hands the schedule back to the poll.
-     */
-    [BOARD_WS_METHODS.setProviderLimitResumeAt]: (input: BoardProviderLimitResumeAtInput) =>
-      authorized(
-        BOARD_WS_METHODS.setProviderLimitResumeAt,
-        deps.boardSupervisor.setProviderLimitResumeAt({
-          providerInstanceId: input.providerInstanceId,
-          resumeAt: input.resumeAt,
-        }),
-      ),
-
     [BOARD_WS_METHODS.mergeCardPullRequest]: (input: BoardCardPullRequestActionInput) =>
       authorized(
         BOARD_WS_METHODS.mergeCardPullRequest,

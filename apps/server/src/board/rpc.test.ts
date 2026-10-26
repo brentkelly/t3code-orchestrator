@@ -96,8 +96,6 @@ const supervisorCalls: {
   merge: Array<string>;
   submit: Array<string>;
   requestRound: Array<string>;
-  probe: Array<string>;
-  setResumeAt: Array<string>;
   removeWorktree: Array<string>;
   checkWorktree: Array<string>;
   link: Array<string>;
@@ -106,8 +104,6 @@ const supervisorCalls: {
   merge: [],
   submit: [],
   requestRound: [],
-  probe: [],
-  setResumeAt: [],
   removeWorktree: [],
   checkWorktree: [],
   link: [],
@@ -120,16 +116,7 @@ const supervisorStub: SupervisorReactorShape = {
   fireSchedules: Effect.void,
   startArmed: Effect.void,
   fireRetries: Effect.void,
-  fireProbes: Effect.void,
   fireAutoMerges: Effect.void,
-  probeProviderLimit: (providerInstanceId) =>
-    Effect.sync(() => {
-      supervisorCalls.probe.push(String(providerInstanceId));
-    }),
-  setProviderLimitResumeAt: (input) =>
-    Effect.sync(() => {
-      supervisorCalls.setResumeAt.push(`${input.providerInstanceId}:${input.resumeAt ?? "null"}`);
-    }),
   releaseThreads: Effect.void,
   drain: Effect.void,
   sweepWorktrees: () => Effect.void,

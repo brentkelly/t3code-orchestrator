@@ -22,7 +22,6 @@ import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts
 import { BoardMcpRelayClientLive } from "../mcp/toolkits/board/relayClient.ts";
 import { ThreadGatewayRouterLive } from "./ThreadGatewayRouter.ts";
 import { LocalThreadGatewayV2Live } from "./ThreadGatewayV2.ts";
-import { UsageLimitDetectorLive } from "./UsageLimitDetector.ts";
 import { WorktreeRetirerLive } from "./worktreeRetire.ts";
 import { BoardRelayStoreLive } from "./workers/BoardRelayStore.ts";
 import { BoardCardMoverLive } from "./workers/BoardCardMove.ts";
@@ -64,7 +63,6 @@ export const BoardServerLive = BoardMcpRelayClientLive.pipe(
   // T3O-65: moving a card to another worker (D20), for the Move dialog's RPCs.
   Layer.provideMerge(BoardCardMoverLive),
   Layer.provide(BoardStepSlotsLive),
-  Layer.provide(UsageLimitDetectorLive),
   // T3O-65: the workers' state placement gates a step on (D20).
   Layer.provideMerge(BoardPlacementLive),
   Layer.provideMerge(BoardWorkersLive),

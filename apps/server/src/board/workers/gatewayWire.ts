@@ -7,7 +7,7 @@
  * RPCs; a test transport implements it with the worker's own host in process.
  *
  * The converters translate between the board's gateway vocabulary and the
- * wire's: a signal's `turnRef`/`outcome` are absent on the wire rather than
+ * wire's: a signal's `turnRef` is absent on the wire rather than
  * `undefined`, and the gateway's three error classes travel as one
  * `BoardWorkerGatewayError` that names which it was.
  */
@@ -137,9 +137,7 @@ export const toWireSignal = (signal: ThreadSignal): BoardGatewaySignal => {
   return {
     type: signal.type,
     threadId: signal.threadId,
-    errorMessage: signal.errorMessage,
     ...(signal.turnRef === undefined ? {} : { turnRef: signal.turnRef }),
-    ...(signal.outcome === undefined ? {} : { outcome: signal.outcome }),
   };
 };
 
@@ -148,9 +146,7 @@ export const fromWireSignal = (signal: BoardGatewaySignal): ThreadSignal => {
   return {
     type: signal.type,
     threadId: signal.threadId,
-    errorMessage: signal.errorMessage,
     turnRef: signal.turnRef,
-    outcome: signal.outcome,
   };
 };
 

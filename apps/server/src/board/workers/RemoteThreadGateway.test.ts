@@ -142,8 +142,6 @@ const turnEnded = (threadId: ThreadId, turnRef: string) =>
     type: "turn-ended",
     threadId,
     turnRef,
-    outcome: "completed",
-    errorMessage: null,
   }) as const;
 
 const centralLayer = BoardRelayStoreLive.pipe(Layer.provideMerge(centralDatabase));

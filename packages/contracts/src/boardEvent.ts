@@ -25,7 +25,6 @@ import {
   BoardStageId,
   makeBoardOrchestrationEvents,
 } from "./board.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
 import { BoardWorkerId } from "./boardWorkers.ts";
 
 /**
@@ -45,13 +44,11 @@ export const BoardEventMetadata = Schema.Struct({
 });
 export type BoardEventMetadata = typeof BoardEventMetadata.Type;
 
-/** The board's aggregates: a card, a label, a stage, and a provider instance's
-    cooldown (T3O-22) — which belongs to an account, not to any card. */
+/** The board's aggregates: a card, a label, a stage, and a worker. */
 export const BoardAggregateKind = Schema.Literals([
   "card",
   "label",
   "stage",
-  "provider-limit",
   // T3O-62: a registered worker, and the board's default-worker choice.
   "worker",
 ]);
@@ -68,7 +65,6 @@ const BoardEventBaseFields = {
     BoardCardId,
     BoardLabelId,
     BoardStageId,
-    ProviderInstanceId,
     BoardWorkerId,
   ]),
   occurredAt: IsoDateTime,
