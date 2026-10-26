@@ -138,6 +138,7 @@ export const toWireSignal = (signal: ThreadSignal): BoardGatewaySignal => {
     type: signal.type,
     threadId: signal.threadId,
     ...(signal.turnRef === undefined ? {} : { turnRef: signal.turnRef }),
+    errorMessage: null,
   };
 };
 
