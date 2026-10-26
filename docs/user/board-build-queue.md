@@ -43,7 +43,7 @@ any other card.
 ## Cards held by a usage limit
 
 A card whose provider runs out of usage waits for the limit to reset, reading **Usage limit —
-resuming 2:50am**, and starts again by itself when it does. The wait spends none of its retries, and
+resuming by 2:50am**, and starts again by itself when it does, usually right at the reset. The wait spends none of its retries, and
 you do not have to be awake for it. A limit the provider gives no reset time for, or a reset time already past, is treated like any
 other stop.
 

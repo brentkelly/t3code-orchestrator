@@ -1697,7 +1697,7 @@ export type BoardCardStepAwaitingReason = typeof BoardCardStepAwaitingReason.Typ
  *
  * | Reason            | Label                                |
  * | ----------------- | ------------------------------------ |
- * | `usage-limit`     | `Usage limit — resuming 2:50am`      |
+ * | `usage-limit`     | `Usage limit — resuming by 2:50am`   |
  * | `waiting-retry`   | `Stalled — waiting to retry 2:32pm`  |
  * | `gave-up`         | `Stalled — needs a human`            |
  * | `no-worktree`     | `Can't start — needs a human`        |
@@ -3171,8 +3171,11 @@ function boardStalledWords(
   const at = due ? ` ${clock}` : "";
   switch (reason) {
     case "usage-limit":
+      // "by": `retryAt` is the board's safety-net wake, a grace past the
+      // provider's reset (T3O-72). v2 normally resumes the thread at the reset
+      // itself, so the time is a deadline, not the moment it starts.
       return {
-        label: due ? `Usage limit — resuming${at}` : "Usage limit — waiting to resume",
+        label: due ? `Usage limit — resuming by${at}` : "Usage limit — waiting to resume",
         detail:
           "The provider's usage window is spent. The board is holding this card and will start it again by itself.",
       };

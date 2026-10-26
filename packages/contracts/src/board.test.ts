@@ -1477,6 +1477,17 @@ describe("cards that need a human (boardCardAttention)", () => {
     }
   });
 
+  it("gives a usage-limit chip's time as a deadline, not the resume (T3O-72)", () => {
+    // `retryAt` is the safety-net wake a grace past the reset; v2 normally
+    // resumes the thread before it, so "resuming 2:50am" would read late.
+    const retryAt = "2026-10-26T14:50:00.000Z";
+    const chip = attention(
+      { stalled: true, stalledReason: "usage-limit", retryAt },
+      { now: Date.parse(retryAt) - 60_000 },
+    );
+    expect(chip?.label).toMatch(/^Usage limit — resuming by /);
+  });
+
   it("says a card whose branch could not be prepared cannot start (T3O-15)", () => {
     // Without its own words this read "Stalled — recovery gave up", which is
     // false: no agent ever ran, so there was nothing to recover.

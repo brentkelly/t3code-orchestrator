@@ -538,6 +538,10 @@ reaches it only through `board/ThreadGatewayV2.ts`; everything else here is wiri
   park's `retryAt` sits a grace past the reset, and the generic retry sweep wakes it if v2 never
   does. There is no account-wide cooldown: a sibling card hits the limit on its own turn and parks
   the same way. A limit with no reset time, or a reset already past, takes the ordinary recovery ladder.
+  A park charges nothing and consecutive parks are not counted, so a provider that refuses again
+  after every resume, each time with a new future reset, keeps the card waiting without ever
+  escalating. That is deliberate: each cycle costs one turn per usage window, and it is how v2
+  treats an interactive thread. T3O-22's seven-day ceiling went with the rest of its machinery.
 - **Board MCP tools are declared through `McpToolAccess`.** Reads are `readsAsCaller`, writes
   `writesWithCapability`; every tool needs a T3 thread caller, resolved with `requireThreadScope`,
   and its failure schema admits `OrchestratorMcpFailure`. Registration is
