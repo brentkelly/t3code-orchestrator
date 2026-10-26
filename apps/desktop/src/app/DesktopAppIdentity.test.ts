@@ -133,6 +133,7 @@ const withIdentity = <A, E, R>(
                 ? Effect.fail(input.legacyPathProbeError)
                 : Effect.succeed(
                     input.legacyPathExists === true &&
+                      // T3o: fork identity expectation (T3O-71).
                       /(T3 Code \((Alpha|Dev)\)|t3o-dev)$/.test(path),
                   ),
             readFileString: () =>
@@ -221,6 +222,7 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         yield* identity.configure;
 
+        // T3o: fork identity expectation (T3O-71).
         assert.deepEqual(calls.setName, ["T3o Beta"]);
         assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3o (Beta)");
         assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
@@ -265,6 +267,7 @@ describe("DesktopAppIdentity", () => {
 
         const runtimeName = calls.setName[0];
         assert.isDefined(runtimeName);
+        // T3o: fork identity expectation (T3O-71).
         assert.equal(runtimeName, `T3o ${stage}`);
         // RFC 9110's token grammar, after Electron removes ASCII spaces.
         assert.match(runtimeName.replaceAll(" ", ""), /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/);

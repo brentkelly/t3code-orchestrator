@@ -76,6 +76,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.serverRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
+      // T3o: fork identity expectation (T3O-71).
       assert.equal(environment.appUserModelId, "com.brentkelly.t3o.dev");
       assert.equal(environment.linuxWmClass, "t3o-dev");
       assert.equal(environment.linuxDesktopEntryName, "com.brentkelly.t3o.Development.desktop");
@@ -150,6 +151,7 @@ describe("DesktopEnvironment", () => {
         resourcesPath: "/tmp/.mount_t3code/resources",
       });
 
+      // T3o: fork identity expectation (T3O-71).
       assert.equal(environment.linuxDesktopEntryName, "com.brentkelly.t3o.desktop");
     }),
   );
@@ -162,6 +164,7 @@ describe("DesktopEnvironment", () => {
       );
       const production = yield* makeEnvironment();
 
+      // T3o: fork identity expectation (T3O-71).
       assert.equal(development.stateDir, "/Users/alice/.t3o/dev");
       assert.equal(production.stateDir, "/Users/alice/.t3o/userdata");
     }),

@@ -7,6 +7,14 @@ listed as **This server (local)**, so a board with no workers added works exactl
 Workers are managed under **Settings → Board → Workers**. Every device connected to the board
 server sees the same list, with each worker's live status.
 
+## Viewing the board from another device
+
+Every device shows the board of one server. By default that is the server the app runs (the
+desktop app's own local server, or the server a browser loaded the page from). To see the central
+board from another device, pair with the board server in **Settings → Connections**, then pick it in
+**Settings → Board → Board server**. The choice is saved on that device only. If the chosen server
+is not connected, the board says so and offers to reconnect or switch back to this device's server.
+
 ## Before you add one
 
 - The worker must run T3o, at or above the version the board needs. A worker on an older version

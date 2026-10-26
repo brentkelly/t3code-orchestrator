@@ -181,6 +181,68 @@ T3CODE_HOME="$HOME/.t3" node ~/.t3/app/dist/bin.mjs serve --host 127.0.0.1 --por
 That is exactly the unit's `ExecStart`. For development, use `pnpm run dev` instead — in a worktree it
 defaults to that worktree's gitignored `.t3`, so it cannot land on your real data by accident.
 
+## Desktop app (.deb)
+
+The Electron app builds as a T3o-branded Debian package (x64 only) that installs **alongside**
+upstream T3 Code. It bundles this checkout's server and web client, so the board comes with it.
+
+Building needs the Linux desktop prerequisites on top of the ones above — Rust (`cargo`, `rustc`),
+`libsecret-1-dev`, `pkg-config` and ImageMagick:
+
+```bash
+sudo apt-get install cargo rustc libsecret-1-dev pkg-config imagemagick
+pnpm run dist:desktop:deb
+sudo apt install ./release/T3o-*.deb
+```
+
+Never set `T3CODE_DESKTOP_UPDATE_REPOSITORY` or `GITHUB_REPOSITORY` for a local build. With neither
+set the app has no update feed, which is what keeps it from auto-updating into upstream's release.
+Rebuild and reinstall the .deb to update.
+
+### Why it has its own identity and home
+
+The package is `t3o` (`/opt/T3o/t3o`, app id `com.brentkelly.t3o`, WM class `t3o`), its Electron
+profile is `~/.config/t3o`, and its T3 home is **`~/.t3o`**. `T3CODE_HOME` still overrides the home.
+It claims no `t3code://` handler: that scheme stays with upstream, so sign-in callbacks that go
+through `t3code://` open upstream T3 Code (or nothing) rather than T3o.
+
+The two apps never share `~/.t3`, even though the board's tables are separate:
+
+1. Upstream rewrites `settings.json` from its own schema, which drops T3o's `board` block.
+2. Upstream auto-updates ahead of T3o, so T3o would open a database migrated by a newer upstream.
+3. One server per data directory: they could not run together, and both own `<home>/bin/t3`.
+
+### Using it with the central board
+
+The desktop app is a client of the board server. Pair it with the central server under **Settings →
+Connections**, then choose that server under **Settings → Board → Board server**. The setting is
+saved on this device only; until it is set the app shows its own local server's board.
+
+### Bringing your threads across
+
+The app's launcher lives at `~/.t3o/bin/t3`. With T3o closed, copy your upstream threads in:
+
+```bash
+~/.t3o/bin/t3 import-threads                          # every project, 50 recent threads each
+~/.t3o/bin/t3 import-threads --project ~/src/app      # one project; repeat --project for more
+```
+
+It reads `~/.t3/userdata/statev2.sqlite` read-only (`--from` picks another home) and copies the
+attachments of the threads it keeps. Stopped and settled threads come with their forks and
+subagents. Running, archived and deleted threads, scheduled tasks, queued work, sign-ins and pairing
+links stay behind, so T3o never picks up upstream's running agents. Board cards and `settings.json`
+are not imported.
+
+It refuses to run while T3o's server is running, when your T3 Code is newer than this T3o build
+("update T3o first"), and when `~/.t3o` already has threads. `--replace` discards those after asking.
+
+### Optional: the desktop's server as a worker
+
+The app's local server can also be a worker for the central board. Open **Settings → Connections**,
+enable **Network access** (the app restarts), then add it from the board server's **Settings → Board
+→ Workers** — or run `~/.t3o/bin/t3 pair` on the desktop and paste the link into **Add worker**. The
+board server must be able to reach the desktop over the network.
+
 ## Uninstall
 
 ```bash
