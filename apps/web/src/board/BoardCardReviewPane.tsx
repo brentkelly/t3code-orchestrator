@@ -33,8 +33,6 @@ import {
   sortProviderInstanceEntries,
 } from "../providerInstances";
 import { getCustomModelOptionsByInstance } from "../modelSelection";
-import { primaryServerProvidersAtom } from "../state/server";
-import { usePrimarySettings } from "../hooks/useSettings";
 import { ModelRow } from "../components/settings/BoardModelRow";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -48,6 +46,7 @@ import {
   type BoardReviewLoopFinding,
   type BoardReviewPhaseStatus,
 } from "./boardReviewLoop";
+import { useBoardServerProviders, useBoardSettings } from "./useBoardEnvironmentId";
 
 const PHASE_NAMES: Record<BoardReviewPhaseId, string> = {
   review: "Fresh-eyes review",
@@ -630,8 +629,8 @@ function PlannedRoundSettings({
   readonly phaseRuntimeMode: RuntimeMode;
   readonly onChange: (model: BoardReviewRoundOverride | null) => void;
 }) {
-  const settings = usePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const settings = useBoardSettings();
+  const serverProviders = useBoardServerProviders();
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );

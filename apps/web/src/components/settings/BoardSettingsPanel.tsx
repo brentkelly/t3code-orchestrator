@@ -4,8 +4,9 @@
  * (`BoardPipelineSection`), concurrency ceilings and lifecycle windows — all
  * sharing the prototype's bordered-card aesthetic. Execution config and
  * project edits reach the decider / reactor, so the panel reads and writes
- * through `usePrimarySettings` / `useUpdatePrimarySettings`; stage CRUD is a
- * board command dispatched through the environment.
+ * through `useBoardSettings` / `useUpdateBoardSettings` — the board server's
+ * settings (T3O-71); stage CRUD is a board command dispatched through the
+ * environment.
  *
  * The pipeline is keyed by STAGE ID, so a rename never orphans a stage's config.
  * A stage's resolved config is frozen onto the card at stage entry (D12), so a
@@ -37,8 +38,6 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../../logicalProject";
-import { usePrimaryEnvironmentId } from "../../state/environments";
-import { primaryServerProvidersAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -57,13 +56,20 @@ import { WorkerConcurrencySection } from "../../board/workers/WorkerConcurrencyS
 import { boardLocalConcurrencyDiverges } from "../../board/workers/workerConcurrency";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { BoardServerSection, BoardServerStatusNotice } from "../../board/BoardServerSettings";
+import {
+  useBoardEnvironmentId,
+  useBoardServerProviders,
+  useBoardSettings,
+  useUpdateBoardSettings,
+} from "../../board/useBoardEnvironmentId";
 
 /** The provider instances the server reports, built-in drivers included, plus
     any configured custom instances — the concurrency rows offer these. Free text
     would risk an invalid slug that fails the whole-settings decode on save. */
 function useProviderInstanceIds(): ReadonlyArray<string> {
-  const providers = useAtomValue(primaryServerProvidersAtom);
-  const providerInstances = usePrimarySettings((settings) => settings.providerInstances);
+  const providers = useBoardServerProviders();
+  const providerInstances = useBoardSettings((settings) => settings.providerInstances);
   return useMemo(
     () => [
       ...new Set([
@@ -76,13 +82,16 @@ function useProviderInstanceIds(): ReadonlyArray<string> {
 }
 
 export function BoardSettingsPanel() {
-  const board = usePrimarySettings((settings) => settings.board);
-  const update = useUpdatePrimarySettings();
+  const board = useBoardSettings((settings) => settings.board);
+  const update = useUpdateBoardSettings();
   const instanceIds = useProviderInstanceIds();
-  const environmentId = usePrimaryEnvironmentId();
+  const environmentId = useBoardEnvironmentId();
 
   return (
     <SettingsPageContainer>
+      {/* T3O-71: which server's board this device shows, and whether it is reachable. */}
+      <BoardServerStatusNotice className="mx-3 sm:mx-4" />
+      <BoardServerSection />
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
       <BoardPipelineSection />
       {environmentId === null ? (
@@ -102,7 +111,7 @@ export function BoardSettingsPanel() {
   );
 }
 
-type UpdateFn = ReturnType<typeof useUpdatePrimarySettings>;
+type UpdateFn = ReturnType<typeof useUpdateBoardSettings>;
 
 /** The prototype's bordered card list container, shared by every non-pipeline
     section so the page reads as one system. Sections holding these use the

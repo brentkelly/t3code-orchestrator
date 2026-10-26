@@ -11,6 +11,13 @@
 import type { SettingsSearchItem } from "../components/settings/settingsSearch";
 
 export const BOARD_SETTINGS_SEARCH_ITEMS = [
+  // T3O-71: which server's board this device shows.
+  {
+    id: "board-server",
+    title: "Board server",
+    to: "/settings/board",
+    searchTerms: ["central board remote environment connection"],
+  },
   { id: "board-projects", title: "Projects", to: "/settings/board" },
   {
     id: "board-key-prefix",

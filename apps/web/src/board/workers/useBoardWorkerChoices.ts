@@ -14,7 +14,6 @@ import {
 import * as Option from "effect/Option";
 import { useCallback, useMemo } from "react";
 
-import { usePrimarySettings } from "../../hooks/useSettings";
 import { boardEnvironment } from "../../state/board";
 import { environmentShell } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -24,6 +23,7 @@ import {
   boardWorkerRunningCounts,
   type BoardWorkerChoice,
 } from "./cardWorker";
+import { useBoardSettings } from "../useBoardEnvironmentId";
 
 export interface BoardWorkerChoices {
   readonly workers: BoardWorkersState;
@@ -42,7 +42,7 @@ export function useBoardWorkerChoices(
   const workers = useAtomValue(boardEnvironment.workersAtom(environmentId));
   const cardsByProject = useAtomValue(boardEnvironment.cardsByProjectAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
-  const concurrency = usePrimarySettings((settings) => settings.board.concurrency);
+  const concurrency = useBoardSettings((settings) => settings.board.concurrency);
   const setupProject = useAtomCommand(boardEnvironment.setupWorkerProject);
   const shown = boardShowsWorkers(workers);
 

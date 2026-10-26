@@ -75,11 +75,9 @@ import { boardQueueInfo } from "./boardQueueInfo";
 import { projectIconColorOf } from "./projectAccent";
 import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
-import { primaryServerProvidersAtom } from "../state/server";
 import { usePaginatedBranches } from "../state/queries";
 import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../hooks/useSettings";
 import { boardQueueReason, boardThreadMoveDividers } from "./workers/cardWorker";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
@@ -117,6 +115,11 @@ import {
 } from "./boardCommandFeedback";
 import { useOpenLink } from "../browser/useOpenLink";
 import { refreshBoardArchivedCards } from "./BoardArchivedCardsSheet";
+import {
+  useBoardServerProviders,
+  useBoardSettings,
+  useUpdateBoardSettings,
+} from "./useBoardEnvironmentId";
 
 /** The modal frame, empty, while `board.subscribeCard` opens — same sheet, so
     nothing jumps when the detail lands. */
@@ -278,15 +281,15 @@ export function BoardCardDetail({
     () => ({ cards: [], stages, nextCardNumberByProject: {} }),
     [stages],
   );
-  const boardSettings = usePrimarySettings((settings) => settings.board);
+  const boardSettings = useBoardSettings((settings) => settings.board);
   // Persisting a newly derived key prefix for the target project (T3O-33), the
   // same write the create dialog makes on a project's first card.
-  const updateSettings = useUpdatePrimarySettings();
+  const updateSettings = useUpdateBoardSettings();
   // Full settings + providers resolve the default model for a blank thread — the
   // same resolution a Threads-view "new thread" uses, so a card-started blank
   // thread lands on the app's default model, not a board-specific one (D3).
-  const allSettings = usePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const allSettings = useBoardSettings();
+  const serverProviders = useBoardServerProviders();
 
   /** Report a rejected command inline (the decider names cycles, missing
       dependencies, the label cap); clear it once the next command succeeds. */
