@@ -78,11 +78,8 @@ import {
 } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
-import { usePrimaryEnvironmentId } from "../../state/environments";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { primaryServerProvidersAtom } from "../../state/server";
 import { boardWorkerOnlyProviders } from "../../board/workers/cardWorker";
 import { useBoardWorkersCardView } from "../../board/workers/BoardWorkersContext";
 import {
@@ -122,6 +119,12 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { SettingsSection } from "./settingsLayout";
 import { BoardHint } from "../../board/BoardHint";
+import {
+  useBoardEnvironmentId,
+  useBoardServerProviders,
+  useBoardSettings,
+  useUpdateBoardSettings,
+} from "../../board/useBoardEnvironmentId";
 
 /** The stand-in card identity for envelope previews: a run interpolates the
     real card, so the preview shows placeholders where values vary per card. */
@@ -637,10 +640,10 @@ function orderKeepsSpine(stages: ReadonlyArray<BoardStageDefinition>): boolean {
 }
 
 export function BoardPipelineSection() {
-  const board = usePrimarySettings((settings) => settings.board);
-  const update = useUpdatePrimarySettings();
+  const board = useBoardSettings((settings) => settings.board);
+  const update = useUpdateBoardSettings();
   const anchor = searchableSetting("board-pipeline");
-  const environmentId = usePrimaryEnvironmentId();
+  const environmentId = useBoardEnvironmentId();
   const stageList = useAtomValue(
     boardEnvironment.stageListAtom(environmentId ?? ("" as EnvironmentId)),
   );
@@ -655,8 +658,8 @@ export function BoardPipelineSection() {
   const [openStageId, setOpenStageId] = useState<string | null>(null);
 
   // ProviderModelPicker context (shared across every stage row).
-  const settings = usePrimarySettings();
-  const ownProviders = useAtomValue(primaryServerProvidersAtom);
+  const settings = useBoardSettings();
+  const ownProviders = useBoardServerProviders();
   // T3O-65: and the instance ids only workers have — a recipe names an id, and
   // it resolves on the worker the card runs on.
   // The card view keeps the same object across a clone's progress ticks, which

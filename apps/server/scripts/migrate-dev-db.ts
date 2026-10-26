@@ -154,6 +154,10 @@ export interface RunMigrateDevDbInput {
   readonly source?: string | undefined;
   readonly projects: number;
   readonly threadsPerProject: number;
+  // T3o: `t3 import-threads --project` keeps only projects at these workspace roots.
+  readonly workspaceRoots?: ReadonlyArray<string> | undefined;
+  // T3o: `t3 import-threads` keeps settled threads, which are most of a user's history.
+  readonly includeSettled?: boolean | undefined;
 }
 
 export interface RunMigrateDevDbOptions {
@@ -262,12 +266,17 @@ const CLEARED_TABLES: ReadonlyArray<string> = [
 const PROVIDER_SESSIONS_TABLE = "orchestration_v2_projection_provider_sessions";
 
 /** Whether the thread aliased `root` is shown: not deleted, archived, or settled. */
-const rootIsVisible = (sql: SqlClient.SqlClient) => sql`
+// T3o: `includeSettled` for import-threads.
+const rootIsVisible = (sql: SqlClient.SqlClient, includeSettled = false) => sql`
   root.deleted_at IS NULL
   AND json_extract(root.payload_json, '$.deletedAt') IS NULL
   AND json_extract(root.payload_json, '$.archivedAt') IS NULL
-  AND json_extract(root.payload_json, '$.settledAt') IS NULL
-  AND json_extract(root.payload_json, '$.settledOverride') IS NOT 'settled'`;
+  ${
+    includeSettled
+      ? sql``
+      : sql`AND json_extract(root.payload_json, '$.settledAt') IS NULL
+  AND json_extract(root.payload_json, '$.settledOverride') IS NOT 'settled'`
+  }`;
 
 /**
  * Copies the source into the empty snapshot, without the rows of thread families whose root is
@@ -276,7 +285,11 @@ const rootIsVisible = (sql: SqlClient.SqlClient) => sql`
  * A source from before the V2 thread tables has no visibility to filter on, so it is copied
  * whole. One transaction reads the source, so the copy is consistent while the real server writes.
  */
-const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath: string) {
+const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (
+  sourcePath: string,
+  // T3o: import-threads keeps settled threads.
+  includeSettled = false,
+) {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`ATTACH DATABASE ${`${NodeURL.pathToFileURL(sourcePath).href}?mode=ro`} AS src`;
   const schema = yield* sql<{ type: string; name: string; sql: string }>`
@@ -298,7 +311,7 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
           SELECT family.thread_id FROM src.orchestration_v2_projection_threads family
           JOIN src.orchestration_v2_projection_threads root ON root.thread_id =
             COALESCE(json_extract(family.payload_json, '$.lineage.rootThreadId'), family.thread_id)
-          WHERE ${rootIsVisible(sql)}`;
+          WHERE ${rootIsVisible(sql, includeSettled)}`;
       }
       for (const { name } of tables) {
         if (CLEARED_TABLES.includes(name)) continue;
@@ -363,7 +376,7 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
     SELECT f.root_id, root.project_id, MAX(f.updated_at) AS updated_at
     FROM thread_families f
     JOIN orchestration_v2_projection_threads root ON root.thread_id = f.root_id
-    WHERE ${rootIsVisible(sql)}
+    WHERE ${rootIsVisible(sql, input.includeSettled)}
     GROUP BY f.root_id, root.project_id
     HAVING SUM(f.thread_id IN (SELECT thread_id FROM live_threads)) = 0`;
 
@@ -378,6 +391,7 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
       GROUP BY project_id
     ) q ON q.project_id = p.project_id
     WHERE p.deleted_at IS NULL
+      ${/* T3o: import-threads project filter. */ input.workspaceRoots === undefined ? sql`` : sql`AND p.workspace_root IN ${sql.in(input.workspaceRoots)}`}
     ORDER BY (q.last_stopped_at IS NULL) ASC,
       COALESCE(q.last_stopped_at, p.updated_at) DESC
     LIMIT ${input.projects}`;
@@ -536,7 +550,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
   // Make sure the snapshot is removed even when a phase fails partway through.
   const { executedMigrations, pruned } = yield* Effect.gen(function* () {
     yield* Console.log(`Copying visible threads from ${sourcePath} (read-only)...`);
-    yield* copySourceSlice(sourcePath).pipe(
+    yield* copySourceSlice(sourcePath, input.includeSettled).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
       wrapPhase("snapshot", sourcePath),
     );
@@ -670,7 +684,9 @@ export const migrateDevDbCommand = Command.make(
   ),
 );
 
-if (import.meta.main) {
+// T3o: `t3 import-threads` bundles this module into the server CLI, where `import.meta.main` is
+// true for whichever chunk is the entry; run only when this script file is itself the entry.
+if (import.meta.main && import.meta.url.endsWith("/migrate-dev-db.ts")) {
   Command.run(migrateDevDbCommand, { version: "0.0.0" }).pipe(
     Effect.provide(NodeServices.layer),
     NodeRuntime.runMain,

@@ -4,8 +4,9 @@
  * (`BoardPipelineSection`), concurrency ceilings and lifecycle windows — all
  * sharing the prototype's bordered-card aesthetic. Execution config and
  * project edits reach the decider / reactor, so the panel reads and writes
- * through `usePrimarySettings` / `useUpdatePrimarySettings`; stage CRUD is a
- * board command dispatched through the environment.
+ * through `useBoardSettings` / `useUpdateBoardSettings` — the board server's
+ * settings (T3O-71); stage CRUD is a board command dispatched through the
+ * environment.
  *
  * The pipeline is keyed by STAGE ID, so a rename never orphans a stage's config.
  * A stage's resolved config is frozen onto the card at stage entry (D12), so a
@@ -28,17 +29,11 @@ import { useMemo } from "react";
 import * as Option from "effect/Option";
 
 import { projectAccent, projectIconColorOf } from "../../board/projectAccent";
-import {
-  useClientSettings,
-  usePrimarySettings,
-  useUpdatePrimarySettings,
-} from "../../hooks/useSettings";
+import { useClientSettings } from "../../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../../logicalProject";
-import { usePrimaryEnvironmentId } from "../../state/environments";
-import { primaryServerProvidersAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -57,13 +52,20 @@ import { WorkerConcurrencySection } from "../../board/workers/WorkerConcurrencyS
 import { boardLocalConcurrencyDiverges } from "../../board/workers/workerConcurrency";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { BoardServerSection, BoardServerStatusNotice } from "../../board/BoardServerSettings";
+import {
+  useBoardEnvironment,
+  useBoardServerProviders,
+  useBoardSettings,
+  useUpdateBoardSettings,
+} from "../../board/useBoardEnvironmentId";
 
 /** The provider instances the server reports, built-in drivers included, plus
     any configured custom instances — the concurrency rows offer these. Free text
     would risk an invalid slug that fails the whole-settings decode on save. */
 function useProviderInstanceIds(): ReadonlyArray<string> {
-  const providers = useAtomValue(primaryServerProvidersAtom);
-  const providerInstances = usePrimarySettings((settings) => settings.providerInstances);
+  const providers = useBoardServerProviders();
+  const providerInstances = useBoardSettings((settings) => settings.providerInstances);
   return useMemo(
     () => [
       ...new Set([
@@ -76,33 +78,49 @@ function useProviderInstanceIds(): ReadonlyArray<string> {
 }
 
 export function BoardSettingsPanel() {
-  const board = usePrimarySettings((settings) => settings.board);
-  const update = useUpdatePrimarySettings();
-  const instanceIds = useProviderInstanceIds();
-  const environmentId = usePrimaryEnvironmentId();
-
+  const resolution = useBoardEnvironment();
   return (
     <SettingsPageContainer>
-      <ProjectsSection board={board} environmentId={environmentId} update={update} />
-      <BoardPipelineSection />
-      {environmentId === null ? (
-        <ConcurrencySection board={board} instanceIds={instanceIds} update={update} />
-      ) : (
-        <BoardConcurrencySettings
-          board={board}
-          environmentId={environmentId}
-          instanceIds={instanceIds}
-          update={update}
-        />
-      )}
-      {/* T3O-62: the board's workers, and which projects each has checked out. */}
-      {environmentId === null ? null : <BoardWorkerSettings environmentId={environmentId} />}
-      <LifecycleSection board={board} update={update} />
+      {/* T3O-71: which server's board this device shows, and whether it is reachable. */}
+      <BoardServerStatusNotice className="mx-3 sm:mx-4" />
+      <BoardServerSection />
+      {/* Without a reachable board server there are no settings to show or save; the sections
+          would only read defaults and drop every edit. */}
+      {resolution.kind === "ready" ? (
+        <BoardSettingsSections environmentId={resolution.environmentId} />
+      ) : resolution.kind === "none" ? (
+        <p className="px-3 text-sm text-muted-foreground sm:px-4">
+          Connect an environment to configure its board.
+        </p>
+      ) : null}
     </SettingsPageContainer>
   );
 }
 
-type UpdateFn = ReturnType<typeof useUpdatePrimarySettings>;
+/** The board server's own settings; rendered only once that server resolves. */
+function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId }) {
+  const board = useBoardSettings((settings) => settings.board);
+  const update = useUpdateBoardSettings();
+  const instanceIds = useProviderInstanceIds();
+
+  return (
+    <>
+      <ProjectsSection board={board} environmentId={environmentId} update={update} />
+      <BoardPipelineSection />
+      <BoardConcurrencySettings
+        board={board}
+        environmentId={environmentId}
+        instanceIds={instanceIds}
+        update={update}
+      />
+      {/* T3O-62: the board's workers, and which projects each has checked out. */}
+      <BoardWorkerSettings environmentId={environmentId} />
+      <LifecycleSection board={board} update={update} />
+    </>
+  );
+}
+
+type UpdateFn = ReturnType<typeof useUpdateBoardSettings>;
 
 /** The prototype's bordered card list container, shared by every non-pipeline
     section so the page reads as one system. Sections holding these use the
@@ -145,7 +163,7 @@ function ProjectsSection({
   update,
 }: {
   board: BoardSettings;
-  environmentId: EnvironmentId | null;
+  environmentId: EnvironmentId;
   update: UpdateFn;
 }) {
   const anchor = searchableSetting("board-projects");
@@ -156,13 +174,7 @@ function ProjectsSection({
         project's icon; open a project's settings to change it. The eye hides a project and its
         cards from the board without touching them.
       </p>
-      {environmentId === null ? (
-        <p className="px-3 text-sm text-muted-foreground sm:px-4">
-          Connect an environment to configure its projects.
-        </p>
-      ) : (
-        <ProjectRows board={board} environmentId={environmentId} update={update} />
-      )}
+      <ProjectRows board={board} environmentId={environmentId} update={update} />
     </SettingsSection>
   );
 }

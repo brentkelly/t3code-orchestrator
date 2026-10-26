@@ -22,8 +22,6 @@ import { ChevronDownIcon } from "lucide-react";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { sortProviderInstanceEntries } from "../../providerInstances";
 import { cn } from "../../lib/utils";
-import { usePrimarySettings } from "../../hooks/useSettings";
-import { usePrimaryEnvironmentId } from "../../state/environments";
 import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import { ModelPickerContent } from "../chat/ModelPickerContent";
 import {
@@ -36,6 +34,7 @@ import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
 import { BoardModelControlsMenu } from "./BoardModelControlsMenu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { useBoardEnvironmentId, useBoardSettings } from "../../board/useBoardEnvironmentId";
 
 export type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
 export type ActiveModel = { instanceId: ProviderInstanceId; model: string };
@@ -67,7 +66,7 @@ function ModelControlsMenu(props: {
 }) {
   // Upstream gates plan-mode traits on the client setting; the row reads the
   // same source as the composer so both show the same controls for a model.
-  const planModeEnabled = usePrimarySettings((settings) => settings.planModeEnabled);
+  const planModeEnabled = useBoardSettings((settings) => settings.planModeEnabled);
   const traits = getTraitsSectionVisibility({
     provider: props.provider,
     models: props.models,
@@ -187,7 +186,7 @@ export function ModelRow(props: {
   placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const environmentId = usePrimaryEnvironmentId();
+  const environmentId = useBoardEnvironmentId();
   // With nothing picked the popup still needs an instance to open on: use the
   // first available one, with an empty model so no row reads as selected.
   const firstEntry = props.instanceEntries.find((entry) => entry.enabled && entry.isAvailable);

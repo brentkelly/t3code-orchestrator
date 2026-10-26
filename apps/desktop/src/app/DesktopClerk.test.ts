@@ -116,7 +116,8 @@ describe("DesktopClerk", () => {
       // The bridge acquires Electron's single-instance lock at creation, and
       // the lock both lives in and creates the userData directory — so the
       // real path must be set before the bridge exists.
-      assert.deepEqual(events, ["setPath:userData:/tmp/app-data/t3code-dev", "createClerkBridge"]);
+      // T3o: fork identity expectation (T3O-71).
+      assert.deepEqual(events, ["setPath:userData:/tmp/app-data/t3o-dev", "createClerkBridge"]);
       storageMock.mockClear();
       createClerkBridgeMock.mockClear();
     });
@@ -127,13 +128,15 @@ describe("DesktopClerk", () => {
       name: "packaged Windows",
       isDevelopment: false,
       platform: "win32" as const,
-      userData: "/tmp/app-data/t3code-v2",
+      // T3o: fork identity expectation (T3O-71).
+      userData: "/tmp/app-data/t3o",
     },
     {
       name: "development",
       isDevelopment: true,
       platform: "win32" as const,
-      userData: "/tmp/app-data/t3code-dev",
+      // T3o: fork identity expectation (T3O-71).
+      userData: "/tmp/app-data/t3o-dev",
     },
   ])(
     "creates the bridge before startup can yield to the event loop ($name)",

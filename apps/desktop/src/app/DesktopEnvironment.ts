@@ -14,6 +14,12 @@ import * as Path from "effect/Path";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import { resolveLinuxDesktopEntryName } from "./DesktopEarlyElectronStartup.ts";
+// T3o: desktop identity.
+import {
+  T3O_DESKTOP_IDENTITY,
+  resolveT3oAppId,
+  resolveT3oLinuxWmClass,
+} from "../../../../scripts/lib/t3o-desktop-identity.ts";
 import { resolveDesktopBaseDir, resolveDesktopStateDir } from "./DesktopStatePaths.ts";
 import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 import type { OtlpProtocol } from "@t3tools/shared/observability";
@@ -93,7 +99,8 @@ export class DesktopEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopEnvironment") {}
 
-const APP_BASE_NAME = "T3 Code";
+// T3o: product name.
+const APP_BASE_NAME = T3O_DESKTOP_IDENTITY.productName;
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -236,10 +243,12 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      // T3o: own appId.
+      resolveT3oAppId(isDevelopment),
     ),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    // T3o: own WM class.
+    linuxWmClass: resolveT3oLinuxWmClass(isDevelopment),
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),

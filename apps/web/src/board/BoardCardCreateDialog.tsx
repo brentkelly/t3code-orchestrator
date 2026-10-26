@@ -55,7 +55,6 @@ import { cn, randomUUID } from "../lib/utils";
 import { boardEnvironment, environmentBoard } from "../state/board";
 import { useEnvironment } from "../state/environments";
 import { environmentShell } from "../state/shell";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../hooks/useSettings";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
@@ -97,6 +96,7 @@ import { BoardLabelField } from "./BoardLabelField";
 import { boardStageLabel } from "./boardStages";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { projectAccent, projectIconColorOf } from "./projectAccent";
+import { useBoardSettings, useUpdateBoardSettings } from "./useBoardEnvironmentId";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply. */
@@ -139,8 +139,8 @@ export function BoardCardCreateDialog({
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
   const stages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
-  const boardSettings = usePrimarySettings((settings) => settings.board);
-  const updateSettings = useUpdatePrimarySettings();
+  const boardSettings = useBoardSettings((settings) => settings.board);
+  const updateSettings = useUpdateBoardSettings();
   const createCard = useAtomCommand(boardEnvironment.createCard);
   // Attach failures after a successful create are reported in the dialog's
   // own feedback line, not the global toast.

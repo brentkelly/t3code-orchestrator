@@ -28,6 +28,8 @@ import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
+// T3o: `t3 import-threads` seeds a T3o home from upstream T3 Code (T3O-71).
+import { importThreadsCommand } from "./t3o/importThreads.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -86,6 +88,8 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       themeCommand,
       traceCommand,
       triageCommand,
+      // T3o: import-threads.
+      importThreadsCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );

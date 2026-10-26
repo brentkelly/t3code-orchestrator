@@ -5,6 +5,8 @@ import * as Option from "effect/Option";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
+// T3o: the launcher marker comes from the fork's desktop identity.
+import { T3O_DESKTOP_IDENTITY } from "../../../../scripts/lib/t3o-desktop-identity.ts";
 
 // A desktop install puts no `t3` on PATH, so commands the server asks a person
 // to run (`sudo t3 browser setup`) had nothing to call. The app keeps a small
@@ -14,7 +16,8 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // so its launcher mounts the AppImage itself instead of pointing into it.
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
-export const MARKER = "Written by T3 Code: runs the desktop app's bundled t3 CLI.";
+// T3o: own marker, so upstream T3 Code's `t3` link is never taken for ours.
+export const MARKER = T3O_DESKTOP_IDENTITY.cliShimMarker;
 
 /** Server entry inside the app, relative to its server root (an asar archive when packaged). */
 const SERVER_ENTRY = "apps/server/dist/bin.mjs";

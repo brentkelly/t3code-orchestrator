@@ -4,6 +4,9 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
+// T3o: the fork's own Electron profile names.
+import { resolveT3oUserDataNames } from "../../../../scripts/lib/t3o-desktop-identity.ts";
+
 export class DesktopUserDataInitializationError extends Schema.TaggedError<DesktopUserDataInitializationError>()(
   "DesktopUserDataInitializationError",
   {
@@ -40,9 +43,8 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const names = input.isDevelopment
-      ? { current: "t3code-dev", legacy: "T3 Code (Dev)" }
-      : { current: "t3code-v2", legacy: "T3 Code (Alpha)" };
+    // T3o: own profile names; legacy equals current so upstream's profiles are never adopted.
+    const names = resolveT3oUserDataNames(input.isDevelopment);
     const destinationPath = path.join(input.appDataDirectory, names.current);
     const legacyPath = path.join(input.appDataDirectory, names.legacy);
     const inspect = (resourcePath: string) =>
@@ -60,6 +62,8 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
     if (input.platform !== "win32") return destinationPath;
     const destinationState = path.join(destinationPath, "Local State");
     if (yield* inspect(destinationState)) return destinationPath;
+    // T3o: legacy equals current, so there is no older profile to migrate from.
+    if (names.legacy === names.current) return destinationPath;
     const legacyState = path.join(legacyPath, "Local State");
     const sourceState = (yield* inspect(legacyState))
       ? legacyState

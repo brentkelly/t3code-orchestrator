@@ -15,6 +15,7 @@
     "install-t3o-service": "node scripts/t3o-service.mjs install",
     "uninstall-t3o-service": "node scripts/t3o-service.mjs uninstall",
     "t3o-service-status": "node scripts/t3o-service.mjs status",
+    "dist:desktop:deb": "node scripts/build-desktop-artifact.ts --platform linux --target deb --arch x64",
     "kill": "node scripts/kill-dev.ts",
     "start:desktop": "vp run --filter @t3tools/desktop start",
     "start:marketing": "vp run --filter @t3tools/marketing preview",

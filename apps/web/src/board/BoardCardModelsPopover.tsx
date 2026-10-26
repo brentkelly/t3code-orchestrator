@@ -20,8 +20,6 @@
  */
 import { useMemo, type ReactNode } from "react";
 
-import { useAtomValue } from "@effect/atom-react";
-
 import {
   type BoardCardModelOverrides,
   type BoardCardStageModelOverride,
@@ -41,11 +39,10 @@ import {
   deriveProviderInstanceEntries,
   sortProviderInstanceEntries,
 } from "../providerInstances";
-import { primaryServerProvidersAtom } from "../state/server";
 import { useBoardWorkersState } from "./workers/BoardWorkersContext";
 import { boardWorkerOnlyProviders } from "./workers/cardWorker";
-import { usePrimarySettings } from "../hooks/useSettings";
 import type { BoardCardModelRowSpec } from "./boardCardModelRows";
+import { useBoardServerProviders, useBoardSettings } from "./useBoardEnvironmentId";
 
 /**
  * The trigger text for a row with no override: the value it will actually run
@@ -106,8 +103,8 @@ export function BoardCardModelsPopover({
   // Resolved here rather than drilled through the detail view, exactly as the
   // review pane's per-round drawer does — this module is lazily loaded, so the
   // provider list it pulls in costs nothing until the popover is opened.
-  const settings = usePrimarySettings();
-  const ownProviders = useAtomValue(primaryServerProvidersAtom);
+  const settings = useBoardSettings();
+  const ownProviders = useBoardServerProviders();
   // T3O-65: and the instance ids only workers have, so a card can pick a model
   // its worker offers.
   const workers = useBoardWorkersState();

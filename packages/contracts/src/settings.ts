@@ -10,6 +10,8 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
+  // T3o: board server client setting.
+  EnvironmentId,
   ForwardCompatibleNullable,
   ForwardCompatibleOptional,
   OmittedWhenNull,
@@ -513,6 +515,10 @@ export const ClientSettingsSchema = Schema.Struct({
   snapShotFlash: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotAnimations: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // T3o: the environment whose board this device shows; null means the primary environment.
+  boardEnvironmentId: Schema.NullOr(EnvironmentId).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -1781,5 +1787,7 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotFlash: Schema.optionalKey(Schema.Boolean),
   snapShotAnimations: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),
+  // T3o: board server client setting.
+  boardEnvironmentId: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

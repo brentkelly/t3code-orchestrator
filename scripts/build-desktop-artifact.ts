@@ -55,8 +55,12 @@ import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+// T3o: the fork's desktop identity, shared with the running app.
+import { T3O_DESKTOP_IDENTITY } from "./lib/t3o-desktop-identity.ts";
+
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
-const DESKTOP_APP_ID = "com.t3tools.t3code";
+// T3o: own appId.
+const DESKTOP_APP_ID = T3O_DESKTOP_IDENTITY.appId;
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -2743,10 +2747,9 @@ export function resolvePackageManagerUserAgent(packageManager: string): string {
   return `${trimmed.slice(0, versionSeparator)}/${trimmed.slice(versionSeparator + 1)}`;
 }
 
-export function resolveDesktopProductName(version: string): string {
-  return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+// T3o: one product name on every channel; it names the /opt install directory.
+export function resolveDesktopProductName(_version: string): string {
+  return T3O_DESKTOP_IDENTITY.productName;
 }
 
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -2771,7 +2774,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
-    artifactName: "T3-Code-${version}-${arch}.${ext}",
+    // T3o: own artifact name.
+    artifactName: `${T3O_DESKTOP_IDENTITY.productName}-\${version}-\${arch}.\${ext}`,
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
@@ -2896,24 +2900,30 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // resources/package-type into the .deb only, so electron-updater updates
       // each install in its own format.
       target: target === "AppImage" ? [target, "deb"] : [target],
-      executableName: "t3code",
+      // T3o: own executable.
+      executableName: T3O_DESKTOP_IDENTITY.packageName,
       icon: "icons",
       category: "Development",
       synopsis: "Desktop GUI for coding agents",
       // Required by the .deb control file.
-      maintainer: "T3 Tools <hello@t3.codes>",
+      // T3o: own maintainer.
+      maintainer: T3O_DESKTOP_IDENTITY.maintainer,
       // electron-builder turns these into MimeType=x-scheme-handler/<scheme>;
       // in the .desktop entry (Exec already gets %U), so browsers can hand
       // t3code:// OAuth callbacks to the app.
-      protocols: [
-        {
-          name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
-        },
-      ],
+      // T3o: upstream T3 Code owns t3code://, so the fork's .deb claims no scheme.
+      protocols: T3O_DESKTOP_IDENTITY.registersUrlScheme
+        ? [
+            {
+              name: "T3 Code",
+              schemes: ["t3code", "t3code-dev"],
+            },
+          ]
+        : [],
       desktop: {
         entry: {
-          StartupWMClass: "t3code",
+          // T3o: own WM class.
+          StartupWMClass: T3O_DESKTOP_IDENTITY.linuxWmClass,
         },
       },
     };
@@ -2921,8 +2931,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // FPM runs outside the staged app directory, so source paths must be absolute.
       // AppStream consumers associate this metadata with our t3code.desktop entry.
       fpm: [
-        `${path.join(repoRoot, "apps/desktop/resources/linux/com.t3tools.t3code.metainfo.xml")}=/usr/share/metainfo/com.t3tools.t3code.metainfo.xml`,
-        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/t3code/copyright`,
+        // T3o: own metainfo and doc paths.
+        `${path.join(repoRoot, `apps/desktop/resources/linux/${T3O_DESKTOP_IDENTITY.appId}.metainfo.xml`)}=/usr/share/metainfo/${T3O_DESKTOP_IDENTITY.appId}.metainfo.xml`,
+        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/${T3O_DESKTOP_IDENTITY.packageName}/copyright`,
       ],
       // Electron's runtime libraries. Debian 13 and Ubuntu 24.04 renamed some
       // for 64-bit time; the old name is the fallback for older releases.
@@ -3860,7 +3871,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ? path.join(stageAppDir, WINDOWS_SERVER_RESOURCE_SOURCE_DIR, WINDOWS_SERVER_ASAR_RESOURCE)
       : undefined;
   const stagePackageJson: StagePackageJson = {
-    name: "t3code",
+    // T3o: own package name (the .deb package and /opt directory follow it).
+    name: T3O_DESKTOP_IDENTITY.packageName,
     version: appVersion,
     buildVersion: appVersion,
     t3codeCommitHash: commitHash,
@@ -3868,12 +3880,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     ...(macWebAuthn ? { t3codeWebAuthn: macWebAuthn } : {}),
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description:
-      "T3 Code is an open-source desktop app for coding agents. Work with your existing agent subscriptions, review code changes, and run commands in your projects. Connect from desktop, web, or mobile to continue working remotely.",
+    // T3o: own package metadata.
+    description: T3O_DESKTOP_IDENTITY.description,
     license: "MIT",
     // Required by the .deb control file.
-    homepage: "https://t3.codes",
-    author: "T3 Tools",
+    homepage: T3O_DESKTOP_IDENTITY.homepage,
+    author: T3O_DESKTOP_IDENTITY.maintainer,
     main: "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(
       options.platform,

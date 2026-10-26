@@ -157,6 +157,34 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  // T3o: upstream T3 Code installs a `t3` link of its own; T3o must leave it alone.
+  it.effect("never adopts or removes upstream T3 Code's t3 link", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const upstreamLauncher = path.join(home, ".t3", "bin", "t3");
+      yield* fs.makeDirectory(path.dirname(upstreamLauncher), { recursive: true });
+      yield* fs.writeFileString(
+        upstreamLauncher,
+        "#!/bin/sh\n# Written by T3 Code: runs the desktop app's bundled t3 CLI.\n",
+        { mode: 0o755 },
+      );
+      const link = path.join(home, ".local", "bin", "t3");
+      yield* fs.makeDirectory(path.dirname(link), { recursive: true });
+      yield* fs.symlink(upstreamLauncher, link);
+
+      const command = yield* commandIn({ home, baseDir: path.join(home, ".t3o") });
+      expect((yield* command.state).installedPath).toBeNull();
+      // Install goes to the next free folder instead of repointing upstream's link.
+      expect((yield* command.install).installedPath).toBe(path.join(home, "bin", "t3"));
+      expect(yield* fs.readLink(link)).toBe(upstreamLauncher);
+      yield* command.uninstall;
+      expect(yield* fs.readLink(link)).toBe(upstreamLauncher);
+      expect(yield* fs.exists(path.join(home, "bin", "t3"))).toBe(false);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("does not read a large binary another t3 links to", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

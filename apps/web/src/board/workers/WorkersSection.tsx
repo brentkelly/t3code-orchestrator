@@ -41,7 +41,7 @@ import {
 import { Spinner } from "../../components/ui/spinner";
 import { toastManager } from "../../components/ui/toast";
 import { boardEnvironment } from "../../state/board";
-import { usePrimaryEnvironment } from "../../state/environments";
+import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { BoardHint } from "../BoardHint";
 import { describeBoardCommandFailure } from "../boardCommandFeedback";
@@ -69,10 +69,11 @@ export function WorkersSection(props: {
 }) {
   const { environmentId } = props;
   const workers = useBoardWorkers(environmentId);
-  const primary = usePrimaryEnvironment();
-  const boardLabel = primary?.label ?? "this board";
-  const localVersion = primary?.serverConfig?.environment.serverVersion ?? null;
-  const localUrl = primary?.displayUrl ?? null;
+  // The board server's own row, which is the primary unless this device nominated another (T3O-71).
+  const boardServer = useEnvironment(environmentId);
+  const boardLabel = boardServer?.label ?? "this board";
+  const localVersion = boardServer?.serverConfig?.environment.serverVersion ?? null;
+  const localUrl = boardServer?.displayUrl ?? null;
   const setDefault = useAtomCommand(boardEnvironment.setDefaultWorker, { reportFailure: false });
   const removeWorker = useAtomCommand(boardEnvironment.removeWorker, { reportFailure: false });
   const [dialog, setDialog] = useState<AddWorkerMode | null>(null);

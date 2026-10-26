@@ -63,8 +63,6 @@ import { toastManager } from "../components/ui/toast";
 import { cn } from "../lib/utils";
 import { environmentShell } from "../state/shell";
 import { boardEnvironment, environmentBoard } from "../state/board";
-import { usePrimaryEnvironmentId } from "../state/environments";
-import { usePrimarySettings } from "../hooks/useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 import { BoardArchivedCardsSheet, refreshBoardArchivedCards } from "./BoardArchivedCardsSheet";
 import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
@@ -107,6 +105,8 @@ import { BoardWorkersContext, useBoardWorkersCardView } from "./workers/BoardWor
 import { boardQueueReason } from "./workers/cardWorker";
 import { BoardWorkersAttentionPill } from "./workers/BoardWorkersAttentionPill";
 import { validateBoardSearch, type BoardSearch } from "../routes/board";
+import { BoardServerUnavailableNotice } from "./BoardServerSettings";
+import { useBoardEnvironment, useBoardSettings } from "./useBoardEnvironmentId";
 
 const EMPTY_COLUMNS: BoardStageColumns = mergeBoardStageColumns([]);
 const EMPTY_CARDS: ReadonlyArray<BoardCardShell> = [];
@@ -179,7 +179,8 @@ export function BoardPage({
       sub-board. The scope is data — the surface below is the same code. */
   readonly scope?: BoardScope;
 } = {}) {
-  const environmentId = usePrimaryEnvironmentId();
+  // T3O-71: the board server this device nominated, or the primary environment.
+  const board = useBoardEnvironment();
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       {/* The corner menu is chrome, not board content: it belongs to every
@@ -191,15 +192,21 @@ export function BoardPage({
             alone: nothing to filter, nothing to create — but the way back to
             threads still has to be on screen. The connected board renders its
             own bar, with those controls in it. */}
-        {environmentId === null ? (
+        {board.kind === "ready" ? (
+          <EnvironmentBoard environmentId={board.environmentId} scope={scope} />
+        ) : (
           <>
             <BoardTopBar />
-            <div className="flex flex-1 items-center justify-center">
-              <p className="text-sm text-muted-foreground">No connected environment.</p>
+            <div className="flex flex-1 items-center justify-center p-6">
+              {board.kind === "unavailable" ? (
+                <div className="w-full max-w-md">
+                  <BoardServerUnavailableNotice label={board.label} />
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No connected environment.</p>
+              )}
             </div>
           </>
-        ) : (
-          <EnvironmentBoard environmentId={environmentId} scope={scope} />
         )}
       </div>
     </SidebarInset>
@@ -306,7 +313,7 @@ function EnvironmentBoard({
 
   // Board settings (t3o-07): the per-project key prefix used when creating a
   // card. Read once here and threaded down, rather than subscribed per card.
-  const boardSettings = usePrimarySettings((settings) => settings.board);
+  const boardSettings = useBoardSettings((settings) => settings.board);
 
   // The board-wide arm (T3O-38, D2) — the third arming condition, and the one
   // the card shell cannot carry, since the SQL snapshot producer cannot see
