@@ -295,6 +295,19 @@ describe("makeSignalReader", () => {
     }
   });
 
+  it("still reads a queued run that failed to start as a turn that never began", () => {
+    // v2's failQueuedRunStart takes a queued run straight to failed when it
+    // cannot start; the board must still hear it, or the step holds its slot.
+    const read = makeSignalReader();
+    read(stored("run.created", run("queued", null, { queuePosition: 1 }), CLIENT_COMMAND_ID));
+    assert.deepStrictEqual(
+      read(stored("run.updated", run("failed", null, { queuePosition: null }))).map(
+        (signal) => signal.type,
+      ),
+      ["turn-start-failed"],
+    );
+  });
+
   it("still reads a human's Stop on a run that left the queue and was starting", () => {
     const read = makeSignalReader();
     read(stored("run.created", run("queued", null, { queuePosition: 1 }), CLIENT_COMMAND_ID));

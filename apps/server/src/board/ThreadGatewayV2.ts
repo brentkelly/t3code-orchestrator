@@ -338,10 +338,12 @@ export const makeSignalReader = () => {
         const wasQueued = noteRunStatus(run);
         const outcome = turnOutcomeOf(run.status);
         if (outcome === null || !firstTime(`run:${run.id}`)) return [];
-        // A run that ended without ever leaving the queue was never a turn:
-        // its message was steered into the live turn, deleted, or dropped with
-        // the thread. It is neither a Stop nor an ending the board should read.
-        if (wasQueued) return [];
+        // A run cancelled without ever leaving the queue was never a turn: its
+        // message was steered into the live turn, deleted, or dropped with the
+        // thread. It is neither a Stop nor an ending the board should read. A
+        // queued run that FAILED to start (v2's failQueuedRunStart) still is a
+        // turn that never began, and reads as one below.
+        if (wasQueued && run.status === "cancelled") return [];
         // A run that failed without ever starting is a turn that never began
         // (t3o-30, D2) — workspace preparation, or the provider refusing it.
         if (outcome === "failed" && run.startedAt === null) {
