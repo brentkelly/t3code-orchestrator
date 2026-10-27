@@ -8,7 +8,7 @@
  * dragged the whole board-pipeline panel, its prompt envelopes and its dialogs
  * into the pane's chunk.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   ProviderInstanceId,
@@ -24,11 +24,8 @@ import { sortProviderInstanceEntries } from "../../providerInstances";
 import { cn } from "../../lib/utils";
 import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import { ModelPickerContent } from "../chat/ModelPickerContent";
-import {
-  buildTraitsTriggerDisplay,
-  getTraitsSectionVisibility,
-  TraitsMenuContent,
-} from "../chat/TraitsPicker";
+import { buildTraitsTriggerDisplay } from "@t3tools/client-runtime/model-traits";
+import { getTraitsSectionVisibility, TraitsMenuContent } from "../chat/TraitsPicker";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
@@ -71,7 +68,6 @@ function ModelControlsMenu(props: {
     provider: props.provider,
     models: props.models,
     model: props.model,
-    prompt: "",
     modelOptions: props.modelOptions,
     allowPromptInjectedEffort: false,
     planModeEnabled,
@@ -105,8 +101,6 @@ function ModelControlsMenu(props: {
             provider={props.provider}
             models={props.models}
             model={props.model}
-            prompt=""
-            onPromptChange={() => {}}
             modelOptions={props.modelOptions}
             allowPromptInjectedEffort={false}
             planModeEnabled={planModeEnabled}
@@ -186,6 +180,7 @@ export function ModelRow(props: {
   placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const environmentId = useBoardEnvironmentId();
   // With nothing picked the popup still needs an instance to open on: use the
   // first available one, with an empty model so no row reads as selected.
@@ -263,6 +258,7 @@ export function ModelRow(props: {
                 modelOptionsByInstance={modelOptions}
                 terminalOpen={false}
                 onRequestClose={() => setOpen(false)}
+                searchInputRef={searchInputRef}
                 onInstanceModelChange={(instanceId, model) => {
                   props.onChange({ instanceId, model });
                   setOpen(false);

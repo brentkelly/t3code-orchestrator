@@ -9,9 +9,8 @@
  * a message that says so, before any forge call.
  */
 import type { BoardCardPullRequestTarget } from "@t3tools/contracts";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
-import { canonicalRepositoryKey } from "@t3tools/shared/sourceControl";
 
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import type { BoardRepository } from "./boardRepository.ts";
 
 const positiveNumber = (digits: string): number | null => {
@@ -69,13 +68,14 @@ export function resolveCardPullRequestTarget(
   let repository: string | undefined;
   let number: number | undefined;
   if (target.url !== undefined) {
-    const parsed = parseChangeRequestUrl(target.url);
+    const parsed = sourceControlDefinitions.parseChangeRequestUrl(target.url)?.link ?? null;
     if (parsed === null) {
       return {
         refused: `'${target.url}' is not a recognised pull request URL. Pass the pull request's URL, its number, or its repository and number.`,
       };
     }
-    repository = canonicalRepositoryKey(`${parsed.host}/${parsed.repository}`)
+    repository = sourceControlDefinitions
+      .canonicalRepositoryKey(`${parsed.host}/${parsed.repository}`)
       .split("/")
       .slice(1)
       .join("/");

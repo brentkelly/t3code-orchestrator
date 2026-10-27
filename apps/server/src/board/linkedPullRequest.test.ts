@@ -400,7 +400,7 @@ describe("merging a card with a linked pull request", () => {
   it.effect.each([
     ["conflicts", refusedFor({ blockedReason: "conflict", failed: 0 })],
     ["fails its checks", refusedFor({ blockedReason: null, failed: 1 })],
-  ] as const)("starts no fix agent when a linked PR on another branch %s", ([label, mergeState]) =>
+  ] as const)("starts no fix agent when a linked PR on another branch %s", ([_label, mergeState]) =>
     withGovernor(
       {
         board: {

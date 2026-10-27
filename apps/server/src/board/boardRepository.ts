@@ -16,19 +16,13 @@
  *
  * Pure. The caller reads `remote.origin.url`.
  */
-import {
-  pullRequestHostOf,
-  type RepositoryIdentity,
-  SourceControlProviderKind,
-} from "@t3tools/contracts";
-import {
-  detectSourceControlProviderFromGitRemoteUrl,
-  normalizeGitRemoteUrl,
-} from "@t3tools/shared/git";
-import {
-  canonicalRepositoryKey,
-  sourceControlRepositorySelector,
-} from "@t3tools/shared/sourceControl";
+import { type RepositoryIdentity, SourceControlProviderKind } from "@t3tools/contracts";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
+
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+
+const { canonicalRepositoryKey, changeRequestHost, recognizeRemote, repositorySelector } =
+  sourceControlDefinitions;
 
 export interface BoardRepository {
   /** The selector `PullRequestService` addresses a repository by — `owner/repo`. */
@@ -50,7 +44,7 @@ function pathBelowHost(canonicalKey: string): string | null {
 }
 
 function fromIdentity(identity: RepositoryIdentity | null | undefined): BoardRepository | null {
-  const repository = sourceControlRepositorySelector(identity);
+  const repository = repositorySelector(identity);
   const path = identity ? pathBelowHost(identity.canonicalKey) : null;
   return repository === null || path === null ? null : { repository, path };
 }
@@ -82,7 +76,7 @@ export function boardRepositoryOf(
     (identity && identityHost === originHost
       ? (identity.provider as SourceControlProviderKind | undefined)
       : undefined) ??
-    detectSourceControlProviderFromGitRemoteUrl(url)?.kind ??
+    recognizeRemote(url)?.kind ??
     SourceControlProviderKind.make("unknown");
   const segments = originKey
     .split("/")
@@ -101,5 +95,5 @@ export function boardRepositoryOf(
   } satisfies RepositoryIdentity;
   const resolved = fromIdentity(origin);
   if (resolved === null) return own;
-  return { ...resolved, host: pullRequestHostOf(origin, kind) };
+  return { ...resolved, host: changeRequestHost(origin, kind) };
 }

@@ -40,7 +40,7 @@ import {
   EnvironmentAuthorizationError,
 } from "./auth.ts";
 import { ProviderOptionSelections } from "./model.ts";
-import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
+import { RuntimeMode } from "./providerPolicy.ts";
 import {
   CommandId,
   EnvironmentId,

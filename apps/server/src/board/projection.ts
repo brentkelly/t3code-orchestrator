@@ -45,7 +45,6 @@ import {
   BoardPlanId,
   BoardStageDefinition,
   BoardStageId,
-  BoardStageRole,
   boardStagesAreSeedOnly,
   BoardStepCompletion,
   BoardCardStepState,
@@ -3508,7 +3507,7 @@ function boardShellCards(
           stepRunning: runningByCard.has(row.cardId),
           held: heldByCard.has(row.cardId),
           stepAwaiting: awaitingByCard.get(row.cardId) ?? null,
-          ...(stallByCard.get(row.cardId) ?? {}),
+          ...stallByCard.get(row.cardId),
           stepConflictFix: conflictFixByCard.has(row.cardId),
           stepChecksFix: checksFixByCard.has(row.cardId),
         });

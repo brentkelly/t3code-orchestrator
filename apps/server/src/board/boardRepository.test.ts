@@ -2,7 +2,7 @@
  * T3O-24: the board resolves its pull requests on `origin`, not on the
  * project identity, which upstream points at an `upstream` remote first.
  */
-import type { RepositoryIdentity } from "@t3tools/contracts";
+import { type RepositoryIdentity, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import { boardRepositoryOf } from "./boardRepository.ts";
@@ -17,7 +17,7 @@ function identity(
   return {
     canonicalKey,
     locator: { source: "git-remote", remoteName, remoteUrl },
-    provider,
+    provider: SourceControlProviderKind.make(provider),
     displayName: canonicalKey.split("/").slice(1).join("/"),
     ...(owner ? { owner } : {}),
     ...(name ? { name } : {}),

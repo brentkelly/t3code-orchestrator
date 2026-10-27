@@ -47,6 +47,7 @@ import {
   type BoardState,
   type BoardEvent,
   type BoardConcurrencySettings,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 
 import type { BoardMergeState } from "./boardMergeState.ts";
@@ -673,7 +674,7 @@ export function withGovernor(
               remoteName: "origin",
               remoteUrl: "git@github.com:acme/repo.git",
             },
-            provider: "github",
+            provider: SourceControlProviderKind.make("github"),
             owner: "acme",
             name: "repo",
           }

@@ -25,19 +25,21 @@ export class WorkerEnvironmentNotConnected extends Data.TaggedError(
  */
 export const mintWorkerPairingToken = createRuntimeCommand(connectionAtomRuntime, {
   label: "web:board:mint-worker-pairing-token",
-  execute: (input: { readonly environmentId: EnvironmentId; readonly sessionLabel: string }) =>
-    Effect.gen(function* () {
-      const prepared = readPreparedConnection(input.environmentId);
-      if (prepared === null) {
-        return yield* new WorkerEnvironmentNotConnected({
-          message: "This device isn't connected to that environment.",
-        });
-      }
-      const minted = yield* mintEnvironmentPairingToken({ prepared, label: input.sessionLabel });
-      // Where THIS device reaches the worker, which is where the board server
-      // is asked to dial it.
-      return { token: minted.credential, httpBaseUrl: prepared.httpBaseUrl };
-    }),
+  execute: Effect.fn("execute")(function* (input: {
+    readonly environmentId: EnvironmentId;
+    readonly sessionLabel: string;
+  }) {
+    const prepared = readPreparedConnection(input.environmentId);
+    if (prepared === null) {
+      return yield* new WorkerEnvironmentNotConnected({
+        message: "This device isn't connected to that environment.",
+      });
+    }
+    const minted = yield* mintEnvironmentPairingToken({ prepared, label: input.sessionLabel });
+    // Where THIS device reaches the worker, which is where the board server
+    // is asked to dial it.
+    return { token: minted.credential, httpBaseUrl: prepared.httpBaseUrl };
+  }),
 });
 
 export interface BoardWorkersView {

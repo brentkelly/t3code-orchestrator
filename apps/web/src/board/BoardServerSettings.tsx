@@ -19,7 +19,7 @@ import {
 } from "../components/ui/select";
 import { SettingsRow, SettingsSection } from "../components/settings/settingsLayout";
 import { searchableSetting } from "../components/settings/settingsSearch";
-import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
+import { updateClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useBoardEnvironment } from "./useBoardEnvironmentId";
 
@@ -72,7 +72,6 @@ export function BoardServerSection() {
   const nominated = useClientSettings(selectBoardEnvironmentId);
   const primary = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
-  const updateClientSettings = useUpdateClientSettings();
   const options = useMemo(
     () => boardServerOptions({ primary, nominated, environments }),
     [environments, nominated, primary],
@@ -118,7 +117,6 @@ export function BoardServerSection() {
  * not reachable. Amber: the board is blocked on a connection, as an offline worker is.
  */
 export function BoardServerUnavailableNotice(props: { readonly label: string | null }) {
-  const updateClientSettings = useUpdateClientSettings();
   // The hosted app has no server of its own to fall back to, as the picker's options agree.
   const hasThisServer = usePrimaryEnvironmentId() !== null;
   return (

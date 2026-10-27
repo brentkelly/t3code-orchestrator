@@ -18,6 +18,7 @@ import {
   type BoardWorkerProvider,
   type BoardWorkersState,
   type RepositoryIdentity,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Duration from "effect/Duration";
@@ -53,7 +54,7 @@ export const REPOSITORY: RepositoryIdentity = {
     remoteName: "origin",
     remoteUrl: "git@github.com:acme/repo.git",
   },
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   owner: "acme",
   name: "repo",
 };

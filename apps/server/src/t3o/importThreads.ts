@@ -6,8 +6,7 @@
  * (dropping the `board` block), auto-updates ahead of T3o so its schema can be newer, and owns
  * `<home>/bin/t3`. So the fork copies once instead, through the same copy-and-prune that
  * `vp run migrate-dev-db` uses (`apps/server/scripts/migrate-dev-db.ts`) — never a second copy of
- * those rules. That keeps stopped threads with their forks and subagents — settled ones too, unlike
- * the dev slice, because a settled thread is finished work and most of a user's history — and drops
+ * those rules. That keeps stopped threads with their forks and subagents, settled ones included, and drops
  * live work, archived and deleted threads,
  * scheduled tasks, queued effects, auth sessions, pairing links and provider runtime rows, so the
  * T3o server never adopts upstream's running agents. The source is only ever read.
@@ -249,7 +248,6 @@ export const runImportThreads = Effect.fn("runImportThreads")(function* (
       source: sourcePath,
       projects: ALL_PROJECTS,
       threadsPerProject: input.threadsPerProject,
-      includeSettled: true,
       ...(input.workspaceRoots.length === 0 ? {} : { workspaceRoots: input.workspaceRoots }),
     },
     { sharedHome: from },

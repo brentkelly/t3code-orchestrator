@@ -13,9 +13,10 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
 
-import * as GitHubApi from "./GitHubApi.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import {
   T3oGitenvProject,
   t3oGitenvBatchKey,
@@ -71,7 +72,7 @@ function harness(status = 200) {
       );
     }),
   );
-  const layer = GitHubApi.layer.pipe(
+  const layer = GitHubRest.layer.pipe(
     Layer.provide(Layer.mergeAll(credentials, http)),
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
@@ -85,21 +86,21 @@ afterEach(() => {
   resetGitenvForTesting();
 });
 
-describe("GitHubApi.credential under gitenv", () => {
+describe("GitHubRequestPolicy.credential under gitenv", () => {
   it.effect("uses the project's gitenv token and keeps its fingerprint apart", () => {
     const { project } = makeFixture();
     const { layer, requests } = harness();
     return Effect.gen(function* () {
-      const api = yield* GitHubApi.GitHubApi;
+      const api = yield* GitHubRest.GitHubRest;
       const held = yield* api
         .credential("GitHub.com")
         .pipe(Effect.provideService(T3oGitenvProject, project));
       expect(Redacted.value(held.token)).toBe(PROJECT_TOKEN);
       expect(held.fingerprint).toBe(`github.com:${sha256(PROJECT_TOKEN)}`);
 
-      // The merge is a GraphQL mutation; it carries the project's token, not the ambient one.
+      // Every request through the policy (REST here, GraphQL alike) carries the project's token.
       yield* api
-        .graphql({ host: "github.com", operation: "mergePullRequest", query: "mutation {}" })
+        .rest({ host: "github.com", operation: "mergePullRequest", path: "user" })
         .pipe(Effect.provideService(T3oGitenvProject, project));
       expect(requests[0]!.headers.authorization).toBe(`Bearer ${PROJECT_TOKEN}`);
     }).pipe(Effect.provide(layer));
@@ -109,7 +110,7 @@ describe("GitHubApi.credential under gitenv", () => {
     const { project, other } = makeFixture();
     const { layer } = harness();
     return Effect.gen(function* () {
-      const api = yield* GitHubApi.GitHubApi;
+      const api = yield* GitHubRest.GitHubRest;
       const ambient = (held: { readonly token: Redacted.Redacted<string> }) =>
         expect(Redacted.value(held.token)).toBe("ambient");
       ambient(yield* api.credential("github.com"));
@@ -129,10 +130,10 @@ describe("GitHubApi.credential under gitenv", () => {
     const { project } = makeFixture();
     const { layer } = harness();
     return Effect.gen(function* () {
-      const api = yield* GitHubApi.GitHubApi;
+      const api = yield* GitHubRest.GitHubRest;
       const held = yield* api.credential("github.com").pipe(
         Effect.provideService(T3oGitenvProject, project),
-        Effect.provideService(GitHubApi.PinnedGitHubCredential, {
+        Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
           host: "github.com",
           token: Redacted.make("pinned"),
           credentialFingerprint: "github.com:pinned",
@@ -148,8 +149,8 @@ describe("a refused token", () => {
     const { project } = makeFixture();
     const { layer, invalidated } = harness(401);
     return Effect.gen(function* () {
-      const api = yield* GitHubApi.GitHubApi;
-      const read = api.graphql({ host: "github.com", operation: "read", query: "query {}" });
+      const api = yield* GitHubRest.GitHubRest;
+      const read = api.rest({ host: "github.com", operation: "read", path: "user" });
       yield* Effect.flip(read.pipe(Effect.provideService(T3oGitenvProject, project)));
       expect(invalidated).toEqual([]);
       // The ambient token itself refused still drops the cache, as upstream intends.
