@@ -2921,9 +2921,11 @@ const make = Effect.gen(function* () {
   // hardcoded "review". Whoever was in the loop: a human-in-the-loop step that
   // reached `board_complete_step` is finished exactly as an unattended one is
   // (T3O-76), and a stage that should wait for a human ships with `autoAdvance`
-  // off. Never when the stage is last. Rides the ordinary move command, gated
-  // like every other transition (a crossing into a blocked build boundary is
-  // refused, leaving the card put).
+  // off. That includes a drag-back re-entry conversation (D7), which is always
+  // human-in-the-loop: its completion moves the card on too. Never when the
+  // stage is last. Rides the ordinary move command, gated like every other
+  // transition (a crossing into a blocked build boundary is refused, leaving the
+  // card put).
   const advanceStage = Effect.fn("board-supervisor-advanceStage")(function* (input: {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;

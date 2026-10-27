@@ -460,7 +460,10 @@ export const followStoredEvents = (
 /** How far before a resume cursor `readSignalLog` starts reading, so the reader
     holds most of the memory it would have had at the cursor. A bounded best
     effort: a live reader remembers a run until its message says who wrote it,
-    so a resume whose run started further back than this loses that memory. */
+    and which runs are still queued (`queuedRuns`), so a resume whose run
+    started further back than this loses that memory. A queued run forgotten
+    that way and later cancelled out of the queue falls back to the Stop
+    reading, and pauses its card. */
 export const SIGNAL_READER_WARMUP_EVENTS = 4096;
 
 /**

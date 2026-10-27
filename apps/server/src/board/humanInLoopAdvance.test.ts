@@ -86,6 +86,40 @@ it.effect("a human-in-the-loop build stays put when Building's auto-advance is o
   ),
 );
 
+// A drag-back re-entry conversation (D7) is always human-in-the-loop with no
+// prompt. It finishes the stage exactly as any other step does: a human who
+// talked the work through to `board_complete_step` wants the card moved on, and
+// a stage that should hold for them ships with `autoAdvance` off.
+it.effect("a drag-back re-entry conversation that completes moves on like any other step", () => {
+  const card = buildingCard("again", "m");
+  const priorBuild = {
+    cardId: card.id,
+    stepId: String(BOARD_SEED_STAGE_IDS.building),
+    outcome: "succeeded" as const,
+    summary: "built it",
+    payload: null,
+    threadId: null,
+    completedAt: "2026-01-01T00:00:00.000Z",
+  };
+  return withGovernor(
+    {
+      board: { cards: [card], stepCompletions: [priorBuild], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(cardMoved(card, "review", "building", 1));
+        const reentry = boardCardStepState(yield* board, card.id);
+        assert.isTrue(reentry?.humanInLoop);
+        assert.strictEqual(reentry?.prompt, "");
+        assert.strictEqual(cardStage(yield* board, card.id), BOARD_SEED_STAGE_IDS.building);
+
+        yield* pumpDomain(stepCompleted(card.id, "succeeded", 2));
+        assert.strictEqual(cardStage(yield* board, card.id), BOARD_SEED_STAGE_IDS.review);
+      }),
+  );
+});
+
 const planningCard = () => makeBoardCard({ id: "plan", stage: "planning", orderKey: "m" });
 
 const completePlanning = (planningAutoAdvance: boolean, expectedStage: string) =>
