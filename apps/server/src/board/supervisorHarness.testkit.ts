@@ -305,6 +305,7 @@ const planningStageExecution = (
   /** The planning interview's real stance (t3o-34): asking IS the job there, so
       the suites that drive a stopped planning agent need it on. */
   humanInLoop = false,
+  autoAdvance = false,
 ): BoardStageExecution => ({
   kind: "simple",
   autoExecute: true,
@@ -314,7 +315,7 @@ const planningStageExecution = (
   humanInLoop,
   humanInLoopWithPlan: false,
   humanInLoopWithoutPlan: false,
-  autoAdvance: false,
+  autoAdvance,
   timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
   maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
   maxInvocationsPerStageEntry: DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
@@ -337,6 +338,9 @@ export const settingsWith = (input: {
   /** Run the Planning step human-in-the-loop, as the real planning interview
       does (t3o-34). */
   readonly planningHumanInLoop?: boolean;
+  /** Whether Planning auto-advances on a successful run. Defaults to off, what
+      the stage ships with. */
+  readonly planningAutoAdvance?: boolean;
   /** Overrides for the merge stage's config (strategy, branch cleanup, the
       conflict prompt). Absent leaves it at the compiled-in defaults, which is
       what a board nobody has configured actually resolves to. */
@@ -369,6 +373,7 @@ export const settingsWith = (input: {
           [BOARD_SEED_STAGE_IDS.planning]: planningStageExecution(
             input.planning,
             input.planningHumanInLoop ?? false,
+            input.planningAutoAdvance ?? false,
           ),
         }),
     ...(input.merge === undefined

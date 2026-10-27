@@ -565,14 +565,14 @@ it.effect("slot accounting returns to zero across park → resume → settle", (
   ),
 );
 
-// ── T3O-17: a stop hands the card to the human ────────────────────────────
+// ── T3O-76: a stop pauses, and leaves the card's stance alone ─────────────
 
 /** The card override on the live read model, which is what the next stage
     entry and every resumed step read. */
 const cardHumanInLoop = (board: BoardState, id: string) =>
   board.cards.find((candidate) => candidate.id === BoardCardId.make(id))?.humanInLoop ?? null;
 
-it.effect("stopping an unattended step hands the card to the human (T3O-17)", () =>
+it.effect("stopping an unattended step pauses it and leaves the card unattended (T3O-76)", () =>
   withGovernor(oneBuildCard("handover"), ({ pumpDomain, board, commands }) =>
     Effect.gen(function* () {
       const threadId = yield* startBuild({ pumpDomain, board }, "handover");
@@ -580,20 +580,42 @@ it.effect("stopping an unattended step hands the card to the human (T3O-17)", ()
 
       yield* pumpDomain(turnInterruptRequested(threadId, 2));
 
-      // Brief item 1. Without this the stop parks the step and nothing else:
-      // the card stays unattended, so the next stage entry runs autonomously
-      // again and a resumed step is supervised as if nobody had intervened.
+      // T3O-17 used to flip the card to human-in-the-loop here. Only the
+      // card's own toggle sets that now; a Stop pauses and nothing else.
       const stopped = yield* board;
       assert.strictEqual(stepStatus(stopped, BoardCardId.make("handover")), "paused");
-      assert.strictEqual(cardHumanInLoop(stopped, "handover"), true);
-      // The pause is dispatched BEFORE the flip, so the agent stops even if the
-      // flip never lands.
-      const dispatched = commandTypes(yield* commands);
-      assert.isBelow(
-        dispatched.indexOf("board.card.pause-step"),
-        dispatched.indexOf("board.card.update"),
+      assert.isNull(cardHumanInLoop(stopped, "handover"));
+      assert.strictEqual(
+        boardCardStepState(stopped, BoardCardId.make("handover"))?.humanInLoop,
+        false,
       );
+      assert.notInclude(commandTypes(yield* commands), "board.card.update");
     }),
+  ),
+);
+
+it.effect("stopping a step on a card set to unattended keeps that explicit choice", () =>
+  withGovernor(
+    {
+      board: { cards: [buildingCard("explicit", "m", false)], nextCardNumberByProject: {} },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board, commands }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(movedToBuilding(buildingCard("explicit", "m", false), 1));
+        const running = boardCardStepState(yield* board, BoardCardId.make("explicit"));
+        assert.strictEqual(running?.humanInLoop, false);
+
+        yield* pumpDomain(turnInterruptRequested(running!.threadId!, 2));
+
+        const stopped = yield* board;
+        assert.strictEqual(stepStatus(stopped, BoardCardId.make("explicit")), "paused");
+        assert.strictEqual(
+          stopped.cards.find((card) => card.id === BoardCardId.make("explicit"))?.humanInLoop,
+          false,
+        );
+        assert.notInclude(commandTypes(yield* commands), "board.card.update");
+      }),
   ),
 );
 
@@ -611,28 +633,25 @@ it.effect("stopping a human-in-the-loop step leaves the card override alone", ()
 
         yield* pumpDomain(turnInterruptRequested(running!.threadId!, 2));
 
-        // Only when it is NECESSARY: this step was never running unattended, so
-        // there is nothing to hand over and no edit to make.
+        // A Stop never edits the card, whatever its stance.
         assert.strictEqual(stepStatus(yield* board, BoardCardId.make("already")), "paused");
         assert.notInclude(commandTypes(yield* commands), "board.card.update");
       }),
   ),
 );
 
-it.effect("the handover's card update does not put the paused agent back to work", () =>
+it.effect("ticking human-in-the-loop on a stopped card does not put the agent back to work", () =>
   withGovernor(oneBuildCard("no-restart"), ({ pumpDomain, board, commands }) =>
     Effect.gen(function* () {
       const threadId = yield* startBuild({ pumpDomain, board }, "no-restart");
       yield* pumpDomain(turnInterruptRequested(threadId, 2));
       const turnsBefore = turnsOf(yield* commands).length;
 
-      // The engine double applies a decided event to the read model without
-      // feeding it back onto the domain stream, so the `board.card-updated`
-      // the flip raises is replayed here — which is where the bug would be.
-      // Before `handleCardUpdated` guarded its stance turn on `running`, this
-      // sent "switching to human-in-the-loop" into the thread we had just
-      // stopped; that raised a `turn-requested` signal, which resumed the
-      // step and put the agent straight back to work against the human's Stop.
+      // The human ticks the card's toggle after pressing Stop. Before
+      // `handleCardUpdated` guarded its stance turn on `paused`, this sent
+      // "switching to human-in-the-loop" into the thread just stopped; that
+      // raised a `turn-requested` signal, which resumed the step and put the
+      // agent straight back to work against the human's Stop.
       const card = (yield* board).cards.find(
         (candidate) => candidate.id === BoardCardId.make("no-restart"),
       );
