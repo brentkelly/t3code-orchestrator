@@ -797,7 +797,11 @@ describe("the worker side of the named operations (T3O-64)", () => {
             true,
           );
         }
-        assert.notStrictEqual(yield* git(env.remote, ["branch", "--list", "board/own-card"]), "");
+        // A bare repository needs `--git-dir` since upstream sets `safe.bareRepository=explicit`.
+        assert.notStrictEqual(
+          yield* git(env.remote, ["--git-dir=.", "branch", "--list", "board/own-card"]),
+          "",
+        );
 
         // The central board's own branch, its checkout retired, is deleted.
         const placed = yield* central.provisionWorktree({
