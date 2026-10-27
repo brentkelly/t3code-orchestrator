@@ -228,7 +228,6 @@ const isGitBranchName = Schema.makeFilter(
     !value.includes("/.") &&
     !value.startsWith(".") &&
     value !== "@" &&
-    // oxlint-disable-next-line no-control-regex -- git forbids control characters in a ref
     !/[\x00-\x20\x7f~^:?*[\\]/.test(value),
   { expected: "a git branch name" },
 );
