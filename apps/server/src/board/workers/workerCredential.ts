@@ -135,7 +135,7 @@ const decodeAccessToken = Schema.decodeUnknownEffect(AccessTokenResponse);
     an expired, used or wrong token; anything else is the network. */
 export function exchangeWorkerCredential(input: {
   readonly target: WorkerTarget;
-  /** Shown on the worker under Settings → Connections → Clients. */
+  /** Shown on the worker under Settings → Sharing & access → Authorized clients. */
   readonly clientLabel: string;
 }): Effect.Effect<{ readonly accessToken: string }, BoardWorkerAddError, HttpClient.HttpClient> {
   return Effect.gen(function* () {

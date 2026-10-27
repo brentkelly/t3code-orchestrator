@@ -25,7 +25,7 @@ export interface BoardThreadWorker {
   /** The environment the thread opens in: the worker's, or the board's own. */
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  /** The worker's address, for Settings → Connections; null for this server. */
+  /** The worker's address, for Settings → Environments; null for this server. */
   readonly url: string | null;
   /** No longer one of the board's workers. */
   readonly removed: boolean;
@@ -87,7 +87,7 @@ export type WorkerThreadAccess = "open" | "connect" | "opening" | "offline" | "r
 export function workerThreadAccess(input: {
   readonly worker: BoardThreadWorker;
   /** The client's connection to the worker's environment, or null when it
-      has none (not in this client's Connections). */
+      has none (not in this client's Environments). */
   readonly connection: SupervisorConnectionState | null;
 }): WorkerThreadAccess {
   const { worker, connection } = input;
@@ -128,7 +128,7 @@ export function workerThreadAccessCopy(
       return {
         title: `Connect to worker ${worker.label} to open this thread`,
         detail:
-          "This thread runs on another machine. Add it under Connections on this device; the board works without it.",
+          "This thread runs on another machine. Add it under Environments on this device; the board works without it.",
         tone: "muted",
         action: "open-connections",
       };

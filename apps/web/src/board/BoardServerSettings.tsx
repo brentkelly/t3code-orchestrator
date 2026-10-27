@@ -84,7 +84,7 @@ export function BoardServerSection() {
     <SettingsSection id={anchor.id} title={anchor.title}>
       <SettingsRow
         title="Board server"
-        description="The server whose board this device shows. Pair with the central board server in Connections, then choose it here. Saved on this device only."
+        description="The server whose board this device shows. Pair with the central board server in Environments, then choose it here. Saved on this device only."
         control={
           <Select
             value={value}
@@ -132,7 +132,7 @@ export function BoardServerUnavailableNotice(props: { readonly label: string | n
       </AlertDescription>
       <AlertAction>
         <Button render={<Link to="/settings/connections" />} size="sm" variant="outline">
-          Open Connections
+          Open Environments
         </Button>
         {hasThisServer ? (
           <Button

@@ -1,5 +1,5 @@
 /**
- * T3o (T3O-63, prototype 7.2): "Open Settings → Connections" from a card
+ * T3o (T3O-63, prototype 7.2): "Open Settings → Environments" from a card
  * thread on a worker this device isn't connected to arrives with the worker's
  * address, so Add environment opens already filled in.
  */
