@@ -278,6 +278,35 @@ describe("makeSignalReader", () => {
     );
   });
 
+  it("reads a queued run steered in, deleted or archived away as neither a Stop nor a turn end", () => {
+    // Promote-to-steer, a queue delete and an archive all cancel the queued run
+    // under the human's own command id, never started — the shape a start-up
+    // Stop has. Seeing it queued first is what tells them apart (T3O-76).
+    for (const created of ["run.created", "run.updated"]) {
+      const read = makeSignalReader();
+      read(stored(created, run("queued", null, { queuePosition: 1 }), CLIENT_COMMAND_ID));
+      assert.deepStrictEqual(
+        read(
+          stored("run.updated", run("cancelled", null, { queuePosition: null }), CLIENT_COMMAND_ID),
+        ),
+        [],
+        created,
+      );
+    }
+  });
+
+  it("still reads a human's Stop on a run that left the queue and was starting", () => {
+    const read = makeSignalReader();
+    read(stored("run.created", run("queued", null, { queuePosition: 1 }), CLIENT_COMMAND_ID));
+    assert.deepStrictEqual(read(stored("run.updated", run("starting", null))), []);
+    assert.deepStrictEqual(
+      read(stored("run.updated", run("interrupted", null), CLIENT_COMMAND_ID)).map(
+        (signal) => signal.type,
+      ),
+      ["interrupt-requested", "turn-ended"],
+    );
+  });
+
   it("does not repeat a Stop the engine already recorded as an interrupt request", () => {
     const read = makeSignalReader();
     const item = {

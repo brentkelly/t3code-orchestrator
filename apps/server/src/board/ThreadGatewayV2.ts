@@ -263,6 +263,27 @@ export const makeSignalReader = () => {
     string,
     { readonly run: OrchestrationV2Run; readonly commandId: CommandId | null }
   >();
+  // Runs whose latest status was `queued` (T3O-76). v2 cancels a queued run
+  // straight out of the queue when a human promotes its message to a steer,
+  // deletes it from the queue, or archives the thread, under that human's
+  // command id and with `startedAt` null — the same shape as a Stop during
+  // start-up. Nothing in the cancelled payload tells them apart (`queuePosition`
+  // is null either way, and a queued run already owns its root node and
+  // attempt), so the reader remembers the one fact that does: the status it
+  // last saw. A run with no remembered status keeps the Stop reading.
+  const queuedRuns = new Set<string>();
+  const noteRunStatus = (run: OrchestrationV2Run): boolean => {
+    const key = String(run.id);
+    const wasQueued = queuedRuns.delete(key);
+    if (run.status === "queued") {
+      queuedRuns.add(key);
+      if (queuedRuns.size > SEEN_LIMIT) {
+        const oldest = queuedRuns.values().next().value;
+        if (oldest !== undefined) queuedRuns.delete(oldest);
+      }
+    }
+    return wasQueued;
+  };
 
   return (stored: OrchestrationV2StoredEvent): ReadonlyArray<ThreadSignal> => {
     const event = stored.event;
@@ -275,6 +296,7 @@ export const makeSignalReader = () => {
         // the run's message decides the rest; v2 commits that message right
         // after the run, in the same command, so the run waits for it.
         const run = event.payload;
+        noteRunStatus(run);
         if (isBoardMintedCommandId(stored.commandId)) {
           return [
             {
@@ -313,8 +335,13 @@ export const makeSignalReader = () => {
       }
       case "run.updated": {
         const run = event.payload;
+        const wasQueued = noteRunStatus(run);
         const outcome = turnOutcomeOf(run.status);
         if (outcome === null || !firstTime(`run:${run.id}`)) return [];
+        // A run that ended without ever leaving the queue was never a turn:
+        // its message was steered into the live turn, deleted, or dropped with
+        // the thread. It is neither a Stop nor an ending the board should read.
+        if (wasQueued) return [];
         // A run that failed without ever starting is a turn that never began
         // (t3o-30, D2) — workspace preparation, or the provider refusing it.
         if (outcome === "failed" && run.startedAt === null) {
