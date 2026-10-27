@@ -21,8 +21,8 @@ It is a supervisor, not a view.
 decisions with their rationale and rejected alternatives. Per-feature specs are the numbered
 `.plans/t3o-NN-*.md` files from `t3o-01` onwards; the build order and dependency waves are in the overview.
 
-**Status:** the board is built and in use. Upstream is synced to `v0.1.0` (`T3O-59`), the first
-orchestration-v2 release; the board reaches threads only through `board/ThreadGatewayV2.ts`. The
+**Status:** the board is built and in use. Upstream is synced to `v0.1.3` (`T3O-74`); the
+board reaches threads only through `board/ThreadGatewayV2.ts`. The
 seam inventory and sync runbook are in `docs/t3o/seams.md`. The distributed board (`T3O-60`,
 overview D19–D22) is built: one central server hosts the board and dials other T3o servers as
 workers. The user-facing guide is `docs/user/board-workers.md`.
