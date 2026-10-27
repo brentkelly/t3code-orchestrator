@@ -821,7 +821,8 @@ describe("withBoardThreadFields", () => {
     kind: "user_input" as const,
     createdAt: v2Now,
   };
-  const monitorTask = { taskId: "monitor-1", kind: "monitor" as const };
+  // Upstream holds a monitor only when the agent waits on it (#24610).
+  const monitorTask = { taskId: "monitor-1", kind: "monitor" as const, awaited: true };
 
   const linked = cardShell("card-1", {
     threadLinks: [{ threadId, role: "build", linkedAt: NOW, tombstonedAt: null }],

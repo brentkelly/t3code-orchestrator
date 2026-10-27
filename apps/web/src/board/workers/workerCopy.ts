@@ -52,9 +52,9 @@ export function workerStatusPresentation(
     case "unauthorized":
       return {
         label: "Access revoked",
-        detail: `Revoked in ${worker.label}'s Connections`,
+        detail: `Revoked in ${worker.label}'s Sharing & access`,
         tone: "warning",
-        tooltip: `${worker.label}'s owner removed “T3o board (${boardLabel})” from Settings → Connections → Clients on that machine, or it no longer recognises this board. Its cards are held until it's re-paired.`,
+        tooltip: `${worker.label}'s owner removed “T3o board (${boardLabel})” from Settings → Sharing & access → Authorized clients on that machine, or it no longer recognises this board. Its cards are held until it's re-paired.`,
       };
     case "incompatible":
       return {

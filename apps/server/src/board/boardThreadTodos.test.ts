@@ -11,7 +11,6 @@ import {
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
   CommandId,
-  EventId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,

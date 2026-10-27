@@ -29,6 +29,12 @@ export default Effect.gen(function* () {
   // a fresh watermark would replay the whole log through the board projector.
   // That is idempotent (every board write is an upsert) but needlessly expensive,
   // and on a large log it would stall boot.
+  // Upstream's migration 063 (v0.1.3) drops `main.projection_state`, so a fresh
+  // database has no watermark to carry (T3O-74).
+  const upstreamState = yield* sql`
+    SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = 'projection_state'
+  `;
+  if (upstreamState.length === 0) return;
   yield* sql`
     INSERT OR IGNORE INTO boards.projection_state (projector, last_applied_sequence, updated_at)
     SELECT projector, last_applied_sequence, updated_at

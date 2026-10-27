@@ -1,9 +1,3 @@
-/**
- * Grok's client definition: settings form, label, and glyph.
- * Browser- and React Native-safe.
- *
- * @module provider-grok/client
- */
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { defineProviderClient } from "@t3tools/provider-core/client";
 
@@ -12,6 +6,7 @@ import { GrokSettings } from "./settings.ts";
 export const grokClient = defineProviderClient({
   driverKind: ProviderDriverKind.make("grok"),
   label: "Grok",
+  acpRegistryAgentIds: ["grok-build"],
   settingsSchema: GrokSettings,
   icon: {
     viewBox: "0 0 24 24",

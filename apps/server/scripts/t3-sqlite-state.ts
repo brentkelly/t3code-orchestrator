@@ -208,17 +208,13 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   const program = Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql.unsafe("PRAGMA busy_timeout = 5000").unprepared;
-    // This connection bypasses persistence/Sqlite.ts and can checkpoint
-    // statev2.sqlite, so it needs the same F_FULLFSYNC checkpoint barrier.
+    // This connection can checkpoint statev2.sqlite, so it needs Sqlite.ts's F_FULLFSYNC barrier.
     yield* sql.unsafe("PRAGMA checkpoint_fullfsync = ON").unprepared;
 
-    // Attach only when the board file already exists. `ATTACH` on a writable
-    // connection CREATES a missing file, and a diagnostic tool must not mutate
-    // the directory it inspects — a pre-t3o-26 database, or a state directory
-    // with no board file, should simply answer questions about `main`. The
-    // `orElseSucceed` is a last resort for an attach failing for other reasons
-    // (a corrupt or unreadable board file), where main-only answers still beat
-    // none.
+    // Attach only when the board file exists: `ATTACH` on a writable connection
+    // creates a missing file, and a diagnostic tool must not mutate what it
+    // inspects. `orElseSucceed` covers a corrupt or unreadable board file, where
+    // main-only answers still beat none.
     const boardDatabaseExists = yield* fs.exists(resolveBoardDatabasePath(databasePath));
     const boardAttached =
       boardDatabaseExists &&

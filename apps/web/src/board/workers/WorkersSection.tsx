@@ -105,7 +105,7 @@ export function WorkersSection(props: {
       title: `${worker.label} was removed`,
       description: result.value.revoked
         ? undefined
-        : `${worker.label} couldn't be reached, so the board's access there wasn't revoked. Remove “T3o board (${boardLabel})” under Settings → Connections → Clients on that machine.`,
+        : `${worker.label} couldn't be reached, so the board's access there wasn't revoked. Remove “T3o board (${boardLabel})” under Settings → Sharing & access → Authorized clients on that machine.`,
     });
   };
 
@@ -198,7 +198,7 @@ export function WorkersSection(props: {
             <div className="flex flex-col">
               <span className="text-[13px] font-medium">No other workers</span>
               <span className="max-w-md text-xs text-muted-foreground">
-                To run cards on another machine, connect to it in Settings → Connections, then use
+                To run cards on another machine, connect to it in Settings → Environments, then use
                 it as a worker here.
               </span>
             </div>

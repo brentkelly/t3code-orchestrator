@@ -66,7 +66,7 @@ export function BoardThreadWorkerGate({
         {copy.action === null ? null : (
           <div className="pt-0.5">
             <Button onClick={openConnections} size="sm" variant="outline">
-              {copy.action === "sign-in" ? "Sign in" : "Open Settings → Connections"}
+              {copy.action === "sign-in" ? "Sign in" : "Open Settings → Environments"}
             </Button>
           </div>
         )}

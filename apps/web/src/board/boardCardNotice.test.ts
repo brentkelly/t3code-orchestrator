@@ -229,7 +229,9 @@ describe("boardCardNoPullRequest", () => {
   it("fails open when there is no evidence the stop was fresh", () => {
     // Same rule the attention chips follow: a card whose thread has never
     // finished a turn, or a caller with no clock, has nothing to wait out.
-    expect(boardCardNoPullRequest({ ...settled, now: Date.now() })).toBe(true);
+    expect(boardCardNoPullRequest({ ...settled, now: Date.parse("2026-09-21T12:30:00Z") })).toBe(
+      true,
+    );
     expect(boardCardNoPullRequest({ ...settled, threadIdleSince: "2026-09-21T12:00:00Z" })).toBe(
       true,
     );

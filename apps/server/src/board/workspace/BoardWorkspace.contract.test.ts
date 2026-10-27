@@ -797,7 +797,11 @@ describe("the worker side of the named operations (T3O-64)", () => {
             true,
           );
         }
-        assert.notStrictEqual(yield* git(env.remote, ["branch", "--list", "board/own-card"]), "");
+        // A bare repository needs `--git-dir` since upstream sets `safe.bareRepository=explicit`.
+        assert.notStrictEqual(
+          yield* git(env.remote, ["--git-dir=.", "branch", "--list", "board/own-card"]),
+          "",
+        );
 
         // The central board's own branch, its checkout retired, is deleted.
         const placed = yield* central.provisionWorktree({
@@ -836,7 +840,7 @@ describe("the worker side of the named operations (T3O-64)", () => {
         // A central split parent of the same key would adopt the worker
         // board's integration branch as its own.
         central.createIntegrationBranch({ projectId, branch: "board/K-1", base: "main" }),
-      ]) {
+      ] as ReadonlyArray<Effect.Effect<object, BoardWorkspaceFailure>>) {
         const refused = yield* Effect.flip(provision);
         assert.strictEqual(refused._tag, "BoardWorkerGitError");
         assert.include(detailOf(refused), "own board");

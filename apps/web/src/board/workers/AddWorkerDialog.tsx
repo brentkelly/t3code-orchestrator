@@ -287,8 +287,8 @@ function AddWorkerFlow(props: {
             </dd>
           </dl>
           <p className="text-[12.5px] text-muted-foreground">
-            On {worker.label}, the board appears under Settings → Connections → Clients as “
-            {sessionLabel}”.
+            On {worker.label}, the board appears under Settings → Sharing & access → Authorized
+            clients as “{sessionLabel}”.
           </p>
         </DialogPanel>
         <DialogFooter>
@@ -427,7 +427,7 @@ function AddWorkerFlow(props: {
                 void navigate({ to: "/settings/connections" });
               }}
             >
-              Open Settings → Connections
+              Open Settings → Environments
             </Button>
           ) : null}
           <Button variant="outline" onClick={close}>
@@ -457,7 +457,7 @@ function AddWorkerFlow(props: {
           <DialogTitle>Re-pair {props.mode.worker.label}</DialogTitle>
           <DialogDescription>
             {props.mode.worker.status.state === "unauthorized"
-              ? `The board's access to ${props.mode.worker.label} was revoked on that machine, under Settings → Connections → Clients, where the board is listed as “${sessionLabel}”. Its cards are held until it's re-paired.`
+              ? `The board's access to ${props.mode.worker.label} was revoked on that machine, under Settings → Sharing & access → Authorized clients, where the board is listed as “${sessionLabel}”. Its cards are held until it's re-paired.`
               : `Give the board a fresh session on ${props.mode.worker.label}.`}
           </DialogDescription>
         </DialogHeader>
@@ -507,7 +507,9 @@ function AddWorkerFlow(props: {
       </DialogHeader>
       <DialogPanel>
         <div className="flex flex-col gap-1.5">
-          <span className="text-[12.5px] font-medium">Environment from Settings → Connections</span>
+          <span className="text-[12.5px] font-medium">
+            Environment from Settings → Environments
+          </span>
           <div
             className="flex flex-col overflow-hidden rounded-lg border border-border"
             role="radiogroup"
@@ -625,14 +627,14 @@ function pasteWhy(
         subtitle: "This device isn't connected to any other environments yet.",
         box: {
           title: "Connect first, or paste a link",
-          body: "Environments you connect to in Settings → Connections show up here to use as workers in one step. For a server you don't want to connect to from this device, paste a pairing link instead.",
+          body: "Environments you connect to in Settings → Environments show up here to use as workers in one step. For a server you don't want to connect to from this device, paste a pairing link instead.",
         },
       };
     case "repair":
       return {
         subtitle:
           mode.kind === "repair" && mode.worker.status.state === "unauthorized"
-            ? `The board's access to ${mode.worker.label} was revoked on that machine, under Settings → Connections → Clients, where the board is listed as “${sessionLabel}”. Its cards are held until it's re-paired.`
+            ? `The board's access to ${mode.worker.label} was revoked on that machine, under Settings → Sharing & access → Authorized clients, where the board is listed as “${sessionLabel}”. Its cards are held until it's re-paired.`
             : null,
         box:
           mode.kind === "repair"

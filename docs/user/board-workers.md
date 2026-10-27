@@ -11,7 +11,7 @@ server sees the same list, with each worker's live status.
 
 Every device shows the board of one server. By default that is the server the app runs (the
 desktop app's own local server, or the server a browser loaded the page from). To see the central
-board from another device, pair with the board server in **Settings → Connections**, then pick it in
+board from another device, pair with the board server in **Settings → Environments**, then pick it in
 **Settings → Board → Board server**. The choice is saved on that device only. If the chosen server
 is not connected, the board says so and offers to reconnect or switch back to this device's server.
 
@@ -27,7 +27,7 @@ is not connected, the board says so and offers to reconnect or switch back to th
 ## Adding a worker
 
 Press **Add worker**. The dialog lists the environments this device is already connected to in
-**Settings → Connections**. Pick one and press **Use as worker**. This device creates a one-time
+**Settings → Environments**. Pick one and press **Use as worker**. This device creates a one-time
 pairing token on that machine, and the board server uses it to get its own access there.
 
 If an environment says **Needs a pairing link**, your connection to it doesn't have admin access, so
@@ -35,7 +35,7 @@ this device can't create a token there. In that case, and for a server this devi
 to at all, run `t3 pair` on the worker machine and paste the link it prints. Links work once and
 expire after 5 minutes.
 
-On the worker, the board then appears under **Settings → Connections → Clients** as
+On the worker, the board then appears under **Settings → Sharing & access → Authorized clients** as
 **T3o board (_board server name_)**.
 
 ## Default worker
@@ -91,7 +91,7 @@ popover lists the cards each one has paused, with **Open Workers settings**.
   isn't treated as dead, and the time the worker is offline doesn't count toward a step's timeout.
   When the worker is back, the board catches up on what happened there first, then carries on.
   A card that can't wait can be **Force-move**d to another worker (see below).
-- **Access revoked** — someone removed the board under Settings → Connections → Clients on that
+- **Access revoked** — someone removed the board under Settings → Sharing & access → Authorized clients on that
   machine, or the worker was reset. The board renews its own access while it runs, but if the board
   server was off for most of a month its access has expired, and that shows here too. Use **Re-pair…** to give the board access again. The worker
   keeps its label and settings.
@@ -102,7 +102,7 @@ popover lists the cards each one has paused, with **Open Workers settings**.
 A card's thread runs on the worker the card was placed on, and that's where it opens. On a board
 with workers, each thread row says which worker it ran on. The board itself works without a
 connection to the worker, but to read or reply in one of its threads this device needs a connection
-to that worker too. If it has none, the thread pane says so and **Open Settings → Connections**
+to that worker too. If it has none, the thread pane says so and **Open Settings → Environments**
 opens the Add environment dialog with the worker's address filled in.
 
 Agents on a worker keep reaching the board through their own server, which passes their board calls

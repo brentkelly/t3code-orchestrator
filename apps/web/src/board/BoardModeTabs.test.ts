@@ -45,8 +45,8 @@ function makeRouter(initialPath: string) {
   });
 }
 
-/** Let the router's async navigation settle. */
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+/** Await the navigation the router has in flight, if any. */
+const settle = (router: ReturnType<typeof makeRouter>) => router.latestLoadPromise;
 
 describe("navigateToMode", () => {
   it("proves the original bug: router.history.push alone does not switch route", async () => {
@@ -57,7 +57,7 @@ describe("navigateToMode", () => {
     // This is what the Board tab used to do; the location never changes, which
     // is exactly why clicking Board appeared to do nothing.
     router.history.push("/board");
-    await flush();
+    await settle(router);
 
     expect(router.state.location.pathname).toBe("/");
   });
@@ -68,7 +68,7 @@ describe("navigateToMode", () => {
     expect(router.state.location.pathname).toBe("/");
 
     navigateToMode(router, "threads", "board", {});
-    await flush();
+    await settle(router);
 
     expect(router.state.location.pathname).toBe("/board");
   });
@@ -78,7 +78,7 @@ describe("navigateToMode", () => {
     await router.load();
 
     navigateToMode(router, "board", "threads", {});
-    await flush();
+    await settle(router);
 
     expect(router.state.location.pathname).toBe("/");
   });
@@ -88,7 +88,7 @@ describe("navigateToMode", () => {
     await router.load();
 
     navigateToMode(router, "threads", "board", { board: "/board?project=web" });
-    await flush();
+    await settle(router);
 
     expect(router.state.location.pathname).toBe("/board");
     expect((router.state.location.search as { project?: string }).project).toBe("web");
@@ -102,7 +102,7 @@ describe("navigateToMode", () => {
     expect(router.state.location.pathname).toBe("/env-1/thread-1");
 
     navigateToMode(router, "threads", "board", { board: "/env-1/thread-1" });
-    await flush();
+    await settle(router);
 
     expect(router.state.location.pathname).toBe("/board");
   });
@@ -115,7 +115,7 @@ describe("navigateToMode", () => {
     await router.load();
 
     navigateToMode(router, "board", "threads", { threads: "/settings/general" });
-    await flush();
+    await settle(router);
 
     expect(router.state.location.pathname).toBe("/");
   });
@@ -132,7 +132,7 @@ describe("navigateToMode", () => {
     };
 
     navigateToMode(spyRouter, "board", "board", { board: "/board?project=web" });
-    await flush();
+    await settle(router);
 
     expect(navigateCalls).toBe(0);
     expect(router.state.location.pathname).toBe("/board");

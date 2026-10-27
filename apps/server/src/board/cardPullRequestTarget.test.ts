@@ -3,7 +3,7 @@
  * and the agent tools accept, and the refusals that keep a link on the
  * card's own repository.
  */
-import type { RepositoryIdentity } from "@t3tools/contracts";
+import { type RepositoryIdentity, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import { boardRepositoryOf } from "./boardRepository.ts";
@@ -16,7 +16,7 @@ const zeald: RepositoryIdentity = {
     remoteName: "origin",
     remoteUrl: "git@github.com:Zeald/core.z5.git",
   },
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   owner: "Zeald",
   name: "core.z5",
 };
@@ -106,7 +106,7 @@ describe("resolveCardPullRequestTarget in a fork", () => {
       remoteName: "upstream",
       remoteUrl: "https://github.com/pingdotgg/t3code.git",
     },
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     owner: "pingdotgg",
     name: "t3code",
   };

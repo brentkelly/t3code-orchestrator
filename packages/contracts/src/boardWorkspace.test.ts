@@ -8,7 +8,7 @@ const projectId = ProjectId.make("project-1");
 const payloadOf = (method: string) =>
   BOARD_WORKER_GIT_RPCS.find((rpc) => rpc._tag === method)!.payloadSchema;
 const accepts = (method: string, payload: object) =>
-  Schema.decodeUnknownExit(payloadOf(method) as Schema.Decoder<unknown>)({ projectId, ...payload })
+  Schema.decodeExit(payloadOf(method) as Schema.Decoder<unknown>)({ projectId, ...payload })
     ._tag === "Success";
 
 describe("boardWorker.git payloads", () => {

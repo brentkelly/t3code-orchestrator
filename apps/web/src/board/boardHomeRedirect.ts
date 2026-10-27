@@ -32,15 +32,20 @@ export type BoardAuthStatus =
   | "authenticated"
   | "requires-auth"
   | "hosted-static"
-  | "hosted-pairing";
+  | "hosted-pairing"
+  | "guest";
 
 /**
  * Where the pairing flow lets go of the user. The hosted static app with no
  * environment connected has no board worth showing (D3), so it keeps the
- * threads surface and its "Connect an environment" hero.
+ * threads surface and its "Connect an environment" hero. A guest-link session
+ * is someone else's visitor to one thread, not an operator of the board, so it
+ * goes where upstream sends it too.
  */
 export function resolvePairExitTarget(authStatus: BoardAuthStatus): "/" | "/board" {
-  return authStatus === "hosted-static" ? THREADS_HOME_PATH : BOARD_HOME_PATH;
+  return authStatus === "hosted-static" || authStatus === "guest"
+    ? THREADS_HOME_PATH
+    : BOARD_HOME_PATH;
 }
 
 /**
