@@ -2933,7 +2933,7 @@ const make = Effect.gen(function* () {
      *
      * A DIRECTED advance, and the two differences from the ordinary one are
      * both deliberate. It ignores `autoAdvance`, which governs the automatic
-     * crossing after an unattended run — a human who clicked "Submit for merge
+     * crossing after a successful run — a human who clicked "Submit for merge
      * — no review" asked for this move explicitly, and it must not silently do
      * nothing because auto-advance is switched off. And it moves with
      * `override`, because the target is non-adjacent by construction (it steps
