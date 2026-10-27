@@ -36,10 +36,10 @@
  *  - An `awaiting-input` or `stalled` step's thread: the whole point of those
  *    statuses is that a human is being asked for something, and settling one
  *    would hide the request.
- *  - A SUCCEEDED step's thread while the card has not moved on. A
- *    human-in-the-loop stage never auto-advances (`advanceStage` returns early),
- *    so its finished run sits in its column waiting to be dragged, and its
- *    thread is exactly where the human picks the work back up.
+ *  - A SUCCEEDED step's thread while the card has not moved on. A stage with
+ *    `autoAdvance` off does not move the card on its own, so its finished run
+ *    sits in its column waiting to be dragged, and its thread is exactly where
+ *    the human picks the work back up.
  *  - The thread of a step that is still being admitted, matched by the link's
  *    ROLE as well as by thread id: `spawnStepThread` links before
  *    `board.card.admit-step` records the thread on the row, and a sweep landing

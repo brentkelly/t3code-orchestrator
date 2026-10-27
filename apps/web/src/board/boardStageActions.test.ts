@@ -189,8 +189,8 @@ describe("boardStagePrimaryAction", () => {
   });
 
   it("offers the ordinary forward move from the build role once its step has settled", () => {
-    // A human-in-the-loop build never auto-advances, and a failed one never
-    // will either: the card sits in Building wearing a "Needs a human" chip
+    // A build that finished with auto-advance off does not move on, and a
+    // failed one never will either: the card sits in Building wearing a "Needs a human" chip
     // with nothing to press. `stepHeld` is that chip's own condition, so the
     // button appears exactly when the chip does — labelled and styled by the
     // generic rule, not special-cased (D5, D6).

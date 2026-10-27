@@ -184,10 +184,10 @@ export function boardStagePrimaryAction(
   // old someone's database is.
   const currentRole = current === null ? null : effectiveBoardStageRole(current);
   // The build role advances board-driven (D8) — no human forward gate WHILE the
-  // pipeline is driving it. A settled step is the opposite case: a
-  // human-in-the-loop build that ran to the end never auto-advances, and a
-  // failed one never will either, so the card would sit in Building with a
-  // "Needs a human" chip and nothing to press.
+  // pipeline is driving it. A settled step is the opposite case: a build that
+  // finished with the stage's auto-advance off does not move on, and a failed
+  // one never will either, so the card would sit in Building with a "Needs a
+  // human" chip and nothing to press.
   if (currentRole === "build" && context?.stepHeld !== true) return null;
   // The merge role's button merges the pull request and advances as a
   // consequence. Only with a PR still OPEN: merged, closed, or absent all fall

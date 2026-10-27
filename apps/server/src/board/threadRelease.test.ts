@@ -170,8 +170,8 @@ describe("boardReleasedThreadIds", () => {
     },
   );
 
-  // A human-in-the-loop stage never auto-advances, so its finished run sits in
-  // its own column waiting to be dragged — and its thread is where the human
+  // A stage with auto-advance off does not move the card, so its finished run
+  // sits in its own column waiting to be dragged — and its thread is where the human
   // picks the work back up.
   it("keeps a succeeded step's thread while the card is still in that stage", () => {
     const state = board({
