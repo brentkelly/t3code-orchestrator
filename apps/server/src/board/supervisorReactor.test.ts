@@ -566,6 +566,31 @@ it.effect("boot: a step that completed while the server was down is settled and 
   }),
 );
 
+it.effect("boot: a human-in-the-loop step that completed while down advances too (T3O-76)", () =>
+  Effect.gen(function* () {
+    const types = yield* reconcileCommands({
+      board: {
+        cards: [{ ...card, humanInLoop: true }],
+        stepStates: [{ ...runningState, humanInLoop: true }],
+        stepCompletions: [
+          {
+            cardId,
+            stepId,
+            outcome: "succeeded",
+            summary: "done",
+            payload: null,
+            threadId: ThreadId.make("thread-1"),
+            completedAt: NOW,
+          },
+        ],
+        nextCardNumberByProject: {},
+      },
+    });
+    assert.include(types, "board.card.settle-step");
+    assert.include(types, "board.card.move");
+  }),
+);
+
 // ── The restart orphan (t3o-10) ────────────────────────────────────────
 //
 // A server restart kills every provider session mid-turn. Upstream's

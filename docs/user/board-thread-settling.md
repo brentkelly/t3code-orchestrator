@@ -32,6 +32,10 @@ Dragging a card backwards works the same way. The threads of the stage it left s
 card is not in that stage any more — and if you send it forward again, whichever thread it resumes
 comes back with it.
 
+The conversation a card opens when you drag it back into a stage it already finished is yours to
+steer. When its agent reports the stage finished, the card moves on exactly as it did the first
+time, if that stage moves cards on by itself.
+
 Moving a card on from Planning before its plan is written asks you to confirm first. If you go
 ahead, the card keeps its planning thread and any agent reply still in progress finishes. That
 thread stays in your inbox until the agent reports planning finished. Move the card back to Planning and the

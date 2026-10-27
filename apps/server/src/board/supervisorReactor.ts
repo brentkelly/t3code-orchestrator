@@ -2916,12 +2916,16 @@ const make = Effect.gen(function* () {
     yield* schedule();
   });
 
-  // Auto-advance to the next stage in order (D8): on a successful UNATTENDED
-  // run, if the stage's `autoAdvance` is on, move the card to the next stage —
-  // never the hardcoded "review". Never on a human-in-the-loop run (no
-  // completion stance to advance on), never when the stage is last. Rides the
-  // ordinary move command, gated like every other transition (a crossing into a
-  // blocked build boundary is refused, leaving the card put).
+  // Auto-advance to the next stage in order (D8): on a successful run, if the
+  // stage's `autoAdvance` is on, move the card to the next stage — never the
+  // hardcoded "review". Whoever was in the loop: a human-in-the-loop step that
+  // reached `board_complete_step` is finished exactly as an unattended one is
+  // (T3O-76), and a stage that should wait for a human ships with `autoAdvance`
+  // off. That includes a drag-back re-entry conversation (D7), which is always
+  // human-in-the-loop: its completion moves the card on too. Never when the
+  // stage is last. Rides the ordinary move command, gated like every other
+  // transition (a crossing into a blocked build boundary is refused, leaving the
+  // card put).
   const advanceStage = Effect.fn("board-supervisor-advanceStage")(function* (input: {
     readonly card: BoardCard;
     readonly state: BoardCardStepState;
@@ -2929,7 +2933,7 @@ const make = Effect.gen(function* () {
      *
      * A DIRECTED advance, and the two differences from the ordinary one are
      * both deliberate. It ignores `autoAdvance`, which governs the automatic
-     * crossing after an unattended run — a human who clicked "Submit for merge
+     * crossing after a successful run — a human who clicked "Submit for merge
      * — no review" asked for this move explicitly, and it must not silently do
      * nothing because auto-advance is switched off. And it moves with
      * `override`, because the target is non-adjacent by construction (it steps
@@ -2985,7 +2989,6 @@ const make = Effect.gen(function* () {
       });
       return;
     }
-    if (input.state.humanInLoop) return;
     const settings = yield* boardSettings;
     const exec = resolveBoardStageExecution(settings, input.card.stage);
     if (!exec.autoAdvance) return;
@@ -3853,6 +3856,10 @@ const make = Effect.gen(function* () {
    * that follows resets `stallCount`, so the escalation is not spent for
    * nothing. Covered by "a human stop still parks the card when an escalation
    * won the ordering race" in `pausedStep.test.ts`.
+   *
+   * A Stop pauses and does nothing else: the card's human-in-the-loop stance is
+   * the human's to set through its own toggle (T3O-76), and resuming carries on
+   * under whichever stance the card already had.
    */
   const pauseStepForHumanStop = Effect.fn("board-supervisor-pauseStepForHumanStop")(function* (
     threadId: ThreadId,
@@ -3875,34 +3882,6 @@ const make = Effect.gen(function* () {
       return;
     }
     yield* pauseStepNow({ card: found.card, state: found.state });
-    // Then say so on the CARD (T3O-17, brief item 1). Stopping an unattended
-    // agent is a human taking the wheel; leaving the card unattended means the
-    // next stage entry runs autonomously again and a resumed step is supervised
-    // as if nobody had intervened.
-    //
-    // The pause goes FIRST on purpose: the agent stopping is what the human
-    // asked for, and it must not be contingent on the flip landing. A process
-    // killed between the two leaves a correctly paused card that simply did not
-    // get flagged — which is the card the human is already looking at.
-    //
-    // Only when it is NECESSARY, as the brief puts it: a step already
-    // human-in-the-loop was never running unattended, and a card whose override
-    // is already `true` has nothing to change. The way back out already exists
-    // — the card detail's own human-in-the-loop toggle — so this is not a
-    // one-way door.
-    //
-    // The resulting `board.card-updated` re-enters this reactor at
-    // `handleCardUpdated`, which carries the stance onto the live step row. Its
-    // `paused` guard is what stops that from sending a turn into the thread we
-    // just stopped; see the note there.
-    if (found.state.humanInLoop || found.card.humanInLoop === true) return;
-    yield* dispatchOptional({
-      type: "board.card.update",
-      commandId: yield* commandId("stop-human-in-loop"),
-      cardId: found.card.id,
-      humanInLoop: true,
-      createdAt: yield* nowIso,
-    });
   });
 
   const settleStep = Effect.fn("board-supervisor-settleStep")(function* (input: {
@@ -7120,18 +7099,17 @@ const make = Effect.gen(function* () {
     // The card's explicit override wins at EVERY stage, not just a build one
     // (T3O-17). Only an explicit override can differ from the stance the step
     // froze at entry, so no other behaviour moves — but without this, a human
-    // pressing Stop on a review or planning step flips the card and the step
-    // carries on being supervised as unattended, which is the half-applied
-    // state the whole card is about.
+    // ticking the toggle on a review or planning step changes the card while
+    // the step carries on being supervised as before, a half-applied stance.
     const desired = card.humanInLoop ?? state.humanInLoop;
     if (desired === state.humanInLoop) return;
     // A `paused` step is NOT told about the switch. This is load-bearing, not
-    // cosmetic: the `humanInLoop: true` update that `pauseStepForHumanStop`
-    // dispatches re-enters this handler, and a turn sent into the step we just
-    // paused would raise `thread.turn-start-requested`, hit `resumeParkedStep`
-    // and un-pause the card — putting the agent straight back to work against
-    // the human's Stop. The stance still lands on the row through the retune
-    // below, so the step reads correctly when a human does resume it.
+    // cosmetic: a human toggling the checkbox on a card they just stopped
+    // re-enters this handler, and a turn sent into the paused step would raise
+    // `thread.turn-start-requested`, hit `resumeParkedStep` and un-pause the
+    // card — putting the agent straight back to work against the human's Stop.
+    // The stance still lands on the row through the retune below, so the step
+    // reads correctly when a human does resume it.
     //
     // ONLY `paused`, deliberately. The other two parked statuses are told, and
     // the turn resuming them through `resumeParkedStep` is the point: flipping

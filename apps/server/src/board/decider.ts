@@ -4212,8 +4212,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       yield* requireActiveBoardCard({ board, command });
       const current = yield* requireLiveStepState({ board, command, stepId: command.stepId });
       // Slot, worktree and thread are untouched (D5) — only the frozen
-      // human-in-the-loop stance changes, so drop-monitoring and auto-advance
-      // honour the new value.
+      // human-in-the-loop stance changes, so drop-monitoring honours the new
+      // value.
       const state: BoardCardStepState = {
         ...current,
         humanInLoop: command.humanInLoop,
