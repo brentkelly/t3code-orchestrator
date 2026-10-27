@@ -21,7 +21,7 @@ export class WorkerEnvironmentNotConnected extends Data.TaggedError(
 /**
  * Mint a one-time pairing token on a worker environment with THIS client's
  * session there, for the board server to spend (D19). The token is labelled
- * as the board's session, so the worker's Connections list names it.
+ * as the board's session, so the worker's Authorized clients list names it.
  */
 export const mintWorkerPairingToken = createRuntimeCommand(connectionAtomRuntime, {
   label: "web:board:mint-worker-pairing-token",

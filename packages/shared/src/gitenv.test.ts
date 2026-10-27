@@ -134,7 +134,7 @@ describe("gitenv", () => {
 
     NodeFS.writeFileSync(filePath, `${fixture.projectRoot}=${TOKEN}-rotated\n`);
     // mtime can land in the same clock tick as the first write; force it.
-    const later = new Date(Date.now() + 2_000);
+    const later = new Date(NodeFS.statSync(filePath).mtimeMs + 2_000);
     NodeFS.utimesSync(filePath, later, later);
     expect(gitenvTokenEnv(fixture.projectRoot)?.GH_TOKEN).toBe(`${TOKEN}-rotated`);
   });

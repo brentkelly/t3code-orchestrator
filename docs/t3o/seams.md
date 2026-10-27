@@ -653,6 +653,13 @@ onto the new design are `T3O-75`.
 - **Upstream tests with fork expectations:** `ws.test.ts` and `serverRuntimeStartup.test.ts` now
   build layers that include the board's services, so they mock them; upstream's new desktop tests
   assert the T3o identity (`DesktopClerk.test.ts`, `DesktopPreReadyPlatform.test.ts`).
+- **Test worker cap.** Upstream added a root `test.projects` list for repo-root `vp test run`, and
+  vitest refuses projects that share `sequence.groupOrder` but differ in `maxWorkers`. The fork's
+  `pool: "forks"`/`maxWorkers: 4` cap now applies only when a package runs the root config from its
+  own directory (`!isRepoRootTestRun`), which is the memory-heavy `vp run -r test` path.
+- **Board test hygiene kept on.** The lint deferral below does not cover upstream's
+  `no-wall-clock-in-tests`/`no-real-time-wait-in-tests`; the eight board test sites that tripped
+  them were fixed instead (fixed epochs, `router.latestLoadPromise`).
 - **Inherited workflows.** `relay-preview.yml`, `relay-preview-cleanup.yml` and
   `stale-needs-more-info.yml` are new upstream; they are disabled once the sync lands on `t3o`
   (GitHub only lists a workflow after it reaches the default branch). See "Inherited workflows".

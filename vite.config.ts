@@ -99,12 +99,9 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    // T3o: bound memory use: each worker boots a t3 server instance (~250-470 MB).
-    // 4 workers x ~470 MB worst case + ~1.3 GB baseline ~= 3.2 GB, well inside
-    // 8 GB RAM. Paired with `--concurrency-limit 1` in the root `test` script,
-    // which stops per-package pools multiplying (vp defaults to 4 at once).
-    pool: "forks",
-    maxWorkers: 4,
+    // T3o: cap per-package runs at 4 forked workers (~470 MB each) for 8 GB boxes.
+    // Repo-root runs skip it: vitest rejects projects with differing maxWorkers.
+    ...(isRepoRootTestRun ? {} : { pool: "forks" as const, maxWorkers: 4 }),
     // Fixture subprocesses must not inherit the outer task runner’s cache policy.
     env: { VP_REMOTE_CACHE: "off", VP_REMOTE_CACHE_URL: "" },
     exclude: TEST_EXCLUDE,
@@ -664,8 +661,6 @@ export default defineConfig({
           "t3code/no-manual-memo": "off",
           "t3code/no-em-dash-copy": "off",
           "t3code/react-effect-budget": "off",
-          "t3code/no-wall-clock-in-tests": "off",
-          "t3code/no-real-time-wait-in-tests": "off",
           "react/purity": "off",
           "react/refs": "off",
           "react/set-state-in-effect": "off",
@@ -695,7 +690,6 @@ export default defineConfig({
           "t3code/no-em-dash-copy": "off",
           "t3code/prefer-effect-fn": "off",
           "t3code/no-inline-schema-compile": "off",
-          "t3code/no-wall-clock-in-tests": "off",
         },
       },
     ],
