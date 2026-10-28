@@ -24,6 +24,7 @@ import {
   EMPTY_BOARD_WORKERS_STATE,
   type BoardStepQueuedBy,
   type BoardWorkerId,
+  boardCardAutoArchiveDue,
   boardCardAutoStartDue,
   boardCardChildren,
   boardBuildHumanInLoopDefault,
@@ -320,6 +321,9 @@ export interface SupervisorReactorShape {
       sweep in production; exposed for the same reason, so a test can fire a due
       card without wall-clock time. */
   readonly fireSchedules: Effect.Effect<void>;
+  /** One auto-archive pass over idle Done cards (T3O-77). Same 30s timer;
+      exposed so a test can age a card with `TestClock` and fire the pass. */
+  readonly fireAutoArchives: Effect.Effect<void>;
   /** One auto-start pass: move every armed card whose dependencies are all met
       into the build-role stage (T3O-24, D3/D6). Rides the same 30s timer and
       boot reconciliation; exposed so a test can drive the self-healing pass
@@ -6810,6 +6814,38 @@ const make = Effect.gen(function* () {
   );
 
   /**
+   * Archive every card that has sat untouched in Done for the configured days
+   * (T3O-77, D15). An ordinary `board.card.archive` with the system actor, so
+   * the archive handler's settle, safe reclaim and cascades all run as for a
+   * human's archive. `boardCardAutoArchiveDue` pre-checks the decider's
+   * refusals; one that still lands (a raced edit) is expected, not a fault.
+   */
+  const fireDueAutoArchives = Effect.fn("board-supervisor-fireDueAutoArchives")(function* () {
+    const { lifecycle } = yield* boardSettings;
+    if (!lifecycle.autoArchiveDone) return;
+    const board = yield* readBoard;
+    const nowMs = Date.parse(yield* nowIso);
+    for (const card of board.cards) {
+      if (!boardCardAutoArchiveDue({ board, card, lifecycle, nowMs })) continue;
+      yield* dispatchOptional({
+        type: "board.card.archive",
+        commandId: yield* commandId("auto-archive"),
+        cardId: card.id,
+        createdAt: yield* nowIso,
+      });
+    }
+  });
+
+  /** Total, like `sweepSchedules`: a failed pass costs one tick. */
+  const sweepAutoArchives = fireDueAutoArchives().pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: auto-archive sweep failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
+
+  /**
    * Start every armed card the selector picks out whose last dependency has
    * landed (T3O-24, D3) — the top-level analogue of `cascadeUnblockedChildren`,
    * and modelled on it.
@@ -8889,6 +8925,7 @@ const make = Effect.gen(function* () {
         // on the board's cadence for "check on things nothing told us about".
         // And a worker whose reconcile could not finish is tried again here
         // (T3O-66): nothing else would ask while its status stays the same.
+        // And the auto-archive pass (T3O-77): idle Done cards age out on it.
         return syncWorkerReach.pipe(
           Effect.andThen(sweepTimeouts),
           Effect.andThen(releaseFinishedThreads),
@@ -8896,6 +8933,7 @@ const make = Effect.gen(function* () {
           Effect.andThen(sweepArmedCards),
           Effect.andThen(sweepRetries),
           Effect.andThen(sweepAutoMergeHolds),
+          Effect.andThen(sweepAutoArchives),
         );
     }
   };
@@ -9024,6 +9062,7 @@ const make = Effect.gen(function* () {
     reconcile,
     sweep: sweepTimeouts,
     fireSchedules: sweepSchedules,
+    fireAutoArchives: sweepAutoArchives,
     startArmed: sweepArmedCards,
     fireRetries: sweepRetries,
     fireAutoMerges: sweepAutoMergeHolds,

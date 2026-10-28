@@ -1054,6 +1054,22 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(reloaded.board.pipeline.building?.maxAttempts, 6);
       assert.equal(reloaded.board.concurrency.globalMaxConcurrent, 7);
       assert.equal(reloaded.board.lifecycle.reclaimWorktreeOnDone, false);
+
+      // T3o (T3O-77): a later lifecycle patch merges beside the earlier one, and
+      // the whole block survives the write.
+      const archiving = yield* serverSettings.updateSettings({
+        board: { lifecycle: { autoArchiveDone: true, autoArchiveAfterDays: PositiveInt.make(14) } },
+      });
+      assert.deepEqual(archiving.board.lifecycle, {
+        reclaimWorktreeOnDone: false,
+        autoArchiveDone: true,
+        autoArchiveAfterDays: 14,
+      });
+      const rewritten = yield* decodeServerSettings(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath)),
+      );
+      assert.deepEqual(rewritten.board.lifecycle, archiving.board.lifecycle);
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

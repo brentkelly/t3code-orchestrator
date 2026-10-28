@@ -2901,8 +2901,8 @@ export function boardCardChildren(
  * The children still standing between a split parent and its own review
  * (t3o-23, D4/D6): not archived and not in the done-role stage. An archived
  * child counts as finished for the same reason an archived dependency stops
- * gating (t3o-13, D1) — and D15 auto-archives Done cards, so a parent must
- * not re-freeze because a finished child aged out. While this list is
+ * gating (t3o-13, D1) — and D15 may auto-archive Done cards when enabled, so
+ * a parent must not re-freeze because a finished child aged out. While this list is
  * non-empty the parent cannot be moved, auto-kickoff skips it, and its plans
  * are frozen.
  */
@@ -2993,7 +2993,7 @@ export function boardCardShellPendingSplit(
  * `parentCardId` and `stage`, so every client already holds the inputs — no
  * server production, no delta machinery, no payload. Archived children are not
  * on the live shell, so they simply leave the counts; the truthful degenerate
- * case ("2/2" after a done child auto-archives) reads correctly. Returns only
+ * case ("2/2" after a done child is archived) reads correctly. Returns only
  * parents with at least one child.
  *
  * `statuses` is one character per child, in the todo-status alphabet the pip
@@ -6370,6 +6370,36 @@ export function boardCardWorktreeKept(input: {
   return input.archived || (input.inDoneStage && input.reclaimWorktreeOnDone);
 }
 
+/**
+ * Whether the auto-archive pass should archive this card now (T3O-77, D15):
+ * the setting is on, the card has sat untouched in the done-role stage for the
+ * configured days, a reclaim has not been refused for unsaved work (that card
+ * stays in Done for a human), and the decider's own unfinished-children
+ * refusal would not fire.
+ *
+ * The clock is `updatedAt`: entering Done and unarchiving both bump it, so a
+ * restored card is not re-archived on the next pass, and any other touch can
+ * only delay archiving.
+ */
+export function boardCardAutoArchiveDue(input: {
+  readonly board: BoardState;
+  readonly card: BoardCard;
+  readonly lifecycle: Pick<BoardLifecycleSettings, "autoArchiveDone" | "autoArchiveAfterDays">;
+  readonly nowMs: number;
+}): boolean {
+  const { board, card, lifecycle } = input;
+  if (!lifecycle.autoArchiveDone || card.archivedAt !== null) return false;
+  const done = boardStageWithRole(board, "done");
+  if (done === null || card.stage !== done.stageId) return false;
+  if (input.nowMs - Date.parse(card.updatedAt) < lifecycle.autoArchiveAfterDays * 86_400_000) {
+    return false;
+  }
+  if (card.worktree?.status === "ready" && card.worktree.reclaimBlockedReason !== null) {
+    return false;
+  }
+  return boardCardUnfinishedChildren(board, card.id).length === 0;
+}
+
 /** The flag's tooltip/banner text: the recorded refusal, or — when no reclaim
     has run since the card got there — that one has not yet. */
 export function boardCardWorktreeKeptReason(reason: string | null | undefined): string {
@@ -8362,6 +8392,11 @@ export function clampBoardInstanceCap(
  * invalid.
  */
 export const DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE = true;
+/** Auto-archive of idle Done cards (T3O-77) is opt-in. Its fields are NEW
+    names on purpose: older settings files still carry `archiveAfterDays`, and
+    reviving that name would switch the feature on silently at upgrade. */
+export const DEFAULT_BOARD_AUTO_ARCHIVE_DONE = false;
+export const DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS = 7;
 
 export const BoardLifecycleSettings = Schema.Struct({
   /** Reclaim a card's worktree on arrival at Done when its pull request is
@@ -8370,6 +8405,13 @@ export const BoardLifecycleSettings = Schema.Struct({
       for as long as those cards sit in Done. */
   reclaimWorktreeOnDone: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE)),
+  ),
+  /** Archive cards left untouched in Done for `autoArchiveAfterDays` (T3O-77). */
+  autoArchiveDone: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_AUTO_ARCHIVE_DONE)),
+  ),
+  autoArchiveAfterDays: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS)),
   ),
 });
 export type BoardLifecycleSettings = typeof BoardLifecycleSettings.Type;
@@ -9765,6 +9807,8 @@ export const BoardSettings = Schema.Struct({
     Schema.withDecodingDefault(
       Effect.succeed({
         reclaimWorktreeOnDone: DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
+        autoArchiveDone: DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
+        autoArchiveAfterDays: DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
       }),
     ),
   ),
@@ -9809,6 +9853,8 @@ export type BoardConcurrencySettingsPatch = typeof BoardConcurrencySettingsPatch
 
 export const BoardLifecycleSettingsPatch = Schema.Struct({
   reclaimWorktreeOnDone: Schema.optionalKey(Schema.Boolean),
+  autoArchiveDone: Schema.optionalKey(Schema.Boolean),
+  autoArchiveAfterDays: Schema.optionalKey(PositiveInt),
 });
 export type BoardLifecycleSettingsPatch = typeof BoardLifecycleSettingsPatch.Type;
 
