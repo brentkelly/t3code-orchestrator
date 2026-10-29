@@ -16,6 +16,8 @@ import {
   BOARD_SEED_STAGE_IDS,
   BoardSettings,
   boardProjectAcronym,
+  DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
+  DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
   DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_SUBMIT_PROMPT,
@@ -73,6 +75,38 @@ describe("board settings defaults", () => {
       lifecycle: { archiveAfterDays: 21, worktreeRetention: "reclaim-on-archive" },
     });
     expect(settings.lifecycle.reclaimWorktreeOnDone).toBe(DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE);
+    // The old `archiveAfterDays` must not switch auto-archive on (T3O-77).
+    expect(settings.lifecycle.autoArchiveDone).toBe(false);
+    expect(settings.lifecycle.autoArchiveAfterDays).toBe(7);
+  });
+
+  it("ships auto-archive off with a seven-day window (T3O-77)", () => {
+    expect(DEFAULT_BOARD_AUTO_ARCHIVE_DONE).toBe(false);
+    expect(DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS).toBe(7);
+    expect(DEFAULT_BOARD_SETTINGS.lifecycle.autoArchiveDone).toBe(false);
+    expect(DEFAULT_BOARD_SETTINGS.lifecycle.autoArchiveAfterDays).toBe(7);
+    // A lifecycle block written before the fields existed decodes the defaults
+    // rather than failing — which would discard the whole settings file.
+    const settings = decodeSettings({ lifecycle: { reclaimWorktreeOnDone: false } });
+    expect(settings.lifecycle).toEqual({
+      reclaimWorktreeOnDone: false,
+      autoArchiveDone: false,
+      autoArchiveAfterDays: 7,
+    });
+  });
+
+  it("round-trips an enabled auto-archive and refuses a non-positive window", () => {
+    const lifecycle = {
+      reclaimWorktreeOnDone: true,
+      autoArchiveDone: true,
+      autoArchiveAfterDays: 3,
+    };
+    expect(decodeSettings(encodeSettings(decodeSettings({ lifecycle }))).lifecycle).toEqual(
+      lifecycle,
+    );
+    expect(() =>
+      decodeSettings({ lifecycle: { ...lifecycle, autoArchiveAfterDays: 0 } }),
+    ).toThrow();
   });
 
   it("the default Building stage is runnable (real instance + model), not a placeholder", () => {

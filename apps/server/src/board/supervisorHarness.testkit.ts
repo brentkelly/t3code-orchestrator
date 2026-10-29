@@ -21,6 +21,8 @@ import {
   boardCardStepState,
   BOARD_SEED_STAGE_IDS,
   BoardStageId,
+  DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
+  DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
   DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
@@ -361,6 +363,10 @@ export const settingsWith = (input: {
       Defaults to on (what the stage ships with); a suite proving the DIRECTED
       advance ignores it switches it off. */
   readonly buildAutoAdvance?: boolean;
+  /** Auto-archive of idle Done cards (T3O-77). Absent is the shipped default:
+      off, 7 days. */
+  readonly autoArchiveDone?: boolean;
+  readonly autoArchiveAfterDays?: number;
 }): BoardSettings => ({
   projects: {},
   // The board has no workspace default in the harness: every test stage names
@@ -399,7 +405,11 @@ export const settingsWith = (input: {
     globalMaxConcurrent: input.globalMaxConcurrent,
     workers: input.workers ?? {},
   },
-  lifecycle: { reclaimWorktreeOnDone: input.reclaimWorktreeOnDone ?? true },
+  lifecycle: {
+    reclaimWorktreeOnDone: input.reclaimWorktreeOnDone ?? true,
+    autoArchiveDone: input.autoArchiveDone ?? DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
+    autoArchiveAfterDays: input.autoArchiveAfterDays ?? DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
+  },
 });
 
 export type Harness = {

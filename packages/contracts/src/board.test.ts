@@ -68,6 +68,7 @@ import {
   BOARD_STEP_STATUSES,
   boardCardPendingSplit,
   boardCardShellPendingSplit,
+  boardCardAutoArchiveDue,
   boardCardUnfinishedChildren,
   boardSubBoardFloorStage,
   BoardPlanId,
@@ -2783,5 +2784,70 @@ describe("boardPullRequestPredatesCard", () => {
     expect(
       boardPullRequestPredatesCard({ state: "merged", closedAt: "2026-10-19T19:07:15Z" }, created),
     ).toBe(true);
+  });
+});
+
+describe("boardCardAutoArchiveDue (T3O-77)", () => {
+  const NOW_MS = Date.parse("2026-01-10T00:00:00.000Z");
+  const lifecycle = { autoArchiveDone: true, autoArchiveAfterDays: 7 };
+  const doneCard = (overrides: Partial<BoardCard> = {}): BoardCard => ({
+    ...typicalCard(1),
+    stage: BOARD_SEED_STAGE_IDS.done,
+    updatedAt: "2026-01-03T00:00:00.000Z",
+    ...overrides,
+  });
+  const due = (
+    card: BoardCard,
+    options: {
+      readonly cards?: ReadonlyArray<BoardCard>;
+      readonly lifecycle?: typeof lifecycle;
+    } = {},
+  ) =>
+    boardCardAutoArchiveDue({
+      board: { ...EMPTY_BOARD_STATE, cards: options.cards ?? [card] },
+      card,
+      lifecycle: options.lifecycle ?? lifecycle,
+      nowMs: NOW_MS,
+    });
+  const worktree = (reclaimBlockedReason: string | null): BoardCardWorktree => ({
+    branch: "board/t3o-1",
+    baseRefName: "t3o",
+    path: "/tmp/wt",
+    status: "ready",
+    attempts: 1,
+    lastError: null,
+    reclaimBlockedReason,
+  });
+
+  it("is due exactly at the window and not a moment before", () => {
+    expect(due(doneCard())).toBe(true);
+    expect(due(doneCard({ updatedAt: "2026-01-03T00:00:00.001Z" }))).toBe(false);
+  });
+
+  it("is never due with the setting off", () => {
+    expect(due(doneCard(), { lifecycle: { ...lifecycle, autoArchiveDone: false } })).toBe(false);
+  });
+
+  it("only applies to unarchived cards in the done-role stage", () => {
+    expect(due(doneCard({ stage: BOARD_SEED_STAGE_IDS.review }))).toBe(false);
+    expect(due(doneCard({ archivedAt: "2026-01-04T00:00:00.000Z" }))).toBe(false);
+  });
+
+  it("keeps a card whose reclaim was refused, but not one merely holding a worktree", () => {
+    expect(due(doneCard({ worktree: worktree("1 uncommitted change (a)") }))).toBe(false);
+    expect(due(doneCard({ worktree: worktree(null) }))).toBe(true);
+  });
+
+  it("skips a parent with unfinished plan children", () => {
+    const parent = doneCard();
+    const child = {
+      ...typicalCard(2),
+      stage: BOARD_SEED_STAGE_IDS.building,
+      parentCardId: parent.id,
+    };
+    expect(due(parent, { cards: [parent, child] })).toBe(false);
+    expect(due(parent, { cards: [parent, { ...child, stage: BOARD_SEED_STAGE_IDS.done }] })).toBe(
+      true,
+    );
   });
 });
