@@ -432,7 +432,7 @@ function LifecycleSection({ board, update }: { board: BoardSettings; update: Upd
       <CardListContainer id="board-auto-archive-done">
         <CardRow
           label={autoArchive.title}
-          description="Archive cards left untouched in Done for this many days. Cards whose worktree holds unsaved work are kept in Done. Archived cards can be restored from the archive."
+          description="Archive cards left untouched in Done for this many days. With worktrees reclaimed at Done, a card whose worktree was kept for unsaved work stays in Done. Archiving never removes unsaved work, and archived cards can be restored from the archive."
           control={
             <Switch
               checked={board.lifecycle.autoArchiveDone}

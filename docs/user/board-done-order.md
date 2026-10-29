@@ -24,6 +24,9 @@ Turn on **Settings → Board → Auto-archive Done cards** to have the board arc
 untouched in Done for a set number of days (7 unless you change it). It is off until you turn it on,
 and when you do, cards already past the window are archived within a minute.
 
-Any change to a card in Done restarts its count. A card whose worktree holds unsaved work stays in
-Done so you can deal with it; see [When a card gives its worktree back](./board-worktree-cleanup.md).
+Any change to a card in Done restarts its count. With **Reclaim worktrees at "Done"** on, a card
+whose worktree was kept for unsaved work stays in Done so you can deal with it. With it off, the board
+never checks a worktree at Done, so such a card is archived. Archiving still keeps a worktree that
+holds unsaved work, and the archived card shows the **Worktree kept** badge; see
+[When a card gives its worktree back](./board-worktree-cleanup.md).
 Archived cards can be restored from the archive, and a restored card gets a fresh count.

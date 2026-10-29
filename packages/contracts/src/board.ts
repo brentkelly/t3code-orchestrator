@@ -6375,7 +6375,9 @@ export function boardCardWorktreeKept(input: {
  * the setting is on, the card has sat untouched in the done-role stage for the
  * configured days, a reclaim has not been refused for unsaved work (that card
  * stays in Done for a human), and the decider's own unfinished-children
- * refusal would not fire.
+ * refusal would not fire. With `reclaimWorktreeOnDone` off no reclaim runs at
+ * Done, so nothing is recorded and the card archives; the archive's own safe
+ * reclaim still keeps a dirty worktree.
  *
  * The clock is `updatedAt`: entering Done and unarchiving both bump it, so a
  * restored card is not re-archived on the next pass, and any other touch can

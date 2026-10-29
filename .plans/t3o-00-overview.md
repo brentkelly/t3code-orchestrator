@@ -310,9 +310,11 @@ migration.
 
 **Decision:** cards **may** auto-archive after N days untouched in Done — an opt-in board setting
 (`lifecycle.autoArchiveDone`, default **off**; `autoArchiveAfterDays`, default **7**). The clock is
-the card's last touch (`updatedAt`), which entering Done and unarchiving both reset, so no stage-entry
-timestamp is stored. A card whose worktree reclaim was refused for unsaved work stays in Done for a
-human (T3O-77). Archiving removes them from the shell snapshot and the in-memory read model, reclaims any surviving worktree, and leaves the events
+the card's last touch (`updatedAt`), which entering Done and unarchiving both reset, so no
+stage-entry timestamp is stored. A card whose reclaim at Done was refused for unsaved work stays in
+Done for a human (T3O-77); with `reclaimWorktreeOnDone` off no reclaim runs at Done, so the card is
+archived and the archive's safe reclaim keeps the worktree. Archiving removes cards from the shell
+snapshot and the in-memory read model, reclaims any surviving worktree, and leaves the events
 in the log. Archived cards remain searchable and restorable through a settings route, mirroring
 `thread.archived` / `/settings/archived`.
 

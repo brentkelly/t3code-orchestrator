@@ -115,6 +115,29 @@ it.effect("keeps a Done card whose worktree reclaim was refused for unsaved work
   ),
 );
 
+it.effect("archives a Done card holding a worktree while reclaim at Done is off", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [doneCard("kept", EIGHT_DAYS_AGO, readyWorktree("kept"))],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({
+        building: [codexStep],
+        globalMaxConcurrent: 3,
+        autoArchiveDone: true,
+        reclaimWorktreeOnDone: false,
+      }),
+    },
+    ({ reactor, board }) =>
+      Effect.gen(function* () {
+        yield* reactor.fireAutoArchives;
+        yield* reactor.drain;
+        assert.strictEqual(archivedAt((yield* board).cards, "kept"), EPOCH);
+      }),
+  ),
+);
+
 it.effect("does not re-archive a card a human restored", () =>
   withGovernor(fixture([doneCard("old", EIGHT_DAYS_AGO)], true), ({ reactor, board, model }) =>
     Effect.gen(function* () {
