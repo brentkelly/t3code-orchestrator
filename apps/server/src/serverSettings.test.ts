@@ -1066,7 +1066,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         autoArchiveAfterDays: 14,
       });
       const rewritten = yield* decodeServerSettings(
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
         JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath)),
       );
       assert.deepEqual(rewritten.board.lifecycle, archiving.board.lifecycle);

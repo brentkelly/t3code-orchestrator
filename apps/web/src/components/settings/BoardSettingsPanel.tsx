@@ -14,6 +14,7 @@
  * card.
  */
 import {
+  DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT,
   DEFAULT_BOARD_KEY_PREFIX,
   DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
@@ -408,6 +409,7 @@ function BoardConcurrencySettings(props: {
 
 function LifecycleSection({ board, update }: { board: BoardSettings; update: UpdateFn }) {
   const anchor = searchableSetting("board-reclaim-worktree-on-done");
+  const autoArchive = searchableSetting("board-auto-archive-done");
   return (
     <SettingsSection id="board-lifecycle" title="Lifecycle" variant="plain">
       <CardListContainer id="board-reclaim-worktree-on-done">
@@ -427,9 +429,43 @@ function LifecycleSection({ board, update }: { board: BoardSettings; update: Upd
           }
         />
       </CardListContainer>
+      <CardListContainer id="board-auto-archive-done">
+        <CardRow
+          label={autoArchive.title}
+          description="Archive cards left untouched in Done for this many days. Cards whose worktree holds unsaved work are kept in Done. Archived cards can be restored from the archive."
+          control={
+            <Switch
+              checked={board.lifecycle.autoArchiveDone}
+              onCheckedChange={(checked) =>
+                update({ board: { lifecycle: { autoArchiveDone: Boolean(checked) } } })
+              }
+              aria-label={autoArchive.title}
+            />
+          }
+        />
+        {board.lifecycle.autoArchiveDone ? (
+          <CardRow
+            label="Days in Done before archiving"
+            control={
+              <NumberStepper
+                value={board.lifecycle.autoArchiveAfterDays}
+                min={1}
+                max={365}
+                ariaLabel="Days in Done before archiving"
+                onChange={(value) => {
+                  if (value !== board.lifecycle.autoArchiveAfterDays) {
+                    update({ board: { lifecycle: { autoArchiveAfterDays: value } } });
+                  }
+                }}
+              />
+            }
+          />
+        ) : null}
+      </CardListContainer>
       <p className="px-3 text-xs text-muted-foreground/70 sm:px-4">
         Defaults: reclaim worktrees at Done {DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE ? "on" : "off"},
-        global concurrency {DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT}.
+        auto-archive off ({DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS} days when on), global concurrency{" "}
+        {DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT}.
       </p>
     </SettingsSection>
   );

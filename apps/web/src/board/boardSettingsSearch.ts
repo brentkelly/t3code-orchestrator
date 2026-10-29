@@ -54,4 +54,10 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/board",
     targetId: "board-lifecycle",
   },
+  {
+    id: "board-auto-archive-done",
+    title: "Auto-archive Done cards",
+    to: "/settings/board",
+    targetId: "board-lifecycle",
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
