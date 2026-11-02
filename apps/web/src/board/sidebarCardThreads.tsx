@@ -24,7 +24,7 @@ import { useBoardEnvironmentId } from "./useBoardEnvironmentId";
 const HIDE_CARD_THREADS_KEY = "t3o:sidebar:hide-card-threads";
 
 /** Whether this device hides card threads from Settled. On until the user turns it off. */
-export function useHideCardThreads() {
+function useHideCardThreads() {
   return useLocalStorage(HIDE_CARD_THREADS_KEY, true, Schema.Boolean);
 }
 
