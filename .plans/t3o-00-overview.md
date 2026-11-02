@@ -308,8 +308,13 @@ migration.
 
 ### D15 — Archive, don't accumulate
 
-**Decision:** cards auto-archive after **7 days in Done** (setting). Archiving removes them from the
-shell snapshot and the in-memory read model, reclaims any surviving worktree, and leaves the events
+**Decision:** cards **may** auto-archive after N days untouched in Done — an opt-in board setting
+(`lifecycle.autoArchiveDone`, default **off**; `autoArchiveAfterDays`, default **7**). The clock is
+the card's last touch (`updatedAt`), which entering Done and unarchiving both reset, so no
+stage-entry timestamp is stored. A card whose reclaim at Done was refused for unsaved work stays in
+Done for a human (T3O-77); with `reclaimWorktreeOnDone` off no reclaim runs at Done, so the card is
+archived and the archive's safe reclaim keeps the worktree. Archiving removes cards from the shell
+snapshot and the in-memory read model, reclaims any surviving worktree, and leaves the events
 in the log. Archived cards remain searchable and restorable through a settings route, mirroring
 `thread.archived` / `/settings/archived`.
 
@@ -379,7 +384,7 @@ a human act unless listed below.
 
 - Building → Code review when the build step reports success.
 - A parent card advances when its last child plan card reaches Done (D12).
-- Done → archived after the configured window (D15).
+- Done → archived after the configured window, when auto-archive is enabled (D15).
 - A card whose worker is removed while it has no worktree falls back to the default worker, with an
   activity entry (D22).
 
