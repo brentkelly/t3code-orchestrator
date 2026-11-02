@@ -76,6 +76,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   ClockIcon,
   EllipsisVerticalIcon,
@@ -98,7 +99,9 @@ import {
   XIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { useMediaQuery } from "../hooks/useMediaQuery";
 
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
@@ -121,6 +124,7 @@ import {
 } from "./boardCardModelRows";
 import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
+import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
@@ -176,6 +180,12 @@ import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
 import { BoardHint } from "./BoardHint";
+import { BOARD_CARD_COMPACT_CHROME_QUERY, boardCardCompactChrome } from "./boardCardCompactChrome";
+import {
+  BoardCardThreadCompactControls,
+  BoardCardThreadExitFullscreenButton,
+  BoardCardThreadOpenInThreadsButton,
+} from "./BoardCardThreadChrome";
 import { threadWorkerOpensOn, type BoardThreadWorker } from "./workers/threadWorker";
 import {
   boardForwardShownBesideRecovery,
@@ -664,23 +674,28 @@ const THREAD_STATE_LABEL: Record<BoardCardThreadState, string> = {
 /**
  * The card's title, click-to-edit in place — the prototype's affordance, the
  * same one `BriefBody` has. The heading keeps `CARD_TITLE_ID` in both states so
- * the dialog stays labelled while the title is being typed.
+ * the dialog stays labelled while the title is being typed, including the
+ * compact identity-row heading used on a short maximised sheet (T3O-17).
  *
  * A blank title is a cancel, not a clear: `board.card.update` takes a non-empty
  * title, and a card with no title is nothing anyone can find again.
  *
  * A done card gets a check glyph after the title, in the title's own size and
- * colour: completion reads off the heading without tinting the sheet. It is a
- * sibling of the text, not a badge, so a wrapping title carries it along.
+ * colour: completion reads off the heading without tinting the sheet. On the
+ * wrapping title it is a sibling of the text, not a badge, so it travels with
+ * the last line. On the compact identity-row title it sits outside the
+ * truncate box so a long heading cannot clip it.
  */
 function TitleBody({
   title,
   done,
   onSave,
+  compact = false,
 }: {
   readonly title: string;
   readonly done: boolean;
   readonly onSave: (title: string) => void;
+  readonly compact?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
@@ -689,42 +704,72 @@ function TitleBody({
     if (trimmed.length > 0 && trimmed !== title) onSave(trimmed);
     setEditing(false);
   };
-  const frame =
-    "mx-2.5 mt-2 shrink-0 rounded-[7px] px-1.5 text-[21px]/[1.25] font-semibold tracking-[-0.015em] text-pretty text-foreground";
+  const frame = compact
+    ? "min-w-16 max-w-[min(40%,14rem)] rounded-[7px] px-1 text-[13.5px]/[18px] font-semibold tracking-[-0.01em] text-foreground"
+    : "mx-2.5 mt-2 shrink-0 rounded-[7px] px-1.5 text-[21px]/[1.25] font-semibold tracking-[-0.015em] text-pretty text-foreground";
+  const editingFrame = compact
+    ? "min-w-[10rem] max-w-none flex-1 rounded-[7px] px-1 text-[13.5px]/[18px] font-semibold tracking-[-0.01em] text-foreground"
+    : frame;
   if (editing) {
     return (
       <h2
-        className={cn(frame, "flex bg-muted shadow-[0_0_0_1px_var(--primary)]")}
+        className={cn(editingFrame, "flex bg-muted shadow-[0_0_0_1px_var(--primary)]")}
         id={CARD_TITLE_ID}
       >
-        {/* A textarea, not an input: long titles wrap here exactly as they do
-            at rest, so committing never reflows the sheet. */}
-        <textarea
-          autoFocus
-          className="field-sizing-content w-full resize-none bg-transparent text-inherit outline-none"
-          onBlur={commit}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              setDraft(title);
-              setEditing(false);
-            }
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              commit();
-            }
-          }}
-          rows={1}
-          value={draft}
-        />
+        {compact ? (
+          <input
+            autoFocus
+            className="w-full bg-transparent text-inherit outline-none"
+            onBlur={commit}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setDraft(title);
+                setEditing(false);
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                commit();
+              }
+            }}
+            value={draft}
+          />
+        ) : (
+          /* A textarea, not an input: long titles wrap here exactly as they do
+              at rest, so committing never reflows the sheet. */
+          <textarea
+            autoFocus
+            className="field-sizing-content w-full resize-none bg-transparent text-inherit outline-none"
+            onBlur={commit}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setDraft(title);
+                setEditing(false);
+              }
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                commit();
+              }
+            }}
+            rows={1}
+            value={draft}
+          />
+        )}
       </h2>
     );
   }
   return (
-    <h2 className={cn(frame, "cursor-text hover:bg-accent")} id={CARD_TITLE_ID}>
-      <BoardHint label="Click to edit">
+    <h2
+      className={cn(frame, compact && "flex min-w-16 items-center", "cursor-text hover:bg-accent")}
+      id={CARD_TITLE_ID}
+    >
+      <BoardHint label={compact ? title : "Click to edit"}>
         <button
-          className="block w-full cursor-text text-left"
+          className={cn(
+            "cursor-text text-left",
+            compact ? "min-w-0 flex-1 truncate" : "block w-full",
+          )}
           onClick={() => {
             setDraft(title);
             setEditing(true);
@@ -732,7 +777,7 @@ function TitleBody({
           type="button"
         >
           {title}
-          {done ? (
+          {done && !compact ? (
             <CheckIcon
               aria-hidden
               className="ml-[9px] inline-block size-[21px] align-[-3px]"
@@ -741,6 +786,9 @@ function TitleBody({
           ) : null}
         </button>
       </BoardHint>
+      {done && compact ? (
+        <CheckIcon aria-hidden className="ml-[9px] size-3.5 shrink-0" strokeWidth={3.2} />
+      ) : null}
     </h2>
   );
 }
@@ -2339,6 +2387,15 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           nowMs: Date.now(),
         });
   const wide = boardCardDetailIsWide(props.stages, card.stage, props.paneChoice);
+  const shortViewport = useMediaQuery(BOARD_CARD_COMPACT_CHROME_QUERY);
+  const compactChrome = boardCardCompactChrome(wide && props.maximised, shortViewport);
+  const compactClusterRef = useRef<HTMLDivElement | null>(null);
+  const [compactCanScrollRight, setCompactCanScrollRight] = useState(false);
+  const syncCompactScrollAffordance = useCallback(() => {
+    const el = compactClusterRef.current;
+    if (el === null) return;
+    setCompactCanScrollRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 1);
+  }, []);
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
   // count at all (t3o-13, D1), and everything else must be done.
@@ -2495,113 +2552,214 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const selectedThread =
     props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
     initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
+  const selectedLink = props.threadLinks.find((link) => link.threadId === selectedThread) ?? null;
+  const paneTabs = (
+    <PaneTabs
+      hasPlan={hasPlan}
+      hasReview={hasReview}
+      hasSummary={hasSummary}
+      onSelect={setPane}
+      pane={activePane}
+      planCount={planRows === null ? null : planRows.rows.length}
+    />
+  );
+  // Chip fields and pane-tab inputs are listed so a same-sized cluster that
+  // gains chips or tabs remeasures scrollWidth. ResizeObserver only sees the box.
+  useEffect(() => {
+    if (!compactChrome) return undefined;
+    const el = compactClusterRef.current;
+    if (el === null) return undefined;
+    syncCompactScrollAffordance();
+    return observeResize(el, syncCompactScrollAffordance);
+  }, [
+    archived,
+    card.autoMerge,
+    card.labels,
+    card.modelOverrides,
+    card.pullRequest,
+    card.scheduledStartAt,
+    card.stage,
+    card.title,
+    compactChrome,
+    done,
+    planRows,
+    props.detail.plans,
+    props.detail.stepCompletions,
+    props.parentCard,
+    props.queueInfo,
+    syncCompactScrollAffordance,
+  ]);
 
   return (
     <>
       {/* Identity row: key, the card's labels, its stage. `relative z-10` lifts
           it (and the × / ⋯ / fullscreen buttons it carries) above the nav
           rails' band, which would otherwise sit over them (T3O-37, D8). */}
-      <div className="relative z-10 flex shrink-0 items-center gap-[9px] px-4 pt-4">
-        <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">{card.key}</span>
-        {props.parentCard != null ? (
-          // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
-          // back into the sub-board it lives on, with this sheet still open.
-          <BoardHint label={`Part of ${props.parentCard.key}'s sub-board — open it`}>
-            <button
-              className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
-              disabled={props.onOpenParentSubBoard === undefined}
-              onClick={props.onOpenParentSubBoard}
-              type="button"
-            >
-              <LayersIcon className="size-2.5" />
-              {props.parentCard.key}
-            </button>
-          </BoardHint>
-        ) : null}
-        <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
-        {/* On a done card the stage chip IS the completion badge, cut to the
+      <div
+        className={cn(
+          "relative z-10 flex min-w-0 shrink-0 items-center gap-[9px] px-4",
+          compactChrome ? "py-2" : "pt-4",
+        )}
+      >
+        <div
+          className={cn(
+            compactChrome
+              ? "relative min-w-0 flex-auto overflow-hidden"
+              : "flex shrink-0 items-center gap-[9px]",
+          )}
+        >
+          <div
+            className={cn(
+              "flex items-center gap-[9px]",
+              compactChrome &&
+                "min-w-0 w-full overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            )}
+            onScroll={compactChrome ? syncCompactScrollAffordance : undefined}
+            ref={compactChrome ? compactClusterRef : undefined}
+          >
+            {compactChrome ? (
+              <TitleBody compact done={done} onSave={props.onSaveTitle} title={card.title} />
+            ) : null}
+            <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">
+              {card.key}
+            </span>
+            {props.parentCard != null ? (
+              // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
+              // back into the sub-board it lives on, with this sheet still open.
+              <BoardHint label={`Part of ${props.parentCard.key}'s sub-board — open it`}>
+                <button
+                  className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
+                  disabled={props.onOpenParentSubBoard === undefined}
+                  onClick={props.onOpenParentSubBoard}
+                  type="button"
+                >
+                  <LayersIcon className="size-2.5" />
+                  {props.parentCard.key}
+                </button>
+              </BoardHint>
+            ) : null}
+            <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
+            {/* On a done card the stage chip IS the completion badge, cut to the
             same block as the label chips beside it (t3o-36): the sheet no
             longer wears a wash, so this and the title's check carry "done".
             Green means done and only done — docs/t3o/status-colours.md. */}
-        <span
-          className={cn(
-            "inline-flex shrink-0 items-center font-medium",
-            done
-              ? "h-4 rounded-[5px] bg-success/16 px-1.5 text-[10px] tracking-[0.03em] text-success-foreground uppercase"
-              : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
-          )}
-        >
-          {boardStageLabel(props.stages, card.stage)}
-        </span>
-        {archived ? (
-          <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-            Archived
-          </span>
-        ) : null}
-        {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
+            <span
+              className={cn(
+                "inline-flex shrink-0 items-center font-medium",
+                done
+                  ? "h-4 rounded-[5px] bg-success/16 px-1.5 text-[10px] tracking-[0.03em] text-success-foreground uppercase"
+                  : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
+              )}
+            >
+              {boardStageLabel(props.stages, card.stage)}
+            </span>
+            {archived ? (
+              <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+                Archived
+              </span>
+            ) : null}
+            {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
             is set, then the clock plus its label. Hidden on a done-role card
             and on an archived one — neither is going to move again on a timer.
             Beside the stage chip, because what it holds is the stage. */}
-        {archived || done ? null : (
-          <BoardCardSchedulePopover
-            // Sized to the chip row it sits in, not to a button row.
-            className="h-[18px]"
-            kind={props.scheduleKind}
-            onChange={props.onSetScheduledStartAt}
-            scheduledStartAt={card.scheduledStartAt}
-            stageLabel={boardStageLabel(props.stages, card.stage)}
-          />
-        )}
-        {/* The auto-merge arm, read-only (T3O-38, D13). NAMES THE SOURCE:
+            {archived || done ? null : (
+              <BoardCardSchedulePopover
+                // Sized to the chip row it sits in, not to a button row.
+                className="h-[18px]"
+                kind={props.scheduleKind}
+                onChange={props.onSetScheduledStartAt}
+                scheduledStartAt={card.scheduledStartAt}
+                stageLabel={boardStageLabel(props.stages, card.stage)}
+              />
+            )}
+            {/* The auto-merge arm, read-only (T3O-38, D13). NAMES THE SOURCE:
             with the board-wide setting on the per-card switch is hidden, so a
             user who goes looking for it needs to be told where the decision
             actually lives. Neutral, like the queue chip below — an armed card
             is not running, not done, and asking nothing of anyone. */}
-        {archived || done || autoMergeChip === null ? null : (
-          <BoardHint label={autoMergeChip.tooltip}>
-            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-              <PullRequestGlyph.merged className="size-2.5" />
-              {autoMergeChip.label}
-            </span>
-          </BoardHint>
-        )}
-        {/* Queued for a build slot (t3o-33). Beside the stage badge, because
+            {archived || done || autoMergeChip === null ? null : (
+              <BoardHint label={autoMergeChip.tooltip}>
+                <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+                  <PullRequestGlyph.merged className="size-2.5" />
+                  {autoMergeChip.label}
+                </span>
+              </BoardHint>
+            )}
+            {/* Queued for a build slot (t3o-33). Beside the stage badge, because
             "Building" alone is what made a queued card look mid-build. Neutral,
             not `--attention`: nothing is waiting on the user here — see
             docs/t3o/status-colours.md. */}
-        {props.queueInfo != null ? (
-          <BoardHint label={props.queueInfo.detail}>
-            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-              <ClockIcon className="size-2.5" />
-              {props.queueInfo.label}
-            </span>
-          </BoardHint>
-        ) : null}
-        {/* Shown only once this card actually overrides something (t3o-29, D7).
+            {props.queueInfo != null ? (
+              <BoardHint label={props.queueInfo.detail}>
+                <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+                  <ClockIcon className="size-2.5" />
+                  {props.queueInfo.label}
+                </span>
+              </BoardHint>
+            ) : null}
+            {/* Shown only once this card actually overrides something (t3o-29, D7).
             An override changes what the card spends and what authority it runs
             under; that should not be invisible from the card. It costs nothing
             on a card that has not set one. */}
-        {modelOverridden ? (
-          <BoardHint label={modelPillTitle}>
-            <button
-              className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={() => setModelsOpen(true)}
-              type="button"
-            >
-              <SlidersHorizontalIcon className="size-2.5" />
-              {modelPillLabel}
-            </button>
-          </BoardHint>
+            {modelOverridden ? (
+              <BoardHint label={modelPillTitle}>
+                <button
+                  className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={() => setModelsOpen(true)}
+                  type="button"
+                >
+                  <SlidersHorizontalIcon className="size-2.5" />
+                  {modelPillLabel}
+                </button>
+              </BoardHint>
+            ) : null}
+            {compactChrome ? paneTabs : null}
+          </div>
+          {/* Overlay, not a flex sibling: mounting Show more must not shrink
+              the scrollport below the title's 4rem floor on a 320px sheet. */}
+          {compactChrome && compactCanScrollRight ? (
+            <BoardHint label="Show more">
+              <button
+                aria-label="Show more"
+                className="absolute top-1/2 right-0 z-10 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-[7px] bg-card text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                onClick={() => {
+                  compactClusterRef.current?.scrollBy({
+                    left: compactClusterRef.current.clientWidth * 0.7,
+                    behavior: "smooth",
+                  });
+                }}
+                type="button"
+              >
+                <ChevronRightIcon className="size-3.5" />
+              </button>
+            </BoardHint>
+          ) : null}
+        </div>
+        {compactChrome && activePane === "thread" ? (
+          <BoardCardThreadCompactControls
+            adoptableThreads={props.adoptableThreads}
+            onCreateBlankThread={props.onCreateBlankThread}
+            onLinkThread={props.onLinkThread}
+            onRestartStage={props.onRestartStage}
+            onSelectThread={setSelectedThreadId}
+            onUnlinkThread={props.onUnlinkThread}
+            selectedThreadId={selectedThread}
+            stageRestart={props.stageRestart}
+            threadLinks={props.threadLinks}
+            threadTodos={props.threadTodos}
+          />
         ) : null}
-        <span className="flex-1" />
-        <PaneTabs
-          hasPlan={hasPlan}
-          hasReview={hasReview}
-          hasSummary={hasSummary}
-          onSelect={setPane}
-          pane={activePane}
-          planCount={planRows === null ? null : planRows.rows.length}
-        />
+        {compactChrome &&
+        activePane === "thread" &&
+        selectedLink !== null &&
+        !selectedLink.tombstoned ? (
+          <BoardCardThreadOpenInThreadsButton
+            threadId={selectedLink.threadId}
+            worker={selectedLink.worker}
+          />
+        ) : null}
+        {compactChrome ? null : <span className="flex-1" />}
+        {compactChrome ? null : paneTabs}
         <Menu>
           <MenuTrigger
             aria-label="More actions"
@@ -2684,8 +2842,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           open={deleteConfirmOpen}
           threadCount={card.threadLinks.length}
         />
+        {compactChrome ? (
+          <BoardCardThreadExitFullscreenButton maximised onToggle={props.onToggleMaximised} />
+        ) : null}
         <BoardHint label="Close">
           <button
+            aria-label="Close"
             className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
             onClick={props.onClose}
             type="button"
@@ -2695,7 +2857,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         </BoardHint>
       </div>
 
-      <TitleBody done={done} onSave={props.onSaveTitle} title={card.title} />
+      {compactChrome ? null : (
+        <TitleBody done={done} onSave={props.onSaveTitle} title={card.title} />
+      )}
 
       {/* One insertion above the layout split covers both forms (T3O-9). Only
           the wide one offers `View thread`: the narrow layout has no thread
@@ -2827,6 +2991,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               <BoardCardThreadPane
                 adoptableThreads={props.adoptableThreads}
                 cardKey={card.key}
+                compactChrome={compactChrome}
                 maximised={props.maximised}
                 onCreateBlankThread={props.onCreateBlankThread}
                 onLinkThread={props.onLinkThread}
