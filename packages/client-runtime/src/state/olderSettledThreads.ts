@@ -31,12 +31,16 @@ export interface OlderSettled {
   readonly before: string;
   readonly beforeMs: number;
   readonly counts: ReadonlyMap<ProjectId, number>;
+  // T3o: board card threads left out of `counts`, null unless the server reported them (T3O-78).
+  readonly boardCardThreadCounts?: ReadonlyMap<ProjectId, number> | null;
 }
 
 /** The scope's projects in one environment, or null for all of them. */
 export interface OlderSettledScope {
   readonly environmentId: EnvironmentId;
   readonly projectIds: ReadonlyArray<ProjectId> | null;
+  // T3o: read counts and pages without board card threads (T3O-78).
+  readonly excludeBoardCardThreads?: boolean;
 }
 
 /**
@@ -150,15 +154,19 @@ export function unloadedOlderSettledCount(input: {
     readonly environmentId: EnvironmentId;
     readonly source: OlderSettledRow;
   }>;
+  // T3o: which counts to read, the card-thread ones for the hidden notice (T3O-78).
+  readonly countsOf?: (older: OlderSettled) => ReadonlyMap<ProjectId, number> | null | undefined;
 }): number {
   let unloaded = 0;
   for (const scope of input.scopes) {
     const older = input.olderSettled(scope.environmentId);
     if (older === null) continue;
+    const counts = input.countsOf === undefined ? older.counts : input.countsOf(older);
+    if (counts == null) continue;
     if (scope.projectIds === null) {
-      for (const count of older.counts.values()) unloaded += count;
+      for (const count of counts.values()) unloaded += count;
     } else {
-      for (const projectId of scope.projectIds) unloaded += older.counts.get(projectId) ?? 0;
+      for (const projectId of scope.projectIds) unloaded += counts.get(projectId) ?? 0;
     }
     for (const thread of input.threads) {
       if (
@@ -202,6 +210,14 @@ export function wantedOlderSettledPages(input: {
   return next ?? input.requested;
 }
 
+// T3o: a server that ignores the card-thread filter reports no card counts (T3O-78).
+function boardCardThreadCountsOf(page: {
+  readonly counts: OrchestrationV2OlderSettledThreadsPage["counts"];
+}): ReadonlyMap<ProjectId, number> | null {
+  if (page.counts.some((entry) => entry.boardCardThreadCount === undefined)) return null;
+  return new Map(page.counts.map((entry) => [entry.projectId, entry.boardCardThreadCount ?? 0]));
+}
+
 /**
  * Shells that omit older settled threads (`omitOlderSettled`) name the cut and count what they left
  * out. These atoms keep those counts current and read older threads in pages for the Settled shelf.
@@ -224,11 +240,16 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
       readonly generation: number;
       readonly before: string;
       readonly key: string;
+      readonly excludeBoardCardThreads?: boolean;
     }) {
-      yield* Effect.sleep(COUNT_REREAD_DELAY);
+      // T3o: the snapshot's counts include card threads, so the filtered read goes at once (T3O-78).
+      if (input.excludeBoardCardThreads !== true || input.key !== "snapshot") {
+        yield* Effect.sleep(COUNT_REREAD_DELAY);
+      }
       return yield* request(ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads, {
         before: { settledAt: input.before },
         limit: 0,
+        ...(input.excludeBoardCardThreads === true ? { excludeBoardCardThreads: true } : {}),
       });
     }),
   });
@@ -243,11 +264,13 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
       readonly generation: number;
       readonly projectIds: ReadonlyArray<ProjectId> | null;
       readonly before: OrchestrationV2OlderSettledCursor;
+      readonly excludeBoardCardThreads?: boolean;
     }) {
       return yield* request(ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads, {
         before: input.before,
         ...(input.projectIds === null ? {} : { projectIds: input.projectIds }),
         limit: OLDER_SETTLED_PAGE_SIZE,
+        ...(input.excludeBoardCardThreads === true ? { excludeBoardCardThreads: true } : {}),
       });
     }),
   });
@@ -256,7 +279,12 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
     readonly counts: OrchestrationV2OlderSettledThreadsPage["counts"];
   }) => new Map(source.counts.map(({ projectId, count }) => [projectId, count] as const));
 
-  const olderSettledAtom = Atom.family((environmentId: EnvironmentId) => {
+  const olderSettledAtomFamily = Atom.family((familyKey: string) => {
+    // T3o: keyed by the card-thread filter too, so each mode keeps its own counts (T3O-78).
+    const [environmentId, excludeBoardCardThreads] = JSON.parse(familyKey) as [
+      EnvironmentId,
+      boolean,
+    ];
     let generation = -1;
     // The key of the first state seen this generation, when that state is the snapshot itself.
     let snapshotKey: string | null = null;
@@ -288,35 +316,51 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
         lastRead = null;
       }
       // Generation 0 is a cached shell: no reads until this session's first snapshot.
-      if (key === snapshotKey || state.generation === 0) return fromSnapshot;
+      if (state.generation === 0) return fromSnapshot;
+      if (key === snapshotKey && !excludeBoardCardThreads) return fromSnapshot;
       const read = selectEnvironmentQueryData(
         get(
           countReadAtom({
             environmentId,
-            input: { generation: state.generation, before: cut.before, key },
+            input: excludeBoardCardThreads
+              ? {
+                  generation: state.generation,
+                  before: cut.before,
+                  key: key === snapshotKey ? "snapshot" : key,
+                  excludeBoardCardThreads,
+                }
+              : { generation: state.generation, before: cut.before, key },
           }),
         ),
       );
       if (read !== null && read !== lastReadPage) {
         lastReadPage = read;
-        lastRead = { ...fromSnapshot, counts: countsOf(read) };
+        lastRead = {
+          ...fromSnapshot,
+          counts: countsOf(read),
+          ...(excludeBoardCardThreads ? { boardCardThreadCounts: boardCardThreadCountsOf(read) } : {}),
+        };
       }
       return lastRead ?? fromSnapshot;
-    }).pipe(Atom.withLabel(`environment-older-settled:${environmentId}`));
+    }).pipe(Atom.withLabel(`environment-older-settled:${familyKey}`));
   });
+  const olderSettledAtom = (environmentId: EnvironmentId, excludeBoardCardThreads = false) =>
+    olderSettledAtomFamily(JSON.stringify([environmentId, excludeBoardCardThreads]));
 
   const pagesKey = (scope: OlderSettledScope, pages: number) =>
     JSON.stringify([
       scope.environmentId,
       scope.projectIds === null ? null : [...scope.projectIds].sort(),
       pages,
+      scope.excludeBoardCardThreads === true,
     ]);
 
   const pagesAtom = Atom.family((key: string) => {
-    const [environmentId, projectIds, pages] = JSON.parse(key) as [
+    const [environmentId, projectIds, pages, excludeBoardCardThreads] = JSON.parse(key) as [
       EnvironmentId,
       ReadonlyArray<ProjectId> | null,
       number,
+      boolean,
     ];
     let previous = NO_PAGES;
     const keep = (next: OlderSettledPages): OlderSettledPages => {
@@ -343,7 +387,12 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
         const result = get(
           pageReadAtom({
             environmentId,
-            input: { generation: state.generation, projectIds, before: frontier },
+            input: {
+              generation: state.generation,
+              projectIds,
+              before: frontier,
+              ...(excludeBoardCardThreads ? { excludeBoardCardThreads } : {}),
+            },
           }),
         );
         const page = selectEnvironmentQueryData(result);
@@ -407,13 +456,13 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
 
   // One read for a shelf that spans environments: each one's cut, counts and pages.
   const shelfAtom = Atom.family((key: string) => {
-    const entries = JSON.parse(key) as ReadonlyArray<readonly [string, string]>;
+    const entries = JSON.parse(key) as ReadonlyArray<readonly [string, string, boolean]>;
     let previous: ReadonlyMap<EnvironmentId, OlderSettledShelfEnvironment> = new Map();
     return Atom.make((get): ReadonlyMap<EnvironmentId, OlderSettledShelfEnvironment> => {
       const shelf = new Map<EnvironmentId, OlderSettledShelfEnvironment>();
       let changed = previous.size !== entries.length;
-      for (const [environmentId, pagesKey] of entries) {
-        const older = get(olderSettledAtom(environmentId as EnvironmentId));
+      for (const [environmentId, pagesKey, excludeBoardCardThreads] of entries) {
+        const older = get(olderSettledAtom(environmentId as EnvironmentId, excludeBoardCardThreads));
         const pages = get(pagesAtom(pagesKey));
         const prior = previous.get(environmentId as EnvironmentId);
         changed ||= prior?.older !== older || prior.pages !== pages;
@@ -440,13 +489,17 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
           generation: state.generation,
           projectIds: scope.projectIds === null ? null : [...scope.projectIds].sort(),
           before: result.frontier,
+          ...(scope.excludeBoardCardThreads === true ? { excludeBoardCardThreads: true } : {}),
         },
       }),
     );
   };
 
   return {
-    /** The environment's cut and current counts, or null when its shell keeps every settled thread. */
+    /**
+     * The environment's cut and current counts, or null when its shell keeps every settled thread.
+     * With `excludeBoardCardThreads`, counts leave card threads out (T3O-78).
+     */
     olderSettledAtom,
     /** Each scope's cut, counts and first `pages` pages. */
     shelfAtom: (
@@ -454,7 +507,14 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
     ) =>
       shelfAtom(
         JSON.stringify(
-          scopes.map(({ scope, pages }) => [scope.environmentId, pagesKey(scope, pages)] as const),
+          scopes.map(
+            ({ scope, pages }) =>
+              [
+                scope.environmentId,
+                pagesKey(scope, pages),
+                scope.excludeBoardCardThreads === true,
+              ] as const,
+          ),
         ),
       ),
     retryPages,
