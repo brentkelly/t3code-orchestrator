@@ -17,22 +17,25 @@ import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 
 // regression: #13239 a stale CLI shadowing the updated one kept "updating" to itself
 // T3o: 2 and 3 are blocked too: upstream's protocol-3 launcher snapshots only state.sqlite (T3O-54).
-it.each([1, 2, 3])("blocks legacy launcher protocol %i with exact recovery steps", (launcherProtocol) => {
-  const result = runServicePreflight({
-    databasePath: "/missing/state.sqlite",
-    launcherProtocol,
-    version: "9.8.7",
-  });
+it.each([1, 2, 3])(
+  "blocks legacy launcher protocol %i with exact recovery steps",
+  (launcherProtocol) => {
+    const result = runServicePreflight({
+      databasePath: "/missing/state.sqlite",
+      launcherProtocol,
+      version: "9.8.7",
+    });
 
-  expect(result).toMatchObject({ status: "blocked", version: "9.8.7" });
-  const reason = result.status === "blocked" ? result.reason : "";
-  expect(reason).toMatch(new RegExp(`\\b${launcherProtocol}\\b`));
-  expect(reason).toMatch(new RegExp(`\\b${SERVICE_LAUNCHER_PROTOCOL}\\b`));
-  expect(reason).toContain("curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION=9.8.7 sh");
-  expect(reason).toContain("~/.local/bin/t3 service install");
-  expect(reason).toContain("t3 --version");
-  expect(reason).toContain("which -a t3");
-});
+    expect(result).toMatchObject({ status: "blocked", version: "9.8.7" });
+    const reason = result.status === "blocked" ? result.reason : "";
+    expect(reason).toMatch(new RegExp(`\\b${launcherProtocol}\\b`));
+    expect(reason).toMatch(new RegExp(`\\b${SERVICE_LAUNCHER_PROTOCOL}\\b`));
+    expect(reason).toContain("curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION=9.8.7 sh");
+    expect(reason).toContain("~/.local/bin/t3 service install");
+    expect(reason).toContain("t3 --version");
+    expect(reason).toContain("which -a t3");
+  },
+);
 
 it.layer(NodeServices.layer)("service preflight database", (it) => {
   it.effect("blocks a database that a newer build migrated", () =>
