@@ -83,6 +83,7 @@ import {
   resolveBoardStageExecution,
   resolveBoardDefaultModelSelection,
   resolveBoardStageModelSelection,
+  resolveBoardCardMergeStrategy,
   resolveBoardCardStageModelOverride,
   boardModelSelectionOfOverride,
   type BoardCardStageModelOverride,
@@ -5727,9 +5728,14 @@ const make = Effect.gen(function* () {
     // same stage today because of the gate above, but reading the role holder
     // is what makes the strategy the user configured the one that runs —
     // resolving off the card's own stage would silently fall back to squash
-    // the moment those two could differ.
+    // the moment those two could differ. The card's own override, then its
+    // sub-board parent's, wins over it (T3O-80).
     const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
-    const strategy = isBoardMergeStageExecution(exec) ? exec.strategy : "squash";
+    const { strategy } = resolveBoardCardMergeStrategy({
+      card: fresh,
+      parent: fresh.parentCardId === null ? null : yield* readCard(fresh.parentCardId),
+      stageStrategy: isBoardMergeStageExecution(exec) ? exec.strategy : null,
+    });
 
     const failure = yield* workspace
       .mergePullRequest({ number: pullRequest.number, method: strategy })

@@ -216,6 +216,7 @@ export const makeBoardCard = (input: {
   humanInLoop: input.humanInLoop ?? null,
   reviewOverrides: null,
   modelOverrides: null,
+  mergeStrategy: null,
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: (input.scheduledStartAt ?? null) as BoardCard["scheduledStartAt"],

@@ -1213,6 +1213,19 @@ export const BoardCardPlacementOrphan = Schema.Struct({
 });
 export type BoardCardPlacementOrphan = typeof BoardCardPlacementOrphan.Type;
 
+/** How a pull request is merged. A host merges with its own default when it
+    is asked for no strategy, which is not a choice a board should leave to the
+    repository, so one is always chosen. Squash is the default: a card's branch
+    is one unit of work.
+
+    An ALIAS, not a second literal set: the value the settings card writes is
+    handed straight to `PullRequestService.runAction` as its `mergeMethod`, so
+    two independent definitions could drift into a config the host cannot
+    accept. `pullRequest.ts` imports nothing from here, so the direction is
+    safe. */
+export const BoardMergeStrategy = PullRequestMergeMethod;
+export type BoardMergeStrategy = PullRequestMergeMethod;
+
 export const BoardCard = Schema.Struct({
   id: BoardCardId,
   /** Generated `<prefix>-<cardNumber>`, e.g. "T3-195" (D14). */
@@ -1444,6 +1457,14 @@ export const BoardCard = Schema.Struct({
       the guarantee `modelOverrides` makes, with migration 043's
       `auto_merge_hold` column defaulting to NULL to the same end. */
   autoMergeHold: Schema.NullOr(BoardCardAutoMergeHold).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** This card's own merge strategy (T3O-80), or null to follow the default.
+      Read through `resolveBoardCardMergeStrategy`: a sub-board child inherits
+      its parent's, then the merge stage's configured strategy governs. Decodes
+      to null on every event written before, matching migration 051's NULL
+      column — the replay guarantee `modelOverrides` makes. */
+  mergeStrategy: Schema.NullOr(BoardMergeStrategy).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /** The worker a human pinned this card to (T3O-65, D20), or null to follow
@@ -3870,6 +3891,8 @@ export const BoardCardCreateCommand = Schema.Struct({
   /** Pin the card to a worker at birth (T3O-65, D20). Absent follows the
       board's default worker. The decider requires a registered worker. */
   pinnedWorkerId: Schema.optional(BoardWorkerId),
+  /** The card's own merge strategy (T3O-80). Absent follows the default. */
+  mergeStrategy: Schema.optional(BoardMergeStrategy),
   createdAt: IsoDateTime,
 });
 export type BoardCardCreateCommand = typeof BoardCardCreateCommand.Type;
@@ -3963,6 +3986,11 @@ export const BoardCardUpdateCommand = Schema.Struct({
       reverse state must never be refused, and a hold about a merge that is no
       longer going to happen is a stale label. */
   autoMerge: Schema.optional(Schema.Boolean),
+  /** The card's own merge strategy (T3O-80). Absent leaves it unchanged;
+      `null` clears it back to the default; a strategy pins it. Never refused —
+      the reverse state must always be reachable. A change clears any
+      auto-merge hold, since the hold may be the forge refusing the old one. */
+  mergeStrategy: Schema.optional(Schema.NullOr(BoardMergeStrategy)),
   /** Append this text to the end of the brief, after a blank line (T3O-53).
       Applied by the decider against the brief as it stands when the command
       is decided, so an edit landing in between is kept rather than
@@ -5060,6 +5088,9 @@ export const BoardCardCreatedPayload = Schema.Struct({
       dialog's pick, or a sub-board child copying its parent's pin. Absent
       follows the default, the same null migration 048's column defaults to. */
   pinnedWorkerId: Schema.optionalKey(BoardWorkerId),
+  /** The card's merge strategy at birth (T3O-80). Absent follows the default,
+      the same null migration 051's column defaults to. */
+  mergeStrategy: Schema.optionalKey(BoardMergeStrategy),
   /** A child arrives with its plan's BODY as its brief — but the decider has
       no SQL client and bodies never ride the read model (D8), so the created
       payload carries this pointer instead of the text and the SQL projector
@@ -7952,6 +7983,12 @@ export const BoardCardDetail = Schema.Struct({
   parentModelOverrides: Schema.NullOr(BoardCardModelOverrides).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** The PARENT card's own merge strategy (T3O-80) for a sub-board child,
+      which inherits it; null for a top-level card or a parent with none. Rides
+      the detail for the same reason `parentModelOverrides` does. */
+  parentMergeStrategy: Schema.NullOr(BoardMergeStrategy).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** Whether the card has any proposed plan row of its own (t3o-15, D6) — it
       is `plans.length > 0`, nothing more. It is ONE INPUT to the Build stage's
       per-card human-in-the-loop default, not the whole rule: a sub-board child
@@ -9424,18 +9461,6 @@ export const BoardStageExecutionReview = Schema.Struct({
 });
 export type BoardStageExecutionReview = typeof BoardStageExecutionReview.Type;
 
-/** How a pull request is merged. A host merges with its own default when it
-    is asked for no strategy, which is not a choice a board should leave to the
-    repository, so one is always chosen. Squash is the default: a card's branch
-    is one unit of work.
-
-    An ALIAS, not a second literal set: the value the settings card writes is
-    handed straight to `PullRequestService.runAction` as its `mergeMethod`, so
-    two independent definitions could drift into a config the host cannot
-    accept. `pullRequest.ts` imports nothing from here, so the direction is
-    safe. */
-export const BoardMergeStrategy = PullRequestMergeMethod;
-export type BoardMergeStrategy = PullRequestMergeMethod;
 
 /**
  * The conflict-resolution prompt (intent only — the completion mechanics are
@@ -10128,6 +10153,27 @@ export function resolveBoardCardStageModelOverride(input: {
     input.parent?.modelOverrides?.[input.stageId] ??
     null
   );
+}
+
+/** Where a card's effective merge strategy came from (T3O-80). */
+export type BoardCardMergeStrategySource = "card" | "parent" | "board";
+
+/**
+ * The merge strategy a card's pull request lands with (T3O-80): the card's own
+ * override, else its sub-board parent's (live, like model overrides), else the
+ * merge stage's configured strategy, else squash.
+ */
+export function resolveBoardCardMergeStrategy(input: {
+  readonly card: Pick<BoardCard, "mergeStrategy">;
+  readonly parent: Pick<BoardCard, "mergeStrategy"> | null;
+  /** The merge-role stage's configured strategy, or null when unknown. */
+  readonly stageStrategy: BoardMergeStrategy | null;
+}): { readonly strategy: BoardMergeStrategy; readonly source: BoardCardMergeStrategySource } {
+  if (input.card.mergeStrategy != null) return { strategy: input.card.mergeStrategy, source: "card" };
+  if (input.parent?.mergeStrategy != null) {
+    return { strategy: input.parent.mergeStrategy, source: "parent" };
+  }
+  return { strategy: input.stageStrategy ?? "squash", source: "board" };
 }
 
 /**

@@ -1302,6 +1302,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             : { scheduledStartAt: command.scheduledStartAt }),
           // Key-optional like `baseBranch`: absent IS "follow the default".
           ...(pinnedWorkerId === null ? {} : { pinnedWorkerId }),
+          ...(command.mergeStrategy === undefined ? {} : { mergeStrategy: command.mergeStrategy }),
           dependsOn,
           stage,
           orderKey,
@@ -1692,6 +1693,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         command.scheduledStartAt === undefined &&
         command.autoStart === undefined &&
         command.autoMerge === undefined &&
+        command.mergeStrategy === undefined &&
         command.briefAppend === undefined &&
         command.briefSection === undefined &&
         command.addDependsOn === undefined &&
@@ -1804,6 +1806,12 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
                     : `Card '${card.key}' has already reached '${boardStageWithRole(board, "done")?.label ?? "Done"}', so there is nothing left for an auto-merge to do.`,
                 );
 
+      const mergeStrategy =
+        command.mergeStrategy === undefined ? card.mergeStrategy : command.mergeStrategy;
+      // A forge refusal of the old strategy is a permanent hold (T3O-80), so
+      // picking another one must release it or an armed card stays parked.
+      const mergeStrategyChanged = mergeStrategy !== card.mergeStrategy;
+
       const nextCard: BoardCard = {
         ...card,
         title: command.title ?? card.title,
@@ -1837,7 +1845,9 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         // an amber pill nobody can act on is the stale label this codebase
         // refuses to ship. Re-arming therefore restarts the ladder at rung 0,
         // which is how an exhausted ladder is restarted by hand.
-        autoMergeHold: command.autoMerge === false ? null : card.autoMergeHold,
+        autoMergeHold:
+          command.autoMerge === false || mergeStrategyChanged ? null : card.autoMergeHold,
+        mergeStrategy,
         updatedAt: command.createdAt,
       };
       return {

@@ -56,6 +56,7 @@ function makeCard(
     autoStart: false,
     autoMerge: false,
     autoMergeHold: null,
+    mergeStrategy: null,
     pinnedWorkerId: null,
     placedWorkerId: null,
     workerMove: null,
