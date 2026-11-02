@@ -13,6 +13,21 @@ const cardThreadIds = (sql: SqlClient.SqlClient) => sql`
   UNION SELECT thread_id FROM boards.board_relayed_threads
 `;
 
+// Uncorrelated so SQLite builds it once; a correlated scan per card thread blocked the server for
+// seconds on real data. NULLs are dropped because `NOT IN` over a NULL is never true.
+const subagentAncestorIds = (sql: SqlClient.SqlClient) => sql`
+  SELECT ancestor_id FROM (
+    SELECT json_extract(payload_json, '$.lineage.parentThreadId') AS ancestor_id,
+      json_extract(payload_json, '$.lineage.relationshipToParent') AS relationship
+    FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
+    UNION ALL
+    SELECT json_extract(payload_json, '$.lineage.rootThreadId'),
+      json_extract(payload_json, '$.lineage.relationshipToParent')
+    FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
+  )
+  WHERE relationship = 'subagent' AND ancestor_id IS NOT NULL
+`;
+
 /**
  * A `card_thread` column (1 or 0) for a query over `orchestration_v2_projection_threads t`. Without
  * the filter it is a constant 0, so the unfiltered query reads no board table.
@@ -39,14 +54,6 @@ export const readShellBoardCardThreadIds = (sql: SqlClient.SqlClient, before: st
         AND json_extract(t.payload_json, '$.settledAt') < ${before}
         AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
         AND json_extract(t.payload_json, '$.snoozedUntil') IS NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM orchestration_v2_projection_threads child
-          WHERE child.deleted_at IS NULL
-            AND json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
-            AND t.thread_id IN (
-              json_extract(child.payload_json, '$.lineage.parentThreadId'),
-              json_extract(child.payload_json, '$.lineage.rootThreadId')
-            )
-        )
+        AND t.thread_id NOT IN (${subagentAncestorIds(sql)})
       )
   `.pipe(Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))));
