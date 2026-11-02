@@ -1051,7 +1051,10 @@ export function withGovernor(
       merge: (request) =>
         Ref.update(mergeMethods, (methods) => [...methods, request.method]).pipe(
           Effect.andThen(
-            Ref.updateAndGet(mergeAttempts, (attempts) => [...attempts, { number: request.number }]),
+            Ref.updateAndGet(mergeAttempts, (attempts) => [
+              ...attempts,
+              { number: request.number },
+            ]),
           ),
           Effect.andThen((attempts) => {
             const scripted = input.mergeOutcomes?.[attempts.length - 1];

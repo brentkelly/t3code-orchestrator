@@ -9461,7 +9461,6 @@ export const BoardStageExecutionReview = Schema.Struct({
 });
 export type BoardStageExecutionReview = typeof BoardStageExecutionReview.Type;
 
-
 /**
  * The conflict-resolution prompt (intent only — the completion mechanics are
  * force-appended by the prompt envelope, as for every other stage prompt).
@@ -10169,7 +10168,8 @@ export function resolveBoardCardMergeStrategy(input: {
   /** The merge-role stage's configured strategy, or null when unknown. */
   readonly stageStrategy: BoardMergeStrategy | null;
 }): { readonly strategy: BoardMergeStrategy; readonly source: BoardCardMergeStrategySource } {
-  if (input.card.mergeStrategy != null) return { strategy: input.card.mergeStrategy, source: "card" };
+  if (input.card.mergeStrategy != null)
+    return { strategy: input.card.mergeStrategy, source: "card" };
   if (input.parent?.mergeStrategy != null) {
     return { strategy: input.parent.mergeStrategy, source: "parent" };
   }

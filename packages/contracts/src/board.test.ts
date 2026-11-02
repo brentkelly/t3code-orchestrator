@@ -1328,7 +1328,11 @@ describe("per-card merge strategy (T3O-80)", () => {
       }),
     ).toEqual({ strategy: "rebase", source: "board" });
     expect(
-      resolveBoardCardMergeStrategy({ card: { mergeStrategy: null }, parent: null, stageStrategy: null }),
+      resolveBoardCardMergeStrategy({
+        card: { mergeStrategy: null },
+        parent: null,
+        stageStrategy: null,
+      }),
     ).toEqual({ strategy: "squash", source: "board" });
   });
 });

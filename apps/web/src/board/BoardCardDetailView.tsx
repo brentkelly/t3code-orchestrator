@@ -2531,232 +2531,237 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         {/* The key and its chips wrap onto a second line rather than pushing
             the tabs and the kebab off a narrow modal (T3O-80). */}
         <div className="flex min-h-7 min-w-0 flex-1 flex-wrap items-center gap-x-[9px] gap-y-1.5">
-        <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">{card.key}</span>
-        {props.parentCard != null ? (
-          // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
-          // back into the sub-board it lives on, with this sheet still open.
-          <BoardHint label={`Part of ${props.parentCard.key}'s sub-board — open it`}>
-            <button
-              className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
-              disabled={props.onOpenParentSubBoard === undefined}
-              onClick={props.onOpenParentSubBoard}
-              type="button"
-            >
-              <LayersIcon className="size-2.5" />
-              {props.parentCard.key}
-            </button>
-          </BoardHint>
-        ) : null}
-        <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
-        {/* On a done card the stage chip IS the completion badge, cut to the
+          <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">
+            {card.key}
+          </span>
+          {props.parentCard != null ? (
+            // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
+            // back into the sub-board it lives on, with this sheet still open.
+            <BoardHint label={`Part of ${props.parentCard.key}'s sub-board — open it`}>
+              <button
+                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
+                disabled={props.onOpenParentSubBoard === undefined}
+                onClick={props.onOpenParentSubBoard}
+                type="button"
+              >
+                <LayersIcon className="size-2.5" />
+                {props.parentCard.key}
+              </button>
+            </BoardHint>
+          ) : null}
+          <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
+          {/* On a done card the stage chip IS the completion badge, cut to the
             same block as the label chips beside it (t3o-36): the sheet no
             longer wears a wash, so this and the title's check carry "done".
             Green means done and only done — docs/t3o/status-colours.md. */}
-        <span
-          className={cn(
-            "inline-flex shrink-0 items-center font-medium",
-            done
-              ? "h-4 rounded-[5px] bg-success/16 px-1.5 text-[10px] tracking-[0.03em] text-success-foreground uppercase"
-              : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
-          )}
-        >
-          {boardStageLabel(props.stages, card.stage)}
-        </span>
-        {archived ? (
-          <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-            Archived
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center font-medium",
+              done
+                ? "h-4 rounded-[5px] bg-success/16 px-1.5 text-[10px] tracking-[0.03em] text-success-foreground uppercase"
+                : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
+            )}
+          >
+            {boardStageLabel(props.stages, card.stage)}
           </span>
-        ) : null}
-        {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
+          {archived ? (
+            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+              Archived
+            </span>
+          ) : null}
+          {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
             is set, then the clock plus its label. Hidden on a done-role card
             and on an archived one — neither is going to move again on a timer.
             Beside the stage chip, because what it holds is the stage. */}
-        {archived || done ? null : (
-          <BoardCardSchedulePopover
-            // Sized to the chip row it sits in, not to a button row.
-            className="h-[18px]"
-            kind={props.scheduleKind}
-            onChange={props.onSetScheduledStartAt}
-            scheduledStartAt={card.scheduledStartAt}
-            stageLabel={boardStageLabel(props.stages, card.stage)}
-          />
-        )}
-        {/* The auto-merge arm, read-only (T3O-38, D13). NAMES THE SOURCE:
+          {archived || done ? null : (
+            <BoardCardSchedulePopover
+              // Sized to the chip row it sits in, not to a button row.
+              className="h-[18px]"
+              kind={props.scheduleKind}
+              onChange={props.onSetScheduledStartAt}
+              scheduledStartAt={card.scheduledStartAt}
+              stageLabel={boardStageLabel(props.stages, card.stage)}
+            />
+          )}
+          {/* The auto-merge arm, read-only (T3O-38, D13). NAMES THE SOURCE:
             with the board-wide setting on the per-card switch is hidden, so a
             user who goes looking for it needs to be told where the decision
             actually lives. Neutral, like the queue chip below — an armed card
             is not running, not done, and asking nothing of anyone. */}
-        {archived || done || autoMergeChip === null ? null : (
-          <BoardHint label={autoMergeChip.tooltip}>
-            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-              <PullRequestGlyph.merged className="size-2.5" />
-              {autoMergeChip.label}
-            </span>
-          </BoardHint>
-        )}
-        {/* Queued for a build slot (t3o-33). Beside the stage badge, because
+          {archived || done || autoMergeChip === null ? null : (
+            <BoardHint label={autoMergeChip.tooltip}>
+              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+                <PullRequestGlyph.merged className="size-2.5" />
+                {autoMergeChip.label}
+              </span>
+            </BoardHint>
+          )}
+          {/* Queued for a build slot (t3o-33). Beside the stage badge, because
             "Building" alone is what made a queued card look mid-build. Neutral,
             not `--attention`: nothing is waiting on the user here — see
             docs/t3o/status-colours.md. */}
-        {props.queueInfo != null ? (
-          <BoardHint label={props.queueInfo.detail}>
-            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-              <ClockIcon className="size-2.5" />
-              {props.queueInfo.label}
-            </span>
-          </BoardHint>
-        ) : null}
-        {/* Shown only once this card actually overrides something (t3o-29, D7).
+          {props.queueInfo != null ? (
+            <BoardHint label={props.queueInfo.detail}>
+              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+                <ClockIcon className="size-2.5" />
+                {props.queueInfo.label}
+              </span>
+            </BoardHint>
+          ) : null}
+          {/* Shown only once this card actually overrides something (t3o-29, D7).
             An override changes what the card spends and what authority it runs
             under; that should not be invisible from the card. It costs nothing
             on a card that has not set one. */}
-        {modelOverridden ? (
-          <BoardHint label={modelPillTitle}>
-            <button
-              className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={() => setModelsOpen(true)}
-              type="button"
-            >
-              <SlidersHorizontalIcon className="size-2.5" />
-              {modelPillLabel}
-            </button>
-          </BoardHint>
-        ) : null}
-        {/* The card's own merge strategy (T3O-80). Shown whenever the card has
+          {modelOverridden ? (
+            <BoardHint label={modelPillTitle}>
+              <button
+                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => setModelsOpen(true)}
+                type="button"
+              >
+                <SlidersHorizontalIcon className="size-2.5" />
+                {modelPillLabel}
+              </button>
+            </BoardHint>
+          ) : null}
+          {/* The card's own merge strategy (T3O-80). Shown whenever the card has
             one, even one equal to the default, because it pins the card if the
             default moves. Neutral, like the models pill. */}
-        {archived || done || mergeStrategy.pill === null || onSetMergeStrategy === undefined ? null : (
-          <BoardHint label={mergeStrategy.pill.tooltip}>
-            <button
-              className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={() => setMergeStrategyOpen(true)}
-              type="button"
-            >
-              <MergeIcon className="size-2.5" />
-              {mergeStrategy.pill.label}
-            </button>
-          </BoardHint>
-        )}
+          {archived ||
+          done ||
+          mergeStrategy.pill === null ||
+          onSetMergeStrategy === undefined ? null : (
+            <BoardHint label={mergeStrategy.pill.tooltip}>
+              <button
+                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => setMergeStrategyOpen(true)}
+                type="button"
+              >
+                <MergeIcon className="size-2.5" />
+                {mergeStrategy.pill.label}
+              </button>
+            </BoardHint>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-[9px]">
-        <PaneTabs
-          hasPlan={hasPlan}
-          hasReview={hasReview}
-          hasSummary={hasSummary}
-          onSelect={setPane}
-          pane={activePane}
-          planCount={planRows === null ? null : planRows.rows.length}
-        />
-        <Menu>
-          <MenuTrigger
-            aria-label="More actions"
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground"
-            title="More actions"
-          >
-            <EllipsisVerticalIcon className="size-[15px]" />
-          </MenuTrigger>
-          {/* `min-w-*`, never a fixed width: the Models row below sizes itself
+          <PaneTabs
+            hasPlan={hasPlan}
+            hasReview={hasReview}
+            hasSummary={hasSummary}
+            onSelect={setPane}
+            pane={activePane}
+            planCount={planRows === null ? null : planRows.rows.length}
+          />
+          <Menu>
+            <MenuTrigger
+              aria-label="More actions"
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground"
+              title="More actions"
+            >
+              <EllipsisVerticalIcon className="size-[15px]" />
+            </MenuTrigger>
+            {/* `min-w-*`, never a fixed width: the Models row below sizes itself
               to a mono override summary that can run long, and a hard box
               would crowd it. */}
-          <MenuPopup align="end" className={autoMergeArm === null ? "min-w-42" : "min-w-68"}>
-            <BoardCardAutoMergeMenuItem arm={autoMergeArm} onToggle={onSetAutoMerge} />
-            {/* Opening the overrides CLOSES this menu (t3o-29, D7): the popover
+            <MenuPopup align="end" className={autoMergeArm === null ? "min-w-42" : "min-w-68"}>
+              <BoardCardAutoMergeMenuItem arm={autoMergeArm} onToggle={onSetAutoMerge} />
+              {/* Opening the overrides CLOSES this menu (t3o-29, D7): the popover
                 contains a model picker that is itself a popover, and selecting
                 from it is an outside-pointerdown on any menu still holding it
                 open. Base UI closes the menu; the row's selection is lost. */}
-            {modelRows.length > 0 ? (
-              <MenuItem onClick={() => setModelsOpen(true)}>
-                <SlidersHorizontalIcon />
-                <span className="flex-1">Models</span>
-                <span className="font-mono text-[11px] font-medium text-muted-foreground">
-                  {modelSummary}
-                </span>
+              {modelRows.length > 0 ? (
+                <MenuItem onClick={() => setModelsOpen(true)}>
+                  <SlidersHorizontalIcon />
+                  <span className="flex-1">Models</span>
+                  <span className="font-mono text-[11px] font-medium text-muted-foreground">
+                    {modelSummary}
+                  </span>
+                </MenuItem>
+              ) : null}
+              {onSetMergeStrategy === undefined ? null : (
+                <MenuItem onClick={() => setMergeStrategyOpen(true)}>
+                  <MergeIcon />
+                  <span className="flex-1">Merge strategy</span>
+                  <span className="font-mono text-[11px] font-medium text-muted-foreground">
+                    {mergeStrategy.menuValue}
+                  </span>
+                </MenuItem>
+              )}
+              {modelRows.length > 0 || onSetMergeStrategy !== undefined ? <MenuSeparator /> : null}
+              <MenuItem
+                onClick={() => {
+                  if (!archived && archiveNeedsConfirmation) {
+                    setArchiveConfirmOpen(true);
+                    return;
+                  }
+                  props.onArchiveToggle();
+                }}
+              >
+                {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+                {archived ? "Restore card" : "Archive card"}
               </MenuItem>
-            ) : null}
-            {onSetMergeStrategy === undefined ? null : (
-              <MenuItem onClick={() => setMergeStrategyOpen(true)}>
-                <MergeIcon />
-                <span className="flex-1">Merge strategy</span>
-                <span className="font-mono text-[11px] font-medium text-muted-foreground">
-                  {mergeStrategy.menuValue}
-                </span>
-              </MenuItem>
-            )}
-            {modelRows.length > 0 || onSetMergeStrategy !== undefined ? <MenuSeparator /> : null}
-            <MenuItem
-              onClick={() => {
-                if (!archived && archiveNeedsConfirmation) {
-                  setArchiveConfirmOpen(true);
-                  return;
-                }
-                props.onArchiveToggle();
-              }}
-            >
-              {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
-              {archived ? "Restore card" : "Archive card"}
-            </MenuItem>
-            {/* Unconditionally confirmed, unlike archive: there is no version
+              {/* Unconditionally confirmed, unlike archive: there is no version
                 of this the user can undo if they meant something else. */}
-            <MenuItem onClick={() => setDeleteConfirmOpen(true)} variant="destructive">
-              <Trash2Icon />
-              Delete card…
-            </MenuItem>
-          </MenuPopup>
-        </Menu>
-        {/* Mounted only while open, so the lazy chunk is never fetched for a
+              <MenuItem onClick={() => setDeleteConfirmOpen(true)} variant="destructive">
+                <Trash2Icon />
+                Delete card…
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+          {/* Mounted only while open, so the lazy chunk is never fetched for a
             card nobody overrides. The anchor is a zero-size span sitting where
             the kebab is, which is what puts the popover under the kebab for
             both doors into it — the menu item and the header pill. */}
-        {modelsOpen ? (
-          <Suspense fallback={null}>
-            <BoardCardModelsPopover
-              anchor={<PopoverTrigger render={<span aria-hidden className="block size-0" />} />}
-              onChange={props.onSetModelOverrides}
-              onOpenChange={setModelsOpen}
-              open={modelsOpen}
-              overrides={card.modelOverrides}
-              rows={modelRows}
-              stepRunning={props.stepRunning === true}
-            />
-          </Suspense>
-        ) : null}
-        {mergeStrategyOpen && onSetMergeStrategy !== undefined ? (
-          <Suspense fallback={null}>
-            <BoardCardMergeStrategyPopover
-              anchor={<PopoverTrigger render={<span aria-hidden className="block size-0" />} />}
-              onChange={onSetMergeStrategy}
-              onOpenChange={setMergeStrategyOpen}
-              open={mergeStrategyOpen}
-              options={mergeStrategy.options}
-              value={card.mergeStrategy}
-            />
-          </Suspense>
-        ) : null}
-        <BoardArchiveConfirmDialog
-          cardKey={card.key}
-          dependents={liveDependents}
-          onConfirm={props.onArchiveToggle}
-          onOpenChange={setArchiveConfirmOpen}
-          open={archiveConfirmOpen}
-        />
-        <BoardDeleteConfirmDialog
-          branch={card.worktree?.branch ?? null}
-          cardKey={card.key}
-          dependents={liveDependents}
-          onConfirm={props.onDelete}
-          onOpenChange={setDeleteConfirmOpen}
-          open={deleteConfirmOpen}
-          threadCount={card.threadLinks.length}
-        />
-        <BoardHint label="Close">
-          <button
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={props.onClose}
-            type="button"
-          >
-            <XIcon className="size-[15px]" />
-          </button>
-        </BoardHint>
+          {modelsOpen ? (
+            <Suspense fallback={null}>
+              <BoardCardModelsPopover
+                anchor={<PopoverTrigger render={<span aria-hidden className="block size-0" />} />}
+                onChange={props.onSetModelOverrides}
+                onOpenChange={setModelsOpen}
+                open={modelsOpen}
+                overrides={card.modelOverrides}
+                rows={modelRows}
+                stepRunning={props.stepRunning === true}
+              />
+            </Suspense>
+          ) : null}
+          {mergeStrategyOpen && onSetMergeStrategy !== undefined ? (
+            <Suspense fallback={null}>
+              <BoardCardMergeStrategyPopover
+                anchor={<PopoverTrigger render={<span aria-hidden className="block size-0" />} />}
+                onChange={onSetMergeStrategy}
+                onOpenChange={setMergeStrategyOpen}
+                open={mergeStrategyOpen}
+                options={mergeStrategy.options}
+                value={card.mergeStrategy}
+              />
+            </Suspense>
+          ) : null}
+          <BoardArchiveConfirmDialog
+            cardKey={card.key}
+            dependents={liveDependents}
+            onConfirm={props.onArchiveToggle}
+            onOpenChange={setArchiveConfirmOpen}
+            open={archiveConfirmOpen}
+          />
+          <BoardDeleteConfirmDialog
+            branch={card.worktree?.branch ?? null}
+            cardKey={card.key}
+            dependents={liveDependents}
+            onConfirm={props.onDelete}
+            onOpenChange={setDeleteConfirmOpen}
+            open={deleteConfirmOpen}
+            threadCount={card.threadLinks.length}
+          />
+          <BoardHint label="Close">
+            <button
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={props.onClose}
+              type="button"
+            >
+              <XIcon className="size-[15px]" />
+            </button>
+          </BoardHint>
         </div>
       </div>
 

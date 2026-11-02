@@ -9,11 +9,7 @@ import {
   type BoardMergeStrategy,
 } from "@t3tools/contracts";
 
-export const BOARD_MERGE_STRATEGIES: ReadonlyArray<BoardMergeStrategy> = [
-  "squash",
-  "merge",
-  "rebase",
-];
+const BOARD_MERGE_STRATEGIES: ReadonlyArray<BoardMergeStrategy> = ["squash", "merge", "rebase"];
 
 const LABELS: Record<BoardMergeStrategy, string> = {
   squash: "Squash",
@@ -55,7 +51,10 @@ export interface BoardCardMergeStrategyView {
 export function boardCardMergeStrategyView(input: {
   readonly card: Pick<BoardCard, "mergeStrategy">;
   /** The sub-board parent's key and own strategy; null for a top-level card. */
-  readonly parent: { readonly key: string; readonly mergeStrategy: BoardMergeStrategy | null } | null;
+  readonly parent: {
+    readonly key: string;
+    readonly mergeStrategy: BoardMergeStrategy | null;
+  } | null;
   /** The merge-role stage's configured strategy. */
   readonly boardStrategy: BoardMergeStrategy;
 }): BoardCardMergeStrategyView {
