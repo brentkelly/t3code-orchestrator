@@ -1,875 +1,274 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <script src="./support.js"></script>
-  </head>
-  <body>
-    <x-dc>
-      <helmet>
-        <meta name="design_doc_mode" content="canvas" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-        <link
-          href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap"
-          rel="stylesheet"
-        />
-        <style>
-          :root {
-            --bg: #fcfcfc;
-            --fg: #27272a;
-            --card: #ffffff;
-            --popover: #ffffff;
-            --muted: #fafafa;
-            --muted-fg: #71717a;
-            --accent: #f4f4f5;
-            --accent-fg: #18181b;
-            --border: #e4e4e7;
-            --input: #d4d4d8;
-            --info: #3b82f6;
-            --info-fg: #1d4ed8;
-            --shadow-xs: 0 1px 2px rgb(0 0 0 / 5%);
-            --shadow-pop: 0 24px 64px -24px rgb(0 0 0 / 35%);
-            --font-sans:
-              "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-            --font-mono: "SF Mono", "SFMono-Regular", "JetBrains Mono", Consolas, Menlo, monospace;
-          }
-          html[data-t3-theme="dark"] {
-            color-scheme: dark;
-            --bg: #000000;
-            --fg: #f1f3f7;
-            --card: #18181b;
-            --popover: #141416;
-            --muted: #0a0a0a;
-            --muted-fg: #a3a3a3;
-            --accent: #191a1d;
-            --accent-fg: #f7f9ff;
-            --border: rgb(255 255 255 / 8%);
-            --input: rgb(255 255 255 / 18%);
-            --info-fg: #60a5fa;
-            --shadow-xs: none;
-            --shadow-pop: 0 24px 72px -20px rgb(0 0 0 / 90%);
-          }
-          * {
-            box-sizing: border-box;
-          }
-          body {
-            margin: 0;
-            font-family: var(--font-sans);
-            background: var(--bg);
-            color: var(--fg);
-            -webkit-font-smoothing: antialiased;
-          }
-          a {
-            color: var(--info-fg);
-            text-decoration: none;
-          }
-          a:hover {
-            text-decoration: underline;
-          }
-          @keyframes t3pop {
-            from {
-              opacity: 0;
-              transform: scale(0.98) translateY(4px);
-            }
-            to {
-              opacity: 1;
-              transform: none;
-            }
-          }
-        </style>
-      </helmet>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#fcfcfc; --fg:#27272a; --card:#ffffff; --popover:#ffffff;
+  --muted:#fafafa; --muted-fg:#71717a; --accent:#f4f4f5; --accent-fg:#18181b;
+  --border:#e4e4e7; --input:#d4d4d8;
+  --info:#3b82f6; --info-fg:#1d4ed8;
+  --shadow-xs:0 1px 2px rgb(0 0 0 / 5%);
+  --shadow-pop:0 24px 64px -24px rgb(0 0 0 / 35%);
+  --font-sans:"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --font-mono:"SF Mono","SFMono-Regular","JetBrains Mono",Consolas,Menlo,monospace;
+}
+html[data-t3-theme="dark"]{
+  color-scheme:dark;
+  --bg:#000000; --fg:#f1f3f7; --card:#18181b; --popover:#141416;
+  --muted:#0a0a0a; --muted-fg:#a3a3a3; --accent:#191a1d; --accent-fg:#f7f9ff;
+  --border:rgb(255 255 255 / 8%); --input:rgb(255 255 255 / 18%);
+  --info-fg:#60a5fa;
+  --shadow-xs:none; --shadow-pop:0 24px 72px -20px rgb(0 0 0 / 90%);
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans);background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
+a{color:var(--info-fg);text-decoration:none}
+a:hover{text-decoration:underline}
+@keyframes t3pop{from{opacity:0;transform:scale(.98) translateY(4px)}to{opacity:1;transform:none}}
+</style>
+</helmet>
 
-      <section
-        style="
-          padding: 34px 40px 60px;
-          display: flex;
-          flex-direction: column;
-          gap: 24px;
-          background: var(--bg);
-          min-height: 100vh;
-        "
-      >
-        <div style="display: flex; flex-direction: column; gap: 10px; max-width: 1080px">
-          <div style="display: flex; align-items: baseline; gap: 10px">
-            <span
-              style="
-                font: 600 11px var(--font-mono);
-                color: var(--muted-fg);
-                border: 1px solid var(--border);
-                border-radius: 6px;
-                padding: 2px 7px;
-              "
-              >TURN 1</span
-            >
-            <h1 style="margin: 0; font: 600 20px var(--font-sans); color: var(--fg)">
-              Per-card merge strategy
-            </h1>
-          </div>
-          <p
-            style="
-              margin: 0;
-              max-width: 720px;
-              font: 400 13.5px/1.65 var(--font-sans);
-              color: var(--muted-fg);
-              text-wrap: pretty;
-            "
-          >
-            Overrides the board's merge stage strategy (squash) for one card. Same entry points as
-            the per-card Models override: a kebab row, an anchored popover, and a neutral header
-            pill that only appears when the card has its own setting. Every frame is live; open the
-            kebab, pick an option, click the pill.
-          </p>
-          <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px">
-            <div
-              style="
-                display: flex;
-                align-items: center;
-                gap: 2px;
-                padding: 2px;
-                border-radius: 9px;
-                background: var(--accent);
-              "
-            >
-              <button type="button" onClick="{{ setLight }}" style="{{ lightTabStyle }}">
-                Light
-              </button>
-              <button type="button" onClick="{{ setDark }}" style="{{ darkTabStyle }}">Dark</button>
-            </div>
-            <button
-              type="button"
-              onClick="{{ resetAll }}"
-              style="
-                display: inline-flex;
-                align-items: center;
-                height: 28px;
-                padding: 0 11px;
-                border: 1px solid transparent;
-                border-radius: 8px;
-                background: transparent;
-                color: var(--muted-fg);
-                font: 500 12px var(--font-sans);
-                cursor: pointer;
-              "
-              style-hover="color:var(--fg)"
-            >
-              Reset frames
-            </button>
-          </div>
+<section style="padding:34px 40px 60px;display:flex;flex-direction:column;gap:24px;background:var(--bg);min-height:100vh">
+
+  <div style="display:flex;flex-direction:column;gap:10px;max-width:1080px">
+    <div style="display:flex;align-items:baseline;gap:10px">
+      <span style="font:600 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:2px 7px">TURN 1</span>
+      <h1 style="margin:0;font:600 20px var(--font-sans);color:var(--fg)">Per-card merge strategy</h1>
+    </div>
+    <p style="margin:0;max-width:720px;font:400 13.5px/1.65 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Overrides the board's merge stage strategy (squash) for one card. Same entry points as the per-card Models override: a kebab row, an anchored popover, and a neutral header pill that only appears when the card has its own setting. Every frame is live; open the kebab, pick an option, click the pill.</p>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+      <div style="display:flex;align-items:center;gap:2px;padding:2px;border-radius:9px;background:var(--accent)">
+        <button type="button" onClick="{{ setLight }}" style="{{ lightTabStyle }}">Light</button>
+        <button type="button" onClick="{{ setDark }}" style="{{ darkTabStyle }}">Dark</button>
+      </div>
+      <button type="button" onClick="{{ resetAll }}" style="display:inline-flex;align-items:center;height:28px;padding:0 11px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted-fg);font:500 12px var(--font-sans);cursor:pointer" style-hover="color:var(--fg)">Reset frames</button>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start">
+    <sc-for list="{{ frames }}" as="f" hint-placeholder-count="5">
+      <div id="{{ f.id }}" style="position:relative;display:flex;flex-direction:column;gap:12px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--muted)">
+        <sc-if value="{{ f.anyOpen }}" hint-placeholder-val="{{ false }}">
+          <div onClick="{{ f.closeAll }}" style="position:absolute;inset:0;z-index:5;border-radius:16px"></div>
+        </sc-if>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font:600 11px var(--font-mono);color:var(--info-fg);border:1px solid color-mix(in srgb,var(--info) 40%,transparent);border-radius:6px;padding:2px 7px">{{ f.id }}</span>
+          <span style="font:600 13.5px var(--font-sans);color:var(--fg)">{{ f.title }}</span>
         </div>
+        <p style="margin:0;max-width:560px;font:400 12px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ f.caption }}</p>
 
-        <div style="display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start">
-          <sc-for list="{{ frames }}" as="f" hint-placeholder-count="5">
-            <div
-              id="{{ f.id }}"
-              style="
-                position: relative;
-                display: flex;
-                flex-direction: column;
-                gap: 12px;
-                padding: 16px;
-                border: 1px solid var(--border);
-                border-radius: 16px;
-                background: var(--muted);
-              "
-            >
-              <sc-if value="{{ f.anyOpen }}" hint-placeholder-val="{{ false }}">
-                <div
-                  onClick="{{ f.closeAll }}"
-                  style="position: absolute; inset: 0; z-index: 5; border-radius: 16px"
-                ></div>
-              </sc-if>
-              <div style="display: flex; align-items: center; gap: 8px">
-                <span
-                  style="
-                    font: 600 11px var(--font-mono);
-                    color: var(--info-fg);
-                    border: 1px solid color-mix(in srgb, var(--info) 40%, transparent);
-                    border-radius: 6px;
-                    padding: 2px 7px;
-                  "
-                  >{{ f.id }}</span
-                >
-                <span style="font: 600 13.5px var(--font-sans); color: var(--fg)"
-                  >{{ f.title }}</span
-                >
-              </div>
-              <p
-                style="
-                  margin: 0;
-                  max-width: 560px;
-                  font: 400 12px/1.55 var(--font-sans);
-                  color: var(--muted-fg);
-                  text-wrap: pretty;
-                "
-              >
-                {{ f.caption }}
-              </p>
+        <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start">
+          <sc-for list="{{ f.modals }}" as="m" hint-placeholder-count="1">
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <span style="font:500 10.5px var(--font-mono);color:var(--muted-fg)">{{ m.label }}</span>
+              <div style="width:{{ m.width }};min-height:{{ f.minH }};display:flex;flex-direction:column;border:1px solid color-mix(in srgb,var(--fg) 10%,transparent);border-radius:16px;background:var(--card);box-shadow:var(--shadow-pop)">
 
-              <div style="display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start">
-                <sc-for list="{{ f.modals }}" as="m" hint-placeholder-count="1">
-                  <div style="display: flex; flex-direction: column; gap: 6px">
-                    <span style="font: 500 10.5px var(--font-mono); color: var(--muted-fg)"
-                      >{{ m.label }}</span
-                    >
-                    <div
-                      style="width:{{ m.width }};min-height:{{ f.minH }};display:flex;flex-direction:column;border:1px solid color-mix(in srgb,var(--fg) 10%,transparent);border-radius:16px;background:var(--card);box-shadow:var(--shadow-pop)"
-                    >
-                      <div
-                        style="
-                          position: relative;
-                          z-index: 6;
-                          display: flex;
-                          align-items: flex-start;
-                          gap: 9px;
-                          padding: 16px 16px 0;
-                        "
-                      >
-                        <div
-                          style="
-                            flex: 1;
-                            min-width: 0;
-                            display: flex;
-                            flex-wrap: wrap;
-                            align-items: center;
-                            gap: 6px 9px;
-                            min-height: 28px;
-                          "
-                        >
-                          <span style="font: 500 11.5px var(--font-sans); color: var(--muted-fg)"
-                            >{{ f.cardKey }}</span
-                          >
-                          <span
-                            style="
-                              display: inline-flex;
-                              align-items: center;
-                              height: 18px;
-                              padding: 0 7px;
-                              flex: none;
-                              border-radius: 6px;
-                              font: 500 10.5px var(--font-sans);
-                              border: 1px solid var(--border);
-                              background: var(--muted);
-                              color: var(--muted-fg);
-                            "
-                            >{{ f.tag }}</span
-                          >
-                          <span
-                            style="
-                              display: inline-flex;
-                              align-items: center;
-                              height: 18px;
-                              padding: 0 7px;
-                              flex: none;
-                              border-radius: 6px;
-                              font: 500 11px var(--font-sans);
-                              background: var(--accent);
-                              color: var(--fg);
-                            "
-                            >Ready for merge</span
-                          >
-                          <sc-if value="{{ f.modelsSet }}" hint-placeholder-val="{{ false }}">
-                            <button
-                              type="button"
-                              onClick="{{ f.openModels }}"
-                              title="{{ f.modelsTip }}"
-                              style="
-                                display: inline-flex;
-                                align-items: center;
-                                gap: 5px;
-                                height: 18px;
-                                padding: 0 7px;
-                                flex: none;
-                                border: 1px solid var(--border);
-                                border-radius: 6px;
-                                background: var(--muted);
-                                color: var(--muted-fg);
-                                font: 500 10.5px var(--font-mono);
-                                white-space: nowrap;
-                                cursor: pointer;
-                              "
-                              style-hover="color:var(--fg);background:var(--accent)"
-                            >
-                              <svg
-                                width="10"
-                                height="10"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2.2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                              >
-                                <path d="M4 6h10"></path>
-                                <path d="M18 6h2"></path>
-                                <path d="M4 12h4"></path>
-                                <path d="M12 12h8"></path>
-                                <path d="M4 18h10"></path>
-                                <path d="M18 18h2"></path>
-                              </svg>
-                              {{ f.modelsPill }}
-                            </button>
-                          </sc-if>
-                          <sc-if value="{{ f.hasPill }}" hint-placeholder-val="{{ false }}">
-                            <button
-                              type="button"
-                              onClick="{{ f.openPop }}"
-                              title="{{ f.pillTip }}"
-                              style="
-                                display: inline-flex;
-                                align-items: center;
-                                gap: 5px;
-                                height: 18px;
-                                padding: 0 7px;
-                                flex: none;
-                                border: 1px solid var(--border);
-                                border-radius: 6px;
-                                background: var(--muted);
-                                color: var(--muted-fg);
-                                font: 500 10.5px var(--font-mono);
-                                white-space: nowrap;
-                                cursor: pointer;
-                              "
-                              style-hover="color:var(--fg);background:var(--accent)"
-                            >
-                              <svg
-                                width="10"
-                                height="10"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2.2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                              >
-                                <circle cx="18" cy="18" r="3"></circle>
-                                <circle cx="6" cy="6" r="3"></circle>
-                                <path d="M6 21V9a9 9 0 0 0 9 9"></path>
-                              </svg>
-                              {{ f.pillLabel }}
-                            </button>
-                          </sc-if>
-                        </div>
-                        <div style="display: flex; align-items: center; gap: 9px; flex: none">
-                          <div
-                            style="
-                              display: flex;
-                              align-items: center;
-                              gap: 2px;
-                              padding: 2px;
-                              flex: none;
-                              border-radius: 9px;
-                              background: var(--accent);
-                            "
-                          >
-                            <span
-                              style="
-                                display: inline-flex;
-                                align-items: center;
-                                gap: 5px;
-                                height: 24px;
-                                padding: 0 8px;
-                                border-radius: 7px;
-                                background: var(--card);
-                                box-shadow: var(--shadow-xs);
-                                color: var(--fg);
-                                font: 500 11.5px var(--font-sans);
-                              "
-                            >
-                              <svg
-                                width="13"
-                                height="13"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                              >
-                                <path
-                                  d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
-                                ></path>
-                              </svg>
-                              Thread
-                            </span>
-                            <span
-                              style="
-                                display: inline-flex;
-                                align-items: center;
-                                gap: 5px;
-                                height: 24px;
-                                padding: 0 8px;
-                                border-radius: 7px;
-                                color: var(--muted-fg);
-                                font: 500 11.5px var(--font-sans);
-                              "
-                            >
-                              <svg
-                                width="13"
-                                height="13"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                              >
-                                <path
-                                  d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"
-                                ></path>
-                                <path d="M14 2v4a2 2 0 0 0 2 2h4"></path>
-                                <path d="M16 13H8"></path>
-                                <path d="M16 17H8"></path>
-                              </svg>
-                              Brief
-                            </span>
-                          </div>
-                          <div style="position: relative; flex: none">
-                            <button
-                              type="button"
-                              onClick="{{ f.toggleMenu }}"
-                              title="More actions"
-                              style="{{ f.kebabStyle }}"
-                              style-hover="background:var(--accent);color:var(--fg)"
-                            >
-                              <svg
-                                width="15"
-                                height="15"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                              >
-                                <circle cx="12" cy="5" r="1"></circle>
-                                <circle cx="12" cy="12" r="1"></circle>
-                                <circle cx="12" cy="19" r="1"></circle>
-                              </svg>
-                            </button>
-                            <sc-if value="{{ f.menuOpen }}" hint-placeholder-val="{{ false }}">
-                              <div
-                                style="
-                                  position: absolute;
-                                  top: 32px;
-                                  right: 0;
-                                  z-index: 60;
-                                  width: 268px;
-                                  padding: 5px;
-                                  border: 1px solid var(--border);
-                                  border-radius: 11px;
-                                  background: var(--popover);
-                                  box-shadow: 0 18px 34px -20px rgb(0 0 0 / 55%);
-                                  display: flex;
-                                  flex-direction: column;
-                                  gap: 1px;
-                                "
-                              >
-                                <button
-                                  type="button"
-                                  onClick="{{ f.openModels }}"
-                                  style="
-                                    display: inline-flex;
-                                    align-items: center;
-                                    gap: 9px;
-                                    height: 30px;
-                                    padding: 0 9px;
-                                    border: none;
-                                    border-radius: 8px;
-                                    background: transparent;
-                                    color: var(--fg);
-                                    font: 500 12.5px var(--font-sans);
-                                    text-align: left;
-                                    cursor: pointer;
-                                  "
-                                  style-hover="background:var(--accent)"
-                                >
-                                  <svg
-                                    width="13"
-                                    height="13"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="var(--muted-fg)"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                  >
-                                    <path d="M4 6h10"></path>
-                                    <path d="M18 6h2"></path>
-                                    <path d="M4 12h4"></path>
-                                    <path d="M12 12h8"></path>
-                                    <path d="M4 18h10"></path>
-                                    <path d="M18 18h2"></path>
-                                    <circle cx="16" cy="6" r="2"></circle>
-                                    <circle cx="10" cy="12" r="2"></circle>
-                                    <circle cx="16" cy="18" r="2"></circle>
-                                  </svg>
-                                  <span style="flex: 1">Models</span>
-                                  <span
-                                    style="font: 500 11px var(--font-mono); color: var(--muted-fg)"
-                                    >{{ f.modelsSummary }}</span
-                                  >
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick="{{ f.openPop }}"
-                                  style="
-                                    display: inline-flex;
-                                    align-items: center;
-                                    gap: 9px;
-                                    height: 30px;
-                                    padding: 0 9px;
-                                    border: none;
-                                    border-radius: 8px;
-                                    background: transparent;
-                                    color: var(--fg);
-                                    font: 500 12.5px var(--font-sans);
-                                    text-align: left;
-                                    cursor: pointer;
-                                  "
-                                  style-hover="background:var(--accent)"
-                                >
-                                  <svg
-                                    width="13"
-                                    height="13"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="var(--muted-fg)"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                  >
-                                    <circle cx="18" cy="18" r="3"></circle>
-                                    <circle cx="6" cy="6" r="3"></circle>
-                                    <path d="M6 21V9a9 9 0 0 0 9 9"></path>
-                                  </svg>
-                                  <span style="flex: 1">Merge strategy</span>
-                                  <span
-                                    style="font: 500 11px var(--font-mono); color: var(--muted-fg)"
-                                    >{{ f.rowValue }}</span
-                                  >
-                                </button>
-                                <div
-                                  style="height: 1px; margin: 3px 7px; background: var(--border)"
-                                ></div>
-                                <button
-                                  type="button"
-                                  style="
-                                    display: inline-flex;
-                                    align-items: center;
-                                    gap: 9px;
-                                    height: 30px;
-                                    padding: 0 9px;
-                                    border: none;
-                                    border-radius: 8px;
-                                    background: transparent;
-                                    color: var(--fg);
-                                    font: 500 12.5px var(--font-sans);
-                                    text-align: left;
-                                    cursor: pointer;
-                                  "
-                                  style-hover="background:var(--accent)"
-                                >
-                                  <svg
-                                    width="13"
-                                    height="13"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="var(--muted-fg)"
-                                    stroke-width="2"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                  >
-                                    <rect width="18" height="4" x="3" y="4" rx="1"></rect>
-                                    <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"></path>
-                                    <path d="M10 12h4"></path>
-                                  </svg>
-                                  <span style="flex: 1">Archive card</span>
-                                </button>
-                              </div>
-                            </sc-if>
-                            <sc-if value="{{ f.popOpen }}" hint-placeholder-val="{{ false }}">
-                              <div
-                                style="
-                                  position: absolute;
-                                  top: 32px;
-                                  right: 0;
-                                  z-index: 60;
-                                  width: 328px;
-                                  padding: 12px 13px 13px;
-                                  border: 1px solid var(--border);
-                                  border-radius: 12px;
-                                  background: var(--popover);
-                                  box-shadow: 0 18px 34px -20px rgb(0 0 0 / 55%);
-                                  display: flex;
-                                  flex-direction: column;
-                                  gap: 11px;
-                                  text-align: left;
-                                "
-                              >
-                                <div style="display: flex; flex-direction: column; gap: 4px">
-                                  <div
-                                    style="
-                                      display: flex;
-                                      align-items: center;
-                                      gap: 8px;
-                                      min-height: 22px;
-                                    "
-                                  >
-                                    <span
-                                      style="font: 600 12.5px var(--font-sans); color: var(--fg)"
-                                      >Merge strategy</span
-                                    >
-                                    <span style="flex: 1"></span>
-                                    <sc-if
-                                      value="{{ f.hasPill }}"
-                                      hint-placeholder-val="{{ false }}"
-                                    >
-                                      <button
-                                        type="button"
-                                        onClick="{{ f.reset }}"
-                                        style="
-                                          height: 22px;
-                                          padding: 0 7px;
-                                          border: none;
-                                          border-radius: 6px;
-                                          background: transparent;
-                                          color: var(--muted-fg);
-                                          font: 500 11.5px var(--font-sans);
-                                          cursor: pointer;
-                                        "
-                                        style-hover="background:var(--accent);color:var(--fg)"
-                                      >
-                                        Reset
-                                      </button>
-                                    </sc-if>
-                                  </div>
-                                  <div
-                                    style="
-                                      font: 400 11.5px/1.5 var(--font-sans);
-                                      color: var(--muted-fg);
-                                      text-wrap: pretty;
-                                    "
-                                  >
-                                    Applies to this card only.
-                                  </div>
-                                </div>
-                                <div
-                                  style="
-                                    display: flex;
-                                    flex-direction: column;
-                                    gap: 1px;
-                                    margin: 0 -5px;
-                                  "
-                                >
-                                  <sc-for list="{{ f.options }}" as="o" hint-placeholder-count="4">
-                                    <button
-                                      type="button"
-                                      role="radio"
-                                      aria-checked="{{ o.selected }}"
-                                      onClick="{{ o.pick }}"
-                                      style="{{ o.rowStyle }}"
-                                      style-hover="background:var(--accent)"
-                                    >
-                                      <span style="{{ o.ringStyle }}">
-                                        <sc-if
-                                          value="{{ o.selected }}"
-                                          hint-placeholder-val="{{ false }}"
-                                        >
-                                          <span
-                                            style="
-                                              width: 6px;
-                                              height: 6px;
-                                              border-radius: 99px;
-                                              background: var(--fg);
-                                            "
-                                          ></span>
-                                        </sc-if>
-                                      </span>
-                                      <span
-                                        style="
-                                          flex: 1;
-                                          min-width: 0;
-                                          display: flex;
-                                          flex-direction: column;
-                                          gap: 2px;
-                                        "
-                                      >
-                                        <span
-                                          style="
-                                            font: 500 12.5px var(--font-sans);
-                                            color: var(--fg);
-                                          "
-                                          >{{ o.label }}</span
-                                        >
-                                        <span
-                                          style="
-                                            font: 400 11.5px/1.4 var(--font-sans);
-                                            color: var(--muted-fg);
-                                            text-wrap: pretty;
-                                          "
-                                          >{{ o.note }}</span
-                                        >
-                                      </span>
-                                    </button>
-                                  </sc-for>
-                                </div>
-                              </div>
-                            </sc-if>
-                          </div>
-                          <span
-                            style="
-                              display: inline-flex;
-                              align-items: center;
-                              justify-content: center;
-                              width: 28px;
-                              height: 28px;
-                              flex: none;
-                              border-radius: 8px;
-                              color: var(--muted-fg);
-                            "
-                          >
-                            <svg
-                              width="15"
-                              height="15"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="2"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                            >
-                              <path d="M18 6 6 18"></path>
-                              <path d="m6 6 12 12"></path>
-                            </svg>
-                          </span>
-                        </div>
-                      </div>
-                      <h2
-                        style="
-                          margin: 8px 10px 0;
-                          padding: 2px 6px;
-                          font: 600 21px/1.25 var(--font-sans);
-                          letter-spacing: -0.015em;
-                          color: var(--fg);
-                          text-wrap: pretty;
-                        "
-                      >
-                        {{ f.cardTitle }}
-                      </h2>
-                      <div
-                        style="flex: 1; margin-top: 12px; border-top: 1px solid var(--border)"
-                      ></div>
-                    </div>
+                <div style="position:relative;z-index:6;display:flex;align-items:flex-start;gap:9px;padding:16px 16px 0">
+                  <div style="flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 9px;min-height:28px">
+                    <span style="font:500 11.5px var(--font-sans);color:var(--muted-fg)">{{ f.cardKey }}</span>
+                    <span style="display:inline-flex;align-items:center;height:18px;padding:0 7px;flex:none;border-radius:6px;font:500 10.5px var(--font-sans);border:1px solid var(--border);background:var(--muted);color:var(--muted-fg)">{{ f.tag }}</span>
+                    <span style="display:inline-flex;align-items:center;height:18px;padding:0 7px;flex:none;border-radius:6px;font:500 11px var(--font-sans);background:var(--accent);color:var(--fg)">Ready for merge</span>
+                    <sc-if value="{{ f.modelsSet }}" hint-placeholder-val="{{ false }}">
+                      <button type="button" onClick="{{ f.openModels }}" title="{{ f.modelsTip }}" style="display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 7px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--muted);color:var(--muted-fg);font:500 10.5px var(--font-mono);white-space:nowrap;cursor:pointer" style-hover="color:var(--fg);background:var(--accent)">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10"></path><path d="M18 6h2"></path><path d="M4 12h4"></path><path d="M12 12h8"></path><path d="M4 18h10"></path><path d="M18 18h2"></path></svg>
+                        {{ f.modelsPill }}
+                      </button>
+                    </sc-if>
+                    <sc-if value="{{ f.hasPill }}" hint-placeholder-val="{{ false }}">
+                      <button type="button" onClick="{{ f.openPop }}" title="{{ f.pillTip }}" style="display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 7px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--muted);color:var(--muted-fg);font:500 10.5px var(--font-mono);white-space:nowrap;cursor:pointer" style-hover="color:var(--fg);background:var(--accent)">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M6 21V9a9 9 0 0 0 9 9"></path></svg>
+                        {{ f.pillLabel }}
+                      </button>
+                    </sc-if>
                   </div>
-                </sc-for>
+                  <div style="display:flex;align-items:center;gap:9px;flex:none">
+                    <div style="display:flex;align-items:center;gap:2px;padding:2px;flex:none;border-radius:9px;background:var(--accent)">
+                      <span style="display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:7px;background:var(--card);box-shadow:var(--shadow-xs);color:var(--fg);font:500 11.5px var(--font-sans)">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                        Thread
+                      </span>
+                      <span style="display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:7px;color:var(--muted-fg);font:500 11.5px var(--font-sans)">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></svg>
+                        Brief
+                      </span>
+                    </div>
+                    <div style="position:relative;flex:none">
+                      <button type="button" onClick="{{ f.toggleMenu }}" title="More actions" style="{{ f.kebabStyle }}" style-hover="background:var(--accent);color:var(--fg)">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
+                      </button>
+                      <sc-if value="{{ f.menuOpen }}" hint-placeholder-val="{{ false }}">
+                        <div style="position:absolute;top:32px;right:0;z-index:60;width:268px;padding:5px;border:1px solid var(--border);border-radius:11px;background:var(--popover);box-shadow:0 18px 34px -20px rgb(0 0 0 / 55%);display:flex;flex-direction:column;gap:1px">
+                          <button type="button" onClick="{{ f.openModels }}" style="display:inline-flex;align-items:center;gap:9px;height:30px;padding:0 9px;border:none;border-radius:8px;background:transparent;color:var(--fg);font:500 12.5px var(--font-sans);text-align:left;cursor:pointer" style-hover="background:var(--accent)">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10"></path><path d="M18 6h2"></path><path d="M4 12h4"></path><path d="M12 12h8"></path><path d="M4 18h10"></path><path d="M18 18h2"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="16" cy="18" r="2"></circle></svg>
+                            <span style="flex:1">Models</span>
+                            <span style="font:500 11px var(--font-mono);color:var(--muted-fg)">{{ f.modelsSummary }}</span>
+                          </button>
+                          <button type="button" onClick="{{ f.openPop }}" style="display:inline-flex;align-items:center;gap:9px;height:30px;padding:0 9px;border:none;border-radius:8px;background:transparent;color:var(--fg);font:500 12.5px var(--font-sans);text-align:left;cursor:pointer" style-hover="background:var(--accent)">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M6 21V9a9 9 0 0 0 9 9"></path></svg>
+                            <span style="flex:1">Merge strategy</span>
+                            <span style="font:500 11px var(--font-mono);color:var(--muted-fg)">{{ f.rowValue }}</span>
+                          </button>
+                          <div style="height:1px;margin:3px 7px;background:var(--border)"></div>
+                          <button type="button" style="display:inline-flex;align-items:center;gap:9px;height:30px;padding:0 9px;border:none;border-radius:8px;background:transparent;color:var(--fg);font:500 12.5px var(--font-sans);text-align:left;cursor:pointer" style-hover="background:var(--accent)">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="4" x="3" y="4" rx="1"></rect><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"></path><path d="M10 12h4"></path></svg>
+                            <span style="flex:1">Archive card</span>
+                          </button>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{ f.popOpen }}" hint-placeholder-val="{{ false }}">
+                        <div style="position:absolute;top:32px;right:0;z-index:60;width:328px;padding:12px 13px 13px;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:0 18px 34px -20px rgb(0 0 0 / 55%);display:flex;flex-direction:column;gap:11px;text-align:left">
+                          <div style="display:flex;flex-direction:column;gap:4px">
+                            <div style="display:flex;align-items:center;gap:8px;min-height:22px">
+                              <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Merge strategy</span>
+                              <span style="flex:1"></span>
+                              <sc-if value="{{ f.hasPill }}" hint-placeholder-val="{{ false }}">
+                                <button type="button" onClick="{{ f.reset }}" style="height:22px;padding:0 7px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);font:500 11.5px var(--font-sans);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">Reset</button>
+                              </sc-if>
+                            </div>
+                            <div style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Applies to this card only.</div>
+                          </div>
+                          <div style="display:flex;flex-direction:column;gap:1px;margin:0 -5px">
+                            <sc-for list="{{ f.options }}" as="o" hint-placeholder-count="4">
+                              <button type="button" role="radio" aria-checked="{{ o.selected }}" onClick="{{ o.pick }}" style="{{ o.rowStyle }}" style-hover="background:var(--accent)">
+                                <span style="{{ o.ringStyle }}">
+                                  <sc-if value="{{ o.selected }}" hint-placeholder-val="{{ false }}">
+                                    <span style="width:6px;height:6px;border-radius:99px;background:var(--fg)"></span>
+                                  </sc-if>
+                                </span>
+                                <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                                  <span style="font:500 12.5px var(--font-sans);color:var(--fg)">{{ o.label }}</span>
+                                  <span style="font:400 11.5px/1.4 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ o.note }}</span>
+                                </span>
+                              </button>
+                            </sc-for>
+                          </div>
+                        </div>
+                      </sc-if>
+                    </div>
+                    <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;border-radius:8px;color:var(--muted-fg)">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+                    </span>
+                  </div>
+                </div>
+                <h2 style="margin:8px 10px 0;padding:2px 6px;font:600 21px/1.25 var(--font-sans);letter-spacing:-0.015em;color:var(--fg);text-wrap:pretty">{{ f.cardTitle }}</h2>
+                <div style="flex:1;margin-top:12px;border-top:1px solid var(--border)"></div>
               </div>
             </div>
           </sc-for>
         </div>
-      </section>
-    </x-dc>
-    <script
-      type="text/x-dc"
-      data-dc-script
-      data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"light","tsType":"\"light\" | \"dark\""}}'
-    >
-      const BOARD = "squash";
-      const NAMES = { squash: "Squash", merge: "Merge commit", rebase: "Rebase" };
-      const VERB = { squash: "Squashes into one commit", merge: "Merges with a merge commit", rebase: "Rebases onto the base" };
-      const NOTES = {
-        squash: "One commit; the branch's history is dropped.",
-        merge: "Keeps the branch's ancestry; required for upstream syncs.",
-        rebase: "Replays the branch's commits linearly onto the base.",
-      };
-      const INIT = [
-        { id: "1a", menu: true, pop: false, own: null, parent: null, models: false },
-        { id: "1b", menu: false, pop: true, own: null, parent: null, models: false },
-        { id: "1c", menu: true, pop: false, own: "merge", parent: null, models: false },
-        { id: "1d", menu: false, pop: true, own: null, parent: { strategy: "merge", key: "T3O-79" }, models: false },
-        { id: "1e", menu: false, pop: false, own: "merge", parent: null, models: true },
-      ];
-      const META = {
-        "1a": { title: "No override · kebab open", caption: "The card follows the merge stage. The row shows the effective value and where it comes from.", modals: [{ label: "600px", width: "600px" }] },
-        "1b": { title: "Popover · default selected", caption: "Opens under the kebab; the menu closes. Picking an option applies immediately. The default row carries the live board value.", modals: [{ label: "600px", width: "600px" }] },
-        "1c": { title: "Override: Merge commit", caption: "The card has its own setting, so the neutral pill appears next to the models pill slot and the row drops its source suffix. Hover the pill for the tooltip; click it to reopen the popover.", modals: [{ label: "600px", width: "600px" }] },
-        "1d": { title: "Sub-board child inheriting from parent", caption: "The parent T3O-79 overrides to merge, so the default option becomes \"Use parent\". No pill: inheriting is not an override.", modals: [{ label: "600px", width: "600px" }] },
-        "1e": { title: "Model + merge pills, narrow widths", caption: "Both overrides on one card. The pill cluster wraps under the key row instead of pushing the tabs and kebab off the edge.", modals: [{ label: "760px", width: "760px" }, { label: "560px", width: "560px" }, { label: "440px", width: "440px" }] },
-      };
+      </div>
+    </sc-for>
+  </div>
 
-      class Component extends DCLogic {
-        state = { frames: INIT.map((f) => ({ ...f })), theme: this.props.theme ?? "light" };
-        componentDidMount() { this.applyTheme(); }
-        componentDidUpdate(pp) {
-          if (pp.theme !== this.props.theme && this.props.theme) this.setState({ theme: this.props.theme });
-          this.applyTheme();
-        }
-        applyTheme() { document.documentElement.dataset.t3Theme = this.state.theme; }
-        patch(i, p) { this.setState((s) => ({ frames: s.frames.map((f, j) => (j === i ? { ...f, ...p } : f)) })); }
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;\&quot;light\&quot; | \&quot;dark\&quot;&quot;}}">
+const BOARD = "squash";
+const NAMES = { squash: "Squash", merge: "Merge commit", rebase: "Rebase" };
+const VERB = { squash: "Squashes into one commit", merge: "Merges with a merge commit", rebase: "Rebases onto the base" };
+const NOTES = {
+  squash: "One commit; the branch's history is dropped.",
+  merge: "Keeps the branch's ancestry; required for upstream syncs.",
+  rebase: "Replays the branch's commits linearly onto the base.",
+};
+const INIT = [
+  { id: "1a", menu: true, pop: false, own: null, parent: null, models: false },
+  { id: "1b", menu: false, pop: true, own: null, parent: null, models: false },
+  { id: "1c", menu: true, pop: false, own: "merge", parent: null, models: false },
+  { id: "1d", menu: false, pop: true, own: null, parent: { strategy: "merge", key: "T3O-79" }, models: false },
+  { id: "1e", menu: false, pop: false, own: "merge", parent: null, models: true },
+];
+const META = {
+  "1a": { title: "No override · kebab open", caption: "The card follows the merge stage. The row shows the effective value and where it comes from.", modals: [{ label: "600px", width: "600px" }] },
+  "1b": { title: "Popover · default selected", caption: "Opens under the kebab; the menu closes. Picking an option applies immediately. The default row carries the live board value.", modals: [{ label: "600px", width: "600px" }] },
+  "1c": { title: "Override: Merge commit", caption: "The card has its own setting, so the neutral pill appears next to the models pill slot and the row drops its source suffix. Hover the pill for the tooltip; click it to reopen the popover.", modals: [{ label: "600px", width: "600px" }] },
+  "1d": { title: "Sub-board child inheriting from parent", caption: "The parent T3O-79 overrides to merge, so the default option becomes \"Use parent\". No pill: inheriting is not an override.", modals: [{ label: "600px", width: "600px" }] },
+  "1e": { title: "Model + merge pills, narrow widths", caption: "Both overrides on one card. The pill cluster wraps under the key row instead of pushing the tabs and kebab off the edge.", modals: [{ label: "760px", width: "760px" }, { label: "560px", width: "560px" }, { label: "440px", width: "440px" }] },
+};
 
-        frameVm(f, i) {
-          const meta = META[f.id];
-          const inherited = f.parent ? f.parent.strategy : BOARD;
-          const eff = f.own || inherited;
-          const source = f.own ? "" : f.parent ? " · parent" : " · default";
-          const baseline = f.parent ? `the parent's setting (${f.parent.strategy} · ${f.parent.key})` : `the board default (${BOARD})`;
-          const rowStyle = (sel) =>
-            "display:flex;align-items:flex-start;gap:9px;width:100%;padding:7px 8px;border:none;border-radius:8px;text-align:left;cursor:pointer;background:" + (sel ? "var(--accent)" : "transparent");
-          const ringStyle = (sel) =>
-            "display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;flex:none;margin-top:2px;border-radius:99px;border:1.5px solid " + (sel ? "var(--fg)" : "var(--input)");
-          const pick = (v) => () => this.patch(i, { own: v });
-          const opts = [
-            {
-              v: null,
-              label: f.parent ? `Use parent (${f.parent.strategy} · ${f.parent.key})` : `Use board default (${BOARD})`,
-              note: f.parent ? "Follows the parent card's setting." : "Follows the merge stage's setting.",
-            },
-            ...["squash", "merge", "rebase"].map((v) => ({ v, label: NAMES[v], note: NOTES[v] })),
-          ].map((o) => {
-            const selected = (f.own || null) === o.v;
-            return { label: o.label, note: o.note, selected, pick: pick(o.v), rowStyle: rowStyle(selected), ringStyle: ringStyle(selected) };
-          });
-          return {
-            id: f.id, title: meta.title, caption: meta.caption, modals: meta.modals,
-            minH: f.menu || f.pop ? "390px" : "170px",
-            cardKey: f.parent ? "T3O-81" : "T3O-84",
-            tag: f.parent ? "sub-board" : "upstream",
-            cardTitle: f.parent ? "Sync fork tooling with upstream v2.4" : "Sync upstream main into fork",
-            menuOpen: f.menu, popOpen: f.pop, anyOpen: f.menu || f.pop,
-            kebabStyle: "display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:8px;cursor:pointer;color:var(--muted-fg);background:" + (f.menu || f.pop ? "var(--accent)" : "transparent"),
-            toggleMenu: () => this.patch(i, { menu: !f.menu, pop: false }),
-            openPop: () => this.patch(i, { pop: true, menu: false }),
-            openModels: () => this.patch(i, { menu: false }),
-            closeAll: () => this.patch(i, { menu: false, pop: false }),
-            modelsSet: f.models,
-            modelsPill: "Build Opus 4.8",
-            modelsTip: "Build: Opus 4.8 · high (default Sonnet 4.7)",
-            modelsSummary: f.models ? "Build" : "Default",
-            hasPill: !!f.own,
-            pillLabel: f.own ? NAMES[f.own] : "",
-            pillTip: f.own ? `${VERB[f.own]} instead of ${baseline}` : "",
-            rowValue: eff + source,
-            reset: () => this.patch(i, { own: null }),
-            options: opts,
-          };
-        }
+class Component extends DCLogic {
+  state = { frames: INIT.map((f) => ({ ...f })), theme: this.props.theme ?? "light" };
+  componentDidMount() { this.applyTheme(); }
+  componentDidUpdate(pp) {
+    if (pp.theme !== this.props.theme && this.props.theme) this.setState({ theme: this.props.theme });
+    this.applyTheme();
+  }
+  applyTheme() { document.documentElement.dataset.t3Theme = this.state.theme; }
+  patch(i, p) { this.setState((s) => ({ frames: s.frames.map((f, j) => (j === i ? { ...f, ...p } : f)) })); }
 
-        renderVals() {
-          const tab = (on) =>
-            "display:inline-flex;align-items:center;height:24px;padding:0 10px;border:none;border-radius:7px;font:500 11.5px var(--font-sans);cursor:pointer;" +
-            (on ? "background:var(--card);color:var(--fg);box-shadow:var(--shadow-xs)" : "background:transparent;color:var(--muted-fg)");
-          const t = this.state.theme;
-          return {
-            frames: this.state.frames.map((f, i) => this.frameVm(f, i)),
-            setLight: () => this.setState({ theme: "light" }),
-            setDark: () => this.setState({ theme: "dark" }),
-            lightTabStyle: tab(t === "light"),
-            darkTabStyle: tab(t === "dark"),
-            resetAll: () => this.setState({ frames: INIT.map((f) => ({ ...f })) }),
-          };
-        }
-      }
-    </script>
-  </body>
+  frameVm(f, i) {
+    const meta = META[f.id];
+    const inherited = f.parent ? f.parent.strategy : BOARD;
+    const eff = f.own || inherited;
+    const source = f.own ? "" : f.parent ? " · parent" : " · default";
+    const baseline = f.parent ? `the parent's setting (${f.parent.strategy} · ${f.parent.key})` : `the board default (${BOARD})`;
+    const rowStyle = (sel) =>
+      "display:flex;align-items:flex-start;gap:9px;width:100%;padding:7px 8px;border:none;border-radius:8px;text-align:left;cursor:pointer;background:" + (sel ? "var(--accent)" : "transparent");
+    const ringStyle = (sel) =>
+      "display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;flex:none;margin-top:2px;border-radius:99px;border:1.5px solid " + (sel ? "var(--fg)" : "var(--input)");
+    const pick = (v) => () => this.patch(i, { own: v });
+    const opts = [
+      {
+        v: null,
+        label: f.parent ? `Use parent (${f.parent.strategy} · ${f.parent.key})` : `Use board default (${BOARD})`,
+        note: f.parent ? "Follows the parent card's setting." : "Follows the merge stage's setting.",
+      },
+      ...["squash", "merge", "rebase"].map((v) => ({ v, label: NAMES[v], note: NOTES[v] })),
+    ].map((o) => {
+      const selected = (f.own || null) === o.v;
+      return { label: o.label, note: o.note, selected, pick: pick(o.v), rowStyle: rowStyle(selected), ringStyle: ringStyle(selected) };
+    });
+    return {
+      id: f.id, title: meta.title, caption: meta.caption, modals: meta.modals,
+      minH: f.menu || f.pop ? "390px" : "170px",
+      cardKey: f.parent ? "T3O-81" : "T3O-84",
+      tag: f.parent ? "sub-board" : "upstream",
+      cardTitle: f.parent ? "Sync fork tooling with upstream v2.4" : "Sync upstream main into fork",
+      menuOpen: f.menu, popOpen: f.pop, anyOpen: f.menu || f.pop,
+      kebabStyle: "display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:8px;cursor:pointer;color:var(--muted-fg);background:" + (f.menu || f.pop ? "var(--accent)" : "transparent"),
+      toggleMenu: () => this.patch(i, { menu: !f.menu, pop: false }),
+      openPop: () => this.patch(i, { pop: true, menu: false }),
+      openModels: () => this.patch(i, { menu: false }),
+      closeAll: () => this.patch(i, { menu: false, pop: false }),
+      modelsSet: f.models,
+      modelsPill: "Build Opus 4.8",
+      modelsTip: "Build: Opus 4.8 · high (default Sonnet 4.7)",
+      modelsSummary: f.models ? "Build" : "Default",
+      hasPill: !!f.own,
+      pillLabel: f.own ? NAMES[f.own] : "",
+      pillTip: f.own ? `${VERB[f.own]} instead of ${baseline}` : "",
+      rowValue: eff + source,
+      reset: () => this.patch(i, { own: null }),
+      options: opts,
+    };
+  }
+
+  renderVals() {
+    const tab = (on) =>
+      "display:inline-flex;align-items:center;height:24px;padding:0 10px;border:none;border-radius:7px;font:500 11.5px var(--font-sans);cursor:pointer;" +
+      (on ? "background:var(--card);color:var(--fg);box-shadow:var(--shadow-xs)" : "background:transparent;color:var(--muted-fg)");
+    const t = this.state.theme;
+    return {
+      frames: this.state.frames.map((f, i) => this.frameVm(f, i)),
+      setLight: () => this.setState({ theme: "light" }),
+      setDark: () => this.setState({ theme: "dark" }),
+      lightTabStyle: tab(t === "light"),
+      darkTabStyle: tab(t === "dark"),
+      resetAll: () => this.setState({ frames: INIT.map((f) => ({ ...f })) }),
+    };
+  }
+}
+</script>
+</body>
 </html>

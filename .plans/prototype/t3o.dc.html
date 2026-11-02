@@ -226,6 +226,10 @@ a:hover{text-decoration:underline}
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path><path d="M15 3v18"></path></svg>
           Board
         </button>
+        <button type="button" onClick="{{ showList }}" style="{{ listTabStyle }}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18"></path><path d="M9 12h12"></path><path d="M9 19h12"></path><path d="M4 12v4a2 2 0 0 0 2 2"></path></svg>
+          List
+        </button>
         <button type="button" onClick="{{ showThreads }}" style="{{ threadsTabStyle }}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
           Threads
@@ -421,6 +425,7 @@ a:hover{text-decoration:underline}
         </button>
         </sc-if>
       </div>
+      <sc-if value="{{ isKanban }}" hint-placeholder-val="{{ true }}">
       <div style="flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column">
         <sc-for list="{{ boards }}" as="b" hint-placeholder-count="1">
           <section style="{{ b.sectionStyle }}">
@@ -453,10 +458,15 @@ a:hover{text-decoration:underline}
                     {{ b.backLabel }}
                   </button>
                   <span style="color:var(--border)">/</span>
+                  <sc-for list="{{ b.crumbs }}" as="cr" hint-placeholder-count="0">
+                    <button type="button" onClick="{{ cr.open }}" title="{{ cr.title }}" style="height:22px;padding:0 6px;margin:0 -4px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);font:500 11.5px var(--font-sans);cursor:pointer;white-space:nowrap" style-hover="background:var(--accent);color:var(--fg)">{{ cr.key }}</button>
+                    <span style="color:var(--border)">/</span>
+                  </sc-for>
                   <span style="{{ b.laneKeyStyle }}">{{ b.laneKey }}</span>
                   <span style="font:600 13.5px var(--font-sans);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px">{{ b.laneName }}</span>
-                  <span style="font:500 11.5px var(--font-sans);color:var(--muted-fg)">{{ b.laneProgress }} merged</span>
-                  <span style="font:500 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:1px 6px;background:var(--muted)">{{ b.laneBase }}</span>
+                  <span style="font:500 11.5px var(--font-sans);color:var(--muted-fg);white-space:nowrap">{{ b.laneProgress }}</span>
+                  <span title="Where this group's children merge" style="font:500 11px var(--font-mono);color:var(--muted-fg);border:1px solid var(--border);border-radius:6px;padding:1px 6px;background:var(--muted);white-space:nowrap">{{ b.laneBase }}</span>
+                  <span style="font:500 11px var(--font-sans);color:var(--muted-fg);white-space:nowrap">{{ b.laneAuto }}</span>
                 </div>
               </sc-if>
               <sc-if value="{{ b.isAll }}" hint-placeholder-val="{{ false }}">
@@ -474,6 +484,42 @@ a:hover{text-decoration:underline}
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"></path><path d="M15 7h2a5 5 0 1 1 0 10h-2"></path><line x1="8" x2="16" y1="12" y2="12"></line></svg>
                   {{ b.graphLabel }}
                 </button>
+                <div style="position:relative;flex:none">
+                  <button type="button" onClick="{{ b.toggleSettings }}" style="{{ b.settingsBtnStyle }}">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10"></path><path d="M18 6h2"></path><path d="M4 12h4"></path><path d="M12 12h8"></path><path d="M4 18h10"></path><path d="M18 18h2"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="16" cy="18" r="2"></circle></svg>
+                    Group settings
+                  </button>
+                  <sc-if value="{{ b.settingsOpen }}" hint-placeholder-val="{{ false }}">
+                    <div onClick="{{ b.toggleSettings }}" style="position:fixed;inset:0;z-index:25"></div>
+                    <div style="position:absolute;top:32px;right:0;z-index:30;width:344px;padding:13px 14px 14px;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:var(--shadow-pop);display:flex;flex-direction:column;gap:12px">
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Group settings</span>
+                        <span style="{{ b.laneKeyStyle }}">{{ b.laneKey }}</span>
+                      </div>
+                      <div style="display:flex;flex-direction:column;gap:6px">
+                        <div style="display:flex;align-items:baseline;gap:8px">
+                          <span style="font:500 12px var(--font-sans);color:var(--fg)">Merge target</span>
+                          <span style="flex:1"></span>
+                          <span style="font:500 11px var(--font-mono);color:var(--fg)">{{ b.settings.resolved }}</span>
+                        </div>
+                        <div title="{{ b.settings.lockTip }}" style="display:flex;gap:2px;padding:2px;border-radius:8px;background:var(--accent)">
+                          <button type="button" onClick="{{ b.settings.pickInherit }}" style="{{ b.settings.inheritStyle }}">Inherit</button>
+                          <button type="button" onClick="{{ b.settings.pickOwn }}" style="{{ b.settings.ownStyle }}">Own integration branch</button>
+                        </div>
+                        <div style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ b.settings.targetNote }}</div>
+                      </div>
+                      <sc-for list="{{ b.settings.toggles }}" as="t" hint-placeholder-count="3">
+                        <div onClick="{{ t.toggle }}" title="{{ t.tip }}" style="{{ t.rowStyle }}">
+                          <span style="{{ t.switchStyle }}"><span style="{{ t.knobStyle }}"></span></span>
+                          <span style="min-width:0;display:flex;flex-direction:column;gap:2px">
+                            <span style="font:500 12px var(--font-sans);color:var(--fg)">{{ t.label }}</span>
+                            <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ t.note }}</span>
+                          </span>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </div>
               </sc-if>
             </div>
             <sc-if value="{{ b.graphOpen }}" hint-placeholder-val="{{ false }}">
@@ -533,12 +579,21 @@ a:hover{text-decoration:underline}
                       </div>
                       <div style="flex:1"></div>
                       <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ col.count }}</span>
+                      <sc-if value="{{ col.canPhase }}" hint-placeholder-val="{{ false }}">
+                        <button type="button" onClick="{{ col.phase }}" title="Move deferred cards into a new phase group" style="display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;margin-left:2px;border:1px solid var(--border);border-radius:6px;background:var(--popover);color:var(--muted-fg);font:500 10.5px var(--font-sans);cursor:pointer;white-space:nowrap" style-hover="background:var(--accent);color:var(--fg)">
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>
+                          New phase
+                        </button>
+                      </sc-if>
                       <sc-if value="{{ col.canAdd }}" hint-placeholder-val="{{ true }}">
                         <button type="button" onClick="{{ col.add }}" title="New task here" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
                         </button>
                       </sc-if>
                     </div>
+                    <sc-if value="{{ col.hint }}" hint-placeholder-val="{{ false }}">
+                      <div style="margin:-4px 4px 10px;font:400 11px/1.4 var(--font-sans);color:var(--muted-fg)">{{ col.hint }}</div>
+                    </sc-if>
                     <div style="display:flex;flex-direction:column;gap:8px">
                       <sc-for list="{{ col.items }}" as="c" hint-placeholder-count="2">
                         <sc-if value="{{ c.isPlaceholder }}" hint-placeholder-val="{{ false }}">
@@ -674,17 +729,36 @@ a:hover{text-decoration:underline}
                               </sc-if>
                             </div>
                           </sc-if>
-                          <sc-if value="{{ c.hasPlans }}" hint-placeholder-val="{{ false }}">
-                            <div style="display:flex;align-items:center;gap:9px;margin-top:10px">
-                              <div style="display:flex;gap:3px;flex:1;min-width:0">
-                                <sc-for list="{{ c.planPips }}" as="pp" hint-placeholder-count="0">
-                                  <span style="{{ pp.style }}"></span>
-                                </sc-for>
+                          <sc-if value="{{ c.splitNote }}" hint-placeholder-val="{{ false }}">
+                            <div style="margin-top:8px;font:500 10.5px var(--font-sans);color:var(--attention-fg)">{{ c.splitNote }}</div>
+                          </sc-if>
+                          <sc-if value="{{ c.group }}" hint-placeholder-val="{{ false }}">
+                            <div style="display:flex;flex-direction:column;gap:7px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border)">
+                              <sc-if value="{{ c.group.hasPips }}" hint-placeholder-val="{{ true }}">
+                                <div style="display:flex;gap:3px">
+                                  <sc-for list="{{ c.group.pips }}" as="gp" hint-placeholder-count="0">
+                                    <span title="{{ gp.tip }}" style="{{ gp.style }}"></span>
+                                  </sc-for>
+                                </div>
+                              </sc-if>
+                              <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                                <div style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden;white-space:nowrap">
+                                <span style="font:500 10.5px var(--font-mono);color:var(--fg);flex:none">{{ c.group.done }}</span>
+                                <sc-if value="{{ c.group.needs }}" hint-placeholder-val="{{ false }}">
+                                  <span style="font:500 10.5px var(--font-sans);color:var(--attention-fg);white-space:nowrap">{{ c.group.needs }}</span>
+                                </sc-if>
+                                <sc-if value="{{ c.group.blocked }}" hint-placeholder-val="{{ false }}">
+                                  <span style="font:500 10.5px var(--font-sans);color:var(--warning-fg);white-space:nowrap">{{ c.group.blocked }}</span>
+                                </sc-if>
+                                </div>
+                                <button type="button" onClick="{{ c.drill }}" title="Open this group's board" style="display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--muted);color:var(--muted-fg);font:500 10.5px var(--font-sans);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
+                                  Board
+                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+                                </button>
                               </div>
-                              <button type="button" onClick="{{ c.drill }}" title="Open the plans for this task" style="display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--muted);color:var(--muted-fg);font:500 10.5px var(--font-sans);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
-                                {{ c.planLabel }}
-                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
-                              </button>
+                              <sc-if value="{{ c.group.meta }}" hint-placeholder-val="{{ false }}">
+                                <div style="font:400 10.5px var(--font-sans);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.group.meta }}</div>
+                              </sc-if>
                             </div>
                           </sc-if>
                           <sc-if value="{{ c.hasMeta }}" hint-placeholder-val="{{ false }}">
@@ -737,6 +811,158 @@ a:hover{text-decoration:underline}
           </section>
         </sc-for>
       </div>
+      </sc-if>
+      <sc-if value="{{ isList }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:1;min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:8px;flex:none;min-height:50px;padding:8px 18px;flex-wrap:wrap">
+            <sc-if value="{{ list.noSel }}" hint-placeholder-val="{{ true }}">
+              <span style="font:600 13.5px var(--font-sans);color:var(--fg);white-space:nowrap">{{ list.scopeName }}</span>
+              <span style="font:400 12px var(--font-sans);color:var(--muted-fg);white-space:nowrap">{{ list.countLabel }}</span>
+              <div style="position:relative;flex:none;margin-left:4px">
+                <button type="button" onClick="{{ list.toggleStage }}" style="{{ list.stageBtnStyle }}">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M7 12h10"></path><path d="M10 18h4"></path></svg>
+                  {{ list.stageLabel }}
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+                </button>
+                <sc-if value="{{ list.stageOpen }}" hint-placeholder-val="{{ false }}">
+                  <div onClick="{{ list.toggleStage }}" style="position:fixed;inset:0;z-index:25"></div>
+                  <div style="position:absolute;top:32px;left:0;z-index:30;width:220px;padding:5px;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:var(--shadow-pop);display:flex;flex-direction:column;gap:1px">
+                    <sc-for list="{{ list.stageOpts }}" as="so" hint-placeholder-count="9">
+                      <div onClick="{{ so.toggle }}" style="display:flex;align-items:center;gap:9px;height:28px;padding:0 8px;border-radius:7px;cursor:pointer;font:400 12.5px var(--font-sans);color:var(--fg)" style-hover="background:var(--accent)">
+                        <span style="{{ so.boxStyle }}">
+                          <sc-if value="{{ so.on }}" hint-placeholder-val="{{ false }}">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+                          </sc-if>
+                        </span>
+                        <span style="flex:1">{{ so.name }}</span>
+                        <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ so.count }}</span>
+                      </div>
+                    </sc-for>
+                    <sc-if value="{{ list.hasStageFilter }}" hint-placeholder-val="{{ false }}">
+                      <div style="height:1px;margin:3px 6px;background:var(--border)"></div>
+                      <button type="button" onClick="{{ list.clearStages }}" style="height:28px;padding:0 8px;border:none;border-radius:7px;background:transparent;color:var(--muted-fg);font:500 12px var(--font-sans);text-align:left;cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">Show all stages</button>
+                    </sc-if>
+                  </div>
+                </sc-if>
+              </div>
+              <span style="flex:1"></span>
+              <span style="display:inline-flex;align-items:center;gap:5px;min-width:0;overflow:hidden;font:400 11.5px var(--font-sans);color:var(--muted-fg);white-space:nowrap">Drag rows, or select and <kbd style="font:500 10.5px var(--font-mono);padding:1px 5px;border:1px solid var(--border);border-radius:4px;background:var(--muted);color:var(--fg)">Tab</kbd> / <kbd style="font:500 10.5px var(--font-mono);padding:1px 5px;border:1px solid var(--border);border-radius:4px;background:var(--muted);color:var(--fg)">⇧Tab</kbd></span>
+              <button type="button" onClick="{{ list.newGroup }}" style="display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 9px;flex:none;border:1px solid var(--input);border-radius:7px;background:var(--popover);color:var(--fg);font:500 12px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+                New group
+              </button>
+            </sc-if>
+            <sc-if value="{{ list.hasSel }}" hint-placeholder-val="{{ false }}">
+              <span style="font:600 12.5px var(--font-sans);color:var(--fg);white-space:nowrap">{{ list.selLabel }}</span>
+              <span style="width:1px;height:16px;background:var(--border);margin:0 2px"></span>
+              <button type="button" onClick="{{ list.indent }}" title="{{ list.indentTip }}" style="{{ list.indentStyle }}">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8 4 4-4 4"></path><path d="M21 12H11"></path><path d="M21 6H11"></path><path d="M21 18H11"></path></svg>
+                Indent
+                <span style="font:500 10px var(--font-mono);color:var(--muted-fg)">Tab</span>
+              </button>
+              <button type="button" onClick="{{ list.outdent }}" title="{{ list.outdentTip }}" style="{{ list.outdentStyle }}">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 8-4 4 4 4"></path><path d="M21 12H11"></path><path d="M21 6H11"></path><path d="M21 18H11"></path></svg>
+                Outdent
+                <span style="font:500 10px var(--font-mono);color:var(--muted-fg)">⇧Tab</span>
+              </button>
+              <div style="position:relative;flex:none">
+                <button type="button" onClick="{{ list.toggleMove }}" style="{{ list.btnStyle }}">
+                  Move to…
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+                </button>
+                <sc-if value="{{ list.moveOpen }}" hint-placeholder-val="{{ false }}">
+                  <div onClick="{{ list.toggleMove }}" style="position:fixed;inset:0;z-index:25"></div>
+                  <div style="position:absolute;top:32px;left:0;z-index:30;width:360px;max-height:360px;overflow-y:auto;padding:5px;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:var(--shadow-pop);display:flex;flex-direction:column;gap:1px">
+                    <div style="padding:6px 8px 5px;font:400 11px var(--font-sans);color:var(--muted-fg)">Move the selection under…</div>
+                    <sc-for list="{{ list.moveOptions }}" as="mo" hint-placeholder-count="6">
+                      <button type="button" onClick="{{ mo.pick }}" style="{{ mo.style }}" style-hover="background:var(--accent)">
+                        <span style="{{ mo.indentStyle }}"></span>
+                        <sc-if value="{{ mo.hasKey }}" hint-placeholder-val="{{ true }}">
+                          <span style="{{ mo.keyStyle }}">{{ mo.key }}</span>
+                        </sc-if>
+                        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ mo.title }}</span>
+                        <sc-if value="{{ mo.isGroup }}" hint-placeholder-val="{{ false }}">
+                          <span style="flex:none;font:400 10.5px var(--font-sans);color:var(--muted-fg)">group</span>
+                        </sc-if>
+                      </button>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+              <button type="button" onClick="{{ list.groupNew }}" style="{{ list.btnStyle }}">Group into new…</button>
+              <sc-if value="{{ list.canArchive }}" hint-placeholder-val="{{ false }}">
+                <button type="button" onClick="{{ list.archive }}" style="{{ list.btnStyle }}">Archive</button>
+              </sc-if>
+              <span style="flex:1"></span>
+              <button type="button" onClick="{{ list.clear }}" style="height:26px;padding:0 9px;border:none;border-radius:7px;background:transparent;color:var(--muted-fg);font:500 12px var(--font-sans);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">Clear</button>
+            </sc-if>
+          </div>
+          <div style="flex:1;min-height:0;overflow:auto;padding:0 18px 90px">
+            <div style="min-width:880px;display:flex;flex-direction:column">
+              <div style="position:sticky;top:0;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) 124px 168px 130px 150px;column-gap:12px;align-items:center;height:30px;padding:0 10px;background:var(--bg);border-bottom:1px solid var(--border);font:500 11px var(--font-sans);color:var(--muted-fg)">
+                <span style="padding-left:47px">Name</span>
+                <span>Stage</span>
+                <span>Status</span>
+                <span>Progress</span>
+                <span>Merges into</span>
+              </div>
+              <sc-for list="{{ list.rows }}" as="r" hint-placeholder-count="12">
+                <div draggable="true" onDragStart="{{ r.onDragStart }}" onDragEnd="{{ r.onDragEnd }}" onDragOver="{{ r.onDragOver }}" onDrop="{{ r.onDrop }}" onClick="{{ r.onClick }}" onDoubleClick="{{ r.open }}" style="{{ r.rowStyle }}" style-hover="background:var(--accent)">
+                  <div style="display:flex;align-items:center;gap:7px;min-width:0">
+                    <span style="{{ r.indentStyle }}"></span>
+                    <sc-if value="{{ r.isGroup }}" hint-placeholder-val="{{ false }}">
+                      <button type="button" onClick="{{ r.toggle }}" title="{{ r.toggleTip }}" style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;padding:0;border:none;border-radius:5px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--card);color:var(--fg)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:{{ r.caret }};transition:transform .12s ease"><path d="m6 9 6 6 6-6"></path></svg>
+                      </button>
+                    </sc-if>
+                    <sc-if value="{{ r.isLeaf }}" hint-placeholder-val="{{ true }}">
+                      <span style="width:18px;flex:none"></span>
+                    </sc-if>
+                    <span onClick="{{ r.onCheck }}" title="Select" style="{{ r.checkStyle }}">
+                      <sc-if value="{{ r.sel }}" hint-placeholder-val="{{ false }}">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+                      </sc-if>
+                    </span>
+                    <span style="{{ r.keyStyle }}">{{ r.key }}</span>
+                    <span style="{{ r.titleStyle }}">{{ r.title }}</span>
+                    <sc-if value="{{ r.isGroup }}" hint-placeholder-val="{{ false }}">
+                      <span style="flex:none;font:500 10.5px var(--font-sans);color:var(--muted-fg)">{{ r.childCount }}</span>
+                      <button type="button" onClick="{{ r.drill }}" title="Open this group's board" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:none;padding:0;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--card);color:var(--fg)">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path><path d="M15 3v18"></path></svg>
+                      </button>
+                    </sc-if>
+                    <button type="button" onClick="{{ r.open }}" title="View details" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:none;padding:0;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--card);color:var(--fg)">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                    </button>
+                  </div>
+                  <div><span style="{{ r.stageStyle }}">{{ r.stageName }}</span></div>
+                  <div style="display:flex;align-items:center;gap:10px;min-width:0;overflow:hidden">
+                    <sc-for list="{{ r.flags }}" as="f" hint-placeholder-count="0">
+                      <span style="{{ f.style }}"><span style="{{ f.dot }}"></span>{{ f.text }}</span>
+                    </sc-for>
+                  </div>
+                  <div>
+                    <sc-if value="{{ r.hasProgress }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <div style="display:flex;gap:2px;width:72px;flex:none">
+                          <sc-for list="{{ r.progress.pips }}" as="pp" hint-placeholder-count="0">
+                            <span style="{{ pp.style }}"></span>
+                          </sc-for>
+                        </div>
+                        <span style="font:500 10.5px var(--font-mono);color:var(--fg)">{{ r.progress.label }}</span>
+                      </div>
+                    </sc-if>
+                  </div>
+                  <span style="{{ r.targetStyle }}">{{ r.target }}</span>
+                </div>
+              </sc-for>
+              <sc-if value="{{ list.empty }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:28px 10px;font:400 13px var(--font-sans);color:var(--muted-fg)">No cards match the filter.</div>
+              </sc-if>
+            </div>
+          </div>
+        </div>
+      </sc-if>
     </sc-if>
   </main>
 
@@ -785,6 +1011,12 @@ a:hover{text-decoration:underline}
             <span style="{{ tg.style }}">{{ tg.name }}</span>
           </sc-for>
           <span style="{{ activeCard.statusStyle }}">{{ activeCard.statusName }}</span>
+          <sc-if value="{{ activeCard.isGroup }}" hint-placeholder-val="{{ false }}">
+            <span title="A group: its stage follows its children" style="display:inline-flex;align-items:center;gap:5px;height:18px;padding:0 7px;border:1px solid var(--border);border-radius:6px;background:var(--muted);font:500 11px var(--font-sans);color:var(--muted-fg)">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"></rect><rect width="7" height="7" x="14" y="14" rx="1"></rect><path d="M10 6.5h4a2 2 0 0 1 2 2V14"></path></svg>
+              Group · {{ activeCard.groupChip }}
+            </span>
+          </sc-if>
           <sc-if value="{{ activeCard.workflowIsCustom }}" hint-placeholder-val="{{ false }}">
             <span title="{{ activeCard.workflowNote }}" style="display:inline-flex;align-items:center;height:18px;padding:0 7px;border:1px solid var(--border);border-radius:6px;background:var(--muted);font:500 11px var(--font-sans);color:var(--muted-fg)">{{ activeCard.workflowName }}</span>
           </sc-if>
@@ -1213,6 +1445,7 @@ a:hover{text-decoration:underline}
                   </div>
                 </sc-for>
               </div>
+              <sc-if value="{{ cardFinal }}" hint-placeholder-val="{{ false }}">
               <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px dashed var(--input);border-radius:12px;background:color-mix(in srgb,var(--fg) 3%,transparent)">
                 <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;flex:none;border-radius:8px;background:var(--card);border:1px solid var(--border);color:var(--muted-fg)">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg>
@@ -1224,6 +1457,7 @@ a:hover{text-decoration:underline}
                 <span style="flex:1"></span>
                 <button type="button" style="{{ cardFinal.style }}">{{ cardFinal.label }}</button>
               </div>
+              </sc-if>
             </div>
           </section>
           </sc-if>
@@ -1231,13 +1465,16 @@ a:hover{text-decoration:underline}
           <sc-if value="{{ summaryPane }}" hint-placeholder-val="{{ false }}">
           <section style="display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid var(--border);background:var(--card)">
             <div style="display:flex;align-items:center;gap:8px;flex:none;height:44px;padding:0 12px 0 16px;border-bottom:1px solid var(--border)">
-              <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Build summary</span>
+              <span style="font:600 12.5px var(--font-sans);color:var(--fg)">{{ summaryTitle }}</span>
+              <sc-if value="{{ hasBuildSummary }}" hint-placeholder-val="{{ true }}">
               <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ summary.meta }}</span>
               <span style="flex:1"></span>
               <button type="button" onClick="{{ summary.openThread }}" style="height:24px;padding:0 8px;flex:none;white-space:nowrap;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);font:500 11.5px var(--font-sans);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">View thread →</button>
+              </sc-if>
             </div>
             <div style="flex:1;min-height:0;overflow-y:auto">
               <div style="padding:22px 22px 36px;display:flex;flex-direction:column;gap:28px">
+                <sc-if value="{{ hasBuildSummary }}" hint-placeholder-val="{{ true }}">
                 <div style="display:flex;flex-direction:column;gap:8px">
                   <div style="font:400 14.5px/1.6 var(--font-sans);color:var(--fg);text-wrap:pretty"><sc-for list="{{ summary.lead }}" as="pt" hint-placeholder-count="1"><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"><code style="font:500 0.92em var(--font-mono);color:var(--fg);background:var(--muted);padding:0 4px;border-radius:4px">{{ pt.t }}</code></sc-if><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"><span>{{ pt.t }}</span></sc-if></sc-for></div>
                   <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font:400 11.5px var(--font-sans);color:var(--muted-fg)">
@@ -1277,6 +1514,53 @@ a:hover{text-decoration:underline}
                   <div style="font:400 13px/1.6 var(--font-sans);color:var(--fg);text-wrap:pretty"><sc-for list="{{ summary.review.parts }}" as="pt" hint-placeholder-count="1"><sc-if value="{{ pt.code }}" hint-placeholder-val="{{ false }}"><code style="font:500 0.92em var(--font-mono);color:var(--fg);background:var(--muted);padding:0 4px;border-radius:4px">{{ pt.t }}</code></sc-if><sc-if value="{{ pt.plain }}" hint-placeholder-val="{{ true }}"><span>{{ pt.t }}</span></sc-if></sc-for></div>
                   <div style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ summary.review.stats }}</div>
                 </div>
+                </sc-if>
+                <sc-if value="{{ decisionLog }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;gap:10px">
+                    <div onClick="{{ decisionLog.toggle }}" style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
+                      <sc-if value="{{ decisionLog.open }}" hint-placeholder-val="{{ false }}">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="m6 9 6 6 6-6"></path></svg>
+                      </sc-if>
+                      <sc-if value="{{ decisionLog.closed }}" hint-placeholder-val="{{ true }}">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="m9 18 6-6-6-6"></path></svg>
+                      </sc-if>
+                      <span style="font:600 12px var(--font-sans);color:var(--fg)">Decision log</span>
+                      <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ decisionLog.count }}</span>
+                      <sc-if value="{{ decisionLog.flags }}" hint-placeholder-val="{{ false }}">
+                        <span style="font:500 11.5px var(--font-sans);color:var(--attention-fg)">{{ decisionLog.flags }}</span>
+                      </sc-if>
+                    </div>
+                    <sc-if value="{{ decisionLog.open }}" hint-placeholder-val="{{ false }}">
+                      <sc-if value="{{ decisionLog.auto }}" hint-placeholder-val="{{ false }}">
+                        <div style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ decisionLog.autoNote }}</div>
+                      </sc-if>
+                      <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-top:-1px">
+                        <sc-for list="{{ decisionLog.rows }}" as="dr" hint-placeholder-count="3">
+                          <div style="{{ dr.rowStyle }}">
+                            <div style="display:flex;align-items:center;gap:8px">
+                              <span style="flex:1;min-width:0;font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ dr.q }}</span>
+                              <sc-if value="{{ dr.hasFlag }}" hint-placeholder-val="{{ false }}">
+                                <span style="{{ dr.flagStyle }}">{{ dr.flagLabel }}</span>
+                              </sc-if>
+                              <span style="flex:none;font:500 10.5px var(--font-sans);color:var(--muted-fg)">{{ dr.who }}</span>
+                            </div>
+                            <div style="font:500 13px/1.5 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ dr.d }}</div>
+                            <div style="font:400 12px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ dr.why }}</div>
+                          </div>
+                        </sc-for>
+                      </div>
+                      <sc-if value="{{ decisionLog.canAct }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                          <button type="button" onClick="{{ decisionLog.sendBack }}" style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 12px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">Send back to build with changes</button>
+                          <button type="button" onClick="{{ decisionLog.followUp }}" style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 12px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">Create follow-up card</button>
+                        </div>
+                      </sc-if>
+                    </sc-if>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ noBuildSummary }}" hint-placeholder-val="{{ false }}">
+                  <div style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg)">The build summary appears here when the build finishes.</div>
+                </sc-if>
               </div>
             </div>
           </section>
@@ -1290,6 +1574,21 @@ a:hover{text-decoration:underline}
               <span style="flex:1"></span>
             </div>
             <div style="flex:1;min-height:0;overflow-y:auto;padding:16px 18px 24px">
+              <sc-if value="{{ planThread }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:11px 12px 11px 13px;border:1px solid var(--border);border-radius:11px;background:var(--card);box-shadow:var(--shadow-xs)">
+                  <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;flex:none;border-radius:8px;background:var(--muted);border:1px solid var(--border);color:var(--muted-fg)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6l-4 4V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"></path></svg>
+                  </span>
+                  <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                    <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Planning thread</span>
+                    <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ planThread.meta }}</span>
+                    <sc-if value="{{ planThread.hasHint }}" hint-placeholder-val="{{ false }}">
+                      <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ planThread.hint }}</span>
+                    </sc-if>
+                  </div>
+                  <button type="button" onClick="{{ planThread.open }}" style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;flex:none;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 12px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);white-space:nowrap" style-hover="background:var(--accent)">{{ planThread.label }}</button>
+                </div>
+              </sc-if>
               <pre style="margin:0;white-space:pre-wrap;font:400 12.5px/1.75 var(--font-sans);color:var(--fg)">{{ planDocBody }}</pre>
             </div>
           </section>
@@ -1515,6 +1814,73 @@ a:hover{text-decoration:underline}
                   </div>
                 </sc-if>
               </sc-for>
+              <sc-if value="{{ cardThread.proposal }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;gap:9px">
+                  <span style="width:18px;height:18px;flex:none;margin-top:2px;border-radius:99px;background:linear-gradient(135deg,#f97316,#ef4444)"></span>
+                  <div style="flex:1;min-width:0;display:flex;flex-direction:column;border:1px solid color-mix(in srgb,var(--attention) 50%,transparent);border-radius:12px;background:var(--card);overflow:hidden;box-shadow:var(--shadow-xs)">
+                    <div style="display:flex;align-items:center;gap:8px;padding:11px 13px 10px">
+                      <span style="font:600 13px var(--font-sans);color:var(--fg)">Proposed split</span>
+                      <span style="font:400 12px var(--font-sans);color:var(--muted-fg);white-space:nowrap">{{ cardThread.proposal.count }} · {{ cardThread.proposal.mix }}</span>
+                      <span style="flex:1"></span>
+                      <span style="display:inline-flex;align-items:center;gap:4px;flex:none;font:500 11px var(--font-sans);color:var(--attention-fg)">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5"></path><path d="M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>
+                        Needs your approval
+                      </span>
+                    </div>
+                    <div style="display:flex;flex-direction:column">
+                      <sc-for list="{{ cardThread.proposal.rows }}" as="pr" hint-placeholder-count="3">
+                        <div style="display:flex;align-items:center;gap:10px;padding:9px 13px;border-top:1px solid var(--border)">
+                          <span style="flex:none;width:20px;font:500 11px var(--font-mono);color:var(--muted-fg)">{{ pr.n }}</span>
+                          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                            <span style="font:500 12.5px var(--font-sans);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ pr.title }}</span>
+                            <sc-if value="{{ pr.hasDeps }}" hint-placeholder-val="{{ false }}">
+                              <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ pr.deps }}</span>
+                            </sc-if>
+                          </div>
+                          <sc-if value="{{ pr.planned }}" hint-placeholder-val="{{ true }}">
+                            <span title="Comes with an approved plan" style="display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;flex:none;border:1px solid var(--input);border-radius:6px;background:var(--card);color:var(--fg);font:500 11px var(--font-sans)">
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="m9 15 2 2 4-4"></path></svg>
+                              Planned
+                            </span>
+                          </sc-if>
+                          <sc-if value="{{ pr.needs }}" hint-placeholder-val="{{ false }}">
+                            <span title="Comes with a brief only" style="display:inline-flex;align-items:center;height:20px;padding:0 7px;flex:none;border:1px dashed var(--input);border-radius:6px;color:var(--muted-fg);font:500 11px var(--font-sans)">Needs planning</span>
+                          </sc-if>
+                          <span style="flex:none;width:62px;text-align:right;font:500 11px var(--font-sans);color:var(--muted-fg)">{{ pr.lands }}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                    <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;padding:12px 13px;border-top:1px solid var(--border);background:var(--muted)">
+                      <div onClick="{{ cardThread.proposal.toggleAuto }}" style="display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+                        <span style="{{ cardThread.proposal.autoSwitch }}"><span style="{{ cardThread.proposal.autoKnob }}"></span></span>
+                        <span style="min-width:0;display:flex;flex-direction:column;gap:2px">
+                          <span style="font:500 12px var(--font-sans);color:var(--fg)">Auto-build</span>
+                          <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ cardThread.proposal.autoNote }}</span>
+                        </span>
+                      </div>
+                      <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+                        <div style="display:flex;align-items:baseline;gap:8px;min-width:0">
+                          <span style="flex:none;font:500 12px var(--font-sans);color:var(--fg)">Merge target</span>
+                          <span style="flex:1"></span>
+                          <span style="min-width:0;font:500 11px var(--font-mono);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ cardThread.proposal.resolved }}</span>
+                        </div>
+                        <div style="display:flex;gap:2px;padding:2px;border-radius:8px;background:var(--accent)">
+                          <button type="button" onClick="{{ cardThread.proposal.pickInherit }}" style="{{ cardThread.proposal.inheritStyle }}">Inherit</button>
+                          <button type="button" onClick="{{ cardThread.proposal.pickOwn }}" style="{{ cardThread.proposal.ownStyle }}">Own branch</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;padding:11px 13px;border-top:1px solid var(--border)">
+                      <span style="flex:1;min-width:0;font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ cardThread.proposal.foot }}</span>
+                      <sc-if value="{{ cardThread.proposal.edited }}" hint-placeholder-val="{{ false }}">
+                        <button type="button" onClick="{{ cardThread.proposal.reset }}" style="height:28px;padding:0 8px;flex:none;border:none;border-radius:7px;background:transparent;color:var(--muted-fg);font:500 12px var(--font-sans);cursor:pointer;white-space:nowrap" style-hover="background:var(--accent);color:var(--fg)">Use recommended</button>
+                      </sc-if>
+                      <button type="button" onClick="{{ cardThread.proposal.requestChanges }}" style="height:30px;padding:0 11px;flex:none;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);white-space:nowrap" style-hover="background:var(--accent)">Ask for changes</button>
+                      <button type="button" onClick="{{ cardThread.proposal.approve }}" style="height:30px;padding:0 12px;flex:none;border:1px solid var(--primary);border-radius:8px;background:var(--primary);color:var(--primary-fg);font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);white-space:nowrap" style-hover="filter:brightness(1.08)">Approve split</button>
+                    </div>
+                  </div>
+                </div>
+              </sc-if>
               <sc-if value="{{ cardThread.pending }}" hint-placeholder-val="{{ false }}">
                 <div style="display:flex;align-items:center;gap:9px;color:var(--muted-fg)">
                   <span style="width:18px;height:18px;flex:none;border-radius:99px;background:linear-gradient(135deg,#f97316,#ef4444);animation:t3pulse 1.4s ease-in-out infinite"></span>
@@ -1727,6 +2093,19 @@ a:hover{text-decoration:underline}
                 </sc-if>
               </div>
             </sc-if>
+            <sc-if value="{{ activeCard.canAutoPlan }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ activeCard.autoPlan }}" title="Ends planning. The agent makes every remaining decision, approves the plan and starts the build. Decisions are logged on the Summary pane." style="display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:34px;padding:0 12px;flex:none;border-radius:8px;border:1px solid var(--input);background:var(--popover);color:var(--fg);font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 19 9-7-9-7v14z"></path><path d="m2 19 9-7-9-7v14z"></path></svg>
+                Auto-plan → Build
+              </button>
+            </sc-if>
+            <sc-if value="{{ activeCard.isGroup }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ activeCard.openGroupBoard }}" style="display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:34px;padding:0 12px;flex:none;border-radius:8px;border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg);font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="filter:brightness(1.08)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path><path d="M15 3v18"></path></svg>
+                Open board
+              </button>
+              <div style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ activeCard.groupNote }}</div>
+            </sc-if>
             <sc-if value="{{ activeCard.canStopLoop }}" hint-placeholder-val="{{ false }}">
               <button type="button" onClick="{{ activeCard.toggleStop }}" title="{{ activeCard.stopTip }}" style="{{ activeCard.stopStyle }}">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="flex:none"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
@@ -1855,6 +2234,33 @@ a:hover{text-decoration:underline}
               </sc-if>
             </div>
             </div>
+            <sc-if value="{{ groupSettings }}" hint-placeholder-val="{{ false }}">
+            <div style="{{ sideStageStyle }}">
+              <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Group settings</div>
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <div style="display:flex;align-items:baseline;gap:8px">
+                  <span style="font:500 12px var(--font-sans);color:var(--fg)">Merge target</span>
+                  <span style="flex:1"></span>
+                  <span style="font:500 11px var(--font-mono);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ groupSettings.resolved }}</span>
+                </div>
+                <div title="{{ groupSettings.lockTip }}" style="display:flex;gap:2px;padding:2px;border-radius:8px;background:var(--accent)">
+                  <button type="button" onClick="{{ groupSettings.pickInherit }}" style="{{ groupSettings.inheritStyle }}">Inherit</button>
+                  <button type="button" onClick="{{ groupSettings.pickOwn }}" style="{{ groupSettings.ownStyle }}">Own branch</button>
+                </div>
+                <div style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ groupSettings.targetNote }}</div>
+              </div>
+              <sc-for list="{{ groupSettings.toggles }}" as="t" hint-placeholder-count="3">
+                <div onClick="{{ t.toggle }}" title="{{ t.tip }}" style="{{ t.rowStyle }}">
+                  <span style="{{ t.switchStyle }}"><span style="{{ t.knobStyle }}"></span></span>
+                  <span style="min-width:0;display:flex;flex-direction:column;gap:2px">
+                    <span style="font:500 12px var(--font-sans);color:var(--fg)">{{ t.label }}</span>
+                    <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ t.note }}</span>
+                  </span>
+                </div>
+              </sc-for>
+            </div>
+            </sc-if>
+            <sc-if value="{{ activeCard.isLeaf }}" hint-placeholder-val="{{ true }}">
             <div style="{{ sideStageStyle }}">
             <div style="display:flex;align-items:baseline;gap:6px">
               <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Workflow</div>
@@ -1896,6 +2302,7 @@ a:hover{text-decoration:underline}
               </sc-for>
             </div>
             </div>
+            </sc-if>
             <div style="font:400 11.5px/1.7 var(--font-sans);color:var(--muted-fg);{{ sideInfoStyle }}">
               <div style="display:flex;align-items:center;gap:5px;position:relative">
                 <span>Project ·</span>
@@ -1952,7 +2359,7 @@ a:hover{text-decoration:underline}
                 </sc-if>
               </div>
               <sc-if value="{{ activeCard.hasParent }}" hint-placeholder-val="{{ false }}">
-                <div>Feature · <a href="#" onClick="{{ activeCard.openParent }}" style="font-weight:500">{{ activeCard.parentKey }}</a></div>
+                <div>In group · <a href="#" onClick="{{ activeCard.openParent }}" style="font-weight:500">{{ activeCard.parentKey }}</a></div>
               </sc-if>
               <div>Created · {{ activeCard.created }}</div>
             </div>
@@ -2209,6 +2616,120 @@ a:hover{text-decoration:underline}
   </sc-if>
 </div>
 
+  <sc-if value="{{ dlg }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ dlg.close }}" style="position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:32px;background:color-mix(in srgb,var(--bg) 60%,transparent);backdrop-filter:blur(4px);animation:t3fade 160ms ease-out">
+      <div onClick="{{ stop }}" style="width:500px;max-width:100%;max-height:86vh;display:flex;flex-direction:column;border:1px solid color-mix(in srgb,var(--fg) 10%,transparent);border-radius:16px;background:var(--card);box-shadow:var(--shadow-pop);overflow:hidden;animation:t3pop 180ms cubic-bezier(.2,.8,.2,1)">
+        <div style="display:flex;align-items:flex-start;gap:10px;padding:18px 18px 0">
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:6px">
+            <h2 style="margin:0;font:600 16px/1.3 var(--font-sans);letter-spacing:-0.01em;color:var(--fg);text-wrap:pretty">{{ dlg.title }}</h2>
+            <div style="font:400 12.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ dlg.body }}</div>
+          </div>
+          <button type="button" onClick="{{ dlg.close }}" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;margin:-4px -6px 0 0;border:none;border-radius:8px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+          </button>
+        </div>
+        <div style="flex:1;min-height:0;overflow-y:auto;padding:14px 18px 18px;display:flex;flex-direction:column;gap:12px">
+          <sc-if value="{{ dlg.hasOptions }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <sc-for list="{{ dlg.options }}" as="o" hint-placeholder-count="2">
+                <div onClick="{{ o.pick }}" style="{{ o.style }}">
+                  <span style="{{ o.radioStyle }}"><span style="{{ o.dotStyle }}"></span></span>
+                  <span style="min-width:0;display:flex;flex-direction:column;gap:2px">
+                    <span style="{{ o.labelStyle }}">{{ o.label }}</span>
+                    <span style="font:400 12px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ o.desc }}</span>
+                  </span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ dlg.hasTitle }}" hint-placeholder-val="{{ false }}">
+            <label style="display:flex;flex-direction:column;gap:6px">
+              <span style="font:500 12px var(--font-sans);color:var(--fg)">{{ dlg.titleLabel }}</span>
+              <input type="text" value="{{ dlg.titleValue }}" onInput="{{ dlg.onTitle }}" onKeyDown="{{ dlg.onEnter }}" placeholder="{{ dlg.titlePh }}" autoFocus="{{ true }}" style="height:34px;padding:0 11px;border:1px solid var(--input);border-radius:9px;background:var(--bg);color:var(--fg);font:400 13.5px var(--font-sans);outline:none;box-shadow:var(--shadow-xs)" style-focus="border-color:var(--muted-fg)">
+            </label>
+          </sc-if>
+          <sc-if value="{{ dlg.hasChecks }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+              <sc-for list="{{ dlg.checks }}" as="ck" hint-placeholder-count="2">
+                <div onClick="{{ ck.toggle }}" style="display:flex;align-items:center;gap:10px;padding:9px 11px;border-bottom:1px solid var(--border);cursor:pointer;margin-bottom:-1px" style-hover="background:var(--accent)">
+                  <span style="{{ ck.boxStyle }}">
+                    <sc-if value="{{ ck.on }}" hint-placeholder-val="{{ true }}">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+                    </sc-if>
+                  </span>
+                  <span style="{{ ck.keyStyle }}">{{ ck.key }}</span>
+                  <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 13px var(--font-sans);color:var(--fg)">{{ ck.title }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ dlg.hasItems }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:10px;overflow:hidden">
+              <sc-for list="{{ dlg.items }}" as="it" hint-placeholder-count="2">
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 11px;border-bottom:1px solid var(--border);margin-bottom:-1px">
+                  <span style="{{ it.keyStyle }}">{{ it.key }}</span>
+                  <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 13px var(--font-sans);color:var(--fg)">{{ it.title }}</span>
+                  <span style="flex:none;font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ it.note }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ dlg.hasLosses }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:7px;padding:11px 12px;border:1px solid color-mix(in srgb,var(--destructive) 35%,transparent);border-radius:10px;background:color-mix(in srgb,var(--destructive) 6%,var(--card))">
+              <span style="font:600 12px var(--font-sans);color:var(--destructive-fg)">{{ dlg.lossTitle }}</span>
+              <sc-for list="{{ dlg.losses }}" as="ls" hint-placeholder-count="2">
+                <div style="display:flex;align-items:baseline;gap:8px;font:400 12.5px/1.5 var(--font-sans);color:var(--fg)">
+                  <span style="width:5px;height:5px;flex:none;border-radius:99px;background:var(--destructive-fg);transform:translateY(-2px)"></span>
+                  <span style="min-width:0;text-wrap:pretty">{{ ls.text }}<sc-if value="{{ ls.code }}" hint-placeholder-val="{{ false }}"><code style="font:500 0.92em var(--font-mono);background:var(--muted);padding:0 4px;border-radius:4px">{{ ls.code }}</code></sc-if></span>
+                </div>
+              </sc-for>
+              <sc-if value="{{ dlg.hasAfter }}" hint-placeholder-val="{{ false }}">
+                <span style="padding-top:2px;font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ dlg.afterNote }}</span>
+              </sc-if>
+            </div>
+          </sc-if>
+          <sc-if value="{{ dlg.hasTyped }}" hint-placeholder-val="{{ false }}">
+            <label style="display:flex;flex-direction:column;gap:6px">
+              <span style="font:500 12px var(--font-sans);color:var(--fg)">Type <code style="font:600 12px var(--font-mono)">{{ dlg.typedKey }}</code> to confirm</span>
+              <input type="text" value="{{ dlg.typed }}" onInput="{{ dlg.onTyped }}" onKeyDown="{{ dlg.onEnter }}" placeholder="{{ dlg.typedKey }}" spellCheck="{{ false }}" style="height:34px;padding:0 11px;border:1px solid var(--input);border-radius:9px;background:var(--bg);color:var(--fg);font:500 13px var(--font-mono);outline:none;box-shadow:var(--shadow-xs)" style-focus="border-color:var(--muted-fg)">
+            </label>
+          </sc-if>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:14px 18px;border-top:1px solid var(--border);background:color-mix(in srgb,var(--muted) 72%,transparent)">
+          <button type="button" onClick="{{ dlg.close }}" style="height:32px;padding:0 12px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 13px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">Cancel</button>
+          <button type="button" onClick="{{ dlg.confirm }}" style="{{ dlg.confirmStyle }}">{{ dlg.confirmLabel }}</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;left:0;right:0;bottom:22px;z-index:80;display:flex;justify-content:center;padding:0 24px;pointer-events:none">
+      <div style="{{ toast.style }}">
+        <sc-if value="{{ toast.isError }}" hint-placeholder-val="{{ false }}">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--destructive-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M12 8v5"></path><path d="M12 17h.01"></path><circle cx="12" cy="12" r="9"></circle></svg>
+        </sc-if>
+        <sc-if value="{{ toast.isInfo }}" hint-placeholder-val="{{ true }}">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><circle cx="12" cy="12" r="9"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+        </sc-if>
+        <span style="flex:1;min-width:0;font:400 12.5px/1.45 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ toast.text }}</span>
+        <sc-if value="{{ toast.hasAction }}" hint-placeholder-val="{{ false }}">
+          <button type="button" onClick="{{ toast.act }}" style="height:26px;padding:0 9px;flex:none;border:1px solid var(--input);border-radius:7px;background:var(--card);color:var(--fg);font:500 12px var(--font-sans);cursor:pointer;white-space:nowrap" style-hover="background:var(--accent)">{{ toast.actionLabel }}</button>
+        </sc-if>
+        <button type="button" onClick="{{ toast.close }}" title="Dismiss" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;flex:none;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+        </button>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ dragTip }}" hint-placeholder-val="{{ false }}">
+    <div style="{{ dragTip.style }}">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px;opacity:.8"><circle cx="12" cy="12" r="9"></circle><path d="m5.6 5.6 12.8 12.8"></path></svg>
+      <span>{{ dragTip.text }}</span>
+    </div>
+  </sc-if>
+
   <sc-if value="{{ mention.open }}" hint-placeholder-val="{{ false }}">
     <div style="{{ mention.style }}">
       <sc-for list="{{ mention.items }}" as="m" hint-placeholder-count="0">
@@ -2239,6 +2760,13 @@ const STAGES = [
   { id: "done", name: "Done", dot: "#a1a1aa", action: null },
 ];
 const PRIMARY_ACTIONS = { backlog: true, sprint: true, ready: true, merge: true };
+// Sub-boards only: "not this round". Deferred children don't count toward a group being done.
+const DEFERRED = { id: "deferred", name: "Deferred", dot: "#a1a1aa", action: null };
+const SUB_STAGES = [DEFERRED].concat(STAGES);
+// A card with children is a group. `placed` is the column the human put it in;
+// once a child starts, the group's stage is derived from its children.
+const GROUP_DEFAULT = { target: "inherit", branch: "", autoBuild: false, autoMerge: false, autoPlan: false, started: false, integrated: false, heading: false };
+const slugify = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").split("-").slice(0, 4).join("-");
 // A card's project can only move while it is still ahead of the build. From
 // Building onward a worktree and branch exist, so the task is pinned.
 const PROJECT_LOCK_FROM = "building";
@@ -2343,11 +2871,24 @@ const SEED = [
   { key: "T3-201", p: "advisor", type: "Feature", status: "backlog", title: "Stream tool-call deltas into the timeline", brief: "Tool calls currently land as one block when the turn settles. Stream them so long-running edits show progress inline." },
   { key: "T3-198", p: "advisor", type: "bug", status: "backlog", title: "Context window pill shows a stale token count", brief: "After a compaction the pill keeps the pre-compaction number until the next turn." },
   { key: "T3-195", p: "advisor", type: "Feature", status: "sprint", title: "Persist composer drafts per worktree", brief: "Drafts are keyed by thread today; switching worktrees loses the in-progress prompt." },
-  { key: "T3-193", p: "advisor", type: "chore", status: "planning", t: "working", title: "Group worktrees by environment in the branch picker", brief: "The picker lists 40+ worktrees flat. Group by environment with a sticky header per group." },
+  { key: "T3-193", p: "advisor", type: "chore", status: "planning", t: "waiting", title: "Group worktrees by environment in the branch picker", brief: "The picker lists 40+ worktrees flat. Group by environment with a sticky header per group." },
   { key: "T3-196", p: "advisor", type: "Feature", status: "planning", t: "waiting", qs: { answered: 2, est: 14 }, title: "Preview deploys for feature branches", brief: "Spin up a preview environment per feature branch so reviewers can click through a change before it merges." },
+  { key: "T3-216", p: "advisor", type: "Feature", status: "planning", t: "waiting", title: "Team workspaces", brief: "Several people share one workspace: shared boards, per-person threads and seat-based billing." },
+  { key: "T3-200", p: "advisor", type: "Feature", status: "planning", group: { autoBuild: false }, title: "Card grouping and nested boards", brief: "Any card can become the parent of other cards, nested to any depth. Absorbs the sub-board feature.", plan: PLAN("Card grouping — breakdown", ["Phase 1: list view, group cards, group settings, the per-child split gate and guard rails", "Deferred column and phases as their own group", "Subtree archive and agent-proposed regrouping deferred to the next phase", "Children merge straight to main; no integration branch"], ["apps/web/src/board/ListView.tsx", "apps/web/src/board/GroupCard.tsx", "packages/contracts/src/task.ts"]) },
+  { key: "T3-202", parent: "T3-200", p: "advisor", type: "Feature", status: "building", t: "working", title: "List view with indent and outdent", brief: "The whole card tree as an indented outline. Select rows and indent them under a card, or outdent them.", plan: PLAN("List view", ["Outline rows from the card tree, groups collapsible", "Multi-select with shift and cmd", "Tab and Shift+Tab indent and outdent"], ["apps/web/src/board/ListView.tsx"]) },
+  { key: "T3-203", parent: "T3-200", p: "advisor", type: "Feature", status: "review", title: "Group cards on the parent board", brief: "A group shows progress, children waiting on you and blocked children, and sits in a derived column.", plan: PLAN("Group cards", ["Derive the group's column from its children", "Refuse drags into derived columns with a reason"], ["apps/web/src/board/GroupCard.tsx", "apps/web/src/board/deriveStage.ts"]), pr: { n: 318, title: "feat(board): group cards", add: 402, del: 61, files: ["apps/web/src/board/GroupCard.tsx", "apps/web/src/board/deriveStage.ts"], state: "In review" } },
+  { key: "T3-204", parent: "T3-200", p: "advisor", type: "Feature", status: "planning", t: "waiting", title: "Per-child planning in the split gate", brief: "Each proposed child is Planned or Needs planning. The gate carries the agent's auto-build and merge target." },
+  { key: "T3-207", parent: "T3-200", p: "advisor", type: "Feature", status: "done", title: "Group settings and the resolved merge target", brief: "Inherit or an own integration branch, plus auto-build, auto-merge to trunk and auto-plan.", plan: PLAN("Group settings", ["Resolve the merge target up the tree", "Settings live on the group card and the sub-board header"], ["apps/web/src/board/GroupSettings.tsx"]), pr: { n: 309, title: "feat(board): group settings", add: 233, del: 18, files: ["apps/web/src/board/GroupSettings.tsx"], state: "Merged" } },
+  { key: "T3-208", parent: "T3-200", p: "advisor", type: "Feature", status: "sprint", group: { autoBuild: false }, title: "Deferred column and phases", brief: "Sub-boards get a Deferred column. Deferred cards can move into a new phase group." },
+  { key: "T3-211", parent: "T3-208", p: "advisor", type: "Feature", status: "ready", title: "Deferred column on sub-boards", brief: "A Deferred column left of Backlog, on sub-boards only.", plan: PLAN("Deferred column", ["Add the column to sub-boards only", "Exclude deferred children from done"], ["apps/web/src/board/BoardView.tsx"]) },
+  { key: "T3-212", parent: "T3-208", p: "advisor", type: "Feature", status: "backlog", title: "Move deferred cards to a new phase", brief: "Pick deferred cards and move them into a new sibling group." },
+  { key: "T3-213", parent: "T3-208", p: "advisor", type: "chore", status: "deferred", title: "Number phases from the group title", brief: "Pre-fill Phase n+1 when the group is already a numbered phase." },
+  { key: "T3-209", parent: "T3-200", p: "advisor", type: "Feature", status: "ready", deps: ["T3-202"], title: "Guard rails for started cards", brief: "Started cards can't become parents, and can't move to a group with a different merge target.", plan: PLAN("Guard rails", ["Shared-parent and cancel-work dialog", "Refuse moves across merge targets"], ["apps/web/src/board/guards.ts"]) },
+  { key: "T3-205", parent: "T3-200", p: "advisor", type: "Feature", status: "deferred", title: "Archive a whole subtree", brief: "Archiving a group stops threads, closes PRs and deletes branches for everything under it." },
+  { key: "T3-206", parent: "T3-200", p: "advisor", type: "Feature", status: "deferred", title: "Agent-proposed regrouping", brief: "Agents can propose a regrouping through the approval gate, never apply one." },
   { key: "T3-188", p: "advisor", type: "Feature", status: "building", title: "Kanban board mode in the workspace shell", brief: "Add a top-level mode switch: threads or board. Board is per project, with drag between stages.", deps: ["T3-195"], plan: PLAN("Kanban board mode", ["Add workspaceMode atom persisted in client storage", "Mount BoardView beside ChatView under AppSidebarLayout", "Cards are server-authoritative events, same store as threads", "Dependencies are edges on the task record, validated on progress"], ["apps/web/src/components/BoardView.tsx", "apps/web/src/state/board.ts", "packages/contracts/src/task.ts"]) },
   { key: "T3-176", p: "advisor", type: "bug", status: "building", t: "queued", title: "Active dot on a sub-board card doesn't roll up to the parent", brief: "A plan card running a thread shows its dot on the sub-board only, so the parent card looks idle." },
-  { key: "T3-171", p: "advisor", type: "chore", status: "building", t: "queued", title: "Prune worktrees for merged branches on launch", brief: "Merged worktrees pile up until someone clears them by hand." },
+  { key: "T3-172", p: "advisor", type: "chore", status: "building", t: "queued", title: "Prune worktrees for merged branches on launch", brief: "Merged worktrees pile up until someone clears them by hand." },
   { key: "T3-186", p: "advisor", type: "Feature", status: "building", t: "waiting", title: "Server-authoritative event sourcing cleanup", brief: "Collapse the duplicate client reducer so the server event log is the single source of truth.", plan: PLAN("Event sourcing cleanup", ["Delete the client-side mirror reducer", "Replay from the server log on reconnect", "Add a determinism test over recorded fixtures"], ["apps/server/src/events/log.ts", "packages/client-runtime/src/replay.ts"]) },
   { key: "T3-182", p: "advisor", type: "Feature", status: "review", t: "working", title: "Typed IPC boundaries for the desktop bridge", brief: "Every desktopBridge call is untyped today. Generate the contract from the shared schema.", deps: ["T3-186"], plan: PLAN("Typed IPC boundaries", ["Describe each channel with an Effect Schema", "Generate the preload surface from the schema", "Fail the build on an unlisted channel"], ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts"]), pr: { n: 291, title: "feat(desktop): typed IPC boundaries", add: 612, del: 208, files: ["apps/desktop/src/preload.ts", "packages/contracts/src/ipc.ts", "apps/web/src/env.ts"], state: "In review" } },
   { key: "T3-180", p: "advisor", type: "bug", status: "review", title: "Compaction leaves orphaned tool-call spans", brief: "After a compaction, spans whose parent turn was summarised away keep streaming into the timeline.", plan: PLAN("Orphaned span cleanup", ["Reparent live spans onto the summary turn", "Drop spans whose turn no longer exists", "Replay test over a recorded compaction"], ["packages/client-runtime/src/compaction.ts", "apps/web/src/state/timeline.ts"]), pr: { n: 287, title: "fix(runtime): reparent spans across compaction", add: 244, del: 96, files: ["packages/client-runtime/src/compaction.ts", "apps/web/src/state/timeline.ts"], state: "In review" } },
@@ -2379,14 +2920,61 @@ const PLAN_SETS = {
       { n: 6, title: "Stacked cards and the plan drill-in", status: "ready", deps: [4, 5] },
     ],
   },
-  "T3-182": {
-    base: "feat/typed-ipc",
-    plans: [
-      { n: 1, title: "Schema for every bridge channel", status: "done", deps: [], pr: 288, add: 210, del: 30 },
-      { n: 2, title: "Generate the preload surface", status: "review", deps: [1], pr: 291, t: "waiting", add: 402, del: 178 },
-      { n: 3, title: "Fail the build on unlisted channels", status: "ready", deps: [2] },
+};
+
+// Split proposals waiting at the approval gate. Each child is Planned (lands in
+// Ready) or Needs planning (lands in Backlog); the agent recommends settings.
+const PROPOSALS = {
+  "T3-193": {
+    summary: "The plan is settled and splits cleanly into three pieces that each build and review on their own. All three are fully planned, so they can run straight through on one integration branch.",
+    autoBuild: true, target: "own", branch: "feat/worktree-groups",
+    children: [
+      { title: "Environment field on worktrees", planned: true, deps: [] },
+      { title: "Grouped list with sticky headers", planned: true, deps: [1] },
+      { title: "Collapse state per environment", planned: true, deps: [2] },
     ],
   },
+  "T3-216": {
+    summary: "This is bigger than one card, so I've broken it into five features. Only the membership model is settled enough to plan now. The rest need their own planning sessions.",
+    autoBuild: false, target: "inherit",
+    children: [
+      { title: "Workspace membership and roles", planned: true, deps: [] },
+      { title: "Shared boards with per-person threads", planned: false, deps: [1] },
+      { title: "Invite flow and pending seats", planned: false, deps: [1] },
+      { title: "Seat-based billing", planned: false, deps: [3] },
+      { title: "Audit log for shared actions", planned: false, deps: [] },
+    ],
+  },
+};
+// Decision log, recorded for every planning session. flag: normal | important | unclear.
+const DEC = (q, d, why, flag, who) => ({ q, d, why, flag: flag || "normal", who: who || "agent" });
+const DECISIONS = {
+  "T3-179": { auto: false, items: [
+    DEC("Which hook runner?", "lefthook", "Already used in mesh.web, and needs no Node at commit time.", "normal", "human"),
+    DEC("Lint the whole tree or staged files only?", "Staged files only", "Keeps a commit on a clean tree under two seconds.", "normal", "human"),
+    DEC("How does someone skip the gate?", "An env var, T3_SKIP_HOOKS=1", "Skips show up in shell history, unlike --no-verify.", "important"),
+    DEC("Pin tool versions in the hook?", "Use the workspace versions", "One source of truth shared with CI."),
+  ] },
+  "T3-202": { auto: true, items: [
+    DEC("Row density", "32px rows", "Matches the sidebar rows."),
+    DEC("Indent by drag, keyboard or menu?", "Keyboard and toolbar, no drag yet", "Drop targets in a deep outline are easy to miss. Drag can follow.", "unclear"),
+    DEC("Where does an outdented card land?", "Directly after its old parent", "Keeps it next to the context it came from."),
+    DEC("Multi-select model", "Checkbox, shift for ranges, cmd to toggle", "Same as the file tree in the threads sidebar."),
+    DEC("Show deferred cards in the outline?", "Yes, subdued", "Hiding them makes indent targets jump around.", "important"),
+  ] },
+};
+// What Auto-plan decides for a card when it ends planning.
+const AUTO_DECISIONS = {
+  "T3-196": [
+    DEC("Which repo owns the preview config?", "The app repo", "Previews change with the app; the infra repo keeps the base stack only.", "normal", "human"),
+    DEC("Build on every push, or when a PR opens?", "When a PR opens, then on each push to it", "No previews for branches nobody is reviewing.", "normal", "human"),
+    DEC("Which AWS account and test domain?", "The staging account, under *.preview.t3.dev", "No account was named. Staging already has the wildcard certificate.", "unclear"),
+    DEC("Public URLs, or behind the team SSO?", "Behind the team SSO", "Safer default. External reviewers can't open previews until this changes.", "unclear"),
+    DEC("How long does an idle preview live?", "48 hours", "Covers a weekend review without leaving stacks up for a week.", "important"),
+    DEC("Seeded data or an empty database?", "Seed from the staging fixture set", "Reviewers need something to click through."),
+    DEC("Cost ceiling per preview?", "$5 a day, then stop the stack", "Well above the expected cost of a small stack."),
+    DEC("Comment the preview link on the PR?", "Yes, one comment updated in place", "One link, never a stack of bot comments."),
+  ],
 };
 
 // Build summary: key points lifted from the build thread's final message, plus a
@@ -2793,6 +3381,10 @@ class Component extends DCLogic {
       plan: c.plan || null,
       pr: c.pr || null,
       qs: c.qs ? { ...c.qs, seedAt: c.qs.answered, seedEst: c.qs.est } : null,
+      parentKey: c.parent || null,
+      group: c.group ? { ...GROUP_DEFAULT, placed: c.status, prevStatus: c.status, ...c.group } : null,
+      proposal: PROPOSALS[c.key] || null,
+      decisions: DECISIONS[c.key] || null,
       created: ["2d ago", "3d ago", "5d ago", "1w ago"][i % 4],
     }));
     const planCards = [];
@@ -2801,6 +3393,7 @@ class Component extends DCLogic {
       if (!parent) return;
       const set = PLAN_SETS[pk];
       parent.base = set.base;
+      parent.group = { ...GROUP_DEFAULT, target: "own", branch: set.base, autoBuild: true, started: true, placed: "planning", prevStatus: "planning" };
       parent.planKeys = set.plans.map((p) => pk + "." + p.n);
       set.plans.forEach((p) => {
         planCards.push({
@@ -2837,7 +3430,7 @@ class Component extends DCLogic {
         });
       });
     });
-    cards = cards.concat(planCards);
+    cards = this.syncGroups(cards.concat(planCards));
     this.state = {
       activeThread: null,
       cardMaxed: false,
@@ -2911,6 +3504,22 @@ class Component extends DCLogic {
       planChart: false,
       rvOpen: {},
       back: null,
+      queries: {},
+      listStages: {},
+      listStageOpen: false,
+      listDrag: null,
+      listOver: null,
+      dragTip: null,
+      dialog: null,
+      toast: null,
+      listSel: {},
+      listAnchor: null,
+      listCollapsed: {},
+      listMoveOpen: false,
+      groupSettingsOpen: false,
+      logOpen: {},
+      reopened: {},
+      propEdit: {},
     };
     this.briefEl = null;
   }
@@ -2919,6 +3528,21 @@ class Component extends DCLogic {
     const th = this.threadFor(c);
     if (!th) return null;
     const kind = th.kind;
+    if (c.group) {
+      const def = this.kidsOf(c.key).filter((k) => k.status === "deferred");
+      return {
+        summary:
+          "Reopened. The breakdown and every child's current stage are loaded." +
+          (def.length
+            ? " " + def.length + " cards are deferred: " + def.map((k) => k.key).join(", ") + ". Want me to plan them as the next phase?"
+            : " What should we plan next?"),
+        question: "",
+        label: "Planning thread",
+        state: th.state,
+      };
+    }
+    if (kind === "planning" && c.proposal)
+      return { summary: c.proposal.summary, question: "", label: "Planning thread", state: th.state };
     if (kind === "conflict") {
       const cf = c.conflict;
       return {
@@ -3140,9 +3764,23 @@ class Component extends DCLogic {
       this.stepCard(d);
     };
     document.addEventListener("keydown", this.onCardKey);
+    // List view: Tab indents the selection, Shift+Tab outdents it.
+    this.onListKey = (e) => {
+      const s = this.state;
+      if (s.mode !== "list" || s.activeId || s.dialog || s.createOpen) return;
+      const el = document.activeElement;
+      if (el && (el.isContentEditable || /^(input|textarea|select)$/i.test(el.tagName))) return;
+      if (e.key === "Escape") return this.setState({ listSel: {}, listMoveOpen: false });
+      if (e.key !== "Tab" || !this.listSelIds().length) return;
+      e.preventDefault();
+      if (e.shiftKey) this.listOutdent();
+      else this.listIndent();
+    };
+    document.addEventListener("keydown", this.onListKey);
   }
   componentWillUnmount() {
     if (this.onCardKey) document.removeEventListener("keydown", this.onCardKey);
+    if (this.onListKey) document.removeEventListener("keydown", this.onListKey);
     if (this._retryTimer) clearInterval(this._retryTimer);
   }
   // The countdown only ticks per-second for the one card open in the modal —
@@ -3167,7 +3805,7 @@ class Component extends DCLogic {
     const st = this.state;
     const active = st.cards.find((c) => c.id === st.activeId);
     if (!active) return { list: [], i: -1, active: null };
-    const q = (st.query || "").trim().toLowerCase();
+    const q = this.queryFor().trim().toLowerCase();
     const pool = active.parentKey
       ? this.planCardsFor(active.parentKey)
       : st.cards.filter((c) => !c.parentKey && !c.archived);
@@ -3421,7 +4059,13 @@ class Component extends DCLogic {
   autoMergeOn(c) {
     if (!c) return false;
     if (this.props.boardAutoMerge) return true;
-    return !!this.state.autoMerge[c.id];
+    if (this.state.autoMerge[c.id]) return true;
+    // Children of a group: into an integration branch they merge on their own
+    // under auto-build; into trunk only when the group says so.
+    const p = c.parentKey ? this.cardByKey(c.parentKey) : null;
+    if (p && p.group)
+      return this.targetOf(p) === this.trunkOf(c) ? !!p.group.autoMerge : !!p.group.autoBuild;
+    return false;
   }
   // A forge refusal (nearly always unfinished CI) parks the card on a backoff.
   // Disarming auto-merge clears the hold with it.
@@ -3828,6 +4472,11 @@ class Component extends DCLogic {
   }
 
   threadFor(c) {
+    // A group's own pipeline is paused; its planning thread only runs again when reopened.
+    if (c.group)
+      return this.state && this.state.reopened && this.state.reopened[c.id]
+        ? { kind: "planning", state: "waiting", title: c.title, id: c.id }
+        : null;
     const kind =
       c.status === "planning"
         ? "planning"
@@ -3904,7 +4553,7 @@ class Component extends DCLogic {
   planCardsFor(key) {
     return this.state.cards
       .filter((c) => c.parentKey === key && !c.archived)
-      .sort((a, b) => a.planN - b.planN);
+      .sort((a, b) => (a.planN || 0) - (b.planN || 0));
   }
   // Dependency waves: wave 0 has no unmet plan deps, wave n depends on n-1.
   planWaves(list) {
@@ -3925,7 +4574,7 @@ class Component extends DCLogic {
     return waves;
   }
   graphVm(parentKey, opener) {
-    const list = this.planCardsFor(parentKey);
+    const list = this.planCardsFor(parentKey).filter((c) => c.status !== "deferred");
     if (!list.length) return null;
     const waves = this.planWaves(list);
     const W = 190, H = 54, GX = 62, GY = 14;
@@ -3957,15 +4606,19 @@ class Component extends DCLogic {
       const waiting = !!th && th.state === "waiting";
       const done = c.status === "done";
       return {
-        label: "#" + c.planN,
+        label: c.planN ? "#" + c.planN : c.key,
         title: c.title,
         statusName: stg.name,
         dot:
           done
             ? "var(--success)"
-            : this.isBlocked(c)
-              ? "var(--warning)"
-              : "var(--info)",
+            : waiting
+              ? "var(--attention)"
+              : this.isBlocked(c)
+                ? "var(--warning)"
+                : this.stageIndex(c.status) >= this.stageIndex("building")
+                  ? "var(--info)"
+                  : "color-mix(in srgb,var(--fg) 22%,transparent)",
         open: opener
           ? opener(c)
           : () => this.setState({ activeId: c.id, artifact: null }),
@@ -3990,6 +4643,7 @@ class Component extends DCLogic {
     return STAGES.findIndex((s) => s.id === id);
   }
   stage(id) {
+    if (id === "deferred") return DEFERRED;
     return STAGES[this.stageIndex(id)] || STAGES[0];
   }
   workflowOf(card) {
@@ -4474,7 +5128,7 @@ class Component extends DCLogic {
       this.ghostEl.remove();
       this.ghostEl = null;
     }
-    this.setState({ dragId: null, overCol: null, overIndex: null });
+    this.setState({ dragId: null, overCol: null, overIndex: null, dragTip: null });
   }
   dropCard(projectId, status, colCards) {
     const id = this.state.dragId;
@@ -4485,7 +5139,16 @@ class Component extends DCLogic {
       if (!card) return { dragId: null, overCol: null, overIndex: null };
       const rest = s.cards.filter((c) => c.id !== id);
       const pid = projectId == null ? card.project : projectId;
-      const moved = { ...card, status };
+      const moved = card.group
+        ? {
+            ...card,
+            status,
+            group: {
+              ...card.group,
+              placed: status === "deferred" || this.stageIndex(status) <= this.stageIndex("planning") ? status : card.group.placed,
+            },
+          }
+        : { ...card, status: !card.parentKey && status === "deferred" ? "backlog" : status };
       const own = colCards.findIndex((c) => c.id === id);
       const list = colCards.filter((c) => c.id !== id);
       let idx = at == null ? list.length : at;
@@ -4517,14 +5180,24 @@ class Component extends DCLogic {
   // Sub-board cards always start themselves once unblocked; top-level cards
   // do so only when the user armed them.
   // Run after every status write, whatever path made it.
+  // Children of a started auto-build group start themselves once unblocked;
+  // top-level cards only when armed. Auto-plan groups plan children entering
+  // Planning and stop them at Ready. Group stages are re-derived after.
   sweepAutoStart(cards, autoStart) {
     const done = {};
-    cards.forEach((c) => { done[c.key] = c.status === "done"; });
-    return cards.map((c) =>
-      (c.parentKey || autoStart[c.id]) && c.status === "ready" && c.depKeys.every((k) => done[k])
-        ? { ...c, status: "building" }
-        : c
-    );
+    const byKey = {};
+    cards.forEach((c) => { done[c.key] = c.status === "done"; byKey[c.key] = c; });
+    const par = (c) => (c.parentKey && byKey[c.parentKey] && byKey[c.parentKey].group) || null;
+    return this.syncGroups(cards.map((c) => {
+      if (c.group) return c;
+      const g = par(c);
+      if (g && g.autoPlan && c.status === "planning" && !c.proposal)
+        return { ...c, status: "ready", tstate: "stopped", qs: null, plan: c.plan || PLAN(c.title, ["Planned by the agent from the brief", "Decisions logged on the Summary pane"], ["apps/web/src/"]), decisions: c.decisions || { auto: true, items: this.genericDecisions(c) } };
+      const runs = (g && g.autoBuild && g.started) || autoStart[c.id];
+      return runs && c.status === "ready" && c.depKeys.every((k) => done[k])
+        ? { ...c, status: "building", tstate: "working" }
+        : c;
+    }));
   }
   setStatus(id, status) {
     this.setState((s) => ({
@@ -4560,7 +5233,7 @@ class Component extends DCLogic {
     });
   }
   scheduleVm(card) {
-    if (!card || card.status === "done") return { show: false, has: false, open: false, presets: [] };
+    if (!card || card.status === "done" || card.group) return { show: false, has: false, open: false, presets: [] };
     const kind = this.schedKindFor(card);
     const stageName = this.stage(card.status).name;
     const has = !!(card.sched && card.sched.at);
@@ -4709,10 +5382,1216 @@ class Component extends DCLogic {
     };
   }
 
+  // ---- Grouping: a card with children is a group; only leaves run the pipeline. ----
+  kidsOf(key, cards) {
+    return (cards || this.state.cards).filter((c) => c.parentKey === key && !c.archived);
+  }
+  inScope(c) {
+    return this.state.scope === "all" || c.project === this.state.scope;
+  }
+  trunkOf(c) {
+    return defaultBranchOf((c && c.project) || "advisor");
+  }
+  // Where this group's children merge.
+  targetOf(g, cards) {
+    cards = cards || this.state.cards;
+    if (!g) return "main";
+    if (g.group && g.group.target === "own") return g.group.branch;
+    const p = g.parentKey ? cards.find((x) => x.key === g.parentKey) : null;
+    return p ? this.targetOf(p, cards) : this.trunkOf(g);
+  }
+  // Where this card itself merges.
+  landsOn(c, cards) {
+    cards = cards || this.state.cards;
+    const p = c.parentKey ? cards.find((x) => x.key === c.parentKey) : null;
+    return p ? this.targetOf(p, cards) : this.trunkOf(c);
+  }
+  isStarted(c) {
+    return !!c && !c.group && this.stageIndex(c.status) >= this.stageIndex("building");
+  }
+  subtree(key, cards) {
+    cards = cards || this.state.cards;
+    const out = [];
+    const walk = (k) =>
+      cards.forEach((c) => {
+        if (c.parentKey === k && !c.archived) {
+          out.push(c);
+          walk(c.key);
+        }
+      });
+    walk(key);
+    return out;
+  }
+  ancestors(c) {
+    const out = [];
+    let p = c && c.parentKey ? this.cardByKey(c.parentKey) : null;
+    while (p && out.length < 12) {
+      out.unshift(p);
+      p = p.parentKey ? this.cardByKey(p.parentKey) : null;
+    }
+    return out;
+  }
+  capStage(s, max) {
+    const i = this.stageIndex(s);
+    const m = this.stageIndex(max || "planning");
+    return i < 0 ? "backlog" : i > m ? STAGES[m].id : s;
+  }
+  autoBuildsFor(c) {
+    const p = c && c.parentKey ? this.cardByKey(c.parentKey) : null;
+    return !!(p && p.group && p.group.autoBuild && p.group.started);
+  }
+  syncGroups(cards) {
+    const parents = {};
+    cards.forEach((c) => {
+      if (c.parentKey && !c.archived) parents[c.parentKey] = true;
+    });
+    const arr = cards.map((c) =>
+      parents[c.key] && !c.group
+        ? { ...c, group: { ...GROUP_DEFAULT, placed: this.capStage(c.status), prevStatus: c.status } }
+        : c,
+    );
+    const kids = {};
+    arr.forEach((c) => {
+      if (c.parentKey && !c.archived) (kids[c.parentKey] = kids[c.parentKey] || []).push(c);
+    });
+    const SI = (s) => this.stageIndex(s);
+    const memo = {};
+    const derive = (c) => {
+      if (memo[c.key] != null) return memo[c.key];
+      memo[c.key] = c.status;
+      if (!c.group || c.status === "deferred") return c.status;
+      const act = (kids[c.key] || []).filter((k) => k.status !== "deferred");
+      const sts = act.map(derive);
+      let s;
+      if (act.length && sts.every((x) => x === "done"))
+        s = c.group.target === "own" && !c.group.integrated ? "review" : "done";
+      else if (sts.some((x) => SI(x) >= SI("building"))) s = "building";
+      else s = c.group.placed || "backlog";
+      memo[c.key] = s;
+      return s;
+    };
+    return arr.map((c) => {
+      if (!c.group) return c;
+      const s = derive(c);
+      const base = this.targetOf(c, arr);
+      return s === c.status && base === c.base ? c : { ...c, status: s, base };
+    });
+  }
+  groupStats(c) {
+    const all = this.kidsOf(c.key);
+    const act = all.filter((k) => k.status !== "deferred");
+    const stateOf = (k) => {
+      if (k.status === "done") return "done";
+      if (k.group) {
+        const r = this.groupStats(k);
+        return r.waiting ? "waiting" : r.blocked ? "blocked" : r.running ? "running" : "idle";
+      }
+      const th = this.threadFor(k);
+      if (th && th.state === "waiting") return "waiting";
+      if (this.isBlocked(k)) return "blocked";
+      return ["building", "review", "merge"].indexOf(k.status) >= 0 ? "running" : "idle";
+    };
+    const states = act.map(stateOf);
+    const n = (s) => states.filter((x) => x === s).length;
+    return { all, act, states, done: n("done"), waiting: n("waiting"), blocked: n("blocked"), running: n("running"), deferred: all.length - act.length };
+  }
+  pipStyle(state, h) {
+    return (
+      "flex:1;min-width:4px;height:" + (h || 4) + "px;border-radius:2px;background:" +
+      (state === "done"
+        ? "var(--success)"
+        : state === "waiting"
+          ? "var(--attention)"
+          : state === "blocked"
+            ? "var(--warning)"
+            : state === "running"
+              ? "color-mix(in srgb,var(--info) 65%,transparent)"
+              : "color-mix(in srgb,var(--fg) 13%,transparent)")
+    );
+  }
+  groupCardVm(c) {
+    const g = this.groupStats(c);
+    const NAME = { done: "done", waiting: "needs you", blocked: "blocked", running: "running", idle: "not started" };
+    const own = c.group.target === "own";
+    return {
+      hasPips: g.act.length > 0,
+      pips: g.act.map((k, i) => ({ style: this.pipStyle(g.states[i]), tip: k.key + " · " + k.title + " — " + NAME[g.states[i]] })),
+      done: g.act.length ? g.done + "/" + g.act.length : "0",
+      needs: g.waiting ? g.waiting + " need" + (g.waiting === 1 ? "s" : "") + " you" : "",
+      blocked: g.blocked ? g.blocked + " blocked" : "",
+      meta: [
+        g.deferred ? "+" + g.deferred + " deferred" : "",
+        own ? "→ " + this.targetOf(c) : "",
+        c.group.autoBuild ? (c.group.started ? "auto-build on" : "auto-build armed") : "",
+      ].filter(Boolean).join(" · "),
+    };
+  }
+  readyKids(g) {
+    return this.kidsOf(g.key).filter((c) => !c.group && c.status === "ready" && !this.hasUnmetDeps(c));
+  }
+  // Why a drag can't land here, or null. Groups only reach their later columns by derivation.
+  dropRefusal(card, to) {
+    if (!card || to === card.status) return null;
+    if (to === "deferred" && this.isStarted(card))
+      return "Work has started on " + card.key + ". Let it finish, or archive it.";
+    if (!card.group) return null;
+    const live = this.stageIndex(card.status) >= this.stageIndex("building");
+    const tgt = this.targetOf(card);
+    if (to === "review")
+      return card.group.target === "own"
+        ? "Reached automatically. The integration review of " + tgt + " opens when every active child is done."
+        : "This group merges straight into " + tgt + ", so it has no review of its own. Give it an integration branch in Group settings.";
+    if (to === "merge") return "Reached automatically. A group never merges by hand; its children do.";
+    if (to === "done") return "Done when all active children are done. Defer or archive the rest.";
+    if (to === "ready") return "Ready holds a single card's approved plan. Drag the group to Building to start its children.";
+    if (to === "building") return live || this.readyKids(card).length ? null : "No children are ready to start. Plan them first.";
+    if (live) return "Children are already building. To pause, turn off auto-build: running children finish and no new ones start.";
+    return null;
+  }
+  setColCollapsed(colKey, v) {
+    this.setState(
+      (s) => ({ colCollapsed: { ...s.colCollapsed, [colKey]: v } }),
+      () => {
+        try {
+          localStorage.setItem("t3-kanban-collapsed-columns", JSON.stringify(this.state.colCollapsed));
+        } catch (e) {}
+      },
+    );
+  }
+  toast(text, opts) {
+    opts = opts || {};
+    clearTimeout(this._toastT);
+    this.setState({ toast: { text, tone: opts.tone || "info", actionLabel: opts.actionLabel || "", action: opts.action || null } });
+    this._toastT = setTimeout(() => this.setState({ toast: null }), opts.tone === "error" ? 9000 : 6000);
+  }
+  newCard(base, extra) {
+    return {
+      id: "c" + Date.now() + Math.random().toString(36).slice(2, 6),
+      project: base.project,
+      tags: (base.tags || []).slice(),
+      status: "backlog",
+      workflow: "full",
+      tstate: "stopped",
+      depKeys: [],
+      plan: null,
+      pr: null,
+      brief: "",
+      created: "just now",
+      ...extra,
+    };
+  }
+  // A group whose last child left becomes an ordinary card again, back in the
+  // stage it had before it became a group, capped at Sprint.
+  revertEmpty(arr, keys) {
+    const out = [];
+    keys.forEach((k) => {
+      if (!k || out.indexOf(k) >= 0) return;
+      const i = arr.findIndex((c) => c.key === k);
+      if (i < 0 || !arr[i].group || arr.some((c) => c.parentKey === k && !c.archived)) return;
+      const g = arr[i];
+      arr[i] = {
+        ...g,
+        group: null,
+        planKeys: null,
+        status: g.status === "deferred" ? "deferred" : this.capStage(g.group.prevStatus || g.status, "sprint"),
+      };
+      out.push(k);
+    });
+    return out;
+  }
+  tryMove(ids, parentKey, afterId, beforeId) {
+    const cards = this.state.cards;
+    const byKey = {};
+    cards.forEach((c) => (byKey[c.key] = c));
+    const np = parentKey ? byKey[parentKey] : null;
+    const movers = cards.filter((c) => ids.indexOf(c.id) >= 0);
+    if (!movers.length) return;
+    if (np && movers.some((m) => m.key === np.key || this.subtree(m.key).some((d) => d.key === np.key)))
+      return this.toast("A card can't move inside itself.", { tone: "error" });
+    if (movers.some((m) => m.project !== movers[0].project) || (np && np.project !== movers[0].project))
+      return this.toast("Groups can't span projects.", { tone: "error" });
+    const dest = np ? this.targetOf(np) : this.trunkOf(movers[0]);
+    // A descendant keeps its target if an own-branch group sits between it and the mover.
+    const keeps = (d) => {
+      if (ids.indexOf(d.id) >= 0) return false;
+      let p = d.parentKey ? byKey[d.parentKey] : null;
+      while (p) {
+        if (p.group && p.group.target === "own") return true;
+        if (ids.indexOf(p.id) >= 0) return false;
+        p = p.parentKey ? byKey[p.parentKey] : null;
+      }
+      return false;
+    };
+    const affected = movers.concat(...movers.map((m) => this.subtree(m.key)));
+    const bad = affected.find((d) => this.isStarted(d) && !keeps(d) && this.landsOn(d) !== dest);
+    if (bad)
+      return this.toast(
+        "Can't move " + bad.key + (np ? " into " + np.key : " to the top level") + ". It's built on " +
+          this.landsOn(bad) + ", and " + (np ? np.key + "'s children merge into " : "top-level cards merge into ") +
+          dest + ". Rebase onto " + dest + " first.",
+        { tone: "error" },
+      );
+    if (np && !np.group && this.isStarted(np))
+      return this.setState({
+        dialog: { kind: "started", xId: np.id, yIds: ids, choice: "parent", title: "", typed: "" },
+        listMoveOpen: false,
+      });
+    const olds = movers.map((m) => m.parentKey);
+    let reverted = [];
+    this.setState(
+      (s) => {
+        const arr = s.cards.filter((c) => ids.indexOf(c.id) < 0);
+        const moved = s.cards
+          .filter((c) => ids.indexOf(c.id) >= 0)
+          .map((c) => ({ ...c, parentKey: parentKey || null, status: !parentKey && c.status === "deferred" ? "backlog" : c.status }));
+        let pos = beforeId
+          ? arr.findIndex((c) => c.id === beforeId)
+          : afterId
+            ? arr.findIndex((c) => c.id === afterId) + 1
+            : arr.length;
+        if (pos < 0 || (!beforeId && pos === 0)) pos = arr.length;
+        arr.splice(pos, 0, ...moved);
+        reverted = this.revertEmpty(arr, olds);
+        return {
+          cards: this.sweepAutoStart(arr, s.autoStart),
+          listMoveOpen: false,
+          listCollapsed: np ? { ...s.listCollapsed, [np.id]: false } : s.listCollapsed,
+        };
+      },
+      () => {
+        if (reverted.length)
+          this.toast(reverted.join(", ") + (reverted.length === 1 ? " has" : " have") + " no children left and is an ordinary card again, back in " + this.stage(this.cardByKey(reverted[0]).status).name + ".");
+      },
+    );
+  }
+  listSelIds() {
+    const s = this.state.listSel;
+    return this.state.cards.filter((c) => s[c.id] && !c.archived).map((c) => c.id);
+  }
+  listIndentTarget() {
+    const ids = this.listSelIds();
+    if (!ids.length) return { why: "Select cards first" };
+    const sel = this.state.cards.filter((c) => ids.indexOf(c.id) >= 0);
+    const pk = sel[0].parentKey || null;
+    if (sel.some((c) => (c.parentKey || null) !== pk)) return { why: "Select cards that share a parent" };
+    const sibs = this.state.cards.filter((c) => (c.parentKey || null) === pk && !c.archived && this.inScope(c));
+    const first = sibs.findIndex((c) => ids.indexOf(c.id) >= 0);
+    for (let i = first - 1; i >= 0; i--) if (ids.indexOf(sibs[i].id) < 0) return { target: sibs[i], ids };
+    return { why: "Nothing above to indent under" };
+  }
+  listOutdentInfo() {
+    const ids = this.listSelIds();
+    if (!ids.length) return { why: "Select cards first" };
+    const sel = this.state.cards.filter((c) => ids.indexOf(c.id) >= 0);
+    const pk = sel[0].parentKey || null;
+    if (!pk) return { why: "Already at the top level" };
+    if (sel.some((c) => (c.parentKey || null) !== pk)) return { why: "Select cards that share a parent" };
+    return { ids, parent: this.cardByKey(pk) };
+  }
+  listIndent() {
+    const t = this.listIndentTarget();
+    if (!t.target) return this.toast(t.why);
+    this.tryMove(t.ids, t.target.key, null);
+  }
+  listOutdent() {
+    const o = this.listOutdentInfo();
+    if (!o.parent) return this.toast(o.why);
+    this.tryMove(o.ids, o.parent.parentKey || null, o.parent.id);
+  }
+  startGroup(g) {
+    const ready = this.readyKids(g).map((c) => c.id);
+    const auto = g.group.autoBuild;
+    this.setState((s) => {
+      let cards = s.cards.map((c) => (c.id === g.id && auto ? { ...c, group: { ...c.group, started: true } } : c));
+      if (!auto) cards = cards.map((c) => (ready.indexOf(c.id) >= 0 ? { ...c, status: "building", tstate: "working" } : c));
+      return { cards: this.sweepAutoStart(cards, s.autoStart), dialog: null };
+    });
+    this.toast(
+      auto
+        ? "Auto-build started on " + g.key + ". " + ready.length + " building now; the rest follow as they unblock."
+        : ready.length + (ready.length === 1 ? " child" : " children") + " of " + g.key + " started.",
+    );
+  }
+  openPhase(g) {
+    const def = this.kidsOf(g.key).filter((c) => c.status === "deferred");
+    const m = /^(.*): Phase (\d+)$/.exec(g.title);
+    this.setState({
+      dialog: {
+        kind: "phase",
+        id: g.id,
+        title: m ? m[1] + ": Phase " + (+m[2] + 1) : g.title + ": Phase 2",
+        picked: def.reduce((o, c) => ((o[c.id] = true), o), {}),
+      },
+    });
+  }
+  confirmPhase() {
+    const d = this.state.dialog;
+    const g = this.state.cards.find((c) => c.id === d.id);
+    const ids = Object.keys(d.picked).filter((k) => d.picked[k]);
+    if (!g || !ids.length || !d.title.trim()) return;
+    const key = this.nextKeyFor(g.project);
+    const ng = this.newCard(g, {
+      key,
+      parentKey: g.parentKey || null,
+      title: d.title.trim(),
+      brief: '<p style="margin:0">Next phase of ' + g.key + " · " + g.title + ".</p>",
+      group: { ...GROUP_DEFAULT, placed: "backlog", prevStatus: "backlog", heading: true },
+    });
+    this.setState((s) => {
+      const arr = s.cards.map((c) => (ids.indexOf(c.id) >= 0 ? { ...c, parentKey: key, status: "backlog" } : c));
+      arr.splice(arr.findIndex((c) => c.id === g.id) + 1, 0, ng);
+      return { cards: this.sweepAutoStart(arr, s.autoStart), dialog: null };
+    });
+    this.toast(
+      "Created " + key + " with " + ids.length + (ids.length === 1 ? " card" : " cards") + " in the Backlog of " + (g.parentKey || "the board") + ".",
+      { actionLabel: "Open", action: () => this.setState({ mode: "board", drill: ng.id, activeId: null }) },
+    );
+  }
+  openArchive(g) {
+    this.setState({ dialog: { kind: "archive", id: g.id, typed: "" }, cardMenuOpen: false });
+  }
+  confirmArchive() {
+    const d = this.state.dialog;
+    const g = this.state.cards.find((c) => c.id === d.id);
+    if (!g || d.typed.trim().toLowerCase() !== g.key.toLowerCase()) return;
+    const ids = [g.id].concat(this.subtree(g.key).map((c) => c.id));
+    this.setState((s) => ({
+      cards: this.sweepAutoStart(s.cards.map((c) => (ids.indexOf(c.id) >= 0 ? { ...c, archived: true, tstate: "stopped" } : c)), s.autoStart),
+      dialog: null,
+      activeId: s.activeId && ids.indexOf(s.activeId) >= 0 ? null : s.activeId,
+      drill: s.drill && ids.indexOf(s.drill) >= 0 ? null : s.drill,
+      listSel: {},
+    }));
+    this.toast("Archived " + g.key + " and the " + (ids.length - 1) + " cards under it.");
+  }
+  confirmStarted() {
+    const d = this.state.dialog;
+    const x = this.state.cards.find((c) => c.id === d.xId);
+    if (!x) return;
+    const olds = this.state.cards.filter((c) => d.yIds.indexOf(c.id) >= 0).map((c) => c.parentKey);
+    if (d.choice === "parent") {
+      const title = (d.title || "").trim();
+      if (!title) return;
+      const key = this.nextKeyFor(x.project);
+      const ng = this.newCard(x, {
+        key,
+        parentKey: x.parentKey || null,
+        title,
+        brief: '<p style="margin:0">Shared parent for ' + x.key + " and the cards grouped with it.</p>",
+        group: { ...GROUP_DEFAULT, placed: "planning", prevStatus: "planning" },
+      });
+      const ids = [x.id].concat(d.yIds);
+      this.setState((s) => {
+        const arr = s.cards.map((c) => (ids.indexOf(c.id) >= 0 ? { ...c, parentKey: key } : c));
+        arr.splice(arr.findIndex((c) => c.id === x.id), 0, ng);
+        this.revertEmpty(arr, olds);
+        return { cards: this.sweepAutoStart(arr, s.autoStart), dialog: null, listSel: {} };
+      });
+      this.toast("Created " + key + " · " + title + ", holding " + ids.length + " cards. No work was touched.");
+    } else {
+      if ((d.typed || "").trim().toLowerCase() !== x.key.toLowerCase()) return;
+      this.setState((s) => {
+        const arr = s.cards.map((c) =>
+          c.id === x.id
+            ? { ...c, status: "planning", tstate: "stopped", pr: null, conflict: null, hold: null, group: { ...GROUP_DEFAULT, placed: "planning", prevStatus: "planning" } }
+            : d.yIds.indexOf(c.id) >= 0
+              ? { ...c, parentKey: x.key }
+              : c,
+        );
+        this.revertEmpty(arr, olds);
+        return { cards: this.sweepAutoStart(arr, s.autoStart), dialog: null, listSel: {} };
+      });
+      this.toast("Work on " + x.key + " cancelled: thread stopped, branch deleted. " + x.key + " is now a group.");
+    }
+  }
+  confirmNewGroup() {
+    const d = this.state.dialog;
+    const title = (d.title || "").trim();
+    if (!title) return;
+    const ids = d.ids || [];
+    const sel = this.state.cards.filter((c) => ids.indexOf(c.id) >= 0);
+    const pk = sel.length ? sel[0].parentKey || null : null;
+    if (sel.some((c) => (c.parentKey || null) !== pk || c.project !== sel[0].project))
+      return this.toast("Group cards that share a parent and a project.", { tone: "error" });
+    const pid = sel.length ? sel[0].project : this.state.scope === "all" ? "advisor" : this.state.scope;
+    const key = this.nextKeyFor(pid);
+    const ng = this.newCard({ project: pid, tags: [] }, {
+      key,
+      parentKey: pk,
+      title,
+      group: { ...GROUP_DEFAULT, placed: "backlog", prevStatus: "backlog", heading: true },
+    });
+    this.setState((s) => {
+      const arr = s.cards.map((c) => (ids.indexOf(c.id) >= 0 ? { ...c, parentKey: key } : c));
+      const at = sel.length ? arr.findIndex((c) => c.id === sel[0].id) : arr.length;
+      arr.splice(at < 0 ? arr.length : at, 0, ng);
+      return { cards: this.sweepAutoStart(arr, s.autoStart), dialog: null, listSel: { [ng.id]: true } };
+    });
+    this.toast("Created group " + key + (ids.length ? " with " + ids.length + " cards." : ". Indent cards under it."));
+  }
+  checkStyle(on) {
+    return (
+      "display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;flex:none;border-radius:4px;border:1px solid " +
+      (on ? "var(--primary)" : "var(--input)") + ";background:" + (on ? "var(--primary)" : "var(--card)") + ";color:#fff;cursor:pointer"
+    );
+  }
+  switchVm(on) {
+    return {
+      switchStyle:
+        "position:relative;flex:none;width:28px;height:16px;margin-top:1px;border-radius:99px;transition:background-color 120ms ease;background:" +
+        (on ? "var(--primary)" : "color-mix(in srgb,var(--fg) 16%,transparent)"),
+      knobStyle:
+        "position:absolute;top:2px;left:" + (on ? "14px" : "2px") +
+        ";width:12px;height:12px;border-radius:99px;background:#fff;box-shadow:0 1px 2px rgb(0 0 0 / 25%);transition:left 120ms ease",
+    };
+  }
+  segStyle(on, locked) {
+    return (
+      "flex:1;height:24px;border:none;border-radius:6px;font:" + (on ? "500" : "400") +
+      " 11.5px var(--font-sans);cursor:" + (locked ? "not-allowed" : "pointer") + ";background:" +
+      (on ? "var(--card)" : "transparent") + ";color:" + (on ? "var(--fg)" : "var(--muted-fg)") +
+      ";box-shadow:" + (on ? "0 0 0 1px var(--border)" : "none")
+    );
+  }
+  groupSettingsVm(g) {
+    if (!g || !g.group) return null;
+    const gr = g.group;
+    const own = gr.target === "own";
+    const trunk = this.trunkOf(g);
+    const resolved = this.targetOf(g);
+    const up = this.landsOn(g);
+    const locked = this.subtree(g.key).some((c) => this.isStarted(c) && c.status !== "done");
+    const branch = gr.branch || "feat/" + slugify(g.title);
+    const atTrunk = resolved === trunk;
+    const set = (patch) =>
+      this.setState((s) => ({
+        cards: this.sweepAutoStart(s.cards.map((c) => (c.id === g.id ? { ...c, group: { ...c.group, ...patch } } : c)), s.autoStart),
+      }));
+    const rows = [
+      {
+        label: "Auto-build",
+        on: gr.autoBuild,
+        note: gr.autoBuild
+          ? gr.started
+            ? "Ready children whose dependencies are met build, review and merge on their own."
+            : "Armed. The cascade starts when you drag the group to Building."
+          : "Children wait for you to start them. Turning this off never interrupts a running child.",
+        toggle: () => set({ autoBuild: !gr.autoBuild }),
+      },
+      {
+        label: "Auto-merge to " + trunk,
+        on: atTrunk && gr.autoMerge,
+        disabled: !atTrunk,
+        note: !atTrunk
+          ? "Only applies when children merge into " + trunk + ". These merge into " + resolved + "."
+          : gr.autoMerge
+            ? "Children merge into " + trunk + " as soon as the forge accepts."
+            : "Children stop at Ready for merge for you, unless a card has its own auto-merge on.",
+        toggle: () => atTrunk && set({ autoMerge: !gr.autoMerge }),
+      },
+      {
+        label: "Auto-plan",
+        on: gr.autoPlan,
+        note: gr.autoPlan
+          ? "Children entering Planning are planned by the agent and stop at Ready."
+          : "Children entering Planning are planned with you.",
+        toggle: () => set({ autoPlan: !gr.autoPlan }),
+      },
+    ];
+    return {
+      resolved: "→ " + resolved,
+      inheritStyle: this.segStyle(!own, locked),
+      ownStyle: this.segStyle(own, locked),
+      lockTip: locked ? "Children have started on " + resolved + ". The merge target is fixed until they finish." : "",
+      pickInherit: () => !locked && own && set({ target: "inherit" }),
+      pickOwn: () => !locked && !own && set({ target: "own", branch }),
+      targetNote: locked
+        ? "Fixed while started children are building against " + resolved + "."
+        : own
+          ? "Children merge into " + branch + ". The group's own Code review merges it into " + up + "."
+          : g.parentKey
+            ? "Children merge wherever " + g.parentKey + "'s children merge: " + resolved + "."
+            : "Children merge into the trunk, " + resolved + ".",
+      toggles: rows.map((t) => ({
+        ...t,
+        ...this.switchVm(t.on),
+        tip: t.disabled ? t.note : "",
+        rowStyle: "display:flex;align-items:flex-start;gap:10px;cursor:" + (t.disabled ? "not-allowed" : "pointer") + ";opacity:" + (t.disabled ? ".55" : "1"),
+      })),
+    };
+  }
+  genericDecisions(c) {
+    return [
+      DEC("Scope of the first cut", "Only what the brief names", "Anything extra becomes a follow-up card."),
+      DEC("Where does the change live?", "Next to the existing board code", "Keeps imports and ownership simple."),
+      DEC("Ship behind a flag?", "No flag", "Small and reversible, and the brief didn't ask for one.", "unclear"),
+    ];
+  }
+  autoPlan(c) {
+    const items = AUTO_DECISIONS[c.key] || this.genericDecisions(c);
+    const un = items.filter((x) => x.flag === "unclear").length;
+    this.setState((s) => ({
+      cards: this.sweepAutoStart(
+        s.cards.map((x) =>
+          x.id === c.id
+            ? {
+                ...x,
+                status: "building",
+                tstate: "working",
+                qs: x.qs ? { ...x.qs, done: true } : x.qs,
+                plan: x.plan || PLAN(x.title, ["Planned by the agent from the brief and the answers so far", "Remaining questions decided and logged on the Summary pane"], ["apps/web/src/"]),
+                decisions: { auto: true, items },
+              }
+            : x,
+        ),
+        s.autoStart,
+      ),
+      pane: { ...s.pane, [c.id]: "summary" },
+      logOpen: { ...s.logOpen, [c.id]: true },
+    }));
+    this.toast(c.key + " auto-planned and building. " + items.length + " decisions logged, " + un + " unclear.");
+  }
+  decisionVm(c) {
+    const d = c && c.decisions;
+    if (!d || !d.items.length) return null;
+    const rank = { unclear: 0, important: 1, normal: 2 };
+    const items = d.items.map((x, i) => ({ ...x, i })).sort((a, b) => rank[a.flag] - rank[b.flag] || a.i - b.i);
+    const un = items.filter((x) => x.flag === "unclear").length;
+    const imp = items.filter((x) => x.flag === "important").length;
+    const stored = this.state.logOpen[c.id];
+    const open = stored != null ? stored : !!(d.auto && un);
+    const firstFlag = items[0];
+    return {
+      open,
+      closed: !open,
+      toggle: () => this.setState((s) => ({ logOpen: { ...s.logOpen, [c.id]: !open } })),
+      count: items.length + " decisions",
+      flags: [un ? un + " unclear" : "", imp ? imp + " important" : ""].filter(Boolean).join(" · "),
+      auto: !!d.auto,
+      autoNote: "Auto-planned. The plan was approved without you, including the decisions marked unclear.",
+      canAct: !!d.auto && this.stageIndex(c.status) >= this.stageIndex("building"),
+      rows: items.map((x) => ({
+        q: x.q,
+        d: x.d,
+        why: x.why,
+        who: x.who === "human" ? "You" : "Agent",
+        hasFlag: x.flag !== "normal",
+        flagLabel: x.flag === "unclear" ? "Unclear" : "Important",
+        flagStyle:
+          "display:inline-flex;align-items:center;height:17px;padding:0 6px;flex:none;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;" +
+          (x.flag === "unclear"
+            ? "background:color-mix(in srgb,var(--attention) 16%,transparent);color:var(--attention-fg)"
+            : "border:1px solid var(--input);color:var(--fg)"),
+        rowStyle:
+          "display:flex;flex-direction:column;gap:3px;padding:10px 12px;border-top:1px solid var(--border);background:" +
+          (x.flag === "unclear" ? "color-mix(in srgb,var(--attention) 6%,var(--card))" : "var(--card)"),
+      })),
+      sendBack: () => {
+        this.setState((s) => ({
+          cards: s.cards.map((x) =>
+            x.id === c.id
+              ? { ...x, status: this.stageIndex(x.status) > this.stageIndex("building") ? "building" : x.status, tstate: "working" }
+              : x,
+          ),
+          pane: { ...s.pane, [c.id]: "thread" },
+          composer: "Change before merge: ",
+        }));
+        setTimeout(() => this.composerEl && this.composerEl.focus(), 40);
+      },
+      followUp: () => {
+        const key = this.nextKeyFor(c.project);
+        const nc = this.newCard(c, {
+          key,
+          parentKey: c.parentKey || null,
+          title: "Follow-up to " + c.key + ": " + firstFlag.q.replace(/\?$/, ""),
+          brief: '<p style="margin:0">' + c.key + " decided \"" + firstFlag.d + "\". Revisit it.</p>",
+        });
+        this.setState((s) => {
+          const arr = s.cards.slice();
+          arr.splice(arr.findIndex((x) => x.id === c.id) + 1, 0, nc);
+          return { cards: this.sweepAutoStart(arr, s.autoStart) };
+        });
+        this.toast("Created " + key + " in Backlog.", { actionLabel: "Open", action: () => this.setState({ activeId: nc.id }) });
+      },
+    };
+  }
+  proposalVm(c) {
+    const p = c && c.status === "planning" && c.proposal;
+    if (!p) return null;
+    const ed = this.state.propEdit[c.id] || {};
+    const autoBuild = ed.autoBuild != null ? ed.autoBuild : p.autoBuild;
+    const target = ed.target || p.target;
+    const branch = p.branch || "feat/" + slugify(c.title);
+    const up = this.landsOn(c);
+    const n = p.children.length;
+    const planned = p.children.filter((x) => x.planned).length;
+    const set = (patch) => this.setState((s) => ({ propEdit: { ...s.propEdit, [c.id]: { ...(s.propEdit[c.id] || {}), ...patch } } }));
+    const edited = autoBuild !== p.autoBuild || target !== p.target;
+    const rec = "auto-build " + (p.autoBuild ? "on" : "off") + ", " + (p.target === "own" ? "own branch" : "inherit");
+    const sw = this.switchVm(autoBuild);
+    return {
+      count: n + " cards",
+      mix: planned === n ? "all planned" : planned ? planned + " planned, " + (n - planned) + " need planning" : "all need planning",
+      rows: p.children.map((x, i) => ({
+        n: "#" + (i + 1),
+        title: x.title,
+        planned: x.planned,
+        needs: !x.planned,
+        lands: x.planned ? "→ Ready" : "→ Backlog",
+        hasDeps: x.deps.length > 0,
+        deps: "after " + x.deps.map((d) => "#" + d).join(", "),
+      })),
+      autoSwitch: sw.switchStyle,
+      autoKnob: sw.knobStyle,
+      toggleAuto: () => set({ autoBuild: !autoBuild }),
+      autoNote: autoBuild ? "Once started, ready children build, review and merge on their own." : "You start each child yourself.",
+      inheritStyle: this.segStyle(target !== "own"),
+      ownStyle: this.segStyle(target === "own"),
+      pickInherit: () => set({ target: "inherit" }),
+      pickOwn: () => set({ target: "own" }),
+      resolved: target === "own" ? branch + " → " + up : "→ " + up,
+      edited,
+      reset: () => this.setState((s) => ({ propEdit: { ...s.propEdit, [c.id]: {} } })),
+      foot: (edited ? "Changed from the agent's recommendation (" + rec + "). " : "Agent recommends " + rec + ". ") + "Approving creates the cards. Nothing starts until you start it.",
+      approve: () => this.approveSplit(c, autoBuild, target, branch),
+      requestChanges: () => {
+        this.setState({ composer: "Change the split: " });
+        if (this.composerEl) {
+          this.composerEl.value = "Change the split: ";
+          this.composerEl.focus();
+        }
+      },
+    };
+  }
+  approveSplit(c, autoBuild, target, branch) {
+    const p = c.proposal;
+    const kids = p.children.map((x, i) => ({
+      id: c.key + "-p" + (i + 1),
+      key: c.key + "." + (i + 1),
+      parentKey: c.key,
+      planN: i + 1,
+      project: c.project,
+      tags: (c.tags || []).slice(),
+      status: x.planned ? "ready" : "backlog",
+      workflow: "full",
+      tstate: "stopped",
+      title: x.title,
+      brief:
+        '<p style="margin:0 0 8px">' + (x.planned ? "Planned" : "Needs planning") + " · split out of " + c.key + " · " + c.title + ".</p>",
+      depKeys: x.deps.map((d) => c.key + "." + d),
+      plan: x.planned ? PLAN(x.title, ["Split out of the " + c.key + " planning thread", "Own build, review and merge loop"], ["apps/web/src/"]) : null,
+      pr: null,
+      created: "just now",
+    }));
+    this.setState((s) => ({
+      cards: this.sweepAutoStart(
+        s.cards
+          .map((x) =>
+            x.id === c.id
+              ? {
+                  ...x,
+                  proposal: null,
+                  tstate: "stopped",
+                  plan: x.plan || PLAN(x.title + " — breakdown", p.children.map((k) => k.title + (k.planned ? " (planned)" : " (needs planning)")), []),
+                  group: { ...GROUP_DEFAULT, target, branch: target === "own" ? branch : "", autoBuild, placed: "planning", prevStatus: "planning" },
+                }
+              : x,
+          )
+          .concat(kids),
+        s.autoStart,
+      ),
+      pane: { ...s.pane, [c.id]: "plans" },
+    }));
+    this.toast("Split approved. " + kids.length + " cards created under " + c.key + "; nothing has started.", {
+      actionLabel: "Open board",
+      action: () => this.setState({ drill: c.id, activeId: null, back: null }),
+    });
+  }
+  planThreadVm(active) {
+    if (!active || !active.group || !active.plan) return null;
+    const def = this.kidsOf(active.key).filter((c) => c.status === "deferred");
+    const re = !!this.state.reopened[active.id];
+    const txt = def.length ? "Plan the next phase from the deferred cards: " + def.map((c) => c.key).join(", ") + "." : "";
+    return {
+      meta: re ? "Reopened · waiting for you" : "Settled " + (active.created || "") + " · where this breakdown was worked out",
+      hasHint: def.length > 0 && !re,
+      hint: def.length + (def.length === 1 ? " deferred card" : " deferred cards") + " (" + def.map((c) => c.key).join(", ") + "). Reopen to plan the next phase.",
+      label: re ? "Go to thread" : "Reopen thread",
+      open: () => {
+        this.setState((s) => ({
+          reopened: { ...s.reopened, [active.id]: true },
+          pane: { ...s.pane, [active.id]: "thread" },
+          composer: re ? s.composer : txt,
+        }));
+        setTimeout(() => this.composerEl && this.composerEl.focus(), 60);
+      },
+    };
+  }
+  dialogVm() {
+    const d = this.state.dialog;
+    if (!d) return null;
+    const cards = this.state.cards;
+    const set = (patch) => this.setState((s) => ({ dialog: { ...s.dialog, ...patch } }));
+    const close = () => this.setState({ dialog: null });
+    const btn = (danger, ok) =>
+      "height:32px;padding:0 13px;border-radius:8px;font:500 13px var(--font-sans);box-shadow:var(--shadow-xs);" +
+      (danger
+        ? ok
+          ? "border:1px solid var(--destructive);background:var(--destructive);color:#fff;cursor:pointer"
+          : "border:1px solid color-mix(in srgb,var(--destructive) 30%,transparent);background:color-mix(in srgb,var(--destructive) 8%,transparent);color:color-mix(in srgb,var(--destructive-fg) 55%,transparent);cursor:not-allowed"
+        : ok
+          ? "border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg);cursor:pointer"
+          : "border:1px solid var(--input);background:var(--popover);color:var(--muted-fg);cursor:not-allowed");
+    const item = (c, note) => ({ key: c.key, title: c.title, note: note || this.stage(c.status).name, keyStyle: this.keyPillStyle(this.projectDot(c.project)) });
+    const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
+    const base = {
+      close,
+      title: "",
+      body: "",
+      hasOptions: false, options: [],
+      hasTitle: false, titleLabel: "", titleValue: "", titlePh: "",
+      onTitle: (e) => set({ title: e.target.value }),
+      hasChecks: false, checks: [],
+      hasItems: false, items: [],
+      hasLosses: false, losses: [], lossTitle: "", hasAfter: false, afterNote: "",
+      hasTyped: false, typedKey: "", typed: d.typed || "",
+      onTyped: (e) => set({ typed: e.target.value }),
+    };
+    const card = (id) => cards.find((c) => c.id === id);
+    let vm = null;
+    if (d.kind === "start") {
+      const g = card(d.id);
+      if (!g) return null;
+      const ready = this.readyKids(g);
+      const auto = g.group.autoBuild;
+      vm = {
+        ...base,
+        title: auto ? "Start auto-build?" : ready.length === 1 ? "Start the ready child?" : "Start the " + ready.length + " ready, unblocked children?",
+        body: auto
+          ? plural(ready.length, "child is", "children are") + " ready with dependencies met. They start now, and the rest of " + g.key + " follows as each one unblocks the next."
+          : "Auto-build is off for " + g.key + ", so this is a one-off start. Children that become ready later wait for you.",
+        hasItems: true,
+        items: ready.map((c) => item(c, "Ready")),
+        confirmLabel: auto ? "Start auto-build" : "Start " + ready.length,
+        confirmStyle: btn(false, true),
+        confirm: () => this.startGroup(g),
+      };
+    } else if (d.kind === "phase") {
+      const g = card(d.id);
+      if (!g) return null;
+      const def = this.kidsOf(g.key).filter((c) => c.status === "deferred");
+      const n = def.filter((c) => d.picked[c.id]).length;
+      const ok = n > 0 && !!d.title.trim();
+      vm = {
+        ...base,
+        title: "Move deferred cards to a new phase",
+        body: "Creates a new group next to " + g.key + ", in the Backlog of " + (g.parentKey || "the board") + ". The ticked cards move into its Backlog.",
+        hasTitle: true,
+        titleLabel: "Phase title",
+        titleValue: d.title,
+        hasChecks: true,
+        checks: def.map((c) => ({
+          key: c.key,
+          title: c.title,
+          on: !!d.picked[c.id],
+          keyStyle: this.keyPillStyle(this.projectDot(c.project)),
+          boxStyle: this.checkStyle(!!d.picked[c.id]),
+          toggle: () => set({ picked: { ...d.picked, [c.id]: !d.picked[c.id] } }),
+        })),
+        confirmLabel: "Create phase with " + n,
+        confirmStyle: btn(false, ok),
+        confirm: () => ok && this.confirmPhase(),
+      };
+    } else if (d.kind === "started") {
+      const x = card(d.xId);
+      if (!x) return null;
+      const ys = cards.filter((c) => d.yIds.indexOf(c.id) >= 0);
+      const yLabel = ys.length === 1 ? ys[0].key : ys.length + " cards";
+      const branch = "t3/" + x.key.toLowerCase() + "-" + slugify(x.title);
+      const commits = x.pr ? (x.pr.n % 5) + 3 : 3;
+      const isParent = d.choice !== "cancel";
+      const typedOk = (d.typed || "").trim().toLowerCase() === x.key.toLowerCase();
+      const opt = (id, label, desc, danger) => {
+        const on = d.choice === id;
+        const tone = danger ? "var(--destructive)" : "var(--primary)";
+        return {
+          label,
+          desc,
+          pick: () => set({ choice: id }),
+          style:
+            "display:flex;align-items:flex-start;gap:11px;padding:11px 12px;border-radius:10px;cursor:pointer;border:1px solid " +
+            (on ? "color-mix(in srgb," + tone + " 55%,transparent)" : "var(--border)") + ";background:" +
+            (on ? "color-mix(in srgb," + tone + " 6%,var(--card))" : "var(--card)"),
+          radioStyle:
+            "display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:none;margin-top:1px;border-radius:99px;border:1.5px solid " +
+            (on ? tone : "var(--input)"),
+          dotStyle: "width:8px;height:8px;border-radius:99px;background:" + (on ? tone : "transparent"),
+          labelStyle: "font:500 13px var(--font-sans);color:" + (danger && on ? "var(--destructive-fg)" : "var(--fg)"),
+        };
+      };
+      vm = {
+        ...base,
+        title: "Work has started on " + x.key,
+        body: x.key + " · " + x.title + " has a worktree and a branch, so it can't become the parent of " + yLabel + ".",
+        hasOptions: true,
+        options: [
+          opt("parent", "Create a shared parent", "A new group holds " + x.key + " and " + yLabel + " side by side. Nothing is lost.", false),
+          opt("cancel", "Cancel work on " + x.key + " and make it the parent", "Abandons what's been built so " + x.key + " can become a group.", true),
+        ],
+        hasTitle: isParent,
+        titleLabel: "New parent's title",
+        titleValue: d.title || "",
+        titlePh: "e.g. Event log overhaul",
+        hasLosses: !isParent,
+        lossTitle: "This is abandoned",
+        losses: [
+          { text: commits + " commits on ", code: branch },
+          { text: "The " + this.stage(x.status).name.toLowerCase() + " thread stops now", code: "" },
+          x.pr ? { text: "PR #" + x.pr.n + " will be closed", code: "" } : { text: "The worktree and remote branch are deleted", code: "" },
+        ],
+        hasTyped: !isParent,
+        typedKey: x.key,
+        confirmLabel: isParent ? "Create parent" : "Cancel work and make it the parent",
+        confirmStyle: isParent ? btn(false, !!(d.title || "").trim()) : btn(true, typedOk),
+        confirm: () => this.confirmStarted(),
+      };
+    } else if (d.kind === "archive") {
+      const g = card(d.id);
+      if (!g) return null;
+      const sub = this.subtree(g.key);
+      const leaves = sub.filter((c) => !c.group);
+      const running = leaves.filter((c) => ["building", "review", "merge"].indexOf(c.status) >= 0).length;
+      const prs = leaves.filter((c) => c.pr && c.status !== "done").length;
+      const branches = leaves.filter((c) => this.isStarted(c) && c.status !== "done").length +
+        [g].concat(sub).filter((c) => c.group && c.group.target === "own").length;
+      const typedOk = (d.typed || "").trim().toLowerCase() === g.key.toLowerCase();
+      vm = {
+        ...base,
+        title: "Archive " + g.key + " and everything under it?",
+        body: "Archiving means no further work on " + g.title + ", ever. It takes the whole subtree: " + plural(sub.length, "card", "cards") + ".",
+        hasLosses: true,
+        lossTitle: "Discarded immediately",
+        losses: [
+          running ? { text: plural(running, "child", "children") + " building · threads stop now", code: "" } : null,
+          prs ? { text: plural(prs, "PR", "PRs") + " open · closed", code: "" } : null,
+          branches ? { text: plural(branches, "branch", "branches") + " · worktrees and branches deleted, remote copies included", code: "" } : null,
+        ].filter(Boolean),
+        hasAfter: true,
+        afterNote: "Unarchiving later restores the cards, plans and history, but not the branch work.",
+        hasTyped: true,
+        typedKey: g.key,
+        confirmLabel: "Archive " + (sub.length + 1) + " cards",
+        confirmStyle: btn(true, typedOk),
+        confirm: () => this.confirmArchive(),
+      };
+    } else if (d.kind === "newgroup") {
+      const ys = cards.filter((c) => (d.ids || []).indexOf(c.id) >= 0);
+      vm = {
+        ...base,
+        title: ys.length ? "Group " + plural(ys.length, "card", "cards") : "New group",
+        body: ys.length
+          ? "Creates a group where they sit and moves them under it. Grouping doesn't touch git."
+          : "Creates an empty group heading. Indent cards under it, or move them in.",
+        hasTitle: true,
+        titleLabel: "Group title",
+        titleValue: d.title || "",
+        titlePh: "e.g. Billing",
+        hasItems: ys.length > 0,
+        items: ys.map((c) => item(c)),
+        confirmLabel: "Create group",
+        confirmStyle: btn(false, !!(d.title || "").trim()),
+        confirm: () => this.confirmNewGroup(),
+      };
+    }
+    if (!vm) return null;
+    vm.onEnter = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        vm.confirm();
+      }
+    };
+    return vm;
+  }
+  listVm() {
+    const st = this.state;
+    const q = this.queryFor().trim().toLowerCase();
+    const live = st.cards.filter((c) => !c.archived && this.inScope(c));
+    const kids = {};
+    live.forEach((c) => {
+      const k = c.parentKey || "";
+      (kids[k] = kids[k] || []).push(c);
+    });
+    const memo = {};
+    const stSel = st.listStages || {};
+    const stOn = Object.keys(stSel).filter((k) => stSel[k]);
+    const filtering = !!q || stOn.length > 0;
+    // A row stays when it matches, or when something under it does (kept for context).
+    const keep = (c) => {
+      if (!filtering) return true;
+      if (memo[c.id] != null) return memo[c.id];
+      memo[c.id] = false;
+      const hit =
+        (!q || (c.title + " " + c.key).toLowerCase().indexOf(q) >= 0) &&
+        (!stOn.length || stOn.indexOf(c.status) >= 0);
+      memo[c.id] = hit || (kids[c.key] || []).some(keep);
+      return memo[c.id];
+    };
+    const matches = (c) =>
+      (!q || (c.title + " " + c.key).toLowerCase().indexOf(q) >= 0) &&
+      (!stOn.length || stOn.indexOf(c.status) >= 0);
+    const sel = st.listSel;
+    const selIds = this.listSelIds();
+    const TONE = {
+      violet: ["var(--attention)", "var(--attention-fg)"],
+      amber: ["var(--warning)", "var(--warning-fg)"],
+      blue: ["var(--info)", "var(--info-fg)"],
+    };
+    const flag = (t, k) => ({
+      text: t,
+      style: "display:inline-flex;align-items:center;gap:5px;flex:none;white-space:nowrap;font:500 11.5px var(--font-sans);color:" + TONE[k][1],
+      dot: "width:6px;height:6px;border-radius:99px;flex:none;background:" + TONE[k][0],
+    });
+    const rows = [];
+    const flat = [];
+    const dragBlocked = {};
+    (st.listDrag || []).forEach((id) => {
+      const d = st.cards.find((x) => x.id === id);
+      if (!d) return;
+      dragBlocked[d.key] = true;
+      this.subtree(d.key).forEach((x) => (dragBlocked[x.key] = true));
+    });
+    const over = st.listOver;
+    const walk = (pk, depth) =>
+      (kids[pk] || []).forEach((c) => {
+        if (!keep(c)) return;
+        const isGrp = !!c.group;
+        const expanded = isGrp && (filtering || !st.listCollapsed[c.id]);
+        const context = filtering && !matches(c);
+        const on = !!sel[c.id];
+        const deferred = c.status === "deferred";
+        const flags = [];
+        let progress = null;
+        if (isGrp) {
+          const g = this.groupStats(c);
+          if (g.waiting) flags.push(flag(g.waiting + (g.waiting === 1 ? " needs you" : " need you"), "violet"));
+          if (g.blocked) flags.push(flag(g.blocked + " blocked", "amber"));
+          if (g.running && flags.length < 2) flags.push(flag(g.running + " running", "blue"));
+          progress = { label: g.done + "/" + g.act.length, pips: g.act.map((k, i) => ({ style: this.pipStyle(g.states[i], 5) })) };
+        } else {
+          const th = this.threadFor(c);
+          if (th && th.state === "waiting") flags.push(flag("Needs you", "violet"));
+          else if (th && th.state === "working") flags.push(flag("Running", "blue"));
+          if (this.isBlocked(c)) flags.push(flag("Blocked", "amber"));
+        }
+        const own = isGrp && c.group.target === "own";
+        rows.push({
+          id: c.id,
+          key: c.key,
+          title: c.title,
+          isGroup: isGrp,
+          isLeaf: !isGrp,
+          sel: on,
+          flags,
+          progress,
+          hasProgress: !!progress,
+          childCount: isGrp ? String((kids[c.key] || []).length) : "",
+          indentStyle: "width:" + depth * 22 + "px;flex:none",
+          caret: expanded ? "none" : "rotate(-90deg)",
+          toggleTip: expanded ? "Collapse" : "Expand",
+          keyStyle: this.keyPillStyle(this.projectDot(c.project)),
+          titleStyle:
+            "min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:" + (isGrp ? "600" : "400") + " 13px var(--font-sans);color:var(--fg)",
+          stageName: this.stage(c.status).name,
+          stageStyle:
+            "display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:6px;font:500 11px var(--font-sans);white-space:nowrap;" +
+            (c.status === "done"
+              ? "background:color-mix(in srgb,var(--success) 14%,transparent);color:var(--success-fg)"
+              : deferred
+                ? "border:1px dashed var(--input);color:var(--muted-fg)"
+                : "background:var(--accent);color:var(--fg)"),
+          target: isGrp ? "→ " + this.targetOf(c) : "",
+          targetStyle: "font:500 11px var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:" + (own ? "var(--fg)" : "var(--muted-fg)"),
+          checkStyle: this.checkStyle(on),
+          rowStyle:
+            "display:grid;grid-template-columns:minmax(0,1fr) 124px 168px 130px 150px;column-gap:12px;align-items:center;height:35px;padding:0 10px;border-radius:0;user-select:none;cursor:default;" +
+            (over && over.id === c.id
+              ? over.zone === "into"
+                ? "background:color-mix(in srgb,var(--primary) 12%,transparent);box-shadow:inset 0 0 0 1.5px var(--primary);"
+                : "box-shadow:inset 0 " + (over.zone === "before" ? "2px" : "-2px") + " 0 0 var(--primary);border-radius:0;"
+              : on
+                ? "background:color-mix(in srgb,var(--primary) 8%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--primary) 32%,transparent);"
+                : "") +
+            "border-bottom:1px solid color-mix(in srgb,var(--fg) 7%,transparent);" +
+            (st.listDrag && dragBlocked[c.key] ? "opacity:.4;" : context ? "opacity:.45;" : deferred ? "opacity:.55;" : "") +
+            "cursor:" + (st.listDrag ? "grabbing" : "grab"),
+          onClick: (e) => {
+            const fl = this._listFlat || [];
+            if (e.shiftKey && this.state.listAnchor) {
+              const a = fl.indexOf(this.state.listAnchor);
+              const b = fl.indexOf(c.id);
+              if (a >= 0 && b >= 0) {
+                const ns = {};
+                fl.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((id) => (ns[id] = true));
+                return this.setState({ listSel: ns, listMoveOpen: false });
+              }
+            }
+            if (e.metaKey || e.ctrlKey)
+              return this.setState((s) => ({ listSel: { ...s.listSel, [c.id]: !s.listSel[c.id] }, listAnchor: c.id }));
+            this.setState({ listSel: on && selIds.length === 1 ? {} : { [c.id]: true }, listAnchor: c.id, listMoveOpen: false });
+          },
+          onCheck: (e) => {
+            e.stopPropagation();
+            this.setState((s) => ({ listSel: { ...s.listSel, [c.id]: !s.listSel[c.id] }, listAnchor: c.id }));
+          },
+          // Drag a row (or the whole selection, if the row is in it). Top or bottom
+          // edge drops beside the target; the middle drops it inside.
+          onDragStart: (e) => {
+            const ids = on ? selIds : [c.id];
+            e.dataTransfer.effectAllowed = "move";
+            try { e.dataTransfer.setData("text/plain", c.key); } catch (err) {}
+            this.setState({ listDrag: ids, listOver: null, listMoveOpen: false });
+          },
+          onDragEnd: () => this.setState({ listDrag: null, listOver: null }),
+          onDragOver: (e) => {
+            const drag = this.state.listDrag;
+            if (!drag) return;
+            if (dragBlocked[c.key]) {
+              if (this.state.listOver) this.setState({ listOver: null });
+              return;
+            }
+            e.preventDefault();
+            const r = e.currentTarget.getBoundingClientRect();
+            const y = (e.clientY - r.top) / r.height;
+            const zone = y < 0.28 ? "before" : y > 0.72 ? "after" : "into";
+            const o = this.state.listOver;
+            if (!o || o.id !== c.id || o.zone !== zone) this.setState({ listOver: { id: c.id, zone } });
+          },
+          onDrop: (e) => {
+            e.preventDefault();
+            const drag = this.state.listDrag;
+            const o = this.state.listOver;
+            this.setState({ listDrag: null, listOver: null });
+            if (!drag || !o || o.id !== c.id || dragBlocked[c.key]) return;
+            if (o.zone === "into") this.tryMove(drag, c.key, null);
+            else if (o.zone === "before") this.tryMove(drag, c.parentKey || null, null, c.id);
+            else this.tryMove(drag, c.parentKey || null, c.id);
+          },
+          open: (e) => {
+            if (e) e.stopPropagation();
+            this.setState({ activeId: c.id, composer: "", composerFocus: false });
+          },
+          toggle: (e) => {
+            e.stopPropagation();
+            this.setState((s) => ({ listCollapsed: { ...s.listCollapsed, [c.id]: !s.listCollapsed[c.id] } }));
+          },
+          drill: (e) => {
+            e.stopPropagation();
+            this.setState({ mode: "board", drill: c.id, back: null });
+          },
+        });
+        flat.push(c.id);
+        if (expanded) walk(c.key, depth + 1);
+      });
+    walk("", 0);
+    this._listFlat = flat;
+    const ind = this.listIndentTarget();
+    const out = this.listOutdentInfo();
+    const tb = (ok) =>
+      "display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;flex:none;border:1px solid var(--input);border-radius:7px;background:var(--popover);font:500 12px var(--font-sans);box-shadow:var(--shadow-xs);color:" +
+      (ok ? "var(--fg)" : "var(--muted-fg)") + ";cursor:" + (ok ? "pointer" : "not-allowed") + ";opacity:" + (ok ? "1" : ".6");
+    const excluded = {};
+    selIds.forEach((id) => {
+      const c = st.cards.find((x) => x.id === id);
+      excluded[c.key] = true;
+      this.subtree(c.key).forEach((dd) => (excluded[dd.key] = true));
+    });
+    const moveOptions = [];
+    const optRow = (c, depth) => ({
+      key: c ? c.key : "",
+      title: c ? c.title : "Top level",
+      isGroup: !!(c && c.group),
+      hasKey: !!c,
+      keyStyle: c ? this.keyPillStyle(this.projectDot(c.project)) : "display:none",
+      indentStyle: "width:" + depth * 14 + "px;flex:none",
+      style:
+        "display:flex;align-items:center;gap:7px;width:100%;min-height:28px;padding:0 8px;border:none;border-radius:7px;background:transparent;cursor:pointer;font:" +
+        (c && c.group ? "500" : "400") + " 12.5px var(--font-sans);color:var(--fg);text-align:left",
+      pick: () => this.tryMove(selIds, c ? c.key : null, null),
+    });
+    moveOptions.push(optRow(null, 0));
+    const walkM = (pk, depth) =>
+      (kids[pk] || []).forEach((c) => {
+        if (excluded[c.key]) return;
+        moveOptions.push(optRow(c, depth));
+        walkM(c.key, depth + 1);
+      });
+    walkM("", 0);
+    return {
+      rows,
+      empty: rows.length === 0,
+      scopeName: st.scope === "all" ? "All projects" : projectOf(st.scope).name,
+      stageOpen: !!st.listStageOpen,
+      toggleStage: () => this.setState((s) => ({ listStageOpen: !s.listStageOpen })),
+      stageLabel: !stOn.length ? "All stages" : stOn.length === 1 ? this.stage(stOn[0]).name : stOn.length + " stages",
+      stageBtnStyle:
+        "display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 8px 0 9px;flex:none;border-radius:7px;font:500 12px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);white-space:nowrap;border:1px solid " +
+        (stOn.length ? "color-mix(in srgb,var(--primary) 45%,transparent)" : "var(--input)") +
+        ";background:" + (stOn.length ? "color-mix(in srgb,var(--primary) 8%,var(--popover))" : "var(--popover)") + ";color:var(--fg)",
+      hasStageFilter: stOn.length > 0,
+      clearStages: () => this.setState({ listStages: {} }),
+      stageOpts: SUB_STAGES.map((sg) => {
+        const on = !!stSel[sg.id];
+        return {
+          name: sg.name,
+          on,
+          count: String(live.filter((c) => c.status === sg.id).length),
+          boxStyle: this.checkStyle(on),
+          toggle: () => this.setState((s) => ({ listStages: { ...(s.listStages || {}), [sg.id]: !on } })),
+        };
+      }),
+      countLabel: live.length + " cards · " + live.filter((c) => c.group).length + " groups",
+      hasSel: selIds.length > 0,
+      noSel: selIds.length === 0,
+      selLabel: selIds.length + " selected",
+      indent: () => this.listIndent(),
+      outdent: () => this.listOutdent(),
+      indentStyle: tb(!!ind.target),
+      outdentStyle: tb(!!out.parent),
+      indentTip: ind.target ? "Indent under " + ind.target.key + " · " + ind.target.title : ind.why,
+      outdentTip: out.parent ? "Move out of " + out.parent.key : out.why,
+      btnStyle: tb(true),
+      moveOpen: !!st.listMoveOpen,
+      toggleMove: () => this.setState((s) => ({ listMoveOpen: !s.listMoveOpen })),
+      moveOptions,
+      groupNew: () => this.setState({ dialog: { kind: "newgroup", ids: selIds, title: "" }, listMoveOpen: false }),
+      newGroup: () => this.setState({ dialog: { kind: "newgroup", ids: [], title: "" } }),
+      canArchive: selIds.length === 1,
+      archive: () => {
+        const c = st.cards.find((x) => x.id === selIds[0]);
+        if (!c) return;
+        if (c.group) return this.openArchive(c);
+        this.patchCard(c.id, { archived: true });
+        this.setState({ listSel: {} });
+        this.toast("Archived " + c.key + ".");
+      },
+      clear: () => this.setState({ listSel: {}, listMoveOpen: false }),
+    };
+  }
+
+  // Each board (root, every sub-board) and the list keep their own filter.
+  queryKey() {
+    const st = this.state;
+    return st.mode === "list" ? "list" : st.drill ? "drill:" + st.drill : "root";
+  }
+  queryFor() {
+    return (this.state.queries || {})[this.queryKey()] || "";
+  }
   renderVals() {
     const st = this.state;
-    const isBoard = st.mode === "board";
-    const q = st.query.trim().toLowerCase();
+    const isBoard = st.mode !== "threads";
+    const isKanban = st.mode === "board";
+    const isList = st.mode === "list";
+    const q = this.queryFor().trim().toLowerCase();
     const compact = (this.props.density || "comfortable") === "compact";
     const showKeys = this.props.showKeys !== false;
     const drillCard = st.drill ? st.cards.find((c) => c.id === st.drill) : null;
@@ -4734,9 +6613,10 @@ class Component extends DCLogic {
       const hasDeps = c.depKeys.length > 0;
       const hasPlan = !!c.plan;
       const hasPr = !!c.pr;
-      const plans = c.planKeys ? this.planCardsFor(c.key) : [];
+      const isGrp = !!c.group;
+      const plans = isGrp ? this.planCardsFor(c.key) : [];
       const planDone = plans.filter((p) => p.status === "done").length;
-      const stacked = plans.length > 0;
+      const stacked = isGrp;
       const planThreads = plans.filter((p) => !!this.threadFor(p)).length;
       const threadCount = (th ? 1 : 0) + planThreads;
       const cf = this.conflictFor(c);
@@ -4746,7 +6626,7 @@ class Component extends DCLogic {
             ? "Auto-merge gave up after " + hd.attempt + " attempts — merge it yourself when it is ready."
             : "Retrying in " + this.fmtMins(hd.next) + " · attempt " + hd.attempt + " of " + hd.of)
         : "";
-      const rs = this.reviewState(c);
+      const rs = isGrp ? null : this.reviewState(c);
       const review = rs
         ? {
             prLabel: "#" + rs.rv.pr,
@@ -4795,8 +6675,10 @@ class Component extends DCLogic {
               (rs.disputed ? " · " + rs.disputed + " disputed" : ""),
           }
         : null;
-      const armed = blocked && (!!c.parentKey || !!this.state.autoStart[c.id]);
+      const armed = blocked && (this.autoBuildsFor(c) || !!this.state.autoStart[c.id]);
       return {
+        group: isGrp ? this.groupCardVm(c) : null,
+        splitNote: c.proposal && c.status === "planning" ? "Split proposed · " + c.proposal.children.length + " cards" : "",
         review,
         armed,
         blockedOnly: blocked && !armed,
@@ -4825,22 +6707,22 @@ class Component extends DCLogic {
             ? "Depends on 1 task"
             : "Depends on " + c.depKeys.length + " tasks",
         hasPlan,
-        hasThreads: threadCount > 0,
+        hasThreads: !isGrp && threadCount > 0,
         threadCount,
         threadTip:
           threadCount === 1
             ? "1 agent thread"
             : threadCount + " agent threads (" + (th ? "this task" : "plans only") + ")",
-        hasPlanCount: stacked || hasPlan,
-        planCount: stacked ? plans.length : hasPlan ? 1 : 0,
+        hasPlanCount: !isGrp && hasPlan,
+        planCount: 1,
         planCountTip: stacked
           ? plans.length + " plans · " + planDone + " done"
           : "1 plan",
-        hasPr,
+        hasPr: hasPr && !isGrp,
         prLabel: hasPr ? "#" + c.pr.n : "",
         prTip: hasPr ? "Pull request #" + c.pr.n : "",
         hasImage: c.brief.indexOf("<img") !== -1,
-        hasMeta: hasDeps || threadCount > 0 || stacked || hasPlan || hasPr,
+        hasMeta: isGrp ? hasDeps : hasDeps || threadCount > 0 || hasPlan || hasPr,
         qbar: this.qsBar(c),
         todo: (() => {
           const ls = this.todoLists(c);
@@ -4897,7 +6779,7 @@ class Component extends DCLogic {
         })),
         drill: (e) => {
           e.stopPropagation();
-          this.setState({ drill: c.id, activeId: null });
+          this.setState({ drill: c.id, activeId: null, groupSettingsOpen: false });
         },
         working,
         awaiting,
@@ -4936,7 +6818,7 @@ class Component extends DCLogic {
           ";transition:border-color 120ms ease,box-shadow 120ms ease,opacity 120ms ease;" +
           (stacked ? "margin-bottom:8px;" : "") +
           "opacity:" +
-          (st.dragId === c.id ? "0.4" : "1"),
+          (st.dragId === c.id ? "0.4" : c.status === "deferred" ? "0.62" : "1"),
         open: () => this.setState({ activeId: c.id, composer: "", composerFocus: false }),
         onDragStart: (e) => this.startDrag(e, c, colKey, index),
         onDragEnd: () => this.endDrag(),
@@ -4969,8 +6851,11 @@ class Component extends DCLogic {
       const gk = parent ? parent.key : "";
       const backTo = st.back && st.back.activeId ? st.cards.find((c) => c.id === st.back.activeId) : null;
       const gOpen = !!(gk && st.graph[gk]);
-      const kids = parent ? this.planCardsFor(parent.key) : [];
+      const kidsAll = parent ? this.planCardsFor(parent.key) : [];
+      const kids = kidsAll.filter((c) => c.status !== "deferred");
+      const kidsDef = kidsAll.length - kids.length;
       const kidsDone = kids.filter((c) => c.status === "done").length;
+      const ownBranch = !!(parent && parent.group && parent.group.target === "own");
       const allDone = kids.length > 0 && kidsDone === kids.length;
       const open = !st.collapsed[bkey];
       const p = { id: bkey };
@@ -4981,8 +6866,24 @@ class Component extends DCLogic {
         isDrill: !!opts.drill,
         laneName: parent ? parent.title : "",
         laneKey: parent ? parent.key : "",
-        laneBase: parent ? parent.base : "",
-        laneProgress: parent ? kidsDone + "/" + kids.length : "",
+        laneBase: parent ? "→ " + this.targetOf(parent) : "",
+        laneProgress: parent ? kidsDone + "/" + kids.length + " done" + (kidsDef ? " · " + kidsDef + " deferred" : "") : "",
+        laneAuto: parent && parent.group ? (parent.group.autoBuild ? (parent.group.started ? "Auto-build on" : "Auto-build armed") : "Auto-build off") : "",
+        crumbs: parent
+          ? this.ancestors(parent).map((a) => ({
+              key: a.key,
+              title: a.title,
+              open: () => this.setState({ drill: a.id, back: null, groupSettingsOpen: false }),
+            }))
+          : [],
+        settings: parent ? this.groupSettingsVm(parent) : null,
+        settingsOpen: !!(parent && st.groupSettingsOpen),
+        toggleSettings: () => this.setState((s) => ({ groupSettingsOpen: !s.groupSettingsOpen })),
+        settingsBtnStyle:
+          "display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;flex:none;white-space:nowrap;border-radius:8px;cursor:pointer;font:500 11.5px var(--font-sans);box-shadow:var(--shadow-xs);border:1px solid " +
+          (st.groupSettingsOpen ? "var(--input)" : "var(--border)") +
+          ";background:" + (st.groupSettingsOpen ? "var(--accent)" : "var(--popover)") +
+          ";color:" + (st.groupSettingsOpen ? "var(--fg)" : "var(--muted-fg)"),
         laneKeyStyle: parent ? this.keyPillStyle(projColor(parent.project)) : "display:none",
         openParent: parent
           ? () => this.setState({ activeId: parent.id, artifact: null })
@@ -4991,9 +6892,18 @@ class Component extends DCLogic {
           const b = st.back;
           if (b && b.activeId)
             this.setState({ back: null, drill: b.drill || null, activeId: b.activeId });
-          else this.setState({ drill: null, back: null });
+          else {
+            const up = parent && parent.parentKey ? this.cardByKey(parent.parentKey) : null;
+            this.setState({ drill: up ? up.id : null, back: null, groupSettingsOpen: false });
+          }
         },
-        backLabel: backTo ? "Back to " + backTo.key : (isAll ? "All projects" : projs[0].name),
+        backLabel: backTo
+          ? "Back to " + backTo.key
+          : parent && parent.parentKey
+            ? "Back to " + parent.parentKey
+            : st.scope === "all"
+              ? "All projects"
+              : projs[0].name,
         hasGraph: !!parent,
         toggleGraph: () =>
           this.setState((s) => ({ graph: { ...s.graph, [gk]: !s.graph[gk] } })),
@@ -5008,9 +6918,9 @@ class Component extends DCLogic {
           ";color:" +
           (gOpen ? "var(--fg)" : "var(--muted-fg)"),
         finalReview:
-          opts.drill && parent
+          opts.drill && parent && ownBranch
             ? {
-                branch: parent.base + " → main",
+                branch: parent.group.branch + " → " + this.landsOn(parent),
                 note: allDone
                   ? "All " + kids.length + " plans merged into " + parent.base + ". One review closes the feature."
                   : kidsDone + " of " + kids.length + " plans merged into " + parent.base +
@@ -5060,8 +6970,14 @@ class Component extends DCLogic {
           const sameSpot = own >= 0 && (at === own || at === own + 1);
           const isOver = !!st.dragId && st.overCol === colKey && !sameSpot;
           if (isOver) items.splice(at, 0, placeholderVm());
-          const isCollapsed = !!st.colCollapsed[colKey];
-          const canAdd = ["backlog", "sprint", "planning"].includes(stage.id);
+          // Sub-boards fold empty early columns so a fully planned split reads like before.
+          const stored = st.colCollapsed[colKey];
+          const autoFold =
+            !!opts.drill && all.length === 0 &&
+            (stage.id === "deferred" || this.stageIndex(stage.id) < this.stageIndex("ready"));
+          const isCollapsed = stored != null ? !!stored : autoFold;
+          const canAdd = !opts.drill && ["backlog", "sprint", "planning"].includes(stage.id);
+          const refused = !!(st.dragTip && st.dragTip.col === colKey);
           return {
             items,
             canAdd,
@@ -5083,24 +6999,42 @@ class Component extends DCLogic {
               if (this.state.hoverCol === colKey)
                 this.setState({ hoverCol: null });
             },
-            toggleCollapsed: () => this.toggleColumn(colKey),
+            toggleCollapsed: () => this.setColCollapsed(colKey, !isCollapsed),
+            canPhase: stage.id === "deferred" && all.length > 0 && !!parent,
+            phase: () => parent && this.openPhase(parent),
+            hint: stage.id === "deferred" ? "Not this round. Doesn't count toward done." : "",
             collapsedStyle:
               "flex:none;width:44px;align-self:stretch;min-height:104px;display:flex;flex-direction:column;align-items:center;gap:10px;border:none;border-radius:12px;background:var(--column-bg);padding:10px 0;cursor:pointer;transition:background-color 120ms ease",
             style:
               "flex:none;width:268px;border:none;border-radius:12px;background:" +
               (isOver ? "var(--column-bg-over)" : "var(--column-bg)") +
-              ";padding:10px;min-height:104px;transition:background-color 120ms ease",
+              ";padding:10px;min-height:104px;transition:background-color 120ms ease" +
+              (refused ? ";outline:1.5px dashed color-mix(in srgb,var(--fg) 22%,transparent);outline-offset:-1.5px;cursor:not-allowed" : ""),
             add: () =>
               this.setState(this.createDraftState(stage.id, isAll ? "advisor" : p.id)),
             onDragOver: (e) => {
-              if (!this.state.dragId) return;
+              const s2 = this.state;
+              if (!s2.dragId) return;
+              const drag = s2.cards.find((c) => c.id === s2.dragId);
+              const why = this.dropRefusal(drag, stage.id);
+              if (why) {
+                const t = s2.dragTip;
+                if (!t || t.col !== colKey || Math.abs(t.x - e.clientX) > 8 || Math.abs(t.y - e.clientY) > 8)
+                  this.setState({ dragTip: { col: colKey, text: why, x: e.clientX, y: e.clientY }, overCol: null, overIndex: null });
+                return;
+              }
               e.preventDefault();
               const at = this.dropIndexIn(e.currentTarget, e.clientY);
-              if (this.state.overCol !== colKey || this.state.overIndex !== at)
-                this.setState({ overCol: colKey, overIndex: at });
+              if (s2.dragTip || s2.overCol !== colKey || s2.overIndex !== at)
+                this.setState({ dragTip: null, overCol: colKey, overIndex: at });
             },
             onDrop: (e) => {
               e.preventDefault();
+              const drag = this.state.cards.find((c) => c.id === this.state.dragId);
+              if (drag && drag.group && stage.id === "building" && drag.status !== "building") {
+                this.endDrag();
+                return this.setState({ dialog: { kind: "start", id: drag.id } });
+              }
               this.dropCard(isAll ? null : p.id, stage.id, all);
             },
           };
@@ -5109,20 +7043,21 @@ class Component extends DCLogic {
     };
 
     let boards;
-    if (isBoard && drillCard) {
+    if (isKanban && drillCard) {
       boards = [
         buildBoard([PROJECTS.find((x) => x.id === drillCard.project)], false, {
           key: "drill:" + drillCard.id,
           cards: this.planCardsFor(drillCard.key),
-          stages: STAGES.slice(3),
+          stages: SUB_STAGES,
           parent: drillCard,
           drill: true,
           single: true,
         }),
       ];
     } else {
-      boards =
-        st.scope === "all"
+      boards = !isKanban
+        ? []
+        : st.scope === "all"
           ? [buildBoard(PROJECTS, true)]
           : visibleProjects.map((p) => buildBoard([p], false));
     }
@@ -5133,7 +7068,7 @@ class Component extends DCLogic {
     const activeThread = active ? this.threadFor(active) : null;
     if (active) {
       const idx = this.stageIndex(active.status);
-      const stage = STAGES[idx];
+      const stage = this.stage(active.status);
       const blocked = this.isBlocked(active);
       const qActive = this.queueInfo(active);
       const rvNow = this.reviewState(active);
@@ -5157,7 +7092,23 @@ class Component extends DCLogic {
       briefNode = React.createElement("div", {
         dangerouslySetInnerHTML: { __html: active.brief },
       });
+      const gStats = active.group ? this.groupStats(active) : null;
       activeCard = {
+        isGroup: !!active.group,
+        isLeaf: !active.group,
+        groupChip: gStats ? gStats.all.length + " cards" : "",
+        groupNote: !gStats
+          ? ""
+          : active.status === "done"
+            ? "Done: every active child is done."
+            : active.status === "review"
+              ? "Every child has merged into " + active.group.branch + ". This review merges it into " + this.landsOn(active) + "."
+              : active.status === "building"
+                ? "Building while any child is past Planning. " + gStats.done + " of " + gStats.act.length + " active children done" + (gStats.deferred ? "; " + gStats.deferred + " deferred don't count." : ".")
+                : "Stays where you put it until a child starts. Drag it to Building to start the ready children.",
+        openGroupBoard: () => this.setState({ mode: "board", drill: active.id, activeId: null, back: null, groupSettingsOpen: false }),
+        canAutoPlan: !active.group && active.status === "planning" && !active.proposal,
+        autoPlan: () => this.autoPlan(active),
         key: active.key,
         tags: (active.tags || []).map((t) => ({ name: t, style: this.typeStyle(t) })),
         statusName: stage.name,
@@ -5199,10 +7150,10 @@ class Component extends DCLogic {
               return d && d.status !== "done";
             })
             .join(", "),
-        canProgress: !!(stage.action && next) && !(blocked && active.status === "ready"),
-        autoImplicit: blocked && active.status === "ready" && !!active.parentKey,
+        canProgress: !active.group && !active.proposal && !!(stage.action && next) && !(blocked && active.status === "ready"),
+        autoImplicit: blocked && active.status === "ready" && this.autoBuildsFor(active),
         progressLabel: this.progressAction(active) || "",
-        autoGate: !!(stage.action && next) && blocked && active.status === "ready" && !active.parentKey,
+        autoGate: !active.group && !!(stage.action && next) && blocked && active.status === "ready" && !this.autoBuildsFor(active),
         autoArmed: !!st.autoStart[active.id],
         autoLabel: st.autoStart[active.id]
           ? "Will start automatically"
@@ -5527,7 +7478,8 @@ class Component extends DCLogic {
           (activeThread && activeThread.state === "waiting"
             ? "border:1px solid color-mix(in srgb,var(--attention) 55%,transparent);background:color-mix(in srgb,var(--attention) 12%,var(--popover));color:var(--attention-fg)"
             : "border:1px solid var(--input);background:var(--popover);color:var(--fg)"),
-        stages: STAGES.map((s, i) => {
+        stages: (active.parentKey ? SUB_STAGES : STAGES).map((s) => {
+          const i = s.id === active.status ? idx : -2;
           const skipped = this.skipsStage(active, s.id);
           return {
             name: s.name,
@@ -5621,10 +7573,9 @@ class Component extends DCLogic {
     }
 
     const hasThreadPane = !!active && this.stageIndex(active.status) >= 2;
-    const isParent = !!(active && active.planKeys);
-    // A feature card's own thread is dormant while its plans are building; it only
-    // matters again at the final review on the base branch.
-    const threadLocked = isParent && this.stageIndex(active.status) < 5;
+    const isParent = !!(active && active.group);
+    // A group's own thread is settled while its children work; it can be reopened from the Plan pane.
+    const threadLocked = isParent && this.stageIndex(active.status) < 5 && !st.reopened[active.id];
     const reviewData = active ? this.reviewState(active) : null;
     const isReview = !!reviewData;
     let pane =
@@ -5635,7 +7586,11 @@ class Component extends DCLogic {
     if (pane === "thread" && threadLocked && !isReview) pane = "plans";
     const hasPlanDoc = !!(active && active.plan && hasThreadPane);
     if (pane === "plandoc" && !hasPlanDoc) pane = threadLocked ? "plans" : "thread";
-    const hasSummary = !!(active && hasThreadPane && this.stageIndex(active.status) >= 5);
+    const hasSummary = !!(
+      active && hasThreadPane && !active.group &&
+      (this.stageIndex(active.status) >= 5 || (active.decisions && this.stageIndex(active.status) >= 3))
+    );
+    const hasBuildSummary = hasSummary && this.stageIndex(active.status) >= 5;
     if (pane === "summary" && !hasSummary) pane = threadLocked ? "plans" : "thread";
     const setPane = (p) => () => {
       if (!active) return;
@@ -5684,6 +7639,7 @@ class Component extends DCLogic {
           working: !!ctCopy && isMain && ctCopy.state === "working" && !ctPending,
           waiting: !!ctCopy && isMain && ctCopy.state === "waiting",
           qbar: isMain ? this.qsBar(active) : null,
+          proposal: isMain ? this.proposalVm(active) : null,
           tabs: allTabs.map((t, i) => {
             const on = t.id === tabId;
             const live = t.id === "main" && ctCopy ? ctCopy.state : null;
@@ -6158,7 +8114,7 @@ class Component extends DCLogic {
           .filter((d) => d && d.status !== "done");
         const blocked = blockers.length > 0 && !done;
         return {
-          n: "#" + pc.planN,
+          n: pc.planN ? "#" + pc.planN : pc.key,
           title: pc.title,
           statusName: stg.name,
           open: openPlan(pc),
@@ -6171,8 +8127,9 @@ class Component extends DCLogic {
                   ? "color-mix(in srgb,var(--fg) 22%,transparent)"
                   : "var(--info)",
           meta: [
+            pc.group ? this.kidsOf(pc.key).length + " cards" : "",
             pc.depKeys.length
-              ? "after " + pc.depKeys.map((k) => "#" + k.split(".")[1]).join(", ")
+              ? "after " + pc.depKeys.map((k) => { const dd = this.cardByKey(k); return dd && dd.planN ? "#" + dd.planN : k; }).join(", ")
               : "no dependencies",
             pc.pr ? "PR #" + pc.pr.n : "",
           ]
@@ -6182,7 +8139,7 @@ class Component extends DCLogic {
           blockNote: blocked
             ? "Waiting on " +
               blockers
-                .map((d) => "#" + d.planN + " · " + this.stage(d.status).name.toLowerCase())
+                .map((d) => (d.planN ? "#" + d.planN : d.key) + " · " + this.stage(d.status).name.toLowerCase())
                 .join(", ")
             : "",
           working: !!th && th.state === "working",
@@ -6201,8 +8158,8 @@ class Component extends DCLogic {
       });
       cardGraph = this.graphVm(active.key, (pc) => openPlan(pc));
       const allDone = doneN === ps.length;
-      cardFinal = {
-        branch: active.base + " → main",
+      cardFinal = active.group.target !== "own" ? null : {
+        branch: active.group.branch + " → " + this.landsOn(active),
         note: allDone
           ? "All " + ps.length + " plans merged. One review closes the feature."
           : doneN + " of " + ps.length + " plans merged into " + active.base +
@@ -6252,7 +8209,7 @@ class Component extends DCLogic {
       paneTabs: hasThreadPane,
       threadTabStyle: paneBtn(pane === "thread", threadLocked),
       threadTabTitle: threadLocked
-        ? "The feature thread opens at the final review on " + (active ? active.base : "the base branch")
+        ? "The planning thread is settled. Reopen it from the Plan tab."
         : "Thread",
       selectThread: threadLocked ? () => {} : setPane("thread"),
       hasReviewTab: isReview,
@@ -6261,7 +8218,7 @@ class Component extends DCLogic {
       reviewPaneOpen: hasThreadPane && pane === "review" && isReview,
       review: reviewVm,
       hasPlansTab: isParent,
-      plansTabLabel: planCount + " plans",
+      plansTabLabel: planCount + (active && active.planKeys ? " plans" : " cards"),
       plansTabStyle: paneBtn(pane === "plans", false),
       selectPlans: setPane("plans"),
       briefTabStyle: paneBtn(pane === "brief", false),
@@ -6270,7 +8227,13 @@ class Component extends DCLogic {
       summaryTabStyle: paneBtn(pane === "summary", false),
       selectSummary: setPane("summary"),
       summaryPane: hasSummary && pane === "summary",
-      summary: hasSummary ? this.buildSummaryVm(active, setPane(threadLocked ? "plans" : "thread"), setPane("review")) : null,
+      summary: hasSummary ? this.buildSummaryVm(active, setPane(threadLocked ? "plans" : "thread"), setPane("review")) || { hasAttention: false } : null,
+      hasBuildSummary,
+      noBuildSummary: hasSummary && !hasBuildSummary,
+      summaryTitle: hasBuildSummary ? "Build summary" : "Summary",
+      decisionLog: hasSummary ? this.decisionVm(active) : null,
+      planThread: this.planThreadVm(active),
+      groupSettings: active && active.group ? this.groupSettingsVm(active) : null,
       hasPlanDocTab: hasPlanDoc,
       planDocTabStyle: paneBtn(pane === "plandoc", false),
       selectPlanDoc: setPane("plandoc"),
@@ -6376,7 +8339,40 @@ class Component extends DCLogic {
       noop: () => {},
       stop: (e) => e.stopPropagation(),
       isBoard,
+      isKanban,
+      isList,
       isThreads: !isBoard,
+      list: isList ? this.listVm() : null,
+      dlg: this.dialogVm(),
+      toast: st.toast
+        ? {
+            text: st.toast.text,
+            isError: st.toast.tone === "error",
+            isInfo: st.toast.tone !== "error",
+            hasAction: !!st.toast.action,
+            actionLabel: st.toast.actionLabel,
+            act: () => {
+              const a = st.toast.action;
+              this.setState({ toast: null });
+              if (a) a();
+            },
+            close: () => this.setState({ toast: null }),
+            style:
+              "pointer-events:auto;display:flex;align-items:center;gap:10px;max-width:min(640px,calc(100vw - 48px));padding:9px 9px 9px 13px;border-radius:12px;box-shadow:var(--shadow-pop);animation:t3pop 160ms ease-out;border:1px solid " +
+              (st.toast.tone === "error" ? "color-mix(in srgb,var(--destructive) 45%,transparent)" : "var(--border)") +
+              ";background:" + (st.toast.tone === "error" ? "color-mix(in srgb,var(--destructive) 7%,var(--popover))" : "var(--popover)"),
+          }
+        : null,
+      dragTip: st.dragTip
+        ? {
+            text: st.dragTip.text,
+            style:
+              "position:fixed;left:" + (st.dragTip.x + 16) + "px;top:" + (st.dragTip.y + 18) +
+              "px;z-index:90;max-width:300px;display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border-radius:9px;background:var(--fg);color:var(--bg);font:500 12px/1.45 var(--font-sans);box-shadow:var(--shadow-pop);pointer-events:none;text-wrap:pretty",
+          }
+        : null,
+      showList: () => this.setState({ mode: "list", listMoveOpen: false }),
+      listTabStyle: this.tabStyle(isList),
       threads: THREADS,
       liveThreads: (() => {
         const ids = visibleProjects.map((p) => p.id);
@@ -6418,14 +8414,18 @@ class Component extends DCLogic {
       showThreads: () => this.setState({ mode: "threads" }),
       showBoard: () => this.setState({ mode: "board" }),
       threadsTabStyle: this.tabStyle(!isBoard),
-      boardTabStyle: this.tabStyle(isBoard),
+      boardTabStyle: this.tabStyle(isKanban),
       crumbProject:
         st.scope === "all"
           ? "All projects"
           : (PROJECTS.find((p) => p.id === st.scope) || PROJECTS[0]).name,
       crumbLeaf: isBoard ? "Board" : st.activeThread || "New thread",
-      query: st.query,
-      onQuery: (e) => this.setState({ query: e.target.value }),
+      query: this.queryFor(),
+      onQuery: (e) => {
+        const k = this.queryKey();
+        const v = e.target.value;
+        this.setState((s) => ({ queries: { ...(s.queries || {}), [k]: v } }));
+      },
       toggleTheme: () => {
         const el = document.documentElement;
         el.setAttribute(
@@ -6649,6 +8649,7 @@ class Component extends DCLogic {
       ...this.cardModelVals(active),
       archiveCard: () => {
         if (!active) return;
+        if (active.group) return this.openArchive(active);
         this.patchCard(active.id, { archived: true });
         this.setState({ cardMenuOpen: false, activeId: null, back: null, cardMaxed: false });
       },
