@@ -95,6 +95,11 @@ import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+// T3o: the Settled shelf's card-thread filter (T3O-78).
+import {
+  boardCardThreadColumn,
+  readShellBoardCardThreadIds,
+} from "../board/boardCardThreadFilter.ts";
 import {
   isThreadHistoryUserTurn,
   isConversationHistoryItem,
@@ -424,12 +429,16 @@ export interface OlderSettledThreadsQuery {
   readonly before: OrchestrationV2OlderSettledCursor;
   readonly projectIds?: ReadonlyArray<ProjectId> | undefined;
   readonly limit: number;
+  // T3o: leave board card threads out (T3O-78).
+  readonly excludeBoardCardThreads?: boolean | undefined;
 }
 
 export interface OlderSettledThreadsListing {
   readonly threadIds: ReadonlyArray<ThreadId>;
   /** Only for `limit: 0`. */
   readonly counts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
+  // T3o: card threads the shell may carry, on filtered `limit: 0` reads (T3O-78).
+  readonly boardCardThreadIds?: ReadonlyArray<ThreadId>;
 }
 
 export interface ProjectionStoreV2Shape {
@@ -6633,11 +6642,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const listOlderSettledThreads: ProjectionStoreV2Shape["listOlderSettledThreads"] = Effect.fn(
       "ProjectionStore.listOlderSettledThreads",
-    )(function* ({ before, projectIds, limit }) {
+    )(function* ({ before, projectIds, limit, excludeBoardCardThreads }) {
       // ISO strings in one format, so string order is time order.
       const older = sql`
         SELECT t.thread_id, t.project_id,
-          json_extract(t.payload_json, '$.settledAt') AS settled_at
+          json_extract(t.payload_json, '$.settledAt') AS settled_at${
+            // T3o: card threads, for the Settled shelf's filter (T3O-78).
+            boardCardThreadColumn(sql, excludeBoardCardThreads)
+          }
         FROM orchestration_v2_projection_threads t
         WHERE t.deleted_at IS NULL
           AND json_extract(t.payload_json, '$.archivedAt') IS NULL
@@ -6658,16 +6670,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           : yield* sql<{ readonly thread_id: string }>`
               WITH older AS (${older})
               SELECT older.thread_id FROM older
-              WHERE ${belowCursor}
+              WHERE ${belowCursor} AND older.card_thread = 0
               ORDER BY older.settled_at DESC, older.thread_id ASC
               LIMIT ${limit}
             `;
       const countRows =
         limit !== 0
           ? []
-          : yield* sql<{ readonly project_id: string; readonly count: number }>`
+          : yield* sql<{
+              readonly project_id: string;
+              readonly count: number;
+              readonly card_count: number;
+            }>`
               WITH older AS (${older})
-              SELECT older.project_id, COUNT(*) AS count FROM older
+              SELECT older.project_id, COUNT(*) - SUM(older.card_thread) AS count,
+                SUM(older.card_thread) AS card_count
+              FROM older
               WHERE ${belowCursor}
               GROUP BY older.project_id
             `;
@@ -6676,7 +6694,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         counts: countRows.map((row) => ({
           projectId: ProjectId.make(row.project_id),
           count: row.count,
+          // T3o: the card threads left out of `count` (T3O-78).
+          ...(excludeBoardCardThreads === true ? { boardCardThreadCount: row.card_count } : {}),
         })),
+        // T3o: the shell's card threads, so the client filters them by the same rule (T3O-78).
+        ...(limit === 0 && excludeBoardCardThreads === true
+          ? { boardCardThreadIds: yield* readShellBoardCardThreadIds(sql, before.settledAt) }
+          : {}),
       };
     }, Effect.mapError(shellSnapshotReadError));
 

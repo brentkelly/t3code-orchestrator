@@ -202,6 +202,35 @@ it("counts older threads the client does not hold, once", () => {
   ).toBe(18);
 });
 
+// T3o: the Settled shelf's card-thread filter (T3O-78).
+it("counts hidden card threads the client does not hold from the card counts", () => {
+  const withCards = (): OlderSettled => ({
+    ...older,
+    boardCardThreadCounts: new Map([[project, 4]]),
+  });
+  const cardRows = [
+    { source: row("card-old", { settledDay: 10 }), environmentId },
+    { source: row("card-recent", { settledDay: 60 }), environmentId },
+  ];
+  expect(
+    unloadedOlderSettledCount({
+      olderSettled: withCards,
+      scopes: [{ environmentId, projectIds: null, excludeBoardCardThreads: true }],
+      threads: cardRows,
+      countsOf: (value) => value.boardCardThreadCounts,
+    }),
+  ).toBe(3);
+  // A server that did not report card counts adds none.
+  expect(
+    unloadedOlderSettledCount({
+      olderSettled: () => ({ ...older, boardCardThreadCounts: null }),
+      scopes: [{ environmentId, projectIds: null }],
+      threads: [],
+      countsOf: (value) => value.boardCardThreadCounts,
+    }),
+  ).toBe(0);
+});
+
 describe("wantedOlderSettledPages", () => {
   const otherEnvironment = EnvironmentId.make("env-b");
   const full = (settledAt: string): OlderSettledPages => ({
@@ -425,6 +454,140 @@ describe("createOlderSettledThreadAtoms", () => {
       });
       expect(count(registry.get(olderAtom))).toBe(7);
       expect(requests).toHaveLength(1);
+    }),
+  );
+
+  // T3o: the Settled shelf's card-thread filter (T3O-78).
+  it.effect(
+    "without card threads, reads counts at once and pages apart from the unfiltered ones",
+    () =>
+      Effect.gen(function* () {
+        const { replies, requests, atoms, registry, setShell, until } = yield* makeAtoms();
+        const olderAtom = atoms.olderSettledAtom(environmentId, true);
+        registry.mount(olderAtom);
+        const snapshot = shellSnapshot({ sequence: 3, asOfSequence: 3, count: 5 });
+        setShell({ snapshot, generation: 1 });
+        yield* Queue.offer(
+          replies,
+          Effect.succeed({
+            snapshotSequence: 3,
+            threads: [],
+            counts: [{ projectId: project, count: 2, boardCardThreadCount: 3 }],
+          }),
+        );
+        // The snapshot's counts include card threads, so the filtered read goes without waiting.
+        const read = yield* until(olderAtom, (value) => value?.counts.get(project) === 2);
+        expect(read?.boardCardThreadCounts?.get(project)).toBe(3);
+        expect(requests).toEqual([
+          { before: { settledAt: before }, limit: 0, excludeBoardCardThreads: true },
+        ]);
+        // The unfiltered atom still uses the snapshot's counts and reads nothing.
+        expect(registry.get(atoms.olderSettledAtom(environmentId))?.counts.get(project)).toBe(5);
+
+        const filtered = atoms.pagesAtom(
+          { environmentId, projectIds: null, excludeBoardCardThreads: true },
+          1,
+        );
+        registry.mount(filtered);
+        yield* Queue.offer(
+          replies,
+          Effect.succeed({ snapshotSequence: 3, threads: [], counts: [] }),
+        );
+        yield* until(filtered, (pages) => pages.reads.length === 1);
+        expect(requests.at(-1)).toEqual({
+          before: { settledAt: before },
+          limit: 25,
+          excludeBoardCardThreads: true,
+        });
+        const unfiltered = atoms.pagesAtom({ environmentId, projectIds: null }, 1);
+        registry.mount(unfiltered);
+        expect(registry.get(unfiltered).status).toBe("pending");
+      }),
+  );
+
+  it.effect(
+    "names the shell's card threads, rereads when a thread arrives, keeps them across a reconnect",
+    () =>
+      Effect.gen(function* () {
+        const { replies, requests, atoms, registry, setShell, until } = yield* makeAtoms();
+        const olderAtom = atoms.olderSettledAtom(environmentId, true);
+        const ids = (value: OlderSettled | null) => [...(value?.boardCardThreadIds ?? [])];
+        registry.mount(olderAtom);
+        const page = (cardIds: ReadonlyArray<string>) =>
+          Effect.succeed({
+            snapshotSequence: 3,
+            threads: [],
+            counts: [{ projectId: project, count: 2, boardCardThreadCount: 3 }],
+            boardCardThreadIds: cardIds.map((id) => ThreadId.make(id)),
+          });
+        const snapshot = shellSnapshot({ sequence: 3, asOfSequence: 3, count: 5 });
+        yield* Queue.offer(replies, page(["recent"]));
+        setShell({ snapshot, generation: 1 });
+        expect(ids(yield* until(olderAtom, (value) => ids(value).length === 1))).toEqual([
+          "recent",
+        ]);
+
+        // A thread created above the cut may be a card thread that settles later: read again.
+        yield* Queue.offer(replies, page(["recent", "new-card"]));
+        const withNew = Option.map(snapshot, (value) => ({
+          ...value,
+          threads: [...value.threads, row("new-card", { createdDay: 61 })],
+        }));
+        setShell({ snapshot: withNew, generation: 1 });
+        yield* TestClock.adjust("500 millis");
+        expect(ids(yield* until(olderAtom, (value) => ids(value).length === 2))).toEqual([
+          "recent",
+          "new-card",
+        ]);
+        expect(requests).toHaveLength(2);
+
+        // A thread linked to a card after it arrived is named once it settles into the shelf.
+        yield* Queue.offer(replies, page(["recent", "new-card", "linked-later"]));
+        const linked = Option.map(withNew, (value) => ({
+          ...value,
+          threads: [...value.threads, row("linked-later", { createdDay: 61 })],
+        }));
+        setShell({ snapshot: linked, generation: 1 });
+        yield* TestClock.adjust("500 millis");
+        yield* until(olderAtom, (value) => ids(value).length === 3);
+        yield* Queue.offer(replies, page(["recent", "new-card", "linked-later"]));
+        const settled = Option.map(linked, (value) => ({
+          ...value,
+          threads: [
+            ...value.threads.slice(0, -1),
+            row("linked-later", { createdDay: 61, settledDay: 62 }),
+          ],
+        }));
+        setShell({ snapshot: settled, generation: 1 });
+        yield* TestClock.adjust("500 millis");
+        yield* until(olderAtom, () => requests.length === 4);
+        expect(requests).toHaveLength(4);
+
+        // A reconnect's snapshot keeps the known card threads until its own read lands.
+        setShell({ snapshot: settled, generation: 2 });
+        expect(ids(registry.get(olderAtom))).toEqual(["recent", "new-card", "linked-later"]);
+      }),
+  );
+
+  it.effect("reports no card counts from a server that ignores the filter", () =>
+    Effect.gen(function* () {
+      const { replies, atoms, registry, setShell, until } = yield* makeAtoms();
+      const olderAtom = atoms.olderSettledAtom(environmentId, true);
+      registry.mount(olderAtom);
+      setShell({
+        snapshot: shellSnapshot({ sequence: 3, asOfSequence: 3, count: 5 }),
+        generation: 1,
+      });
+      yield* Queue.offer(
+        replies,
+        Effect.succeed({
+          snapshotSequence: 3,
+          threads: [],
+          counts: [{ projectId: project, count: 5 }],
+        }),
+      );
+      const read = yield* until(olderAtom, (value) => value?.boardCardThreadCounts !== undefined);
+      expect(read?.boardCardThreadCounts).toBeNull();
     }),
   );
 

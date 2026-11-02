@@ -241,6 +241,8 @@ export const loadOlderSettledThreadsPage = Effect.fn("ShellStream.loadOlderSettl
       {
         readonly threadIds: ReadonlyArray<ThreadId>;
         readonly counts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
+        // T3o: the shell's card threads (T3O-78).
+        readonly boardCardThreadIds?: ReadonlyArray<ThreadId>;
       },
       E1
     >;
@@ -268,6 +270,10 @@ export const loadOlderSettledThreadsPage = Effect.fn("ShellStream.loadOlderSettl
       snapshotSequence: read.snapshotSequence,
       threads: threads.toSorted((left, right) => order.get(left.id)! - order.get(right.id)!),
       counts: read.listed.counts,
+      // T3o: the shell's card threads (T3O-78).
+      ...(read.listed.boardCardThreadIds === undefined
+        ? {}
+        : { boardCardThreadIds: read.listed.boardCardThreadIds }),
     };
   },
 );

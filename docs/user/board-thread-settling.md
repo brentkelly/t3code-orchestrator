@@ -8,6 +8,12 @@ the card is finished with it.
 The card keeps them all. Settling only clears the inbox; the card's thread tabs are untouched, and
 every finished round is still there to read.
 
+Settled card threads are also hidden from the **Settled** shelf in Threads view, so your one-off
+threads are easy to find there. Open an old card thread from its card instead. To list them in
+Settled again, turn off **Hide card threads** in the sidebar's filter menu, or choose **Show** in
+the note under the **Settled** header. The setting is saved per device, and search still finds
+hidden card threads.
+
 ## What stays in the inbox
 
 Whatever the card is actually working in, and nothing else:
