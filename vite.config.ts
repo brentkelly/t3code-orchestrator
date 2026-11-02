@@ -209,6 +209,8 @@ export default defineConfig({
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
+      // T3o: the tracked .plans/ prototype is a throwaway design sketch, not shipped code.
+      ".plans/**",
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
     jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint"],
@@ -649,7 +651,8 @@ export default defineConfig({
           "t3code/no-low-value-comments": "off",
           "t3code/no-manual-memo": "off",
           "t3code/no-em-dash-copy": "off",
-          "t3code/react-effect-budget": "off",
+          // T3o (T3O-79): replaced react-effect-budget upstream in v0.1.6.
+          "t3code/no-unreasoned-state-sync": "off",
           "react/purity": "off",
           "react/refs": "off",
           "react/set-state-in-effect": "off",
