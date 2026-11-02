@@ -747,6 +747,55 @@ it.effect("clears the hold when the arm is switched off (D10)", () =>
   ),
 );
 
+// T3O-80: the strategy change clears the hold, and the hold was the retry.
+it.effect("re-attempts a held card at once when its merge strategy changes", () =>
+  withGovernor(
+    setup({
+      cards: [cardAtMerge({ autoMerge: true })],
+      mergeOutcomes: ["This host cannot merge with the squash strategy.", null],
+      mergeRefusal: "blocked",
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(cardAtMerge({ autoMerge: true }), REVIEW, MERGE, 1));
+        assert.strictEqual(holdOf(yield* h.board)?.retryAt, null);
+        const held = (yield* h.board).cards.find(
+          (card) => card.id === BoardCardId.make("card-one"),
+        );
+        assert.isDefined(held);
+        yield* h.pumpDomain({
+          type: "board.card-updated",
+          sequence: 2,
+          payload: {
+            cardId: held!.id,
+            card: { ...held!, mergeStrategy: "merge", autoMergeHold: null },
+            autoMergeHoldReleased: true,
+          },
+        } as never);
+        assert.deepStrictEqual(yield* h.mergeMethods, ["squash", "merge"]);
+        assert.strictEqual(stageOf(yield* h.board), DONE);
+      }),
+  ),
+);
+
+it.effect("a strategy change on an UNARMED held card does not merge it", () =>
+  withGovernor(setup({ cards: [cardAtMerge()] }), (h) =>
+    Effect.gen(function* () {
+      const card = cardAtMerge();
+      yield* h.pumpDomain({
+        type: "board.card-updated",
+        sequence: 1,
+        payload: {
+          cardId: card.id,
+          card: { ...card, mergeStrategy: "merge" },
+          autoMergeHoldReleased: true,
+        },
+      } as never);
+      assert.deepStrictEqual(yield* h.mergeAttempts, []);
+    }),
+  ),
+);
+
 it.effect("clears the hold when the card leaves the merge stage (D10)", () =>
   withGovernor(
     setup({

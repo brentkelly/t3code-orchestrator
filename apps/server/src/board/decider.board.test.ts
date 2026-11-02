@@ -4626,6 +4626,26 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         assert.strictEqual(card.mergeStrategy, "squash");
         assert.strictEqual(card.autoMergeHold, null);
         assert.isTrue(card.autoMerge);
+        // The cleared hold was the retry, so the event tells the supervisor.
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type === "board.card-updated") {
+          assert.strictEqual(event.payload.autoMergeHoldReleased, true);
+        }
+      }),
+    );
+
+    it.effect("a change on a card with no hold does not ask for a merge", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          setStrategy("squash"),
+          boardWith(
+            makeCard({ id: "card-1", stage: "merge", autoMerge: true, mergeStrategy: "merge" }),
+          ),
+        );
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type === "board.card-updated") {
+          assert.isFalse("autoMergeHoldReleased" in event.payload);
+        }
       }),
     );
 

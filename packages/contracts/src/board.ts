@@ -5212,6 +5212,10 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       step stalled because its worker lacks its provider restarts only on this
       edit — Change model — and never on a title or label change. */
   modelOverridesEdited: Schema.optional(Schema.Literal(true)),
+  /** Present when a merge-strategy change released the card's auto-merge
+      hold (T3O-80). The hold was the retry, so the supervisor re-attempts the
+      merge on this edit; a card that never held is left to the arrival rules. */
+  autoMergeHoldReleased: Schema.optional(Schema.Literal(true)),
   /** The card face's review summary AFTER this edit (t3o-22, D7), folded by
       the decider when the edit could change it (a round budget or a stop). It
       rides the `card-upserted` shell delta this event produces, so a pure

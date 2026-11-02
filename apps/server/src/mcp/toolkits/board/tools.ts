@@ -220,6 +220,8 @@ const BoardCardReadResult = Schema.Struct({
   baseBranch: Schema.NullOr(TrimmedNonEmptyString),
   /** The card's own merge strategy, or null to follow the board default. */
   mergeStrategy: Schema.NullOr(BoardMergeStrategy),
+  /** What the pull request merges with now: the card's own, its parent's, or the board default. */
+  effectiveMergeStrategy: BoardMergeStrategy,
   brief: Schema.NullOr(Schema.String),
   /** Pass back as board_update_card's expectedBriefVersion to guard an edit. */
   briefVersion: TrimmedNonEmptyString,

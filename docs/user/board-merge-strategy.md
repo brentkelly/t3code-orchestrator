@@ -29,10 +29,11 @@ A child card with no strategy of its own uses its parent's. In that case the fir
 ## Agents
 
 An agent can set the strategy with `board_create_card` or `board_update_card` (`mergeStrategy`:
-`squash`, `merge` or `rebase`, or `null` to clear it), and `board_get_card` reports it.
+`squash`, `merge` or `rebase`, or `null` to clear it). `board_get_card` reports both the card's
+own setting and the strategy it will actually merge with.
 
 ## Small print
 
 - Your repository has to allow the strategy. If it does not, the forge refuses the merge and the
-  card shows the forge's reason. Choosing another strategy clears a held auto-merge so it can try
-  again.
+  card shows the forge's reason. Choosing another strategy on a card held for auto-merge tries the
+  merge again straight away.

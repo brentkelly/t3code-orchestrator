@@ -7092,6 +7092,18 @@ const make = Effect.gen(function* () {
     if (event.payload.autoMerge === true) {
       yield* autoMergeArmedCard(event.payload.cardId);
     }
+    // A strategy change cleared the hold that WAS the retry (T3O-80), so the
+    // card re-attempts now, under the new strategy, rather than sitting with
+    // no hold for the sweep to find. Only an armed card, or one whose CI fix
+    // is still riding the ladder, merges by itself.
+    if (
+      event.payload.autoMergeHoldReleased === true &&
+      event.payload.autoMerge !== true &&
+      ((yield* cardAutoMergeArmed(event.payload.card)) ||
+        mergeAwaitingChecks.has(String(event.payload.cardId)))
+    ) {
+      yield* autoMergeArmedCard(event.payload.cardId);
+    }
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
     const state = boardCardStepState(board, event.payload.cardId);
