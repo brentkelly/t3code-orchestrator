@@ -986,6 +986,7 @@ export const boardHandlers = {
         parent:
           parent === undefined ? null : { cardId: parent.id, key: parent.key, title: parent.title },
         baseBranch: card.baseBranch,
+        mergeStrategy: card.mergeStrategy,
         brief,
         briefVersion: boardBriefVersion(brief),
         dependencies: describeDependencies(board, card),
@@ -1104,6 +1105,7 @@ export const boardHandlers = {
         // stage's column (T3O-27), which is the only place that can see the
         // whole board — this tool's read model is filtered to one project.
         keyPrefix: yield* resolveCardKeyPrefix(projectId, projectTitle),
+        ...(input.mergeStrategy === undefined ? {} : { mergeStrategy: input.mergeStrategy }),
         createdAt: yield* nowIso,
       };
       // Stamps the agent actor (t3o-18, D11) via the deps-aware dispatch.
@@ -1251,6 +1253,7 @@ export const boardHandlers = {
         input.addLabels,
         input.removeLabels,
         input.externalRef,
+        input.mergeStrategy,
       ].some((value) => value !== undefined);
       if (updatesFields || input.pullRequest === undefined) {
         const command: BoardCardUpdateCommand = {
@@ -1269,6 +1272,7 @@ export const boardHandlers = {
           addLabels,
           removeLabels,
           externalRef: input.externalRef,
+          mergeStrategy: input.mergeStrategy,
           createdAt: yield* nowIso,
         };
         yield* dispatch(deps, command);

@@ -4557,4 +4557,134 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       }),
     );
   });
+
+  describe("per-card merge strategy (T3O-80)", () => {
+    const HOLD = {
+      reason: "Merge commits are not allowed on this repository.",
+      classification: "permanent",
+      detail: null,
+      attempt: 1,
+      heldSince: NOW,
+      retryAt: null,
+      headSha: "sha-one",
+    } as const;
+
+    const setStrategy = (mergeStrategy: BoardCard["mergeStrategy"]) =>
+      ({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-merge-strategy"),
+        cardId: BoardCardId.make("card-1"),
+        mergeStrategy,
+        createdAt: NOW,
+      }) satisfies BoardCommand;
+
+    const boardWith = (...cards: ReadonlyArray<BoardCard>) =>
+      makeReadModel({ board: seededBoard([...cards]) });
+
+    const updatedCard = (event: { readonly type: string; readonly payload: unknown }) => {
+      assert.strictEqual(event.type, "board.card-updated");
+      return (event.payload as { readonly card: BoardCard }).card;
+    };
+
+    it.effect("sets the strategy, and a strategy-only edit is a real change", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          setStrategy("merge"),
+          boardWith(makeCard({ id: "card-1", stage: "ready" })),
+        );
+        assert.strictEqual(updatedCard(event).mergeStrategy, "merge");
+      }),
+    );
+
+    it.effect("null clears it back to the default, in any stage", () =>
+      Effect.gen(function* () {
+        for (const stage of ["backlog", "building", "merge", "done"]) {
+          const event = yield* decide(
+            setStrategy(null),
+            boardWith(makeCard({ id: "card-1", stage, mergeStrategy: "rebase" })),
+          );
+          assert.strictEqual(updatedCard(event).mergeStrategy, null, stage);
+        }
+      }),
+    );
+
+    it.effect("a change clears the auto-merge hold", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          setStrategy("squash"),
+          boardWith(
+            makeCard({
+              id: "card-1",
+              stage: "merge",
+              autoMerge: true,
+              autoMergeHold: HOLD,
+              mergeStrategy: "merge",
+            }),
+          ),
+        );
+        const card = updatedCard(event);
+        assert.strictEqual(card.mergeStrategy, "squash");
+        assert.strictEqual(card.autoMergeHold, null);
+        assert.isTrue(card.autoMerge);
+      }),
+    );
+
+    it.effect("re-writing the same strategy leaves the hold alone", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          setStrategy("merge"),
+          boardWith(
+            makeCard({ id: "card-1", stage: "merge", autoMergeHold: HOLD, mergeStrategy: "merge" }),
+          ),
+        );
+        assert.deepStrictEqual(updatedCard(event).autoMergeHold, HOLD);
+      }),
+    );
+
+    it.effect("an edit that does not name the strategy keeps it", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          {
+            type: "board.card.update",
+            commandId: CommandId.make("cmd-title"),
+            cardId: BoardCardId.make("card-1"),
+            title: "Renamed",
+            createdAt: NOW,
+          },
+          boardWith(makeCard({ id: "card-1", stage: "ready", mergeStrategy: "rebase" })),
+        );
+        assert.strictEqual(updatedCard(event).mergeStrategy, "rebase");
+      }),
+    );
+
+    it.effect("a sub-board child may set its own", () =>
+      Effect.gen(function* () {
+        const parent = makeCard({ id: "card-parent", stage: "building" });
+        const child = makeCard({
+          id: "card-1",
+          stage: "building",
+          parentCardId: BoardCardId.make("card-parent"),
+        });
+        const event = yield* decide(setStrategy("merge"), boardWith(parent, child));
+        assert.strictEqual(updatedCard(event).mergeStrategy, "merge");
+      }),
+    );
+
+    it.effect("a create carries the strategy, and omits the key without one", () =>
+      Effect.gen(function* () {
+        const withStrategy = yield* decide(
+          { ...createCommand({ cardId: "card-new" }), mergeStrategy: "merge" },
+          boardWith(),
+        );
+        assert.strictEqual(withStrategy.type, "board.card-created");
+        if (withStrategy.type === "board.card-created") {
+          assert.strictEqual(withStrategy.payload.mergeStrategy, "merge");
+        }
+        const without = yield* decide(createCommand({ cardId: "card-new" }), boardWith());
+        if (without.type === "board.card-created") {
+          assert.isFalse("mergeStrategy" in without.payload);
+        }
+      }),
+    );
+  });
 });

@@ -32,6 +32,7 @@ import {
   isBoardCardScheduleDue,
   isEmptyBoardCardModelOverrides,
   resolveBoardCardEffectiveBase,
+  resolveBoardCardMergeStrategy,
   resolveBoardCardStageModelOverride,
   BoardCardId,
   boardCardArchiveNeedsConfirmation,
@@ -1294,6 +1295,41 @@ describe("sub-boards (t3o-23)", () => {
         ),
       ).toBe(false);
     });
+  });
+});
+
+describe("per-card merge strategy (T3O-80)", () => {
+  it("the card's own strategy wins over its parent's and the stage's", () => {
+    expect(
+      resolveBoardCardMergeStrategy({
+        card: { mergeStrategy: "rebase" },
+        parent: { mergeStrategy: "merge" },
+        stageStrategy: "squash",
+      }),
+    ).toEqual({ strategy: "rebase", source: "card" });
+  });
+
+  it("a child with none of its own inherits its parent's", () => {
+    expect(
+      resolveBoardCardMergeStrategy({
+        card: { mergeStrategy: null },
+        parent: { mergeStrategy: "merge" },
+        stageStrategy: "squash",
+      }),
+    ).toEqual({ strategy: "merge", source: "parent" });
+  });
+
+  it("falls back to the merge stage's strategy, then squash", () => {
+    expect(
+      resolveBoardCardMergeStrategy({
+        card: { mergeStrategy: null },
+        parent: { mergeStrategy: null },
+        stageStrategy: "rebase",
+      }),
+    ).toEqual({ strategy: "rebase", source: "board" });
+    expect(
+      resolveBoardCardMergeStrategy({ card: { mergeStrategy: null }, parent: null, stageStrategy: null }),
+    ).toEqual({ strategy: "squash", source: "board" });
   });
 });
 

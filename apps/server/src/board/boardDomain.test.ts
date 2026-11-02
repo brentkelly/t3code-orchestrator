@@ -457,3 +457,57 @@ it.layer(makeBoardDomainTestLayer("t3o-board-base-branch-test-"))(
     );
   },
 );
+
+it.layer(makeBoardDomainTestLayer("t3o-board-merge-strategy-test-"))(
+  "per-card merge strategy (T3O-80)",
+  (it) => {
+    it.effect("survives the SQL round trip, and replay agrees with rehydration", () =>
+      Effect.gen(function* () {
+        const engine = yield* boardStackEngine;
+        const snapshotQuery = yield* boardStackSnapshotQuery;
+        const strategyOf = (
+          model: { readonly board?: BoardReadModel["board"] },
+          cardId: typeof cardOne,
+        ) => model.board?.cards.find((card) => card.id === cardId)?.mergeStrategy;
+
+        yield* engine.dispatch(createProject(projectA, "a"));
+        yield* engine.dispatch({
+          ...createCard({ cardId: cardOne, projectId: projectA, orderKey: "m", n: "one" }),
+          mergeStrategy: "merge",
+        });
+        yield* engine.dispatch(
+          createCard({ cardId: cardTwo, projectId: projectA, orderKey: "t", n: "two" }),
+        );
+
+        const created = yield* snapshotQuery.getCommandReadModel();
+        assert.strictEqual(strategyOf(created, cardOne), "merge");
+        assert.strictEqual(strategyOf(created, cardTwo), null);
+
+        yield* engine.dispatch({
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-clear-strategy"),
+          cardId: cardOne,
+          mergeStrategy: null,
+          createdAt: t0,
+        });
+        yield* engine.dispatch({
+          type: "board.card.update",
+          commandId: CommandId.make("cmd-set-strategy"),
+          cardId: cardTwo,
+          mergeStrategy: "rebase",
+          createdAt: t0,
+        });
+
+        const rehydrated = yield* snapshotQuery.getCommandReadModel();
+        assert.strictEqual(strategyOf(rehydrated, cardOne), null);
+        assert.strictEqual(strategyOf(rehydrated, cardTwo), "rebase");
+
+        let replayed = {} as BoardReadModel;
+        for (const event of Array.from(yield* Stream.runCollect(engine.readBoardEvents()))) {
+          replayed = yield* projectBoardEvent(replayed, event);
+        }
+        assert.deepStrictEqual(replayed.board, rehydrated.board);
+      }),
+    );
+  },
+);

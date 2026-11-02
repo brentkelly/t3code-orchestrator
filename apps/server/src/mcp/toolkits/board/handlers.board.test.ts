@@ -1941,6 +1941,32 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
   const read = (card: string) =>
     boardHandlers.board_get_card({ card }).pipe(withScope(linkedThread));
 
+  it.effect("create, update and read carry the card's merge strategy (T3O-80)", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const created = yield* boardHandlers
+        .board_create_card({ projectId, title: "Sync upstream", mergeStrategy: "merge" })
+        .pipe(withScope(orphanThread));
+      assert.strictEqual((yield* read(created.cardId)).mergeStrategy, "merge");
+
+      // A strategy-only update is a real change, not a refused empty edit.
+      yield* boardHandlers
+        .board_update_card({ cardId: created.cardId, mergeStrategy: "rebase" })
+        .pipe(withScope(orphanThread));
+      assert.strictEqual((yield* read(created.cardId)).mergeStrategy, "rebase");
+
+      yield* boardHandlers
+        .board_update_card({ cardId: created.cardId, mergeStrategy: null })
+        .pipe(withScope(orphanThread));
+      assert.strictEqual((yield* read(created.cardId)).mergeStrategy, null);
+
+      const plain = yield* boardHandlers
+        .board_create_card({ projectId, title: "Plain" })
+        .pipe(withScope(orphanThread));
+      assert.strictEqual((yield* read(plain.cardId)).mergeStrategy, null);
+    }),
+  );
+
   it.effect("reads another card by key: brief, version, dependencies and plans", () =>
     Effect.gen(function* () {
       yield* seed();
