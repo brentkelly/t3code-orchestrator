@@ -338,7 +338,9 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
         lastRead = {
           ...fromSnapshot,
           counts: countsOf(read),
-          ...(excludeBoardCardThreads ? { boardCardThreadCounts: boardCardThreadCountsOf(read) } : {}),
+          ...(excludeBoardCardThreads
+            ? { boardCardThreadCounts: boardCardThreadCountsOf(read) }
+            : {}),
         };
       }
       return lastRead ?? fromSnapshot;
@@ -462,7 +464,9 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
       const shelf = new Map<EnvironmentId, OlderSettledShelfEnvironment>();
       let changed = previous.size !== entries.length;
       for (const [environmentId, pagesKey, excludeBoardCardThreads] of entries) {
-        const older = get(olderSettledAtom(environmentId as EnvironmentId, excludeBoardCardThreads));
+        const older = get(
+          olderSettledAtom(environmentId as EnvironmentId, excludeBoardCardThreads),
+        );
         const pages = get(pagesAtom(pagesKey));
         const prior = previous.get(environmentId as EnvironmentId);
         changed ||= prior?.older !== older || prior.pages !== pages;
