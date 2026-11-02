@@ -26,31 +26,36 @@ export interface CardThreadIdStore {
   readonly save: (environmentId: EnvironmentId, ids: ReadonlyArray<string>) => void;
 }
 
+const sameIds = (left: ReadonlySet<ThreadId> | null, right: ReadonlySet<ThreadId>) =>
+  left !== null && left.size === right.size && [...right].every((id) => left.has(id));
+
 /**
  * Until this session's filtered read lands (a cached shell, or the first snapshot's read in
  * flight), an environment's card threads are the ones its server last named, so they do not show
  * in Settled on every load and then drop out.
  */
 export function rememberCardThreadIds(store: CardThreadIdStore) {
-  const known = new Map<EnvironmentId, ReadonlySet<ThreadId>>();
+  const known = new Map<EnvironmentId, ReadonlySet<ThreadId> | null>();
+  const recall = (environmentId: EnvironmentId) => {
+    if (known.has(environmentId)) return known.get(environmentId) ?? null;
+    const loaded = store.load(environmentId);
+    const remembered = loaded === null ? null : new Set(loaded.map((id) => id as ThreadId));
+    known.set(environmentId, remembered);
+    return remembered;
+  };
   return (environmentId: EnvironmentId, older: OlderSettled | null): OlderSettled | null => {
     if (older === null) return null;
     const ids = older.boardCardThreadIds;
     if (ids != null) {
-      if (known.get(environmentId) !== ids) {
+      const previous = recall(environmentId);
+      if (previous !== ids) {
         known.set(environmentId, ids);
-        store.save(environmentId, [...ids]);
+        if (!sameIds(previous, ids)) store.save(environmentId, [...ids]);
       }
       return older;
     }
-    let remembered = known.get(environmentId);
-    if (remembered === undefined) {
-      const loaded = store.load(environmentId);
-      if (loaded === null) return older;
-      remembered = new Set(loaded.map((id) => id as ThreadId));
-      known.set(environmentId, remembered);
-    }
-    return { ...older, boardCardThreadIds: remembered };
+    const remembered = recall(environmentId);
+    return remembered === null ? older : { ...older, boardCardThreadIds: remembered };
   };
 }
 

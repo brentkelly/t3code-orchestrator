@@ -91,6 +91,20 @@ describe("rememberCardThreadIds", () => {
     // Nothing remembered for the worker, so nothing is hidden there.
     expect(remember(worker, unread)?.boardCardThreadIds).toBeNull();
   });
+
+  it("writes the ids only when the set the server names changes", () => {
+    const saves: Array<ReadonlyArray<string>> = [];
+    const store = {
+      load: () => ["card-open"],
+      save: (_id: EnvironmentId, ids: ReadonlyArray<string>) => void saves.push(ids),
+    };
+    const remember = rememberCardThreadIds(store);
+    remember(environmentId, older({ cardIds: ["card-open"] }));
+    remember(environmentId, older({ cardIds: ["card-open"] }));
+    expect(saves).toEqual([]);
+    remember(environmentId, older({ cardIds: ["card-open", "card-old"] }));
+    expect(saves).toEqual([["card-open", "card-old"]]);
+  });
 });
 
 describe("filterSettledCardThreads", () => {

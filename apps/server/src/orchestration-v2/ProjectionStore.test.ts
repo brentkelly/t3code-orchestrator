@@ -1417,6 +1417,23 @@ it.effect("leaves board card threads out of older settled pages and counts on re
       [...((yield* list({ limit: 0, excludeBoardCardThreads: true })).boardCardThreadIds ?? [])],
       [id("archived-card-recent"), id("card-b")],
     );
+
+    // Older card threads above a subagent stay in the shell as its parent or root, so they are named.
+    yield* createThread("subagent", 1);
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(
+        payload_json,
+        '$.lineage.relationshipToParent', 'subagent',
+        '$.lineage.parentThreadId', ${id("tombstoned")},
+        '$.lineage.rootThreadId', ${id("relayed")}
+      )
+      WHERE thread_id = ${id("subagent")}
+    `;
+    assert.sameMembers(
+      [...((yield* list({ limit: 0, excludeBoardCardThreads: true })).boardCardThreadIds ?? [])],
+      [id("archived-card-recent"), id("card-b"), id("tombstoned"), id("relayed")],
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 

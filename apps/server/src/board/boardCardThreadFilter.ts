@@ -24,8 +24,8 @@ export const boardCardThreadColumn = (sql: SqlClient.SqlClient, exclude: boolean
 
 /**
  * Card threads a shell cut at `before` may carry: every one except older settled threads that are
- * neither pinned nor snoozed, which the shell leaves out. Extra ids are harmless; a missing one
- * would show a card thread in Settled, so this errs wide.
+ * neither pinned, snoozed, nor above a subagent, which the shell leaves out. Extra ids are
+ * harmless; a missing one would show a card thread in Settled, so this errs wide.
  */
 export const readShellBoardCardThreadIds = (sql: SqlClient.SqlClient, before: string) =>
   sql<{ readonly thread_id: string }>`
@@ -39,5 +39,14 @@ export const readShellBoardCardThreadIds = (sql: SqlClient.SqlClient, before: st
         AND json_extract(t.payload_json, '$.settledAt') < ${before}
         AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
         AND json_extract(t.payload_json, '$.snoozedUntil') IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM orchestration_v2_projection_threads child
+          WHERE child.deleted_at IS NULL
+            AND json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+            AND t.thread_id IN (
+              json_extract(child.payload_json, '$.lineage.parentThreadId'),
+              json_extract(child.payload_json, '$.lineage.rootThreadId')
+            )
+        )
       )
   `.pipe(Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))));
