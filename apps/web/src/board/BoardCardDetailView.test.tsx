@@ -81,6 +81,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     autoStart: false,
     autoMerge: false,
     autoMergeHold: null,
+    mergeStrategy: null,
     pinnedWorkerId: null,
     placedWorkerId: null,
     workerMove: null,
@@ -112,6 +113,7 @@ function detail(
     dependents: edges?.dependents ?? [],
     activity: edges?.activity ?? [],
     parentModelOverrides: null,
+    parentMergeStrategy: null,
     stepError: null,
     stepCompletions: edges?.stepCompletions ?? [],
   };

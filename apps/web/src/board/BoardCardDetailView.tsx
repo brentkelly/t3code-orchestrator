@@ -55,6 +55,7 @@ import {
   type BoardLabelId,
   type BoardStageDefinition,
   type BoardCardModelOverrides,
+  type BoardMergeStrategy,
   type BoardCardStageModelOverride,
   type BoardSettings,
   type BoardStageId,
@@ -93,6 +94,7 @@ import {
   RefreshCcwIcon,
   RotateCcwIcon,
   SlidersHorizontalIcon,
+  MergeIcon,
   Trash2Icon,
   TriangleAlertIcon,
   XIcon,
@@ -119,6 +121,7 @@ import {
   hasBoardCardModelOverride,
   type BoardCardModelRowSpec,
 } from "./boardCardModelRows";
+import { boardCardMergeStrategyView } from "./boardCardMergeStrategy";
 import { Switch } from "../components/ui/switch";
 import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
@@ -247,6 +250,13 @@ const BoardCardSummaryPane = lazy(() =>
 const BoardCardModelsPopover = lazy(() =>
   import("./BoardCardModelsPopover").then((module) => ({
     default: module.BoardCardModelsPopover,
+  })),
+);
+
+/** The per-card merge strategy override (T3O-80), mounted only while open. */
+const BoardCardMergeStrategyPopover = lazy(() =>
+  import("./BoardCardMergeStrategyPopover").then((module) => ({
+    default: module.BoardCardMergeStrategyPopover,
   })),
 );
 
@@ -550,6 +560,12 @@ export interface BoardCardDetailViewProps {
   readonly boardSettings: BoardSettings;
   /** Write this card's per-stage model overrides; null clears them. */
   readonly onSetModelOverrides: (next: BoardCardModelOverrides | null) => void;
+  /** The merge stage's configured strategy (T3O-80), what "Use board default"
+      names. Absent reads as squash, the stage's own default. */
+  readonly boardMergeStrategy?: BoardMergeStrategy | undefined;
+  /** Write this card's own merge strategy; null returns it to the default.
+      Absent hides the control. */
+  readonly onSetMergeStrategy?: ((next: BoardMergeStrategy | null) => void) | undefined;
   /** What the card's schedule control is offering (T3O-19, D13), derived by the
       container from the card's live step — the copy has to be honest about
       whether setting a time will STOP an agent that is working right now. */
@@ -2356,6 +2372,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [mergeStrategyOpen, setMergeStrategyOpen] = useState(false);
+  const onSetMergeStrategy = props.onSetMergeStrategy;
+  const mergeStrategy = boardCardMergeStrategyView({
+    card,
+    parent:
+      props.parentCard == null
+        ? null
+        : { key: props.parentCard.key, mergeStrategy: props.detail.parentMergeStrategy },
+    boardStrategy: props.boardMergeStrategy ?? "squash",
+  });
 
   // The rows the card can override, and what each falls back to (t3o-29).
   // Derived eagerly — it is picker-free, and the kebab needs the summary to
@@ -2501,7 +2527,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       {/* Identity row: key, the card's labels, its stage. `relative z-10` lifts
           it (and the × / ⋯ / fullscreen buttons it carries) above the nav
           rails' band, which would otherwise sit over them (T3O-37, D8). */}
-      <div className="relative z-10 flex shrink-0 items-center gap-[9px] px-4 pt-4">
+      <div className="relative z-10 flex shrink-0 items-start gap-[9px] px-4 pt-4">
+        {/* The key and its chips wrap onto a second line rather than pushing
+            the tabs and the kebab off a narrow modal (T3O-80). */}
+        <div className="flex min-h-7 min-w-0 flex-1 flex-wrap items-center gap-x-[9px] gap-y-1.5">
         <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">{card.key}</span>
         {props.parentCard != null ? (
           // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
@@ -2593,7 +2622,23 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </button>
           </BoardHint>
         ) : null}
-        <span className="flex-1" />
+        {/* The card's own merge strategy (T3O-80). Shown whenever the card has
+            one, even one equal to the default, because it pins the card if the
+            default moves. Neutral, like the models pill. */}
+        {archived || done || mergeStrategy.pill === null || onSetMergeStrategy === undefined ? null : (
+          <BoardHint label={mergeStrategy.pill.tooltip}>
+            <button
+              className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={() => setMergeStrategyOpen(true)}
+              type="button"
+            >
+              <MergeIcon className="size-2.5" />
+              {mergeStrategy.pill.label}
+            </button>
+          </BoardHint>
+        )}
+        </div>
+        <div className="flex shrink-0 items-center gap-[9px]">
         <PaneTabs
           hasPlan={hasPlan}
           hasReview={hasReview}
@@ -2620,17 +2665,24 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 from it is an outside-pointerdown on any menu still holding it
                 open. Base UI closes the menu; the row's selection is lost. */}
             {modelRows.length > 0 ? (
-              <>
-                <MenuItem onClick={() => setModelsOpen(true)}>
-                  <SlidersHorizontalIcon />
-                  <span className="flex-1">Models</span>
-                  <span className="font-mono text-[11px] font-medium text-muted-foreground">
-                    {modelSummary}
-                  </span>
-                </MenuItem>
-                <MenuSeparator />
-              </>
+              <MenuItem onClick={() => setModelsOpen(true)}>
+                <SlidersHorizontalIcon />
+                <span className="flex-1">Models</span>
+                <span className="font-mono text-[11px] font-medium text-muted-foreground">
+                  {modelSummary}
+                </span>
+              </MenuItem>
             ) : null}
+            {onSetMergeStrategy === undefined ? null : (
+              <MenuItem onClick={() => setMergeStrategyOpen(true)}>
+                <MergeIcon />
+                <span className="flex-1">Merge strategy</span>
+                <span className="font-mono text-[11px] font-medium text-muted-foreground">
+                  {mergeStrategy.menuValue}
+                </span>
+              </MenuItem>
+            )}
+            {modelRows.length > 0 || onSetMergeStrategy !== undefined ? <MenuSeparator /> : null}
             <MenuItem
               onClick={() => {
                 if (!archived && archiveNeedsConfirmation) {
@@ -2668,6 +2720,18 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             />
           </Suspense>
         ) : null}
+        {mergeStrategyOpen && onSetMergeStrategy !== undefined ? (
+          <Suspense fallback={null}>
+            <BoardCardMergeStrategyPopover
+              anchor={<PopoverTrigger render={<span aria-hidden className="block size-0" />} />}
+              onChange={onSetMergeStrategy}
+              onOpenChange={setMergeStrategyOpen}
+              open={mergeStrategyOpen}
+              options={mergeStrategy.options}
+              value={card.mergeStrategy}
+            />
+          </Suspense>
+        ) : null}
         <BoardArchiveConfirmDialog
           cardKey={card.key}
           dependents={liveDependents}
@@ -2693,6 +2757,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             <XIcon className="size-[15px]" />
           </button>
         </BoardHint>
+        </div>
       </div>
 
       <TitleBody done={done} onSave={props.onSaveTitle} title={card.title} />

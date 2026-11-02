@@ -787,6 +787,10 @@ export function BoardCardDetail({
     mergeExecution !== null && isBoardMergeStageExecution(mergeExecution)
       ? mergeExecution.autoMerge
       : false;
+  const boardMergeStrategy =
+    mergeExecution !== null && isBoardMergeStageExecution(mergeExecution)
+      ? mergeExecution.strategy
+      : "squash";
   /**
    * The rounds this card's loop has RECORDED — the budget's floor.
    *
@@ -1353,6 +1357,10 @@ export function BoardCardDetail({
         runCommand(updateCard({ environmentId, input: { cardId: card.id, autoMerge } }))
       }
       autoMergeFromBoardSetting={boardWideAutoMerge}
+      boardMergeStrategy={boardMergeStrategy}
+      onSetMergeStrategy={(mergeStrategy) =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, mergeStrategy } }))
+      }
       resolveModelDisplayName={resolveModelDisplayName}
       // Queued counts as running for this note's purpose: a queued step has
       // already been selected onto the run row, so its model and authority are
