@@ -93,12 +93,14 @@ export function olderSettledCountKey(
 }
 
 // T3o: the filtered read also names the shell's card threads, so it reruns when a top-level thread
-// arrives above the cut, before that thread can settle into the shelf (T3O-78).
+// above the cut arrives or settles, which is when it can enter the shelf (T3O-78).
 function shellThreadsKey(threads: ReadonlyArray<OrchestrationV2ThreadShell>, beforeMs: number) {
   const ids: string[] = [];
   for (const thread of threads) {
     if (thread.lineage.relationshipToParent === "subagent") continue;
-    if (!isOlderSettledThreadShell(thread, beforeMs)) ids.push(thread.id);
+    if (isOlderSettledThreadShell(thread, beforeMs)) continue;
+    const settledAt = thread.settledAt === null ? "" : DateTime.toEpochMillis(thread.settledAt);
+    ids.push(`${thread.id}@${settledAt}`);
   }
   return ids.sort().join(",");
 }

@@ -541,9 +541,31 @@ describe("createOlderSettledThreadAtoms", () => {
         ]);
         expect(requests).toHaveLength(2);
 
+        // A thread linked to a card after it arrived is named once it settles into the shelf.
+        yield* Queue.offer(replies, page(["recent", "new-card", "linked-later"]));
+        const linked = Option.map(withNew, (value) => ({
+          ...value,
+          threads: [...value.threads, row("linked-later", { createdDay: 61 })],
+        }));
+        setShell({ snapshot: linked, generation: 1 });
+        yield* TestClock.adjust("500 millis");
+        yield* until(olderAtom, (value) => ids(value).length === 3);
+        yield* Queue.offer(replies, page(["recent", "new-card", "linked-later"]));
+        const settled = Option.map(linked, (value) => ({
+          ...value,
+          threads: [
+            ...value.threads.slice(0, -1),
+            row("linked-later", { createdDay: 61, settledDay: 62 }),
+          ],
+        }));
+        setShell({ snapshot: settled, generation: 1 });
+        yield* TestClock.adjust("500 millis");
+        yield* until(olderAtom, () => requests.length === 4);
+        expect(requests).toHaveLength(4);
+
         // A reconnect's snapshot keeps the known card threads until its own read lands.
-        setShell({ snapshot: withNew, generation: 2 });
-        expect(ids(registry.get(olderAtom))).toEqual(["recent", "new-card"]);
+        setShell({ snapshot: settled, generation: 2 });
+        expect(ids(registry.get(olderAtom))).toEqual(["recent", "new-card", "linked-later"]);
       }),
   );
 
