@@ -214,21 +214,6 @@ function withDerivedThreadFields(
   };
 }
 
-// ── Card threads in the thread list (T3O-78) ───────────────────────────
-
-/** Whether a thread is a board card thread, from the board shell's live links: a link names its
-    worker's environment, or the board's own when it has none. Threads of archived cards are not
-    in the shell, so the server filters older settled reads instead. */
-export function boardCardThreadMatcher(
-  boardEnvironmentId: EnvironmentId,
-  cardThreads: ReadonlyArray<Pick<BoardCardThreadShell, "threadId" | "workerId">>,
-): (environmentId: EnvironmentId, threadId: ThreadId) => boolean {
-  const keys = new Set(
-    cardThreads.map((entry) => `${entry.workerId ?? boardEnvironmentId}\u0000${entry.threadId}`),
-  );
-  return (environmentId, threadId) => keys.has(`${environmentId}\u0000${threadId}`);
-}
-
 // ── Column ordering ────────────────────────────────────────────────────
 
 /** Column order inside a stage: (orderKey, cardId) by code units — the

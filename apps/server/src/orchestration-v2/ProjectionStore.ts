@@ -96,7 +96,10 @@ import type * as Statement from "effect/sql/Statement";
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 // T3o: the Settled shelf's card-thread filter (T3O-78).
-import { boardCardThreadColumn } from "../board/boardCardThreadFilter.ts";
+import {
+  boardCardThreadColumn,
+  readShellBoardCardThreadIds,
+} from "../board/boardCardThreadFilter.ts";
 import {
   isThreadHistoryUserTurn,
   isConversationHistoryItem,
@@ -434,6 +437,8 @@ export interface OlderSettledThreadsListing {
   readonly threadIds: ReadonlyArray<ThreadId>;
   /** Only for `limit: 0`. */
   readonly counts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
+  // T3o: card threads the shell may carry, on filtered `limit: 0` reads (T3O-78).
+  readonly boardCardThreadIds?: ReadonlyArray<ThreadId>;
 }
 
 export interface ProjectionStoreV2Shape {
@@ -6692,6 +6697,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           // T3o: the card threads left out of `count` (T3O-78).
           ...(excludeBoardCardThreads === true ? { boardCardThreadCount: row.card_count } : {}),
         })),
+        // T3o: the shell's card threads, so the client filters them by the same rule (T3O-78).
+        ...(limit === 0 && excludeBoardCardThreads === true
+          ? { boardCardThreadIds: yield* readShellBoardCardThreadIds(sql, before.settledAt) }
+          : {}),
       };
     }, Effect.mapError(shellSnapshotReadError));
 

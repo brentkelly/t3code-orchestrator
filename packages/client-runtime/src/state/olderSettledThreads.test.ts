@@ -505,6 +505,48 @@ describe("createOlderSettledThreadAtoms", () => {
       }),
   );
 
+  it.effect(
+    "names the shell's card threads, rereads when a thread arrives, keeps them across a reconnect",
+    () =>
+      Effect.gen(function* () {
+        const { replies, requests, atoms, registry, setShell, until } = yield* makeAtoms();
+        const olderAtom = atoms.olderSettledAtom(environmentId, true);
+        const ids = (value: OlderSettled | null) => [...(value?.boardCardThreadIds ?? [])];
+        registry.mount(olderAtom);
+        const page = (cardIds: ReadonlyArray<string>) =>
+          Effect.succeed({
+            snapshotSequence: 3,
+            threads: [],
+            counts: [{ projectId: project, count: 2, boardCardThreadCount: 3 }],
+            boardCardThreadIds: cardIds.map((id) => ThreadId.make(id)),
+          });
+        const snapshot = shellSnapshot({ sequence: 3, asOfSequence: 3, count: 5 });
+        yield* Queue.offer(replies, page(["recent"]));
+        setShell({ snapshot, generation: 1 });
+        expect(ids(yield* until(olderAtom, (value) => ids(value).length === 1))).toEqual([
+          "recent",
+        ]);
+
+        // A thread created above the cut may be a card thread that settles later: read again.
+        yield* Queue.offer(replies, page(["recent", "new-card"]));
+        const withNew = Option.map(snapshot, (value) => ({
+          ...value,
+          threads: [...value.threads, row("new-card", { createdDay: 61 })],
+        }));
+        setShell({ snapshot: withNew, generation: 1 });
+        yield* TestClock.adjust("500 millis");
+        expect(ids(yield* until(olderAtom, (value) => ids(value).length === 2))).toEqual([
+          "recent",
+          "new-card",
+        ]);
+        expect(requests).toHaveLength(2);
+
+        // A reconnect's snapshot keeps the known card threads until its own read lands.
+        setShell({ snapshot: withNew, generation: 2 });
+        expect(ids(registry.get(olderAtom))).toEqual(["recent", "new-card"]);
+      }),
+  );
+
   it.effect("reports no card counts from a server that ignores the filter", () =>
     Effect.gen(function* () {
       const { replies, atoms, registry, setShell, until } = yield* makeAtoms();

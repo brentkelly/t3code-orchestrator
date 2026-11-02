@@ -1334,12 +1334,16 @@ it.effect("leaves board card threads out of older settled pages and counts on re
     yield* createThread("relayed", 5);
     yield* createThread("one-off-c", 4);
     yield* createThread("card-b", 3, "project:b");
+    // Above the cut: the shell carries these, so the client filters them itself.
+    yield* createThread("archived-card-recent", 11);
+    yield* createThread("one-off-recent", 12);
     const linkedAt = DateTime.formatIso(now);
     yield* sql`
-      INSERT INTO board_card_thread_links (thread_id, card_id, role, linked_at, tombstoned_at)
+      INSERT INTO boards.board_card_thread_links (thread_id, card_id, role, linked_at, tombstoned_at)
       VALUES (${id("card")}, 'card:1', 'building', ${linkedAt}, NULL),
         (${id("tombstoned")}, 'card:archived', 'planning', ${linkedAt}, ${linkedAt}),
-        (${id("card-b")}, 'card:2', 'manual', ${linkedAt}, NULL)
+        (${id("card-b")}, 'card:2', 'manual', ${linkedAt}, NULL),
+        (${id("archived-card-recent")}, 'card:archived', 'review@1', ${linkedAt}, ${linkedAt})
     `;
     yield* sql`
       INSERT INTO boards.board_relayed_threads (thread_id, central_environment_id, created_at)
@@ -1392,6 +1396,26 @@ it.effect("leaves board card threads out of older settled pages and counts on re
         excludeBoardCardThreads: true,
       })).counts,
       [{ projectId: ProjectId.make("project:a"), count: 1, boardCardThreadCount: 1 }],
+    );
+
+    // A filtered count read names the card threads the shell carries: above the cut, whatever the
+    // link's state, plus older ones the shell keeps because they are pinned. Others are left out.
+    assert.isUndefined((yield* list({ limit: 0 })).boardCardThreadIds);
+    assert.isUndefined(
+      (yield* list({ limit: 2, excludeBoardCardThreads: true })).boardCardThreadIds,
+    );
+    assert.deepEqual(
+      (yield* list({ limit: 0, excludeBoardCardThreads: true })).boardCardThreadIds,
+      [id("archived-card-recent")],
+    );
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.pinnedAt', ${linkedAt})
+      WHERE thread_id = ${id("card-b")}
+    `;
+    assert.sameMembers(
+      [...((yield* list({ limit: 0, excludeBoardCardThreads: true })).boardCardThreadIds ?? [])],
+      [id("archived-card-recent"), id("card-b")],
     );
   }).pipe(Effect.provide(layerTest)),
 );

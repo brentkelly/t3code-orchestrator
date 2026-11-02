@@ -3523,6 +3523,8 @@ export const OrchestrationV2OlderSettledThreadsPage = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationV2ThreadShell),
   counts: Schema.Array(OrchestrationV2OlderSettledCount),
+  // T3o: board card threads the shell may carry, on filtered count reads (T3O-78).
+  boardCardThreadIds: Schema.optionalKey(Schema.Array(ThreadId)),
 });
 export type OrchestrationV2OlderSettledThreadsPage =
   typeof OrchestrationV2OlderSettledThreadsPage.Type;

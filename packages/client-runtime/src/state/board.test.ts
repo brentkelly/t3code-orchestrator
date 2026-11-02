@@ -10,7 +10,6 @@ import {
   BOARD_SEED_STAGES,
   BoardLabelId,
   BoardStageId,
-  EnvironmentId,
   ProjectId,
   ThreadId,
   type BoardCard,
@@ -26,7 +25,6 @@ import {
   applyBoardCardPlacements,
   applyBoardShellStreamEvent,
   boardBuildQueue,
-  boardCardThreadMatcher,
   boardRunningStepCount,
   planBoardQueueMoveToFront,
   boardColumnAppendOrderKey,
@@ -1249,22 +1247,5 @@ describe("planBoardQueueMoveToFront", () => {
         nowMs: NOW_MS,
       }),
     ).toBeNull();
-  });
-});
-
-describe("boardCardThreadMatcher (T3O-78)", () => {
-  it("matches a link on the board's own environment, or on its worker's", () => {
-    const board = EnvironmentId.make("env-board");
-    const worker = EnvironmentId.make("env-worker");
-    const isCardThread = boardCardThreadMatcher(board, [
-      { threadId: ThreadId.make("local") },
-      { threadId: ThreadId.make("remote"), workerId: worker },
-    ]);
-    expect(isCardThread(board, ThreadId.make("local"))).toBe(true);
-    expect(isCardThread(worker, ThreadId.make("remote"))).toBe(true);
-    // The same id on another environment is a different thread.
-    expect(isCardThread(worker, ThreadId.make("local"))).toBe(false);
-    expect(isCardThread(board, ThreadId.make("remote"))).toBe(false);
-    expect(isCardThread(board, ThreadId.make("one-off"))).toBe(false);
   });
 });

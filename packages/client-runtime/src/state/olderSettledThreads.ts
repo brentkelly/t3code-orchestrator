@@ -33,6 +33,8 @@ export interface OlderSettled {
   readonly counts: ReadonlyMap<ProjectId, number>;
   // T3o: board card threads left out of `counts`, null unless the server reported them (T3O-78).
   readonly boardCardThreadCounts?: ReadonlyMap<ProjectId, number> | null;
+  // T3o: card threads the shell may carry, by the server's rule; null until it reports (T3O-78).
+  readonly boardCardThreadIds?: ReadonlySet<ThreadId> | null;
 }
 
 /** The scope's projects in one environment, or null for all of them. */
@@ -88,6 +90,17 @@ export function olderSettledCountKey(
     }
   }
   return `${lastRemoval}|${rows.sort().join(",")}`;
+}
+
+// T3o: the filtered read also names the shell's card threads, so it reruns when a top-level thread
+// arrives above the cut, before that thread can settle into the shelf (T3O-78).
+function shellThreadsKey(threads: ReadonlyArray<OrchestrationV2ThreadShell>, beforeMs: number) {
+  const ids: string[] = [];
+  for (const thread of threads) {
+    if (thread.lineage.relationshipToParent === "subagent") continue;
+    if (!isOlderSettledThreadShell(thread, beforeMs)) ids.push(thread.id);
+  }
+  return ids.sort().join(",");
 }
 
 /** Whether a row sits at or above a page cursor in the server's order (settle time desc, id asc). */
@@ -218,6 +231,12 @@ function boardCardThreadCountsOf(page: {
   return new Map(page.counts.map((entry) => [entry.projectId, entry.boardCardThreadCount ?? 0]));
 }
 
+function boardCardThreadIdsOf(
+  page: Pick<OrchestrationV2OlderSettledThreadsPage, "boardCardThreadIds">,
+): ReadonlySet<ThreadId> | null {
+  return page.boardCardThreadIds === undefined ? null : new Set(page.boardCardThreadIds);
+}
+
 /**
  * Shells that omit older settled threads (`omitOlderSettled`) name the cut and count what they left
  * out. These atoms keep those counts current and read older threads in pages for the Settled shelf.
@@ -293,6 +312,8 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
     let fromSnapshot: OlderSettled | null = null;
     let lastRead: OlderSettled | null = null;
     let lastReadPage: OrchestrationV2OlderSettledThreadsPage | null = null;
+    // T3o: kept across reconnects, so known card threads stay hidden until the next read (T3O-78).
+    let lastCardThreadIds: ReadonlySet<ThreadId> | null = null;
     return Atom.make((get): OlderSettled | null => {
       const state = shellStateValue(get(shellStateAtom(environmentId)));
       const snapshot = state === null ? null : Option.getOrNull(state.snapshot);
@@ -303,12 +324,16 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
           before: cut.before,
           beforeMs: DateTime.toEpochMillis(DateTime.makeUnsafe(cut.before)),
           counts: countsOf(cut),
+          ...(excludeBoardCardThreads ? { boardCardThreadIds: lastCardThreadIds } : {}),
         };
       }
       // Most shell updates move only the cursor; the key needs new rows or removals.
       if (keyInputs?.threads !== snapshot.threads || keyInputs.removedAt !== state.removedAt) {
         keyInputs = { threads: snapshot.threads, removedAt: state.removedAt };
         key = olderSettledCountKey(snapshot.threads, fromSnapshot.beforeMs, state.removedAt);
+        if (excludeBoardCardThreads) {
+          key += `#${shellThreadsKey(snapshot.threads, fromSnapshot.beforeMs)}`;
+        }
       }
       if (state.generation !== generation) {
         generation = state.generation;
@@ -335,11 +360,15 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
       );
       if (read !== null && read !== lastReadPage) {
         lastReadPage = read;
+        if (excludeBoardCardThreads) lastCardThreadIds = boardCardThreadIdsOf(read);
         lastRead = {
           ...fromSnapshot,
           counts: countsOf(read),
           ...(excludeBoardCardThreads
-            ? { boardCardThreadCounts: boardCardThreadCountsOf(read) }
+            ? {
+                boardCardThreadCounts: boardCardThreadCountsOf(read),
+                boardCardThreadIds: lastCardThreadIds,
+              }
             : {}),
         };
       }

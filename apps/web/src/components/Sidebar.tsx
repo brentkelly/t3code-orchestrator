@@ -142,7 +142,7 @@ import {
   SidebarCardThreadsSwitch,
   useSettledCardThreadFilter,
 } from "../board/sidebarCardThreads";
-import { filterSettledCardThreads, hiddenCardThreadCount } from "../board/sidebarCardThreadFilter";
+import { filterSettledCardThreads, settledCardThreadCount } from "../board/sidebarCardThreadFilter";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
@@ -432,7 +432,8 @@ function useSidebarThreads(input: {
 
   const { pinnedThreads, activeThreads, workingThreads, snoozedThreads } = partition;
   // T3o: card threads leave Settled by default (T3O-78).
-  const cardThreadFilter = useSettledCardThreadFilter();
+  const environmentIds = [...serverConfigs.keys()];
+  const cardThreadFilter = useSettledCardThreadFilter(environmentIds);
   const settledCardThreads = filterSettledCardThreads({
     hide: cardThreadFilter.hide,
     isCardThread: cardThreadFilter.isCardThread,
@@ -441,9 +442,8 @@ function useSidebarThreads(input: {
     isRouteThread: (thread) => threadShellKey(thread) === routeRowThreadKey,
   });
   const settledThreads = settledCardThreads.settledThreads;
-  const settledScopes = cardThreadFilter.scopes(
-    olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
-  );
+  const unfilteredSettledScopes = olderSettledScopes(environmentIds, scopedProjectKeys);
+  const settledScopes = cardThreadFilter.scopes(unfilteredSettledScopes);
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: settledScopes,
@@ -514,11 +514,10 @@ function useSidebarThreads(input: {
     // T3o: the Settled notice's count and switch (T3O-78).
     settledCardThreadsNotice: {
       hide: cardThreadFilter.hide,
-      hasCardThreads: cardThreadFilter.hasCardThreads,
-      hiddenCount: hiddenCardThreadCount({
-        hiddenLocally: settledCardThreads.hiddenCount,
-        scopes: settledScopes,
-        environments: olderSettledShelf.environments,
+      cardThreadCount: settledCardThreadCount({
+        localCardCount: settledCardThreads.localCardCount,
+        scopes: unfilteredSettledScopes,
+        olderSettled: cardThreadFilter.olderSettled,
         heldCardThreads: settledCardThreads.heldCardThreads,
       }),
       onToggle: () => cardThreadFilter.setHide(!cardThreadFilter.hide),
