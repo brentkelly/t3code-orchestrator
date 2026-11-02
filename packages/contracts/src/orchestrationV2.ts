@@ -2048,6 +2048,8 @@ export function isOlderSettledThreadShell(
 export const OrchestrationV2OlderSettledCount = Schema.Struct({
   projectId: ProjectId,
   count: NonNegativeInt,
+  // T3o: board card threads left out of `count`, only on `excludeBoardCardThreads` reads (T3O-78).
+  boardCardThreadCount: Schema.optionalKey(NonNegativeInt),
 });
 export type OrchestrationV2OlderSettledCount = typeof OrchestrationV2OlderSettledCount.Type;
 
@@ -3506,6 +3508,8 @@ export const OrchestrationV2GetOlderSettledThreadsInput = Schema.Struct({
   projectIds: Schema.optionalKey(Schema.Array(ProjectId)),
   /** 0 reads only the counts. */
   limit: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 50 })),
+  // T3o: leave board card threads out of pages and counts; older servers ignore it (T3O-78).
+  excludeBoardCardThreads: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2GetOlderSettledThreadsInput =
   typeof OrchestrationV2GetOlderSettledThreadsInput.Type;
