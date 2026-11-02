@@ -514,8 +514,6 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-archived-test-"))(
   },
 );
 
-// T3O-79: upstream v0.1.6 stopped deriving a connection origin, so the board reads its
-// surface and app version from the connection's analytics props instead.
 it("boardClientOrigin keeps only a valid surface and app version", () => {
   assert.deepStrictEqual(
     boardClientOrigin({

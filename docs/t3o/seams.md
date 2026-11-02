@@ -688,8 +688,11 @@ Another parity sync. Nothing new upstream offers is adopted yet.
   ambient cache alone, because neither issued it. `t3oGitenvCredential.test.ts` asserts both.
 - **Board MCP tools sit outside `layerTools`.** Upstream split `McpHttpServer.layer` into
   `layerTools` (what `AgentContextBudget.test.ts` measures) plus the transport. The board toolkit
-  merges into `layer` beside it, so the budget measures the stock tools only. The budget JSON was
-  re-measured (+82 bytes, from fork fields in stock contracts).
+  merges into `layer` beside it, so the budget measures the stock tools only. Board tool text is
+  deliberately unmeasured: the budget guards upstream's tool text, and a fork-owned budget is a
+  separate card if board tool growth ever needs one. The budget JSON was re-measured (+82 bytes,
+  from fork fields in stock contracts). `agent-context-budget.yml` compares against the PR's base
+  branch, not `main`, because `main` is the upstream mirror and would always be 82 bytes smaller.
 - **Client origin.** Upstream deleted `readClientConnectionOrigin` and the `clientOrigin` parameter
   of `layerWsRpc`, since nothing upstream used them. The board still stamps the origin on its
   events. It now derives it from the connection's analytics props (`boardClientOrigin` in
