@@ -20,6 +20,40 @@ export function cardThreadMatcher(
     olderSettled(environmentId)?.boardCardThreadIds?.has(threadId) ?? false;
 }
 
+/** Where the last card-thread ids each environment's server named are kept between sessions. */
+export interface CardThreadIdStore {
+  readonly load: (environmentId: EnvironmentId) => ReadonlyArray<string> | null;
+  readonly save: (environmentId: EnvironmentId, ids: ReadonlyArray<string>) => void;
+}
+
+/**
+ * Until this session's filtered read lands (a cached shell, or the first snapshot's read in
+ * flight), an environment's card threads are the ones its server last named, so they do not show
+ * in Settled on every load and then drop out.
+ */
+export function rememberCardThreadIds(store: CardThreadIdStore) {
+  const known = new Map<EnvironmentId, ReadonlySet<ThreadId>>();
+  return (environmentId: EnvironmentId, older: OlderSettled | null): OlderSettled | null => {
+    if (older === null) return null;
+    const ids = older.boardCardThreadIds;
+    if (ids != null) {
+      if (known.get(environmentId) !== ids) {
+        known.set(environmentId, ids);
+        store.save(environmentId, [...ids]);
+      }
+      return older;
+    }
+    let remembered = known.get(environmentId);
+    if (remembered === undefined) {
+      const loaded = store.load(environmentId);
+      if (loaded === null) return older;
+      remembered = new Set(loaded.map((id) => id as ThreadId));
+      known.set(environmentId, remembered);
+    }
+    return { ...older, boardCardThreadIds: remembered };
+  };
+}
+
 /**
  * The Settled rows with card threads taken out when hiding. The open thread stays, so the row
  * the user is on never vanishes. `held` is every visible row less the hidden ones, the set the

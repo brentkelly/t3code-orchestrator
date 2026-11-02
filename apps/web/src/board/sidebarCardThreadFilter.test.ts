@@ -7,6 +7,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   cardThreadMatcher,
   filterSettledCardThreads,
+  rememberCardThreadIds,
   settledCardThreadCount,
 } from "./sidebarCardThreadFilter";
 
@@ -61,6 +62,34 @@ describe("cardThreadMatcher", () => {
     expect(isCardThread(EnvironmentId.make("env-old-server"), ThreadId.make("one-off"))).toBe(
       false,
     );
+  });
+});
+
+describe("rememberCardThreadIds", () => {
+  const unread: OlderSettled = { ...older({ cardIds: [] }), boardCardThreadIds: null };
+
+  it("hides the card threads the server last named until this session's read lands", () => {
+    const stored = new Map<EnvironmentId, ReadonlyArray<string>>();
+    const store = {
+      load: (id: EnvironmentId) => stored.get(id) ?? null,
+      save: (id: EnvironmentId, ids: ReadonlyArray<string>) => void stored.set(id, ids),
+    };
+    const lastSession = rememberCardThreadIds(store);
+    lastSession(environmentId, older({ cardIds: ["card-open"] }));
+
+    // A cold load: a fresh session, its read not landed yet.
+    const remember = rememberCardThreadIds(store);
+    const coldLoad = cardThreadMatcher((id) => remember(id, unread));
+    const filtered = filterSettledCardThreads({
+      hide: true,
+      isCardThread: coldLoad,
+      settledThreads: [oneOff, cardOpen],
+      visibleThreads: [oneOff, cardOpen],
+      isRouteThread: () => false,
+    });
+    expect(filtered.settledThreads).toEqual([oneOff]);
+    // Nothing remembered for the worker, so nothing is hidden there.
+    expect(remember(worker, unread)?.boardCardThreadIds).toBeNull();
   });
 });
 

@@ -15,9 +15,13 @@ import { useMemo } from "react";
 
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
-import { useLocalStorage } from "../hooks/useLocalStorage";
+import {
+  getLocalStorageItem,
+  setLocalStorageItem,
+  useLocalStorage,
+} from "../hooks/useLocalStorage";
 import { olderSettledThreads } from "../state/threads";
-import { cardThreadMatcher } from "./sidebarCardThreadFilter";
+import { cardThreadMatcher, rememberCardThreadIds } from "./sidebarCardThreadFilter";
 
 const HIDE_CARD_THREADS_KEY = "t3o:sidebar:hide-card-threads";
 
@@ -26,18 +30,43 @@ function useHideCardThreads() {
   return useLocalStorage(HIDE_CARD_THREADS_KEY, true, Schema.Boolean);
 }
 
+const CARD_THREAD_IDS_KEY = "t3o:sidebar:card-thread-ids:";
+const CardThreadIds = Schema.Array(Schema.String);
+
+// Storage failures (quota, private mode) only cost the remembered ids, never the sidebar.
+const withCardThreadIds = rememberCardThreadIds({
+  load: (environmentId) => {
+    try {
+      return getLocalStorageItem(CARD_THREAD_IDS_KEY + environmentId, CardThreadIds);
+    } catch {
+      return null;
+    }
+  },
+  save: (environmentId, ids) => {
+    try {
+      setLocalStorageItem(CARD_THREAD_IDS_KEY + environmentId, ids, CardThreadIds);
+    } catch {
+      // Kept in memory for this session regardless.
+    }
+  },
+});
+
 /** Each environment's filtered cut, counts and card threads; the same map while none changed. */
 const cardThreadReadsAtom = Atom.family((key: string) => {
   const environmentIds = JSON.parse(key) as ReadonlyArray<EnvironmentId>;
+  let previousReads: ReadonlyMap<EnvironmentId, OlderSettled | null> = new Map();
   let previous: ReadonlyMap<EnvironmentId, OlderSettled | null> = new Map();
   return Atom.make((get) => {
-    const next = new Map(
+    const reads = new Map(
       environmentIds.map((id) => [id, get(olderSettledThreads.olderSettledAtom(id, true))]),
     );
     const same =
-      next.size === previous.size &&
-      [...next].every(([id, older]) => previous.has(id) && previous.get(id) === older);
-    if (!same) previous = next;
+      reads.size === previousReads.size &&
+      [...reads].every(([id, older]) => previousReads.has(id) && previousReads.get(id) === older);
+    if (!same) {
+      previousReads = reads;
+      previous = new Map([...reads].map(([id, older]) => [id, withCardThreadIds(id, older)]));
+    }
     return previous;
   }).pipe(Atom.withLabel(`t3o:sidebar:card-threads:${key}`));
 });
