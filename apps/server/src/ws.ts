@@ -3276,7 +3276,7 @@ export const layerWsRpc = (
         ...(yield* boardRpcHandlers({
           currentSession,
           boardSupervisor,
-          clientOrigin,
+          clientAnalyticsProps,
         })),
       });
       const splitHandlers: Pick<typeof handlers, SplitWsRpc["_tag"]> = handlers;

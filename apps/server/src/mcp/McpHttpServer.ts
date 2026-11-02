@@ -1164,8 +1164,11 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
-  // T3o: the board toolkit joins the stock toolkits on the same MCP server (D3).
-  toolkitRegistration(BoardToolkit, BoardToolkitHandlersLive),
 );
 
-export const layer = layerTools.pipe(Layer.provideMerge(layerMcpTransport));
+export const layer = layerTools.pipe(
+  // T3o: the board toolkit joins the stock toolkits on the same MCP server (D3). It sits
+  // outside `layerTools`, so upstream's agent-context budget measures the stock set only.
+  Layer.merge(toolkitRegistration(BoardToolkit, BoardToolkitHandlersLive)),
+  Layer.provideMerge(layerMcpTransport),
+);

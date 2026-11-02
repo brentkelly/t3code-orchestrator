@@ -757,6 +757,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           mode: Option.none(),
           port: Option.none(),
           host: Option.none(),
+          lan: Option.none(),
           baseDir: Option.some(baseDir),
           cwd: Option.none(),
           devUrl: Option.none(),

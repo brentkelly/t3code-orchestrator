@@ -131,7 +131,7 @@ export function boardModelDisplayName(
   const option = getModelOptions(selection)
     .get(selection.instanceId)
     ?.find((entry) => entry.slug === selection.model);
-  return option ? getTriggerDisplayModelName(option) : selection.model;
+  return option ? getTriggerDisplayModelName(option, null) : selection.model;
 }
 
 /**
@@ -201,7 +201,7 @@ export function ModelRow(props: {
     props.selection === null
       ? (props.placeholder ?? "Select a model")
       : selectedOption
-        ? getTriggerDisplayModelName(selectedOption)
+        ? getTriggerDisplayModelName(selectedOption, activeEntry?.driverKind)
         : active.model;
 
   return (

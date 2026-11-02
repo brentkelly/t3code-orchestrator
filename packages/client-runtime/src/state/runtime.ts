@@ -476,7 +476,8 @@ export async function settlePromise<A>(
   }
 }
 
-function environmentRpcKey<Input>(target: {
+// T3o: board.ts keys its own query families with this encoding.
+export function environmentRpcKey<Input>(target: {
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
 }): string {

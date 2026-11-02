@@ -161,7 +161,8 @@ export function providerInstanceEntriesFor(
   );
 }
 
-function sortProviderInstanceEntries(
+// T3o: the board's model pickers sort entries they derive themselves.
+export function sortProviderInstanceEntries(
   entries: ReadonlyArray<ProviderInstanceEntry>,
 ): ReadonlyArray<ProviderInstanceEntry> {
   const byKind = new Map<ProviderDriverKind, ProviderInstanceEntry[]>();

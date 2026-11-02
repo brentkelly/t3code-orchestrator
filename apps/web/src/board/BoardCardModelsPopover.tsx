@@ -68,7 +68,7 @@ function placeholderFor(
   const option = getModelOptions(active)
     .get(active.instanceId)
     ?.find((candidate) => candidate.slug === active.model);
-  const name = option ? getTriggerDisplayModelName(option) : active.model;
+  const name = option ? getTriggerDisplayModelName(option, null) : active.model;
   return row.inheritedFromCardKey === null
     ? `${name} (default)`
     : `${name} (from ${row.inheritedFromCardKey})`;

@@ -41,7 +41,7 @@ import {
   type BoardClientCommand,
   type BoardSubscribeBoardInput,
   type BoardSubscribeCardInput,
-  type OrchestrationClientOrigin,
+  OrchestrationClientOrigin,
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -85,13 +85,28 @@ export interface BoardRpcHandlerDeps {
   /** The supervisor reactor performs the card→PR actions: it owns the forge
       gateway and the step machinery a conflict fix needs. */
   readonly boardSupervisor: SupervisorReactorShape;
-  /** The connecting client, stamped on every board event its commands make. */
-  readonly clientOrigin: OrchestrationClientOrigin;
+  /** The connecting client's self-description (ws.ts `readClientAnalyticsProps`). Its
+      surface and app version are stamped on every board event its commands make. */
+  readonly clientAnalyticsProps: Readonly<Record<string, unknown>>;
 }
 
-/** A client that said nothing about itself has no origin worth stamping. */
-const hasClientOrigin = (origin: OrchestrationClientOrigin): boolean =>
-  origin.surface !== undefined || origin.appVersion !== undefined;
+const decodeClientOrigin = Schema.decodeUnknownOption(OrchestrationClientOrigin);
+
+/**
+ * The origin a client's board commands carry: its surface and app version, each kept only
+ * when valid, or undefined when it said nothing usable about itself.
+ */
+export const boardClientOrigin = (
+  props: Readonly<Record<string, unknown>>,
+): OrchestrationClientOrigin | undefined => {
+  const surface = decodeClientOrigin({ surface: props.surface });
+  const appVersion = decodeClientOrigin({ appVersion: props.appVersion });
+  const origin: OrchestrationClientOrigin = {
+    ...(surface._tag === "Some" ? surface.value : {}),
+    ...(appVersion._tag === "Some" ? appVersion.value : {}),
+  };
+  return origin.surface === undefined && origin.appVersion === undefined ? undefined : origin;
+};
 
 export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
   Effect.gen(function* () {
@@ -140,6 +155,7 @@ function makeBoardRpcHandlers(
   },
 ) {
   const { boardEngine, boardQueries } = services;
+  const clientOrigin = boardClientOrigin(deps.clientAnalyticsProps);
   const authorized = <A, E, R>(
     method: keyof typeof BOARD_RPC_SCOPES,
     effect: Effect.Effect<A, E, R>,
@@ -209,7 +225,7 @@ function makeBoardRpcHandlers(
           Effect.andThen(
             boardEngine.dispatch(
               command,
-              hasClientOrigin(deps.clientOrigin) ? { origin: deps.clientOrigin } : undefined,
+              clientOrigin === undefined ? undefined : { origin: clientOrigin },
             ),
           ),
           Effect.mapError(

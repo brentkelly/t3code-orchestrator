@@ -993,7 +993,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     });
     if (!boardPath) return null;
     const fileSystem = yield* FileSystem.FileSystem;
-    const info = yield* optionOnNotFound(fileSystem.stat(boardPath)).pipe(
+    const info = yield* ProjectFaviconResolver.optionOnNotFound(fileSystem.stat(boardPath)).pipe(
       Effect.orElseSucceed(() => Option.none()),
     );
     return Option.isSome(info) && info.value.type === "File"

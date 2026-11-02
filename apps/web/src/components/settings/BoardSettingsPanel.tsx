@@ -34,7 +34,7 @@ import { useClientSettings } from "../../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
-} from "../../logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { environmentShell } from "../../state/shell";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";

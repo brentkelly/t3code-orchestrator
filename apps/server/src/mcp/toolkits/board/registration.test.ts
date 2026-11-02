@@ -47,6 +47,11 @@ import { BoardEngine } from "../../../board/BoardEngine.ts";
 import { BoardQueries } from "../../../board/BoardQueries.ts";
 import { SupervisorReactor } from "../../../board/supervisorReactor.ts";
 import { ThreadGateway } from "../../../board/ThreadGateway.ts";
+import { PeerForwarding } from "../../../peer/PeerForwarding.ts";
+import { PeerLinkRequests } from "../../../peer/PeerLinkRequests.ts";
+import { PeerLinks } from "../../../peer/PeerLinks.ts";
+import { RemoteDelegation } from "../../../peer/RemoteDelegation.ts";
+import { ProjectCloneTracker } from "../../../project/ProjectCloneTracker.ts";
 
 const layerServerEnvironment = Layer.mock(ServerEnvironment.ServerEnvironment)({
   getEnvironmentId: Effect.succeed("environment-scratch" as never),
@@ -76,6 +81,11 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
+  Layer.mock(PeerForwarding)({}),
+  Layer.mock(PeerLinkRequests)({}),
+  Layer.mock(PeerLinks)({}),
+  Layer.mock(ProjectCloneTracker)({}),
+  Layer.mock(RemoteDelegation)({}),
   // T3o: the board toolkit registers on the same server (t3o-08); unused here.
   Layer.mock(BoardEngine)({}),
   Layer.mock(BoardQueries)({}),
