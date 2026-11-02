@@ -4561,7 +4561,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
   describe("per-card merge strategy (T3O-80)", () => {
     const HOLD = {
       reason: "Merge commits are not allowed on this repository.",
-      classification: "permanent",
+      classification: "other",
       detail: null,
       attempt: 1,
       heldSince: NOW,
