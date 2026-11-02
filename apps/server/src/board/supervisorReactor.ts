@@ -3437,6 +3437,28 @@ const make = Effect.gen(function* () {
     yield* autoMergeCard(card);
   });
 
+  /** A held child with no strategy of its own merged with its parent's
+      (T3O-80), so a change to the parent's releases it the same way a change
+      to its own would: hold cleared, and the merge re-attempted now. */
+  const releaseInheritingChildHolds = Effect.fn("board-supervisor-releaseInheritingChildHolds")(
+    function* (parentId: BoardCardId) {
+      const board = yield* readBoard;
+      for (const child of board.cards) {
+        if (
+          child.parentCardId !== parentId ||
+          child.mergeStrategy !== null ||
+          child.autoMergeHold === null
+        ) {
+          continue;
+        }
+        yield* clearAutoMergeHold(child);
+        if ((yield* cardAutoMergeArmed(child)) || mergeAwaitingChecks.has(String(child.id))) {
+          yield* autoMergeArmedCard(child.id);
+        }
+      }
+    },
+  );
+
   /**
    * Ask the forge WHY it refused, and classify the answer (T3O-38, D6/D7).
    *
@@ -7103,6 +7125,9 @@ const make = Effect.gen(function* () {
         mergeAwaitingChecks.has(String(event.payload.cardId)))
     ) {
       yield* autoMergeArmedCard(event.payload.cardId);
+    }
+    if (event.payload.mergeStrategyEdited === true) {
+      yield* releaseInheritingChildHolds(event.payload.cardId);
     }
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);

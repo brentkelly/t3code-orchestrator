@@ -778,6 +778,63 @@ it.effect("re-attempts a held card at once when its merge strategy changes", () 
   ),
 );
 
+// T3O-80: a child with no strategy of its own merges with its parent's, so the
+// parent's change is the change that has to release the child's hold.
+it.effect("re-attempts a held child at once when its parent's merge strategy changes", () => {
+  const parent = makeBoardCard({ id: "card-parent", stage: BUILDING, orderKey: "a" });
+  const child = { ...cardAtMerge(), parentCardId: parent.id };
+  return withGovernor(
+    setup({
+      cards: [parent, child],
+      mergeOutcomes: ["This host cannot merge with the squash strategy.", null],
+      mergeRefusal: "blocked",
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(child, REVIEW, MERGE, 1));
+        assert.strictEqual(holdOf(yield* h.board)?.retryAt, null);
+        yield* h.pumpDomain({
+          type: "board.card-updated",
+          sequence: 2,
+          payload: {
+            cardId: parent.id,
+            card: { ...parent, mergeStrategy: "merge" },
+            mergeStrategyEdited: true,
+          },
+        } as never);
+        assert.deepStrictEqual(yield* h.mergeMethods, ["squash", "merge"]);
+        assert.strictEqual(stageOf(yield* h.board), DONE);
+      }),
+  );
+});
+
+it.effect("a parent's strategy change leaves a child with its own strategy held", () => {
+  const parent = makeBoardCard({ id: "card-parent", stage: BUILDING, orderKey: "a" });
+  const child = { ...cardAtMerge(), parentCardId: parent.id, mergeStrategy: "squash" as const };
+  return withGovernor(
+    setup({
+      cards: [parent, child],
+      mergeOutcomes: ["This host cannot merge with the squash strategy.", null],
+      mergeRefusal: "blocked",
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(child, REVIEW, MERGE, 1));
+        yield* h.pumpDomain({
+          type: "board.card-updated",
+          sequence: 2,
+          payload: {
+            cardId: parent.id,
+            card: { ...parent, mergeStrategy: "merge" },
+            mergeStrategyEdited: true,
+          },
+        } as never);
+        assert.deepStrictEqual(yield* h.mergeMethods, ["squash"]);
+        assert.notStrictEqual(holdOf(yield* h.board), null);
+      }),
+  );
+});
+
 it.effect("a strategy change on an UNARMED held card does not merge it", () =>
   withGovernor(setup({ cards: [cardAtMerge()] }), (h) =>
     Effect.gen(function* () {

@@ -24,7 +24,8 @@ setting and does not follow later changes.
 ## Sub-board children
 
 A child card with no strategy of its own uses its parent's. In that case the first option reads
-**Use parent** and names the parent card. A child can still set its own strategy.
+**Use parent** and names the parent card. A child can still set its own strategy. Changing the parent's strategy also retries any held
+child that uses it.
 
 ## Agents
 

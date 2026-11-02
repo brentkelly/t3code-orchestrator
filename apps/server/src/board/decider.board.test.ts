@@ -4645,6 +4645,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         assert.strictEqual(event.type, "board.card-updated");
         if (event.type === "board.card-updated") {
           assert.isFalse("autoMergeHoldReleased" in event.payload);
+          // Still a change, which an inheriting child's hold has to hear about.
+          assert.strictEqual(event.payload.mergeStrategyEdited, true);
         }
       }),
     );
@@ -4658,6 +4660,9 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           ),
         );
         assert.deepStrictEqual(updatedCard(event).autoMergeHold, HOLD);
+        if (event.type === "board.card-updated") {
+          assert.isFalse("mergeStrategyEdited" in event.payload);
+        }
       }),
     );
 

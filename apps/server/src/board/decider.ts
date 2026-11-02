@@ -1887,6 +1887,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           ...(mergeStrategyChanged && card.autoMergeHold !== null && command.autoMerge !== false
             ? { autoMergeHoldReleased: true as const }
             : {}),
+          ...(mergeStrategyChanged ? { mergeStrategyEdited: true as const } : {}),
           // Fold the review summary onto the event when the edit could change
           // it (t3o-22, D7), so a pure override edit updates the card face live
           // — the same reason the step-completion path folds it. Only when the

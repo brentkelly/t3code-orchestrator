@@ -5216,6 +5216,10 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       hold (T3O-80). The hold was the retry, so the supervisor re-attempts the
       merge on this edit; a card that never held is left to the arrival rules. */
   autoMergeHoldReleased: Schema.optional(Schema.Literal(true)),
+  /** Present when this edit changed the card's own merge strategy (T3O-80).
+      A held sub-board child with no strategy of its own merges with this one,
+      so the supervisor releases and re-attempts it on this edit. */
+  mergeStrategyEdited: Schema.optional(Schema.Literal(true)),
   /** The card face's review summary AFTER this edit (t3o-22, D7), folded by
       the decider when the edit could change it (a round budget or a stop). It
       rides the `card-upserted` shell delta this event produces, so a pure
