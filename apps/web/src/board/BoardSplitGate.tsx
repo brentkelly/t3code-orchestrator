@@ -15,6 +15,7 @@ import { useState } from "react";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
+import { BoardHint } from "./BoardHint";
 import { boardSplitGateView, type BoardSplitGateSettings } from "./boardSplitGate";
 
 export function BoardSplitGate(props: {
@@ -71,20 +72,18 @@ export function BoardSplitGate(props: {
               )}
             </span>
             {row.planned ? (
-              <span
-                className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-input bg-card px-1.5 text-[11px] font-medium text-foreground"
-                title="Comes with an approved plan"
-              >
-                <FileCheckIcon className="size-3" />
-                Planned
-              </span>
+              <BoardHint label="Comes with an approved plan">
+                <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-input bg-card px-1.5 text-[11px] font-medium text-foreground">
+                  <FileCheckIcon className="size-3" />
+                  Planned
+                </span>
+              </BoardHint>
             ) : (
-              <span
-                className="inline-flex h-5 shrink-0 items-center rounded-md border border-dashed border-input px-1.5 text-[11px] font-medium text-muted-foreground"
-                title="Comes with a brief only"
-              >
-                Needs planning
-              </span>
+              <BoardHint label="Comes with a brief only">
+                <span className="inline-flex h-5 shrink-0 items-center rounded-md border border-dashed border-input px-1.5 text-[11px] font-medium text-muted-foreground">
+                  Needs planning
+                </span>
+              </BoardHint>
             )}
             <span className="w-16 shrink-0 text-right text-[11px] font-medium text-muted-foreground">
               {row.lands}
