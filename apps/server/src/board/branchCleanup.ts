@@ -50,6 +50,8 @@ import { safeProcessOutput } from "../vcs/VcsProcess.ts";
 export interface BoardBranchCleanupResult {
   readonly remoteDeleted: boolean;
   readonly localDeleted: boolean;
+  /** The repository has no remote, so there was no remote copy to delete. */
+  readonly remoteAbsent: boolean;
   /** Why a deletion was skipped or failed; null when everything asked for
       happened. Human-facing — it lands on the card. */
   readonly skippedReason: string | null;
@@ -183,6 +185,7 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
   return {
     remoteDeleted,
     localDeleted,
+    remoteAbsent: remoteName === null,
     skippedReason: skipped.length === 0 ? null : skipped.join("; "),
   } satisfies BoardBranchCleanupResult;
 });

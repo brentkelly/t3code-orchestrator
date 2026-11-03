@@ -421,6 +421,35 @@ describe("archiving a group discards its subtree's work (T3O-28)", () => {
     );
   });
 
+  it.effect("the sweep keeps a discard pending while the remote branch delete fails", () => {
+    const child = card("card-child", merge, {
+      parent: "card-group",
+      worktree: {
+        ...readyWorktree("card-child"),
+        baseRefName: "board/card-group",
+        path: null,
+        status: "reclaimed",
+        discardPending: true,
+      },
+      archivedAt: NOW,
+    });
+    return withGovernor(
+      {
+        board: { cards: [child], nextCardNumberByProject: {} },
+        settings,
+        gitFailure: "remote-delete",
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.sweepWorktrees();
+          yield* h.reactor.drainWorktreeSweep;
+          assert.include(remoteDeletes(yield* h.gitInvocations), "board/card-child");
+          const after = (yield* h.board).cards.find((candidate) => candidate.id === "card-child");
+          assert.strictEqual(after?.worktree?.discardPending, true);
+        }),
+    );
+  });
+
   it.effect("also discards a child that was archived before the group", () => {
     const group = card("card-group", review, {
       group: ownGroup(),

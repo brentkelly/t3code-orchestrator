@@ -7705,12 +7705,12 @@ const make = Effect.gen(function* () {
     );
     if (result === null) return;
     yield* recordBranchDeletion(card, worktree.branch, result);
-    // A branch-only slice has no checkout to retire; its branch is the whole
-    // of it, so it is reclaimed once the branch is gone. Until then the
-    // pending discard stays on the card for the sweep to retry.
+    // Settled only once both copies are gone: until then the pending discard
+    // stays on the card for the sweep to retry, so a failed remote delete is
+    // never forgotten.
+    if (!result.localDeleted || !(result.remoteDeleted || result.remoteAbsent)) return;
     const after = yield* readCard(card.id);
     if (after?.worktree == null) return;
-    if (after.worktree.status !== "reclaimed" && !result.localDeleted) return;
     if (after.worktree.status === "reclaimed" && after.worktree.discardPending !== true) return;
     yield* dispatchOptional({
       type: "board.card.reclaim-worktree",

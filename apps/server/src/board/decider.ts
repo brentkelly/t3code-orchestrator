@@ -232,6 +232,12 @@ const invariant = (command: BoardCommand, detail: string) =>
 /** A pending auto-plan request marked spent (T3O-32): the plan was approved,
     the card left planning before it arrived, or the run stopped being driven
     by the board. Anything else is untouched. */
+function withoutPendingDiscard(worktree: BoardCard["worktree"]): BoardCard["worktree"] {
+  if (worktree?.discardPending !== true) return worktree;
+  const { discardPending: _cancelled, ...rest } = worktree;
+  return rest;
+}
+
 function endBoardCardAutoPlan(card: BoardCard, at: string): Pick<BoardCard, "autoPlan"> {
   return card.autoPlan !== undefined && card.autoPlan.endedAt === null
     ? { autoPlan: { ...card.autoPlan, endedAt: at } }
@@ -3068,15 +3074,19 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             }
             return candidate;
           }
+          // A discard the group archive had not finished is called off: the
+          // card is back, and its branch is live work again.
+          const worktree = withoutPendingDiscard(candidate.worktree);
           if (candidate.id === card.id && detach) {
             return {
               ...candidate,
+              worktree,
               archivedAt: null,
               parentCardId: null,
               stage: isBoardDeferredStage(candidate.stage) ? firstStage : candidate.stage,
             };
           }
-          return { ...candidate, archivedAt: null };
+          return { ...candidate, worktree, archivedAt: null };
         });
       // Dependencies taken on the card while it sat in the archive may now
       // wait on the group it would rejoin; it returns to the top level instead

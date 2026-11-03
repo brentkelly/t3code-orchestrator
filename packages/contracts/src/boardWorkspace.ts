@@ -103,6 +103,9 @@ export type BoardWorkspaceWorktree = typeof BoardWorkspaceWorktree.Type;
 export const BoardWorkspaceBranchCleanup = Schema.Struct({
   remoteDeleted: Schema.Boolean,
   localDeleted: Schema.Boolean,
+  /** No remote to delete from. A pre-T3O-26 worker omits it; false keeps a
+      group discard retrying rather than settling with a remote copy alive. */
+  remoteAbsent: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   skippedReason: Schema.NullOr(Schema.String),
 });
 export type BoardWorkspaceBranchCleanup = typeof BoardWorkspaceBranchCleanup.Type;
