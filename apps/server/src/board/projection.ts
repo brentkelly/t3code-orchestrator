@@ -65,6 +65,9 @@ import {
   isBoardChecksFixLive,
   isBoardTerminalStepStatus,
   makeBoardCardShell,
+  boardSplitChildPlanCopy,
+  BoardCardGroupTarget,
+  type BoardCardGroup,
   BoardCardAttachment,
   BoardCardAutoMergeHold,
   sortBoardCardAttachments,
@@ -177,6 +180,16 @@ const BoardCardDbRow = Schema.Struct({
   /** NULL before migration 049 and for every card whose worker is still on
       the board (T3O-66). */
   placementOrphaned: Schema.NullOr(Schema.fromJsonString(BoardCardPlacementOrphan)),
+  /** Migration 051 (T3O-27): NULL `groupTarget` is a leaf. */
+  groupTarget: Schema.NullOr(BoardCardGroupTarget),
+  groupAutoBuild: Schema.Int,
+  groupAutoMerge: Schema.Int,
+  groupAutoPlan: Schema.Int,
+  groupStarted: Schema.Int,
+  groupPlaced: Schema.NullOr(BoardStageId),
+  groupPrevStage: Schema.NullOr(BoardStageId),
+  groupHeading: Schema.Int,
+  groupIntegrated: Schema.Int,
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -567,6 +580,16 @@ const BoardCardShellDbRow = Schema.Struct({
   workerMoveTo: BoardCard.fields.pinnedWorkerId,
   /** The removed worker's label, for Worker removed (T3O-66). */
   orphanedWorkerLabel: Schema.NullOr(Schema.String),
+  /** Group settings (T3O-27), the same columns the card row reads. */
+  groupTarget: Schema.NullOr(BoardCardGroupTarget),
+  groupAutoBuild: Schema.Int,
+  groupAutoMerge: Schema.Int,
+  groupAutoPlan: Schema.Int,
+  groupStarted: Schema.Int,
+  groupPlaced: Schema.NullOr(BoardStageId),
+  groupPrevStage: Schema.NullOr(BoardStageId),
+  groupHeading: Schema.Int,
+  groupIntegrated: Schema.Int,
   /** The review-summary CACHE (t3o-22, D7); NULL for a card with no review
       history. Its `outcome` is provisional — `resolveBoardCardReviewOutcome`
       settles it against the card's live step at assembly. */
@@ -631,10 +654,48 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     placedWorkerId: card.placedWorkerId,
     workerMove: card.workerMove,
     placementOrphaned: card.placementOrphaned,
+    groupTarget: card.group?.target ?? null,
+    groupAutoBuild: card.group?.autoBuild === true ? 1 : 0,
+    groupAutoMerge: card.group?.autoMerge === true ? 1 : 0,
+    groupAutoPlan: card.group?.autoPlan === true ? 1 : 0,
+    groupStarted: card.group?.started === true ? 1 : 0,
+    groupPlaced: card.group?.placed ?? null,
+    groupPrevStage: card.group?.prevStage ?? null,
+    groupHeading: card.group?.heading === true ? 1 : 0,
+    groupIntegrated: card.group?.integrated === true ? 1 : 0,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
     updatedAt: card.updatedAt,
+  };
+}
+
+function boardCardGroupFromRow(
+  row: Pick<
+    BoardCardDbRow,
+    | "stage"
+    | "groupTarget"
+    | "groupAutoBuild"
+    | "groupAutoMerge"
+    | "groupAutoPlan"
+    | "groupStarted"
+    | "groupPlaced"
+    | "groupPrevStage"
+    | "groupHeading"
+    | "groupIntegrated"
+  >,
+): BoardCardGroup | null {
+  if (row.groupTarget === null) return null;
+  return {
+    target: row.groupTarget,
+    autoBuild: row.groupAutoBuild !== 0,
+    autoMerge: row.groupAutoMerge !== 0,
+    autoPlan: row.groupAutoPlan !== 0,
+    started: row.groupStarted !== 0,
+    placed: row.groupPlaced ?? row.stage,
+    prevStage: row.groupPrevStage,
+    heading: row.groupHeading !== 0,
+    integrated: row.groupIntegrated !== 0,
   };
 }
 
@@ -686,6 +747,7 @@ function rowToBoardCard(
     placedWorkerId: row.placedWorkerId,
     workerMove: row.workerMove,
     placementOrphaned: row.placementOrphaned,
+    group: boardCardGroupFromRow(row),
     blocked: row.blocked !== 0,
     threadLinks,
     attachments,
@@ -753,6 +815,15 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         placed_worker_id,
         worker_move,
         placement_orphaned,
+        group_target,
+        group_auto_build,
+        group_auto_merge,
+        group_auto_plan,
+        group_started,
+        group_placed,
+        group_prev_stage,
+        group_heading,
+        group_integrated,
         blocked,
         archived_at,
         created_at,
@@ -788,6 +859,15 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.placedWorkerId},
         ${row.workerMove},
         ${row.placementOrphaned},
+        ${row.groupTarget},
+        ${row.groupAutoBuild},
+        ${row.groupAutoMerge},
+        ${row.groupAutoPlan},
+        ${row.groupStarted},
+        ${row.groupPlaced},
+        ${row.groupPrevStage},
+        ${row.groupHeading},
+        ${row.groupIntegrated},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -823,6 +903,15 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         placed_worker_id = excluded.placed_worker_id,
         worker_move = excluded.worker_move,
         placement_orphaned = excluded.placement_orphaned,
+        group_target = excluded.group_target,
+        group_auto_build = excluded.group_auto_build,
+        group_auto_merge = excluded.group_auto_merge,
+        group_auto_plan = excluded.group_auto_plan,
+        group_started = excluded.group_started,
+        group_placed = excluded.group_placed,
+        group_prev_stage = excluded.group_prev_stage,
+        group_heading = excluded.group_heading,
+        group_integrated = excluded.group_integrated,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -868,6 +957,15 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         placed_worker_id AS "placedWorkerId",
         worker_move AS "workerMove",
         placement_orphaned AS "placementOrphaned",
+        group_target AS "groupTarget",
+        group_auto_build AS "groupAutoBuild",
+        group_auto_merge AS "groupAutoMerge",
+        group_auto_plan AS "groupAutoPlan",
+        group_started AS "groupStarted",
+        group_placed AS "groupPlaced",
+        group_prev_stage AS "groupPrevStage",
+        group_heading AS "groupHeading",
+        group_integrated AS "groupIntegrated",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -1006,6 +1104,15 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         json_extract(worker_move, '$.status') AS "workerMoveStatus",
         json_extract(worker_move, '$.toWorkerId') AS "workerMoveTo",
         json_extract(placement_orphaned, '$.workerLabel') AS "orphanedWorkerLabel",
+        group_target AS "groupTarget",
+        group_auto_build AS "groupAutoBuild",
+        group_auto_merge AS "groupAutoMerge",
+        group_auto_plan AS "groupAutoPlan",
+        group_started AS "groupStarted",
+        group_placed AS "groupPlaced",
+        group_prev_stage AS "groupPrevStage",
+        group_heading AS "groupHeading",
+        group_integrated AS "groupIntegrated",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -1096,6 +1203,15 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         json_extract(worker_move, '$.status') AS "workerMoveStatus",
         json_extract(worker_move, '$.toWorkerId') AS "workerMoveTo",
         json_extract(placement_orphaned, '$.workerLabel') AS "orphanedWorkerLabel",
+        group_target AS "groupTarget",
+        group_auto_build AS "groupAutoBuild",
+        group_auto_merge AS "groupAutoMerge",
+        group_auto_plan AS "groupAutoPlan",
+        group_started AS "groupStarted",
+        group_placed AS "groupPlaced",
+        group_prev_stage AS "groupPrevStage",
+        group_heading AS "groupHeading",
+        group_integrated AS "groupIntegrated",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -1195,6 +1311,15 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         placed_worker_id AS "placedWorkerId",
         worker_move AS "workerMove",
         placement_orphaned AS "placementOrphaned",
+        group_target AS "groupTarget",
+        group_auto_build AS "groupAutoBuild",
+        group_auto_merge AS "groupAutoMerge",
+        group_auto_plan AS "groupAutoPlan",
+        group_started AS "groupStarted",
+        group_placed AS "groupPlaced",
+        group_prev_stage AS "groupPrevStage",
+        group_heading AS "groupHeading",
+        group_integrated AS "groupIntegrated",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -2614,6 +2739,19 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
                 updatedAt: event.payload.updatedAt,
               })
               .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.body:query")));
+            // The child owns a copy of its plan (T3O-27), so it counts as
+            // planned without a parent special case.
+            const copy = boardSplitChildPlanCopy(planRow.value, {
+              id: card.id,
+              createdAt: card.createdAt,
+            });
+            yield* queries
+              .insertBoardPlanRow({
+                ...copy,
+                locked: 0,
+                body: planRow.value.body,
+              })
+              .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")));
           }
         }
         yield* recordActivity({
@@ -3494,6 +3632,7 @@ function boardShellCards(
               : { status: row.workerMoveStatus, toWorkerId: row.workerMoveTo },
           placementOrphaned:
             row.orphanedWorkerLabel === null ? null : { workerLabel: row.orphanedWorkerLabel },
+          group: boardCardGroupFromRow(row),
           queuedBy: queueReasonByCard.get(row.cardId) ?? null,
           // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
           // against `stepRunning`, which every shell already holds — resolving
@@ -3584,6 +3723,7 @@ function boardArchivedShellCards(
                 : { status: row.workerMoveStatus, toWorkerId: row.workerMoveTo },
             placementOrphaned:
               row.orphanedWorkerLabel === null ? null : { workerLabel: row.orphanedWorkerLabel },
+            group: boardCardGroupFromRow(row),
             archivedAt: row.archivedAt,
             activeThreadId: null,
           }),

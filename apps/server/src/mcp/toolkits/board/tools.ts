@@ -23,6 +23,7 @@ import {
   BoardCardExternalRef,
   BoardCardAttachmentId,
   BoardCardId,
+  BoardCardGroupTarget,
   BoardCardPullRequestState,
   BoardCardPullRequestTarget,
   BoardBriefSectionEdit,
@@ -371,7 +372,7 @@ export const BoardListProjectsTool = Tool.make("board_list_projects", {
 
 export const BoardCreateCardTool = Tool.make("board_create_card", {
   description:
-    "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. Omit projectId to create the card in this thread's own project (the common case); pass one only to target a different project. A projectId is matched first as a project id, then leniently against a project's title or workspace-root folder name, so a name from the app usually resolves — but the id from board_list_projects is unambiguous. An unresolvable projectId is rejected with the live project list. A card may be created into ANY existing stage (omit stage for Backlog). CAUTION: creating into an auto-executing stage (e.g. Building) starts an unattended agent run immediately, with a worktree and a concurrency slot — default to the early stages unless a human asked for mid-pipeline work; the build-onward dependency gate still applies. When you make a card for an existing pull request, pass pullRequest so the card tracks it (status, merge, settling) from the start — a url, or repository and number; it must be on the card's project repository, and a pull request the forge cannot find rejects the call before any card is made. NOT idempotent: a retried call creates a second card, so on a timeout list cards before retrying. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created, so create a new label with board_manage_labels first. dependsOn lists card ids this card waits on. A dependency must sit at the card's own level: a top-level card depends on top-level cards, and a sub-board child only on its siblings. To wait on another card's child, depend on that child's parent instead, because the child merges into its parent's branch, not the base.",
+    "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. Omit projectId to create the card in this thread's own project (the common case); pass one only to target a different project. A projectId is matched first as a project id, then leniently against a project's title or workspace-root folder name, so a name from the app usually resolves — but the id from board_list_projects is unambiguous. An unresolvable projectId is rejected with the live project list. A card may be created into ANY existing stage (omit stage for Backlog). CAUTION: creating into an auto-executing stage (e.g. Building) starts an unattended agent run immediately, with a worktree and a concurrency slot — default to the early stages unless a human asked for mid-pipeline work; the build-onward dependency gate still applies. When you make a card for an existing pull request, pass pullRequest so the card tracks it (status, merge, settling) from the start — a url, or repository and number; it must be on the card's project repository, and a pull request the forge cannot find rejects the call before any card is made. NOT idempotent: a retried call creates a second card, so on a timeout list cards before retrying. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created, so create a new label with board_manage_labels first. dependsOn lists card ids this card waits on. parentCardId (a card key or id) creates the card inside that group. If that card is not a group yet, this turns it into one, which is regrouping: describe it to the user, get their explicit confirmation, and only then pass approved: true (the server refuses without it). A card already being built cannot become a group. Dependencies may cross groups; a dependency on a group is met when the whole group is done. A card cannot depend on a group it is inside, and a group cannot depend on a card inside it.",
   parameters: Schema.Struct({
     projectId: Schema.optional(ProjectId),
     title: TrimmedNonEmptyString,
@@ -380,6 +381,10 @@ export const BoardCreateCardTool = Tool.make("board_create_card", {
     labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
     stage: Schema.optional(BoardStageId),
     dependsOn: Schema.optional(Schema.Array(BoardCardId)),
+    /** Card key or id of the group to create the card inside. */
+    parentCardId: Schema.optional(TrimmedNonEmptyString),
+    /** Required when parentCardId is not a group yet: a human confirmed it. */
+    approved: Schema.optional(Schema.Boolean),
     /** A pull request on the project's repository for the card to track. */
     pullRequest: Schema.optional(BoardCardPullRequestTarget),
   }),
@@ -390,11 +395,17 @@ export const BoardCreateCardTool = Tool.make("board_create_card", {
 
 export const BoardMoveCardTool = Tool.make("board_move_card", {
   description:
-    "Move a card to another stage, subject to the same rules a human drag obeys: a blocked card (unmet dependencies) cannot cross into the build stage or beyond, and you have no privileged path around that. Set override to move to a non-adjacent stage (e.g. dragging backwards). CAUTION: the server does not require a human sign-off on forward moves — moving a card into an auto-executing stage starts an unattended agent run (worktree, concurrency slot). Use this for board tidying and explicitly requested moves, not to advance your own work; leave forward transitions to a human unless one asked you to make them.",
+    "Move a card to another stage, into another group, or both. A stage move obeys the same rules a human drag obeys: a blocked card (unmet dependencies) cannot cross into the build stage or beyond, and you have no privileged path around that. Set override to move to a non-adjacent stage (e.g. dragging backwards). A group's stage follows its children, so moving a group only places it before Building, or starts it at Building. CAUTION: the server does not require a human sign-off on forward moves — moving a card into an auto-executing stage starts an unattended agent run (worktree, concurrency slot). Use this for board tidying and explicitly requested moves, not to advance your own work; leave forward transitions to a human unless one asked you to make them. parentCardId (a card key or id, or null for the top level) moves the card into that group; pass afterCardId or beforeCardId to place it next to a card already there. With both, the regroup happens first and stays if the stage move is then refused. REGROUPING NEEDS A HUMAN: moving cards between groups changes how they build and where they merge, so before calling, describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses a regroup without it.",
   parameters: Schema.Struct({
     cardId: BoardCardId,
-    toStage: BoardStageId,
+    toStage: Schema.optional(BoardStageId),
     override: Schema.optional(Schema.Boolean),
+    /** Card key or id of the destination group; null moves to the top level. */
+    parentCardId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    afterCardId: Schema.optional(TrimmedNonEmptyString),
+    beforeCardId: Schema.optional(TrimmedNonEmptyString),
+    /** True only once a human confirmed this regrouping. */
+    approved: Schema.optional(Schema.Boolean),
   }),
   success: Schema.Struct({ cardId: BoardCardId, stage: BoardStageId }),
   failure: BoardToolFailure,
@@ -403,7 +414,7 @@ export const BoardMoveCardTool = Tool.make("board_move_card", {
 
 export const BoardUpdateCardTool = Tool.make("board_update_card", {
   description:
-    "Update a card's title, brief, labels, dependencies, external reference, or linked pull request. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (the whole label set, named against the catalogue; unknown names are rejected, so create a new label with board_manage_labels first); dependsOn (the whole dependency set); externalRef (null clears); pullRequest links a pull request to the card so it tracks its status, merge and settling just as if the card's own branch had opened it — a url, or repository and number, on the card's project repository, checked with the forge first. Use it to link a pull request to ANY card, not only your own, instead of setting externalRef. Linking the pull request the card already has changes nothing; pullRequest null removes an explicit link only, and a pull request found on the card's own branch reappears on the next refresh. ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing); addLabels and removeLabels add or remove single labels by name, leaving the rest alone (adding one the card has, or removing one it does not, does nothing; a name that is no label at all is rejected; a deleted label can be removed but not added; a name in both is rejected). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, not dependsOn together with addDependsOn/removeDependsOn, and not labels together with addLabels/removeLabels. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. A dependency must sit at the card's own level: a top-level card depends on top-level cards, and a sub-board child only on its siblings. To wait on another card's child, depend on that child's parent instead, because the child merges into its parent's branch, not the base.",
+    "Update a card's title, brief, labels, dependencies, external reference, or linked pull request. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (the whole label set, named against the catalogue; unknown names are rejected, so create a new label with board_manage_labels first); dependsOn (the whole dependency set); externalRef (null clears); pullRequest links a pull request to the card so it tracks its status, merge and settling just as if the card's own branch had opened it — a url, or repository and number, on the card's project repository, checked with the forge first. Use it to link a pull request to ANY card, not only your own, instead of setting externalRef. Linking the pull request the card already has changes nothing; pullRequest null removes an explicit link only, and a pull request found on the card's own branch reappears on the next refresh. ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing); addLabels and removeLabels add or remove single labels by name, leaving the rest alone (adding one the card has, or removing one it does not, does nothing; a name that is no label at all is rejected; a deleted label can be removed but not added; a name in both is rejected). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, not dependsOn together with addDependsOn/removeDependsOn, and not labels together with addLabels/removeLabels. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. Dependencies may cross groups; a dependency on a group is met when the whole group is done. A card cannot depend on a group it is inside, and a group cannot depend on a card inside it.",
   parameters: Schema.Struct({
     /** Card key or id. */
     cardId: TrimmedNonEmptyString,
@@ -467,6 +478,77 @@ export const BoardDeleteCardTool = Tool.make("board_delete_card", {
   failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Delete board card");
+
+// ── Grouping tools (T3O-27) ────────────────────────────────────────────
+
+const BoardRegroupResult = Schema.Struct({
+  cardIds: Schema.Array(BoardCardId),
+  /** Where the cards now sit: a group's key, or null for the top level. */
+  parentKey: Schema.NullOr(TrimmedNonEmptyString),
+});
+
+const regroupApproved = Schema.optional(Schema.Boolean);
+
+export const BoardIndentCardsTool = Tool.make("board_indent_cards", {
+  description:
+    "Indent cards one level: they move inside the card just above them, which becomes a group if it is not one yet. The cards must share a parent. A card already being built cannot become a group. Grouping alone never touches git. REGROUPING NEEDS A HUMAN: moving cards between groups changes how they build and where they merge, so before calling, describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses a regroup without it.",
+  parameters: Schema.Struct({
+    /** Card keys or ids, all under the same parent. */
+    cardIds: Schema.Array(TrimmedNonEmptyString),
+    approved: regroupApproved,
+  }),
+  success: BoardRegroupResult,
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Indent board cards");
+
+export const BoardOutdentCardsTool = Tool.make("board_outdent_cards", {
+  description:
+    "Outdent cards one level: they move out of their group to sit directly after it. The cards must share a parent. A group left with no cards becomes an ordinary card again, no further on than Sprint. REGROUPING NEEDS A HUMAN: moving cards between groups changes how they build and where they merge, so before calling, describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses a regroup without it.",
+  parameters: Schema.Struct({
+    /** Card keys or ids, all under the same parent. */
+    cardIds: Schema.Array(TrimmedNonEmptyString),
+    approved: regroupApproved,
+  }),
+  success: BoardRegroupResult,
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Outdent board cards");
+
+export const BoardGroupCardsTool = Tool.make("board_group_cards", {
+  description:
+    "Put cards into a new group titled title, created beside them under their shared parent. The cards must share a parent. Returns the new group's key. REGROUPING NEEDS A HUMAN: moving cards between groups changes how they build and where they merge, so before calling, describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses a regroup without it.",
+  parameters: Schema.Struct({
+    /** Card keys or ids, all under the same parent. */
+    cardIds: Schema.Array(TrimmedNonEmptyString),
+    title: TrimmedNonEmptyString,
+    approved: regroupApproved,
+  }),
+  success: Schema.Struct({
+    groupCardId: BoardCardId,
+    groupKey: TrimmedNonEmptyString,
+    cardIds: Schema.Array(BoardCardId),
+  }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Group board cards");
+
+export const BoardSetGroupSettingsTool = Tool.make("board_set_group_settings", {
+  description:
+    "Change a group's settings. target 'own' gives the group its own integration branch, which its children merge into and which is reviewed and merged to its own target once they are all done; 'inherit' passes the children through to wherever the group itself lands. target is locked while any card inside has started building. autoBuild: ready children with their dependencies met start themselves once the group has been started; turning it off never stops a running child. autoMerge: children merging to trunk merge themselves. autoPlan: children entering planning are planned by the agent. Only the fields you pass change. These settings decide how cards build and merge, so describe the change to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
+  parameters: Schema.Struct({
+    /** Card key or id of the group. */
+    cardId: TrimmedNonEmptyString,
+    target: Schema.optional(BoardCardGroupTarget),
+    autoBuild: Schema.optional(Schema.Boolean),
+    autoMerge: Schema.optional(Schema.Boolean),
+    autoPlan: Schema.optional(Schema.Boolean),
+    approved: regroupApproved,
+  }),
+  success: Schema.Struct({ cardId: BoardCardId, key: TrimmedNonEmptyString }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Set board group settings");
 
 // ── Label tools (T3O-68) ───────────────────────────────────────────────
 
@@ -560,6 +642,10 @@ export const BoardToolkit = Toolkit.make(
   BoardArchiveCardTool,
   BoardUnarchiveCardTool,
   BoardDeleteCardTool,
+  BoardIndentCardsTool,
+  BoardOutdentCardsTool,
+  BoardGroupCardsTool,
+  BoardSetGroupSettingsTool,
   BoardManageLabelsTool,
   BoardProposePlansTool,
   BoardGetPlanTool,

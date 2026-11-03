@@ -366,7 +366,7 @@ export interface BoardCardDetailViewProps {
   readonly humanInLoop: {
     readonly value: boolean;
     readonly explicit: boolean;
-    readonly basis: "plan" | "no-plan" | "child";
+    readonly basis: "plan" | "no-plan";
   } | null;
   readonly onSetHumanInLoop: (value: boolean) => void;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -1917,17 +1917,13 @@ function ActionsSection({
 }
 
 /** The toggle's hint for a card running on the DEFAULT stance: names the
-    default and the reason it applies, so a user reading "conversation" on a
-    sub-board child knows it came from the with-plan setting, not from a plan
-    they forgot to write. */
+    default and the reason it applies. */
 function humanInLoopDefaultHint(humanInLoop: {
   readonly value: boolean;
-  readonly basis: "plan" | "no-plan" | "child";
+  readonly basis: "plan" | "no-plan";
 }): string {
   const stance = humanInLoop.value ? "conversation" : "unattended";
   switch (humanInLoop.basis) {
-    case "child":
-      return `Default: ${stance} (sub-board child; its approved plan is its brief).`;
     case "plan":
       return `Default: ${stance} (a plan exists).`;
     case "no-plan":

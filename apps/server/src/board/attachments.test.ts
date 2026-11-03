@@ -43,6 +43,7 @@ const card = (attachments: BoardCard["attachments"] = []): BoardCard => ({
   dependsOn: [],
   parentCardId: null,
   sourcePlanId: null,
+  group: null,
   threadLinks: [],
   attachments,
   externalRef: null,

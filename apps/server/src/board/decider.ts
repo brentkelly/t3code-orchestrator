@@ -43,6 +43,7 @@ import {
   boardStageBeforeBuild,
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterSubBoardFloor,
+  boardOrderKeyBetween,
   boardCardPullRequestsEqual,
   boardPullRequestPredatesCard,
   isBoardCardPullRequestTerminal,
@@ -68,7 +69,22 @@ import {
   EMPTY_BOARD_STATE,
   EventId,
   isBoardCommand,
-  isBoardDependencyInScope,
+  boardCardActiveChildren,
+  boardCardAncestors,
+  boardCardGroupOf,
+  boardCardGroupsEqual,
+  boardCardIntegrationAncestor,
+  boardCardLiveChildren,
+  boardCardLiveDescendants,
+  boardGroupRevertStage,
+  boardGroupTargetLockReason,
+  boardNextStageId,
+  defaultBoardCardGroup,
+  deriveBoardGroupStage,
+  isBoardCardSelfOrAncestor,
+  isBoardCardStarted,
+  isBoardDeferredStage,
+  type BoardCardGroup,
   isBoardStageAtOrAfterBuild,
   isBoardParkedStepStatus,
   isBoardTerminalStepStatus,
@@ -119,7 +135,7 @@ import {
   replaceBriefSection,
 } from "./briefEdits.ts";
 import { isKeptStepThread } from "./planningThreadKeep.ts";
-import type { BoardReadModel } from "./projector.ts";
+import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
 
 export type { BoardCommand };
 
@@ -267,15 +283,20 @@ function findDependencyCycle(input: {
   readonly board: BoardState;
   readonly cardId: BoardCardId;
   readonly proposed: ReadonlyArray<BoardCardId>;
+  /** The edges to test; the rest of `proposed` already existed. */
+  readonly added: ReadonlyArray<BoardCardId>;
 }): {
   readonly edgeFrom: BoardCardId;
   readonly edgeTo: BoardCardId;
   readonly path: ReadonlyArray<BoardCardId>;
 } | null {
-  const dependsOnById = new Map<BoardCardId, ReadonlyArray<BoardCardId>>(
-    input.board.cards.map((card) => [card.id, card.dependsOn]),
+  // Tree-wide (T3O-27): a group waits for its children, so an edge through
+  // a group closes a cycle the same way a direct edge would.
+  const dependsOnById: Map<BoardCardId, ReadonlyArray<BoardCardId>> = boardTreeDependencyGraph(
+    input.board.cards.map((card) =>
+      card.id === input.cardId ? { ...card, dependsOn: input.proposed } : card,
+    ),
   );
-  dependsOnById.set(input.cardId, input.proposed);
 
   // A proposed edge cardId -> dependency closes a cycle iff cardId is
   // reachable from that dependency. DFS returns the path for the message.
@@ -294,7 +315,7 @@ function findDependencyCycle(input: {
     return null;
   };
 
-  for (const dependency of input.proposed) {
+  for (const dependency of input.added) {
     const path = pathTo(dependency, input.cardId, new Set());
     if (path !== null) {
       return { edgeFrom: input.cardId, edgeTo: dependency, path: [input.cardId, ...path] };
@@ -304,31 +325,87 @@ function findDependencyCycle(input: {
 }
 
 /**
- * Why `dependency` cannot be a new dependency of a card under
- * `dependentParentCardId`, or null when the edge is in scope (T3O-10). A child
- * merges into its parent's integration branch, so a top-level card is pointed
- * at the parent, and a child is pointed back at its own siblings.
+ * Why `dependency` cannot be a new dependency of `dependent`, or null when the
+ * edge is fine (T3O-27). Dependencies may cross groups freely; the one shape
+ * refused is an edge along the card's own ancestry. A card inside a group
+ * finishes before its group does, so it can never also wait for that group,
+ * and a group already waits for everything inside it.
  */
-function dependencyScopeRefusal(input: {
+function dependencyTreeRefusal(input: {
   readonly board: BoardState;
-  readonly dependentParentCardId: BoardCardId | null;
+  readonly dependent: Pick<BoardCard, "id" | "key" | "parentCardId">;
   readonly dependency: Pick<BoardCard, "id" | "key" | "parentCardId">;
 }): string | null {
-  const { dependency, dependentParentCardId } = input;
-  if (
-    isBoardDependencyInScope({
-      dependentParentCardId,
-      dependencyParentCardId: dependency.parentCardId,
-    })
-  ) {
+  const { board, dependent, dependency } = input;
+  if (boardCardAncestors(board, dependent).some((ancestor) => ancestor.id === dependency.id)) {
+    return `Card '${dependency.key}' is a group containing '${dependent.key}'; a card inside a group finishes before its group does, so it cannot also wait for it.`;
+  }
+  if (boardCardAncestors(board, dependency).some((ancestor) => ancestor.id === dependent.id)) {
+    return `Card '${dependency.key}' is inside the group '${dependent.key}', which already waits for everything inside it.`;
+  }
+  return null;
+}
+
+/**
+ * The dependency graph across the whole tree (T3O-27): every card's own
+ * `dependsOn`, plus an implicit edge from each group to its live children,
+ * because a group is done only once they are. Cycle checks run over this.
+ */
+function boardTreeDependencyGraph(
+  cards: ReadonlyArray<BoardCard>,
+): Map<BoardCardId, ReadonlyArray<BoardCardId>> {
+  const graph = new Map<BoardCardId, Array<BoardCardId>>(
+    cards.map((card) => [card.id, [...card.dependsOn]]),
+  );
+  for (const card of cards) {
+    if (card.parentCardId === null || card.archivedAt !== null) continue;
+    graph.get(card.parentCardId)?.push(card.id);
+  }
+  return graph;
+}
+
+/** A path from `start` to `target` along `graph`, or null. */
+function treeDependencyPath(
+  graph: ReadonlyMap<BoardCardId, ReadonlyArray<BoardCardId>>,
+  start: BoardCardId,
+  target: BoardCardId,
+): ReadonlyArray<BoardCardId> | null {
+  if (start === target) return [start];
+  const seen = new Set<BoardCardId>([start]);
+  const walk = (from: BoardCardId): ReadonlyArray<BoardCardId> | null => {
+    for (const next of graph.get(from) ?? []) {
+      if (next === target) return [from, target];
+      if (seen.has(next)) continue;
+      seen.add(next);
+      const rest = walk(next);
+      if (rest !== null) return [from, ...rest];
+    }
     return null;
+  };
+  return walk(start);
+}
+
+/**
+ * A dependency cycle a regrouping creates, or null. Every new cycle runs
+ * through at least one edge the regrouping added, so only those are checked:
+ * a cycle that predates the move does not block it, and does not hide a new
+ * one through the same card.
+ */
+function findNewTreeDependencyCycle(input: {
+  readonly before: ReadonlyArray<BoardCard>;
+  readonly after: ReadonlyArray<BoardCard>;
+}): ReadonlyArray<BoardCardId> | null {
+  const beforeGraph = boardTreeDependencyGraph(input.before);
+  const afterGraph = boardTreeDependencyGraph(input.after);
+  for (const [from, targets] of afterGraph) {
+    const existing = beforeGraph.get(from) ?? [];
+    for (const to of targets) {
+      if (existing.includes(to)) continue;
+      const back = treeDependencyPath(afterGraph, to, from);
+      if (back !== null) return [from, ...back];
+    }
   }
-  const keyOf = (id: BoardCardId) => input.board.cards.find((card) => card.id === id)?.key ?? id;
-  if (dependentParentCardId !== null) {
-    return `Dependency '${dependency.key}' is not a sibling in the sub-board of '${keyOf(dependentParentCardId)}'; a sub-board child may only depend on its siblings.`;
-  }
-  const parentKey = keyOf(dependency.parentCardId!);
-  return `Dependency '${dependency.key}' is a sub-board child of '${parentKey}' and merges into that card's branch, not the base, so a top-level card would wait on '${parentKey}' anyway. Depend on '${parentKey}' instead.`;
+  return null;
 }
 
 /**
@@ -1067,17 +1144,19 @@ const resolveCardUpdateEdits = Effect.fn("resolveCardUpdateEdits")(function* (in
       if (dependency === undefined) {
         return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
       }
-      // Only NEW edges are scoped (T3O-10): an edge made before the rule must
-      // not block re-saving the set it already sits in.
+      // Only NEW edges are checked: an edge made before a rule must not
+      // block re-saving the set it already sits in.
       if (card.dependsOn.includes(dependencyId)) continue;
-      const scopeRefusal = dependencyScopeRefusal({
-        board,
-        dependentParentCardId: card.parentCardId,
-        dependency,
-      });
-      if (scopeRefusal !== null) return yield* invariant(command, scopeRefusal);
+      const treeRefusal = dependencyTreeRefusal({ board, dependent: card, dependency });
+      if (treeRefusal !== null) return yield* invariant(command, treeRefusal);
     }
-    const cycle = findDependencyCycle({ board, cardId: command.cardId, proposed: dependsOn });
+    // As above, only new edges can close a cycle the update is blamed for.
+    const cycle = findDependencyCycle({
+      board,
+      cardId: command.cardId,
+      proposed: dependsOn,
+      added: dependsOn.filter((id) => !card.dependsOn.includes(id)),
+    });
     if (cycle !== null) {
       return yield* invariant(
         command,
@@ -1112,7 +1191,250 @@ const resolveCardUpdateEdits = Effect.fn("resolveCardUpdateEdits")(function* (in
   };
 });
 
-export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
+// ── Groups (T3O-27, D12) ───────────────────────────────────────────────
+
+/** Why `parent` cannot take a child, or null when it can. A leaf already
+    being built has a branch of its own; turning it into a group would strand
+    that work, so the shared-parent and cancel-work alternatives are offered
+    instead (built by the integration card). */
+function groupParentRefusal(board: BoardState, parent: BoardCard): string | null {
+  if (isBoardCardStarted(board, parent)) {
+    return `Work has started on '${parent.key}', so it cannot become a group; put it and the new cards side by side under a new group instead.`;
+  }
+  return null;
+}
+
+/** A group's settings after a human move of the group itself. */
+function movedGroupSettings(input: {
+  readonly board: BoardState;
+  readonly group: BoardCardGroup;
+  readonly card: BoardCard;
+  readonly toStage: BoardStageId;
+}): BoardCardGroup {
+  const { board, group, card, toStage } = input;
+  if (isBoardDeferredStage(toStage)) return group;
+  const build = boardStageWithRole(board, "build");
+  const done = boardStageWithRole(board, "done");
+  if (build !== null && toStage === build.stageId) return { ...group, started: true };
+  if (done !== null && toStage === done.stageId) return { ...group, integrated: true };
+  if (!isBoardStageAtOrAfterBuild(board, toStage)) {
+    // Placing the heading. A group whose children are already underway stays
+    // started, so the split runs to completion wherever it is parked.
+    const underway = boardCardActiveChildren(board, card.id).some((child) =>
+      isBoardStageAtOrAfterBuild(board, child.stage),
+    );
+    return { ...group, placed: toStage, started: group.started && underway };
+  }
+  return group;
+}
+
+/** The events that turn a leaf into a group as it takes its first child. Any
+    live planning step on it is abandoned by the reactor; its plans stay as a
+    record. */
+const groupConversionEvents = Effect.fn("groupConversionEvents")(function* (input: {
+  readonly board: BoardState;
+  readonly command: BoardCardCommand;
+  readonly card: BoardCard;
+}): Effect.fn.Return<ReadonlyArray<PlannedBoardEvent>, PlatformError.PlatformError, Crypto.Crypto> {
+  const { board, command, card } = input;
+  const nextCard: BoardCard = {
+    ...card,
+    group: defaultBoardCardGroup(board, card),
+    autoStart: false,
+    updatedAt: command.createdAt,
+  };
+  return [
+    {
+      ...(yield* makeBoardEventBase({
+        cardId: card.id,
+        occurredAt: command.createdAt,
+        commandId: command.commandId,
+      })),
+      type: "board.card-updated",
+      payload: { cardId: card.id, card: nextCard, becameGroup: true },
+    },
+  ];
+});
+
+/** The order key a card takes when it lands under a new parent: next to the
+    named sibling when it shares the card's column, else the column's arrival
+    position. */
+function regroupOrderKey(input: {
+  readonly cards: ReadonlyArray<BoardCard>;
+  readonly card: BoardCard;
+  readonly stage: BoardStageId;
+  readonly parentCardId: BoardCardId | null;
+  readonly anchor: { readonly card: BoardCard; readonly side: "after" | "before" } | null;
+  readonly doneStageId: BoardStageId | null;
+}): string {
+  const column = boardColumnOrderKeys({
+    cards: input.cards.filter((candidate) => candidate.id !== input.card.id),
+    stage: input.stage,
+    parentCardId: input.parentCardId,
+  }).toSorted();
+  const anchor = input.anchor;
+  if (anchor !== null && anchor.card.stage === input.stage) {
+    const key = anchor.card.orderKey;
+    const between =
+      anchor.side === "after"
+        ? boardOrderKeyBetween(key, column.find((candidate) => candidate > key) ?? null)
+        : boardOrderKeyBetween(column.filter((candidate) => candidate < key).at(-1) ?? "", key);
+    if (between !== null) return between;
+  }
+  return boardArrivalOrderKey({
+    cards: input.cards.filter((candidate) => candidate.id !== input.card.id),
+    stage: input.stage,
+    parentCardId: input.parentCardId,
+    doneStageId: input.doneStageId,
+  });
+}
+
+/** Commands that can change a child's stage, parent, archive state or
+    deferral — after each, every affected ancestor group is re-derived in the
+    same decision. */
+const GROUP_DERIVING_COMMANDS: ReadonlySet<BoardCommand["type"]> = new Set([
+  "board.card.create",
+  "board.card.move",
+  "board.card.move-cards",
+  "board.card.archive",
+  "board.card.unarchive",
+  "board.card.delete",
+  "board.plans.approve",
+  "board.card.set-group-settings",
+  "board.card.sync-groups",
+]);
+
+/**
+ * Re-derive the groups a decision touched (T3O-27): the ancestors of every
+ * card it changed, and the card's old ancestry when it left a group. Deepest
+ * first, so a parent sees its child group's new stage. A group whose last
+ * live child left reverts to an ordinary card, unless it is a heading.
+ *
+ * The card a human just moved by hand is left as they put it.
+ */
+const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
+  readonly before: BoardState;
+  readonly command: BoardCardCommand;
+  readonly planned: ReadonlyArray<PlannedBoardEvent>;
+}): Effect.fn.Return<
+  ReadonlyArray<PlannedBoardEvent>,
+  BoardCommandInvariantError | PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  const { before, command, planned } = input;
+  let model: BoardReadModel = { board: before };
+  for (const event of planned) {
+    model = yield* projectBoardEvent(model, { ...event, sequence: 0 } as BoardEvent).pipe(
+      Effect.mapError((cause) =>
+        invariant(command, `Failed to derive group stages: ${String(cause)}`),
+      ),
+    );
+  }
+  const derivedFrom = model.board ?? before;
+  let board: BoardState = derivedFrom;
+  const touched = new Set<BoardCardId>();
+  for (const event of planned) {
+    if (event.aggregateKind === "card") touched.add(event.aggregateId as BoardCardId);
+  }
+  if (command.type === "board.card.sync-groups") touched.add(command.cardId);
+  const candidates = new Map<BoardCardId, number>();
+  const addChain = (state: BoardState, id: BoardCardId) => {
+    const card = state.cards.find((candidate) => candidate.id === id);
+    if (card === undefined) return;
+    const chain = boardCardAncestors(state, card);
+    chain.forEach((ancestor, index) => {
+      const depth = chain.length - index;
+      candidates.set(ancestor.id, Math.max(candidates.get(ancestor.id) ?? 0, depth));
+    });
+  };
+  for (const id of touched) {
+    addChain(board, id);
+    addChain(before, id);
+  }
+  if (
+    command.type === "board.card.sync-groups" ||
+    command.type === "board.card.set-group-settings"
+  ) {
+    candidates.set(command.cardId, Math.max(candidates.get(command.cardId) ?? 0, 1_000_000));
+  }
+  if (command.type === "board.card.move") candidates.delete(command.cardId);
+
+  const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
+  const build = boardStageWithRole(board, "build");
+  const lane = build === null ? null : boardNextStageId(board, build.stageId);
+  const events: Array<PlannedBoardEvent> = [];
+  const ordered = [...candidates.entries()].toSorted((left, right) => right[1] - left[1]);
+  for (const [cardId] of ordered) {
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined || card.archivedAt !== null) continue;
+    const group = boardCardGroupOf(board, card);
+    if (group === null) continue;
+    let next: BoardCard;
+    if (boardCardLiveChildren(board, card.id).length === 0) {
+      if (group.heading || card.group === null) continue;
+      next = { ...card, group: null, stage: boardGroupRevertStage(board, card) };
+    } else {
+      const derived = deriveBoardGroupStage(board, card);
+      const laneIndex = lane === null ? -1 : boardStageIndex(board, lane);
+      const reopened =
+        group.integrated &&
+        derived !== doneStageId &&
+        (laneIndex < 0 || boardStageIndex(board, derived) < laneIndex);
+      next = {
+        ...card,
+        stage: derived,
+        group: reopened ? { ...group, integrated: false } : group,
+      };
+    }
+    const stageChanged = next.stage !== card.stage;
+    const groupChanged = !boardCardGroupsEqual(next.group, card.group);
+    // A legacy group is only written out alongside a real change.
+    if (!stageChanged && (!groupChanged || card.group === null)) continue;
+    next = {
+      ...next,
+      orderKey:
+        stageChanged && next.stage === doneStageId
+          ? boardArrivalOrderKey({
+              cards: board.cards,
+              stage: next.stage,
+              parentCardId: card.parentCardId,
+              doneStageId,
+            })
+          : card.orderKey,
+      blocked: deriveBoardCardBlocked({
+        board,
+        stage: next.stage,
+        dependsOn: card.dependsOn,
+        cards: board.cards,
+      }),
+      updatedAt: command.createdAt,
+    };
+    const base = yield* makeBoardEventBase({
+      cardId: card.id,
+      occurredAt: command.createdAt,
+      commandId: command.commandId,
+    });
+    events.push(
+      stageChanged
+        ? {
+            ...base,
+            type: "board.card-moved",
+            payload: { cardId: card.id, fromStage: card.stage, toStage: next.stage, card: next },
+          }
+        : { ...base, type: "board.card-updated", payload: { cardId: card.id, card: next } },
+    );
+    const crossesDone =
+      doneStageId !== null && (card.stage === doneStageId) !== (next.stage === doneStageId);
+    const cards = board.cards.map((c) => (c.id === card.id ? next : c));
+    board = { ...derivedFrom, cards };
+    if (crossesDone) {
+      events.push(...(yield* boardDependentBlockedEvents({ board, command, changed: next })));
+    }
+  }
+  return events;
+});
+
+const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
   command,
   readModel,
   context,
@@ -1144,7 +1466,16 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // is gone; Mode governs worktree/slot on entry, so creation and dragging
       // follow an identical path. The target stage must exist.
       const stage = command.stage ?? boardStagesInOrder(board)[0]!.stageId;
-      if (boardStageById(board, stage) === null) {
+      // Deferred (T3O-27) is a system stage outside the stage list, open only
+      // inside a group.
+      if (isBoardDeferredStage(stage)) {
+        if (command.parentCardId === undefined) {
+          return yield* invariant(
+            command,
+            `Only a card inside a group can be created in Deferred; a top-level card starts in Backlog.`,
+          );
+        }
+      } else if (boardStageById(board, stage) === null) {
         return yield* invariant(command, `Stage '${stage}' does not exist.`);
       }
 
@@ -1155,34 +1486,33 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         existing: [],
       });
 
-      // Child create (t3o-25): the drill-in's create dialog presets a parent.
-      // The card must land where a materialised child could live — a live
-      // top-level parent in the same project, a floor-onward stage — so a
-      // hand-created child is indistinguishable from an approved plan's.
+      // Child create (t3o-25, T3O-27): any live card may take a child, at any
+      // depth and across projects, unless it is a leaf already being built.
+      // A leaf taking its first child becomes a group in the same decision.
+      const parent =
+        command.parentCardId === undefined
+          ? undefined
+          : board.cards.find((existing) => existing.id === command.parentCardId);
       if (command.parentCardId !== undefined) {
-        const parent = board.cards.find((existing) => existing.id === command.parentCardId);
         if (parent === undefined || parent.archivedAt !== null) {
           return yield* invariant(
             command,
             `Parent card '${command.parentCardId}' does not exist or is archived.`,
           );
         }
-        if (parent.parentCardId !== null) {
+        const refusal = groupParentRefusal(board, parent);
+        if (refusal !== null) return yield* invariant(command, refusal);
+        // A fully planned split's children are materialised work (t3o-23,
+        // D3): they live from the materialisation floor onward. An `inherit`
+        // group holds unplanned work anywhere in the pipeline.
+        if (
+          !isBoardDeferredStage(stage) &&
+          boardCardGroupOf(board, parent)?.target === "own" &&
+          !isBoardStageAtOrAfterSubBoardFloor(board, stage)
+        ) {
           return yield* invariant(
             command,
-            `Card '${parent.id}' is itself a sub-board child; sub-boards do not nest.`,
-          );
-        }
-        if (parent.projectId !== command.projectId) {
-          return yield* invariant(
-            command,
-            `Parent card '${parent.id}' belongs to a different project.`,
-          );
-        }
-        if (!isBoardStageAtOrAfterSubBoardFloor(board, stage)) {
-          return yield* invariant(
-            command,
-            `A sub-board child cannot be created in '${stage}'; children live from the materialisation floor onward.`,
+            `A card inside '${parent.key}' cannot be created in '${stage}'; that group's children live from the materialisation floor onward.`,
           );
         }
       }
@@ -1197,15 +1527,18 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         if (dependency === undefined) {
           return yield* invariant(command, `Dependency '${dependencyId}' does not exist.`);
         }
-        // Dependencies stay within the card's own level (t3o-25, T3O-10): a
-        // child depends only on its siblings, a top-level card only on other
-        // top-level cards.
-        const scopeRefusal = dependencyScopeRefusal({
+        // Dependencies may cross groups, but never run along the card's own
+        // ancestry (T3O-27).
+        const treeRefusal = dependencyTreeRefusal({
           board,
-          dependentParentCardId: command.parentCardId ?? null,
+          dependent: {
+            id: command.cardId,
+            key: "the new card",
+            parentCardId: command.parentCardId ?? null,
+          },
           dependency,
         });
-        if (scopeRefusal !== null) return yield* invariant(command, scopeRefusal);
+        if (treeRefusal !== null) return yield* invariant(command, treeRefusal);
       }
 
       // Dependency blocking is unconditional from the `build` role onward (D11):
@@ -1270,7 +1603,18 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           parentCardId: command.parentCardId ?? null,
           doneStageId: boardStageWithRole(board, "done")?.stageId ?? null,
         });
-      return {
+      // A heading (T3O-27) is born a group and stays one while empty.
+      const heading =
+        command.heading === true
+          ? defaultBoardCardGroup(board, { stage }, { heading: true })
+          : null;
+      // The parent becoming a group is part of this decision: its first child
+      // turns it from a leaf into a group (T3O-27).
+      const becomesGroup =
+        parent !== undefined && boardCardGroupOf(board, parent) === null
+          ? yield* groupConversionEvents({ board, command, card: parent })
+          : [];
+      const created: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -1302,6 +1646,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             : { scheduledStartAt: command.scheduledStartAt }),
           // Key-optional like `baseBranch`: absent IS "follow the default".
           ...(pinnedWorkerId === null ? {} : { pinnedWorkerId }),
+          ...(heading === null ? {} : { group: heading }),
           dependsOn,
           stage,
           orderKey,
@@ -1309,6 +1654,7 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           updatedAt: command.createdAt,
         },
       };
+      return becomesGroup.length === 0 ? created : [created, ...becomesGroup];
     }
 
     // T3O-33: move a card to another project before it has ever been built.
@@ -1396,10 +1742,49 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
           `Card '${command.cardId}' is already in stage '${command.toStage}'.`,
         );
       }
-      if (boardStageById(board, command.toStage) === null) {
+      const toDeferred = isBoardDeferredStage(command.toStage);
+      const fromDeferred = isBoardDeferredStage(card.stage);
+      if (!toDeferred && boardStageById(board, command.toStage) === null) {
         return yield* invariant(command, `Stage '${command.toStage}' does not exist.`);
       }
+      // Deferred (T3O-27): a parking lot inside a group, just before the
+      // first stage. Cards enter it from anywhere unstarted, and leave it for
+      // any stage before build; further needs override, like any other skip.
+      if (toDeferred) {
+        if (card.parentCardId === null) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' is not inside a group; only a group's cards can be deferred.`,
+          );
+        }
+        if (isBoardCardStarted(board, card)) {
+          return yield* invariant(
+            command,
+            `Work has started on '${card.key}'; let it finish, or archive it, rather than deferring it.`,
+          );
+        }
+        const startedInside = boardCardLiveDescendants(board, card.id).find((descendant) =>
+          isBoardCardStarted(board, descendant),
+        );
+        if (startedInside !== undefined) {
+          return yield* invariant(
+            command,
+            `Work has started on '${startedInside.key}' inside '${card.key}'; let it finish, or archive it, rather than deferring the group.`,
+          );
+        }
+      }
+      // A group's own moves (T3O-27): its stage is derived from its children,
+      // so a human move only places it before build, or starts it.
+      const group = boardCardGroupOf(board, card);
+      const buildStageForDeferred = boardStageWithRole(board, "build");
+      const leavesDeferredBeforeBuild =
+        fromDeferred &&
+        (buildStageForDeferred === null ||
+          boardStageIndex(board, command.toStage) <
+            boardStageIndex(board, buildStageForDeferred.stageId));
       if (
+        !toDeferred &&
+        !leavesDeferredBeforeBuild &&
         command.override !== true &&
         !areBoardStagesAdjacent(board, card.stage, command.toStage)
       ) {
@@ -1412,8 +1797,16 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // to the materialisation floor and beyond — draggable back out of
       // Building to the floor (reverse states), but no override reopens the
       // ideation stages.
+      const parentGroup =
+        card.parentCardId === null
+          ? null
+          : (() => {
+              const parent = board.cards.find((candidate) => candidate.id === card.parentCardId);
+              return parent === undefined ? null : boardCardGroupOf(board, parent);
+            })();
       if (
-        card.parentCardId !== null &&
+        parentGroup?.target === "own" &&
+        !toDeferred &&
         !isBoardStageAtOrAfterSubBoardFloor(board, command.toStage)
       ) {
         return yield* invariant(
@@ -1605,6 +1998,10 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
         // `board.card.reorder`, a different command, and it moves the card
         // nowhere.
         autoStart: false,
+        group:
+          group === null
+            ? null
+            : movedGroupSettings({ board, group, card, toStage: command.toStage }),
         blocked: deriveBoardCardBlocked({
           board,
           stage: command.toStage,
@@ -1650,6 +2047,259 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       return crossesDone
         ? [moved, ...(yield* boardDependentBlockedEvents({ board, command, changed: nextCard }))]
         : moved;
+    }
+
+    // T3O-27: the one regrouping primitive. Grouping alone never touches git;
+    // the reactor sees ordinary card updates.
+    case "board.card.move-cards": {
+      if (command.cardIds.length === 0 || command.cardIds[0] !== command.cardId) {
+        return yield* invariant(
+          command,
+          "move-cards needs at least one card, and `cardId` must be the first of `cardIds`.",
+        );
+      }
+      const movers: Array<BoardCard> = [];
+      for (const id of new Set(command.cardIds)) {
+        const mover = board.cards.find((candidate) => candidate.id === id);
+        if (mover === undefined || mover.archivedAt !== null) {
+          return yield* invariant(command, `Card '${id}' does not exist or is archived.`);
+        }
+        movers.push(mover);
+      }
+      const parent =
+        command.parentCardId === null
+          ? null
+          : (board.cards.find((candidate) => candidate.id === command.parentCardId) ?? null);
+      if (command.parentCardId !== null && (parent === null || parent.archivedAt !== null)) {
+        return yield* invariant(
+          command,
+          `Parent card '${command.parentCardId}' does not exist or is archived.`,
+        );
+      }
+      if (parent !== null) {
+        const inside = movers.find((mover) => isBoardCardSelfOrAncestor(board, parent, mover.id));
+        if (inside !== undefined) {
+          return yield* invariant(command, `Card '${inside.key}' can't move inside itself.`);
+        }
+        const refusal = groupParentRefusal(board, parent);
+        if (refusal !== null) return yield* invariant(command, refusal);
+      }
+      // Ancestors first: a card whose ancestor also moves travels with it.
+      const moverIds = new Set(movers.map((mover) => mover.id));
+      const roots = movers.filter(
+        (mover) => !boardCardAncestors(board, mover).some((ancestor) => moverIds.has(ancestor.id)),
+      );
+      const anchorId = command.afterCardId ?? command.beforeCardId;
+      const anchorCard =
+        anchorId === undefined
+          ? undefined
+          : board.cards.find((candidate) => candidate.id === anchorId);
+      if (anchorId !== undefined) {
+        if (
+          anchorCard === undefined ||
+          anchorCard.archivedAt !== null ||
+          anchorCard.parentCardId !== command.parentCardId ||
+          moverIds.has(anchorCard.id)
+        ) {
+          return yield* invariant(
+            command,
+            `Card '${anchorId}' is not a card under the destination to place next to.`,
+          );
+        }
+      }
+
+      const firstStage = boardStagesInOrder(board)[0]!.stageId;
+      const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
+      const nextParentGroup =
+        parent === null
+          ? null
+          : (boardCardGroupOf(board, parent) ?? defaultBoardCardGroup(board, parent));
+      let working: Array<BoardCard> = [...board.cards];
+      const conversions =
+        parent !== null && boardCardGroupOf(board, parent) === null
+          ? yield* groupConversionEvents({ board, command, card: parent })
+          : [];
+      if (parent !== null && nextParentGroup !== null) {
+        working = working.map((candidate) =>
+          candidate.id === parent.id ? { ...candidate, group: nextParentGroup } : candidate,
+        );
+      }
+      const moved: Array<BoardCard> = [];
+      let anchor: { readonly card: BoardCard; readonly side: "after" | "before" } | null =
+        anchorCard === undefined
+          ? null
+          : { card: anchorCard, side: command.afterCardId !== undefined ? "after" : "before" };
+      for (const mover of command.beforeCardId !== undefined ? [...roots].reverse() : roots) {
+        // A deferred card leaving every group lands in Backlog.
+        const stage =
+          parent === null && isBoardDeferredStage(mover.stage) ? firstStage : mover.stage;
+        if (
+          parent !== null &&
+          nextParentGroup?.target === "own" &&
+          !isBoardDeferredStage(stage) &&
+          !isBoardStageAtOrAfterSubBoardFloor(board, stage)
+        ) {
+          return yield* invariant(
+            command,
+            `Card '${mover.key}' cannot move inside '${parent.key}' from '${stage}'; that group's children live from the materialisation floor onward.`,
+          );
+        }
+        const next: BoardCard = {
+          ...mover,
+          parentCardId: command.parentCardId,
+          stage,
+          orderKey: regroupOrderKey({
+            cards: working,
+            card: mover,
+            stage,
+            parentCardId: command.parentCardId,
+            anchor,
+            doneStageId,
+          }),
+          blocked: deriveBoardCardBlocked({
+            board,
+            stage,
+            dependsOn: mover.dependsOn,
+            cards: board.cards,
+          }),
+          updatedAt: command.createdAt,
+        };
+        working = working.map((candidate) => (candidate.id === mover.id ? next : candidate));
+        moved.push(next);
+        if (anchor !== null && anchor.card.stage === stage)
+          anchor = { side: anchor.side, card: next };
+      }
+      const after: BoardState = { ...board, cards: working };
+
+      // A started card's branch was cut from where it lands today; moving it
+      // under a different integration branch would retarget work in flight.
+      for (const mover of roots) {
+        const affected = [mover, ...boardCardLiveDescendants(board, mover.id)];
+        for (const card of affected) {
+          if (!isBoardCardStarted(board, card)) continue;
+          const landsBefore = boardCardIntegrationAncestor(board, card)?.id ?? null;
+          const movedCard = after.cards.find((candidate) => candidate.id === card.id)!;
+          const landsAfter = boardCardIntegrationAncestor(after, movedCard)?.id ?? null;
+          if (landsBefore !== landsAfter) {
+            const where = (id: BoardCardId | null) =>
+              id === null
+                ? "trunk"
+                : `the integration branch of '${board.cards.find((c) => c.id === id)?.key ?? id}'`;
+            return yield* invariant(
+              command,
+              `Can't move '${card.key}': it's built on ${where(landsBefore)}, and it would land on ${where(landsAfter)}. Rebase onto ${where(landsAfter)} first.`,
+            );
+          }
+        }
+      }
+      // Dependencies may cross groups, but never along a card's own ancestry,
+      // and never into a cycle through a group (T3O-27).
+      const affectedIds = new Set<BoardCardId>(
+        roots.flatMap((root) => [
+          root.id,
+          ...boardCardLiveDescendants(board, root.id).map((d) => d.id),
+        ]),
+      );
+      for (const card of after.cards) {
+        if (card.archivedAt !== null) continue;
+        const involved =
+          affectedIds.has(card.id) || card.dependsOn.some((id) => affectedIds.has(id));
+        if (!involved) continue;
+        for (const dependencyId of card.dependsOn) {
+          const dependency = after.cards.find((candidate) => candidate.id === dependencyId);
+          if (dependency === undefined) continue;
+          const refusal = dependencyTreeRefusal({ board: after, dependent: card, dependency });
+          if (refusal !== null) return yield* invariant(command, refusal);
+        }
+      }
+      const cycle = findNewTreeDependencyCycle({
+        before: board.cards,
+        after: after.cards,
+      });
+      if (cycle !== null) {
+        const keyOf = (id: BoardCardId) => after.cards.find((c) => c.id === id)?.key ?? id;
+        return yield* invariant(
+          command,
+          `That regrouping would create a dependency cycle: ${cycle.map(keyOf).join(" -> ")}.`,
+        );
+      }
+
+      const events: Array<PlannedBoardEvent> = [...conversions];
+      for (const next of moved) {
+        events.push({
+          ...(yield* makeBoardEventBase({
+            cardId: next.id,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "board.card-updated",
+          payload: {
+            cardId: next.id,
+            card: next,
+            // A same-parent reorder is not a regrouping; the group cascade
+            // must not restart a sibling the human parked.
+            ...(next.parentCardId ===
+            board.cards.find((candidate) => candidate.id === next.id)?.parentCardId
+              ? {}
+              : { regrouped: true }),
+          },
+        });
+      }
+      return events;
+    }
+
+    case "board.card.set-group-settings": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      const group = boardCardGroupOf(board, card);
+      if (group === null) {
+        return yield* invariant(command, `Card '${card.key}' is not a group.`);
+      }
+      if (command.target !== undefined && command.target !== group.target) {
+        const locked = boardGroupTargetLockReason(board, card);
+        if (locked !== null) return yield* invariant(command, locked);
+      }
+      if (command.target === "own" && group.target !== "own") {
+        const belowFloor = board.cards.find(
+          (child) =>
+            child.parentCardId === card.id &&
+            child.archivedAt === null &&
+            !isBoardDeferredStage(child.stage) &&
+            !isBoardStageAtOrAfterSubBoardFloor(board, child.stage),
+        );
+        if (belowFloor !== undefined) {
+          return yield* invariant(
+            command,
+            `Can't give '${card.key}' its own branch while '${belowFloor.key}' is in '${belowFloor.stage}'; that group's children live from the materialisation floor onward. Move it on or out first.`,
+          );
+        }
+      }
+      const nextGroup: BoardCardGroup = {
+        ...group,
+        ...(command.target === undefined ? {} : { target: command.target }),
+        ...(command.autoBuild === undefined ? {} : { autoBuild: command.autoBuild }),
+        ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
+        ...(command.autoPlan === undefined ? {} : { autoPlan: command.autoPlan }),
+      };
+      if (boardCardGroupsEqual(nextGroup, card.group)) {
+        return yield* invariant(command, `Group settings for '${card.key}' are unchanged.`);
+      }
+      const nextCard: BoardCard = { ...card, group: nextGroup, updatedAt: command.createdAt };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: card.id,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-updated",
+        payload: { cardId: card.id, card: nextCard },
+      };
+    }
+
+    // The derivation itself runs in `decideBoardCommand` after this arm; the
+    // command only names where to start.
+    case "board.card.sync-groups": {
+      yield* requireBoardCard({ board, command });
+      return [];
     }
 
     case "board.card.reorder": {
@@ -1772,12 +2422,15 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             ? // Disarming is always accepted. A reverse state that can be
               // refused is not a reverse state.
               false
-            : boardCardCanArmAutoStart({ board, card: { ...card, dependsOn } })
+            : boardCardCanArmAutoStart({
+                  board,
+                  card: { ...card, dependsOn, group: boardCardGroupOf(board, card) },
+                })
               ? true
               : yield* invariant(
                   command,
-                  card.parentCardId !== null
-                    ? `Card '${card.key}' is a sub-board child; its siblings already start it when its dependencies finish, so it cannot arm an auto-start of its own.`
+                  boardCardGroupOf(board, card) !== null
+                    ? `Card '${card.key}' is a group; its children start themselves, so it cannot arm an auto-start of its own.`
                     : boardStageBeforeBuild(board)?.stageId !== card.stage
                       ? `Card '${card.key}' is not waiting in '${boardStageBeforeBuild(board)?.label ?? "the stage before the build stage"}', so there is nothing for an auto-start to do.`
                       : `Card '${card.key}' has no unmet dependencies to wait for, so it cannot be armed to start when they finish.`,
@@ -1795,12 +2448,15 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
             ? // Disarming is always accepted. A reverse state that can be
               // refused is not a reverse state.
               false
-            : boardCardCanArmAutoMerge({ board, card })
+            : boardCardCanArmAutoMerge({
+                  board,
+                  card: { ...card, group: boardCardGroupOf(board, card) },
+                })
               ? true
               : yield* invariant(
                   command,
-                  card.parentCardId !== null
-                    ? `Card '${card.key}' is a sub-board child; it already merges itself down on arrival, so it cannot arm an auto-merge of its own.`
+                  boardCardGroupOf(board, card) !== null
+                    ? `Card '${card.key}' is a group; its children merge, so it cannot arm an auto-merge of its own.`
                     : `Card '${card.key}' has already reached '${boardStageWithRole(board, "done")?.label ?? "Done"}', so there is nothing left for an auto-merge to do.`,
                 );
 
@@ -2857,12 +3513,8 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // left it and walks forward on the ordinary button, and its arrival in
       // the build-role stage is what starts the sub-board (D3).
       const card = yield* requireActiveBoardCard({ board, command });
-      if (card.parentCardId !== null) {
-        return yield* invariant(
-          command,
-          `Card '${card.key}' is itself a sub-board plan card; splits do not nest (D12).`,
-        );
-      }
+      // Splits nest (T3O-27): a card inside a group may split into a group of
+      // its own.
       // A parent with a BUILD run in flight cannot be split under it: the
       // live agent would keep writing the very branch the children are about
       // to fork from, and its completion would race the materialisation.
@@ -3019,8 +3671,16 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       // The parent is untouched but for its timestamp (t3o-28, D1): no stage
       // move, and `blocked` is left exactly as it stands — approval crosses no
       // build boundary, so it has no dependency verdict to record.
+      // Approval makes the card a group (T3O-27) with today's fully planned
+      // semantics: its own integration branch, auto-build on. Until the split
+      // gate offers the choice, every split is this shape.
       const parentAfterApproval: BoardCard = {
         ...card,
+        group: defaultBoardCardGroup(board, card, {
+          target: "own",
+          autoBuild: true,
+          started: card.stage === buildStage.stageId,
+        }),
         updatedAt: command.createdAt,
       };
       events.push({
@@ -4725,4 +5385,31 @@ export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* ({
       });
     }
   }
+});
+
+/**
+ * Decide a board command (D8): the command's own events, then — for the
+ * commands that can change a child — the derived stages of every affected
+ * group, in the same transaction (T3O-27).
+ */
+export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* (input: {
+  readonly command: BoardCommand;
+  readonly readModel: BoardReadModel;
+  readonly context?: BoardDecisionContext;
+}): Effect.fn.Return<
+  BoardDecision,
+  BoardCommandInvariantError | PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  const decided = yield* decideBoardCommandCore(input);
+  const command = input.command;
+  if (!GROUP_DERIVING_COMMANDS.has(command.type)) return decided;
+  const planned = boardDecidedEvents(decided);
+  const derived = yield* deriveGroupEvents({
+    before: input.readModel.board ?? EMPTY_BOARD_STATE,
+    command: command as BoardCardCommand,
+    planned,
+  });
+  if (derived.length === 0) return decided;
+  return [...planned, ...derived];
 });

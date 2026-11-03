@@ -33,6 +33,8 @@ import {
   type BoardCardCompleteStepCommand,
   type BoardCardDeleteCommand,
   type BoardCardMoveCommand,
+  type BoardCardMoveCardsCommand,
+  type BoardCardSetGroupSettingsCommand,
   type BoardCardUnarchiveCommand,
   type BoardCardUpdateCommand,
   type BoardCard,
@@ -49,6 +51,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   type BoardState,
   unmetBoardCardDependencies,
+  boardCardGroupOf,
   type BoardCommand,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -78,6 +81,11 @@ import { boardAgentActor, stampBoardActivityActor } from "../../../board/activit
 import { boardBriefVersion } from "../../../board/briefEdits.ts";
 import { isKeptStepThread, keptPlanningStepId } from "../../../board/planningThreadKeep.ts";
 import { SupervisorReactor } from "../../../board/supervisorReactor.ts";
+import {
+  boardGroupIntoNewPlan,
+  boardIndentPlan,
+  boardOutdentPlan,
+} from "../../../board/groupOperations.ts";
 import { BoardRelayInvocation, relayable } from "./relay.ts";
 import { BoardToolError, BoardToolkit } from "./tools.ts";
 
@@ -737,6 +745,59 @@ const dispatch = (
   return deps.boardEngine.dispatch(command).pipe(Effect.mapError(dispatchError));
 };
 
+/**
+ * Regrouping is direct but needs a human's say-so (T3O-27): the agent must
+ * describe the change, get explicit confirmation, and pass `approved: true`.
+ */
+const requireRegroupApproval = (
+  approved: boolean | undefined,
+): Effect.Effect<void, BoardToolError> =>
+  approved === true
+    ? Effect.void
+    : Effect.fail(
+        new BoardToolError({
+          code: "invalid-input",
+          message:
+            "Regrouping changes how cards build and where they merge, so it needs a human. Describe the regrouping to the user, ask them to confirm it, and once they have, call again with approved: true.",
+        }),
+      );
+
+const resolveCardRefs = (board: BoardState, refs: ReadonlyArray<string>) =>
+  Effect.forEach(refs, (ref) => findCardByKeyOrId(board, ref));
+
+const regroupRefused = (reason: string) =>
+  new BoardToolError({ code: "invalid-input", message: reason });
+
+/** Dispatch one move-cards command and answer with where the cards landed. */
+const dispatchMoveCards = (
+  deps: BoardToolDeps,
+  input: {
+    readonly cardIds: ReadonlyArray<BoardCardId>;
+    readonly parentCardId: BoardCardId | null;
+    readonly afterCardId?: BoardCardId | undefined;
+    readonly beforeCardId?: BoardCardId | undefined;
+  },
+) =>
+  Effect.gen(function* () {
+    const command: BoardCardMoveCardsCommand = {
+      type: "board.card.move-cards",
+      commandId: yield* mintCommandId,
+      cardId: input.cardIds[0]!,
+      cardIds: input.cardIds,
+      parentCardId: input.parentCardId,
+      ...(input.afterCardId === undefined ? {} : { afterCardId: input.afterCardId }),
+      ...(input.beforeCardId === undefined ? {} : { beforeCardId: input.beforeCardId }),
+      createdAt: yield* nowIso,
+    };
+    yield* dispatch(deps, command);
+    const after = yield* readBoardState(deps);
+    const parentKey =
+      input.parentCardId === null
+        ? null
+        : (after.cards.find((card) => card.id === input.parentCardId)?.key ?? input.parentCardId);
+    return { cardIds: input.cardIds, parentKey };
+  });
+
 export const boardHandlers = {
   board_get_card_context: () =>
     Effect.gen(function* () {
@@ -1085,6 +1146,15 @@ export const boardHandlers = {
         input.pullRequest === undefined
           ? null
           : yield* resolveLinkablePullRequest(projectId, input.pullRequest);
+      const parent =
+        input.parentCardId === undefined
+          ? undefined
+          : yield* findCardByKeyOrId(board, input.parentCardId);
+      // Creating under a leaf converts it to a group: the same regrouping
+      // board_indent_cards gates behind a human.
+      if (parent !== undefined && boardCardGroupOf(board, parent) === null) {
+        yield* requireRegroupApproval(input.approved);
+      }
       const cardId = BoardCardId.make(yield* mintUuid);
       // ONE atomic command: the create command carries `brief` and `dependsOn`
       // natively (t3o-06), so the card lands whole — no follow-up update whose
@@ -1100,6 +1170,7 @@ export const boardHandlers = {
         ...(dependsOn.length > 0 ? { dependsOn } : {}),
         labels,
         stage,
+        ...(parent === undefined ? {} : { parentCardId: parent.id }),
         // No `orderKey`: the decider places the card at the bottom of the
         // stage's column (T3O-27), which is the only place that can see the
         // whole board — this tool's read model is filtered to one project.
@@ -1131,9 +1202,44 @@ export const boardHandlers = {
   board_move_card: (input) =>
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
-      const board = yield* readBoardState(deps);
-      const card = board.cards.find((candidate) => candidate.id === input.cardId);
+      let board = yield* readBoardState(deps);
+      let card = board.cards.find((candidate) => candidate.id === input.cardId);
       if (card !== undefined) yield* refuseOtherWorkersCard(board, deps.scope, card);
+      if (input.toStage === undefined && input.parentCardId === undefined) {
+        return yield* new BoardToolError({
+          code: "invalid-input",
+          message: "Pass toStage, parentCardId, or both.",
+        });
+      }
+      // Regrouping first (T3O-27), so a stage move lands in the new group.
+      if (input.parentCardId !== undefined) {
+        yield* requireRegroupApproval(input.approved);
+        const target = yield* requireTargetCard(board, input.cardId);
+        const parent =
+          input.parentCardId === null ? null : yield* findCardByKeyOrId(board, input.parentCardId);
+        const after =
+          input.afterCardId === undefined
+            ? undefined
+            : yield* findCardByKeyOrId(board, input.afterCardId);
+        const before =
+          input.beforeCardId === undefined
+            ? undefined
+            : yield* findCardByKeyOrId(board, input.beforeCardId);
+        yield* dispatchMoveCards(deps, {
+          cardIds: [target.id],
+          parentCardId: parent?.id ?? null,
+          afterCardId: after?.id,
+          beforeCardId: before?.id,
+        });
+        if (input.toStage === undefined) {
+          const moved = (yield* readBoardState(deps)).cards.find((c) => c.id === target.id);
+          return { cardId: target.id, stage: moved?.stage ?? target.stage };
+        }
+        board = yield* readBoardState(deps);
+        // The order key below must come from the new group's column.
+        card = board.cards.find((candidate) => candidate.id === target.id);
+      }
+      const toStage = input.toStage!;
       // A bottom key in the target column, so a cross-stage move lands last.
       // When the card does not exist the move carries no order key and the
       // decider rejects it with an actionable "does not exist" message —
@@ -1142,7 +1248,7 @@ export const boardHandlers = {
       // the column, which the decider places (T3O-15).
       const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
       const orderKey =
-        card === undefined || input.toStage === doneStageId
+        card === undefined || toStage === doneStageId
           ? undefined
           : boardAppendOrderKey(
               // The column the card is moving into, in the same scope every
@@ -1153,7 +1259,7 @@ export const boardHandlers = {
               // lands on the board a human is looking at.
               boardColumnOrderKeys({
                 cards: board.cards,
-                stage: input.toStage,
+                stage: toStage,
                 parentCardId: card.parentCardId,
               }),
             );
@@ -1161,13 +1267,13 @@ export const boardHandlers = {
         type: "board.card.move",
         commandId: yield* mintCommandId,
         cardId: input.cardId,
-        toStage: input.toStage,
+        toStage: toStage,
         orderKey,
         override: input.override,
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps, command);
-      return { cardId: input.cardId, stage: input.toStage };
+      return { cardId: input.cardId, stage: toStage };
     }),
 
   board_update_card: (input) =>
@@ -1292,6 +1398,96 @@ export const boardHandlers = {
         );
       }
       return { cardId };
+    }),
+
+  board_indent_cards: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      yield* requireRegroupApproval(input.approved);
+      const board = yield* readBoardState(deps);
+      const cards = yield* resolveCardRefs(board, input.cardIds);
+      for (const card of cards) yield* refuseOtherWorkersCard(board, deps.scope, card);
+      const plan = boardIndentPlan(
+        board,
+        cards.map((card) => card.id),
+      );
+      if (plan.kind === "refused") return yield* regroupRefused(plan.reason);
+      return yield* dispatchMoveCards(deps, plan);
+    }),
+
+  board_outdent_cards: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      yield* requireRegroupApproval(input.approved);
+      const board = yield* readBoardState(deps);
+      const cards = yield* resolveCardRefs(board, input.cardIds);
+      for (const card of cards) yield* refuseOtherWorkersCard(board, deps.scope, card);
+      const plan = boardOutdentPlan(
+        board,
+        cards.map((card) => card.id),
+      );
+      if (plan.kind === "refused") return yield* regroupRefused(plan.reason);
+      return yield* dispatchMoveCards(deps, plan);
+    }),
+
+  board_group_cards: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      yield* requireRegroupApproval(input.approved);
+      const board = yield* readBoardState(deps);
+      const cards = yield* resolveCardRefs(board, input.cardIds);
+      for (const card of cards) yield* refuseOtherWorkersCard(board, deps.scope, card);
+      const plan = boardGroupIntoNewPlan(
+        board,
+        cards.map((card) => card.id),
+      );
+      if (plan.kind === "refused") return yield* regroupRefused(plan.reason);
+      const first = plan.cards[0]!;
+      const projects = yield* listProjects(deps);
+      const projectTitle = projects.find((project) => project.id === first.projectId)?.title ?? "";
+      const groupCardId = BoardCardId.make(yield* mintUuid);
+      const create: BoardCardCreateCommand = {
+        type: "board.card.create",
+        commandId: yield* mintCommandId,
+        cardId: groupCardId,
+        projectId: first.projectId,
+        title: input.title,
+        heading: true,
+        ...(plan.parent === null ? {} : { parentCardId: plan.parent.id }),
+        keyPrefix: yield* resolveCardKeyPrefix(first.projectId, projectTitle),
+        createdAt: yield* nowIso,
+      };
+      yield* dispatch(deps, create);
+      // The heading persists empty, so a refused move leaves a group the
+      // human can see and remove — never cards moved halfway.
+      const moved = yield* dispatchMoveCards(deps, {
+        cardIds: plan.cards.map((card) => card.id),
+        parentCardId: groupCardId,
+      });
+      const after = yield* readBoardState(deps);
+      const groupKey = after.cards.find((card) => card.id === groupCardId)?.key ?? groupCardId;
+      return { groupCardId, groupKey, cardIds: moved.cardIds };
+    }),
+
+  board_set_group_settings: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      yield* requireRegroupApproval(input.approved);
+      const board = yield* readBoardState(deps);
+      const card = yield* findCardByKeyOrId(board, input.cardId);
+      yield* refuseOtherWorkersCard(board, deps.scope, card);
+      const command: BoardCardSetGroupSettingsCommand = {
+        type: "board.card.set-group-settings",
+        commandId: yield* mintCommandId,
+        cardId: card.id,
+        ...(input.target === undefined ? {} : { target: input.target }),
+        ...(input.autoBuild === undefined ? {} : { autoBuild: input.autoBuild }),
+        ...(input.autoMerge === undefined ? {} : { autoMerge: input.autoMerge }),
+        ...(input.autoPlan === undefined ? {} : { autoPlan: input.autoPlan }),
+        createdAt: yield* nowIso,
+      };
+      yield* dispatch(deps, command);
+      return { cardId: card.id, key: card.key };
     }),
 
   board_archive_card: (input) =>
@@ -1571,6 +1767,18 @@ export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
   ),
   board_delete_card: McpToolAccess.writesWithCapability(
     relayable("board_delete_card", boardHandlers.board_delete_card),
+  ),
+  board_indent_cards: McpToolAccess.writesWithCapability(
+    relayable("board_indent_cards", boardHandlers.board_indent_cards),
+  ),
+  board_outdent_cards: McpToolAccess.writesWithCapability(
+    relayable("board_outdent_cards", boardHandlers.board_outdent_cards),
+  ),
+  board_group_cards: McpToolAccess.writesWithCapability(
+    relayable("board_group_cards", boardHandlers.board_group_cards),
+  ),
+  board_set_group_settings: McpToolAccess.writesWithCapability(
+    relayable("board_set_group_settings", boardHandlers.board_set_group_settings),
   ),
   board_manage_labels: McpToolAccess.writesWithCapability(
     relayable("board_manage_labels", boardHandlers.board_manage_labels),

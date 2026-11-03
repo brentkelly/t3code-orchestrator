@@ -210,6 +210,11 @@ function boardLinkedPullRequestLines(
   ];
 }
 
+/** Regrouping needs a human (T3O-27): an unattended run has no one to confirm
+    it, so it never regroups. */
+const BOARD_ENVELOPE_REGROUP_GUARD =
+  "Do not regroup cards (move them between groups, indent, outdent, group them, or change a group's settings) without a human's explicit confirmation.";
+
 /** The system postamble (D5): branches on human-in-the-loop (an unattended run
     carries the `/unattended` stance; a human-in-the-loop run is
     question-friendly), then appends the role-keyed deliverable segment and the
@@ -241,6 +246,7 @@ export function boardStepPostamble(input: {
         // tool. The supervisor still reads a plan tool when a provider emits one.
         `Commit as you go: the supervisor watches for new commits and activity to tell a productive long job from a wedged one, and a run that shows neither will be nudged and eventually escalated.`,
         `If you are truly blocked and need a human decision, ${BOARD_ENVELOPE_QUESTION_MECHANISM}; never end a turn with an unanswered question in prose.`,
+        BOARD_ENVELOPE_REGROUP_GUARD,
       ];
   const deliverable =
     input.role === "plan"

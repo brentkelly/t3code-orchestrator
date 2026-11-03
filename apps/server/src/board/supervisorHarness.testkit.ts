@@ -210,6 +210,7 @@ export const makeBoardCard = (input: {
   dependsOn: (input.dependsOn ?? []).map((id) => BoardCardId.make(id)),
   parentCardId: input.parentCardId == null ? null : BoardCardId.make(input.parentCardId),
   sourcePlanId: null,
+  group: null,
   threadLinks: [],
   attachments: [],
   externalRef: null,

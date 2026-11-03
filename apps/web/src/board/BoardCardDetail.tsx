@@ -28,7 +28,6 @@ import {
   boardStageWithRole,
   boardCardWorktreeKept,
   boardCardWorktreeKeptReason,
-  isBoardDependencyInScope,
   isBoardMergeStageExecution,
   isBoardCardBaseRetargeted,
   resolveBoardCardEffectiveBase,
@@ -47,6 +46,8 @@ import {
   EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   type BoardCardReviewOverrides,
   type BoardCardStageModelOverride,
+  boardShellAncestorIds,
+  boardShellDescendantIds,
 } from "@t3tools/contracts";
 import {
   boardBuildQueue,
@@ -385,11 +386,7 @@ export function BoardCardDetail({
   // edges the UI could not otherwise create. Rather than leave a state that can
   // be inherited but not made, the picker offers them and marks them with the
   // owning project's dot.
-  //
-  // Every picker is scoped to the card's own level (t3o-25, T3O-10): a child
-  // sees only its siblings, a top-level card only other top-level cards. The
-  // decider refuses anything else, and offering it here would only teach the
-  // rule by refusal.
+
   const dependencyOptions = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
     const shells = board?.cards ?? [];
@@ -397,15 +394,14 @@ export function BoardCardDetail({
       (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
     );
     const existing = new Set<string>([card.id, ...card.dependsOn]);
+    // Dependencies cross groups (T3O-27); the card's own ancestors and
+    // descendants are refused, so they are not offered.
+    const related = new Set<string>([
+      ...boardShellAncestorIds(shells, card.parentCardId),
+      ...boardShellDescendantIds(shells, card.id),
+    ]);
     return shells
-      .filter(
-        (candidate) =>
-          !existing.has(candidate.cardId) &&
-          isBoardDependencyInScope({
-            dependentParentCardId: card.parentCardId,
-            dependencyParentCardId: candidate.parentCardId,
-          }),
-      )
+      .filter((candidate) => !existing.has(candidate.cardId) && !related.has(candidate.cardId))
       .map((candidate) => ({
         id: candidate.cardId,
         key: candidate.key,
@@ -738,19 +734,19 @@ export function BoardCardDetail({
 
   // Per-card human-in-the-loop stance on the Build role (D6): shown only when
   // the card is on the build stage. The default flips on whether the card has a
-  // plan — a sub-board child counts as planned (t3o-23: its approved plan is
-  // its brief) — and an explicit override wins over it. The same rule the
+  // plan — a split child owns a copy of its plan (T3O-27) — and an explicit
+  // override wins over it. The same rule the
   // reactor runs the step under, so the hint here never contradicts the run.
   const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
   const humanInLoop =
     buildStageId !== null && card.stage === buildStageId
       ? (() => {
           const exec = resolveBoardStageExecution(boardSettings, buildStageId);
-          const fallback = boardBuildHumanInLoopDefault(exec, card, detail.hasPlan);
+          const fallback = boardBuildHumanInLoopDefault(exec, detail.hasPlan);
           return {
             value: card.humanInLoop ?? fallback,
             explicit: card.humanInLoop !== null,
-            basis: card.parentCardId !== null ? "child" : detail.hasPlan ? "plan" : "no-plan",
+            basis: detail.hasPlan ? "plan" : "no-plan",
           } as const;
         })()
       : null;
