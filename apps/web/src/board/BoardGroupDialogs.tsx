@@ -141,8 +141,6 @@ export function BoardNewPhaseDialog({
   readonly onOpenBoard: (groupCardId: string) => void;
 }) {
   const createCard = useAtomCommand(boardEnvironment.createCard);
-  const moveCards = useAtomCommand(boardEnvironment.moveCards);
-  const moveCard = useAtomCommand(boardEnvironment.moveCard);
   const deferred = boardDeferredChildren(shells, String(group.cardId));
   const [title, setTitle] = useState(() => boardNextPhaseTitle(group.title));
   const [picked, setPicked] = useState<ReadonlySet<string>>(
@@ -173,6 +171,8 @@ export function BoardNewPhaseDialog({
           heading: true,
           stage: headingStage,
           ...(group.parentCardId === undefined ? {} : { parentCardId: group.parentCardId }),
+          adoptCardIds: ids,
+          adoptStage: first,
           keyPrefix,
         },
       });
@@ -181,30 +181,6 @@ export function BoardNewPhaseDialog({
           tone: "error",
           title: "Could not create the phase",
           description: describeBoardCommandFailure(created),
-        });
-        return;
-      }
-      const moved = await moveCards({
-        environmentId,
-        input: { cardId: ids[0]!, cardIds: ids, parentCardId: cardId },
-      });
-      if (failed(moved)) {
-        boardToast({
-          tone: "error",
-          title: "The phase was created, but its cards did not move",
-          description: describeBoardCommandFailure(moved),
-        });
-        return;
-      }
-      const landed = await Promise.all(
-        ids.map((id) => moveCard({ environmentId, input: { cardId: id, toStage: first } })),
-      );
-      const rejected = landed.find(failed);
-      if (rejected !== undefined) {
-        boardToast({
-          tone: "error",
-          title: "The cards moved, but some are still deferred",
-          description: describeBoardCommandFailure(rejected),
         });
         return;
       }
@@ -358,7 +334,6 @@ export function BoardStartedParentDialog({
   readonly onClose: () => void;
 }) {
   const createCard = useAtomCommand(boardEnvironment.createCard);
-  const moveCards = useAtomCommand(boardEnvironment.moveCards);
   const cancelCardWork = useAtomCommand(boardEnvironment.cancelCardWork);
   const [choice, setChoice] = useState<"parent" | "cancel">("parent");
   const [title, setTitle] = useState("");
@@ -373,16 +348,13 @@ export function BoardStartedParentDialog({
       if (choice === "cancel") {
         const cancelled = await cancelCardWork({
           environmentId,
-          input: { cardId: started.cardId, confirmCardKey: typed.trim() },
+          input: {
+            cardId: started.cardId,
+            confirmCardKey: typed.trim(),
+            ...(movingIds.length === 0 ? {} : { adoptCardIds: movingIds }),
+          },
         });
         if (failed(cancelled)) return fail(`Could not cancel work on ${started.key}`, cancelled);
-        if (movingIds.length === 0) return;
-        const moved = await moveCards({
-          environmentId,
-          input: { cardId: movingIds[0]!, cardIds: movingIds, parentCardId: started.cardId },
-        });
-        if (failed(moved))
-          return fail(`${started.key} is a group now, but the cards did not move`, moved);
         return;
       }
       const groupId = BoardCardId.make(randomUUID());
@@ -394,17 +366,12 @@ export function BoardStartedParentDialog({
           title: title.trim(),
           heading: true,
           ...(started.parentCardId === undefined ? {} : { parentCardId: started.parentCardId }),
+          // The decider lands it on an own-branch parent's floor.
+          adoptCardIds: [started.cardId, ...movingIds],
           keyPrefix,
         },
       });
       if (failed(created)) return fail("Could not create the shared parent", created);
-      const ids = [started.cardId, ...movingIds];
-      const moved = await moveCards({
-        environmentId,
-        input: { cardId: ids[0]!, cardIds: ids, parentCardId: groupId },
-      });
-      if (failed(moved))
-        return fail("The shared parent was created, but the cards did not move", moved);
     })();
   };
   const cancelling = choice === "cancel";

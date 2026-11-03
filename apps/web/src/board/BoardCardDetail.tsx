@@ -106,7 +106,12 @@ import {
 import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
 import { BoardArchiveGroupDialog } from "./BoardGroupDialogs";
 import { BoardGroupSettings } from "./BoardGroupSettings";
-import { boardDeferredChildren, boardGroupNote, isBoardGroupShell } from "./boardGroups";
+import {
+  boardDeferredChildren,
+  boardGroupNote,
+  boardShellGroup,
+  isBoardGroupShell,
+} from "./boardGroups";
 import { boardMoveLeavesPlanningUnwritten } from "./boardStageActions";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
@@ -1106,6 +1111,7 @@ export function BoardCardDetail({
             deferredKeys.length === 0
               ? null
               : `Let's plan the deferred cards (${deferredKeys.join(", ")}) as the next phase of ${card.key}.`,
+          ownBranch: boardShellGroup(groupShells, cardShell)?.target === "own",
         };
   // A group's child can be parked in Deferred (T3O-29).
   const parentIsGroup =

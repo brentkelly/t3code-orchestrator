@@ -1119,7 +1119,6 @@ function BoardListNewGroupDialog({
   readonly onCreated: (cardId: string) => void;
 }) {
   const createCard = useAtomCommand(boardEnvironment.createCard);
-  const moveCards = useAtomCommand(boardEnvironment.moveCards);
   const [title, setTitle] = useState("");
   const first = cards[0];
   const [projectId, setProjectId] = useState<string>(
@@ -1149,6 +1148,7 @@ function BoardListNewGroupDialog({
             parent !== undefined && boardShellGroup(shells, parent)?.target === "own",
           ),
           ...(parent === undefined ? {} : { parentCardId: parent.cardId }),
+          ...(ids.length === 0 ? {} : { adoptCardIds: ids }),
           keyPrefix: keyPrefixFor(project),
         },
       });
@@ -1159,20 +1159,6 @@ function BoardListNewGroupDialog({
           description: describeBoardCommandFailure(created),
         });
         return;
-      }
-      if (ids.length > 0) {
-        const moved = await moveCards({
-          environmentId,
-          input: { cardId: ids[0]!, cardIds: ids, parentCardId: cardId },
-        });
-        if (failed(moved)) {
-          boardToast({
-            tone: "error",
-            title: "The group was created, but the cards did not move",
-            description: describeBoardCommandFailure(moved),
-          });
-          return;
-        }
       }
       onCreated(String(cardId));
       boardToast({

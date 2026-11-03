@@ -1137,6 +1137,31 @@ describe("BoardCardDetailPanel", () => {
     expect(paneFor(BOARD_SEED_STAGE_IDS.done, false)).toBe("Summary");
   });
 
+  it("opens an own-branch group in its integration review on the Review pane", () => {
+    const group = {
+      chip: "Group · 2 cards",
+      note: "Every card is done; its integration review is open.",
+      onOpenBoard: undefined,
+      settings: null,
+      onArchive: noop,
+      reopenPrompt: null,
+      ownBranch: true,
+    };
+    const paneFor = (stage: BoardCard["stage"]) =>
+      selectedTab(
+        renderToStaticMarkup(
+          <BoardCardDetailPanel
+            {...baseProps}
+            group={group}
+            detail={detail({ stage })}
+            projectName="P"
+          />,
+        ),
+      );
+    expect(paneFor(BOARD_SEED_STAGE_IDS.review)).toBe("Review");
+    expect(paneFor(BOARD_SEED_STAGE_IDS.sprint)).toBe("Brief");
+  });
+
   it("shows the Summary pill from Code review on, and keeps it after a real loop", () => {
     const atReview = renderToStaticMarkup(
       <BoardCardDetailPanel

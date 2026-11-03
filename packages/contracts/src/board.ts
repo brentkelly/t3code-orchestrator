@@ -4176,6 +4176,12 @@ export const BoardCardCreateCommand = Schema.Struct({
   /** Create an empty group heading (T3O-27): a group that stays a group with
       no children until its first one arrives. */
   heading: Schema.optional(Schema.Boolean),
+  /** A heading only: cards moved into it in the same decision (T3O-27), so a
+      refused move creates nothing rather than an orphan heading. */
+  adoptCardIds: Schema.optional(Schema.Array(BoardCardId)),
+  /** Where the adopted cards then land — New phase sends deferred cards to
+      Backlog. Absent leaves them where the move put them. */
+  adoptStage: Schema.optional(BoardStageId),
   /** Pin the card to a worker at birth (T3O-65, D20). Absent follows the
       board's default worker. The decider requires a registered worker. */
   pinnedWorkerId: Schema.optional(BoardWorkerId),
@@ -4479,6 +4485,9 @@ export const BoardCardCancelWorkCommand = Schema.Struct({
   commandId: CommandId,
   cardId: BoardCardId,
   confirmCardKey: TrimmedNonEmptyString,
+  /** Cards moved under it in the same decision (T3O-28): a refused move
+      cancels nothing. */
+  adoptCardIds: Schema.optional(Schema.Array(BoardCardId)),
   createdAt: IsoDateTime,
 });
 export type BoardCardCancelWorkCommand = typeof BoardCardCancelWorkCommand.Type;

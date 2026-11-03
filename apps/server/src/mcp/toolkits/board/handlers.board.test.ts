@@ -1586,6 +1586,29 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("refuses a regroup from an unattended run even with approved: true", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("unattended-regroup");
+      yield* startStep({ ...own, suffix: "unattended-regroup" });
+      const a = yield* boardHandlers
+        .board_create_card({ projectId, title: "A", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const b = yield* boardHandlers
+        .board_create_card({ projectId, title: "B", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_group_cards({ cardIds: [a.key, b.key], title: "Epic", approved: true })
+          .pipe(withScope(own.ownThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "unattended");
+      const cards = yield* readCards;
+      assert.isNull(cards.find((card) => card.id === a.cardId)?.parentCardId ?? null);
+    }),
+  );
+
   it.effect(
     "regroups with approval: create inside, indent, outdent, group into new, settings",
     () =>

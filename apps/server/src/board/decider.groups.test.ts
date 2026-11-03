@@ -1088,4 +1088,116 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
       expect(stagesAfter(events).get("a")?.stage).toBe("building");
     }),
   );
+
+  it.effect("a heading created under an own-branch group lands on its floor", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "building", { group: group("ready", { target: "own", started: true }) }),
+        child("s1", "building", "g", {
+          worktree: {
+            branch: "board/t3-1",
+            baseRefName: "board/t3-0",
+            path: "/tmp/wt",
+            status: "ready",
+            attempts: 1,
+            lastError: null,
+            reclaimBlockedReason: null,
+          },
+        }),
+        child("b2", "ready", "g"),
+      ];
+      // The shared-parent flow: a heading beside the started card, adopting both.
+      const events = yield* decideEvents(
+        {
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-share"),
+          cardId: BoardCardId.make("h9"),
+          projectId,
+          title: "Shared",
+          heading: true,
+          parentCardId: BoardCardId.make("g"),
+          adoptCardIds: [BoardCardId.make("s1"), BoardCardId.make("b2")],
+          createdAt: NOW,
+        },
+        model(cards),
+      );
+      const created = events.find((event) => event.type === "board.card-created");
+      assert.ok(created?.type === "board.card-created");
+      expect(created.payload.stage).toBe("ready");
+      const after = stagesAfter(events);
+      expect(after.get("s1")?.card.parentCardId).toBe(BoardCardId.make("h9"));
+      expect(after.get("b2")?.card.parentCardId).toBe(BoardCardId.make("h9"));
+    }),
+  );
+
+  it.effect("a compound group flow lands whole or not at all", () =>
+    Effect.gen(function* () {
+      const cards = [card("g", "sprint", { group: group("sprint") }), child("a", "ready", "g")];
+      // Adopting the heading's own would-be ancestor is refused, so nothing is created.
+      const refused = yield* decideFail(
+        {
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-group-bad"),
+          cardId: BoardCardId.make("h9"),
+          projectId,
+          title: "Bad",
+          heading: true,
+          parentCardId: BoardCardId.make("a"),
+          adoptCardIds: [BoardCardId.make("g")],
+          createdAt: NOW,
+        },
+        model(cards),
+      );
+      assert.include(String(refused), "inside itself");
+      // New phase: create, adopt the deferred card, and land it in Backlog.
+      const phase = yield* decideEvents(
+        {
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-phase"),
+          cardId: BoardCardId.make("h8"),
+          projectId,
+          title: "Phase 2",
+          heading: true,
+          adoptCardIds: [BoardCardId.make("d1")],
+          adoptStage: BoardStageId.make("backlog"),
+          createdAt: NOW,
+        },
+        model([
+          card("p", "sprint", { group: group("sprint") }),
+          child("d1", BOARD_DEFERRED_STAGE_ID, "p"),
+        ]),
+      );
+      const landed = stagesAfter(phase).get("d1")?.card;
+      expect(landed?.parentCardId).toBe(BoardCardId.make("h8"));
+      expect(landed?.stage).toBe("backlog");
+    }),
+  );
+
+  it.effect("cancel-work with cards to adopt cancels nothing when the move is refused", () =>
+    Effect.gen(function* () {
+      const started = card("x1", "review", {
+        worktree: {
+          branch: "board/t3-1",
+          baseRefName: "main",
+          path: "/tmp/wt",
+          status: "ready",
+          attempts: 1,
+          lastError: null,
+          reclaimBlockedReason: null,
+        },
+      });
+      const cancel = (adopt: string): BoardCommand => ({
+        type: "board.card.cancel-work",
+        commandId: CommandId.make(`cmd-cancel-${adopt}`),
+        cardId: BoardCardId.make("x1"),
+        confirmCardKey: "T3-1",
+        adoptCardIds: [BoardCardId.make(adopt)],
+        createdAt: NOW,
+      });
+      const refused = yield* decideFail(cancel("x1"), model([started, card("y2", "ready")]));
+      assert.include(String(refused), "inside itself");
+      const events = yield* decideEvents(cancel("y2"), model([started, card("y2", "ready")]));
+      expect(stagesAfter(events).get("y2")?.card.parentCardId).toBe(BoardCardId.make("x1"));
+    }),
+  );
 });

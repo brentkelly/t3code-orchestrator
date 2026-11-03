@@ -7,6 +7,7 @@
  */
 import {
   boardGroupRevertStage,
+  boardStageBeforeBuild,
   boardStageIndex,
   isBoardDeferredStage,
   type BoardCardId,
@@ -445,6 +446,21 @@ export function planBoardListMove(input: {
     isBoardShellStarted(shells, stages, parent)
   ) {
     return { kind: "started", started: parent, moving: movers };
+  }
+  // An own-branch group's children are materialised work, from the floor onward.
+  const floor = boardStageBeforeBuild(stages);
+  if (parent !== null && floor !== null && boardShellGroup(shells, parent)?.target === "own") {
+    const early = roots.find(
+      (root) =>
+        !isBoardDeferredStage(root.stage) &&
+        boardStageIndex(stages, root.stage) < boardStageIndex(stages, floor.stageId),
+    );
+    if (early !== undefined) {
+      return {
+        kind: "refused",
+        reason: `${parent.key} has its own integration branch, so its cards live from ${floor.label} onward. Move ${early.key} to ${floor.label} first.`,
+      };
+    }
   }
   const anchorId = request.beforeId ?? request.afterId;
   const anchor = anchorId === undefined || moverIds.has(anchorId) ? undefined : byId.get(anchorId);

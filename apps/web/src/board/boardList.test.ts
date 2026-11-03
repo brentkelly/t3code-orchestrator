@@ -330,6 +330,21 @@ describe("planBoardListMove", () => {
     });
   });
 
+  it("refuses a card before the floor under an own-branch group, as the decider does", () => {
+    const shells = [
+      shell("own", "ready", { group: group({ target: "own" }) }),
+      shell("x", "backlog"),
+      shell("r", "ready"),
+      shell("d", "deferred", { parent: "own" }),
+    ];
+    expect(plan(shells, { ids: ["x"], parentId: "own" })).toEqual({
+      kind: "refused",
+      reason:
+        "OWN has its own integration branch, so its cards live from Ready onward. Move X to Ready first.",
+    });
+    expect(plan(shells, { ids: ["r"], parentId: "own" })).toMatchObject({ kind: "move" });
+  });
+
   it("builds the command, anchors next to a sibling and names emptied groups", () => {
     const shells = [
       shell("g", "backlog", { group: group({ prevStage: BoardStageId.make("building") }) }),

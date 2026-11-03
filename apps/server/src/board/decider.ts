@@ -76,6 +76,7 @@ import {
   boardCardAncestors,
   boardCardGroupOf,
   boardCardInheritedDependsOn,
+  boardNewPhaseHeadingStage,
   boardCardGroupsEqual,
   boardCardIntegrationAncestor,
   boardCardLiveChildren,
@@ -1334,6 +1335,24 @@ function regroupOrderKey(input: {
   });
 }
 
+/** The board as it stands once `planned` is applied — how a decision reads
+    its own effects before deciding more. */
+const projectPlannedBoardEvents = Effect.fn("projectPlannedBoardEvents")(function* (
+  before: BoardState,
+  command: BoardCommand,
+  planned: ReadonlyArray<PlannedBoardEvent>,
+): Effect.fn.Return<BoardState, BoardCommandInvariantError> {
+  let model: BoardReadModel = { board: before };
+  for (const event of planned) {
+    model = yield* projectBoardEvent(model, { ...event, sequence: 0 } as BoardEvent).pipe(
+      Effect.mapError((cause) =>
+        invariant(command, `Failed to project the decision: ${String(cause)}`),
+      ),
+    );
+  }
+  return model.board ?? before;
+});
+
 /** Commands that can change a child's stage, parent, archive state or
     deferral — after each, every affected ancestor group is re-derived in the
     same decision. */
@@ -1368,15 +1387,7 @@ const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
   Crypto.Crypto
 > {
   const { before, command, planned } = input;
-  let model: BoardReadModel = { board: before };
-  for (const event of planned) {
-    model = yield* projectBoardEvent(model, { ...event, sequence: 0 } as BoardEvent).pipe(
-      Effect.mapError((cause) =>
-        invariant(command, `Failed to derive group stages: ${String(cause)}`),
-      ),
-    );
-  }
-  const derivedFrom = model.board ?? before;
+  const derivedFrom = yield* projectPlannedBoardEvents(before, command, planned);
   let board: BoardState = derivedFrom;
   const touched = new Set<BoardCardId>();
   for (const event of planned) {
@@ -1519,7 +1530,20 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // A card may be created into any stage (D10) — `BOARD_CREATABLE_STAGES`
       // is gone; Mode governs worktree/slot on entry, so creation and dragging
       // follow an identical path. The target stage must exist.
-      const stage = command.stage ?? boardStagesInOrder(board)[0]!.stageId;
+      // A heading with no stage under an own-branch group lands on the floor,
+      // the first stage that group's children may hold (T3O-28).
+      const createParent =
+        command.parentCardId === undefined
+          ? undefined
+          : board.cards.find((existing) => existing.id === command.parentCardId);
+      const stage =
+        command.stage ??
+        (command.heading === true
+          ? boardNewPhaseHeadingStage(
+              board,
+              createParent !== undefined && boardCardGroupOf(board, createParent)?.target === "own",
+            )
+          : boardStagesInOrder(board)[0]!.stageId);
       // Deferred (T3O-27) is a system stage outside the stage list, open only
       // inside a group.
       if (isBoardDeferredStage(stage)) {
@@ -1543,10 +1567,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // Child create (t3o-25, T3O-27): any live card may take a child, at any
       // depth and across projects, unless it is a leaf already being built.
       // A leaf taking its first child becomes a group in the same decision.
-      const parent =
-        command.parentCardId === undefined
-          ? undefined
-          : board.cards.find((existing) => existing.id === command.parentCardId);
+      const parent = createParent;
       if (command.parentCardId !== undefined) {
         if (parent === undefined || parent.archivedAt !== null) {
           return yield* invariant(
@@ -5821,7 +5842,76 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
  * commands that can change a child — the derived stages of every affected
  * group, in the same transaction (T3O-27).
  */
+/**
+ * The follow-up commands a compound group flow carries (T3O-27/28): the cards
+ * a new heading or a cancelled card adopts, and where New phase lands them.
+ * Decided in the same decision as the command itself, so the flow lands whole
+ * or not at all.
+ */
+function boardAdoptionCommands(command: BoardCommand): ReadonlyArray<BoardCommand> {
+  if (command.type !== "board.card.create" && command.type !== "board.card.cancel-work") {
+    return [];
+  }
+  const cardIds = command.adoptCardIds ?? [];
+  if (cardIds.length === 0) return [];
+  const moveCards: BoardCommand = {
+    type: "board.card.move-cards",
+    commandId: command.commandId,
+    cardId: cardIds[0]!,
+    cardIds,
+    parentCardId: command.cardId,
+    createdAt: command.createdAt,
+  };
+  const adoptStage = command.type === "board.card.create" ? command.adoptStage : undefined;
+  return [
+    moveCards,
+    ...(adoptStage === undefined
+      ? []
+      : cardIds.map((cardId): BoardCommand => ({
+          type: "board.card.move",
+          commandId: command.commandId,
+          cardId,
+          toStage: adoptStage,
+          createdAt: command.createdAt,
+        }))),
+  ];
+}
+
 export const decideBoardCommand = Effect.fn("decideBoardCommand")(function* (input: {
+  readonly command: BoardCommand;
+  readonly readModel: BoardReadModel;
+  readonly context?: BoardDecisionContext;
+}): Effect.fn.Return<
+  BoardDecision,
+  BoardCommandInvariantError | PlatformError.PlatformError,
+  Crypto.Crypto
+> {
+  const { command } = input;
+  const followUps = boardAdoptionCommands(command);
+  if (followUps.length === 0) return yield* decideOneBoardCommand(input);
+  if (command.type === "board.card.create" && command.heading !== true) {
+    return yield* invariant(command, "Only a new group heading can adopt cards.");
+  }
+  if (command.type === "board.card.create" && command.adoptCardIds?.includes(command.cardId)) {
+    return yield* invariant(command, "A new group can't adopt itself.");
+  }
+  const events: Array<PlannedBoardEvent> = [];
+  let board = input.readModel.board ?? EMPTY_BOARD_STATE;
+  for (const step of [command, ...followUps]) {
+    const decided = boardDecidedEvents(
+      yield* decideOneBoardCommand({
+        ...input,
+        command: step,
+        readModel: { ...input.readModel, board },
+      }),
+    );
+    events.push(...decided);
+    board = yield* projectPlannedBoardEvents(board, step, decided);
+  }
+  return events;
+});
+
+const decideOneBoardCommand = Effect.fn("decideOneBoardCommand")(function* (input: {
   readonly command: BoardCommand;
   readonly readModel: BoardReadModel;
   readonly context?: BoardDecisionContext;

@@ -372,6 +372,9 @@ export interface BoardCardDetailGroup {
   /** What reopening the planning thread pre-fills: planning the deferred
       cards as the next phase, or null when none are deferred. */
   readonly reopenPrompt: string | null;
+  /** Whether the group has its own integration branch, and so its own
+      integration review and summary. */
+  readonly ownBranch: boolean;
 }
 
 export interface BoardCardDetailViewProps {
@@ -2576,14 +2579,26 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // stays locked until the human reopens it from the Planning thread box. A
   // group with no planning thread has no box, so nothing to lock.
   const [threadReopened, setThreadReopened] = useState(false);
+  // Only the planning thread settles: an own-branch group's integration
+  // review runs on a thread of its own, which must stay reachable.
+  const planStageId = boardStageWithRole(stageStateOf(props.stages), "plan")?.stageId ?? null;
+  const selectedRole =
+    props.threadLinks.find((link) => link.threadId === selectedThread)?.role ?? null;
   const threadLocked =
-    group !== null && selectedThread !== null && !threadReopened
+    group !== null &&
+    selectedThread !== null &&
+    selectedRole !== null &&
+    selectedRole === planStageId &&
+    !threadReopened
       ? "The planning thread is settled. Reopen it from the Planning thread box."
       : null;
   const reopenGroupThread = () => {
     setThreadReopened(true);
     setPane("thread");
-    const link = props.threadLinks.find((candidate) => candidate.threadId === selectedThread);
+    const link = props.threadLinks.findLast(
+      (candidate) => planStageId !== null && candidate.role === planStageId,
+    );
+    if (link !== undefined) setSelectedThreadId(link.threadId);
     if (group === null || group.reopenPrompt === null || link === undefined || link.tombstoned)
       return;
     useComposerDraftStore
@@ -2593,7 +2608,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const groupDefaultPane: BoardCardPane = (planRows?.rows.length ?? 0) > 0 ? "plan" : "brief";
   const pane =
     paneChoice ??
-    (group !== null
+    (group !== null && (!group.ownBranch || !isStageAtOrAfterReview(props.stages, card.stage))
       ? groupDefaultPane
       : initialBoardCardPane(props.stages, card.stage, liveChildCount));
   // The plan is a first-class entity, so its pill only exists once one is
@@ -2606,14 +2621,18 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const hasPlan = props.detail.plans.length > 0;
   const reviewStageId = boardStageWithRole(stageStateOf(props.stages), "review")?.stageId ?? null;
   const reviewStarted = hasBoardReviewSteps(props.detail.stepCompletions);
-  const hasReview = reviewStageId !== null || reviewStarted;
-  const hasSummary = boardCardHasSummaryPane({
-    stages: props.stages,
-    stage: card.stage,
-    stepCompletions: props.detail.stepCompletions,
-    card,
-    decisionCount: props.detail.decisions.length,
-  });
+  // An inherit group never reviews; an own-branch group's integration does.
+  const integrates = group === null || group.ownBranch;
+  const hasReview = integrates && (reviewStageId !== null || reviewStarted);
+  const hasSummary =
+    integrates &&
+    boardCardHasSummaryPane({
+      stages: props.stages,
+      stage: card.stage,
+      stepCompletions: props.detail.stepCompletions,
+      card,
+      decisionCount: props.detail.decisions.length,
+    });
   // The card-level running/queued signals describe the review loop only while
   // the card sits ON the review stage — anywhere else the live step is some
   // other stage's, and feeding it in would spin the review pill during a
@@ -2629,8 +2648,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const fallbackPane: BoardCardPane = group !== null && threadLocked !== null ? "brief" : "thread";
   const activePane: BoardCardPane =
     (pane === "plan" && !hasPlan) ||
-    (pane === "review" && (!hasReview || group !== null)) ||
-    (pane === "summary" && (!hasSummary || group !== null)) ||
+    (pane === "review" && !hasReview) ||
+    (pane === "summary" && !hasSummary) ||
     (pane === "thread" && threadLocked !== null)
       ? fallbackPane
       : pane;
@@ -2808,8 +2827,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         <span className="flex-1" />
         <PaneTabs
           hasPlan={hasPlan}
-          hasReview={hasReview && group === null}
-          hasSummary={hasSummary && group === null}
+          hasReview={hasReview}
+          hasSummary={hasSummary}
           onSelect={setPane}
           pane={activePane}
           planCount={planRows === null ? null : planRows.rows.length}
