@@ -34,7 +34,7 @@ import {
   SquareArrowOutUpRightIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import ChatView from "../components/ChatView";
 import { observeResize } from "../lib/observeResize";
@@ -95,6 +95,7 @@ export function BoardCardThreadPane({
   queueInfo,
   queueForceStartPending,
   onQueueForceStart,
+  footer = null,
 }: {
   readonly cardKey: string;
   readonly threadLinks: ReadonlyArray<BoardDetailThreadLink>;
@@ -122,6 +123,8 @@ export function BoardCardThreadPane({
   readonly queueInfo?: BoardQueueInfo | null | undefined;
   readonly queueForceStartPending?: boolean | undefined;
   readonly onQueueForceStart?: (() => void) | undefined;
+  /** Docked at the end of the thread, e.g. the split gate (T3O-31). */
+  readonly footer?: ReactNode;
 }) {
   // A new blank thread becomes the card's most-recently-linked live thread, so
   // selecting it opens its ChatView (which focuses the composer on mount, D3).
@@ -396,6 +399,11 @@ export function BoardCardThreadPane({
               <BoardCardChat environmentId={threadEnvironmentId} threadId={selected.threadId} />
             )}
           </BoardThreadWorkerGate>
+        </div>
+      )}
+      {footer == null ? null : (
+        <div className="max-h-[60%] shrink-0 overflow-y-auto border-t border-border p-3">
+          {footer}
         </div>
       )}
     </section>

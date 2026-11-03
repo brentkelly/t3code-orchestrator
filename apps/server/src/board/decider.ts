@@ -61,6 +61,7 @@ import {
   boardStageIndex,
   boardStages,
   boardStagesInOrder,
+  boardCardMergesIntoIntegrationBranch,
   boardStageWithRole,
   compareBoardStages,
   DEFAULT_BOARD_KEY_PREFIX,
@@ -80,6 +81,9 @@ import {
   boardGroupTargetLockReason,
   boardNextStageId,
   defaultBoardCardGroup,
+  boardSplitRecommendationFallback,
+  boardSplitRecommendationOf,
+  isBoardPlanPlanned,
   deriveBoardGroupStage,
   boardGroupOwnTargetProjectRefusal,
   boardGroupProjectRefusal,
@@ -3645,11 +3649,29 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           dependsOn: plan.dependsOn.map((dependency) => boardPlanId(command.cardId, dependency)),
           ordinal: index,
           locked: false,
+          // Only a split's plans carry the flag; a single plan is the card's
+          // own, which is planned by definition.
+          ...(command.plans.length >= 2 && plan.planned === false ? { planned: false } : {}),
           createdAt: prior?.createdAt ?? command.createdAt,
           updatedAt: command.createdAt,
           body: plan.body,
         };
       });
+      // The agent's advice for the split gate (T3O-31), each omitted field
+      // filled from the shared fallback rules so the stored value is whole.
+      const splitRecommendation =
+        splitRationale === null
+          ? undefined
+          : (() => {
+              const fallback = boardSplitRecommendationFallback({
+                plans,
+                underIntegrationBranch: boardCardMergesIntoIntegrationBranch(board, proposalCard),
+              });
+              return {
+                autoBuild: command.recommendedAutoBuild ?? fallback.autoBuild,
+                mergeTarget: command.recommendedMergeTarget ?? fallback.mergeTarget,
+              };
+            })();
       return {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
@@ -3657,7 +3679,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           commandId: command.commandId,
         })),
         type: "board.plans-proposed",
-        payload: { cardId: command.cardId, plans, splitRationale },
+        payload: {
+          cardId: command.cardId,
+          plans,
+          splitRationale,
+          ...(splitRecommendation === undefined ? {} : { splitRecommendation }),
+        },
       };
     }
 
@@ -3795,6 +3822,14 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `The board has no stage before '${buildStage.label}' to hold materialised plan cards; add one first.`,
         );
       }
+      // A child whose plan is only a brief lands in the first stage to be
+      // planned on its own (T3O-31); a planned one lands on the floor.
+      const backlog = boardStagesInOrder(board)[0]!;
+      const recommendation = boardSplitRecommendationOf(board, card);
+      const settings = {
+        autoBuild: command.autoBuild ?? recommendation.autoBuild,
+        target: command.mergeTarget ?? recommendation.mergeTarget,
+      };
       // The graph is agent-authored and therefore re-validated at the gate
       // (D12) — propose checked it on ingest, but the gate is where a human
       // commits to it.
@@ -3818,13 +3853,17 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // feeds the next so siblings sort in plan order. The column is this
       // parent's sub-board (T3O-27) — the only place a child renders — not
       // the root board's floor stage, which a child never appears in.
-      const floorOrderKeys = [
-        ...boardColumnOrderKeys({
-          cards: board.cards,
-          stage: floor.stageId,
-          parentCardId: card.id,
-        }),
-      ];
+      const orderKeysByStage = new Map<BoardStageId, Array<string>>();
+      const nextOrderKey = (stage: BoardStageId) => {
+        let keys = orderKeysByStage.get(stage);
+        if (keys === undefined) {
+          keys = [...boardColumnOrderKeys({ cards: board.cards, stage, parentCardId: card.id })];
+          orderKeysByStage.set(stage, keys);
+        }
+        const orderKey = boardAppendOrderKey(keys);
+        keys.push(orderKey);
+        return orderKey;
+      };
       // A child runs where its parent is bound (T3O-65, D20) — its pin, or
       // the worker holding its worktree — and can be re-pinned after.
       const inheritedPin = inheritedBoardWorkerPin(board, boardCardBoundWorkerId(card));
@@ -3837,8 +3876,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       for (const plan of plans) {
         const childId = childIdByPlan.get(plan.planId)!;
         childCardIds.push(childId);
-        const orderKey = boardAppendOrderKey(floorOrderKeys);
-        floorOrderKeys.push(orderKey);
+        const planned = isBoardPlanPlanned(plan);
+        const stage = planned ? floor.stageId : backlog.stageId;
+        const orderKey = nextOrderKey(stage);
         const cardNumber = nextNumber;
         nextNumber += 1;
         events.push({
@@ -3859,11 +3899,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             // bodies never ride the read model (D8); the SQL projector copies
             // it inside the same transaction.
             briefFromPlanId: plan.planId,
+            ...(planned ? {} : { briefOnly: true }),
             dependsOn: plan.dependsOn.map((dependency) => childIdByPlan.get(dependency)!),
             parentCardId: card.id,
             sourcePlanId: plan.planId,
             ...(inheritedPin === null ? {} : { pinnedWorkerId: inheritedPin }),
-            stage: floor.stageId,
+            stage,
             orderKey,
             createdAt: command.createdAt,
             updatedAt: command.createdAt,
@@ -3873,14 +3914,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // The parent is untouched but for its timestamp (t3o-28, D1): no stage
       // move, and `blocked` is left exactly as it stands — approval crosses no
       // build boundary, so it has no dependency verdict to record.
-      // Approval makes the card a group (T3O-27) with today's fully planned
-      // semantics: its own integration branch, auto-build on. Until the split
-      // gate offers the choice, every split is this shape.
+      // Approval makes the card a group (T3O-27) with the settings the human
+      // confirmed at the split gate (T3O-31). It starts nothing: the group
+      // stays where it is until the human starts it.
       const parentAfterApproval: BoardCard = {
         ...card,
         group: defaultBoardCardGroup(board, card, {
-          target: "own",
-          autoBuild: true,
+          ...settings,
           started: card.stage === buildStage.stageId,
         }),
         updatedAt: command.createdAt,

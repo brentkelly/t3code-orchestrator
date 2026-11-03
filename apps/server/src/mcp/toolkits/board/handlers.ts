@@ -1780,6 +1780,12 @@ export const boardHandlers = {
         // Optional on the tool, explicit on the command (t3o card 11): the
         // decider is the one place that decides whether a split needs one.
         splitRationale: input.splitRationale ?? null,
+        ...(input.recommendedAutoBuild === undefined
+          ? {}
+          : { recommendedAutoBuild: input.recommendedAutoBuild }),
+        ...(input.recommendedMergeTarget === undefined
+          ? {}
+          : { recommendedMergeTarget: input.recommendedMergeTarget }),
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps, command);

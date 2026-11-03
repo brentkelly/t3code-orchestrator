@@ -56,6 +56,7 @@ import {
   BoardCardWorktree,
   BoardCardPullRequest,
   BoardCardModelOverrides,
+  BoardSplitRecommendation,
   BoardCardReviewOverrides,
   BoardCardReviewSummary,
   deriveBoardCardReviewSummary,
@@ -148,6 +149,9 @@ const BoardCardDbRow = Schema.Struct({
       replay equals rehydration (t3o card 11). Plain text, not JSON: one prose
       paragraph the human reads at the Approve split gate. */
   splitRationale: BoardCard.fields.splitRationale,
+  /** NULL for every row written before migration 052 and for every card with
+      no split proposed since T3O-31 (D8: replay equals rehydration). */
+  splitRecommendation: Schema.NullOr(Schema.fromJsonString(BoardSplitRecommendation)),
   /** NULL for every row written before migration 036, and for every card that
       follows its project's default branch — indistinguishable on purpose, which
       is what makes replay equal rehydration (T3O-5, D1). */
@@ -487,6 +491,8 @@ const BoardPlanDbRow = Schema.Struct({
   dependsOn: Schema.fromJsonString(Schema.Array(BoardPlanId)),
   ordinal: Schema.Int,
   locked: Schema.Int,
+  /** 0/1; migration 052 defaults every older row to 1 (planned). */
+  planned: Schema.Int,
   body: Schema.String,
   createdAt: BoardPlan.fields.createdAt,
   updatedAt: BoardPlan.fields.updatedAt,
@@ -505,6 +511,7 @@ function rowToBoardPlan(row: BoardPlanDbRow): BoardPlan {
     dependsOn: row.dependsOn,
     ordinal: row.ordinal,
     locked: row.locked !== 0,
+    ...(row.planned === 0 ? { planned: false } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -645,6 +652,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
       ? null
       : card.modelOverrides,
     splitRationale: card.splitRationale,
+    splitRecommendation: card.splitRecommendation ?? null,
     baseBranch: card.baseBranch,
     scheduledStartAt: card.scheduledStartAt,
     autoStart: card.autoStart ? 1 : 0,
@@ -738,6 +746,7 @@ function rowToBoardCard(
     reviewOverrides: row.reviewOverrides,
     modelOverrides: row.modelOverrides,
     splitRationale: row.splitRationale,
+    ...(row.splitRecommendation === null ? {} : { splitRecommendation: row.splitRecommendation }),
     baseBranch: row.baseBranch,
     scheduledStartAt: row.scheduledStartAt,
     autoStart: row.autoStart !== 0,
@@ -806,6 +815,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         review_overrides,
         model_overrides,
         split_rationale,
+        split_recommendation,
         base_branch,
         scheduled_start_at,
         auto_start,
@@ -850,6 +860,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.reviewOverrides},
         ${row.modelOverrides},
         ${row.splitRationale},
+        ${row.splitRecommendation},
         ${row.baseBranch},
         ${row.scheduledStartAt},
         ${row.autoStart},
@@ -894,6 +905,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         review_overrides = excluded.review_overrides,
         model_overrides = excluded.model_overrides,
         split_rationale = excluded.split_rationale,
+        split_recommendation = excluded.split_recommendation,
         base_branch = excluded.base_branch,
         scheduled_start_at = excluded.scheduled_start_at,
         auto_start = excluded.auto_start,
@@ -948,6 +960,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         review_overrides AS "reviewOverrides",
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
+        split_recommendation AS "splitRecommendation",
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
@@ -1298,6 +1311,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         review_overrides AS "reviewOverrides",
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
+        split_recommendation AS "splitRecommendation",
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
@@ -1945,10 +1959,12 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: Schema.Struct({
       cardId: BoardCardId,
       splitRationale: BoardCard.fields.splitRationale,
+      splitRecommendation: Schema.NullOr(Schema.fromJsonString(BoardSplitRecommendation)),
     }),
     execute: (row) => sql`
       UPDATE board_cards
-      SET split_rationale = ${row.splitRationale}
+      SET split_rationale = ${row.splitRationale},
+        split_recommendation = ${row.splitRecommendation}
       WHERE card_id = ${row.cardId}
     `,
   });
@@ -2144,11 +2160,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: BoardPlanDbRow,
     execute: (row) => sql`
       INSERT INTO board_plans (
-        plan_id, card_id, title, summary, depends_on, ordinal, locked, body, created_at, updated_at
+        plan_id, card_id, title, summary, depends_on, ordinal, locked, planned, body,
+        created_at, updated_at
       )
       VALUES (
         ${row.planId}, ${row.cardId}, ${row.title}, ${row.summary}, ${row.dependsOn},
-        ${row.ordinal}, ${row.locked}, ${row.body}, ${row.createdAt}, ${row.updatedAt}
+        ${row.ordinal}, ${row.locked}, ${row.planned}, ${row.body}, ${row.createdAt},
+        ${row.updatedAt}
       )
       ON CONFLICT (plan_id)
       DO UPDATE SET
@@ -2158,6 +2176,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         depends_on = excluded.depends_on,
         ordinal = excluded.ordinal,
         locked = excluded.locked,
+        planned = excluded.planned,
         body = excluded.body,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at
@@ -2190,6 +2209,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         depends_on AS "dependsOn",
         ordinal,
         locked,
+        planned,
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2212,6 +2232,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         depends_on AS "dependsOn",
         ordinal,
         locked,
+        planned,
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2232,6 +2253,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         depends_on AS "dependsOn",
         ordinal,
         locked,
+        planned,
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2667,6 +2689,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           dependsOn: plan.dependsOn,
           ordinal: plan.ordinal,
           locked: plan.locked ? 1 : 0,
+          planned: plan.planned === false ? 0 : 1,
           body: plan.body,
           createdAt: plan.createdAt,
           updatedAt: plan.updatedAt,
@@ -2727,6 +2750,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
             .findBoardPlanRow(event.payload.briefFromPlanId)
             .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.planBody:query")));
           if (Option.isSome(planRow)) {
+            const briefOnly = event.payload.briefOnly === true;
             yield* queries
               .upsertBoardCardBodyRow({
                 cardId: event.payload.cardId,
@@ -2736,18 +2760,22 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
               })
               .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.body:query")));
             // The child owns a copy of its plan (T3O-27), so it counts as
-            // planned without a parent special case.
-            const copy = boardSplitChildPlanCopy(planRow.value, {
-              id: card.id,
-              createdAt: card.createdAt,
-            });
-            yield* queries
-              .insertBoardPlanRow({
-                ...copy,
-                locked: 0,
-                body: planRow.value.body,
-              })
-              .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")));
+            // planned without a parent special case — unless the plan was a
+            // brief that still needs planning (T3O-31).
+            if (!briefOnly) {
+              const copy = boardSplitChildPlanCopy(planRow.value, {
+                id: card.id,
+                createdAt: card.createdAt,
+              });
+              yield* queries
+                .insertBoardPlanRow({
+                  ...copy,
+                  locked: 0,
+                  planned: 1,
+                  body: planRow.value.body,
+                })
+                .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")));
+            }
           }
         }
         yield* recordActivity({
@@ -3136,6 +3164,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           .updateBoardCardSplitRationaleRow({
             cardId: event.payload.cardId,
             splitRationale: event.payload.splitRationale,
+            splitRecommendation: event.payload.splitRecommendation ?? null,
           })
           .pipe(
             Effect.mapError(toPersistenceSqlError("BoardCardsProjection.splitRationale:query")),

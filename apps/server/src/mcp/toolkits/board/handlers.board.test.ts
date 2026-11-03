@@ -1245,6 +1245,39 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("board_propose_plans carries the Planned flags and the recommendation (T3O-31)", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* boardHandlers
+        .board_propose_plans({
+          plans: [
+            { key: "now", title: "Now", summary: "s", dependsOn: [], body: "plan" },
+            {
+              key: "later",
+              title: "Later",
+              summary: "s",
+              dependsOn: [],
+              body: "brief",
+              planned: false,
+            },
+          ],
+          splitRationale: "Now and later are separate deliveries, each worth its own review round.",
+          recommendedAutoBuild: true,
+          recommendedMergeTarget: "own",
+        })
+        .pipe(withScope(linkedThread));
+      const snapshotQuery = yield* boardStackSnapshotQuery;
+      const board = (yield* snapshotQuery.getCommandReadModel()).board;
+      const card = board?.cards.find((candidate) => candidate.id === cardId);
+      // Explicit advice wins over the fallback (which would say off, inherit).
+      assert.deepStrictEqual(card?.splitRecommendation, { autoBuild: true, mergeTarget: "own" });
+      assert.strictEqual(
+        board?.plans?.find((plan) => plan.planId === boardPlanId(cardId, "later"))?.planned,
+        false,
+      );
+    }),
+  );
+
   it.effect("board_propose_plans rejects a cycle from the handler, naming the edge", () =>
     Effect.gen(function* () {
       yield* seed();

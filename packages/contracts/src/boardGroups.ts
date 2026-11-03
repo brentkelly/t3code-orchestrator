@@ -10,7 +10,9 @@ import {
   BoardStageId,
   boardCardHasLiveBranch,
   boardCardIntegrationAncestor,
+  boardCardMergesIntoIntegrationBranch,
   boardCardPlans,
+  isBoardPlanPlanned,
   boardNextStageId,
   boardStageBeforeBuild,
   boardStageIndex,
@@ -21,7 +23,9 @@ import {
   type BoardCard,
   type BoardCardGroup,
   type BoardCardId,
+  type BoardCardShell,
   type BoardPlan,
+  type BoardSplitRecommendation,
   type BoardState,
 } from "./board.ts";
 
@@ -337,6 +341,55 @@ export function boardGroupOwnTargetProjectRefusal(
  */
 export function isBoardCardPlanned(board: BoardState, cardId: BoardCardId): boolean {
   return boardCardPlans(board, cardId).length > 0;
+}
+
+/**
+ * The split recommendation's fallback rules (T3O-31), for a field the agent
+ * omitted: every child planned → auto-build on with its own branch (today's
+ * sub-board); otherwise an epic breakdown → auto-build off, inherit. A card
+ * that already merges into an ancestor's integration branch prefers inherit,
+ * so a nested split does not stack a second integration review.
+ */
+export function boardSplitRecommendationFallback(input: {
+  readonly plans: ReadonlyArray<Pick<BoardPlan, "planned">>;
+  readonly underIntegrationBranch: boolean;
+}): BoardSplitRecommendation {
+  const allPlanned = input.plans.every(isBoardPlanPlanned);
+  return {
+    autoBuild: allPlanned,
+    mergeTarget: allPlanned && !input.underIntegrationBranch ? "own" : "inherit",
+  };
+}
+
+/** `boardCardMergesIntoIntegrationBranch` read from the client's shells,
+    which carry `cardId` and leave `parentCardId` / `group` absent for null. */
+export function boardShellMergesIntoIntegrationBranch(
+  shells: ReadonlyArray<Pick<BoardCardShell, "cardId" | "parentCardId" | "group">>,
+  card: { readonly parentCardId?: BoardCardId | null | undefined },
+): boolean {
+  const cards = shells.map((shell) => ({
+    id: shell.cardId,
+    parentCardId: shell.parentCardId ?? null,
+    group: shell.group ?? null,
+  }));
+  return (
+    boardCardIntegrationAncestor({ cards }, { parentCardId: card.parentCardId ?? null }) !== null
+  );
+}
+
+/** A card's split recommendation: the stored one, or the fallback for a
+    proposal made before T3O-31 recorded one. */
+export function boardSplitRecommendationOf(
+  board: BoardState,
+  card: BoardCard,
+): BoardSplitRecommendation {
+  return (
+    card.splitRecommendation ??
+    boardSplitRecommendationFallback({
+      plans: boardCardPlans(board, card.id),
+      underIntegrationBranch: boardCardMergesIntoIntegrationBranch(board, card),
+    })
+  );
 }
 
 /** Whether two group settings are the same, field for field. */
