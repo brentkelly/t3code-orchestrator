@@ -2842,7 +2842,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             command,
             `Card '${card.key}' still has ${unfinished.length} unfinished plan card${
               unfinished.length === 1 ? "" : "s"
-            } (${unfinished.map((child) => child.key).join(", ")}); finish or archive those first, or archive the whole group by confirming its key.`,
+            } (${unfinished.map((child) => child.key).join(", ")}); finish or archive those first. To archive the whole group, have an agent call board_archive_card with its key confirmed.`,
           );
         }
       }

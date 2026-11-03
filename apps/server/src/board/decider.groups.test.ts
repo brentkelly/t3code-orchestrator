@@ -814,7 +814,7 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
   it.effect("archives a group's whole subtree for good, only with its key", () =>
     Effect.gen(function* () {
       const plain = yield* decideFail(archive("g1"), model(tree()));
-      assert.include(String(plain), "archive the whole group by confirming its key");
+      assert.include(String(plain), "have an agent call board_archive_card with its key confirmed");
       const wrong = yield* decideFail(archive("g1", "T3-4"), model(tree()));
       assert.include(String(wrong), "does not match");
       const leaf = yield* decideFail(archive("x6", "T3-6"), model(tree()));
