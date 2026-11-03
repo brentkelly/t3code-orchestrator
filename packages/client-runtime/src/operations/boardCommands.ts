@@ -45,6 +45,9 @@ type CommandInput<T extends CommandType> = Omit<
 export type CreateBoardCardInput = CommandInput<"board.card.create">;
 export type MoveBoardCardInput = CommandInput<"board.card.move">;
 export type ReorderBoardCardInput = CommandInput<"board.card.reorder">;
+export type MoveBoardCardsInput = CommandInput<"board.card.move-cards">;
+export type SetBoardCardGroupSettingsInput = CommandInput<"board.card.set-group-settings">;
+export type CancelBoardCardWorkInput = CommandInput<"board.card.cancel-work">;
 export type UpdateBoardCardInput = CommandInput<"board.card.update">;
 export type SetBoardCardProjectInput = CommandInput<"board.card.set-project">;
 export type PinBoardCardWorkerInput = CommandInput<"board.card.pin-worker">;
@@ -308,6 +311,45 @@ export const archiveBoardCard: (input: ArchiveBoardCardInput) => CommandEffect =
   return yield* dispatch({
     ...input,
     type: "board.card.archive",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** Regroup cards (T3O-27): into a group, out of one, or within one. */
+export const moveBoardCards: (input: MoveBoardCardsInput) => CommandEffect = Effect.fn(
+  "BoardCommands.moveBoardCards",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.move-cards",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** A group's merge target, auto-build, auto-merge and auto-plan (T3O-29). */
+export const setBoardCardGroupSettings: (input: SetBoardCardGroupSettingsInput) => CommandEffect =
+  Effect.fn("BoardCommands.setBoardCardGroupSettings")(function* (input) {
+    const metadata = yield* commandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "board.card.set-group-settings",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+/** Cancel a started leaf's work so it can become a group (T3O-28). The
+    caller has confirmed it by the card's typed key. */
+export const cancelBoardCardWork: (input: CancelBoardCardWorkInput) => CommandEffect = Effect.fn(
+  "BoardCommands.cancelBoardCardWork",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.cancel-work",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

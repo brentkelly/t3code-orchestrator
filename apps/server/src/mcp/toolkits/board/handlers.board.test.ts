@@ -1663,6 +1663,151 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       }),
   );
 
+  it.effect(
+    "destructive group flows need approval and the key: share a parent, cancel work, archive a group (T3O-28)",
+    () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const create = (title: string, stage: string) =>
+          boardHandlers
+            .board_create_card({ projectId, title, stage: BoardStageId.make(stage) })
+            .pipe(withScope(orphanThread));
+
+        // Share a parent: a started card and another go side by side.
+        const started = yield* create("Started", "building");
+        const other = yield* create("Other", "backlog");
+        const shared = yield* boardHandlers
+          .board_share_parent({
+            cardId: started.key,
+            cardIds: [other.key],
+            title: "Shared",
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        let cards = yield* readCards;
+        for (const id of [started.cardId, other.cardId]) {
+          assert.strictEqual(
+            cards.find((card) => card.id === id)?.parentCardId,
+            shared.groupCardId,
+          );
+        }
+
+        // Cancel work: refused without approval, and with the wrong key.
+        const leaf = yield* create("Leaf", "building");
+        const extra = yield* create("Extra", "backlog");
+        const unapproved = yield* Effect.flip(
+          boardHandlers
+            .board_cancel_card_work({ cardId: leaf.key, confirmCardKey: leaf.key })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(unapproved.message, "approved: true");
+        const wrongKey = yield* Effect.flip(
+          boardHandlers
+            .board_cancel_card_work({ cardId: leaf.key, confirmCardKey: other.key, approved: true })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(wrongKey.message, "does not match");
+        const cancelled = yield* boardHandlers
+          .board_cancel_card_work({
+            cardId: leaf.key,
+            confirmCardKey: leaf.key,
+            cardIds: [extra.key],
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        assert.deepStrictEqual(cancelled.cardIds, [extra.cardId]);
+        cards = yield* readCards;
+        const parent = cards.find((card) => card.id === leaf.cardId);
+        assert.strictEqual(parent?.stage, "sprint");
+        assert.isNotNull(parent?.group ?? null);
+        assert.strictEqual(
+          cards.find((card) => card.id === extra.cardId)?.parentCardId,
+          leaf.cardId,
+        );
+
+        // Archive a group: the key needs approval, then the subtree goes.
+        const unapprovedArchive = yield* Effect.flip(
+          boardHandlers
+            .board_archive_card({ cardId: shared.groupCardId, confirmCardKey: shared.groupKey })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(unapprovedArchive.message, "approved: true");
+        yield* boardHandlers
+          .board_archive_card({
+            cardId: shared.groupCardId,
+            confirmCardKey: shared.groupKey,
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        for (const id of [shared.groupCardId, started.cardId, other.cardId]) {
+          assert.isNotNull(cards.find((card) => card.id === id)?.archivedAt ?? null);
+        }
+      }),
+  );
+
+  it.effect(
+    "board_new_phase moves a group's deferred cards into a sibling heading's Backlog (T3O-29)",
+    () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const group = yield* boardHandlers
+          .board_create_card({ projectId, title: "Event log", stage: BoardStageId.make("sprint") })
+          .pipe(withScope(orphanThread));
+        const createChild = (title: string, stage: string) =>
+          boardHandlers
+            .board_create_card({
+              projectId,
+              title,
+              stage: BoardStageId.make(stage),
+              parentCardId: group.cardId,
+              approved: true,
+            })
+            .pipe(withScope(orphanThread));
+        const later = yield* createChild("Later", "deferred");
+        const active = yield* createChild("Now", "backlog");
+
+        const unapproved = yield* Effect.flip(
+          boardHandlers
+            .board_new_phase({ groupCardId: group.key, cardIds: [later.key], title: "Phase 2" })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(unapproved.message, "approved: true");
+        const notDeferred = yield* Effect.flip(
+          boardHandlers
+            .board_new_phase({
+              groupCardId: group.key,
+              cardIds: [active.key],
+              title: "Phase 2",
+              approved: true,
+            })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(notDeferred.message, "only deferred cards move");
+
+        const phase = yield* boardHandlers
+          .board_new_phase({
+            groupCardId: group.key,
+            cardIds: [later.key],
+            title: "Event log: Phase 2",
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        const cards = yield* readCards;
+        const heading = cards.find((card) => card.id === phase.groupCardId);
+        assert.strictEqual(heading?.title, "Event log: Phase 2");
+        assert.isNull(heading?.parentCardId ?? null);
+        assert.isTrue(heading?.group?.heading ?? false);
+        const moved = cards.find((card) => card.id === later.cardId);
+        assert.strictEqual(moved?.parentCardId, phase.groupCardId);
+        assert.strictEqual(moved?.stage, "backlog");
+        assert.strictEqual(
+          cards.find((card) => card.id === active.cardId)?.parentCardId,
+          group.cardId,
+        );
+      }),
+  );
+
   it.effect("board_update_card resolves label names on update and rejects unknown ones", () =>
     Effect.gen(function* () {
       yield* seed();

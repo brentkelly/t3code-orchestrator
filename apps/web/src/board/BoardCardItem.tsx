@@ -40,6 +40,7 @@ import {
   PauseIcon,
   TriangleAlertIcon,
   ArrowRightLeftIcon,
+  ChevronRightIcon,
   ServerOffIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
@@ -76,6 +77,82 @@ import {
 } from "./workers/cardWorker";
 import { BoardHint } from "./BoardHint";
 import type { BoardQueueInfo } from "./boardQueueInfo";
+import type { BoardGroupCardVm, BoardGroupChildState } from "./boardGroups";
+
+/** A group's progress pips (T3O-29) in the fixed status vocabulary: green is
+    done and only done, violet needs you, amber blocked, blue running. */
+const PIP_CLASS: Record<BoardGroupChildState, string> = {
+  done: "bg-success",
+  waiting: "bg-attention",
+  blocked: "bg-warning",
+  running: "bg-info/65",
+  idle: "bg-foreground/13",
+};
+
+/** The group card's body (T3O-29): pips, `n/m`, who needs you, what is
+    blocked, the drill-in, and a meta line. Stats truncate; the Board button
+    never wraps. */
+function BoardGroupBlock({
+  group,
+  onOpenSubBoard,
+}: {
+  readonly group: BoardGroupCardVm;
+  readonly onOpenSubBoard?: (() => void) | undefined;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      {group.pips.length > 0 ? (
+        <div className="flex items-center gap-[3px]" data-board-group-pips>
+          {group.pips.map((pip, index) => (
+            <BoardHint key={index} label={pip.tooltip}>
+              <span
+                aria-label={pip.tooltip}
+                className={cn("h-1 min-w-1 flex-1 rounded-[2px]", PIP_CLASS[pip.state])}
+                data-state={pip.state}
+                role="img"
+              />
+            </BoardHint>
+          ))}
+        </div>
+      ) : null}
+      <div className="flex min-w-0 items-center gap-2 text-[11.5px] font-medium">
+        <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+          <span
+            className={cn(
+              "shrink-0 tabular-nums",
+              group.complete ? "text-success-foreground" : "text-muted-foreground",
+            )}
+          >
+            {group.doneLabel}
+          </span>
+          {group.needs === null ? null : (
+            <span className="truncate text-attention-foreground">{group.needs}</span>
+          )}
+          {group.blocked === null ? null : (
+            <span className="truncate text-warning-foreground">{group.blocked}</span>
+          )}
+        </span>
+        {onOpenSubBoard === undefined ? null : (
+          <button
+            className="inline-flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 whitespace-nowrap text-muted-foreground hover:bg-accent hover:text-foreground"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenSubBoard();
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
+            type="button"
+          >
+            Board
+            <ChevronRightIcon className="size-3" />
+          </button>
+        )}
+      </div>
+      {group.meta.length === 0 ? null : (
+        <div className="truncate text-[11px] text-muted-foreground">{group.meta}</div>
+      )}
+    </div>
+  );
+}
 
 /** What a card needs to render its todo strip (t3o-18). All of it is joined
     client-side from state the client already holds — `boardCardThreads` off the
@@ -287,13 +364,18 @@ export function BoardCardContent({
   childRunning,
   noPullRequest,
   atMergeStage,
-  autoMergeBoardWide,
+  autoMergeArmed,
   worktreeKeptReason,
+  group = null,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly queueSlot: BoardQueueInfo | undefined;
   readonly selected: boolean;
+  /** The group face (T3O-29), or null for a leaf. A group's own thread,
+      review, todo, PR and plan indicators are hidden: its pipeline is paused,
+      and its children carry the work. */
+  readonly group?: BoardGroupCardVm | null | undefined;
   /** T3O-52: why this finished card kept its worktree, or null when it has not
       — `boardCardWorktreeKept`, resolved by the board page, which holds the
       settings and the stage roles. Absent on the surfaces that do not resolve
@@ -337,12 +419,10 @@ export function BoardCardContent({
       the only place an armed card wears the grey `Auto` glyph. Absent on the
       surfaces that do not resolve it (the drag ghost, the archive sheet). */
   readonly atMergeStage?: boolean | undefined;
-  /** The board-wide merge-stage default (T3O-38, D2), ORed into the glyph the
-      way `BoardCardDetailView` ORs it into the modal chip. The shell's
-      `autoMergeArmed` is the card's OWN arming only — the SQL snapshot
-      producer cannot see settings — so without this the column stays silent
-      about a board every one of whose cards merges itself. */
-  readonly autoMergeBoardWide?: boolean | undefined;
+  /** The card's resolved auto-merge arm (`boardShellAutoMergeArmed`, T3O-28):
+      its own override, its nearest group, or the board-wide default. The
+      shell's `autoMergeArmed` is the override alone, used when absent. */
+  readonly autoMergeArmed?: boolean | undefined;
 }) {
   const accent = projectAccent(card.projectId, accentName);
   const summary = boardCardSummary(card);
@@ -368,11 +448,13 @@ export function BoardCardContent({
       : EMPTY_TODO_THREADS;
   // The card's own turn wins the dot's wording; a parent with nothing running
   // of its own borrows its children's, counted.
-  const workingLabel = isBoardCardWorking(card)
-    ? "Thread running"
-    : childRunning !== undefined && childRunning > 0
-      ? boardCardChildRunningLabel(childRunning)
-      : null;
+  const isGroup = group !== null;
+  const workingLabel =
+    isBoardCardWorking(card) && !isGroup
+      ? "Thread running"
+      : childRunning !== undefined && childRunning > 0
+        ? boardCardChildRunningLabel(childRunning)
+        : null;
   // "This card is waiting on you" — the whole card, not just a badge, so a
   // board of forty cards answers "where am I needed" at a glance (the
   // prototype's treatment: tinted fill, coloured border, a 1px ring). The
@@ -387,8 +469,9 @@ export function BoardCardContent({
   //
   // Muting a Done card wins over all of it: a finished card is not asking for
   // anything, whatever its last thread state said.
-  const own = summary.muted ? null : (attention ?? null);
-  const inherited = summary.muted || own !== null ? null : (childAttention ?? null);
+  // A group says who needs you in its own stats, so it takes no tone.
+  const own = summary.muted || isGroup ? null : (attention ?? null);
+  const inherited = summary.muted || isGroup || own !== null ? null : (childAttention ?? null);
   const flag = own ?? inherited;
   const tone = flag?.tone ?? null;
   // A held review loop already spells itself out in the summary's round row
@@ -415,7 +498,7 @@ export function BoardCardContent({
   // sheet of a pile. Purely visual now — the drill-in affordance is the plan
   // row's chip — so it keys off `planTotal` alone and the drag ghost / archive
   // sheet keep the pile.
-  const wearsStack = card.planTotal !== undefined && card.planTotal > 0;
+  const wearsStack = isGroup || (card.planTotal !== undefined && card.planTotal > 0);
   // "This card's merge is held by conflicts" (T3O-9) — a server fact off the
   // step row, not a guess at a running merge-stage step. A Done card is muted
   // and asking for nothing, so it never wears the pill; the flag is already
@@ -437,19 +520,21 @@ export function BoardCardContent({
   // ONE notice for the whole header (T3O-45). Every one of these used to render
   // on its own, so a card could wear `Needs a human` and `Merge needs you` at
   // once — the same claim twice, and wider than the column.
+  // A group keeps only its own dependency gate here; its children's states
+  // are in its stats, and its own thread is paused.
   const notice = boardCardNotice({
-    attention: chip,
-    conflictFix,
-    autoMergeHold,
+    attention: isGroup ? null : chip,
+    conflictFix: isGroup ? null : conflictFix,
+    autoMergeHold: isGroup ? null : autoMergeHold,
     // T3o (T3O-48): a Done card is asking for nothing, and the page's predicate
     // already says so — the guard here just refuses to trust a stale prop.
-    noPullRequestAtMerge: noPullRequest === true && !summary.muted,
+    noPullRequestAtMerge: !isGroup && noPullRequest === true && !summary.muted,
     blocked: card.blocked,
     dependencyCount: card.dependencyCount,
-    worktreeKeptReason,
-    workerMove: boardCardMoveNotice(card, workers),
-    workerTrouble: boardCardWorkerTrouble(card, workers),
-    providerMissing: card.stalled && card.stalledReason === "provider-not-on-worker",
+    worktreeKeptReason: isGroup ? null : worktreeKeptReason,
+    workerMove: isGroup ? null : boardCardMoveNotice(card, workers),
+    workerTrouble: isGroup ? null : boardCardWorkerTrouble(card, workers),
+    providerMissing: !isGroup && card.stalled && card.stalledReason === "provider-not-on-worker",
   });
   // The card's scheduled start (T3O-19, D9/D14). Null on a done card and on
   // one whose time has already passed — the server clears the field within a
@@ -643,7 +728,7 @@ export function BoardCardContent({
         {/* Keyed on the HOLD, not on which notice won it (T3O-45): a held card
             whose slot went to a pending question is still held, and "merges
             itself as soon as the forge accepts it" is not true of it. */}
-        {(card.autoMergeArmed === true || autoMergeBoardWide === true) &&
+        {(autoMergeArmed ?? card.autoMergeArmed === true) &&
         autoMergeHold === null &&
         !summary.muted &&
         atMergeStage ? (
@@ -689,13 +774,14 @@ export function BoardCardContent({
           {boardSplitProposedNote(card.planCount ?? 0)}
         </div>
       ) : null}
-      <BoardCardSummaryRow items={summary.items} />
-      {progress.kind === "review" ? (
+      {group === null ? null : <BoardGroupBlock group={group} onOpenSubBoard={onOpenSubBoard} />}
+      {isGroup ? null : <BoardCardSummaryRow items={summary.items} />}
+      {!isGroup && progress.kind === "review" ? (
         // The review ledger is the card's progress block while it sits in code
         // review — even for a split parent, whose plan bar it outranks (D8).
         <BoardCardReviewBlock items={progress.items} />
       ) : null}
-      {progress.kind === "subcards"
+      {!isGroup && progress.kind === "subcards"
         ? // The plan bar with its drill-in chip (t3o-25, AC2) — the D8 progress
           // block a split parent shows. The chip is the sub-board door where the
           // handler is supplied (the live root board); elsewhere it is static.
@@ -711,7 +797,7 @@ export function BoardCardContent({
             );
           })()
         : null}
-      {progress.kind === "todos" ? (
+      {!isGroup && progress.kind === "todos" ? (
         <BoardCardTodoStrip
           expanded={todos?.expanded ?? false}
           onToggleThreads={todos?.onToggleExpanded}
@@ -719,7 +805,7 @@ export function BoardCardContent({
           todo={progress.todo}
         />
       ) : null}
-      {otherThreads.length === 0 ? null : (
+      {isGroup || otherThreads.length === 0 ? null : (
         <div className="flex flex-col gap-0.5 border-t border-border/60 pt-1">
           {otherThreads.map((entry) => (
             <BoardCardTodoThreadRow
@@ -732,10 +818,12 @@ export function BoardCardContent({
       )}
       {/* Last, always: the meta row is the card's footer, so it sits below the
           stage summary and the todo strip however tall those grow. */}
-      <BoardCardMetaRow
-        meta={boardCardMeta(card, todoThreads.length)}
-        worker={boardCardWorkerChip(card, workers)}
-      />
+      {isGroup ? null : (
+        <BoardCardMetaRow
+          meta={boardCardMeta(card, todoThreads.length)}
+          worker={boardCardWorkerChip(card, workers)}
+        />
+      )}
     </article>
   );
 }
@@ -767,14 +855,16 @@ export function DraggableBoardCard({
   childRunning,
   noPullRequest,
   atMergeStage,
-  autoMergeBoardWide,
+  autoMergeArmed,
   worktreeKeptReason,
+  group = null,
 }: {
   readonly card: BoardCardShell;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   readonly queueSlot: BoardQueueInfo | undefined;
   readonly selected: boolean;
   readonly dragging: boolean;
+  readonly group?: BoardGroupCardVm | null | undefined;
   readonly onSelect: (card: BoardCardShell) => void;
   readonly onDragStart: (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => void;
   readonly onDragEnd: () => void;
@@ -790,7 +880,7 @@ export function DraggableBoardCard({
   /** T3o (T3O-48): forwarded to the card face. */
   readonly noPullRequest?: boolean | undefined;
   readonly atMergeStage?: boolean | undefined;
-  readonly autoMergeBoardWide?: boolean | undefined;
+  readonly autoMergeArmed?: boolean | undefined;
   readonly worktreeKeptReason?: string | null | undefined;
 }) {
   return (
@@ -816,6 +906,13 @@ export function DraggableBoardCard({
         // Ctrl/Cmd+Arrow reorders within the column — plain arrows stay free
         // for scrolling and focus movement. Stage moves ride the detail
         // dialog's stage actions (Enter opens it).
+        // Alt+Down drills into a group's board (T3O-29); Alt+Up on the board
+        // goes back up a level.
+        if (event.altKey && event.key === "ArrowDown" && group !== null && onOpenSubBoard) {
+          event.preventDefault();
+          onOpenSubBoard();
+          return;
+        }
         if (
           (event.ctrlKey || event.metaKey) &&
           (event.key === "ArrowUp" || event.key === "ArrowDown")
@@ -841,8 +938,9 @@ export function DraggableBoardCard({
         childRunning={childRunning}
         noPullRequest={noPullRequest}
         atMergeStage={atMergeStage}
-        autoMergeBoardWide={autoMergeBoardWide}
+        autoMergeArmed={autoMergeArmed}
         worktreeKeptReason={worktreeKeptReason}
+        group={group}
       />
     </div>
   );

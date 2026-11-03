@@ -91,6 +91,7 @@ const PULL_REQUEST_OPERATIONS = [
   "mergePullRequest",
   "pullRequestMergeState",
   "markPullRequestReady",
+  "closePullRequest",
   "pullRequestRepository",
 ] as const satisfies ReadonlyArray<BoardWorkerGitOperation>;
 

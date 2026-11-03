@@ -565,11 +565,38 @@ export function makeLocalBoardWorkspace(
           `refs/heads/${branch}`,
         ]).pipe(Effect.map((sha) => sha !== ""));
       if (!(yield* exists())) {
+        // Cut from the REMOTE tip of the level above (T3O-28): on a nested
+        // group that is the outer integration branch, which another worker's
+        // merges may have moved without this checkout seeing it.
+        const remoteName = yield* primaryRemote(cwd);
+        const remoteBase =
+          remoteName === null
+            ? null
+            : yield* fetchRemoteBranch(
+                "boardIntegrationBranch.fetchBase",
+                cwd,
+                remoteName,
+                base,
+              ).pipe(
+                // A failed fetch leaves a possibly stale remote-tracking ref; cut from the local base.
+                Effect.flatMap((fetched) =>
+                  fetched
+                    ? gitRef("boardIntegrationBranch.remoteBase", cwd, [
+                        "rev-parse",
+                        "--verify",
+                        "--quiet",
+                        `refs/remotes/${remoteName}/${base}`,
+                      ])
+                    : Effect.succeed(""),
+                ),
+                Effect.map((sha) => (sha === "" ? null : `${remoteName}/${base}`)),
+              );
         const created = yield* git
           .execute({
             operation: "boardIntegrationBranch.create",
             cwd,
-            args: ["branch", branch, base],
+            // --no-track: a remote start point would otherwise make the base this branch's upstream.
+            args: ["branch", "--no-track", branch, remoteBase ?? base],
             timeoutMs: 10_000,
             allowNonZeroExit: true,
           })
@@ -924,6 +951,8 @@ export function makeLocalBoardWorkspace(
         .pipe(Effect.mapError(forgeFailed("mergeState"))),
     markPullRequestReady: ({ projectId, number }) =>
       pullRequests.markReady({ projectId, number }).pipe(Effect.mapError(forgeFailed("markReady"))),
+    closePullRequest: ({ projectId, number }) =>
+      pullRequests.close({ projectId, number }).pipe(Effect.mapError(forgeFailed("close"))),
     pullRequestRepository: ({ projectId }) =>
       pullRequests.repository(projectId).pipe(Effect.mapError(forgeFailed("repository"))),
     reclaimWorktree,

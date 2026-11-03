@@ -17,13 +17,22 @@ whatever column the card is in, so the switch is not hidden away in one stage.
 Turning it on for a card that is _already_ waiting at Ready for merge merges it straight away. That
 is the same thing the Merge button does; the switch just also covers next time.
 
-The plan cards inside a split with **Auto-build** on are armed already: each child merges itself
-into the split's branch as it finishes, which is what lets the next sibling start.
+## Cards inside a group
+
+Inside a group, the nearest group decides, and the board-wide setting below does not apply:
+
+- A card merging into its group's own integration branch merges itself while that group's
+  **auto-build** is on. Approving a fully planned split turns auto-build on, so each child merges
+  itself down as it finishes, which is what lets the next sibling start.
+- A card merging to trunk (its group has no branch of its own) merges itself only when that group's
+  **Auto-merge to trunk** is on. It is off by default.
+
+A card's own **Auto-merge when ready** switch still arms it, wherever it sits.
 
 ## Arming the whole board
 
-**Settings → Board → Pipeline → Ready for merge → Auto-merge when ready** arms every card that
-arrives at that stage from then on. With it on, the per-card switch disappears — one control, so
+**Settings → Board → Pipeline → Ready for merge → Auto-merge when ready** arms every top-level card
+that arrives at that stage from then on. With it on, the per-card switch disappears — one control, so
 nothing can disagree about a card — and each card's header says **Auto-merge · board** so you can
 tell where the decision came from.
 

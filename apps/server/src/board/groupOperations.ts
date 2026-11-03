@@ -5,6 +5,7 @@
  * the decider still validates every move.
  */
 import {
+  isBoardCardStarted,
   boardStageIndex,
   type BoardCard,
   type BoardCardId,
@@ -120,4 +121,41 @@ export function boardGroupIntoNewPlan(
   const parent =
     parentId === null ? null : (board.cards.find((card) => card.id === parentId) ?? null);
   return { kind: "group", parent, cards: picked.cards };
+}
+
+/**
+ * Shared parent (T3O-28, decision 12): a started card cannot become a group,
+ * so a new group is made where it sits and it and `cardIds` move in side by
+ * side. The started card's merge target is unchanged: the new group inherits.
+ */
+export function boardSharedParentPlan(
+  board: BoardState,
+  startedCardId: BoardCardId,
+  cardIds: ReadonlyArray<BoardCardId>,
+):
+  | {
+      readonly kind: "share";
+      readonly started: BoardCard;
+      readonly parentCardId: BoardCardId | null;
+      readonly cardIds: ReadonlyArray<BoardCardId>;
+    }
+  | { readonly kind: "refused"; readonly reason: string } {
+  const started = board.cards.find((card) => card.id === startedCardId);
+  if (started === undefined || started.archivedAt !== null) {
+    return { kind: "refused", reason: `Card '${startedCardId}' does not exist or is archived.` };
+  }
+  if (!isBoardCardStarted(board, started)) {
+    return {
+      kind: "refused",
+      reason: `Work has not started on '${started.key}'; move the cards into it directly.`,
+    };
+  }
+  const others = cardIds.filter((id) => id !== started.id);
+  if (others.length === 0) return { kind: "refused", reason: "Pick the cards to put beside it." };
+  return {
+    kind: "share",
+    started,
+    parentCardId: started.parentCardId,
+    cardIds: [started.id, ...others],
+  };
 }
