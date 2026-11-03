@@ -229,14 +229,15 @@ export function boardCommandAggregateRef(command: BoardCommand): {
 const invariant = (command: BoardCommand, detail: string) =>
   new BoardCommandInvariantError({ commandType: command.type, detail });
 
-/** A pending auto-plan request marked spent (T3O-32): the plan was approved,
-    the card left planning before it arrived, or the run stopped being driven
-    by the board. Anything else is untouched. */
 function withoutPendingDiscard(worktree: BoardCard["worktree"]): BoardCard["worktree"] {
   if (worktree?.discardPending !== true) return worktree;
   const { discardPending: _cancelled, ...rest } = worktree;
   return rest;
 }
+
+/** A pending auto-plan request marked spent (T3O-32): the plan was approved,
+    the card left planning before it arrived, or the run stopped being driven
+    by the board. Anything else is untouched. */
 
 function endBoardCardAutoPlan(card: BoardCard, at: string): Pick<BoardCard, "autoPlan"> {
   return card.autoPlan !== undefined && card.autoPlan.endedAt === null

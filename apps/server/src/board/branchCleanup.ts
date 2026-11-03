@@ -102,8 +102,24 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
     .resolvePrimaryRemoteName(input.cwd)
     .pipe(Effect.catch(() => Effect.succeed(null)));
   let remoteDeleted = false;
+  let remoteAbsent = false;
   if (remoteName === null) {
-    skipped.push("no remote to delete the branch from");
+    // Absent only when git listed the remotes and there were none: a lookup
+    // that failed outright says nothing about the remote branch.
+    const remotes = yield* git
+      .execute({
+        operation: "board.deleteCardBranch.remotes",
+        cwd: input.cwd,
+        args: ["remote"],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    remoteAbsent = remotes !== null && remotes.exitCode === 0 && remotes.stdout.trim() === "";
+    skipped.push(
+      remoteAbsent
+        ? "no remote to delete the branch from"
+        : "remote branch not deleted: no remote resolved",
+    );
   } else {
     // `allowNonZeroExit`: the branch already being gone is the single most
     // likely outcome here — GitHub deletes it itself when the repository has
@@ -185,7 +201,7 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
   return {
     remoteDeleted,
     localDeleted,
-    remoteAbsent: remoteName === null,
+    remoteAbsent,
     skippedReason: skipped.length === 0 ? null : skipped.join("; "),
   } satisfies BoardBranchCleanupResult;
 });

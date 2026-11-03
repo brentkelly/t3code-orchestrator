@@ -450,6 +450,35 @@ describe("archiving a group discards its subtree's work (T3O-28)", () => {
     );
   });
 
+  it.effect("a discard that keeps failing is retried by the sweep once per process", () => {
+    const child = card("card-child", merge, {
+      parent: "card-group",
+      worktree: {
+        ...readyWorktree("card-child"),
+        baseRefName: "board/card-group",
+        path: null,
+        status: "reclaimed",
+        discardPending: true,
+      },
+      archivedAt: NOW,
+    });
+    return withGovernor(
+      {
+        board: { cards: [child], nextCardNumberByProject: {} },
+        settings,
+        gitFailure: "remote-delete",
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.sweepWorktrees();
+          yield* h.reactor.drainWorktreeSweep;
+          yield* h.reactor.sweepWorktrees();
+          yield* h.reactor.drainWorktreeSweep;
+          assert.deepStrictEqual(remoteDeletes(yield* h.gitInvocations), ["board/card-child"]);
+        }),
+    );
+  });
+
   it.effect("also discards a child that was archived before the group", () => {
     const group = card("card-group", review, {
       group: ownGroup(),

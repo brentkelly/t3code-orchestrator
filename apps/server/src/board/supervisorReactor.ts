@@ -5254,6 +5254,8 @@ const make = Effect.gen(function* () {
    * cached `open` may have merged on the forge since, and the refresh settles
    * it. That set is tiny by construction, so it is the one forge call here.
    */
+  // Pending group-archive discards the sweep has already retried this process.
+  const sweptDiscards = new Set<BoardCardId>();
   const sweepWorktrees = Effect.fn("board-supervisor-sweepWorktrees")(function* (options: {
     readonly refreshOpenPullRequests: boolean;
   }) {
@@ -5279,9 +5281,13 @@ const make = Effect.gen(function* () {
       }
       // A confirmed group archive whose branch deletion has not finished:
       // retried here, as the one queued at archive may have failed or been
-      // lost to a restart.
+      // lost to a restart. Once per process: some remote refusals never clear,
+      // and each attempt is a push of up to 30s.
       if (card.archivedAt !== null && card.worktree?.discardPending === true) {
-        yield* discardCardBranchWork(card.id);
+        if (!sweptDiscards.has(card.id)) {
+          sweptDiscards.add(card.id);
+          yield* discardCardBranchWork(card.id);
+        }
         continue;
       }
       if (card.worktree === null || card.worktree.status !== "ready") continue;
@@ -7708,7 +7714,15 @@ const make = Effect.gen(function* () {
     // Settled only once both copies are gone: until then the pending discard
     // stays on the card for the sweep to retry, so a failed remote delete is
     // never forgotten.
-    if (!result.localDeleted || !(result.remoteDeleted || result.remoteAbsent)) return;
+    if (!result.localDeleted || !(result.remoteDeleted || result.remoteAbsent)) {
+      // The rail refuses notes on archived cards, so the log is the record.
+      yield* Effect.logWarning("board supervisor: group archive's branch discard still pending", {
+        cardId: card.id,
+        branch: worktree.branch,
+        reason: result.skippedReason,
+      });
+      return;
+    }
     const after = yield* readCard(card.id);
     if (after?.worktree == null) return;
     if (after.worktree.status === "reclaimed" && after.worktree.discardPending !== true) return;
