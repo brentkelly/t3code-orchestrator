@@ -18,7 +18,7 @@ import {
   boardCardWorktreeKeptReason,
   deriveBoardCardPlanProgress,
   boardCardAttention,
-  boardShellAutoMergeArmed,
+  boardShellAutoMergeArmedByCard,
   deriveBoardCardChildAttention,
   deriveBoardCardChildRunning,
   deriveBoardCardThreadState,
@@ -523,10 +523,13 @@ function EnvironmentBoard({
   );
   // Nearest wins (T3O-28): a card's own override, else its parent group's
   // settings, else — top-level only — the board-wide default.
-  const autoMergeArmedFor = useCallback(
-    (card: BoardCardShell) =>
-      boardShellAutoMergeArmed({ shells: allCards, shell: card, boardWide: boardWideAutoMerge }),
+  const autoMergeArmedByCard = useMemo(
+    () => boardShellAutoMergeArmedByCard({ shells: allCards, boardWide: boardWideAutoMerge }),
     [allCards, boardWideAutoMerge],
+  );
+  const autoMergeArmedFor = useCallback(
+    (card: BoardCardShell) => autoMergeArmedByCard.get(String(card.cardId)) === true,
+    [autoMergeArmedByCard],
   );
   const childAttentionFor = useCallback(
     (card: BoardCardShell) => childAttentionByParent.get(card.cardId),

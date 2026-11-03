@@ -2825,7 +2825,12 @@ export function boardCardAutoMergeArmed(input: {
   readonly boardWide?: boolean | undefined;
 }): boolean {
   if (input.card.archivedAt !== null) return false;
-  return resolveBoardAutoMerge(input.board.cards, input.card, input.boardWide === true);
+  const cards = input.board.cards;
+  return resolveBoardAutoMerge(
+    (id) => cards.find((node) => String(node.id) === id),
+    input.card,
+    input.boardWide === true,
+  );
 }
 
 /** The tree fields auto-merge resolution reads — a card or a client shell. */
@@ -2837,15 +2842,14 @@ type BoardAutoMergeNode = {
 };
 
 function resolveBoardAutoMerge(
-  nodes: ReadonlyArray<BoardAutoMergeNode>,
+  byId: (id: string) => BoardAutoMergeNode | undefined,
   card: Pick<BoardAutoMergeNode, "parentCardId" | "autoMerge">,
   boardWide: boolean,
 ): boolean {
   if (card.autoMerge === true) return true;
   const parentId = card.parentCardId ?? null;
   if (parentId === null) return boardWide;
-  const byId = (id: string) => nodes.find((node) => String(node.id) === String(id));
-  const parent = byId(parentId);
+  const parent = byId(String(parentId));
   if (parent === undefined || parent.group == null) return true;
   // Where the card lands: the nearest ancestor with its own branch, through
   // any inherit groups, or trunk.
@@ -2859,41 +2863,65 @@ function resolveBoardAutoMerge(
       break;
     }
     const next: string | null = ancestor.parentCardId ?? null;
-    ancestor = next === null ? undefined : byId(next);
+    ancestor = next === null ? undefined : byId(String(next));
   }
   return intoIntegration ? parent.group.autoBuild : parent.group.autoMerge;
 }
 
-/**
- * `boardCardAutoMergeArmed` over the client's shells (T3O-28): the shell's own
- * `autoMergeArmed` is the per-card override, and its tree position and group
- * settings ride the shells, so a board resolves every card's arm without the
- * aggregate.
- */
+type BoardAutoMergeShell = {
+  readonly cardId: string;
+  readonly parentCardId?: string | null | undefined;
+  readonly group?: BoardCardGroup | null | undefined;
+  readonly autoMergeArmed?: boolean | undefined;
+};
+
+function boardAutoMergeShellIndex(shells: ReadonlyArray<BoardAutoMergeShell>) {
+  const nodes = new Map<string, BoardAutoMergeNode>();
+  for (const shell of shells) {
+    nodes.set(String(shell.cardId), {
+      id: shell.cardId,
+      parentCardId: shell.parentCardId,
+      autoMerge: shell.autoMergeArmed,
+      group: shell.group,
+    });
+  }
+  return nodes;
+}
+
+/** One shell's resolved arm (T3O-28); see `boardShellAutoMergeArmedByCard`. */
 export function boardShellAutoMergeArmed(input: {
-  readonly shells: ReadonlyArray<{
-    readonly cardId: string;
-    readonly parentCardId?: string | null | undefined;
-    readonly group?: BoardCardGroup | null | undefined;
-    readonly autoMergeArmed?: boolean | undefined;
-  }>;
+  readonly shells: ReadonlyArray<BoardAutoMergeShell>;
   readonly shell: {
     readonly parentCardId?: string | null | undefined;
     readonly autoMergeArmed?: boolean | undefined;
   };
   readonly boardWide: boolean;
 }): boolean {
-  const nodes = input.shells.map((shell) => ({
-    id: shell.cardId,
-    parentCardId: shell.parentCardId,
-    autoMerge: shell.autoMergeArmed,
-    group: shell.group,
-  }));
+  const nodes = boardAutoMergeShellIndex(input.shells);
   return resolveBoardAutoMerge(
-    nodes,
+    (id) => nodes.get(id),
     { parentCardId: input.shell.parentCardId, autoMerge: input.shell.autoMergeArmed },
     input.boardWide,
   );
+}
+
+/**
+ * `boardCardAutoMergeArmed` over the client's shells (T3O-28), for every shell
+ * at once: the shell's own `autoMergeArmed` is the per-card override, and its
+ * tree position and group settings ride the shells, so a board resolves every
+ * card's arm without the aggregate. Keyed by `cardId`.
+ */
+export function boardShellAutoMergeArmedByCard(input: {
+  readonly shells: ReadonlyArray<BoardAutoMergeShell>;
+  readonly boardWide: boolean;
+}): ReadonlyMap<string, boolean> {
+  const nodes = boardAutoMergeShellIndex(input.shells);
+  const byId = (id: string) => nodes.get(id);
+  const armed = new Map<string, boolean>();
+  for (const [id, node] of nodes) {
+    armed.set(id, resolveBoardAutoMerge(byId, node, input.boardWide));
+  }
+  return armed;
 }
 
 /**

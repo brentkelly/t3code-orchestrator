@@ -21,6 +21,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   boardCardAutoMergeArmed,
   boardShellAutoMergeArmed,
+  boardShellAutoMergeArmedByCard,
   boardCardAutoMergeGaveUp,
   boardCardAutoStartDue,
   boardCardCanArmAutoMerge,
@@ -2817,6 +2818,9 @@ describe("auto-merge (T3O-38)", () => {
         const leafShell = shells.find((shell) => shell.cardId === leaf.id)!;
         expect(
           boardShellAutoMergeArmed({ shells, shell: leafShell, boardWide: row.boardWide }),
+        ).toBe(row.armed);
+        expect(
+          boardShellAutoMergeArmedByCard({ shells, boardWide: row.boardWide }).get(String(leaf.id)),
         ).toBe(row.armed);
       });
     });
