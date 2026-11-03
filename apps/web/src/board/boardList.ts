@@ -103,7 +103,7 @@ export function buildBoardListTree(input: {
   return { shells, byId, children, order, inScope };
 }
 
-export function boardListChildren(tree: BoardListTree, parentId: string | null): Shells {
+function boardListChildren(tree: BoardListTree, parentId: string | null): Shells {
   return tree.children.get(parentId ?? TOP) ?? [];
 }
 
@@ -113,7 +113,7 @@ export interface BoardListFilter {
   readonly stages: ReadonlySet<string>;
 }
 
-export function isBoardListFiltering(filter: BoardListFilter): boolean {
+function isBoardListFiltering(filter: BoardListFilter): boolean {
   return filter.query.trim().length > 0 || filter.stages.size > 0;
 }
 
@@ -271,7 +271,7 @@ export function boardListRange(
 export type BoardListDropZone = "before" | "into" | "after";
 
 /** The top and bottom 28% of a row drop beside it; the middle nests inside. */
-export const BOARD_LIST_EDGE_FRACTION = 0.28;
+const BOARD_LIST_EDGE_FRACTION = 0.28;
 
 export function boardListDropZone(offsetY: number, height: number): BoardListDropZone {
   const at = height <= 0 ? 0.5 : offsetY / height;

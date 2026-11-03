@@ -56,6 +56,7 @@ import {
   MenuTrigger,
 } from "../components/ui/menu";
 import { isEditableFocused } from "../lib/editableFocus";
+import { observeResize } from "../lib/observeResize";
 import { cn, randomUUID } from "../lib/utils";
 import { boardEnvironment } from "../state/board";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -95,7 +96,7 @@ import { projectAccent } from "./projectAccent";
 
 type Shells = ReadonlyArray<BoardCardShell>;
 
-export const BOARD_LIST_ROW_HEIGHT = 35;
+const BOARD_LIST_ROW_HEIGHT = 35;
 const INDENT_PX = 22;
 /** Below this many rows every row renders; above it, only the window. */
 const VIRTUALISE_FROM = 150;
@@ -433,10 +434,8 @@ export function BoardListView(props: BoardListViewProps) {
     if (!virtualised) return;
     measure();
     const element = scrollRef.current;
-    if (element === null || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
+    if (element === null) return;
+    return observeResize(element, measure);
   }, [measure, virtualised]);
   const start = virtualised ? Math.min(rowWindow.start, rows.length) : 0;
   const end = virtualised ? Math.min(rowWindow.end, rows.length) : rows.length;

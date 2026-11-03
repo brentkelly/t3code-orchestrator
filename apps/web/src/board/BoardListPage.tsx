@@ -43,7 +43,7 @@ function stageStateOf(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
   return { cards: [], stages, nextCardNumberByProject: {} };
 }
 
-export function BoardListPage() {
+function BoardListPage() {
   const board = useBoardEnvironment();
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
