@@ -2131,6 +2131,30 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         },
         // Reporting only: it writes an activity row and touches no card field,
         // so it cannot possibly emit a move.
+        "board.card.record-decisions": {
+          type: "board.card.record-decisions",
+          commandId: CommandId.make("cmd-record-decisions"),
+          cardId: BoardCardId.make("card-ready"),
+          decisions: [
+            {
+              question: "Ship behind a flag?",
+              decision: "No flag",
+              reason: "Small and reversible.",
+              flag: "unclear",
+              decidedBy: "agent",
+            },
+          ],
+          stepId: null,
+          threadId: null,
+          createdAt: NOW,
+        },
+        "board.card.mark-auto-plan": {
+          type: "board.card.mark-auto-plan",
+          commandId: CommandId.make("cmd-mark-auto-plan"),
+          cardId: BoardCardId.make("card-ready"),
+          mode: "build",
+          createdAt: NOW,
+        },
         "board.card.record-note": {
           type: "board.card.record-note",
           commandId: CommandId.make("cmd-record-note"),

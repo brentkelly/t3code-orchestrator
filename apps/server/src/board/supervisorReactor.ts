@@ -25,6 +25,11 @@ import {
   type BoardStepQueuedBy,
   type BoardWorkerId,
   boardCardAutoArchiveDue,
+  BOARD_AUTO_PLAN_INSTRUCTION,
+  BOARD_DECISION_REASON_MAX_LENGTH,
+  BOARD_DECISION_TEXT_MAX_LENGTH,
+  isBoardCardAutoPlanPending,
+  type BoardAutoPlanCardResult,
   boardCardAutoStartDue,
   boardCardChildren,
   boardBuildHumanInLoopDefault,
@@ -410,7 +415,15 @@ export interface SupervisorReactorShape {
   readonly requestReviewRound: (
     cardId: BoardCardId,
   ) => Effect.Effect<BoardRequestReviewRoundResult>;
+  /** Auto-plan → Build (T3O-32, decision 7): steer the live planning thread to
+      decide, record and propose, or start an unattended planning step. The
+      plan that arrives is approved and the card goes on to Building. */
+  readonly autoPlanCard: (cardId: BoardCardId) => Effect.Effect<BoardAutoPlanCardResult>;
 }
+
+/** A string cut to `max` characters, ending in an ellipsis when cut. */
+const clip = (text: string, max: number): string =>
+  text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
 
 /** Epoch millis off the Effect clock, never `new Date()`, so a test's
     `TestClock` moves every due-time comparison the reactor makes. */
@@ -1072,6 +1085,9 @@ const make = Effect.gen(function* () {
     if (stage?.role === "build") {
       return card.humanInLoop ?? buildHumanInLoopDefault(board, exec, card);
     }
+    // An auto-planned card is planned unattended (T3O-32): the click, or the
+    // group's setting, is the human act, and nobody is there to answer.
+    if (stage?.role === "plan" && isBoardCardAutoPlanPending(card)) return false;
     return exec.humanInLoop;
   };
 
@@ -1814,6 +1830,7 @@ const make = Effect.gen(function* () {
         stepLabel: state.stepLabel,
         prompt: state.prompt,
         humanInLoop: state.humanInLoop,
+        ...(role === "plan" && isBoardCardAutoPlanPending(card) ? { autoPlan: true } : {}),
       },
       role,
     });
@@ -2762,7 +2779,14 @@ const make = Effect.gen(function* () {
     // Auto-kickoff fires only for an auto-executing stage; on-demand runs any
     // stage that has work (gated above).
     if (!onDemand && !exec.autoExecute) return;
-    const completions = boardCardStepCompletions(board, card.id);
+    // An auto-plan run is always a fresh planning run (T3O-32): a card that
+    // was planned before is re-planned unattended rather than handed the
+    // empty re-entry conversation, so its earlier planning step is set aside.
+    const autoPlanRun =
+      effectiveBoardStageRole(stage) === "plan" && isBoardCardAutoPlanPending(card);
+    const completions = boardCardStepCompletions(board, card.id).filter(
+      (completion) => !autoPlanRun || completion.stepId !== card.stage,
+    );
     // First entry vs re-entry (D7): a recorded completion for this stage's step
     // means the card has been here before, so re-run nothing — open a clean
     // human-in-the-loop conversation. This is reactor policy, orthogonal to the
@@ -6424,6 +6448,214 @@ const make = Effect.gen(function* () {
     yield* releaseFinishedThreads;
   });
 
+  /** A rail row for something auto-planning did, or could not do (T3O-32). */
+  const autoPlanNote = Effect.fn("board-supervisor-autoPlanNote")(function* (
+    cardId: BoardCardId,
+    detail: string,
+  ) {
+    yield* dispatch({
+      type: "board.card.record-note",
+      commandId: yield* commandId("auto-plan-note"),
+      cardId,
+      kind: "card-auto-planned",
+      detail,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
+   * Approve an auto-planned card's plan (T3O-32, decisions 4 and 7) — always,
+   * unclear decisions included. A single plan walks to Ready, and on to
+   * Building for an Auto-plan → Build click (D18: the click is the human act).
+   * A split is approved with the agent's recommended settings and logged as an
+   * important decision; for a click the group is then started, which builds
+   * every ready child whose dependencies are met only when auto-build is on.
+   * Every gate still applies, and a refusal lands on the rail.
+   */
+  const approveAutoPlannedCard = Effect.fn("board-supervisor-approveAutoPlannedCard")(function* (
+    card: BoardCard,
+    state: BoardCardStepState,
+  ) {
+    const board = yield* readBoard;
+    const mode = card.autoPlan?.mode ?? "ready";
+    const plans = boardCardPlans(board, card.id).toSorted(
+      (left, right) => left.ordinal - right.ordinal,
+    );
+    if (plans.length === 0) {
+      yield* autoPlanNote(
+        card.id,
+        "Auto-plan finished without proposing a plan, so nothing was approved. Plan the card by hand, or auto-plan it again.",
+      );
+      return;
+    }
+    const buildStage = boardStageWithRole(board, "build");
+    if (plans.length >= 2) {
+      const refusal = yield* dispatchRefusal({
+        type: "board.plans.approve",
+        commandId: yield* commandId("auto-plan-approve-split"),
+        cardId: card.id,
+        createdAt: yield* nowIso,
+      });
+      if (refusal !== null) {
+        yield* autoPlanNote(card.id, `Auto-plan could not approve the split: ${refusal}`);
+        return;
+      }
+      const titles = plans.map((plan) => plan.title).join("; ");
+      yield* dispatch({
+        type: "board.card.record-decisions",
+        commandId: yield* commandId("auto-plan-split-decision"),
+        cardId: card.id,
+        decisions: [
+          {
+            question: "Build this card as one plan, or split it?",
+            decision: clip(`Split into ${plans.length} cards: ${titles}`, BOARD_DECISION_TEXT_MAX_LENGTH),
+            reason: clip(
+              card.splitRationale ?? "The agent proposed a split.",
+              BOARD_DECISION_REASON_MAX_LENGTH,
+            ),
+            flag: "important",
+            decidedBy: "agent",
+          },
+        ],
+        stepId: state.stepId,
+        threadId: state.threadId,
+        createdAt: yield* nowIso,
+      });
+      const group = boardCardGroupOf(yield* readBoard, (yield* readCard(card.id)) ?? card);
+      if (mode !== "build" || buildStage === null) {
+        yield* autoPlanNote(card.id, `Auto-plan approved the split into ${plans.length} cards.`);
+        return;
+      }
+      if (group === null || !group.autoBuild) {
+        yield* autoPlanNote(
+          card.id,
+          `Auto-plan approved the split into ${plans.length} cards. Auto-build is off, so nothing starts until you start the group.`,
+        );
+        return;
+      }
+      const started = yield* dispatchRefusal({
+        type: "board.card.move",
+        commandId: yield* commandId("auto-plan-start-group"),
+        cardId: card.id,
+        toStage: buildStage.stageId,
+        override: true,
+        createdAt: yield* nowIso,
+      });
+      yield* autoPlanNote(
+        card.id,
+        started === null
+          ? `Auto-plan approved the split into ${plans.length} cards and started the group.`
+          : `Auto-plan approved the split into ${plans.length} cards; the group did not start: ${started}`,
+      );
+      return;
+    }
+    const next = boardNextStageId(board, card.stage);
+    if (next === null) return;
+    const toReady = yield* dispatchRefusal({
+      type: "board.card.move",
+      commandId: yield* commandId("auto-plan-approve"),
+      cardId: card.id,
+      toStage: next,
+      createdAt: yield* nowIso,
+    });
+    if (toReady !== null) {
+      yield* autoPlanNote(card.id, `Auto-plan could not approve the plan: ${toReady}`);
+      return;
+    }
+    if (mode !== "build" || buildStage === null || next === buildStage.stageId) return;
+    const toBuild = yield* dispatchRefusal({
+      type: "board.card.move",
+      commandId: yield* commandId("auto-plan-build"),
+      cardId: card.id,
+      toStage: buildStage.stageId,
+      createdAt: yield* nowIso,
+    });
+    if (toBuild !== null) {
+      yield* autoPlanNote(card.id, `Auto-plan approved the plan; the build did not start: ${toBuild}`);
+    }
+  });
+
+  /**
+   * Group auto-plan (T3O-32, decision 4): a leaf arriving in planning inside a
+   * group with auto-plan on is marked for an unattended planning run whose
+   * plan is approved to Ready. Returns the card the kickoff should use.
+   */
+  const markGroupAutoPlan = Effect.fn("board-supervisor-markGroupAutoPlan")(function* (
+    card: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    const planStage = boardStageWithRole(board, "plan");
+    if (planStage === null || card.stage !== planStage.stageId) return card;
+    if (card.parentCardId === null || isBoardCardAutoPlanPending(card)) return card;
+    if (boardCardGroupOf(board, card) !== null) return card;
+    const parent = board.cards.find((candidate) => candidate.id === card.parentCardId);
+    if (parent === undefined || boardCardGroupOf(board, parent)?.autoPlan !== true) return card;
+    const marked = yield* dispatchOptional({
+      type: "board.card.mark-auto-plan",
+      commandId: yield* commandId("group-auto-plan"),
+      cardId: card.id,
+      mode: "ready",
+      createdAt: yield* nowIso,
+    });
+    if (!marked) return card;
+    const after = yield* readCard(card.id);
+    return after?.autoPlan === undefined ? card : { ...card, autoPlan: after.autoPlan };
+  });
+
+  /**
+   * Auto-plan → Build (T3O-32, decision 7). Request-scoped and total, like
+   * the other buttons: every refusal is a sentence the card shows.
+   */
+  const autoPlanCard = Effect.fn("board-supervisor-autoPlanCard")(function* (cardId: BoardCardId) {
+    const card = yield* readCard(cardId);
+    if (card === null || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
+    const refusal = yield* dispatchRefusal({
+      type: "board.card.mark-auto-plan",
+      commandId: yield* commandId("auto-plan"),
+      cardId: card.id,
+      mode: "build",
+      createdAt: yield* nowIso,
+    });
+    if (refusal !== null) return { outcome: "refused", detail: refusal } as const;
+    const board = yield* readBoard;
+    const state = boardCardStepState(board, card.id);
+    // A live planning thread is told to finish on its own terms; a stalled
+    // one gave up, so it is replaced by a fresh unattended run like no thread.
+    if (
+      state !== null &&
+      state.threadId !== null &&
+      state.stepId === card.stage &&
+      !isBoardTerminalStepStatus(state.status) &&
+      state.status !== "stalled"
+    ) {
+      yield* sendTurn({
+        threadId: state.threadId,
+        text: BOARD_AUTO_PLAN_INSTRUCTION,
+        runtimeMode: state.runtimeMode,
+      });
+      if (state.humanInLoop) {
+        yield* dispatch({
+          type: "board.card.retune-step",
+          commandId: yield* commandId("auto-plan-retune"),
+          cardId: card.id,
+          stepId: state.stepId,
+          humanInLoop: false,
+          createdAt: yield* nowIso,
+        });
+      }
+      return { outcome: "steered" } as const;
+    }
+    const started = yield* dispatchRefusal({
+      type: "board.card.start-stage-thread",
+      commandId: yield* commandId("auto-plan-start"),
+      cardId: card.id,
+      createdAt: yield* nowIso,
+    });
+    return started === null
+      ? ({ outcome: "started" } as const)
+      : ({ outcome: "refused", detail: started } as const);
+  });
+
   const handleStepCompleted = Effect.fn("board-supervisor-handleStepCompleted")(function* (
     event: Extract<BoardEvent, { type: "board.card-step-completed" }>,
   ) {
@@ -6608,6 +6840,18 @@ const make = Effect.gen(function* () {
             });
           }
           return;
+        }
+        // An auto-planned card's plan is approved by the board (T3O-32): the
+        // click or the group's setting authorised it, so the plan never waits
+        // on the gate — and the stage's own auto-advance must not move it too.
+        if (stageRole === "plan") {
+          const planned = yield* readCard(card.id);
+          if (planned !== null && isBoardCardAutoPlanPending(planned)) {
+            yield* approveAutoPlannedCard(planned, state);
+            yield* releaseFinishedThreads;
+            yield* schedule();
+            return;
+          }
         }
         // Ask the stage executor what runs next (t3o-16): a single-step stage
         // reports `complete` and this auto-advances to the next stage in order
@@ -7731,6 +7975,7 @@ const make = Effect.gen(function* () {
       });
     }
 
+    kickoffCard = yield* markGroupAutoPlan(kickoffCard);
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
     // The card changed stage, so the threads it left behind are finished work
     // (t3o-13). Run AFTER the kickoff, so the destination's own freshly linked
@@ -9220,6 +9465,15 @@ const make = Effect.gen(function* () {
           // round did not start" rather than as an unhandled failure on a
           // button click.
           Effect.logWarning("board supervisor: review round request failed", {
+            cardId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ outcome: "failed" } as const)),
+        ),
+      ),
+    autoPlanCard: (cardId) =>
+      autoPlanCard(cardId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: auto-plan failed", {
             cardId,
             cause: Cause.pretty(cause),
           }).pipe(Effect.as({ outcome: "failed" } as const)),

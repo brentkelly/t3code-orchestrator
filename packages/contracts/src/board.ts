@@ -1266,6 +1266,92 @@ export const BoardSplitRecommendation = Schema.Struct({
 });
 export type BoardSplitRecommendation = typeof BoardSplitRecommendation.Type;
 
+/**
+ * A card being, or having been, auto-planned (T3O-32, decisions 4 and 7).
+ * `build` is the human's Auto-plan → Build click: its plan is approved and the
+ * card goes on to Building. `ready` is a group's auto-plan setting: the plan is
+ * approved and the card stops at Ready. Set when the run is asked for and kept
+ * after, so "auto-planned" stays readable on the card; `endedAt` marks the
+ * request spent — the plan was approved, or the card left planning first.
+ */
+export const BoardCardAutoPlanMode = Schema.Literals(["build", "ready"]);
+export type BoardCardAutoPlanMode = typeof BoardCardAutoPlanMode.Type;
+
+export const BoardCardAutoPlan = Schema.Struct({
+  mode: BoardCardAutoPlanMode,
+  requestedAt: IsoDateTime,
+  endedAt: Schema.NullOr(IsoDateTime),
+});
+export type BoardCardAutoPlan = typeof BoardCardAutoPlan.Type;
+
+/** Whether an auto-plan request is still waiting on its plan. */
+export function isBoardCardAutoPlanPending(
+  card: { readonly autoPlan?: BoardCardAutoPlan | null | undefined },
+): boolean {
+  return card.autoPlan != null && card.autoPlan.endedAt === null;
+}
+
+/**
+ * One planning decision (T3O-32): what was asked, what was decided, a
+ * one-line reason and who decided. `unclear` marks a call the agent was not
+ * sure about and wants a human to review; `important` a call that shapes the
+ * work. Lives in its own table, never the read model, like plan bodies (D8).
+ */
+export const BoardCardDecisionFlag = Schema.Literals(["normal", "important", "unclear"]);
+export type BoardCardDecisionFlag = typeof BoardCardDecisionFlag.Type;
+
+export const BoardCardDecisionMaker = Schema.Literals(["agent", "human"]);
+export type BoardCardDecisionMaker = typeof BoardCardDecisionMaker.Type;
+
+/** Caps on what one decision may carry: the log rides every detail frame. */
+export const BOARD_DECISION_QUESTION_MAX_LENGTH = 300;
+export const BOARD_DECISION_TEXT_MAX_LENGTH = 600;
+export const BOARD_DECISION_REASON_MAX_LENGTH = 400;
+export const BOARD_DECISIONS_PER_CALL_MAX = 40;
+
+export const BoardCardDecisionInput = Schema.Struct({
+  question: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(BOARD_DECISION_QUESTION_MAX_LENGTH),
+  ),
+  decision: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_DECISION_TEXT_MAX_LENGTH)),
+  reason: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_DECISION_REASON_MAX_LENGTH)),
+  flag: BoardCardDecisionFlag,
+  decidedBy: BoardCardDecisionMaker,
+});
+export type BoardCardDecisionInput = typeof BoardCardDecisionInput.Type;
+
+export const BoardCardDecision = Schema.Struct({
+  ...BoardCardDecisionInput.fields,
+  decisionId: TrimmedNonEmptyString,
+  cardId: BoardCardId,
+  /** The planning step (or thread) that recorded it; null when neither. */
+  stepId: Schema.NullOr(TrimmedNonEmptyString),
+  threadId: Schema.NullOr(ThreadId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardDecision = typeof BoardCardDecision.Type;
+
+const BOARD_DECISION_FLAG_RANK: Record<BoardCardDecisionFlag, number> = {
+  unclear: 0,
+  important: 1,
+  normal: 2,
+};
+
+/** A decision log in reading order: unclear, then important, then normal,
+    each in the order it was recorded. */
+export function sortBoardCardDecisions<T extends Pick<BoardCardDecision, "flag">>(
+  decisions: ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  return decisions
+    .map((decision, index) => ({ decision, index }))
+    .toSorted(
+      (left, right) =>
+        BOARD_DECISION_FLAG_RANK[left.decision.flag] - BOARD_DECISION_FLAG_RANK[right.decision.flag] ||
+        left.index - right.index,
+    )
+    .map((entry) => entry.decision);
+}
+
 export const BoardCard = Schema.Struct({
   id: BoardCardId,
   /** Generated `<prefix>-<cardNumber>`, e.g. "T3-195" (D14). */
@@ -1506,6 +1592,9 @@ export const BoardCard = Schema.Struct({
   autoMergeHold: Schema.NullOr(BoardCardAutoMergeHold).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** The card's auto-plan request (T3O-32); absent on a card never
+      auto-planned, matching migration 053's NULL column. */
+  autoPlan: Schema.optionalKey(BoardCardAutoPlan),
   /** The worker a human pinned this card to (T3O-65, D20), or null to follow
       the board's default worker. Set at creation, by `board.card.pin-worker`,
       and by a completed move. Decodes to null on every event written before
@@ -2166,6 +2255,8 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
   /** The board marked a draft pull request ready for review (T3O-12), which
       is what starts the repository's full CI — and the row that says so. */
   "card-pull-request-ready",
+  /** What auto-planning did with a card's plan, or why it could not (T3O-32). */
+  "card-auto-planned",
   /** A finished card's worktree was kept because removing it would lose work
       (T3O-52, D5). Written only when the REASON changes, so a refusal repeated
       on every card open stays one row. */
@@ -4853,6 +4944,8 @@ export const BoardCardNoteKind = Schema.Literals([
       at the merge stage, an attempt to that failed and is left to the next
       merge attempt, which no merge refusal has happened yet to explain. */
   "card-pull-request-ready",
+  /** What auto-planning did with a card's plan, or why it could not (T3O-32). */
+  "card-auto-planned",
 ]);
 export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
 
@@ -4898,6 +4991,36 @@ export const BoardCardRecordAutoMergeHoldCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardCardRecordAutoMergeHoldCommand = typeof BoardCardRecordAutoMergeHoldCommand.Type;
+
+/**
+ * Record planning decisions on a card's decision log (T3O-32). Dispatched by
+ * the `board_record_decisions` tool for the caller's card, and by the
+ * supervisor when an auto-plan split is approved (logged as important).
+ */
+export const BoardCardRecordDecisionsCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-decisions"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  decisions: Schema.Array(BoardCardDecisionInput),
+  stepId: Schema.NullOr(TrimmedNonEmptyString),
+  threadId: Schema.NullOr(ThreadId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordDecisionsCommand = typeof BoardCardRecordDecisionsCommand.Type;
+
+/**
+ * Mark a leaf in planning for auto-planning (T3O-32). Server-internal: the
+ * supervisor's `autoPlanCard` (the Auto-plan → Build click, mode `build`) and
+ * a group's auto-plan setting (mode `ready`) are the only ways in.
+ */
+export const BoardCardMarkAutoPlanCommand = Schema.Struct({
+  type: Schema.Literal("board.card.mark-auto-plan"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  mode: BoardCardAutoPlanMode,
+  createdAt: IsoDateTime,
+});
+export type BoardCardMarkAutoPlanCommand = typeof BoardCardMarkAutoPlanCommand.Type;
 
 // Server-INTERNAL step-lifecycle commands (t3o-10, BOARD_INTERNAL_COMMANDS):
 // the supervisor reactor dispatches them as it drives a card's step through
@@ -5403,6 +5526,8 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       step stalled because its worker lacks its provider restarts only on this
       edit — Change model — and never on a title or label change. */
   modelOverridesEdited: Schema.optional(Schema.Literal(true)),
+  /** Present when this update marked the card for auto-planning (T3O-32). */
+  autoPlanMarked: Schema.optional(Schema.Literal(true)),
   /** The card face's review summary AFTER this edit (t3o-22, D7), folded by
       the decider when the edit could change it (a round budget or a stop). It
       rides the `card-upserted` shell delta this event produces, so a pure
@@ -5799,6 +5924,13 @@ export const BoardCardNoteRecordedPayload = Schema.Struct({
   detail: TrimmedNonEmptyString,
 });
 export type BoardCardNoteRecordedPayload = typeof BoardCardNoteRecordedPayload.Type;
+
+/** Decisions appended to a card's log (T3O-32). No card field changes. */
+export const BoardCardDecisionsRecordedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  decisions: Schema.Array(BoardCardDecision),
+});
+export type BoardCardDecisionsRecordedPayload = typeof BoardCardDecisionsRecordedPayload.Type;
 
 /** Carries the whole post-change card, like `board.card-pull-request-recorded`
     — the shell delta mapping is a pure function of the event, and the hold
@@ -7276,6 +7408,9 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardRecordNoteCommand,
   // T3O-38: the auto-merge hold and its retry ladder.
   BoardCardRecordAutoMergeHoldCommand,
+  // T3O-32: the decision log and auto-planning.
+  BoardCardRecordDecisionsCommand,
+  BoardCardMarkAutoPlanCommand,
   BoardCardSelectStepCommand,
   BoardCardAdmitStepCommand,
   BoardCardAwaitStepInputCommand,
@@ -7349,6 +7484,8 @@ export const BOARD_EVENT_TYPES = [
   "board.card-pull-request-recorded",
   "board.card-note-recorded",
   "board.card-auto-merge-hold-recorded",
+  // T3O-32: planning decisions on a card's decision log.
+  "board.card-decisions-recorded",
   "board.card-step-selected",
   "board.card-step-admitted",
   "board.card-step-force-start-requested",
@@ -7629,6 +7766,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
     }),
     Schema.Struct({
       ...base,
+      type: Schema.Literal("board.card-decisions-recorded"),
+      payload: BoardCardDecisionsRecordedPayload,
+    }),
+    Schema.Struct({
+      ...base,
       type: Schema.Literal("board.card-step-selected"),
       payload: BoardCardStepSelectedPayload,
     }),
@@ -7769,6 +7911,10 @@ export const BOARD_WS_METHODS = {
       moves, or the executor re-plans a converged loop, completes `succeeded`,
       and bounces the card straight back to Ready for merge. */
   requestReviewRound: "board.requestReviewRound",
+  /** Auto-plan → Build (T3O-32, decision 7): end planning, have the agent
+      decide what is left, approve the plan and start building. An RPC
+      because it may steer a live planning thread. */
+  autoPlanCard: "board.autoPlanCard",
   /** "Remove worktree" on a finished card that kept one (T3O-52, D5): remove
       it past the safety rule, after a confirm dialog. The branch is kept. An
       RPC because the git removal must land before the record does. */
@@ -7985,6 +8131,18 @@ export const BoardRequestReviewRoundResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("failed") }),
 ]);
 export type BoardRequestReviewRoundResult = typeof BoardRequestReviewRoundResult.Type;
+
+/** What Auto-plan → Build did (T3O-32). `steered` told the live planning
+    thread to decide, record and propose; `started` began an unattended
+    planning step. `refused` carries the reason as a sentence. */
+export const BoardAutoPlanCardResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("steered") }),
+  Schema.Struct({ outcome: Schema.Literal("started") }),
+  Schema.Struct({ outcome: Schema.Literal("refused"), detail: TrimmedNonEmptyString }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+  Schema.Struct({ outcome: Schema.Literal("failed") }),
+]);
+export type BoardAutoPlanCardResult = typeof BoardAutoPlanCardResult.Type;
 
 /** What "Remove worktree" did (T3O-52, D5). */
 export const BoardRemoveCardWorktreeResult = Schema.Union([
@@ -8244,6 +8402,9 @@ export const BoardCardDetail = Schema.Struct({
   stepError: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** The card's decision log (T3O-32), oldest first. Decodes to `[]` on
+      legacy detail payloads. */
+  decisions: Schema.Array(BoardCardDecision).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type BoardCardDetail = typeof BoardCardDetail.Type;
 
@@ -8405,6 +8566,11 @@ export const BOARD_RPCS = [
     success: BoardRequestReviewRoundResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.autoPlanCard, {
+    payload: BoardCardPullRequestActionInput,
+    success: BoardAutoPlanCardResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WS_METHODS.removeCardWorktree, {
     payload: BoardCardPullRequestActionInput,
     success: BoardRemoveCardWorktreeResult,
@@ -8474,6 +8640,7 @@ export const BOARD_RPC_SCOPES = {
   // and moves the card: the same mutation tier as merging.
   [BOARD_WS_METHODS.submitCardForMerge]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.requestReviewRound]: AuthOrchestrationOperateScope,
+  [BOARD_WS_METHODS.autoPlanCard]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.removeCardWorktree]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.checkCardWorktree]: AuthOrchestrationOperateScope,
   // T3O-65: the move reads the source worker's git and then changes where the

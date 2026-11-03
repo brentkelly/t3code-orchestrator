@@ -22,6 +22,8 @@
  */
 import {
   areBoardStagesAdjacent,
+  BOARD_DECISIONS_PER_CALL_MAX,
+  isBoardCardAutoPlanPending,
   BOARD_CARD_BRIEF_BODY_KIND,
   BOARD_CARD_LABELS_MAX,
   boardAppendOrderKey,
@@ -221,6 +223,14 @@ export function boardCommandAggregateRef(command: BoardCommand): {
 
 const invariant = (command: BoardCommand, detail: string) =>
   new BoardCommandInvariantError({ commandType: command.type, detail });
+
+/** A pending auto-plan request marked spent (T3O-32): the plan was approved,
+    or the card left planning before it arrived. Anything else is untouched. */
+function endBoardCardAutoPlan(card: BoardCard, at: string): Pick<BoardCard, "autoPlan"> {
+  return card.autoPlan !== undefined && card.autoPlan.endedAt === null
+    ? { autoPlan: { ...card.autoPlan, endedAt: at } }
+    : {};
+}
 
 function requireBoardCard(input: {
   readonly board: BoardState;
@@ -1986,6 +1996,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         ...card,
         stage: command.toStage,
         orderKey: nextOrderKey,
+        // Leaving planning spends an auto-plan request (T3O-32): the card can
+        // be in planning only once per request, so any move ends it.
+        ...endBoardCardAutoPlan(card, command.createdAt),
         // ANY move spends the auto-start arm (T3O-24, D4). Clearing it here —
         // inside the move rather than in a second command afterwards — is what
         // makes fire-and-clear one atomic event, with none of the
@@ -3717,6 +3730,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // stays where it is until the human starts it.
       const parentAfterApproval: BoardCard = {
         ...card,
+        ...endBoardCardAutoPlan(card, command.createdAt),
         group: defaultBoardCardGroup(board, card, {
           ...settings,
           started: card.stage === buildStage.stageId,
@@ -4208,6 +4222,86 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         })),
         type: "board.card-auto-merge-hold-recorded",
         payload: { cardId: command.cardId, hold: command.hold, card: nextCard },
+      };
+    }
+
+    case "board.card.record-decisions": {
+      // The decision log (T3O-32). Append-only: a planning session records
+      // what it decided, and a correction is a newer entry, not an edit.
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (command.decisions.length === 0) {
+        return yield* invariant(command, "Record at least one decision.");
+      }
+      if (command.decisions.length > BOARD_DECISIONS_PER_CALL_MAX) {
+        return yield* invariant(
+          command,
+          `Record at most ${BOARD_DECISIONS_PER_CALL_MAX} decisions per call; split the rest into another call.`,
+        );
+      }
+      const base = yield* makeBoardEventBase({
+        cardId: card.id,
+        occurredAt: command.createdAt,
+        commandId: command.commandId,
+      });
+      return {
+        ...base,
+        type: "board.card-decisions-recorded",
+        payload: {
+          cardId: card.id,
+          // Derived from the event id, so re-projecting the event inserts
+          // nothing twice.
+          decisions: command.decisions.map((decision, index) => ({
+            ...decision,
+            decisionId: `${base.eventId}:${index}`,
+            cardId: card.id,
+            stepId: command.stepId,
+            threadId: command.threadId,
+            createdAt: command.createdAt,
+          })),
+        },
+      };
+    }
+
+    case "board.card.mark-auto-plan": {
+      // Auto-planning applies to a leaf that is being planned and has no split
+      // waiting on a human (T3O-32, decision 7). A group plans through its
+      // children, and a pending split already has its plans.
+      const card = yield* requireActiveBoardCard({ board, command });
+      const planStage = boardStageWithRole(board, "plan");
+      if (planStage === null || card.stage !== planStage.stageId) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' is not in planning; only a card being planned can be auto-planned.`,
+        );
+      }
+      if (boardCardGroupOf(board, card) !== null) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' is a group; its children are planned one by one.`,
+        );
+      }
+      if (boardCardPendingSplit(board, card.id)) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' has a proposed split waiting for approval; approve it or ask for changes instead.`,
+        );
+      }
+      if (isBoardCardAutoPlanPending(card)) {
+        return yield* invariant(command, `Card '${card.key}' is already being auto-planned.`);
+      }
+      const nextCard: BoardCard = {
+        ...card,
+        autoPlan: { mode: command.mode, requestedAt: command.createdAt, endedAt: null },
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: card.id,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-updated",
+        payload: { cardId: card.id, card: nextCard, autoPlanMarked: true },
       };
     }
 
