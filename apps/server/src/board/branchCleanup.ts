@@ -2,8 +2,8 @@
  * Branch cleanup for a card that is finished with its branch.
  *
  * Deleting a branch is irreversible, so nothing here decides on its own that a
- * branch is spent — the CALLER carries that burden, and there are exactly two,
- * with two different justifications:
+ * branch is spent — the CALLER carries that burden, and each caller below has
+ * its own justification:
  *
  * - **Arrival at Done with a merged pull request.** The commits already live in
  *   the base branch, so the branch holds nothing that exists nowhere else. This
@@ -13,8 +13,17 @@
  *   lost. What makes it legitimate is that a human confirmed the destruction of
  *   the card at a dialog that says so; the card is being erased, and a branch
  *   named after a card that no longer exists has no owner left.
+ * - **Confirmed group archive** (T3O-28, decision 14). The human typed the
+ *   group's key to say no further work happens on the subtree, ever.
+ * - **Archive of a `branch-only` integration branch whose PR merged** (T3O-28).
+ *   It has no checkout for a reclaim to remove, and its merge made it durable.
+ * - **Cancelled work, after its worktree goes** (T3O-28, decision 12). A human
+ *   confirmed the cancellation by typing the card's key and its PR was closed,
+ *   so the work is not wanted. The reclaim's safety rule only proves the work
+ *   is pushed, not merged, so this deletes the remote copy on that confirmation
+ *   alone; the branch goes with the checkout.
  *
- * Two deletions, with different risk:
+ * Each caller runs two deletions, with different risk:
  *
  * - **Remote** — what GitHub's own "delete branch on merge" does, and safe for
  *   the same reason.

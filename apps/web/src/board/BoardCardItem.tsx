@@ -287,7 +287,7 @@ export function BoardCardContent({
   childRunning,
   noPullRequest,
   atMergeStage,
-  autoMergeBoardWide,
+  autoMergeArmed,
   worktreeKeptReason,
 }: {
   readonly card: BoardCardShell;
@@ -337,12 +337,10 @@ export function BoardCardContent({
       the only place an armed card wears the grey `Auto` glyph. Absent on the
       surfaces that do not resolve it (the drag ghost, the archive sheet). */
   readonly atMergeStage?: boolean | undefined;
-  /** The board-wide merge-stage default (T3O-38, D2), ORed into the glyph the
-      way `BoardCardDetailView` ORs it into the modal chip. The shell's
-      `autoMergeArmed` is the card's OWN arming only — the SQL snapshot
-      producer cannot see settings — so without this the column stays silent
-      about a board every one of whose cards merges itself. */
-  readonly autoMergeBoardWide?: boolean | undefined;
+  /** The card's resolved auto-merge arm (`boardShellAutoMergeArmed`, T3O-28):
+      its own override, its nearest group, or the board-wide default. The
+      shell's `autoMergeArmed` is the override alone, used when absent. */
+  readonly autoMergeArmed?: boolean | undefined;
 }) {
   const accent = projectAccent(card.projectId, accentName);
   const summary = boardCardSummary(card);
@@ -643,7 +641,7 @@ export function BoardCardContent({
         {/* Keyed on the HOLD, not on which notice won it (T3O-45): a held card
             whose slot went to a pending question is still held, and "merges
             itself as soon as the forge accepts it" is not true of it. */}
-        {(card.autoMergeArmed === true || autoMergeBoardWide === true) &&
+        {(autoMergeArmed ?? card.autoMergeArmed === true) &&
         autoMergeHold === null &&
         !summary.muted &&
         atMergeStage ? (
@@ -767,7 +765,7 @@ export function DraggableBoardCard({
   childRunning,
   noPullRequest,
   atMergeStage,
-  autoMergeBoardWide,
+  autoMergeArmed,
   worktreeKeptReason,
 }: {
   readonly card: BoardCardShell;
@@ -790,7 +788,7 @@ export function DraggableBoardCard({
   /** T3o (T3O-48): forwarded to the card face. */
   readonly noPullRequest?: boolean | undefined;
   readonly atMergeStage?: boolean | undefined;
-  readonly autoMergeBoardWide?: boolean | undefined;
+  readonly autoMergeArmed?: boolean | undefined;
   readonly worktreeKeptReason?: string | null | undefined;
 }) {
   return (
@@ -841,7 +839,7 @@ export function DraggableBoardCard({
         childRunning={childRunning}
         noPullRequest={noPullRequest}
         atMergeStage={atMergeStage}
-        autoMergeBoardWide={autoMergeBoardWide}
+        autoMergeArmed={autoMergeArmed}
         worktreeKeptReason={worktreeKeptReason}
       />
     </div>

@@ -23,6 +23,25 @@ cleaned up unless it holds uncommitted work or commits that exist nowhere else (
 [When a card gives its worktree back](./board-worktree-cleanup.md)). Nothing is destroyed and unarchiving puts
 the card back, but if you only meant to tidy up, wait for the step to finish first.
 
+## Archiving a whole group
+
+A group whose cards are still working can be archived only as a whole, and only for good. Ask for it
+and the agent describes what goes, waits for you to confirm, and passes the group's key as the
+confirmation. Every card inside it is archived, Deferred ones included; every thread stops, every
+pull request is closed, and every worktree and branch is deleted, including the copies on the
+remote. Unarchiving the group brings its cards, plans and history back, but not the branch work.
+
+## Grouping cards under a card that has started
+
+A card whose work has started cannot become a group. The agent can offer two ways round that:
+
+- **Share a parent.** A new group, titled as you ask, is made where the card sits, and the card and
+  the others go into it side by side. Nothing is lost.
+- **Cancel the card's work and make it the group.** Its threads stop, its pull request is closed,
+  and it becomes an empty group no further on than Sprint. Its branch goes once its worktree is
+  cleaned up; work that exists nowhere else keeps the worktree until you remove it. This needs your
+  confirmation and the card's key.
+
 ## Delete is final, and it says so
 
 Deleting a card destroys it. The card leaves the board, the conversations attached to it go with it,

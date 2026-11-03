@@ -304,6 +304,38 @@ export function boardGroupTargetLockReason(board: BoardState, card: BoardCard): 
 }
 
 /**
+ * Why cards can't arrive under `parent` (T3O-28): an integration branch lives
+ * in one repository, so every card landing on one must share the project of
+ * the group that owns it. `arriving` is every card that would sit there,
+ * subtrees included. Null when they may, or when they land on trunk.
+ */
+export function boardGroupProjectRefusal(
+  board: BoardState,
+  parent: BoardCard,
+  arriving: ReadonlyArray<Pick<BoardCard, "key" | "projectId">>,
+): string | null {
+  const group = boardCardGroupOf(board, parent) ?? defaultBoardCardGroup(board, parent);
+  const owner = group.target === "own" ? parent : boardCardIntegrationAncestor(board, parent);
+  if (owner === null) return null;
+  const foreign = arriving.find((card) => card.projectId !== owner.projectId);
+  if (foreign === undefined) return null;
+  return `Can't put '${foreign.key}' under '${parent.key}': it's in another project, and the integration branch of '${owner.key}' lives in that card's repository.`;
+}
+
+/** Why a group can't take its own integration branch because its subtree
+    spans projects (T3O-28), or null when it can. */
+export function boardGroupOwnTargetProjectRefusal(
+  board: BoardState,
+  card: BoardCard,
+): string | null {
+  const foreign = boardCardLiveDescendants(board, card.id).find(
+    (descendant) => descendant.projectId !== card.projectId,
+  );
+  if (foreign === undefined) return null;
+  return `Can't give '${card.key}' its own branch: '${foreign.key}' is in another project, and an integration branch lives in one repository.`;
+}
+
+/**
  * Whether a card counts as PLANNED (T3O-27): it owns a plan row. A split child
  * owns a copy of the plan it was cut from, so this needs no parent special case.
  */

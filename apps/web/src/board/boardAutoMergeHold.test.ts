@@ -208,11 +208,12 @@ describe("boardAutoMergeArm (T3O-38, D3; T3O-42)", () => {
     expect(arm(armCard(), { canSet: false })).toBeNull();
   });
 
-  it("hides the switch on a done card, an archived card and a sub-board child", () => {
+  it("hides the switch on a done card and an archived card, not on a card in a group", () => {
     // The same predicate the decider enforces on the way in, so the control
-    // and the refusal can never disagree.
+    // and the refusal can never disagree. A card inside a group carries its
+    // own override, which wins over the group's settings (T3O-28).
     expect(arm(armCard({ stage: BOARD_SEED_STAGE_IDS.done }))).toBeNull();
     expect(arm(armCard({ archivedAt: "2026-03-04T09:00:00.000Z" }))).toBeNull();
-    expect(arm(armCard({ parentCardId: "card-parent" }))).toBeNull();
+    expect(arm(armCard({ parentCardId: "card-parent" }))).not.toBeNull();
   });
 });

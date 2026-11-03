@@ -454,8 +454,13 @@ const BoardCardWriteResult = Schema.Struct({
 
 export const BoardArchiveCardTool = Tool.make("board_archive_card", {
   description:
-    "Archive a card — the reversible way to take it off the board. The card, its threads, its history and its dependency edges all survive; it leaves the columns, stops gating the cards that depend on it, and is still readable in the archive. Use it for cards that are done with, duplicated, or no longer wanted. Rejected on a card that is already archived, on a card whose plan cards are still unfinished (finish or archive those first), and on YOUR OWN card — archiving reclaims the worktree you are running in and unarchiving does not bring it back, so ask a human to do it from the app. Allowed on a card ANOTHER agent is working on — it is the softer route board_delete_card points at — but it is not free there: the in-flight step is settled as abandoned, so that agent's turn is orphaned, and the card's checkout is reclaimed unless it holds uncommitted or unpushed work. Wait for the step to settle if you are only tidying. Reverse it with board_unarchive_card; use board_delete_card only when nothing should survive.",
-  parameters: Schema.Struct({ cardId: BoardCardId }),
+    "Archive a card — the reversible way to take it off the board. The card, its threads, its history and its dependency edges all survive; it leaves the columns, stops gating the cards that depend on it, and is still readable in the archive. Use it for cards that are done with, duplicated, or no longer wanted. Rejected on a card that is already archived, on a card whose plan cards are still unfinished (finish or archive those first), and on YOUR OWN card — archiving reclaims the worktree you are running in and unarchiving does not bring it back, so ask a human to do it from the app. Allowed on a card ANOTHER agent is working on — it is the softer route board_delete_card points at — but it is not free there: the in-flight step is settled as abandoned, so that agent's turn is orphaned, and the card's checkout is reclaimed unless it holds uncommitted or unpushed work. Wait for the step to settle if you are only tidying. Reverse it with board_unarchive_card; use board_delete_card only when nothing should survive. ARCHIVING A WHOLE GROUP: pass confirmCardKey (the group's own key) to archive the group and every card inside it, Deferred ones included, for good — every thread stops, every pull request closes, and every worktree and branch is deleted, remote copies included. Unarchiving brings back the cards, plans and history, never the branch work. Describe exactly that to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
+  parameters: Schema.Struct({
+    cardId: BoardCardId,
+    /** The group's own key, to archive its whole subtree and discard its work. */
+    confirmCardKey: Schema.optional(TrimmedNonEmptyString),
+    approved: Schema.optional(Schema.Boolean),
+  }),
   success: BoardCardWriteResult,
   failure: BoardToolFailure,
   dependencies,
@@ -532,6 +537,46 @@ export const BoardGroupCardsTool = Tool.make("board_group_cards", {
   failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Group board cards");
+
+const BoardShareParentTool = Tool.make("board_share_parent", {
+  description:
+    "Give a card that is already being built some sibling cards: a new group titled title is created where that card sits, and the card and cardIds all move into it, side by side. Use it when someone wants cards under a card whose work has started — a started card cannot become a group itself. The started card keeps its branch and where it merges. Returns the new group's key. REGROUPING NEEDS A HUMAN: describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
+  parameters: Schema.Struct({
+    /** Card key or id of the started card. */
+    cardId: TrimmedNonEmptyString,
+    /** Card keys or ids to put beside it. */
+    cardIds: Schema.Array(TrimmedNonEmptyString),
+    title: TrimmedNonEmptyString,
+    approved: regroupApproved,
+  }),
+  success: Schema.Struct({
+    groupCardId: BoardCardId,
+    groupKey: TrimmedNonEmptyString,
+    cardIds: Schema.Array(BoardCardId),
+  }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Share a parent with a started card");
+
+const BoardCancelCardWorkTool = Tool.make("board_cancel_card_work", {
+  description:
+    "Cancel a started card's work so it can become a group, then optionally move cardIds into it. DESTRUCTIVE: the card's threads stop, its pull request closes, and its branch — with every commit on it — is deleted once its worktree is reclaimed (work that exists nowhere else keeps the worktree until a human removes it). The card becomes an empty group no further on than Sprint. confirmCardKey must be the card's own key. Rejected on YOUR OWN card. Prefer board_share_parent, which keeps the work. Describe what is lost to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
+  parameters: Schema.Struct({
+    /** Card key or id of the started card. */
+    cardId: TrimmedNonEmptyString,
+    confirmCardKey: TrimmedNonEmptyString,
+    /** Card keys or ids to move into it once it is a group. */
+    cardIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+    approved: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Struct({
+    cardId: BoardCardId,
+    key: TrimmedNonEmptyString,
+    cardIds: Schema.Array(BoardCardId),
+  }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Cancel a card's work and make it a group");
 
 export const BoardSetGroupSettingsTool = Tool.make("board_set_group_settings", {
   description:
@@ -648,6 +693,8 @@ export const BoardToolkit = Toolkit.make(
   BoardIndentCardsTool,
   BoardOutdentCardsTool,
   BoardGroupCardsTool,
+  BoardShareParentTool,
+  BoardCancelCardWorkTool,
   BoardSetGroupSettingsTool,
   BoardManageLabelsTool,
   BoardProposePlansTool,

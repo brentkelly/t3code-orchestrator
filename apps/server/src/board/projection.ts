@@ -1087,11 +1087,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
             AND json_extract(auto_merge_hold, '$.retryAt') IS NULL THEN 1
           ELSE 0
         END AS "autoMergeGaveUp",
-        -- The AGGREGATE half of the arm only: the board-wide merge-stage
-        -- setting is ORed in client-side, because this query cannot see
-        -- settings and a field only one producer could compute would be the
-        -- very flicker the pair test exists to prevent.
-        CASE WHEN auto_merge <> 0 OR parent_card_id IS NOT NULL THEN 1 ELSE 0 END
+        -- The card's own override only (T3O-28); the client resolves the
+        -- group and board-wide arms over the shells it holds.
+        CASE WHEN auto_merge <> 0 THEN 1 ELSE 0 END
           AS "autoMergeArmed",
         -- The SECOND producer of prDraft (T3O-12); the delta path reads it
         -- through boardCardPullRequestIsOpenDraft. Current link only: a retired
@@ -1186,11 +1184,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
             AND json_extract(auto_merge_hold, '$.retryAt') IS NULL THEN 1
           ELSE 0
         END AS "autoMergeGaveUp",
-        -- The AGGREGATE half of the arm only: the board-wide merge-stage
-        -- setting is ORed in client-side, because this query cannot see
-        -- settings and a field only one producer could compute would be the
-        -- very flicker the pair test exists to prevent.
-        CASE WHEN auto_merge <> 0 OR parent_card_id IS NOT NULL THEN 1 ELSE 0 END
+        -- The card's own override only (T3O-28); the client resolves the
+        -- group and board-wide arms over the shells it holds.
+        CASE WHEN auto_merge <> 0 THEN 1 ELSE 0 END
           AS "autoMergeArmed",
         -- The SECOND producer of prDraft (T3O-12); the delta path reads it
         -- through boardCardPullRequestIsOpenDraft. Current link only: a retired

@@ -18,6 +18,7 @@ import {
   boardCardWorktreeKeptReason,
   deriveBoardCardPlanProgress,
   boardCardAttention,
+  boardShellAutoMergeArmedByCard,
   deriveBoardCardChildAttention,
   deriveBoardCardChildRunning,
   deriveBoardCardThreadState,
@@ -519,6 +520,16 @@ function EnvironmentBoard({
         now: attentionNow,
       }),
     [allCards, orderedStages, threadIdleSinceByCard, attentionNow],
+  );
+  // Nearest wins (T3O-28): a card's own override, else its parent group's
+  // settings, else — top-level only — the board-wide default.
+  const autoMergeArmedByCard = useMemo(
+    () => boardShellAutoMergeArmedByCard({ shells: allCards, boardWide: boardWideAutoMerge }),
+    [allCards, boardWideAutoMerge],
+  );
+  const autoMergeArmedFor = useCallback(
+    (card: BoardCardShell) => autoMergeArmedByCard.get(String(card.cardId)) === true,
+    [autoMergeArmedByCard],
   );
   const childAttentionFor = useCallback(
     (card: BoardCardShell) => childAttentionByParent.get(card.cardId),
@@ -1425,7 +1436,7 @@ function EnvironmentBoard({
                 atMergeStage={stage.stageId === mergeStageId}
                 noPullRequestFor={noPullRequestFor}
                 worktreeKeptFor={worktreeKeptFor}
-                autoMergeBoardWide={boardWideAutoMerge}
+                autoMergeArmedFor={autoMergeArmedFor}
                 onCardDragEnd={handleCardDragEnd}
                 onCardReorder={handleCardReorder}
                 onCardDragStart={handleCardDragStart}

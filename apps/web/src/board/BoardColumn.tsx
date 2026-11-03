@@ -72,11 +72,9 @@ export interface BoardColumnProps extends BoardColumnDragProps {
       does an armed card wear the grey `Auto` glyph — everywhere else an armed
       card is an ordinary card and should look like one. */
   readonly atMergeStage?: boolean | undefined;
-  /** Whether the board-wide merge-stage default is on (T3O-38, D2). Read with
-      `atMergeStage` and nothing else: it is the third arming condition, the
-      one the card shell cannot carry, and the cards in this column wear the
-      `Auto` glyph because of it. */
-  readonly autoMergeBoardWide?: boolean | undefined;
+  /** Each card's resolved auto-merge arm (T3O-28), read with `atMergeStage`
+      to draw the `Auto` glyph. */
+  readonly autoMergeArmedFor?: ((card: BoardCardShell) => boolean) | undefined;
   /** The column's display label from the read-model stage list (D13). */
   readonly label: string;
   readonly cards: ReadonlyArray<BoardCardShell>;
@@ -166,7 +164,7 @@ function CollapsedColumn({
 function ExpandedColumn({
   stage,
   atMergeStage,
-  autoMergeBoardWide,
+  autoMergeArmedFor,
   label,
   cards,
   labelsById,
@@ -289,7 +287,7 @@ function ExpandedColumn({
                   parentKey={parentKeyFor(card.cardId)}
                   attention={attentionFor(card)}
                   atMergeStage={atMergeStage === true}
-                  autoMergeBoardWide={autoMergeBoardWide === true}
+                  autoMergeArmed={autoMergeArmedFor?.(card)}
                   childAttention={childAttentionFor(card)}
                   childRunning={childRunningFor(card)}
                   noPullRequest={noPullRequestFor(card)}

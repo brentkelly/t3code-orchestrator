@@ -51,6 +51,7 @@ import {
   type BoardCardReviewOverrides,
   type BoardCardStageModelOverride,
   boardShellAncestorIds,
+  boardShellAutoMergeArmed,
   boardShellDescendantIds,
 } from "@t3tools/contracts";
 import {
@@ -1384,7 +1385,16 @@ export function BoardCardDetail({
       onSetAutoMerge={(autoMerge) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, autoMerge } }))
       }
-      autoMergeFromBoardSetting={boardWideAutoMerge}
+      // Nearest wins (T3O-28): the board-wide setting is ignored inside a group.
+      autoMergeFromBoardSetting={card.parentCardId === null && boardWideAutoMerge}
+      autoMergeFromGroup={
+        card.parentCardId !== null &&
+        boardShellAutoMergeArmed({
+          shells: board?.cards ?? [],
+          shell: { parentCardId: card.parentCardId },
+          boardWide: false,
+        })
+      }
       resolveModelDisplayName={resolveModelDisplayName}
       // Queued counts as running for this note's purpose: a queued step has
       // already been selected onto the run row, so its model and authority are

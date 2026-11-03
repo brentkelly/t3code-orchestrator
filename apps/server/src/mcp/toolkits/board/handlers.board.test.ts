@@ -1663,6 +1663,89 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       }),
   );
 
+  it.effect(
+    "destructive group flows need approval and the key: share a parent, cancel work, archive a group (T3O-28)",
+    () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const create = (title: string, stage: string) =>
+          boardHandlers
+            .board_create_card({ projectId, title, stage: BoardStageId.make(stage) })
+            .pipe(withScope(orphanThread));
+
+        // Share a parent: a started card and another go side by side.
+        const started = yield* create("Started", "building");
+        const other = yield* create("Other", "backlog");
+        const shared = yield* boardHandlers
+          .board_share_parent({
+            cardId: started.key,
+            cardIds: [other.key],
+            title: "Shared",
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        let cards = yield* readCards;
+        for (const id of [started.cardId, other.cardId]) {
+          assert.strictEqual(
+            cards.find((card) => card.id === id)?.parentCardId,
+            shared.groupCardId,
+          );
+        }
+
+        // Cancel work: refused without approval, and with the wrong key.
+        const leaf = yield* create("Leaf", "building");
+        const extra = yield* create("Extra", "backlog");
+        const unapproved = yield* Effect.flip(
+          boardHandlers
+            .board_cancel_card_work({ cardId: leaf.key, confirmCardKey: leaf.key })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(unapproved.message, "approved: true");
+        const wrongKey = yield* Effect.flip(
+          boardHandlers
+            .board_cancel_card_work({ cardId: leaf.key, confirmCardKey: other.key, approved: true })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(wrongKey.message, "does not match");
+        const cancelled = yield* boardHandlers
+          .board_cancel_card_work({
+            cardId: leaf.key,
+            confirmCardKey: leaf.key,
+            cardIds: [extra.key],
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        assert.deepStrictEqual(cancelled.cardIds, [extra.cardId]);
+        cards = yield* readCards;
+        const parent = cards.find((card) => card.id === leaf.cardId);
+        assert.strictEqual(parent?.stage, "sprint");
+        assert.isNotNull(parent?.group ?? null);
+        assert.strictEqual(
+          cards.find((card) => card.id === extra.cardId)?.parentCardId,
+          leaf.cardId,
+        );
+
+        // Archive a group: the key needs approval, then the subtree goes.
+        const unapprovedArchive = yield* Effect.flip(
+          boardHandlers
+            .board_archive_card({ cardId: shared.groupCardId, confirmCardKey: shared.groupKey })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(unapprovedArchive.message, "approved: true");
+        yield* boardHandlers
+          .board_archive_card({
+            cardId: shared.groupCardId,
+            confirmCardKey: shared.groupKey,
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        for (const id of [shared.groupCardId, started.cardId, other.cardId]) {
+          assert.isNotNull(cards.find((card) => card.id === id)?.archivedAt ?? null);
+        }
+      }),
+  );
+
   it.effect("board_update_card resolves label names on update and rejects unknown ones", () =>
     Effect.gen(function* () {
       yield* seed();

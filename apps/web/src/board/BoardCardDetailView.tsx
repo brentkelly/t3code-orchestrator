@@ -584,6 +584,8 @@ export interface BoardCardDetailViewProps {
       header chip read `Auto-merge · board`, so a user who cannot find the
       switch learns where the decision was actually made. */
   readonly autoMergeFromBoardSetting?: boolean | undefined;
+  /** Whether the card's nearest group arms its merge (T3O-28). */
+  readonly autoMergeFromGroup?: boolean | undefined;
   /** Resolve an override's model slug to its display name for the header pill
       and tooltip (t3o-29, D7). Passed from the container, which holds the
       provider list; absent, the pill falls back to the raw slug. */
@@ -2319,7 +2321,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // pill reads the three shell facts instead, and `boardAutoMergeHold` is the
   // one place either set of words is written, so they cannot disagree.
   const autoMergeChip = boardAutoMergeHeaderChip({
-    armed: card.autoMerge || card.parentCardId !== null || props.autoMergeFromBoardSetting === true,
+    armed:
+      card.autoMerge ||
+      props.autoMergeFromGroup === true ||
+      props.autoMergeFromBoardSetting === true,
     fromBoardSetting: !card.autoMerge && props.autoMergeFromBoardSetting === true,
   });
   const hold = card.autoMergeHold;

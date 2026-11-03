@@ -563,7 +563,7 @@ describe("BoardCardContent (D7)", () => {
         selected={false}
         attention={attentionOf(plain)}
         atMergeStage
-        autoMergeBoardWide
+        autoMergeArmed
       />,
     );
     expect(boardWide).toContain("Auto-merge armed");
@@ -577,7 +577,7 @@ describe("BoardCardContent (D7)", () => {
         queueSlot={undefined}
         selected={false}
         attention={attentionOf(plain)}
-        autoMergeBoardWide
+        autoMergeArmed
       />,
     );
     expect(earlier).not.toContain("Auto-merge armed");
