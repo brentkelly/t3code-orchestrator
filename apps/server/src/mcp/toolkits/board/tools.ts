@@ -44,6 +44,7 @@ import {
   ProjectId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Crypto from "effect/Crypto";
 import * as Path from "effect/Path";
@@ -202,14 +203,19 @@ const BoardCardContext = Schema.Struct({
   /** The groups this card sits in, nearest first (T3O-32). Read their
       decisions before planning, so a child does not re-decide what its parent
       settled. Empty for a top-level card. */
-  ancestors: Schema.Array(BoardCardContextAncestor),
+  // Defaults decode the answer of a central built before T3O-32 (relay).
+  ancestors: Schema.Array(BoardCardContextAncestor).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   /** The plan this card was cut from, with its full body; null for a card
       that was not cut from a plan. `body` is null when it is the brief word for
       word, which it is unless the brief was edited since. */
-  sourcePlan: Schema.NullOr(Schema.Struct({ plan: BoardPlan, body: Schema.NullOr(Schema.String) })),
+  sourcePlan: Schema.NullOr(
+    Schema.Struct({ plan: BoardPlan, body: Schema.NullOr(Schema.String) }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   /** This card's own decision log so far (T3O-32), unclear and important
       first, capped at 40 entries like each ancestor's. */
-  decisions: Schema.Array(BoardCardDecision),
+  decisions: Schema.Array(BoardCardDecision).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 
 /** A card's pull request as an agent checks it (T3O-18). `linked` is true
