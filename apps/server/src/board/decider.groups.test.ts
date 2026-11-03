@@ -586,6 +586,42 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
     }),
   );
 
+  it.effect("refuses a cycle a group's own dependency closes through a card inside it", () =>
+    Effect.gen(function* () {
+      // c inside g waits on g's dependency x, so x waiting on c deadlocks both.
+      const cards = [
+        card("g", "sprint", { group: group("sprint"), dependsOn: [BoardCardId.make("x")] }),
+        child("c", "ready", "g"),
+        card("x", "ready"),
+      ];
+      const failure = yield* decideFail(update("x", ["c"]), model(cards));
+      assert.include(String(failure), "x -> c -> x");
+      // The same deadlock reached by giving the group the dependency.
+      const reverse = [
+        card("g", "sprint", { group: group("sprint") }),
+        child("c", "ready", "g"),
+        card("x", "ready", { dependsOn: [BoardCardId.make("c")] }),
+      ];
+      const viaGroup = yield* decideFail(update("g", ["x"]), model(reverse));
+      assert.include(String(viaGroup), "cycle");
+    }),
+  );
+
+  it.effect("refuses a regrouping into a group whose dependency waits on the card", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "sprint", {
+          group: group("sprint", { heading: true }),
+          dependsOn: [BoardCardId.make("x")],
+        }),
+        card("c", "ready"),
+        card("x", "ready", { dependsOn: [BoardCardId.make("c")] }),
+      ];
+      const failure = yield* decideFail(moveCards(["c"], "g"), model(cards));
+      assert.include(String(failure), "dependency cycle");
+    }),
+  );
+
   it.effect("refuses depending on your own ancestor, and a group on its own child", () =>
     Effect.gen(function* () {
       const cards = [

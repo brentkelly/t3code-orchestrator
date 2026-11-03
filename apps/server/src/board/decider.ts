@@ -309,38 +309,19 @@ function findDependencyCycle(input: {
   readonly edgeTo: BoardCardId;
   readonly path: ReadonlyArray<BoardCardId>;
 } | null {
-  // Tree-wide (T3O-27): a group waits for its children, so an edge through
-  // a group closes a cycle the same way a direct edge would.
-  const dependsOnById: Map<BoardCardId, ReadonlyArray<BoardCardId>> = boardTreeDependencyGraph(
+  // Tree-wide (T3O-27): a group waits for its children and they wait on its
+  // dependencies, so a new edge can close a cycle that skips `cardId` itself.
+  const before = boardTreeDependencyGraph(input.board.cards);
+  const after = boardTreeDependencyGraph(
     input.board.cards.map((card) =>
       card.id === input.cardId ? { ...card, dependsOn: input.proposed } : card,
     ),
   );
-
-  // A proposed edge cardId -> dependency closes a cycle iff cardId is
-  // reachable from that dependency. DFS returns the path for the message.
-  const pathTo = (
-    from: BoardCardId,
-    target: BoardCardId,
-    seen: Set<BoardCardId>,
-  ): ReadonlyArray<BoardCardId> | null => {
-    if (from === target) return [from];
-    if (seen.has(from)) return null;
-    seen.add(from);
-    for (const next of dependsOnById.get(from) ?? []) {
-      const rest = pathTo(next, target, seen);
-      if (rest !== null) return [from, ...rest];
-    }
-    return null;
-  };
-
-  for (const dependency of input.added) {
-    const path = pathTo(dependency, input.cardId, new Set());
-    if (path !== null) {
-      return { edgeFrom: input.cardId, edgeTo: dependency, path: [input.cardId, ...path] };
-    }
-  }
-  return null;
+  const ownEdges: Array<readonly [BoardCardId, BoardCardId]> = input.added.map(
+    (dependency) => [input.cardId, dependency] as const,
+  );
+  const cycle = findNewCycleAlong(before, after, ownEdges);
+  return cycle === null ? null : { edgeFrom: cycle[0]!, edgeTo: cycle[1]!, path: cycle };
 }
 
 /**
@@ -366,15 +347,23 @@ function dependencyTreeRefusal(input: {
 }
 
 /**
- * The dependency graph across the whole tree (T3O-27): every card's own
- * `dependsOn`, plus an implicit edge from each group to its live children,
- * because a group is done only once they are. Cycle checks run over this.
+ * The dependency graph across the whole tree (T3O-27): every live card's
+ * inherited `dependsOn` (its own plus every ancestor group's, which hold it
+ * back), plus an edge from each group to its live children, because a group
+ * is done only once they are. Cycle checks run over this.
  */
 function boardTreeDependencyGraph(
   cards: ReadonlyArray<BoardCard>,
 ): Map<BoardCardId, ReadonlyArray<BoardCardId>> {
   const graph = new Map<BoardCardId, Array<BoardCardId>>(
-    cards.map((card) => [card.id, [...card.dependsOn]]),
+    cards.map((card) => [
+      card.id,
+      [
+        ...(card.archivedAt === null
+          ? boardCardInheritedDependsOn({ cards }, card)
+          : card.dependsOn),
+      ],
+    ]),
   );
   for (const card of cards) {
     if (card.parentCardId === null || card.archivedAt !== null) continue;
@@ -414,15 +403,31 @@ function findNewTreeDependencyCycle(input: {
   readonly before: ReadonlyArray<BoardCard>;
   readonly after: ReadonlyArray<BoardCard>;
 }): ReadonlyArray<BoardCardId> | null {
-  const beforeGraph = boardTreeDependencyGraph(input.before);
-  const afterGraph = boardTreeDependencyGraph(input.after);
-  for (const [from, targets] of afterGraph) {
-    const existing = beforeGraph.get(from) ?? [];
-    for (const to of targets) {
-      if (existing.includes(to)) continue;
-      const back = treeDependencyPath(afterGraph, to, from);
-      if (back !== null) return [from, ...back];
-    }
+  return findNewCycleAlong(
+    boardTreeDependencyGraph(input.before),
+    boardTreeDependencyGraph(input.after),
+    [],
+  );
+}
+
+/**
+ * A cycle through an edge of `after` that `before` lacks, as a closed path, or
+ * null. `first` edges are tried before the rest so the edge a caller added is
+ * the one blamed when it closes the cycle itself.
+ */
+function findNewCycleAlong(
+  before: ReadonlyMap<BoardCardId, ReadonlyArray<BoardCardId>>,
+  after: ReadonlyMap<BoardCardId, ReadonlyArray<BoardCardId>>,
+  first: ReadonlyArray<readonly [BoardCardId, BoardCardId]>,
+): ReadonlyArray<BoardCardId> | null {
+  const edges = [
+    ...first,
+    ...[...after].flatMap(([from, targets]) => targets.map((to) => [from, to] as const)),
+  ];
+  for (const [from, to] of edges) {
+    if ((before.get(from) ?? []).includes(to)) continue;
+    const back = treeDependencyPath(after, to, from);
+    if (back !== null) return [from, ...back];
   }
   return null;
 }
