@@ -3073,9 +3073,14 @@ export function boardCardPendingSplit(board: BoardState, cardId: BoardCardId): b
  * with no children of its own (`planTotal` absent — the sub-board pip producer
  * only sets it for parents that HAVE children) and two or more plans
  * (`planCount`), still at or before the build stage. Lets a column card wear
- * the amber "Needs approval" state without any extra payload — the same
+ * the violet "Input needed" state without any extra payload — the same
  * zero-cost derivation the plan pips use (D6).
  */
+/** The card face's line for a pending split (T3O-31). */
+export function boardSplitProposedNote(childCount: number): string {
+  return `Split proposed · ${childCount} cards`;
+}
+
 export function boardCardShellPendingSplit(
   card: Pick<BoardCardShell, "stage" | "planCount" | "planTotal" | "parentCardId">,
   stages: ReadonlyArray<BoardStageDefinition>,
@@ -3330,7 +3335,9 @@ const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> 
   // its own automatic resume rendered as an error, which is the loudest colour
   // on the board saying the opposite of what its own chip says.
   stalled: "warning",
-  approval: "warning",
+  // Violet (T3O-31): a proposed split is a plan waiting on the human's
+  // approval, which `docs/t3o/status-colours.md` gives to violet.
+  approval: "attention",
   "review-held": "warning",
   held: "warning",
   stopped: "warning",
@@ -3447,8 +3454,8 @@ export function boardCardAttention(input: {
     return {
       reason: "approval",
       tone: ATTENTION_TONES.approval,
-      label: "Needs approval",
-      detail: "Planning proposed a multi-part split — approve it to materialise the plan cards",
+      label: "Input needed",
+      detail: `${boardSplitProposedNote(card.planCount ?? 0)} — review and approve it in the planning thread`,
     };
   }
   // The loop's own verdict, settled against the live step exactly as the

@@ -239,7 +239,7 @@ const baseProps = {
   onArchiveToggle: noop,
   onDelete: noop,
   canApproveSplit: false,
-  approveSplitTargetLabel: null,
+  splitGate: null,
   onApproveSplit: noop,
   onLinkThread: noop,
   onUnlinkThread: noop,

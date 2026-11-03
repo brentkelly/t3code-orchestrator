@@ -15,6 +15,7 @@
  */
 import {
   boardCardChildAttentionLabel,
+  boardSplitProposedNote,
   boardCardChildRunningLabel,
   isBoardCardWorking,
   isBoardReviewLoopHeld,
@@ -682,6 +683,12 @@ export function BoardCardContent({
       >
         {card.title}
       </div>
+      {own?.reason === "approval" ? (
+        // A pending split (T3O-31): the chip says it needs you, this says what.
+        <div className="text-[11.5px] font-medium text-attention-foreground">
+          {boardSplitProposedNote(card.planCount ?? 0)}
+        </div>
+      ) : null}
       <BoardCardSummaryRow items={summary.items} />
       {progress.kind === "review" ? (
         // The review ledger is the card's progress block while it sits in code

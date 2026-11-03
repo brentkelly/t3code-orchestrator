@@ -8,6 +8,7 @@
  * Mounting this component IS the detail subscription — it exists only while a
  * card is selected, so the board at rest opens none.
  */
+import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import {
   BoardCardId,
@@ -32,6 +33,8 @@ import {
   isBoardCardBaseRetargeted,
   resolveBoardCardEffectiveBase,
   boardSubBoardFloorStage,
+  boardSplitRecommendationFallback,
+  boardStagesInOrder,
   isBoardStageAtOrAfterBuild,
   deriveBoardCardThreadState,
   boardBuildHumanInLoopDefault,
@@ -968,8 +971,8 @@ export function BoardCardDetail({
   };
 
   // The approve gate (t3o-23, D1): two or more plans, nothing materialised
-  // yet, a top-level card at or before the build stage, and a floor stage for
-  // the children to land in. These are the cheap STRUCTURAL checks only — the
+  // yet, a card at or before the build stage (at any depth — splits nest,
+  // T3O-27), and a floor stage for the children to land in. These are the cheap STRUCTURAL checks only — the
   // decider additionally gates on unmet dependencies, plan-graph cycles and a
   // live step, and a refusal from any of those surfaces through the shared
   // command feedback, so the button may offer an approval the decider still
@@ -981,11 +984,30 @@ export function BoardCardDetail({
     // Live children only, matching the decider's re-approval guard: a first
     // round whose children all archived may be re-split.
     detail.children.every((child) => child.archivedAt !== null) &&
-    card.parentCardId === null &&
     card.archivedAt === null &&
     floorStage !== null &&
     buildStage !== null &&
     (!isBoardStageAtOrAfterBuild(stageState, card.stage) || card.stage === buildStage.stageId);
+
+  // What the split gate shows (T3O-31). A proposal made before T3O-31 has no
+  // stored recommendation; the fallback treats any parent as one with its own
+  // branch, which every split parent from before then was.
+  const firstStage = boardStagesInOrder(stageState)[0] ?? null;
+  const splitGate =
+    canApproveSplit && floorStage !== null && firstStage !== null
+      ? {
+          recommendation:
+            card.splitRecommendation ??
+            boardSplitRecommendationFallback({
+              plans: detail.plans,
+              underIntegrationBranch: card.parentCardId !== null,
+            }),
+          ownBranch: `board/${sanitizeBranchFragment(card.key)}`,
+          landsOn: baseBranchInfo.effective ?? "the default branch",
+          readyLabel: floorStage.label,
+          backlogLabel: firstStage.label,
+        }
+      : null;
 
   const moveStage = (toStage: BoardStageId) => {
     const targetColumn = (board?.cards ?? []).filter((shell) => shell.stage === toStage);
@@ -1084,8 +1106,19 @@ export function BoardCardDetail({
       }
       stages={stages}
       canApproveSplit={canApproveSplit}
-      approveSplitTargetLabel={floorStage?.label ?? null}
-      onApproveSplit={() => runCommand(approvePlans({ environmentId, input: { cardId: card.id } }))}
+      splitGate={splitGate}
+      onApproveSplit={(settings) =>
+        runCommand(
+          approvePlans({
+            environmentId,
+            input: {
+              cardId: card.id,
+              autoBuild: settings.autoBuild,
+              mergeTarget: settings.mergeTarget,
+            },
+          }),
+        )
+      }
       catalogue={catalogue}
       dependencies={dependencies}
       dependencyOptions={dependencyOptions}
