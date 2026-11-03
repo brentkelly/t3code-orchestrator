@@ -15,8 +15,9 @@ dependency still unfinished. Everywhere else there is nothing for it to do:
 - A card with no unfinished dependencies can already start, so it just has a **Begin build** button.
 - A card still in Backlog, Sprint or Planning is not waiting on a dependency, it is waiting on its
   plan. Arming it there would either sit doing nothing for days or skip the planning you asked for.
-- The plan cards inside a split already do this. Approve a split, press Begin build on the parent,
-  and each child starts as soon as the siblings it depends on finish — no switch needed.
+- The plan cards inside a split with **Auto-build** on already do this. Approve the split, press
+  Begin build on the parent, and each child starts as soon as the siblings it depends on finish —
+  no switch needed. See [Approving a split](board-split-gate.md).
 
 ## What it does when it fires
 

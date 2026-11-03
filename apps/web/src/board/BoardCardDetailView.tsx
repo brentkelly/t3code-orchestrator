@@ -67,7 +67,9 @@ import {
   type BoardReviewRoundOverride,
   type RuntimeMode,
   type BoardCardStepStalledReason,
+  type BoardSplitRecommendation,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
 import {
   ArchiveIcon,
@@ -176,6 +178,9 @@ import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
 import { BoardHint } from "./BoardHint";
+import { BoardSplitGate } from "./BoardSplitGate";
+import { BOARD_SPLIT_CHANGE_REQUEST_PREFILL, type BoardSplitGateSettings } from "./boardSplitGate";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { threadWorkerOpensOn, type BoardThreadWorker } from "./workers/threadWorker";
 import {
   boardForwardShownBesideRecovery,
@@ -337,6 +342,15 @@ export interface BoardDetailThreadLink {
   /** "Moved from {worker} · {time}" when this is the first thread after a
       move (T3O-65), drawn as a divider above it. */
   readonly movedFrom?: string | null | undefined;
+}
+
+/** What the split gate needs beyond the plans (T3O-31). */
+export interface BoardSplitGateContext {
+  readonly recommendation: BoardSplitRecommendation;
+  readonly ownBranch: string;
+  readonly landsOn: string;
+  readonly readyLabel: string;
+  readonly backlogLabel: string;
 }
 
 export interface BoardCardDetailViewProps {
@@ -529,11 +543,11 @@ export interface BoardCardDetailViewProps {
   /** Purge the card outright. Always behind `BoardDeleteConfirmDialog` — the
       server does not ask, so this must never be reachable without one. */
   readonly onDelete: () => void;
-  /** The plan pane's approve gate (t3o-23, D1): whether it renders, the
-      floor stage's label for the confirm copy, and the dispatch. */
+  /** The split gate (T3O-31): whether a proposal is pending, what the gate
+      shows, and the dispatch with the human's final settings. */
   readonly canApproveSplit: boolean;
-  readonly approveSplitTargetLabel: string | null;
-  readonly onApproveSplit: () => void;
+  readonly splitGate: BoardSplitGateContext | null;
+  readonly onApproveSplit: (settings: BoardSplitGateSettings) => void;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   /** The parent this card is a child of (t3o-25), for the identity row's
@@ -1411,9 +1425,12 @@ function BoardStepRecoveryButton({
 function ActionsSection({
   props,
   unmet,
+  onReviewSplit,
 }: {
   readonly props: BoardCardDetailViewProps;
   readonly unmet: ReadonlyArray<BoardDetailDependency>;
+  /** Opens the split gate's pane (T3O-31). */
+  readonly onReviewSplit: () => void;
 }) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
@@ -1700,28 +1717,25 @@ function ActionsSection({
         </BoardHint>
       ) : null}
       {props.canApproveSplit ? (
-        // A pending split (t3o-27): the forward stage button is REPLACED by
-        // Approve split, because the card cannot advance until the split is
-        // resolved — the decider refuses every forward move while it stands.
-        // Amber, matching the card face's "Needs approval" state (distinct
-        // from the blue "Input needed" a thread question raises).
-        // The hint is planning's own argument for the split when it left one
-        // (t3o card 11), so the reason is readable without opening the pane;
-        // the generic sentence covers a split proposed before rationales
-        // existed.
+        // A pending split (t3o-27): the forward stage button is REPLACED,
+        // because the card cannot advance until the split is resolved — the
+        // decider refuses every forward move while it stands. It opens the
+        // split gate at the end of the planning thread (T3O-31), where the
+        // human approves with the group settings. Violet, matching the card
+        // face's "Input needed": a plan is waiting on the human.
         <BoardHint
           label={
             card.splitRationale ??
-            "This card's planning proposed a multi-part split; approve it to materialise the plan cards"
+            "This card's planning proposed a multi-part split; review it in the planning thread"
           }
         >
           <button
-            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-amber-500/60 bg-amber-500/15 px-3 text-[13px] font-medium text-amber-700 shadow-xs hover:bg-amber-500/25 dark:text-amber-300"
-            onClick={() => props.onApproveSplit()}
+            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-attention/55 bg-attention/12 px-3 text-[13px] font-medium text-attention-foreground shadow-xs hover:bg-attention/20"
+            onClick={onReviewSplit}
             type="button"
           >
             <LayersIcon className="size-3.5" />
-            Approve split
+            Review split
           </button>
         </BoardHint>
       ) : forward !== null &&
@@ -2811,10 +2825,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 plans={props.detail.plans}
                 childCards={props.detail.children}
                 stages={props.stages}
-                canApproveSplit={props.canApproveSplit}
-                approveTargetLabel={props.approveSplitTargetLabel}
-                splitRationale={card.splitRationale}
-                onApproveSplit={props.onApproveSplit}
+                onReviewSplit={props.canApproveSplit ? () => setPane("thread") : undefined}
                 onOpenChild={props.onOpenChildInSubBoard}
               />
             </Suspense>
@@ -2837,13 +2848,46 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 queueInfo={props.queueInfo}
                 queueForceStartPending={props.queueForceStartPending}
                 onQueueForceStart={props.onQueueForceStart}
+                footer={
+                  props.canApproveSplit && props.splitGate !== null ? (
+                    <BoardSplitGate
+                      // A re-proposal is a new gate: start from its own
+                      // recommendation rather than the last one's edits.
+                      key={props.detail.plans.map((plan) => plan.planId + plan.updatedAt).join()}
+                      {...props.splitGate}
+                      onApprove={props.onApproveSplit}
+                      onAskForChanges={() => {
+                        // The planning thread, not whichever tab is open: that
+                        // conversation proposed the split and must revise it.
+                        const planningThread = initialBoardCardThreadId(
+                          props.stages,
+                          card.stage,
+                          card.threadLinks,
+                        );
+                        const link = props.threadLinks.find(
+                          (candidate) => candidate.threadId === planningThread,
+                        );
+                        if (link === undefined || link.tombstoned) return;
+                        setSelectedThreadId(link.threadId);
+                        useComposerDraftStore
+                          .getState()
+                          .setPrompt(
+                            scopeThreadRef(link.worker.environmentId, link.threadId),
+                            BOARD_SPLIT_CHANGE_REQUEST_PREFILL,
+                          );
+                      }}
+                      plans={props.detail.plans}
+                      splitRationale={card.splitRationale}
+                    />
+                  ) : null
+                }
               />
             </Suspense>
           )}
 
           {/* The rail: everything about the card that is not the conversation. */}
           <div className="flex min-h-0 flex-col overflow-y-auto [&>*:first-child]:border-t-0">
-            <ActionsSection props={props} unmet={unmet} />
+            <ActionsSection onReviewSplit={() => setPane("thread")} props={props} unmet={unmet} />
             <QueueSection props={props} />
             {props.stepFailure !== null ? (
               <BoardCardStepFailure
@@ -2973,7 +3017,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
             {/* ── Right: what you can do with it ──────────────────────── */}
             <div className="flex w-[244px] shrink-0 flex-col border-l border-border [&>*:first-child]:border-t-0">
-              <ActionsSection props={props} unmet={unmet} />
+              <ActionsSection onReviewSplit={() => setPane("thread")} props={props} unmet={unmet} />
               <div className="flex flex-col gap-2 border-t border-border p-3.5">
                 <LabelSection
                   catalogue={props.catalogue}

@@ -1469,6 +1469,24 @@ describe("cards that need a human (boardCardAttention)", () => {
     expect(attention({ stepAwaiting: "paused" })?.label).toBe("Paused");
   });
 
+  it("reads a pending split as violet Input needed, naming the split (T3O-31)", () => {
+    // No `planTotal`: the card has no children yet, so the split is pending.
+    const {
+      planTotal: _none,
+      planDone: _noneDone,
+      ...shell
+    } = card({
+      stage: BOARD_SEED_STAGE_IDS.planning,
+      planCount: 3,
+    });
+    const pending = boardCardAttention({ card: shell, stages: BOARD_SEED_STAGES });
+    expect(pending?.reason).toBe("approval");
+    // A plan waiting on the human's approval is violet, not amber.
+    expect(pending?.tone).toBe("attention");
+    expect(pending?.label).toBe("Input needed");
+    expect(pending?.detail).toContain("Split proposed · 3 cards");
+  });
+
   it("paints every reading of stalled amber, never red", () => {
     // `docs/t3o/status-colours.md` (T3O-22, D10): the vocabulary is green,
     // blue, violet and amber, and every reading of `stalled` are the same

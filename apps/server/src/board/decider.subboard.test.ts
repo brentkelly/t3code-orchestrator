@@ -551,7 +551,9 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
       }
       const approved = events.find((event) => event.type === "board.plans-approved");
       assert.ok(approved?.type === "board.plans-approved");
-      expect(approved.payload.card.group?.target).toBe("own");
+      // Its parent already has its own branch, so the nested split inherits
+      // it rather than stacking a second integration review (T3O-31).
+      expect(approved.payload.card.group?.target).toBe("inherit");
     }),
   );
 
