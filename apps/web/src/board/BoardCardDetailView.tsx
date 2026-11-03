@@ -562,6 +562,7 @@ export interface BoardCardDetailViewProps {
     readonly reason: string;
     readonly path: string | null;
     readonly branch: string;
+    readonly cancelledWork: boolean;
   } | null;
   /** "Check again": refresh and re-run the cleanup. */
   readonly onCheckWorktree?: (() => void) | undefined;
@@ -3361,6 +3362,7 @@ function worktreeKeptProps(
     reason: kept.reason,
     path: kept.path,
     branch: kept.branch,
+    cancelledWork: kept.cancelledWork,
     onCheckAgain: props.onCheckWorktree ?? null,
     checking: props.checkingWorktree === true,
     onRemove: props.onRemoveWorktree ?? null,

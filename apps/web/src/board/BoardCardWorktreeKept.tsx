@@ -36,6 +36,8 @@ export function BoardCardWorktreeKept(props: {
   readonly reason: string;
   readonly path: string | null;
   readonly branch: string;
+  /** Cancelled work: removing it deletes the branch too. */
+  readonly cancelledWork: boolean;
   /** Absent where nothing can re-run the cleanup from here. */
   readonly onCheckAgain: (() => void) | null;
   readonly checking: boolean;
@@ -102,8 +104,10 @@ export function BoardCardWorktreeKept(props: {
           <AlertDialogHeader>
             <AlertDialogTitle>Remove this worktree?</AlertDialogTitle>
             <AlertDialogDescription>
-              It was kept because: {props.reason}. Removing it deletes any uncommitted changes in
-              it. Committed work stays on the branch {props.branch}.
+              It was kept because: {props.reason}.{" "}
+              {props.cancelledWork
+                ? `Its work was cancelled, so removing it deletes the worktree and the branch ${props.branch}, including any commits on it.`
+                : `Removing it deletes any uncommitted changes in it. Committed work stays on the branch ${props.branch}.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

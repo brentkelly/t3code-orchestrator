@@ -118,6 +118,7 @@ import {
   boardCardDisplayPullRequest,
   boardCardIntegrationAncestor,
   boardCardLiveChildren,
+  boardCardWorktreeIsCancelledWork,
   boardGroupRevertsToCard,
   boardCardMergesIntoIntegrationBranch,
   deriveBoardGroupStage,
@@ -476,7 +477,7 @@ interface BoardWorld {
  * and refuses dropping `own` while a group's integration worktree exists.
  */
 function holdsCancelledWork(card: BoardCard): boolean {
-  return card.group !== null && card.group.target !== "own" && card.worktree?.status === "ready";
+  return boardCardWorktreeIsCancelledWork(card) && card.worktree?.status === "ready";
 }
 
 /** The children of `card` archived before it, with everything under them. */
@@ -5279,6 +5280,11 @@ const make = Effect.gen(function* () {
       if (card.worktree === null || card.worktree.status !== "ready") continue;
       if (card.archivedAt !== null) {
         yield* reclaimCardWorktree(card, fetchedBases);
+        continue;
+      }
+      // Retried here, since the one reclaim on cancel may have kept it.
+      if (holdsCancelledWork(card)) {
+        yield* reclaimCancelledCardWorktree(card.id);
         continue;
       }
       if (!settings.lifecycle.reclaimWorktreeOnDone) continue;

@@ -27,6 +27,7 @@ import {
   boardCardProjectLock,
   boardStallIsWaiting,
   boardStageWithRole,
+  boardCardWorktreeIsCancelledWork,
   boardCardWorktreeKept,
   boardCardWorktreeKeptReason,
   isBoardMergeStageExecution,
@@ -883,11 +884,13 @@ export function BoardCardDetail({
       archived: card.archivedAt !== null,
       inDoneStage: doneStageId !== null && card.stage === doneStageId,
       reclaimWorktreeOnDone: boardSettings.lifecycle.reclaimWorktreeOnDone,
+      cancelledWork: boardCardWorktreeIsCancelledWork(card),
     })
       ? {
           reason: boardCardWorktreeKeptReason(card.worktree.reclaimBlockedReason),
           path: card.worktree.path,
           branch: card.worktree.branch,
+          cancelledWork: boardCardWorktreeIsCancelledWork(card),
         }
       : null;
 

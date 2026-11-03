@@ -6871,9 +6871,23 @@ export function boardCardWorktreeKept(input: {
   readonly archived: boolean;
   readonly inDoneStage: boolean;
   readonly reclaimWorktreeOnDone: boolean;
+  /** Its worktree is cancelled work (`boardCardWorktreeIsCancelledWork`). */
+  readonly cancelledWork: boolean;
 }): boolean {
   if (!input.worktreeReady) return false;
-  return input.archived || (input.inDoneStage && input.reclaimWorktreeOnDone);
+  return (
+    input.archived || input.cancelledWork || (input.inDoneStage && input.reclaimWorktreeOnDone)
+  );
+}
+
+/**
+ * Whether a worktree this card holds is work cancelled to make it a group
+ * (T3O-28): only an own-branch group legitimately holds a worktree.
+ */
+export function boardCardWorktreeIsCancelledWork(card: {
+  readonly group?: Pick<BoardCardGroup, "target"> | null | undefined;
+}): boolean {
+  return card.group != null && card.group.target !== "own";
 }
 
 /**

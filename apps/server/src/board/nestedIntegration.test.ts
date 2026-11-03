@@ -575,6 +575,28 @@ describe("cancelling a started leaf's work to make it a parent (T3O-28)", () => 
     );
   });
 
+  it.effect("the worktree sweep retries a kept cancelled worktree once its work is safe", () => {
+    const cancelled = asCancelled(card("card-x", building, { worktree: readyWorktree("card-x") }));
+    return withGovernor(
+      {
+        board: { cards: [cancelled], nextCardNumberByProject: {} },
+        settings,
+        worktreeUndurable: true,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(workCancelledEvent(cancelled, 1));
+          yield* h.reactor.drain;
+          assert.deepStrictEqual(yield* h.removedWorktrees, []);
+          h.setWorktreeUndurable(false);
+          yield* h.reactor.sweepWorktrees();
+          yield* h.reactor.drainWorktreeSweep;
+          assert.include(yield* h.removedWorktrees, "/tmp/wt/card-x");
+          assert.deepStrictEqual(remoteDeletes(yield* h.gitInvocations), ["board/card-x"]);
+        }),
+    );
+  });
+
   it.effect("Check again reclaims a kept cancelled worktree once its work is safe", () => {
     const cancelled = asCancelled(card("card-x", building, { worktree: readyWorktree("card-x") }));
     return withGovernor(

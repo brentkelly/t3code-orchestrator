@@ -17,6 +17,7 @@ import {
   boardStageBeforeBuild,
   boardStageIndex,
   boardStageWithRole,
+  boardCardWorktreeIsCancelledWork,
   boardCardWorktreeKept,
   boardCardWorktreeKeptReason,
   deriveBoardCardPlanProgress,
@@ -506,6 +507,7 @@ function EnvironmentBoard({
         archived: card.archivedAt !== null,
         inDoneStage: doneStageId !== null && card.stage === doneStageId,
         reclaimWorktreeOnDone,
+        cancelledWork: boardCardWorktreeIsCancelledWork(card),
       })
         ? boardCardWorktreeKeptReason(card.worktreeKeptReason)
         : null,
