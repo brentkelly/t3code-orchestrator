@@ -1999,6 +1999,8 @@ export const boardHandlers = {
       );
       const board = yield* readBoardState(deps);
       const card = yield* findCardByKeyOrId(board, input.cardId);
+      // Auto-planning steers the card's planning thread by interrupting it.
+      yield* refuseOwnCard(board, deps.scope, card, "Auto-planning it interrupts this very turn");
       yield* refuseOtherWorkersCard(board, deps.scope, card);
       const supervisor = yield* SupervisorReactor;
       const result = yield* supervisor.autoPlanCard(card.id);

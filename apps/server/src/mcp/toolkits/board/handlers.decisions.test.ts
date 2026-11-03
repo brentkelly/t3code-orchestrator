@@ -298,11 +298,17 @@ it.layer(layer)("decision log and ancestor context (T3O-32)", (it) => {
         .pipe(asChild, Effect.exit);
       assert.isTrue(Exit.isFailure(refused));
       assert.deepStrictEqual(autoPlanCalls, []);
-      const started = yield* boardHandlers
+      const own = yield* boardHandlers
         .board_auto_plan({ cardId: leaf.key, approved: true })
+        .pipe(asChild, Effect.flip);
+      assert.include(own.message, "is the card you are working on");
+      assert.deepStrictEqual(autoPlanCalls, []);
+      const started = yield* boardHandlers
+        .board_auto_plan({ cardId: otherId, approved: true })
         .pipe(asChild);
-      assert.deepStrictEqual(started, { cardId: leaf.id, key: leaf.key, outcome: "started" });
-      assert.deepStrictEqual(autoPlanCalls, [String(leaf.id)]);
+      assert.strictEqual(started.cardId, otherId);
+      assert.strictEqual(started.outcome, "started");
+      assert.deepStrictEqual(autoPlanCalls, [String(otherId)]);
     }),
   );
 });
