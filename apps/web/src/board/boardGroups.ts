@@ -24,7 +24,7 @@ type Shells = ReadonlyArray<BoardCardShell>;
 
 /** The name trunk goes by on the client, which never sees a project's default
     branch name. */
-const BOARD_TRUNK_LABEL = "trunk";
+export const BOARD_TRUNK_LABEL = "trunk";
 
 // Indexes built once per shells array: every helper below is called per card
 // and per column on each board delta, and a linear scan per call is quadratic.
@@ -42,7 +42,8 @@ function byId(shells: Shells): ReadonlyMap<string, BoardCardShell> {
   return index;
 }
 
-function boardShellChildren(shells: Shells, cardId: string): Shells {
+/** A card's direct children, in shell order. */
+export function boardShellChildren(shells: Shells, cardId: string): Shells {
   let index = childIndexes.get(shells);
   if (index === undefined) {
     const built = new Map<string, BoardCardShell[]>();
@@ -138,7 +139,11 @@ export function boardShellDescendants(shells: Shells, cardId: string): Shells {
 }
 
 /** Whether work has started on a leaf; a group never has, its children have. */
-function isBoardShellStarted(shells: Shells, stages: BoardState, card: BoardCardShell): boolean {
+export function isBoardShellStarted(
+  shells: Shells,
+  stages: BoardState,
+  card: BoardCardShell,
+): boolean {
   return !isBoardGroupShell(shells, card) && isLeafStarted(stages, card);
 }
 
