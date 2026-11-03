@@ -1746,6 +1746,68 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       }),
   );
 
+  it.effect(
+    "board_new_phase moves a group's deferred cards into a sibling heading's Backlog (T3O-29)",
+    () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const group = yield* boardHandlers
+          .board_create_card({ projectId, title: "Event log", stage: BoardStageId.make("sprint") })
+          .pipe(withScope(orphanThread));
+        const createChild = (title: string, stage: string) =>
+          boardHandlers
+            .board_create_card({
+              projectId,
+              title,
+              stage: BoardStageId.make(stage),
+              parentCardId: group.cardId,
+              approved: true,
+            })
+            .pipe(withScope(orphanThread));
+        const later = yield* createChild("Later", "deferred");
+        const active = yield* createChild("Now", "backlog");
+
+        const unapproved = yield* Effect.flip(
+          boardHandlers
+            .board_new_phase({ groupCardId: group.key, cardIds: [later.key], title: "Phase 2" })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(unapproved.message, "approved: true");
+        const notDeferred = yield* Effect.flip(
+          boardHandlers
+            .board_new_phase({
+              groupCardId: group.key,
+              cardIds: [active.key],
+              title: "Phase 2",
+              approved: true,
+            })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(notDeferred.message, "only deferred cards move");
+
+        const phase = yield* boardHandlers
+          .board_new_phase({
+            groupCardId: group.key,
+            cardIds: [later.key],
+            title: "Event log: Phase 2",
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        const cards = yield* readCards;
+        const heading = cards.find((card) => card.id === phase.groupCardId);
+        assert.strictEqual(heading?.title, "Event log: Phase 2");
+        assert.isNull(heading?.parentCardId ?? null);
+        assert.isTrue(heading?.group?.heading ?? false);
+        const moved = cards.find((card) => card.id === later.cardId);
+        assert.strictEqual(moved?.parentCardId, phase.groupCardId);
+        assert.strictEqual(moved?.stage, "backlog");
+        assert.strictEqual(
+          cards.find((card) => card.id === active.cardId)?.parentCardId,
+          group.cardId,
+        );
+      }),
+  );
+
   it.effect("board_update_card resolves label names on update and rejects unknown ones", () =>
     Effect.gen(function* () {
       yield* seed();

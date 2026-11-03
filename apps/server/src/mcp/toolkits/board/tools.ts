@@ -538,6 +538,26 @@ export const BoardGroupCardsTool = Tool.make("board_group_cards", {
   dependencies,
 }).annotate(Tool.Title, "Group board cards");
 
+export const BoardNewPhaseTool = Tool.make("board_new_phase", {
+  description:
+    "Start the next phase of a group: its deferred cards (cardIds, each one in the group's Deferred column) move into a new group titled title, created next to the group under the same parent, and land in that new group's Backlog. Use it when the deferred work of a group is to be planned and built as its own round. Returns the new group's key. REGROUPING NEEDS A HUMAN: describe the new phase and the cards moving into it to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
+  parameters: Schema.Struct({
+    /** Card key or id of the group whose deferred cards move. */
+    groupCardId: TrimmedNonEmptyString,
+    /** Card keys or ids of the deferred cards to move. */
+    cardIds: Schema.Array(TrimmedNonEmptyString),
+    title: TrimmedNonEmptyString,
+    approved: regroupApproved,
+  }),
+  success: Schema.Struct({
+    groupCardId: BoardCardId,
+    groupKey: TrimmedNonEmptyString,
+    cardIds: Schema.Array(BoardCardId),
+  }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Start a group's next phase");
+
 const BoardShareParentTool = Tool.make("board_share_parent", {
   description:
     "Give a card that is already being built some sibling cards: a new group titled title is created where that card sits, and the card and cardIds all move into it, side by side. Use it when someone wants cards under a card whose work has started — a started card cannot become a group itself. The started card keeps its branch and where it merges. Returns the new group's key. REGROUPING NEEDS A HUMAN: describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
@@ -694,6 +714,7 @@ export const BoardToolkit = Toolkit.make(
   BoardOutdentCardsTool,
   BoardGroupCardsTool,
   BoardShareParentTool,
+  BoardNewPhaseTool,
   BoardCancelCardWorkTool,
   BoardSetGroupSettingsTool,
   BoardManageLabelsTool,
