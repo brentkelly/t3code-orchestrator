@@ -42,6 +42,29 @@ function describe(settings: BoardSplitGateSettings): string {
   }`;
 }
 
+/** Own branch is offered only when every child arrives planned: an own
+    group's children start on the floor, so one landing in Backlog to be
+    planned could never move. The server refuses the choice the same way. */
+export function boardSplitGateOwnAllowed(
+  plans: ReadonlyArray<Pick<BoardPlan, "planned">>,
+): boolean {
+  return plans.every(isBoardPlanPlanned);
+}
+
+/** The recommendation as the gate pre-selects it: `own` falls back to
+    `inherit` when it is not allowed, exactly as the server's approval does. */
+export function boardSplitGateRecommended(input: {
+  readonly plans: ReadonlyArray<Pick<BoardPlan, "planned">>;
+  readonly recommendation: BoardSplitRecommendation;
+}): BoardSplitGateSettings {
+  const { autoBuild, mergeTarget } = input.recommendation;
+  return {
+    autoBuild,
+    mergeTarget:
+      mergeTarget === "own" && !boardSplitGateOwnAllowed(input.plans) ? "inherit" : mergeTarget,
+  };
+}
+
 export function boardSplitGateView(input: {
   readonly plans: ReadonlyArray<Pick<BoardPlan, "planId" | "title" | "dependsOn" | "planned">>;
   readonly recommendation: BoardSplitRecommendation;
