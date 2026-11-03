@@ -210,8 +210,13 @@ function sharedParent(cards: Shells): string | null | undefined {
   return cards.every((card) => parentOf(card) === first) ? first : undefined;
 }
 
-/** Indent: the selection goes under the sibling above the first selected card. */
-export function boardListIndent(tree: BoardListTree, selected: ReadonlySet<string>): BoardListStep {
+/** Indent: the selection goes under the sibling above the first selected card.
+    With a filter on, pass the visible ids: a hidden sibling is never a target. */
+export function boardListIndent(
+  tree: BoardListTree,
+  selected: ReadonlySet<string>,
+  visible?: ReadonlySet<string>,
+): BoardListStep {
   const cards = boardListSelection(tree, selected);
   if (cards.length === 0) return { kind: "refused", reason: "Select cards first" };
   const parentId = sharedParent(cards);
@@ -223,6 +228,7 @@ export function boardListIndent(tree: BoardListTree, selected: ReadonlySet<strin
   for (let index = first - 1; index >= 0; index--) {
     const target = siblings[index]!;
     if (ids.has(String(target.cardId))) continue;
+    if (visible !== undefined && !visible.has(String(target.cardId))) continue;
     return {
       kind: "ok",
       request: { ids: [...ids], parentId: String(target.cardId) },
@@ -488,4 +494,24 @@ export function boardListStageCounts(tree: BoardListTree): ReadonlyMap<string, n
     counts.set(card.stage, (counts.get(card.stage) ?? 0) + 1);
   }
   return counts;
+}
+
+/**
+ * The slice of rows a virtualised list renders for a scroll position. The
+ * scroll offset is clamped to the rows that exist, so a list that shrinks
+ * under a stale scroll position still shows its last rows, never a blank band.
+ */
+export function boardListRowWindow(input: {
+  readonly scrollTop: number;
+  readonly viewportHeight: number;
+  readonly rowCount: number;
+  readonly rowHeight: number;
+  readonly overscan: number;
+}): { readonly start: number; readonly end: number } {
+  const { viewportHeight, rowCount, rowHeight, overscan } = input;
+  const maxScroll = Math.max(0, rowCount * rowHeight - viewportHeight);
+  const scrollTop = Math.min(Math.max(0, input.scrollTop), maxScroll);
+  const start = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+  const end = Math.min(rowCount, Math.ceil((scrollTop + viewportHeight) / rowHeight) + overscan);
+  return { start, end };
 }

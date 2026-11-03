@@ -80,6 +80,7 @@ import {
   boardListMoveTargets,
   boardListOutdent,
   boardListRange,
+  boardListRowWindow,
   boardListRows,
   boardListSelection,
   boardListStageCounts,
@@ -173,7 +174,11 @@ export function BoardListView(props: BoardListViewProps) {
   const visibleIds = useMemo(() => rows.map((row) => String(row.card.cardId)), [rows]);
   const selection = useMemo(() => boardListSelection(tree, selected), [selected, tree]);
   const selectionIds = useMemo(() => selection.map((card) => String(card.cardId)), [selection]);
-  const indent = useMemo(() => boardListIndent(tree, selected), [selected, tree]);
+  const filtering = props.query.trim().length > 0 || stageFilter.size > 0;
+  const indent = useMemo(
+    () => boardListIndent(tree, selected, filtering ? new Set(visibleIds) : undefined),
+    [filtering, selected, tree, visibleIds],
+  );
   const outdent = useMemo(() => boardListOutdent(tree, selected), [selected, tree]);
   const dragBlocked = useMemo(
     () => (dragIds === null ? null : boardListDragBlocked(shells, dragIds)),
@@ -219,14 +224,21 @@ export function BoardListView(props: BoardListViewProps) {
           });
           return;
         }
-        if (plan.reverting.length === 0) return;
-        const keys = plan.reverting.map((entry) => entry.card.key).join(", ");
-        const stage = boardStageLabel(stageDefinitions, plan.reverting[0]!.stageId);
-        boardToast({
-          title: `${keys} ${plan.reverting.length === 1 ? "has" : "have"} no children left and ${
-            plan.reverting.length === 1 ? "is an ordinary card" : "are ordinary cards"
-          } again, back in ${stage}.`,
-        });
+        const byStage = new Map<BoardStageId, Array<(typeof plan.reverting)[number]>>();
+        for (const entry of plan.reverting) {
+          byStage.set(entry.stageId, [...(byStage.get(entry.stageId) ?? []), entry]);
+        }
+        for (const [stageId, entries] of byStage) {
+          const keys = entries.map((entry) => entry.card.key).join(", ");
+          const stage = isBoardDeferredStage(stageId)
+            ? BOARD_DEFERRED_STAGE.label
+            : boardStageLabel(stageDefinitions, stageId);
+          boardToast({
+            title: `${keys} ${entries.length === 1 ? "has" : "have"} no children left and ${
+              entries.length === 1 ? "is an ordinary card" : "are ordinary cards"
+            } again, back in ${stage}.`,
+          });
+        }
       });
     },
     [environmentId, shells, stageDefinitions, stages],
@@ -286,7 +298,11 @@ export function BoardListView(props: BoardListViewProps) {
       setAnchorId(id);
       return;
     }
-    setSelected((current) => (current.size === 1 && current.has(id) ? new Set() : new Set([id])));
+    // The second click of a double-click must not deselect the row it opens.
+    const again = event.detail === 1;
+    setSelected((current) =>
+      again && current.size === 1 && current.has(id) ? new Set() : new Set([id]),
+    );
     setAnchorId(id);
   }, []);
   const onRowCheck = useCallback((id: string) => {
@@ -406,6 +422,16 @@ export function BoardListView(props: BoardListViewProps) {
   };
 
   const counts = useMemo(() => boardListStageCounts(tree), [tree]);
+  const moveTargets = useMemo(
+    () =>
+      selected.size === 0
+        ? []
+        : boardListMoveTargets(tree, selected).map((target) => ({
+            ...target,
+            isGroup: target.card !== null && boardShellGroup(shells, target.card) !== null,
+          })),
+    [selected, shells, tree],
+  );
   const groupCount = useMemo(
     () =>
       [...tree.inScope].filter((id) => {
@@ -418,16 +444,19 @@ export function BoardListView(props: BoardListViewProps) {
 
   // ── Rows ────────────────────────────────────────────────────────────
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const [rowWindow, setRowWindow] = useState({ start: 0, end: VIRTUALISE_FROM + OVERSCAN });
+  const [viewport, setViewport] = useState({
+    scrollTop: 0,
+    height: VIRTUALISE_FROM * BOARD_LIST_ROW_HEIGHT,
+  });
   const virtualised = rows.length > VIRTUALISE_FROM;
   const measure = useCallback(() => {
     const element = scrollRef.current;
     if (element === null) return;
-    const start = Math.max(0, Math.floor(element.scrollTop / BOARD_LIST_ROW_HEIGHT) - OVERSCAN);
-    const end =
-      Math.ceil((element.scrollTop + element.clientHeight) / BOARD_LIST_ROW_HEIGHT) + OVERSCAN;
-    setRowWindow((current) =>
-      current.start === start && current.end === end ? current : { start, end },
+    const { scrollTop, clientHeight: height } = element;
+    setViewport((current) =>
+      current.scrollTop === scrollTop && current.height === height
+        ? current
+        : { scrollTop, height },
     );
   }, []);
   useEffect(() => {
@@ -437,8 +466,15 @@ export function BoardListView(props: BoardListViewProps) {
     if (element === null) return;
     return observeResize(element, measure);
   }, [measure, virtualised]);
-  const start = virtualised ? Math.min(rowWindow.start, rows.length) : 0;
-  const end = virtualised ? Math.min(rowWindow.end, rows.length) : rows.length;
+  const { start, end } = virtualised
+    ? boardListRowWindow({
+        scrollTop: viewport.scrollTop,
+        viewportHeight: viewport.height,
+        rowCount: rows.length,
+        rowHeight: BOARD_LIST_ROW_HEIGHT,
+        overscan: OVERSCAN,
+      })
+    : { start: 0, end: rows.length };
   const doneStageId = boardStageWithRole(stages, "done")?.stageId ?? null;
 
   const hasSelection = selection.length > 0;
@@ -487,7 +523,7 @@ export function BoardListView(props: BoardListViewProps) {
                 }
               />
               <MenuPopup align="start" className="max-h-80 min-w-64 overflow-y-auto">
-                {boardListMoveTargets(tree, selected).map(({ card, depth }) => (
+                {moveTargets.map(({ card, depth, isGroup }) => (
                   <MenuItem
                     key={card === null ? "top" : card.cardId}
                     onClick={() =>
@@ -503,12 +539,7 @@ export function BoardListView(props: BoardListViewProps) {
                     ) : (
                       <>
                         <KeyPill accentNameFor={props.accentNameFor} card={card} />
-                        <span
-                          className={cn(
-                            "min-w-0 truncate",
-                            boardShellGroup(shells, card) !== null && "font-medium",
-                          )}
-                        >
+                        <span className={cn("min-w-0 truncate", isGroup && "font-medium")}>
                           {card.title}
                         </span>
                       </>

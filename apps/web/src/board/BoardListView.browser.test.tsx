@@ -191,6 +191,28 @@ describe("BoardListView", () => {
     await vi.waitFor(() => expect(row("b").getAttribute("aria-selected")).toBe("false"));
   });
 
+  it("keeps a double-clicked row selected", async () => {
+    await using _screen = await renderList(flat);
+    await userEvent.dblClick(await rowReady("b"));
+    await expect.element(page.getByText("1 selected")).toBeInTheDocument();
+    expect(row("b").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("with a filter on, indents under the sibling above that is still shown", async () => {
+    await using _screen = await renderList(
+      [
+        shell("a", "backlog", { orderKey: "a", title: "Match one" }),
+        shell("b", "backlog", { orderKey: "b", title: "Hidden" }),
+        shell("c", "backlog", { orderKey: "c", title: "Match two" }),
+      ],
+      "match",
+    );
+    await userEvent.click(await rowReady("c"));
+    await expect
+      .element(page.getByRole("button", { name: /^Indent/ }))
+      .toHaveAccessibleDescription("Indent under A · Match one (Tab)");
+  });
+
   it("drops before, into or after a row by thirds, and dims the dragged subtree", async () => {
     await using _screen = await renderList([
       shell("g", "backlog", { orderKey: "a", group: group() }),

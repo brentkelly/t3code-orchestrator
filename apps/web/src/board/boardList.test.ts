@@ -23,6 +23,7 @@ import {
   boardListMoveTargets,
   boardListOutdent,
   boardListRange,
+  boardListRowWindow,
   boardListRows,
   boardListStageCounts,
   buildBoardListTree,
@@ -194,6 +195,18 @@ describe("boardListIndent and boardListOutdent", () => {
     expect(boardListIndent(tree, new Set(["k1"]))).toMatchObject({ kind: "refused" });
   });
 
+  it("with a filter on, skips siblings the filter hides", () => {
+    expect(boardListIndent(tree, new Set(["c"]), new Set(["a", "c"]))).toEqual({
+      kind: "ok",
+      request: { ids: ["c"], parentId: "a" },
+      label: "Indent under A · Card a",
+    });
+    expect(boardListIndent(tree, new Set(["c"]), new Set(["c"]))).toEqual({
+      kind: "refused",
+      reason: "Nothing above to indent under",
+    });
+  });
+
   it("refuses cards that don't share a parent", () => {
     const reason = "Select cards that share a parent";
     expect(boardListIndent(tree, new Set(["b", "k2"]))).toEqual({ kind: "refused", reason });
@@ -350,6 +363,39 @@ describe("planBoardListMove", () => {
         parentCardId: BoardCardId.make("h"),
       },
       reverting: [],
+    });
+  });
+});
+
+describe("boardListRowWindow", () => {
+  const base = { viewportHeight: 350, rowHeight: 35, overscan: 2 };
+
+  it("starts at the top with the viewport plus overscan", () => {
+    expect(boardListRowWindow({ ...base, scrollTop: 0, rowCount: 200 })).toEqual({
+      start: 0,
+      end: 12,
+    });
+  });
+
+  it("reaches the last row at the bottom", () => {
+    const scrollTop = 200 * 35 - 350;
+    expect(boardListRowWindow({ ...base, scrollTop, rowCount: 200 })).toEqual({
+      start: 188,
+      end: 200,
+    });
+  });
+
+  it("shows the last rows when the list shrinks under a stale scroll position", () => {
+    expect(boardListRowWindow({ ...base, scrollTop: 190 * 35, rowCount: 30 })).toEqual({
+      start: 18,
+      end: 30,
+    });
+  });
+
+  it("renders every row when they fit the viewport", () => {
+    expect(boardListRowWindow({ ...base, scrollTop: 500, rowCount: 5 })).toEqual({
+      start: 0,
+      end: 5,
     });
   });
 });
