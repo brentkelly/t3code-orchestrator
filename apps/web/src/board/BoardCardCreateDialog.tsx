@@ -22,7 +22,6 @@ import {
   BoardLabelId,
   assignBoardKeyPrefix,
   boardStagesInOrder,
-  isBoardDependencyInScope,
   isBoardStageAtOrAfterSubBoardFloor,
   resolveBoardStageExecution,
   type BoardCardShell,
@@ -33,6 +32,7 @@ import {
   type EnvironmentId,
   type ProjectIconOverride,
   type ProjectId,
+  boardShellAncestorIds,
 } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
@@ -192,10 +192,7 @@ export function BoardCardCreateDialog({
   // Dependencies may cross projects (T3O-33, D3): `dependsOn` stores card ids
   // and the decider has never enforced a same-project rule, so a card that
   // changes project inherits cross-project edges — a state the picker should be
-  // able to create too. Foreign options carry their project's dot. A child's
-  // picker is scoped to its level (t3o-25, T3O-10): a child sees only its
-  // siblings, a top-level card only other top-level cards — the decider
-  // refuses anything else.
+  // able to create too. Foreign options carry their project's dot.
   const dependencyOptions = useMemo(() => {
     const projectTitleById = new Map(
       projects.map((project) => [String(project.id), project.title]),
@@ -204,14 +201,13 @@ export function BoardCardCreateDialog({
     const projectById = new Map(
       (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
     );
+    // Dependencies cross groups (T3O-27); only the new card's own ancestry is
+    // refused, so its group and that group's ancestors are not offered.
+    const ancestors = boardShellAncestorIds(allCards, subBoardParentId ?? null);
     return allCards
       .filter(
         (card) =>
-          !dependsOn.includes(card.cardId as BoardCardId) &&
-          isBoardDependencyInScope({
-            dependentParentCardId: subBoardParentId,
-            dependencyParentCardId: card.parentCardId,
-          }),
+          !dependsOn.includes(card.cardId as BoardCardId) && !ancestors.has(String(card.cardId)),
       )
       .map((card) => ({
         id: card.cardId,

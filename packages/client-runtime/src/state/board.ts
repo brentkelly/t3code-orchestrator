@@ -77,6 +77,9 @@ import {
   detachBoardCardFile,
   mergeBoardCardPullRequest,
   moveBoardCard,
+  moveBoardCards,
+  setBoardCardGroupSettings,
+  cancelBoardCardWork,
   refreshBoardCardPullRequest,
   linkBoardCardPullRequest,
   renameBoardStage,
@@ -87,6 +90,7 @@ import {
   reorderBoardStage,
   startBoardStageThread,
   requestBoardReviewRound,
+  autoPlanBoardCard,
   removeBoardCardWorktree,
   checkBoardCardWorktree,
   submitBoardCardForMerge,
@@ -109,6 +113,9 @@ import {
   type DeleteBoardStageInput,
   type LinkBoardCardThreadInput,
   type MoveBoardCardInput,
+  type MoveBoardCardsInput,
+  type SetBoardCardGroupSettingsInput,
+  type CancelBoardCardWorkInput,
   type RenameBoardStageInput,
   type ReorderBoardCardInput,
   type RequeueBoardCardStepInput,
@@ -136,6 +143,9 @@ export * from "./boardReducer.ts";
 export * from "./boardSubscription.ts";
 
 export type {
+  MoveBoardCardsInput,
+  SetBoardCardGroupSettingsInput,
+  CancelBoardCardWorkInput,
   ApproveBoardPlansInput,
   ArchiveBoardCardInput,
   CreateBoardCardInput,
@@ -739,6 +749,12 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:request-review-round",
       execute: (input: { readonly cardId: BoardCardId }) => requestBoardReviewRound(input),
     }),
+    /** Auto-plan → Build (T3O-32). Resolves to steered, started, or the
+        reason it was refused. */
+    autoPlanCard: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:auto-plan-card",
+      execute: (input: { readonly cardId: BoardCardId }) => autoPlanBoardCard(input),
+    }),
     /** Remove a finished card's kept worktree past the safety rule (T3O-52). */
     removeCardWorktree: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:remove-card-worktree",
@@ -788,6 +804,20 @@ export function createBoardEnvironmentAtoms<R, ER>(
     dismissWorkerSetup: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:dismiss-worker-setup",
       execute: (input: BoardWorkersDismissSetupInput) => dismissBoardWorkerSetup(input),
+    }),
+    /** Regroup cards (T3O-27); the board's New phase and shared parent. */
+    moveCards: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:move-cards",
+      execute: (input: MoveBoardCardsInput) => moveBoardCards(input),
+    }),
+    setGroupSettings: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-group-settings",
+      execute: (input: SetBoardCardGroupSettingsInput) => setBoardCardGroupSettings(input),
+    }),
+    /** Destructive: the caller confirmed it by the card's typed key. */
+    cancelCardWork: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:cancel-card-work",
+      execute: (input: CancelBoardCardWorkInput) => cancelBoardCardWork(input),
     }),
     reorderCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reorder-card",

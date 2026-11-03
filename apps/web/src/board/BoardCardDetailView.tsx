@@ -39,6 +39,7 @@ import {
   boardStageById,
   boardStageWithRole,
   effectiveBoardStageRole,
+  isBoardDeferredStage,
   liveBoardCardDependents,
   parseReviewStepId,
   sortBoardCardThreadLinks,
@@ -67,7 +68,10 @@ import {
   type BoardReviewRoundOverride,
   type RuntimeMode,
   type BoardCardStepStalledReason,
+  type BoardSplitRecommendation,
+  isBoardCardAutoPlanPending,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
 import {
   ArchiveIcon,
@@ -96,9 +100,10 @@ import {
   Trash2Icon,
   TriangleAlertIcon,
   XIcon,
+  FastForwardIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
@@ -176,6 +181,12 @@ import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
 import { BoardHint } from "./BoardHint";
+import { BoardDecisionLog } from "./BoardDecisionLog";
+import { boardDecisionFollowUp, boardDecisionLogView } from "./boardDecisionLog";
+import { BOARD_DEFERRED_STAGE } from "./boardScope";
+import { BoardSplitGate } from "./BoardSplitGate";
+import { BOARD_SPLIT_CHANGE_REQUEST_PREFILL, type BoardSplitGateSettings } from "./boardSplitGate";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { threadWorkerOpensOn, type BoardThreadWorker } from "./workers/threadWorker";
 import {
   boardForwardShownBesideRecovery,
@@ -339,6 +350,33 @@ export interface BoardDetailThreadLink {
   readonly movedFrom?: string | null | undefined;
 }
 
+/** What the split gate needs beyond the plans (T3O-31). */
+export interface BoardSplitGateContext {
+  readonly recommendation: BoardSplitRecommendation;
+  readonly ownBranch: string;
+  readonly landsOn: string;
+  readonly readyLabel: string;
+  readonly backlogLabel: string;
+}
+
+export interface BoardCardDetailGroup {
+  /** "Group · N cards". */
+  readonly chip: string;
+  /** Why the group is in its stage, under Open board. */
+  readonly note: string;
+  readonly onOpenBoard: (() => void) | undefined;
+  /** The Group settings controls, which replace the Stage ladder. */
+  readonly settings: ReactNode;
+  /** Opens the group archive confirmation. */
+  readonly onArchive: () => void;
+  /** What reopening the planning thread pre-fills: planning the deferred
+      cards as the next phase, or null when none are deferred. */
+  readonly reopenPrompt: string | null;
+  /** Whether the group has its own integration branch, and so its own
+      integration review and summary. */
+  readonly ownBranch: boolean;
+}
+
 export interface BoardCardDetailViewProps {
   readonly environmentId: EnvironmentId;
   /** Why the live step stalled, from the card's shell (T3O-65 shows the
@@ -366,7 +404,7 @@ export interface BoardCardDetailViewProps {
   readonly humanInLoop: {
     readonly value: boolean;
     readonly explicit: boolean;
-    readonly basis: "plan" | "no-plan" | "child";
+    readonly basis: "plan" | "no-plan";
   } | null;
   readonly onSetHumanInLoop: (value: boolean) => void;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
@@ -479,6 +517,12 @@ export interface BoardCardDetailViewProps {
       round" at Code review and Ready for merge, "Request review" on a card
       that has never had one. Absent hides the button entirely. */
   readonly onRequestReviewRound?: (() => void) | undefined;
+  /** Auto-plan → Build (T3O-32). Absent hides the button. */
+  readonly onAutoPlan?: (() => void) | undefined;
+  /** Create a follow-up card from the decision log (T3O-32). */
+  readonly onCreateFollowUp?:
+    | ((draft: { readonly title: string; readonly brief: string }) => void)
+    | undefined;
   /** Whether ANY step is live on the card — running, queued, or parked
       (stalled / awaiting input / paused). One step at a time is a decider
       invariant, so "Another review round" is disabled rather than hidden while
@@ -518,6 +562,7 @@ export interface BoardCardDetailViewProps {
     readonly reason: string;
     readonly path: string | null;
     readonly branch: string;
+    readonly cancelledWork: boolean;
   } | null;
   /** "Check again": refresh and re-run the cleanup. */
   readonly onCheckWorktree?: (() => void) | undefined;
@@ -529,11 +574,11 @@ export interface BoardCardDetailViewProps {
   /** Purge the card outright. Always behind `BoardDeleteConfirmDialog` — the
       server does not ask, so this must never be reachable without one. */
   readonly onDelete: () => void;
-  /** The plan pane's approve gate (t3o-23, D1): whether it renders, the
-      floor stage's label for the confirm copy, and the dispatch. */
+  /** The split gate (T3O-31): whether a proposal is pending, what the gate
+      shows, and the dispatch with the human's final settings. */
   readonly canApproveSplit: boolean;
-  readonly approveSplitTargetLabel: string | null;
-  readonly onApproveSplit: () => void;
+  readonly splitGate: BoardSplitGateContext | null;
+  readonly onApproveSplit: (settings: BoardSplitGateSettings) => void;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   /** The parent this card is a child of (t3o-25), for the identity row's
@@ -570,6 +615,8 @@ export interface BoardCardDetailViewProps {
       header chip read `Auto-merge · board`, so a user who cannot find the
       switch learns where the decision was actually made. */
   readonly autoMergeFromBoardSetting?: boolean | undefined;
+  /** Whether the card's nearest group arms its merge (T3O-28). */
+  readonly autoMergeFromGroup?: boolean | undefined;
   /** Resolve an override's model slug to its display name for the header pill
       and tooltip (t3o-29, D7). Passed from the container, which holds the
       provider list; absent, the pill falls back to the raw slug. */
@@ -585,6 +632,12 @@ export interface BoardCardDetailViewProps {
   /** The children's shells, for the Plans panel's live per-child state
       (t3o-29, D1). Empty on every card without a split. */
   readonly childShells?: ReadonlyArray<BoardCardShell> | undefined;
+  /** The group popup (T3O-29), or null for a leaf: Open board instead of the
+      stage's actions, Group settings instead of the Stage ladder, and the
+      archive confirmation instead of a one-click archive. */
+  readonly group?: BoardCardDetailGroup | null | undefined;
+  /** A group's child also lists Deferred on its Stage ladder (T3O-29). */
+  readonly stageLadderDeferred?: boolean | undefined;
   /** The card's base branch (T3O-5, D13): what it branches off and merges back
       into, resolved through `resolveBoardCardEffectiveBase` by the container —
       the one layer that can see the project's default branch. */
@@ -1165,14 +1218,20 @@ function StageLadder({
   stage,
   stages,
   onMoveStage,
+  deferred = false,
 }: {
   readonly stage: BoardStageId;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly onMoveStage: (toStage: BoardStageId) => void;
+  /** Lists Deferred first: only a group's child may sit there (T3O-29). */
+  readonly deferred?: boolean | undefined;
 }) {
+  const ladder = deferred
+    ? [BOARD_DEFERRED_STAGE, ...boardStagesInOrder(stageStateOf(stages))]
+    : boardStagesInOrder(stageStateOf(stages));
   return (
     <div className="flex flex-col gap-px">
-      {boardStagesInOrder(stageStateOf(stages)).map((candidate) => {
+      {ladder.map((candidate) => {
         const current = candidate.stageId === stage;
         const rung = (
           <>
@@ -1187,7 +1246,11 @@ function StageLadder({
         );
         // The build role onward is granted by the pipeline, not chosen — those
         // rungs render as plain rows so the ladder still reads whole.
-        if (current || !isBoardStageManuallySelectable(stages, candidate.stageId)) {
+        if (
+          current ||
+          (!isBoardDeferredStage(candidate.stageId) &&
+            !isBoardStageManuallySelectable(stages, candidate.stageId))
+        ) {
           return (
             <div
               aria-current={current ? "true" : undefined}
@@ -1408,12 +1471,59 @@ function BoardStepRecoveryButton({
 
 /** Stage action, blocked reason and archive — the things you *do* to a card,
     kept together at the top of the rail. */
+/** A group's action area (T3O-29): Open board and why the group sits where
+    it does — no advance button, its stage is derived — and the planning
+    thread, reopenable to plan what was deferred. */
+function GroupActionsSection({
+  group,
+  hasPlanningThread,
+  threadReopened,
+  onReopenThread,
+}: {
+  readonly group: BoardCardDetailGroup;
+  readonly hasPlanningThread: boolean;
+  readonly threadReopened: boolean;
+  readonly onReopenThread: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 border-t border-border p-3.5">
+      <div className="flex flex-col gap-1.5">
+        <Button disabled={group.onOpenBoard === undefined} onClick={group.onOpenBoard}>
+          <LayersIcon />
+          Open board
+        </Button>
+        <p className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">{group.note}</p>
+      </div>
+      {hasPlanningThread ? (
+        <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/50 p-2.5">
+          <span className="text-[12px] font-medium text-foreground">Planning thread</span>
+          <span className="text-[11.5px]/[1.45] text-pretty text-muted-foreground">
+            {group.reopenPrompt === null
+              ? "Settled when the group split. Reopen it to keep planning with the agent."
+              : "Some cards are deferred. Reopen the thread to plan them as the next phase."}
+          </span>
+          <Button disabled={threadReopened} onClick={onReopenThread} size="sm" variant="outline">
+            <MessageSquareIcon />
+            {threadReopened ? "Thread reopened" : "Reopen thread"}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ActionsSection({
   props,
   unmet,
+  onReviewSplit,
+  onAutoPlan,
 }: {
   readonly props: BoardCardDetailViewProps;
   readonly unmet: ReadonlyArray<BoardDetailDependency>;
+  /** Opens the split gate's pane (T3O-31). */
+  readonly onReviewSplit: () => void;
+  /** Auto-plan → Build (T3O-32), or null where it is not offered. */
+  readonly onAutoPlan: (() => void) | null;
 }) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
@@ -1614,7 +1724,8 @@ function ActionsSection({
     // T3o (T3O-48): a card with nothing but the missing-PR notice still needs
     // the section, or the one thing it has to say has nowhere to render.
     missingPullRequest === null &&
-    linkPullRequest === null
+    linkPullRequest === null &&
+    onAutoPlan === null
   ) {
     return null;
   }
@@ -1700,28 +1811,25 @@ function ActionsSection({
         </BoardHint>
       ) : null}
       {props.canApproveSplit ? (
-        // A pending split (t3o-27): the forward stage button is REPLACED by
-        // Approve split, because the card cannot advance until the split is
-        // resolved — the decider refuses every forward move while it stands.
-        // Amber, matching the card face's "Needs approval" state (distinct
-        // from the blue "Input needed" a thread question raises).
-        // The hint is planning's own argument for the split when it left one
-        // (t3o card 11), so the reason is readable without opening the pane;
-        // the generic sentence covers a split proposed before rationales
-        // existed.
+        // A pending split (t3o-27): the forward stage button is REPLACED,
+        // because the card cannot advance until the split is resolved — the
+        // decider refuses every forward move while it stands. It opens the
+        // split gate at the end of the planning thread (T3O-31), where the
+        // human approves with the group settings. Violet, matching the card
+        // face's "Input needed": a plan is waiting on the human.
         <BoardHint
           label={
             card.splitRationale ??
-            "This card's planning proposed a multi-part split; approve it to materialise the plan cards"
+            "This card's planning proposed a multi-part split; review it in the planning thread"
           }
         >
           <button
-            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-amber-500/60 bg-amber-500/15 px-3 text-[13px] font-medium text-amber-700 shadow-xs hover:bg-amber-500/25 dark:text-amber-300"
-            onClick={() => props.onApproveSplit()}
+            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-attention/55 bg-attention/12 px-3 text-[13px] font-medium text-attention-foreground shadow-xs hover:bg-attention/20"
+            onClick={onReviewSplit}
             type="button"
           >
             <LayersIcon className="size-3.5" />
-            Approve split
+            Review split
           </button>
         </BoardHint>
       ) : forward !== null &&
@@ -1792,6 +1900,18 @@ function ActionsSection({
           ) : null}
         </div>
       ) : null}
+      {onAutoPlan === null ? null : (
+        <BoardHint label="Ends planning. The agent makes every remaining decision, approves the plan and starts the build. Decisions are logged on the Summary pane.">
+          <button
+            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent"
+            onClick={onAutoPlan}
+            type="button"
+          >
+            <FastForwardIcon className="size-3.5" />
+            Auto-plan → Build
+          </button>
+        </BoardHint>
+      )}
       {/* Between the forward button and View PR, giving the approved mockup's
           order: Merge → Another review round → View PR, all three full width.
           Styled off its shipped sibling below rather than the prototype's
@@ -1917,17 +2037,13 @@ function ActionsSection({
 }
 
 /** The toggle's hint for a card running on the DEFAULT stance: names the
-    default and the reason it applies, so a user reading "conversation" on a
-    sub-board child knows it came from the with-plan setting, not from a plan
-    they forgot to write. */
+    default and the reason it applies. */
 function humanInLoopDefaultHint(humanInLoop: {
   readonly value: boolean;
-  readonly basis: "plan" | "no-plan" | "child";
+  readonly basis: "plan" | "no-plan";
 }): string {
   const stance = humanInLoop.value ? "conversation" : "unattended";
   switch (humanInLoop.basis) {
-    case "child":
-      return `Default: ${stance} (sub-board child; its approved plan is its brief).`;
     case "plan":
       return `Default: ${stance} (a plan exists).`;
     case "no-plan":
@@ -2208,11 +2324,18 @@ function PaneTabs({
   hasPlan,
   planCount,
   onSelect,
+  threadLocked = null,
+  plansLabel = null,
 }: {
   readonly pane: BoardCardPane;
   readonly hasReview: boolean;
   readonly hasSummary: boolean;
   readonly hasPlan: boolean;
+  /** Why the Thread pill is locked (T3O-29: a group's settled planning
+      thread), or null. */
+  readonly threadLocked?: string | null | undefined;
+  /** The plans pill's label when it lists a group's cards. */
+  readonly plansLabel?: string | null | undefined;
   /** Non-null once the card has materialised children (t3o-29): the plan pill
       then labels the Plans panel by how many rows it holds — "4 plans", not
       "Plan" — because the pill names its pane's contents. */
@@ -2228,10 +2351,26 @@ function PaneTabs({
     );
   return (
     <div className="flex shrink-0 items-center gap-0.5 rounded-[9px] bg-accent p-0.5">
-      <button className={tab("thread")} onClick={() => onSelect("thread")} type="button">
-        <MessageSquareIcon className="size-3" />
-        Thread
-      </button>
+      {threadLocked === null ? (
+        <button className={tab("thread")} onClick={() => onSelect("thread")} type="button">
+          <MessageSquareIcon className="size-3" />
+          Thread
+        </button>
+      ) : (
+        <BoardHint label={threadLocked}>
+          <button
+            aria-disabled
+            className={cn(
+              tab("thread"),
+              "cursor-not-allowed opacity-60 hover:text-muted-foreground",
+            )}
+            type="button"
+          >
+            <LockIcon className="size-3" />
+            Thread
+          </button>
+        </BoardHint>
+      )}
       {hasReview ? (
         <BoardHint label="Adversarial review loop">
           <button className={tab("review")} onClick={() => onSelect("review")} type="button">
@@ -2251,7 +2390,8 @@ function PaneTabs({
       {hasPlan ? (
         <button className={tab("plan")} onClick={() => onSelect("plan")} type="button">
           {planCount === null ? <FileIcon className="size-3" /> : <LayersIcon className="size-3" />}
-          {planCount === null ? "Plan" : `${planCount} ${planCount === 1 ? "plan" : "plans"}`}
+          {plansLabel ??
+            (planCount === null ? "Plan" : `${planCount} ${planCount === 1 ? "plan" : "plans"}`)}
         </button>
       ) : null}
       <button className={tab("brief")} onClick={() => onSelect("brief")} type="button">
@@ -2309,7 +2449,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // pill reads the three shell facts instead, and `boardAutoMergeHold` is the
   // one place either set of words is written, so they cannot disagree.
   const autoMergeChip = boardAutoMergeHeaderChip({
-    armed: card.autoMerge || card.parentCardId !== null || props.autoMergeFromBoardSetting === true,
+    armed:
+      card.autoMerge ||
+      props.autoMergeFromGroup === true ||
+      props.autoMergeFromBoardSetting === true,
     fromBoardSetting: !card.autoMerge && props.autoMergeFromBoardSetting === true,
   });
   const hold = card.autoMergeHold;
@@ -2342,7 +2485,18 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
   // count at all (t3o-13, D1), and everything else must be done.
-  const unmet = props.dependencies.filter(
+  // A waiting group holds back every card inside it (T3O-27), as the decider's
+  // move gate does.
+  const groupDependencies: ReadonlyArray<BoardDetailDependency> =
+    props.detail.groupDependencies.map((dependency) => ({
+      cardId: dependency.cardId,
+      key: dependency.key,
+      title: dependency.title,
+      stage: dependency.stage,
+      known: true,
+      archived: dependency.archivedAt !== null,
+    }));
+  const unmet = [...props.dependencies, ...groupDependencies].filter(
     (dependency) => !dependency.known || (!dependency.archived && dependency.stage !== "done"),
   );
 
@@ -2425,7 +2579,54 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         : null,
     [isSplitParent, props.detail.plans, props.detail.children, props.childShells, props.stages],
   );
-  const pane = paneChoice ?? initialBoardCardPane(props.stages, card.stage, liveChildCount);
+  const group = props.group ?? null;
+  // Which tab the thread pane is on. Absent means "whichever thread the card's
+  // stage makes current", so the pane follows the card until the user picks a
+  // thread, and a since-unlinked selection falls back to that same default.
+  const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
+  const selectedThread =
+    props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
+    initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
+  // A group's planning thread is settled once it split (T3O-29): the tab
+  // stays locked until the human reopens it from the Planning thread box. A
+  // group with no planning thread has no box, so nothing to lock.
+  const [threadReopened, setThreadReopened] = useState(false);
+  // Only the planning thread settles: an own-branch group's integration
+  // review runs on a thread of its own, which must stay reachable.
+  const planStageId = boardStageWithRole(stageStateOf(props.stages), "plan")?.stageId ?? null;
+  const selectedRole =
+    props.threadLinks.find((link) => link.threadId === selectedThread)?.role ?? null;
+  const threadLocked =
+    group !== null &&
+    selectedThread !== null &&
+    selectedRole !== null &&
+    selectedRole === planStageId &&
+    !threadReopened
+      ? "The planning thread is settled. Reopen it from the Planning thread box."
+      : null;
+  // Not the selected thread: that falls back to an integration-review thread.
+  const hasGroupPlanningThread = props.threadLinks.some(
+    (candidate) => planStageId !== null && candidate.role === planStageId && !candidate.tombstoned,
+  );
+  const reopenGroupThread = () => {
+    setThreadReopened(true);
+    setPane("thread");
+    const link = props.threadLinks.findLast(
+      (candidate) => planStageId !== null && candidate.role === planStageId,
+    );
+    if (link !== undefined) setSelectedThreadId(link.threadId);
+    if (group === null || group.reopenPrompt === null || link === undefined || link.tombstoned)
+      return;
+    useComposerDraftStore
+      .getState()
+      .setPrompt(scopeThreadRef(link.worker.environmentId, link.threadId), group.reopenPrompt);
+  };
+  const groupDefaultPane: BoardCardPane = (planRows?.rows.length ?? 0) > 0 ? "plan" : "brief";
+  const pane =
+    paneChoice ??
+    (group !== null && (!group.ownBranch || !isStageAtOrAfterReview(props.stages, card.stage))
+      ? groupDefaultPane
+      : initialBoardCardPane(props.stages, card.stage, liveChildCount));
   // The plan is a first-class entity, so its pill only exists once one is
   // written; if the card loses its plans while the pane is open, fall back to
   // the thread rather than render an empty surface. The review pane exists at
@@ -2436,13 +2637,20 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const hasPlan = props.detail.plans.length > 0;
   const reviewStageId = boardStageWithRole(stageStateOf(props.stages), "review")?.stageId ?? null;
   const reviewStarted = hasBoardReviewSteps(props.detail.stepCompletions);
-  const hasReview = reviewStageId !== null || reviewStarted;
-  const hasSummary = boardCardHasSummaryPane({
-    stages: props.stages,
-    stage: card.stage,
-    stepCompletions: props.detail.stepCompletions,
-    card,
-  });
+  // An inherit group never reviews; an own-branch group's integration does.
+  const integrates = group === null || group.ownBranch;
+  const hasReview = integrates && (reviewStageId !== null || reviewStarted);
+  // An inherit group's Summary is its decision log, which its children's
+  // planning inherits as context (T3O-32).
+  const hasSummary = !integrates
+    ? props.detail.decisions.length > 0
+    : boardCardHasSummaryPane({
+        stages: props.stages,
+        stage: card.stage,
+        stepCompletions: props.detail.stepCompletions,
+        card,
+        decisionCount: props.detail.decisions.length,
+      });
   // The card-level running/queued signals describe the review loop only while
   // the card sits ON the review stage — anywhere else the live step is some
   // other stage's, and feeding it in would spin the review pill during a
@@ -2455,11 +2663,13 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       (link) => link.threadId === activeThreadId && link.threadState === "working",
     );
   const reviewStalled = onReviewStage && boardReviewPaneStopped(props.stepFailure);
+  const fallbackPane: BoardCardPane = group !== null && threadLocked !== null ? "brief" : "thread";
   const activePane: BoardCardPane =
     (pane === "plan" && !hasPlan) ||
     (pane === "review" && !hasReview) ||
-    (pane === "summary" && !hasSummary)
-      ? "thread"
+    (pane === "summary" && !hasSummary) ||
+    (pane === "thread" && threadLocked !== null)
+      ? fallbackPane
       : pane;
   // Derived only while the Summary pane is showing: the panel re-renders on
   // every thread-link or detail push, and the walk over step completions is
@@ -2488,13 +2698,46 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       reviewMaxRounds,
     ],
   );
-  // Which tab the thread pane is on. Absent means "whichever thread the card's
-  // stage makes current", so the pane follows the card until the user picks a
-  // thread, and a since-unlinked selection falls back to that same default.
-  const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
-  const selectedThread =
-    props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
-    initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
+
+  // The decision log (T3O-32). Null open state means "the default rule".
+  const [logOpen, setLogOpen] = useState<boolean | null>(null);
+  const stagesState = stageStateOf(props.stages);
+  const buildStage = boardStageWithRole(stagesState, "build");
+  const pastBuild =
+    buildStage !== null &&
+    boardStageIndex(stagesState, card.stage) > boardStageIndex(stagesState, buildStage.stageId);
+  const decisionLog = summaryShown
+    ? boardDecisionLogView({
+        decisions: props.detail.decisions,
+        autoPlanned: card.autoPlan !== undefined,
+        pastBuild,
+      })
+    : null;
+  const buildPending =
+    !isStageAtOrAfterReview(props.stages, card.stage) &&
+    !props.detail.stepCompletions.some(
+      (completion) =>
+        buildStage !== null &&
+        completion.stepId === buildStage.stageId &&
+        completion.outcome === "succeeded",
+    );
+  // Auto-plan → Build (T3O-32): a leaf in planning with no split waiting and
+  // no auto-plan already under way. The click opens the Summary pane with the
+  // log expanded, so the decisions are what the human sees once it builds.
+  const onAutoPlan = props.onAutoPlan;
+  const autoPlanAction =
+    onAutoPlan === undefined ||
+    card.archivedAt !== null ||
+    card.group !== null ||
+    props.canApproveSplit ||
+    isBoardCardAutoPlanPending(card) ||
+    boardStageWithRole(stagesState, "plan")?.stageId !== card.stage
+      ? null
+      : () => {
+          onAutoPlan();
+          setLogOpen(true);
+          setPane("summary");
+        };
 
   return (
     <>
@@ -2518,6 +2761,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </button>
           </BoardHint>
         ) : null}
+        {group === null ? null : (
+          <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground">
+            <LayersIcon className="size-2.5" />
+            {group.chip}
+          </span>
+        )}
         <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
         {/* On a done card the stage chip IS the completion badge, cut to the
             same block as the label chips beside it (t3o-36): the sheet no
@@ -2601,6 +2850,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           onSelect={setPane}
           pane={activePane}
           planCount={planRows === null ? null : planRows.rows.length}
+          plansLabel={group === null || planRows === null ? null : "Cards"}
+          threadLocked={threadLocked}
         />
         <Menu>
           <MenuTrigger
@@ -2633,6 +2884,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             ) : null}
             <MenuItem
               onClick={() => {
+                if (!archived && group !== null) {
+                  group.onArchive();
+                  return;
+                }
                 if (!archived && archiveNeedsConfirmation) {
                   setArchiveConfirmOpen(true);
                   return;
@@ -2760,6 +3015,34 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onOpenPullRequest={props.onOpenPullRequest}
                 onSelectReview={() => setPane("review")}
                 summary={workSummary}
+                buildPending={buildPending}
+                decisionLog={
+                  decisionLog === null ? null : (
+                    <BoardDecisionLog
+                      view={decisionLog}
+                      open={logOpen}
+                      onOpenChange={setLogOpen}
+                      onSendBack={
+                        buildStage === null
+                          ? undefined
+                          : () => {
+                              props.onMoveStage(buildStage.stageId);
+                              setPane("thread");
+                            }
+                      }
+                      onFollowUp={(() => {
+                        const create = props.onCreateFollowUp;
+                        const draft = boardDecisionFollowUp({
+                          cardKey: card.key,
+                          rows: decisionLog.rows,
+                        });
+                        return create === undefined || draft === null
+                          ? undefined
+                          : () => create(draft);
+                      })()}
+                    />
+                  )
+                }
               />
             </Suspense>
           ) : activePane === "review" ? (
@@ -2815,10 +3098,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 plans={props.detail.plans}
                 childCards={props.detail.children}
                 stages={props.stages}
-                canApproveSplit={props.canApproveSplit}
-                approveTargetLabel={props.approveSplitTargetLabel}
-                splitRationale={card.splitRationale}
-                onApproveSplit={props.onApproveSplit}
+                onReviewSplit={props.canApproveSplit ? () => setPane("thread") : undefined}
                 onOpenChild={props.onOpenChildInSubBoard}
               />
             </Suspense>
@@ -2841,13 +3121,60 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 queueInfo={props.queueInfo}
                 queueForceStartPending={props.queueForceStartPending}
                 onQueueForceStart={props.onQueueForceStart}
+                footer={
+                  props.canApproveSplit && props.splitGate !== null ? (
+                    <BoardSplitGate
+                      // A re-proposal is a new gate: start from its own
+                      // recommendation rather than the last one's edits.
+                      key={props.detail.plans.map((plan) => plan.planId + plan.updatedAt).join()}
+                      {...props.splitGate}
+                      onApprove={props.onApproveSplit}
+                      onAskForChanges={() => {
+                        // The planning thread, not whichever tab is open: that
+                        // conversation proposed the split and must revise it.
+                        const planningThread = initialBoardCardThreadId(
+                          props.stages,
+                          card.stage,
+                          card.threadLinks,
+                        );
+                        const link = props.threadLinks.find(
+                          (candidate) => candidate.threadId === planningThread,
+                        );
+                        if (link === undefined || link.tombstoned) return;
+                        setSelectedThreadId(link.threadId);
+                        useComposerDraftStore
+                          .getState()
+                          .setPrompt(
+                            scopeThreadRef(link.worker.environmentId, link.threadId),
+                            BOARD_SPLIT_CHANGE_REQUEST_PREFILL,
+                          );
+                      }}
+                      plans={props.detail.plans}
+                      splitRationale={card.splitRationale}
+                    />
+                  ) : null
+                }
               />
             </Suspense>
           )}
 
           {/* The rail: everything about the card that is not the conversation. */}
           <div className="flex min-h-0 flex-col overflow-y-auto [&>*:first-child]:border-t-0">
-            <ActionsSection props={props} unmet={unmet} />
+            {group === null ? (
+              <ActionsSection
+                onAutoPlan={autoPlanAction}
+                onReviewSplit={() => setPane("thread")}
+                props={props}
+                unmet={unmet}
+              />
+            ) : (
+              <GroupActionsSection
+                group={group}
+                hasPlanningThread={hasGroupPlanningThread}
+                onReopenThread={reopenGroupThread}
+                threadReopened={threadReopened}
+              />
+            )}
             <QueueSection props={props} />
             {props.stepFailure !== null ? (
               <BoardCardStepFailure
@@ -2897,12 +3224,17 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               />
             </div>
             <div className="flex flex-col gap-2 border-t border-border p-3.5">
-              <SectionHeading>Stage</SectionHeading>
-              <StageLadder
-                onMoveStage={props.onMoveStage}
-                stage={card.stage}
-                stages={props.stages}
-              />
+              <SectionHeading>{group === null ? "Stage" : "Group settings"}</SectionHeading>
+              {group === null ? (
+                <StageLadder
+                  deferred={props.stageLadderDeferred}
+                  onMoveStage={props.onMoveStage}
+                  stage={card.stage}
+                  stages={props.stages}
+                />
+              ) : (
+                group.settings
+              )}
             </div>
             <InfoSection onOpenThread={setSelectedThreadId} props={props} />
           </div>
@@ -2977,7 +3309,21 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
             {/* ── Right: what you can do with it ──────────────────────── */}
             <div className="flex w-[244px] shrink-0 flex-col border-l border-border [&>*:first-child]:border-t-0">
-              <ActionsSection props={props} unmet={unmet} />
+              {group === null ? (
+                <ActionsSection
+                  onAutoPlan={null}
+                  onReviewSplit={() => setPane("thread")}
+                  props={props}
+                  unmet={unmet}
+                />
+              ) : (
+                <GroupActionsSection
+                  group={group}
+                  hasPlanningThread={hasGroupPlanningThread}
+                  onReopenThread={reopenGroupThread}
+                  threadReopened={threadReopened}
+                />
+              )}
               <div className="flex flex-col gap-2 border-t border-border p-3.5">
                 <LabelSection
                   catalogue={props.catalogue}
@@ -2990,12 +3336,17 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 />
               </div>
               <div className="flex flex-col gap-2 border-t border-border p-3.5">
-                <SectionHeading>Stage</SectionHeading>
-                <StageLadder
-                  onMoveStage={props.onMoveStage}
-                  stage={card.stage}
-                  stages={props.stages}
-                />
+                <SectionHeading>{group === null ? "Stage" : "Group settings"}</SectionHeading>
+                {group === null ? (
+                  <StageLadder
+                    deferred={props.stageLadderDeferred}
+                    onMoveStage={props.onMoveStage}
+                    stage={card.stage}
+                    stages={props.stages}
+                  />
+                ) : (
+                  group.settings
+                )}
               </div>
               <InfoSection onOpenThread={setSelectedThreadId} props={props} />
             </div>
@@ -3015,6 +3366,7 @@ function worktreeKeptProps(
     reason: kept.reason,
     path: kept.path,
     branch: kept.branch,
+    cancelledWork: kept.cancelledWork,
     onCheckAgain: props.onCheckWorktree ?? null,
     checking: props.checkingWorktree === true,
     onRemove: props.onRemoveWorktree ?? null,

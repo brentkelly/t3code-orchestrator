@@ -210,6 +210,7 @@ export const makeBoardCard = (input: {
   dependsOn: (input.dependsOn ?? []).map((id) => BoardCardId.make(id)),
   parentCardId: input.parentCardId == null ? null : BoardCardId.make(input.parentCardId),
   sourcePlanId: null,
+  group: null,
   threadLinks: [],
   attachments: [],
   externalRef: null,
@@ -440,6 +441,8 @@ export type Harness = {
   readonly mergeStateProbes: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** Every mark-ready request the reactor made (T3O-12), in order. */
   readonly markReadyCalls: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
+  /** Every pull request the reactor asked the forge to close (T3O-28), in order. */
+  readonly closePullRequestCalls: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** T3o (T3O-48): every pull request lookup, with whether it was FORCED — so a
       test can tell a human's "Check again" from the automatic cached refresh. */
   readonly pullRequestLookups: Effect.Effect<ReadonlyArray<{ readonly forced: boolean }>>;
@@ -514,8 +517,9 @@ export function withGovernor(
     /** Make git itself fail on an otherwise healthy repository (T3O-15):
         `worktree-add` fails `createWorktree`, `branch-create` makes every
         `git branch <name> <start>` exit non-zero. The transient failures the
-        reactor must retry on its next pass rather than park. */
-    readonly gitFailure?: "worktree-add" | "branch-create";
+        reactor must retry on its next pass rather than park. `remote-delete`
+        makes `git push <remote> --delete` fail as an auth or network error does. */
+    readonly gitFailure?: "worktree-add" | "branch-create" | "remote-delete";
     /** Reject every `thread.create`, so a test can drive the spawn-failure path
         (a thread the engine refuses to create) without a provider double. */
     readonly rejectThreadCreate?: boolean;
@@ -928,6 +932,17 @@ export function withGovernor(
         if (request.args?.[0] === "rev-list" && request.args[1] === "--count") {
           return Effect.succeed({ stdout: "2\n", stderr: "", exitCode: 0 });
         }
+        if (
+          input.gitFailure === "remote-delete" &&
+          request.args?.[0] === "push" &&
+          request.args.includes("--delete")
+        ) {
+          return Effect.succeed({
+            stdout: "",
+            stderr: "fatal: Authentication failed",
+            exitCode: 128,
+          });
+        }
         if (request.args?.[0] === "worktree" && request.args[1] === "list") {
           return Effect.succeed({
             stdout: input.registeredWorktrees ?? "",
@@ -935,11 +950,15 @@ export function withGovernor(
             exitCode: 0,
           });
         }
-        if (request.args?.[0] === "branch" && request.args[1] !== undefined) {
+        const createdBranch =
+          request.args?.[0] === "branch"
+            ? request.args.slice(1).find((arg) => !arg.startsWith("-"))
+            : undefined;
+        if (createdBranch !== undefined) {
           if (input.gitFailure === "branch-create") {
             return Effect.succeed({ stdout: "", stderr: "fatal: cannot lock ref", exitCode: 128 });
           }
-          createdBranches.add(request.args[1]);
+          createdBranches.add(createdBranch);
           return Effect.succeed({ stdout: "", stderr: "", exitCode: 0 });
         }
         // `git log -1 --format=%cI` answers the configured commit time (the
@@ -978,7 +997,12 @@ export function withGovernor(
       ReadonlyArray<{ readonly number: number; readonly forced: boolean }>
     >([]);
     const markReadyCalls = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
+    const closePullRequestCalls = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
     const pullRequestStub = BoardPullRequestGateway.of({
+      close: (request) =>
+        Ref.update(closePullRequestCalls, (calls) => [...calls, { number: request.number }]).pipe(
+          Effect.as("closed" as const),
+        ),
       repository: () =>
         Effect.succeed(
           boardRepositoryOf(projectRepositoryIdentity, input.projectOriginUrl ?? null),
@@ -1179,6 +1203,7 @@ export function withGovernor(
           mergeAttempts: Ref.get(mergeAttempts),
           mergeStateProbes: Ref.get(mergeStateProbes),
           markReadyCalls: Ref.get(markReadyCalls),
+          closePullRequestCalls: Ref.get(closePullRequestCalls),
           pullRequestLookups: Ref.get(pullRequestLookups),
           pullRequestGets: Ref.get(pullRequestGets),
           removedWorktrees: Ref.get(removedWorktrees),

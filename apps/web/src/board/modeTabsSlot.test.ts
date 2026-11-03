@@ -52,6 +52,7 @@ describe("shouldSidebarHostModeTabs", () => {
       "/projects/web",
       "/board",
       "/board/card-1",
+      "/list",
     ]) {
       expect(hosting({ pathname, availableWidth: 1000 })).toBe(false);
     }

@@ -69,6 +69,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     dependsOn: [],
     parentCardId: null,
     sourcePlanId: null,
+    group: null,
     threadLinks: [],
     attachments: [],
     externalRef: null,
@@ -98,7 +99,16 @@ function detail(
   overrides?: Partial<BoardCard>,
   brief: string | null = null,
   edges?: Partial<
-    Pick<BoardCardDetail, "dependencies" | "dependents" | "stepCompletions" | "activity" | "plans">
+    Pick<
+      BoardCardDetail,
+      | "dependencies"
+      | "groupDependencies"
+      | "dependents"
+      | "stepCompletions"
+      | "activity"
+      | "plans"
+      | "decisions"
+    >
   >,
 ): BoardCardDetail {
   const plans = edges?.plans ?? [];
@@ -109,11 +119,13 @@ function detail(
     plans,
     children: [],
     dependencies: edges?.dependencies ?? [],
+    groupDependencies: edges?.groupDependencies ?? [],
     dependents: edges?.dependents ?? [],
     activity: edges?.activity ?? [],
     parentModelOverrides: null,
     stepError: null,
     stepCompletions: edges?.stepCompletions ?? [],
+    decisions: edges?.decisions ?? [],
   };
 }
 
@@ -238,7 +250,7 @@ const baseProps = {
   onArchiveToggle: noop,
   onDelete: noop,
   canApproveSplit: false,
-  approveSplitTargetLabel: null,
+  splitGate: null,
   onApproveSplit: noop,
   onLinkThread: noop,
   onUnlinkThread: noop,
@@ -1096,6 +1108,32 @@ describe("BoardCardDetailPanel", () => {
     expect(html).not.toContain("Blocked by T3-1");
     expect(html).toContain("disabled");
   });
+  it("counts the dependencies a card inherits from its group at the build gate (T3O-26)", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        dependencies={[]}
+        detail={detail(
+          { stage: BOARD_SEED_STAGE_IDS.ready, parentCardId: BoardCardId.make("card-group") },
+          null,
+          {
+            groupDependencies: [
+              {
+                cardId: BoardCardId.make("dep-group"),
+                key: "T3-7",
+                title: "What the group waits on",
+                stage: BOARD_SEED_STAGE_IDS.building,
+                archivedAt: null,
+              },
+            ],
+          },
+        )}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("Blocked by T3-7");
+    expect(html).toContain("disabled");
+  });
   // The modal opens on the pane the card's stage has made current (planning
   // and build on their thread, everything from Code review on the review
   // pane), so nobody lands on a stale surface and has to click across.
@@ -1133,6 +1171,69 @@ describe("BoardCardDetailPanel", () => {
     // Skip-review Done still opens on Summary — the recap is how the work
     // went, including "No review summary".
     expect(paneFor(BOARD_SEED_STAGE_IDS.done, false)).toBe("Summary");
+  });
+
+  it("opens an own-branch group in its integration review on the Review pane", () => {
+    const group = {
+      chip: "Group · 2 cards",
+      note: "Every card is done; its integration review is open.",
+      onOpenBoard: undefined,
+      settings: null,
+      onArchive: noop,
+      reopenPrompt: null,
+      ownBranch: true,
+    };
+    const paneFor = (stage: BoardCard["stage"]) =>
+      selectedTab(
+        renderToStaticMarkup(
+          <BoardCardDetailPanel
+            {...baseProps}
+            group={group}
+            detail={detail({ stage })}
+            projectName="P"
+          />,
+        ),
+      );
+    expect(paneFor(BOARD_SEED_STAGE_IDS.review)).toBe("Review");
+    expect(paneFor(BOARD_SEED_STAGE_IDS.sprint)).toBe("Brief");
+  });
+
+  it("opens an inherit group's decision log on the Summary pane (T3O-26)", () => {
+    const group = {
+      chip: "Group · 2 cards",
+      note: "Its cards are being planned.",
+      onOpenBoard: undefined,
+      settings: null,
+      onArchive: noop,
+      reopenPrompt: null,
+      ownBranch: false,
+    };
+    const render = (decisions: BoardCardDetail["decisions"]) =>
+      renderToStaticMarkup(
+        <BoardCardDetailPanel
+          {...baseProps}
+          group={group}
+          detail={detail({ stage: BOARD_SEED_STAGE_IDS.planning }, null, { decisions })}
+          projectName="P"
+        />,
+      );
+    expect(render([])).not.toContain(">Summary</button>");
+    const html = render([
+      {
+        decisionId: "d-1",
+        cardId,
+        stepId: null,
+        threadId: null,
+        question: "Split by surface?",
+        decision: "Yes",
+        reason: "Each ships alone.",
+        flag: "normal",
+        decidedBy: "agent",
+        createdAt: NOW,
+      },
+    ]);
+    expect(html).toContain(">Summary</button>");
+    expect(html).not.toContain(">Review</button>");
   });
 
   it("shows the Summary pill from Code review on, and keeps it after a real loop", () => {

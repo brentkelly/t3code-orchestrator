@@ -9,8 +9,61 @@
  * survives and the guard is what refuses the delete.
  */
 import { assert, describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import { GitCommandError } from "@t3tools/contracts";
 
-import { parseWorktreeBranches } from "./branchCleanup.ts";
+import type { ExecuteGitInput, ExecuteGitResult, GitVcsDriver } from "../vcs/GitVcsDriver.ts";
+import { deleteCardBranch, parseWorktreeBranches } from "./branchCleanup.ts";
+
+/** A repository with no resolvable remote, whose `git remote` replies as given. */
+function remotelessGit(remoteList: { readonly exitCode: number; readonly stdout: string }) {
+  return {
+    resolvePrimaryRemoteName: (cwd: string) =>
+      Effect.fail(
+        new GitCommandError({
+          operation: "git.resolvePrimaryRemoteName",
+          command: "git remote",
+          cwd,
+          detail: "failed",
+        }),
+      ),
+    execute: (input: ExecuteGitInput) =>
+      Effect.succeed({
+        exitCode: (input.args[0] === "remote"
+          ? remoteList.exitCode
+          : 0) as ExecuteGitResult["exitCode"],
+        stdout: input.args[0] === "remote" ? remoteList.stdout : "",
+        stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      } satisfies ExecuteGitResult),
+  } as unknown as GitVcsDriver["Service"];
+}
+
+describe("deleteCardBranch", () => {
+  it.effect("reports the remote absent only when the remote list reads empty", () =>
+    Effect.gen(function* () {
+      const result = yield* deleteCardBranch({
+        git: remotelessGit({ exitCode: 0, stdout: "" }),
+        cwd: "/repo",
+        branch: "board/x",
+      });
+      assert.isTrue(result.remoteAbsent);
+    }),
+  );
+
+  it.effect("does not report the remote absent when the remote lookup itself failed", () =>
+    Effect.gen(function* () {
+      const result = yield* deleteCardBranch({
+        git: remotelessGit({ exitCode: 128, stdout: "" }),
+        cwd: "/repo",
+        branch: "board/x",
+      });
+      assert.isFalse(result.remoteAbsent);
+      assert.isFalse(result.remoteDeleted);
+    }),
+  );
+});
 
 describe("parseWorktreeBranches", () => {
   it("reads the branch each worktree holds, stripped of refs/heads/", () => {

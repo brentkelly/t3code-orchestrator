@@ -12,6 +12,7 @@ const kept = (input: Partial<Parameters<typeof boardCardWorktreeKept>[0]>) =>
     archived: false,
     inDoneStage: true,
     reclaimWorktreeOnDone: true,
+    cancelledWork: false,
     ...input,
   });
 
@@ -35,6 +36,10 @@ describe("boardCardWorktreeKept", () => {
 
   it("does not flag a card still being worked", () => {
     expect(kept({ inDoneStage: false })).toBe(false);
+  });
+
+  it("flags a group still holding the worktree of its cancelled work", () => {
+    expect(kept({ inDoneStage: false, cancelledWork: true })).toBe(true);
   });
 });
 

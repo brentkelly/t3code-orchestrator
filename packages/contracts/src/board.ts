@@ -311,6 +311,18 @@ export const BoardStageId = TrimmedNonEmptyString.pipe(Schema.brand("BoardStageI
 export type BoardStageId = typeof BoardStageId.Type;
 
 /**
+ * The fixed system stage before Backlog: work set aside for a later round.
+ * Deliberately NOT a configurable stage — it never appears in the board's
+ * stage list, so settings cannot rename, reorder or delete it, and the root
+ * board never draws a column for it. Only a card inside a group may sit here.
+ */
+export const BOARD_DEFERRED_STAGE_ID = BoardStageId.make("deferred");
+
+export function isBoardDeferredStage(stageId: string): boolean {
+  return stageId === BOARD_DEFERRED_STAGE_ID;
+}
+
+/**
  * The four product roles (D3). Exactly one stage holds each; every other
  * stage carries a null role. Plan-mode forcing and the plan deliverable
  * contract (`plan`), dependency blocking (`build`), the review loop
@@ -686,6 +698,9 @@ export const BoardCardWorktree = Schema.Struct({
       reclaim never deletes uncommitted work to save disk, it flags the card
       and skips (D6). Null when no reclaim has been blocked. */
   reclaimBlockedReason: Schema.NullOr(TrimmedNonEmptyString),
+  /** A confirmed group archive (T3O-28) has not yet deleted this branch; the
+      worktree sweep retries until it has. */
+  discardPending: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardCardWorktree = typeof BoardCardWorktree.Type;
 
@@ -1213,6 +1228,143 @@ export const BoardCardPlacementOrphan = Schema.Struct({
 });
 export type BoardCardPlacementOrphan = typeof BoardCardPlacementOrphan.Type;
 
+/**
+ * Where a group's children merge (T3O-27): `own` cuts the group its own
+ * integration branch, `inherit` passes the children through to whatever the
+ * group itself lands on (its own parent's target, or trunk).
+ */
+const BOARD_CARD_GROUP_TARGETS = ["inherit", "own"] as const;
+export const BoardCardGroupTarget = Schema.Literals(BOARD_CARD_GROUP_TARGETS);
+export type BoardCardGroupTarget = typeof BoardCardGroupTarget.Type;
+
+/**
+ * A group's settings (T3O-27, D12). Non-null exactly while the card is a
+ * group: a card gains it with its first child and loses it when its last live
+ * child leaves, unless `heading` marks a group created empty on purpose.
+ *
+ * The group's `stage` is DERIVED from its children (`deriveBoardGroupStage`),
+ * never set by hand; `placed` is the column the human last put it in, which
+ * is where it sits while no child has started.
+ */
+export const BoardCardGroup = Schema.Struct({
+  target: BoardCardGroupTarget,
+  /** Ready children with their dependencies met start themselves once the
+      group is `started`. */
+  autoBuild: Schema.Boolean,
+  /** Children merging to trunk merge themselves. */
+  autoMerge: Schema.Boolean,
+  /** Children entering planning are planned by the agent. */
+  autoPlan: Schema.Boolean,
+  /** The human started the group (moved it to the build stage). */
+  started: Schema.Boolean,
+  placed: BoardStageId,
+  /** The leaf stage the card had before it became a group, restored (capped
+      at Sprint) when it reverts to an ordinary card. */
+  prevStage: Schema.NullOr(BoardStageId),
+  /** Created empty on purpose: stays a group with no children. */
+  heading: Schema.Boolean,
+  /** An `own` group's integration branch has merged — it reached Done. */
+  integrated: Schema.Boolean,
+});
+export type BoardCardGroup = typeof BoardCardGroup.Type;
+
+/**
+ * The planning agent's advice for a proposed split (T3O-31): the group
+ * settings the split gate pre-sets, and approval applies unless the human
+ * edits them. Resolved by the decider at propose time (falling back to
+ * `boardSplitRecommendationFallback` for an omitted field), so a stored value
+ * is always complete.
+ */
+export const BoardSplitRecommendation = Schema.Struct({
+  autoBuild: Schema.Boolean,
+  mergeTarget: BoardCardGroupTarget,
+});
+export type BoardSplitRecommendation = typeof BoardSplitRecommendation.Type;
+
+/**
+ * A card being, or having been, auto-planned (T3O-32, decisions 4 and 7).
+ * `build` is the human's Auto-plan → Build click: its plan is approved and the
+ * card goes on to Building. `ready` is a group's auto-plan setting: the plan is
+ * approved and the card stops at Ready. Set when the run is asked for and kept
+ * after, so "auto-planned" stays readable on the card; `endedAt` marks the
+ * request spent — the plan was approved, or the card left planning first.
+ */
+export const BoardCardAutoPlanMode = Schema.Literals(["build", "ready"]);
+export type BoardCardAutoPlanMode = typeof BoardCardAutoPlanMode.Type;
+
+export const BoardCardAutoPlan = Schema.Struct({
+  mode: BoardCardAutoPlanMode,
+  requestedAt: IsoDateTime,
+  endedAt: Schema.NullOr(IsoDateTime),
+});
+export type BoardCardAutoPlan = typeof BoardCardAutoPlan.Type;
+
+/** Whether an auto-plan request is still waiting on its plan. */
+export function isBoardCardAutoPlanPending(card: {
+  readonly autoPlan?: BoardCardAutoPlan | null | undefined;
+}): boolean {
+  return card.autoPlan != null && card.autoPlan.endedAt === null;
+}
+
+/**
+ * One planning decision (T3O-32): what was asked, what was decided, a
+ * one-line reason and who decided. `unclear` marks a call the agent was not
+ * sure about and wants a human to review; `important` a call that shapes the
+ * work. Lives in its own table, never the read model, like plan bodies (D8).
+ */
+export const BoardCardDecisionFlag = Schema.Literals(["normal", "important", "unclear"]);
+export type BoardCardDecisionFlag = typeof BoardCardDecisionFlag.Type;
+
+export const BoardCardDecisionMaker = Schema.Literals(["agent", "human"]);
+export type BoardCardDecisionMaker = typeof BoardCardDecisionMaker.Type;
+
+/** Caps on what one decision may carry: the log rides every detail frame. */
+const BOARD_DECISION_QUESTION_MAX_LENGTH = 300;
+export const BOARD_DECISION_TEXT_MAX_LENGTH = 600;
+export const BOARD_DECISION_REASON_MAX_LENGTH = 400;
+export const BOARD_DECISIONS_PER_CALL_MAX = 40;
+
+export const BoardCardDecisionInput = Schema.Struct({
+  question: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_DECISION_QUESTION_MAX_LENGTH)),
+  decision: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_DECISION_TEXT_MAX_LENGTH)),
+  reason: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_DECISION_REASON_MAX_LENGTH)),
+  flag: BoardCardDecisionFlag,
+  decidedBy: BoardCardDecisionMaker,
+});
+export type BoardCardDecisionInput = typeof BoardCardDecisionInput.Type;
+
+export const BoardCardDecision = Schema.Struct({
+  ...BoardCardDecisionInput.fields,
+  decisionId: TrimmedNonEmptyString,
+  cardId: BoardCardId,
+  /** The planning step (or thread) that recorded it; null when neither. */
+  stepId: Schema.NullOr(TrimmedNonEmptyString),
+  threadId: Schema.NullOr(ThreadId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardDecision = typeof BoardCardDecision.Type;
+
+const BOARD_DECISION_FLAG_RANK: Record<BoardCardDecisionFlag, number> = {
+  unclear: 0,
+  important: 1,
+  normal: 2,
+};
+
+/** A decision log in reading order: unclear, then important, then normal,
+    each in the order it was recorded. */
+export function sortBoardCardDecisions<T extends Pick<BoardCardDecision, "flag">>(
+  decisions: ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  return decisions
+    .map((decision, index) => ({ decision, index }))
+    .sort(
+      (left, right) =>
+        BOARD_DECISION_FLAG_RANK[left.decision.flag] -
+          BOARD_DECISION_FLAG_RANK[right.decision.flag] || left.index - right.index,
+    )
+    .map((entry) => entry.decision);
+}
+
 export const BoardCard = Schema.Struct({
   id: BoardCardId,
   /** Generated `<prefix>-<cardNumber>`, e.g. "T3-195" (D14). */
@@ -1238,14 +1390,16 @@ export const BoardCard = Schema.Struct({
       ride the read model); null when the card has no brief. */
   briefRef: Schema.NullOr(TrimmedNonEmptyString),
   dependsOn: Schema.Array(BoardCardId),
-  /** Null for top-level cards; set for sub-board plan cards materialised by
-      `board.plans.approve` (t3o-23, D12). Depth 1: a parented card can never
-      itself approve a split. */
+  /** Null for top-level cards; set for every card inside a group (T3O-27,
+      D12). Groups nest to any depth. */
   parentCardId: Schema.NullOr(BoardCardId),
   /** The plan a sub-board child was materialised from (t3o-23, D2), so the
       parent's plan pane can chip each plan with its card. Null for top-level
       cards and for pre-t3o-23 rows. */
   sourcePlanId: Schema.NullOr(BoardPlanId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Group settings (T3O-27); null for a leaf. Decodes to null on every
+      payload written before migration 051, matching its NULL columns. */
+  group: Schema.NullOr(BoardCardGroup).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   threadLinks: Schema.Array(BoardCardThreadLink),
   /** The brief's attachments (t3o-32, K5), in `sortBoardCardAttachments`
       order. On the aggregate like `threadLinks` — the decider refuses a
@@ -1347,6 +1501,11 @@ export const BoardCard = Schema.Struct({
   splitRationale: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** The agent's recommended group settings for the split it proposed
+      (T3O-31). Present exactly while `splitRationale` is, on proposals made
+      since T3O-31; absent on older ones, which read the fallback rules
+      (`boardSplitRecommendationOf`). Migration 052's NULL column. */
+  splitRecommendation: Schema.optionalKey(BoardSplitRecommendation),
   /** The branch this card's work is cut from and merges back into (T3O-5, D1),
       or null to FOLLOW THE PROJECT DEFAULT — resolved LIVE on every read, never
       snapshotted into this column when the card is provisioned.
@@ -1446,6 +1605,9 @@ export const BoardCard = Schema.Struct({
   autoMergeHold: Schema.NullOr(BoardCardAutoMergeHold).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** The card's auto-plan request (T3O-32); absent on a card never
+      auto-planned, matching migration 053's NULL column. */
+  autoPlan: Schema.optionalKey(BoardCardAutoPlan),
   /** The worker a human pinned this card to (T3O-65, D20), or null to follow
       the board's default worker. Set at creation, by `board.card.pin-worker`,
       and by a completed move. Decodes to null on every event written before
@@ -1531,6 +1693,26 @@ export function unmetBoardCardDependencies(input: {
   });
 }
 
+/** A card's own dependencies plus every ancestor group's: a group that is
+    waiting holds back everything inside it (T3O-27). Every build gate reads
+    this, so the blocked flag, auto-start and the move gate agree. */
+export function boardCardInheritedDependsOn(
+  board: { readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "parentCardId" | "dependsOn">> },
+  card: Pick<BoardCard, "id" | "parentCardId" | "dependsOn">,
+): ReadonlyArray<BoardCardId> {
+  const out = new Set<BoardCardId>(card.dependsOn);
+  const seen = new Set<BoardCardId>([card.id]);
+  let parentId = card.parentCardId;
+  while (parentId !== null && !seen.has(parentId)) {
+    seen.add(parentId);
+    const parent = board.cards.find((candidate) => candidate.id === parentId);
+    if (parent === undefined) break;
+    for (const id of parent.dependsOn) out.add(id);
+    parentId = parent.parentCardId;
+  }
+  return [...out];
+}
+
 /**
  * Blocked derivation (D11): unmet dependencies block a card from the `build`
  * role onward and never earlier — no Ready anchor, whatever the stages are
@@ -1544,23 +1726,6 @@ export function deriveBoardCardBlocked(input: {
 }): boolean {
   if (!isBoardStageAtOrAfterBuild(input.board, input.stage)) return false;
   return unmetBoardCardDependencies(input).length > 0;
-}
-
-/**
- * Whether a card may depend on another, judged on where each one merges (T3O-10).
- * A child merges into its parent's integration branch, not the base, so only
- * its siblings ever see its work. A top-level card that depends on another
- * parent's child would wait for that parent to merge anyway, so it depends on
- * the parent. The edge is in scope only when both cards share a parent, or
- * both are top-level. The decider refuses new edges that fail this, and the
- * pickers only offer cards that pass it. `undefined` reads as top-level, the
- * way the bounded shell leaves `parentCardId` absent.
- */
-export function isBoardDependencyInScope(input: {
-  readonly dependentParentCardId: BoardCardId | null | undefined;
-  readonly dependencyParentCardId: BoardCardId | null | undefined;
-}): boolean {
-  return (input.dependentParentCardId ?? null) === (input.dependencyParentCardId ?? null);
 }
 
 // ── Agent write-path value types (t3o-08) ──────────────────────────────
@@ -2022,10 +2187,21 @@ export const BoardPlan = Schema.Struct({
   /** True once materialised to `.plans/` at Building entry (t3o-12); a locked
       plan rejects `board_write_plan`, pointing the agent at the file. */
   locked: Schema.Boolean,
+  /** A split child's plan is PLANNED (T3O-31) when its body is a full
+      implementation plan: the child owns it and lands ready to build. False
+      marks a brief that still needs planning: the child lands in the first
+      stage with the body as its brief only. Absent means planned — every plan
+      written before T3O-31, and a single-plan proposal, where it is moot. */
+  planned: Schema.optionalKey(Schema.Boolean),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 export type BoardPlan = typeof BoardPlan.Type;
+
+/** Whether a plan is a full implementation plan (T3O-31); absent reads true. */
+export function isBoardPlanPlanned(plan: Pick<BoardPlan, "planned">): boolean {
+  return plan.planned !== false;
+}
 
 /** A plan plus its body — the event-carried and table-stored shape. The read
     model keeps only the `BoardPlan` metadata; the body rides `board_plans`. */
@@ -2112,6 +2288,8 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
   /** The board marked a draft pull request ready for review (T3O-12), which
       is what starts the repository's full CI — and the row that says so. */
   "card-pull-request-ready",
+  /** What auto-planning did with a card's plan, or why it could not (T3O-32). */
+  "card-auto-planned",
   /** A finished card's worktree was kept because removing it would lose work
       (T3O-52, D5). Written only when the REASON changes, so a refusal repeated
       on every card open stays one row. */
@@ -2547,23 +2725,15 @@ export function boardCardPlans(board: BoardState, cardId: BoardCardId): Readonly
  * `humanInLoopWithPlan`, one without reads `humanInLoopWithoutPlan` — so
  * writing a plan moves the default with it.
  *
- * A sub-board child (t3o-23) is a PLANNED build whatever its own plan rows say:
- * materialisation cut it from one of the parent's approved plans and made that
- * plan's body its brief, so it owns no `board_plans` row of its own — and read
- * as plan-less it would take the without-plan pause. The cascade (t3o-28, D3)
- * exists to run children through build → PR → merge "with no human in
- * between"; the human act was Begin build on the parent. So a child reads the
- * with-plan default. `hasPlan` still decides for a top-level card. The
- * explicit per-card toggle is applied by the caller and wins over both.
+ * A split child owns a copy of the plan it was cut from (T3O-27), so `hasPlan`
+ * alone decides. The explicit per-card toggle is applied by the caller and
+ * wins over both.
  */
 export function boardBuildHumanInLoopDefault(
   exec: Pick<BoardStageExecution, "humanInLoopWithPlan" | "humanInLoopWithoutPlan">,
-  card: Pick<BoardCard, "parentCardId">,
   hasPlan: boolean,
 ): boolean {
-  return hasPlan || card.parentCardId !== null
-    ? exec.humanInLoopWithPlan
-    : exec.humanInLoopWithoutPlan;
+  return hasPlan ? exec.humanInLoopWithPlan : exec.humanInLoopWithoutPlan;
 }
 
 /**
@@ -2716,9 +2886,12 @@ export function boardStageBeforeBuild(board: BoardState): BoardStageDefinition |
  */
 function isBoardCardAtAutoStartGate(input: {
   readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt">;
+  readonly card: Pick<BoardCard, "stage" | "archivedAt"> & {
+    readonly group?: BoardCard["group"] | undefined;
+  };
 }): boolean {
-  if (input.card.archivedAt !== null || input.card.parentCardId !== null) return false;
+  // Any leaf may be armed (T3O-27); a group starts through its children.
+  if (input.card.archivedAt !== null || (input.card.group ?? null) !== null) return false;
   const before = boardStageBeforeBuild(input.board);
   return before !== null && input.card.stage === before.stageId;
 }
@@ -2738,13 +2911,15 @@ function isBoardCardAtAutoStartGate(input: {
  */
 export function boardCardCanArmAutoStart(input: {
   readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt" | "dependsOn">;
+  readonly card: Pick<BoardCard, "id" | "parentCardId" | "stage" | "archivedAt" | "dependsOn"> & {
+    readonly group?: BoardCard["group"] | undefined;
+  };
 }): boolean {
   if (!isBoardCardAtAutoStartGate(input)) return false;
   return (
     unmetBoardCardDependencies({
       board: input.board,
-      dependsOn: input.card.dependsOn,
+      dependsOn: boardCardInheritedDependsOn(input.board, input.card),
       cards: input.board.cards,
     }).length > 0
   );
@@ -2765,37 +2940,40 @@ export function boardCardAutoStartDue(input: {
   readonly board: BoardState;
   readonly card: Pick<
     BoardCard,
-    "stage" | "parentCardId" | "archivedAt" | "dependsOn" | "autoStart"
-  >;
+    "id" | "parentCardId" | "stage" | "archivedAt" | "dependsOn" | "autoStart"
+  > & {
+    readonly group?: BoardCard["group"] | undefined;
+  };
 }): boolean {
   if (!input.card.autoStart) return false;
   if (!isBoardCardAtAutoStartGate(input)) return false;
   return (
     unmetBoardCardDependencies({
       board: input.board,
-      dependsOn: input.card.dependsOn,
+      dependsOn: boardCardInheritedDependsOn(input.board, input.card),
       cards: input.board.cards,
     }).length === 0
   );
 }
 
 /**
- * Whether this card's merge runs itself (T3O-38, D1) — ONE predicate for all
- * THREE arming conditions, shared by the reactor that merges, the decider that
- * clears a hold, and every surface that draws a chip.
+ * Whether this card's merge runs itself (T3O-38, D1) — ONE predicate for every
+ * arming condition, shared by the reactor that merges, the decider that clears
+ * a hold, and every surface that draws a chip.
  *
- * Shared for the reason `unmetBoardCardDependencies` is: the flag, the refusal
- * and the chip must never disagree about the same card. Two auto-merge paths
- * with different refusal behaviour is the kind of divergence that rots, and
- * the sub-board case is the MORE exposed of the two — a held child blocks its
- * whole split.
+ * Nearest wins (T3O-28):
  *
- * A sub-board child is armed unconditionally (t3o-28 D3, unchanged): the
- * initiating act was Begin build on the parent, and a child parked at the
- * merge stage strands every sibling whose dependency it holds.
+ * 1. The card's own `autoMerge` override.
+ * 2. Inside a group, the nearest group — its parent — decides: merging into an
+ *    integration branch, under that group's auto-build; merging to trunk,
+ *    under its "Auto-merge to trunk". The board-wide setting is ignored there.
+ * 3. A top-level card follows the board-wide merge-stage setting.
+ *
+ * A parent this board slice cannot see, or one with no group settings (a
+ * split parent written before groups), keeps the legacy unconditional arm.
  */
 export function boardCardAutoMergeArmed(input: {
-  readonly board: BoardState;
+  readonly board: { readonly cards: ReadonlyArray<BoardAutoMergeNode> };
   readonly card: Pick<BoardCard, "parentCardId" | "archivedAt" | "autoMerge">;
   /** The merge-role stage's resolved execution config, when the caller has the
       settings in hand. Omitted by a caller that does not — which reads as the
@@ -2803,9 +2981,132 @@ export function boardCardAutoMergeArmed(input: {
   readonly boardWide?: boolean | undefined;
 }): boolean {
   if (input.card.archivedAt !== null) return false;
-  if (input.card.parentCardId !== null) return true;
-  if (input.card.autoMerge) return true;
-  return input.boardWide === true;
+  const cards = input.board.cards;
+  return resolveBoardAutoMerge(
+    (id) => cards.find((node) => String(node.id) === id),
+    input.card,
+    input.boardWide === true,
+  );
+}
+
+/** The tree fields auto-merge resolution reads — a card or a client shell. */
+type BoardAutoMergeNode = {
+  readonly id: string;
+  readonly parentCardId?: string | null | undefined;
+  readonly autoMerge?: boolean | undefined;
+  readonly group?: BoardCardGroup | null | undefined;
+};
+
+function resolveBoardAutoMerge(
+  byId: (id: string) => BoardAutoMergeNode | undefined,
+  card: Pick<BoardAutoMergeNode, "parentCardId" | "autoMerge">,
+  boardWide: boolean,
+): boolean {
+  if (card.autoMerge === true) return true;
+  const parentId = card.parentCardId ?? null;
+  if (parentId === null) return boardWide;
+  const parent = byId(String(parentId));
+  if (parent === undefined || parent.group == null) return true;
+  // Where the card lands: the nearest ancestor with its own branch, through
+  // any inherit groups, or trunk.
+  let intoIntegration = false;
+  const seen = new Set<string>();
+  let ancestor: BoardAutoMergeNode | undefined = parent;
+  while (ancestor !== undefined && !seen.has(String(ancestor.id))) {
+    seen.add(String(ancestor.id));
+    if (ancestor.group == null || ancestor.group.target === "own") {
+      intoIntegration = true;
+      break;
+    }
+    const next: string | null = ancestor.parentCardId ?? null;
+    ancestor = next === null ? undefined : byId(String(next));
+  }
+  return intoIntegration ? parent.group.autoBuild : parent.group.autoMerge;
+}
+
+type BoardAutoMergeShell = {
+  readonly cardId: string;
+  readonly parentCardId?: string | null | undefined;
+  readonly group?: BoardCardGroup | null | undefined;
+  readonly autoMergeArmed?: boolean | undefined;
+};
+
+function boardAutoMergeShellIndex(shells: ReadonlyArray<BoardAutoMergeShell>) {
+  const nodes = new Map<string, BoardAutoMergeNode>();
+  for (const shell of shells) {
+    nodes.set(String(shell.cardId), {
+      id: shell.cardId,
+      parentCardId: shell.parentCardId,
+      autoMerge: shell.autoMergeArmed,
+      group: shell.group,
+    });
+  }
+  return nodes;
+}
+
+/** One shell's resolved arm (T3O-28); see `boardShellAutoMergeArmedByCard`. */
+export function boardShellAutoMergeArmed(input: {
+  readonly shells: ReadonlyArray<BoardAutoMergeShell>;
+  readonly shell: {
+    readonly parentCardId?: string | null | undefined;
+    readonly autoMergeArmed?: boolean | undefined;
+  };
+  readonly boardWide: boolean;
+}): boolean {
+  const nodes = boardAutoMergeShellIndex(input.shells);
+  return resolveBoardAutoMerge(
+    (id) => nodes.get(id),
+    { parentCardId: input.shell.parentCardId, autoMerge: input.shell.autoMergeArmed },
+    input.boardWide,
+  );
+}
+
+/**
+ * `boardCardAutoMergeArmed` over the client's shells (T3O-28), for every shell
+ * at once: the shell's own `autoMergeArmed` is the per-card override, and its
+ * tree position and group settings ride the shells, so a board resolves every
+ * card's arm without the aggregate. Keyed by `cardId`.
+ */
+export function boardShellAutoMergeArmedByCard(input: {
+  readonly shells: ReadonlyArray<BoardAutoMergeShell>;
+  readonly boardWide: boolean;
+}): ReadonlyMap<string, boolean> {
+  const nodes = boardAutoMergeShellIndex(input.shells);
+  const byId = (id: string) => nodes.get(id);
+  const armed = new Map<string, boolean>();
+  for (const [id, node] of nodes) {
+    armed.set(id, resolveBoardAutoMerge(byId, node, input.boardWide));
+  }
+  return armed;
+}
+
+/**
+ * Whether a card's own branch merges into an integration branch rather than
+ * trunk (T3O-27): some ancestor group has its own target. Inherit groups pass
+ * straight through. A legacy parent with no group settings always cut one.
+ */
+export function boardCardMergesIntoIntegrationBranch(
+  board: BoardState,
+  card: Pick<BoardCard, "parentCardId">,
+): boolean {
+  return boardCardIntegrationAncestor(board, card) !== null;
+}
+
+/** The nearest ancestor whose integration branch this card merges into, or
+    null when it lands on trunk. */
+export function boardCardIntegrationAncestor<
+  C extends Pick<BoardCard, "id" | "parentCardId" | "group">,
+>(board: { readonly cards: ReadonlyArray<C> }, card: Pick<BoardCard, "parentCardId">): C | null {
+  const seen = new Set<BoardCardId>();
+  let parentId = card.parentCardId;
+  while (parentId !== null && !seen.has(parentId)) {
+    seen.add(parentId);
+    const parent = board.cards.find((candidate) => candidate.id === parentId);
+    if (parent === undefined) return null;
+    if (parent.group === null || parent.group.target === "own") return parent;
+    parentId = parent.parentCardId;
+  }
+  return null;
 }
 
 /**
@@ -2823,9 +3124,12 @@ export function boardCardAutoMergeArmed(input: {
  */
 export function boardCardCanArmAutoMerge(input: {
   readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt">;
+  readonly card: Pick<BoardCard, "stage" | "archivedAt"> & {
+    readonly group?: BoardCard["group"] | undefined;
+  };
 }): boolean {
-  if (input.card.archivedAt !== null || input.card.parentCardId !== null) return false;
+  // Any live leaf may carry its own override (T3O-27); a group merges nothing.
+  if (input.card.archivedAt !== null || (input.card.group ?? null) !== null) return false;
   const done = boardStageWithRole(input.board, "done");
   return done === null || input.card.stage !== done.stageId;
 }
@@ -2856,14 +3160,12 @@ export function isBoardStageAtOrAfterSubBoardFloor(
  * A pure stage test is wrong in both directions: a card dragged back out of
  * Building still owns a worktree on the old project's checkout, and a Done card
  * whose branch was cleaned up still has its key printed on a merged pull
- * request. Both halves of a sub-board refuse outright — a child inherits its
- * parent's project and integration branch, and a split parent builds THROUGH
- * its children, so moving one would cascade key reissues and thread kills
- * across the whole sub-board.
+ * request. An integration branch lives in one repository, so a card landing
+ * on one and a group cutting one are both pinned; an inherit group's cards
+ * land on trunk and may span projects.
  *
- * `childCount` is passed rather than derived because the client holds card
- * shells, not the aggregate list `boardCardChildren` needs; the server passes
- * `boardCardChildren(board, card.id).length`.
+ * `childCount` and `integrationParentId` are passed rather than derived because
+ * the client holds card shells, not the aggregate the server reads.
  */
 export type BoardCardProjectLock =
   | { readonly kind: "child"; readonly parentCardId: BoardCardId }
@@ -2872,12 +3174,20 @@ export type BoardCardProjectLock =
 
 export function boardCardProjectLock(input: {
   readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "worktree" | "pullRequestHistory" | "parentCardId">;
+  readonly card: Pick<BoardCard, "stage" | "worktree" | "pullRequestHistory" | "group">;
   readonly childCount: number;
+  /** The group whose integration branch the card lands on, if any. */
+  readonly integrationParentId: BoardCardId | null;
 }): BoardCardProjectLock | null {
   const card = input.card;
-  if (card.parentCardId !== null) return { kind: "child", parentCardId: card.parentCardId };
-  if (input.childCount > 0) return { kind: "parent", childCount: input.childCount };
+  // An integration branch lives in one repository; inherit groups may span projects.
+  if (input.integrationParentId !== null) {
+    return { kind: "child", parentCardId: input.integrationParentId };
+  }
+  // A parent with no settings is a legacy split parent: its own branch.
+  if (input.childCount > 0 && (card.group?.target ?? "own") === "own") {
+    return { kind: "parent", childCount: input.childCount };
+  }
   if (
     isBoardStageAtOrAfterBuild(input.board, card.stage) ||
     card.worktree !== null ||
@@ -2911,8 +3221,13 @@ export function boardCardUnfinishedChildren(
   cardId: BoardCardId,
 ): ReadonlyArray<BoardCard> {
   const done = boardStageWithRole(board, "done");
+  // Deferred children (T3O-27) are not this round's work, so they never hold
+  // a group back.
   return boardCardChildren(board, cardId).filter(
-    (child) => child.archivedAt === null && (done === null || child.stage !== done.stageId),
+    (child) =>
+      child.archivedAt === null &&
+      !isBoardDeferredStage(child.stage) &&
+      (done === null || child.stage !== done.stageId),
   );
 }
 
@@ -2932,7 +3247,7 @@ export function boardCardUnfinishedChildren(
  */
 export function boardCardPendingSplit(board: BoardState, cardId: BoardCardId): boolean {
   const card = board.cards.find((candidate) => candidate.id === cardId);
-  if (card === undefined || card.parentCardId !== null || card.archivedAt !== null) return false;
+  if (card === undefined || card.archivedAt !== null) return false;
   // Only LIVE children clear the pending state, matching the re-approval
   // guard: a first round whose children all archived is gone from the board,
   // so the card is pending its second-round split again — and the shell
@@ -2955,20 +3270,24 @@ export function boardCardPendingSplit(board: BoardState, cardId: BoardCardId): b
   return true;
 }
 
+/** The card face's line for a pending split (T3O-31). */
+export function boardSplitProposedNote(childCount: number): string {
+  return `Split proposed · ${childCount} cards`;
+}
+
 /**
  * The card-face counterpart of `boardCardPendingSplit`, derived CLIENT-SIDE
- * from the bounded shell (t3o-27): a top-level card (`parentCardId` absent)
- * with no children of its own (`planTotal` absent — the sub-board pip producer
- * only sets it for parents that HAVE children) and two or more plans
+ * from the bounded shell (t3o-27): a card at any depth (T3O-31 allows nested
+ * splits) with no children of its own (`planTotal` absent — the sub-board pip
+ * producer only sets it for parents that HAVE children) and two or more plans
  * (`planCount`), still at or before the build stage. Lets a column card wear
- * the amber "Needs approval" state without any extra payload — the same
+ * the violet "Input needed" state without any extra payload — the same
  * zero-cost derivation the plan pips use (D6).
  */
 export function boardCardShellPendingSplit(
   card: Pick<BoardCardShell, "stage" | "planCount" | "planTotal" | "parentCardId">,
   stages: ReadonlyArray<BoardStageDefinition>,
 ): boolean {
-  if (card.parentCardId !== undefined) return false;
   // `planTotal` is derived from LIVE children only (D6), which is exactly the
   // read-model rule too: only live children clear the pending state.
   if (card.planTotal !== undefined) return false;
@@ -3219,7 +3538,9 @@ const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> 
   // its own automatic resume rendered as an error, which is the loudest colour
   // on the board saying the opposite of what its own chip says.
   stalled: "warning",
-  approval: "warning",
+  // Violet (T3O-31): a proposed split is a plan waiting on the human's
+  // approval, which `docs/t3o/status-colours.md` gives to violet.
+  approval: "attention",
   "review-held": "warning",
   held: "warning",
   stopped: "warning",
@@ -3336,8 +3657,8 @@ export function boardCardAttention(input: {
     return {
       reason: "approval",
       tone: ATTENTION_TONES.approval,
-      label: "Needs approval",
-      detail: "Planning proposed a multi-part split — approve it to materialise the plan cards",
+      label: "Input needed",
+      detail: `${boardSplitProposedNote(card.planCount ?? 0)} — review and approve it in the planning thread`,
     };
   }
   // The loop's own verdict, settled against the live step exactly as the
@@ -3718,6 +4039,39 @@ function boardOrderKeyBelow(key: string): string | null {
 }
 
 /**
+ * A key strictly between `low` and `high` (`""` = unbounded below, null =
+ * unbounded above), or null when none fits: `high` is not above `low`, or
+ * nothing sorts between them (`"x"` and `"xa"`). Callers fall back to the
+ * column's arrival key.
+ */
+export function boardOrderKeyBetween(low: string, high: string | null): string | null {
+  if (high !== null && high <= low) return null;
+  let out = "";
+  let upper = high;
+  for (let index = 0; ; index += 1) {
+    const lowDigit = Math.max(
+      index < low.length ? BOARD_ORDER_KEY_DIGITS.indexOf(low.charAt(index)) : 0,
+      0,
+    );
+    const highDigit =
+      upper !== null && index < upper.length
+        ? BOARD_ORDER_KEY_DIGITS.indexOf(upper.charAt(index))
+        : BOARD_ORDER_KEY_DIGITS.length;
+    if (lowDigit === highDigit) {
+      out += BOARD_ORDER_KEY_DIGITS.charAt(lowDigit);
+      continue;
+    }
+    const middle = Math.floor((lowDigit + highDigit) / 2);
+    if (middle > lowDigit) {
+      const key = out + BOARD_ORDER_KEY_DIGITS.charAt(middle);
+      return key > low && (high === null || key < high) ? key : null;
+    }
+    out += BOARD_ORDER_KEY_DIGITS.charAt(lowDigit);
+    upper = null;
+  }
+}
+
+/**
  * Order key for a card placed at the TOP of a stage column — the mirror of
  * `boardAppendOrderKey`, and computed server-side for the same reason (T3O-15
  * needs it in the decider, which cannot reach `client-runtime`). A card
@@ -3859,14 +4213,19 @@ export const BoardCardCreateCommand = Schema.Struct({
       card is before Building, so this reads as "start the build at" — plan-mode
       steps are never withheld, and the create dialog's copy says so. */
   scheduledStartAt: Schema.optional(IsoDateTime),
-  /** Create the card as a sub-board child of this parent (t3o-25): the
-      drill-in view's create dialog presets it. The decider requires the
-      parent to be a live top-level card in the same project, restricts the
-      target stage to the materialisation floor onward (the same subset a
-      materialised child may occupy) and requires every dependency to be a
-      sibling — a child may only depend on siblings, exactly as materialised
-      edges are scoped. Absent creates an ordinary top-level card. */
+  /** Create the card inside this group (t3o-25, T3O-27). Any live card may be
+      the parent, at any depth, unless it is a started leaf. Absent creates an
+      ordinary top-level card. */
   parentCardId: Schema.optional(BoardCardId),
+  /** Create an empty group heading (T3O-27): a group that stays a group with
+      no children until its first one arrives. */
+  heading: Schema.optional(Schema.Boolean),
+  /** A heading only: cards moved into it in the same decision (T3O-27), so a
+      refused move creates nothing rather than an orphan heading. */
+  adoptCardIds: Schema.optional(Schema.Array(BoardCardId)),
+  /** Where the adopted cards then land — New phase sends deferred cards to
+      Backlog. Absent leaves them where the move put them. */
+  adoptStage: Schema.optional(BoardStageId),
   /** Pin the card to a worker at birth (T3O-65, D20). Absent follows the
       board's default worker. The decider requires a registered worker. */
   pinnedWorkerId: Schema.optional(BoardWorkerId),
@@ -3887,6 +4246,52 @@ export const BoardCardMoveCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardCardMoveCommand = typeof BoardCardMoveCommand.Type;
+
+/**
+ * Move cards into a group, out of one, or within one (T3O-27) — the one
+ * regrouping primitive behind indent, outdent, drag and "Move to…". `cardId`
+ * is the aggregate anchor and must be the first of `cardIds`. `parentCardId`
+ * null moves to the top level. `afterCardId` / `beforeCardId` name a sibling
+ * under the new parent to place the cards next to.
+ */
+export const BoardCardMoveCardsCommand = Schema.Struct({
+  type: Schema.Literal("board.card.move-cards"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  cardIds: Schema.Array(BoardCardId),
+  parentCardId: Schema.NullOr(BoardCardId),
+  afterCardId: Schema.optional(BoardCardId),
+  beforeCardId: Schema.optional(BoardCardId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardMoveCardsCommand = typeof BoardCardMoveCardsCommand.Type;
+
+/** A group's settings (T3O-27). Absent fields are unchanged. */
+export const BoardCardSetGroupSettingsCommand = Schema.Struct({
+  type: Schema.Literal("board.card.set-group-settings"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  target: Schema.optional(BoardCardGroupTarget),
+  autoBuild: Schema.optional(Schema.Boolean),
+  autoMerge: Schema.optional(Schema.Boolean),
+  autoPlan: Schema.optional(Schema.Boolean),
+  createdAt: IsoDateTime,
+});
+export type BoardCardSetGroupSettingsCommand = typeof BoardCardSetGroupSettingsCommand.Type;
+
+/**
+ * Re-derive the stages of a card's ancestor groups (T3O-27). The decider
+ * already derives inside every command that changes a child; the reactor sends
+ * this only when it finds a group out of step (an event it did not decide, a
+ * boot after migration), so it heals rather than drives.
+ */
+export const BoardCardSyncGroupsCommand = Schema.Struct({
+  type: Schema.Literal("board.card.sync-groups"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardCardSyncGroupsCommand = typeof BoardCardSyncGroupsCommand.Type;
 
 export const BoardCardReorderCommand = Schema.Struct({
   type: Schema.Literal("board.card.reorder"),
@@ -4103,9 +4508,33 @@ export const BoardCardArchiveCommand = Schema.Struct({
   type: Schema.Literal("board.card.archive"),
   commandId: CommandId,
   cardId: BoardCardId,
+  /** Archive a GROUP for good (T3O-28, decision 14): the card's own key,
+      typed by the human. Archives the whole subtree, Deferred children
+      included, and discards its work — threads stop, pull requests close,
+      worktrees and branches (remote copies included) are deleted. Refused on
+      a leaf, and on any key but the card's own. */
+  confirmCardKey: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 export type BoardCardArchiveCommand = typeof BoardCardArchiveCommand.Type;
+
+/**
+ * Cancel a started leaf's work and make it a parent (T3O-28, decision 12):
+ * confirmed by the card's own key. Its threads stop, its pull request closes,
+ * its branch is kept until its worktree is reclaimed, and the card becomes an
+ * empty group (a heading) at its stage capped at Sprint, ready to take cards.
+ */
+export const BoardCardCancelWorkCommand = Schema.Struct({
+  type: Schema.Literal("board.card.cancel-work"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  confirmCardKey: TrimmedNonEmptyString,
+  /** Cards moved under it in the same decision (T3O-28): a refused move
+      cancels nothing. */
+  adoptCardIds: Schema.optional(Schema.Array(BoardCardId)),
+  createdAt: IsoDateTime,
+});
+export type BoardCardCancelWorkCommand = typeof BoardCardCancelWorkCommand.Type;
 
 export const BoardCardUnarchiveCommand = Schema.Struct({
   type: Schema.Literal("board.card.unarchive"),
@@ -4354,6 +4783,10 @@ export const BoardProposedPlanInput = Schema.Struct({
   summary: TrimmedNonEmptyString,
   dependsOn: Schema.Array(TrimmedNonEmptyString),
   body: Schema.String,
+  /** True (the default when absent): the body is a full implementation plan
+      and the child lands ready to build. False: the body is a brief, and the
+      child lands in the first stage to be planned on its own (T3O-31). */
+  planned: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardProposedPlanInput = typeof BoardProposedPlanInput.Type;
 
@@ -4374,6 +4807,11 @@ export const BoardPlansProposeCommand = Schema.Struct({
       surfacing a decode error. Forced to null below two plans, so a non-null
       value means "a split was proposed", exactly. */
   splitRationale: Schema.NullOr(TrimmedNonEmptyString),
+  /** The agent's recommended group settings for a split (T3O-31). Either may
+      be omitted; the decider fills it from `boardSplitRecommendationFallback`.
+      Ignored below two plans. */
+  recommendedAutoBuild: Schema.optionalKey(Schema.Boolean),
+  recommendedMergeTarget: Schema.optionalKey(BoardCardGroupTarget),
   createdAt: IsoDateTime,
 });
 export type BoardPlansProposeCommand = typeof BoardPlansProposeCommand.Type;
@@ -4400,6 +4838,10 @@ export const BoardPlansApproveCommand = Schema.Struct({
   type: Schema.Literal("board.plans.approve"),
   commandId: CommandId,
   cardId: BoardCardId,
+  /** The human's final group settings from the split gate (T3O-31); each
+      defaults to the card's split recommendation when absent. */
+  autoBuild: Schema.optionalKey(Schema.Boolean),
+  mergeTarget: Schema.optionalKey(BoardCardGroupTarget),
   createdAt: IsoDateTime,
 });
 export type BoardPlansApproveCommand = typeof BoardPlansApproveCommand.Type;
@@ -4572,6 +5014,9 @@ export const BoardCardReclaimWorktreeCommand = Schema.Struct({
   /** T3O-23: a `removed` worktree whose `runOnWorktreeRemove` script failed or
       timed out. The removal went ahead; this says what the script did not do. */
   hookWarning: Schema.optional(TrimmedNonEmptyString),
+  /** A group archive's branch deletion finished (T3O-28): clears
+      `discardPending`, on an already-reclaimed worktree too. */
+  discardSettled: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardCardReclaimWorktreeCommand = typeof BoardCardReclaimWorktreeCommand.Type;
@@ -4644,6 +5089,8 @@ export const BoardCardNoteKind = Schema.Literals([
       at the merge stage, an attempt to that failed and is left to the next
       merge attempt, which no merge refusal has happened yet to explain. */
   "card-pull-request-ready",
+  /** What auto-planning did with a card's plan, or why it could not (T3O-32). */
+  "card-auto-planned",
 ]);
 export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
 
@@ -4689,6 +5136,50 @@ export const BoardCardRecordAutoMergeHoldCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardCardRecordAutoMergeHoldCommand = typeof BoardCardRecordAutoMergeHoldCommand.Type;
+
+/**
+ * Record planning decisions on a card's decision log (T3O-32). Dispatched by
+ * the `board_record_decisions` tool for the caller's card, and by the
+ * supervisor when an auto-plan split is approved (logged as important).
+ */
+export const BoardCardRecordDecisionsCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-decisions"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  decisions: Schema.Array(BoardCardDecisionInput),
+  stepId: Schema.NullOr(TrimmedNonEmptyString),
+  threadId: Schema.NullOr(ThreadId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordDecisionsCommand = typeof BoardCardRecordDecisionsCommand.Type;
+
+/**
+ * Mark a leaf in planning for auto-planning (T3O-32). Server-internal: the
+ * supervisor's `autoPlanCard` (the Auto-plan → Build click, mode `build`) and
+ * a group's auto-plan setting (mode `ready`) are the only ways in.
+ */
+export const BoardCardMarkAutoPlanCommand = Schema.Struct({
+  type: Schema.Literal("board.card.mark-auto-plan"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  mode: BoardCardAutoPlanMode,
+  createdAt: IsoDateTime,
+});
+export type BoardCardMarkAutoPlanCommand = typeof BoardCardMarkAutoPlanCommand.Type;
+
+/**
+ * End a pending auto-plan request without approving anything (T3O-32): the
+ * run stopped being driven by the board — it failed, was paused, or is waiting
+ * on a human — so the card goes back to ordinary, human-gated planning.
+ * Server-internal, like marking.
+ */
+export const BoardCardEndAutoPlanCommand = Schema.Struct({
+  type: Schema.Literal("board.card.end-auto-plan"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardCardEndAutoPlanCommand = typeof BoardCardEndAutoPlanCommand.Type;
 
 // Server-INTERNAL step-lifecycle commands (t3o-10, BOARD_INTERNAL_COMMANDS):
 // the supervisor reactor dispatches them as it drives a card's step through
@@ -5045,6 +5536,8 @@ export const BoardCardCreatedPayload = Schema.Struct({
       create. */
   parentCardId: Schema.optionalKey(BoardCardId),
   sourcePlanId: Schema.optionalKey(BoardPlanId),
+  /** Group settings at birth (T3O-27): present only on an empty heading. */
+  group: Schema.optionalKey(BoardCardGroup),
   /** The card's pinned base branch (T3O-5, D1). Key-optional: absent on every
       event written before this spec and on every card created without an
       explicit base, both of which mean "follow the project default" — the same
@@ -5068,6 +5561,11 @@ export const BoardCardCreatedPayload = Schema.Struct({
       the log, and approval freezes the plans, so the body resolved at any
       replay equals the body at approval. Mutually exclusive with `brief`. */
   briefFromPlanId: Schema.optionalKey(BoardPlanId),
+  /** With `briefFromPlanId`: the child takes the plan's body as its brief
+      but NOT a copy of the plan row (T3O-31), because the plan was a brief
+      that still needs planning. Absent copies the plan, as every split child
+      before T3O-31 did. */
+  briefOnly: Schema.optionalKey(Schema.Boolean),
   stage: BoardStageId.pipe(
     Schema.withDecodingDefault(Effect.succeed(BOARD_SEED_STAGE_IDS.backlog)),
   ),
@@ -5145,6 +5643,16 @@ export type BoardCardReorderedPayload = typeof BoardCardReorderedPayload.Type;
 
 export const BoardCardUpdatedPayload = Schema.Struct({
   cardId: BoardCardId,
+  /** Set when this update turned a leaf into a group (T3O-27), so the
+      supervisor abandons the leaf's live planning step. */
+  becameGroup: Schema.optional(Schema.Boolean),
+  /** Set when this update moved the card under a different parent (T3O-27),
+      so the supervisor cascades the group it landed in. */
+  regrouped: Schema.optional(Schema.Boolean),
+  /** Set when this update cancelled a started leaf's work to make it a
+      parent (T3O-28): the supervisor stops its threads, closes its pull
+      request and reclaims its worktree. */
+  workCancelled: Schema.optional(Schema.Boolean),
   /** Absent: brief unchanged. Null: brief cleared. String: new body text for
       `board_card_bodies` (the body deliberately never enters the read
       model — D8). */
@@ -5181,6 +5689,8 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       step stalled because its worker lacks its provider restarts only on this
       edit — Change model — and never on a title or label change. */
   modelOverridesEdited: Schema.optional(Schema.Literal(true)),
+  /** Present when this update marked the card for auto-planning (T3O-32). */
+  autoPlanMarked: Schema.optional(Schema.Literal(true)),
   /** The card face's review summary AFTER this edit (t3o-22, D7), folded by
       the decider when the edit could change it (a round budget or a stop). It
       rides the `card-upserted` shell delta this event produces, so a pure
@@ -5233,6 +5743,10 @@ export const BoardCardArchivedPayload = Schema.Struct({
   cardId: BoardCardId,
   archivedAt: IsoDateTime,
   card: BoardCard,
+  /** Archived as part of a confirmed group archive (T3O-28): the supervisor
+      stops its threads, closes its pull request, and deletes its worktree
+      and branches, remote copies included. */
+  discard: Schema.optional(Schema.Boolean),
 });
 export type BoardCardArchivedPayload = typeof BoardCardArchivedPayload.Type;
 
@@ -5395,6 +5909,9 @@ export const BoardPlansProposedPayload = Schema.Struct({
   splitRationale: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** The resolved recommendation (T3O-31): present exactly when
+      `splitRationale` is non-null. Absent clears the card's. */
+  splitRecommendation: Schema.optionalKey(BoardSplitRecommendation),
 });
 export type BoardPlansProposedPayload = typeof BoardPlansProposedPayload.Type;
 
@@ -5574,6 +6091,13 @@ export const BoardCardNoteRecordedPayload = Schema.Struct({
   detail: TrimmedNonEmptyString,
 });
 export type BoardCardNoteRecordedPayload = typeof BoardCardNoteRecordedPayload.Type;
+
+/** Decisions appended to a card's log (T3O-32). No card field changes. */
+export const BoardCardDecisionsRecordedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  decisions: Schema.Array(BoardCardDecision),
+});
+export type BoardCardDecisionsRecordedPayload = typeof BoardCardDecisionsRecordedPayload.Type;
 
 /** Carries the whole post-change card, like `board.card-pull-request-recorded`
     — the shell delta mapping is a pure function of the event, and the hold
@@ -6085,6 +6609,10 @@ export const BoardCardShell = Schema.Struct({
   /** Set on sub-board children (t3o-23) so a child's face can wear its
       "part of <parent key>" chip and t3o-25's drill-in can scope by it. */
   parentCardId: Schema.optionalKey(BoardCardId),
+  /** Group settings (T3O-27), absent on a leaf — which is nearly every card,
+      so a leaf's shell stays byte-identical. On the card aggregate, so both
+      producers carry it. */
+  group: Schema.optionalKey(BoardCardGroup),
   /** When the card is held until (T3O-19, D8), absent when it is not scheduled
       — which is nearly every card, and why this is KEY-optional rather than
       nullable: the shell is under a fixed per-card byte budget asserted in
@@ -6119,15 +6647,11 @@ export const BoardCardShell = Schema.Struct({
       `Merge needs you` with an alert glyph — and never its colour: both board
       states are amber (D12). */
   autoMergeGaveUp: Schema.optionalKey(Schema.Boolean),
-  /** Whether the card's merge runs itself by its OWN arming — a sub-board
-      child, or the per-card flag. Absent otherwise.
-
-      Deliberately not the full `boardCardAutoMergeArmed` reading: the third
-      arming condition is the board-wide merge-stage setting, which the SQL
-      snapshot producer cannot see and the client already holds, so the client
-      ORs it in. A shell field only one of the two producers could compute is
-      precisely the reconnect flicker `cardMetaShellFields.test.ts` exists to
-      catch. Draws the small grey `Auto` glyph, in the merge-role stage only. */
+  /** The card's own per-card auto-merge override, absent otherwise. The full
+      arm — the nearest group's settings, the board-wide setting — resolves
+      client-side through `boardShellAutoMergeArmed`, over shells that already
+      carry the tree and the group settings (T3O-28). Draws the small grey
+      `Auto` glyph, in the merge-role stage only. */
   autoMergeArmed: Schema.optionalKey(Schema.Boolean),
   /** Whether the card still holds a worktree on disk (T3O-52, D5), absent when
       it does not. Half of the amber "Worktree kept" flag: the other half — is
@@ -6365,9 +6889,23 @@ export function boardCardWorktreeKept(input: {
   readonly archived: boolean;
   readonly inDoneStage: boolean;
   readonly reclaimWorktreeOnDone: boolean;
+  /** Its worktree is cancelled work (`boardCardWorktreeIsCancelledWork`). */
+  readonly cancelledWork: boolean;
 }): boolean {
   if (!input.worktreeReady) return false;
-  return input.archived || (input.inDoneStage && input.reclaimWorktreeOnDone);
+  return (
+    input.archived || input.cancelledWork || (input.inDoneStage && input.reclaimWorktreeOnDone)
+  );
+}
+
+/**
+ * Whether a worktree this card holds is work cancelled to make it a group
+ * (T3O-28): only an own-branch group legitimately holds a worktree.
+ */
+export function boardCardWorktreeIsCancelledWork(card: {
+  readonly group?: Pick<BoardCardGroup, "target"> | null | undefined;
+}): boolean {
+  return card.group != null && card.group.target !== "own";
 }
 
 /**
@@ -6484,6 +7022,8 @@ export function makeBoardCardShell(input: {
       omitted for top-level cards to keep their shells byte-identical to
       pre-sub-board payloads. */
   readonly parentCardId?: BoardCardId | null | undefined;
+  /** Group settings (T3O-27), or null on a leaf. */
+  readonly group?: BoardCardGroup | null | undefined;
   /** When the card is held until (T3O-19), or null when it is not scheduled.
       Rides the card aggregate like `prNumber`, so every producer asserts it;
       the key is omitted for an unscheduled card to keep its shell
@@ -6579,6 +7119,7 @@ export function makeBoardCardShell(input: {
     // Sub-board membership (t3o-23): on the aggregate, so asserted whenever
     // present; omitted for top-level cards (see the input doc).
     ...(input.parentCardId == null ? {} : { parentCardId: input.parentCardId }),
+    ...(input.group == null ? {} : { group: input.group }),
     // The schedule (T3O-19, D8): on the aggregate like `parentCardId`, and
     // omitted when there is none, which keeps an unscheduled card's shell
     // exactly the size it was before this field existed.
@@ -6681,17 +7222,15 @@ export function boardCardShellFromCard(
     // `cardMetaShellFields.test.ts`.
     prNumber: boardCardDisplayPullRequest(card)?.number ?? null,
     parentCardId: card.parentCardId,
+    group: card.group,
     scheduledStartAt: card.scheduledStartAt,
     autoStart: card.autoStart,
     autoMergeHeldSince: card.autoMergeHold?.heldSince ?? null,
     autoMergeGaveUp: boardCardAutoMergeGaveUp(card.autoMergeHold),
-    // The AGGREGATE half of the arm only (T3O-38, D14): a sub-board child or
-    // an explicit per-card flag. The board-wide merge-stage setting is ORed in
-    // CLIENT-side, where the settings already live — the SQL snapshot producer
-    // cannot see them, and a shell field only one of the two producers could
-    // compute is exactly the reconnect-flicker `cardMetaShellFields.test.ts`
-    // exists to catch.
-    autoMergeArmed: card.parentCardId !== null || card.autoMerge,
+    // The card's OWN override only (T3O-28): the client resolves the rest
+    // with `boardShellAutoMergeArmed`, because a group's settings and the
+    // board-wide setting both live outside this card's delta.
+    autoMergeArmed: card.autoMerge,
     prDraft: boardCardPullRequestIsOpenDraft(card.pullRequest),
     worktreeReady: card.worktree?.status === "ready",
     worktreeKeptReason: card.worktree?.reclaimBlockedReason ?? null,
@@ -6987,6 +7526,8 @@ export function isBoardEvent<Event extends { readonly type: string }>(
 export const BOARD_CLIENT_COMMANDS = [
   BoardCardCreateCommand,
   BoardCardMoveCommand,
+  BoardCardMoveCardsCommand,
+  BoardCardSetGroupSettingsCommand,
   BoardCardReorderCommand,
   BoardCardUpdateCommand,
   // T3O-33: move a card to another project, before it has ever been built.
@@ -6998,6 +7539,8 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardCardArchiveCommand,
   BoardCardUnarchiveCommand,
   BoardCardDeleteCommand,
+  // T3O-28: cancel a started leaf's work to make it a parent.
+  BoardCardCancelWorkCommand,
   BoardLabelCreateCommand,
   BoardLabelUpdateCommand,
   BoardLabelDeleteCommand,
@@ -7028,6 +7571,7 @@ export const BOARD_CLIENT_COMMANDS = [
  * registry and touches no upstream-owned file.
  */
 export const BOARD_INTERNAL_COMMANDS = [
+  BoardCardSyncGroupsCommand,
   BoardCardProvisionWorktreeCommand,
   BoardCardRecordWorktreeCommand,
   BoardCardRecordIntegrationBranchCommand,
@@ -7040,6 +7584,10 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardRecordNoteCommand,
   // T3O-38: the auto-merge hold and its retry ladder.
   BoardCardRecordAutoMergeHoldCommand,
+  // T3O-32: the decision log and auto-planning.
+  BoardCardRecordDecisionsCommand,
+  BoardCardMarkAutoPlanCommand,
+  BoardCardEndAutoPlanCommand,
   BoardCardSelectStepCommand,
   BoardCardAdmitStepCommand,
   BoardCardAwaitStepInputCommand,
@@ -7113,6 +7661,8 @@ export const BOARD_EVENT_TYPES = [
   "board.card-pull-request-recorded",
   "board.card-note-recorded",
   "board.card-auto-merge-hold-recorded",
+  // T3O-32: planning decisions on a card's decision log.
+  "board.card-decisions-recorded",
   "board.card-step-selected",
   "board.card-step-admitted",
   "board.card-step-force-start-requested",
@@ -7393,6 +7943,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
     }),
     Schema.Struct({
       ...base,
+      type: Schema.Literal("board.card-decisions-recorded"),
+      payload: BoardCardDecisionsRecordedPayload,
+    }),
+    Schema.Struct({
+      ...base,
       type: Schema.Literal("board.card-step-selected"),
       payload: BoardCardStepSelectedPayload,
     }),
@@ -7533,6 +8088,10 @@ export const BOARD_WS_METHODS = {
       moves, or the executor re-plans a converged loop, completes `succeeded`,
       and bounces the card straight back to Ready for merge. */
   requestReviewRound: "board.requestReviewRound",
+  /** Auto-plan → Build (T3O-32, decision 7): end planning, have the agent
+      decide what is left, approve the plan and start building. An RPC
+      because it may steer a live planning thread. */
+  autoPlanCard: "board.autoPlanCard",
   /** "Remove worktree" on a finished card that kept one (T3O-52, D5): remove
       it past the safety rule, after a confirm dialog. The branch is kept. An
       RPC because the git removal must land before the record does. */
@@ -7749,6 +8308,18 @@ export const BoardRequestReviewRoundResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("failed") }),
 ]);
 export type BoardRequestReviewRoundResult = typeof BoardRequestReviewRoundResult.Type;
+
+/** What Auto-plan → Build did (T3O-32). `steered` told the live planning
+    thread to decide, record and propose; `started` began an unattended
+    planning step. `refused` carries the reason as a sentence. */
+export const BoardAutoPlanCardResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("steered") }),
+  Schema.Struct({ outcome: Schema.Literal("started") }),
+  Schema.Struct({ outcome: Schema.Literal("refused"), detail: TrimmedNonEmptyString }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+  Schema.Struct({ outcome: Schema.Literal("failed") }),
+]);
+export type BoardAutoPlanCardResult = typeof BoardAutoPlanCardResult.Type;
 
 /** What "Remove worktree" did (T3O-52, D5). */
 export const BoardRemoveCardWorktreeResult = Schema.Union([
@@ -7977,6 +8548,12 @@ export const BoardCardDetail = Schema.Struct({
       must read as such rather than as a dangling id. An id with no row left
       is simply absent. */
   dependencies: Schema.Array(BoardCardDependencyRef),
+  /** Dependencies the card inherits from its ancestor groups and does not
+      hold itself (T3O-27): a waiting group holds back everything inside it,
+      so the detail's build gate must count them. */
+  groupDependencies: Schema.Array(BoardCardDependencyRef).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   /** Cards whose `dependsOn` names this one, archived included. Feeds the
       archive confirmation (t3o-13, D3), which counts only the live ones. */
   dependents: Schema.Array(BoardCardDependencyRef),
@@ -8008,6 +8585,9 @@ export const BoardCardDetail = Schema.Struct({
   stepError: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** The card's decision log (T3O-32), oldest first. Decodes to `[]` on
+      legacy detail payloads. */
+  decisions: Schema.Array(BoardCardDecision).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type BoardCardDetail = typeof BoardCardDetail.Type;
 
@@ -8169,6 +8749,11 @@ export const BOARD_RPCS = [
     success: BoardRequestReviewRoundResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.autoPlanCard, {
+    payload: BoardCardPullRequestActionInput,
+    success: BoardAutoPlanCardResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WS_METHODS.removeCardWorktree, {
     payload: BoardCardPullRequestActionInput,
     success: BoardRemoveCardWorktreeResult,
@@ -8238,6 +8823,7 @@ export const BOARD_RPC_SCOPES = {
   // and moves the card: the same mutation tier as merging.
   [BOARD_WS_METHODS.submitCardForMerge]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.requestReviewRound]: AuthOrchestrationOperateScope,
+  [BOARD_WS_METHODS.autoPlanCard]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.removeCardWorktree]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.checkCardWorktree]: AuthOrchestrationOperateScope,
   // T3O-65: the move reads the source worker's git and then changes where the
@@ -10118,16 +10704,18 @@ export function boardModelSelectionOfOverride(
  */
 export function resolveBoardCardStageModelOverride(input: {
   readonly card: Pick<BoardCard, "modelOverrides">;
-  /** The card's parent, for a sub-board child; null for a top-level card or
-      when the caller could not resolve it. */
-  readonly parent: Pick<BoardCard, "modelOverrides"> | null;
+  /** The card's ancestors, nearest first (T3O-27): groups nest, and the
+      nearest one that sets the stage wins. Empty for a top-level card. */
+  readonly ancestors: ReadonlyArray<Pick<BoardCard, "modelOverrides">>;
   readonly stageId: BoardStageId;
 }): BoardCardStageModelOverride | null {
-  return (
-    input.card.modelOverrides?.[input.stageId] ??
-    input.parent?.modelOverrides?.[input.stageId] ??
-    null
-  );
+  const own = input.card.modelOverrides?.[input.stageId];
+  if (own !== undefined) return own;
+  for (const ancestor of input.ancestors) {
+    const inherited = ancestor.modelOverrides?.[input.stageId];
+    if (inherited !== undefined) return inherited;
+  }
+  return null;
 }
 
 /**
@@ -10205,12 +10793,21 @@ export function isBoardCardBaseBranchShape(value: string): boolean {
 export function resolveBoardCardEffectiveBase(input: {
   readonly card: Pick<BoardCard, "parentCardId" | "baseBranch">;
   readonly cards: ReadonlyArray<
-    Pick<BoardCard, "id" | "worktree" | "pullRequest" | "pullRequestHistory">
+    Pick<BoardCard, "id" | "worktree" | "pullRequest" | "pullRequestHistory"> &
+      Partial<Pick<BoardCard, "parentCardId" | "baseBranch" | "group">>
   >;
   readonly defaultBranch: string | null;
 }): string | null {
   if (input.card.parentCardId === null) return input.card.baseBranch ?? input.defaultBranch;
   const parent = input.cards.find((candidate) => candidate.id === input.card.parentCardId);
+  // An inherit group (T3O-27) has no branch of its own: its children land
+  // wherever the group itself would.
+  if (parent !== undefined && parent.group?.target === "inherit") {
+    return resolveBoardCardEffectiveBase({
+      ...input,
+      card: { parentCardId: parent.parentCardId ?? null, baseBranch: parent.baseBranch ?? null },
+    });
+  }
   const worktree = parent?.worktree ?? null;
   const liveBranch =
     worktree !== null &&

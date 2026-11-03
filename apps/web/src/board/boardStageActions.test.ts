@@ -361,11 +361,10 @@ describe("boardMoveLeavesPlanningUnwritten", () => {
     from: (typeof ids)[keyof typeof ids],
     to: (typeof ids)[keyof typeof ids],
     planCount = 0,
-    parentCardId: string | null = null,
   ) =>
     boardMoveLeavesPlanningUnwritten({
       stages,
-      card: { stage: from, parentCardId },
+      card: { stage: from },
       toStage: to,
       planCount,
     });
@@ -385,7 +384,7 @@ describe("boardMoveLeavesPlanningUnwritten", () => {
     expect(asks(ids.ready, ids.building)).toBe(false);
   });
 
-  it("does not ask for a sub-board child, which its parent planned", () => {
-    expect(asks(ids.planning, ids.ready, 0, "card-parent")).toBe(false);
+  it("a split child carries its own plan copy, so its plan count decides (T3O-27)", () => {
+    expect(asks(ids.planning, ids.ready, 1)).toBe(false);
   });
 });

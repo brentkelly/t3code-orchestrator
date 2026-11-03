@@ -8,6 +8,7 @@
  * Mounting this component IS the detail subscription — it exists only while a
  * card is selected, so the board at rest opens none.
  */
+import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import {
   BoardCardId,
@@ -26,13 +27,16 @@ import {
   boardCardProjectLock,
   boardStallIsWaiting,
   boardStageWithRole,
+  boardCardWorktreeIsCancelledWork,
   boardCardWorktreeKept,
   boardCardWorktreeKeptReason,
-  isBoardDependencyInScope,
   isBoardMergeStageExecution,
   isBoardCardBaseRetargeted,
   resolveBoardCardEffectiveBase,
   boardSubBoardFloorStage,
+  boardShellMergesIntoIntegrationBranch,
+  boardSplitRecommendationFallback,
+  boardStagesInOrder,
   isBoardStageAtOrAfterBuild,
   deriveBoardCardThreadState,
   boardBuildHumanInLoopDefault,
@@ -47,6 +51,9 @@ import {
   EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   type BoardCardReviewOverrides,
   type BoardCardStageModelOverride,
+  boardShellAncestorIds,
+  boardShellAutoMergeArmed,
+  boardShellDescendantIds,
 } from "@t3tools/contracts";
 import {
   boardBuildQueue,
@@ -98,6 +105,15 @@ import {
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
 import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
+import { BoardArchiveGroupDialog } from "./BoardGroupDialogs";
+import { BoardGroupSettings } from "./BoardGroupSettings";
+import {
+  boardDeferredChildren,
+  boardGroupNote,
+  boardShellGroup,
+  boardShellIntegrationAncestor,
+  isBoardGroupShell,
+} from "./boardGroups";
 import { boardMoveLeavesPlanningUnwritten } from "./boardStageActions";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
@@ -111,6 +127,7 @@ import {
   describeBoardRefreshOutcome,
   describeBoardRemoveWorktreeOutcome,
   describeBoardReviewRoundOutcome,
+  describeBoardAutoPlanOutcome,
   describeBoardSubmitOutcome,
 } from "./boardCommandFeedback";
 import { useOpenLink } from "../browser/useOpenLink";
@@ -233,6 +250,9 @@ export function BoardCardDetail({
   const requestReviewRound = useAtomCommand(boardEnvironment.requestReviewRound, {
     reportFailure: false,
   });
+  // Auto-plan → Build (T3O-32). Same reason again: a refusal is an answer.
+  const autoPlanCard = useAtomCommand(boardEnvironment.autoPlanCard, { reportFailure: false });
+  const createCard = useAtomCommand(boardEnvironment.createCard);
   // "Remove worktree" (T3O-52). Same reason again: a refusal is an answer.
   const removeCardWorktree = useAtomCommand(boardEnvironment.removeCardWorktree, {
     reportFailure: false,
@@ -385,11 +405,7 @@ export function BoardCardDetail({
   // edges the UI could not otherwise create. Rather than leave a state that can
   // be inherited but not made, the picker offers them and marks them with the
   // owning project's dot.
-  //
-  // Every picker is scoped to the card's own level (t3o-25, T3O-10): a child
-  // sees only its siblings, a top-level card only other top-level cards. The
-  // decider refuses anything else, and offering it here would only teach the
-  // rule by refusal.
+
   const dependencyOptions = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
     const shells = board?.cards ?? [];
@@ -397,15 +413,14 @@ export function BoardCardDetail({
       (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
     );
     const existing = new Set<string>([card.id, ...card.dependsOn]);
+    // Dependencies cross groups (T3O-27); the card's own ancestors and
+    // descendants are refused, so they are not offered.
+    const related = new Set<string>([
+      ...boardShellAncestorIds(shells, card.parentCardId),
+      ...boardShellDescendantIds(shells, card.id),
+    ]);
     return shells
-      .filter(
-        (candidate) =>
-          !existing.has(candidate.cardId) &&
-          isBoardDependencyInScope({
-            dependentParentCardId: card.parentCardId,
-            dependencyParentCardId: candidate.parentCardId,
-          }),
-      )
+      .filter((candidate) => !existing.has(candidate.cardId) && !related.has(candidate.cardId))
       .map((candidate) => ({
         id: candidate.cardId,
         key: candidate.key,
@@ -447,6 +462,8 @@ export function BoardCardDetail({
   const workers = useAtomValue(boardEnvironment.workersAtom(environmentId));
   // "today" in a move divider is measured from when the card was opened.
   const [openedAt] = useState(() => Date.now());
+  // The group archive confirmation (T3O-29): a group always warns.
+  const [archiveGroupOpen, setArchiveGroupOpen] = useState(false);
   const threadLinks = useMemo<ReadonlyArray<BoardDetailThreadLink>>(() => {
     if (card === null) return [];
     const threads = snapshot?.threads ?? [];
@@ -668,12 +685,15 @@ export function BoardCardDetail({
   // ── Project (T3O-33) ───────────────────────────────────────────────────
   // The lock comes from the SAME predicate the decider refuses on, so the row
   // and the rejection cannot disagree. `detail.children` carries archived
-  // children too, which is what the parent refusal needs: an archived child is
-  // still a card holding a number in the parent's project namespace.
+  // children too, as the server's count does.
   const projectLock = boardCardProjectLock({
     board: stageState,
     card,
     childCount: detail.children.length,
+    integrationParentId:
+      cardShell === undefined
+        ? card.parentCardId
+        : (boardShellIntegrationAncestor(allShellCards, cardShell)?.cardId ?? null),
   });
   const projectOptions =
     projectLock === null
@@ -738,19 +758,19 @@ export function BoardCardDetail({
 
   // Per-card human-in-the-loop stance on the Build role (D6): shown only when
   // the card is on the build stage. The default flips on whether the card has a
-  // plan — a sub-board child counts as planned (t3o-23: its approved plan is
-  // its brief) — and an explicit override wins over it. The same rule the
+  // plan — a split child owns a copy of its plan (T3O-27) — and an explicit
+  // override wins over it. The same rule the
   // reactor runs the step under, so the hint here never contradicts the run.
   const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
   const humanInLoop =
     buildStageId !== null && card.stage === buildStageId
       ? (() => {
           const exec = resolveBoardStageExecution(boardSettings, buildStageId);
-          const fallback = boardBuildHumanInLoopDefault(exec, card, detail.hasPlan);
+          const fallback = boardBuildHumanInLoopDefault(exec, detail.hasPlan);
           return {
             value: card.humanInLoop ?? fallback,
             explicit: card.humanInLoop !== null,
-            basis: card.parentCardId !== null ? "child" : detail.hasPlan ? "plan" : "no-plan",
+            basis: detail.hasPlan ? "plan" : "no-plan",
           } as const;
         })()
       : null;
@@ -864,11 +884,13 @@ export function BoardCardDetail({
       archived: card.archivedAt !== null,
       inDoneStage: doneStageId !== null && card.stage === doneStageId,
       reclaimWorktreeOnDone: boardSettings.lifecycle.reclaimWorktreeOnDone,
+      cancelledWork: boardCardWorktreeIsCancelledWork(card),
     })
       ? {
           reason: boardCardWorktreeKeptReason(card.worktree.reclaimBlockedReason),
           path: card.worktree.path,
           branch: card.worktree.branch,
+          cancelledWork: boardCardWorktreeIsCancelledWork(card),
         }
       : null;
 
@@ -915,6 +937,40 @@ export function BoardCardDetail({
       }
       setFeedback(describeBoardReviewRoundOutcome(result.value));
     });
+  };
+
+  /** Auto-plan → Build (T3O-32): one RPC that steers the planning thread or
+      starts an unattended one; the plan it proposes is approved on arrival. */
+  const onAutoPlan = () => {
+    setFeedback(null);
+    void autoPlanCard({ environmentId, input: { cardId: card.id } }).then((result) => {
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+        return;
+      }
+      setFeedback(describeBoardAutoPlanOutcome(result.value));
+    });
+  };
+
+  /** A follow-up card in the first stage, for a decision worth revisiting. */
+  const onCreateFollowUp = (draft: { readonly title: string; readonly brief: string }) => {
+    const firstStage = stageState.stages?.[0];
+    if (firstStage === undefined) return;
+    runCommand(
+      createCard({
+        environmentId,
+        input: {
+          cardId: BoardCardId.make(randomUUID()),
+          projectId: card.projectId,
+          title: draft.title,
+          brief: draft.brief,
+          stage: firstStage.stageId,
+          orderKey: boardColumnAppendOrderKey(
+            (board?.cards ?? []).filter((shell) => shell.stage === firstStage.stageId),
+          ),
+        },
+      }),
+    );
   };
 
   // Restart is a server command (D2): the reactor runs the stage's configured
@@ -972,8 +1028,8 @@ export function BoardCardDetail({
   };
 
   // The approve gate (t3o-23, D1): two or more plans, nothing materialised
-  // yet, a top-level card at or before the build stage, and a floor stage for
-  // the children to land in. These are the cheap STRUCTURAL checks only — the
+  // yet, a card at or before the build stage (at any depth — splits nest,
+  // T3O-27), and a floor stage for the children to land in. These are the cheap STRUCTURAL checks only — the
   // decider additionally gates on unmet dependencies, plan-graph cycles and a
   // live step, and a refusal from any of those surfaces through the shared
   // command feedback, so the button may offer an approval the decider still
@@ -985,11 +1041,32 @@ export function BoardCardDetail({
     // Live children only, matching the decider's re-approval guard: a first
     // round whose children all archived may be re-split.
     detail.children.every((child) => child.archivedAt !== null) &&
-    card.parentCardId === null &&
     card.archivedAt === null &&
     floorStage !== null &&
     buildStage !== null &&
     (!isBoardStageAtOrAfterBuild(stageState, card.stage) || card.stage === buildStage.stageId);
+
+  // What the split gate shows (T3O-31). A proposal made before T3O-31 has no
+  // stored recommendation, so it falls back to the server's rule.
+  const firstStage = boardStagesInOrder(stageState)[0] ?? null;
+  const splitGate =
+    canApproveSplit && floorStage !== null && firstStage !== null
+      ? {
+          recommendation:
+            card.splitRecommendation ??
+            boardSplitRecommendationFallback({
+              plans: detail.plans,
+              underIntegrationBranch: boardShellMergesIntoIntegrationBranch(
+                board?.cards ?? [],
+                card,
+              ),
+            }),
+          ownBranch: `board/${sanitizeBranchFragment(card.key)}`,
+          landsOn: baseBranchInfo.effective ?? "the default branch",
+          readyLabel: floorStage.label,
+          backlogLabel: firstStage.label,
+        }
+      : null;
 
   const moveStage = (toStage: BoardStageId) => {
     const targetColumn = (board?.cards ?? []).filter((shell) => shell.stage === toStage);
@@ -1010,8 +1087,47 @@ export function BoardCardDetail({
     );
   };
 
+  // The group popup (T3O-29): Open board, the group's note, its settings and
+  // the archive warning, all from the shells the board already holds.
+  const groupShells = board?.cards ?? EMPTY_SHELL_CARDS;
+  const groupStats =
+    cardShell === undefined || !isBoardGroupShell(groupShells, cardShell)
+      ? null
+      : { shells: groupShells, stages: stageState, attentionFor: () => null };
+  const deferredKeys =
+    groupStats === null
+      ? []
+      : boardDeferredChildren(groupShells, String(card.id)).map((child) => child.key);
+  const groupView =
+    groupStats === null || cardShell === undefined
+      ? null
+      : {
+          chip: `Group · ${childShells.length} ${childShells.length === 1 ? "card" : "cards"}`,
+          note: boardGroupNote(groupStats, cardShell),
+          onOpenBoard: onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card.id),
+          settings: (
+            <BoardGroupSettings
+              card={cardShell}
+              environmentId={environmentId}
+              shells={groupShells}
+              stages={stageState}
+            />
+          ),
+          onArchive: () => setArchiveGroupOpen(true),
+          reopenPrompt:
+            deferredKeys.length === 0
+              ? null
+              : `Let's plan the deferred cards (${deferredKeys.join(", ")}) as the next phase of ${card.key}.`,
+          ownBranch: boardShellGroup(groupShells, cardShell)?.target === "own",
+        };
+  // A group's child can be parked in Deferred (T3O-29).
+  const parentIsGroup =
+    card.parentCardId !== null && groupShells.some((shell) => shell.cardId === card.parentCardId);
+
   const view = (
     <BoardCardDetailView
+      group={groupView}
+      stageLadderDeferred={parentIsGroup && groupView === null}
       stalledReason={cardShell?.stalledReason}
       workerShell={cardShell}
       nav={nav}
@@ -1088,8 +1204,19 @@ export function BoardCardDetail({
       }
       stages={stages}
       canApproveSplit={canApproveSplit}
-      approveSplitTargetLabel={floorStage?.label ?? null}
-      onApproveSplit={() => runCommand(approvePlans({ environmentId, input: { cardId: card.id } }))}
+      splitGate={splitGate}
+      onApproveSplit={(settings) =>
+        runCommand(
+          approvePlans({
+            environmentId,
+            input: {
+              cardId: card.id,
+              autoBuild: settings.autoBuild,
+              mergeTarget: settings.mergeTarget,
+            },
+          }),
+        )
+      }
       catalogue={catalogue}
       dependencies={dependencies}
       dependencyOptions={dependencyOptions}
@@ -1270,6 +1397,8 @@ export function BoardCardDetail({
         });
       }}
       onRequestReviewRound={onRequestReviewRound}
+      onAutoPlan={onAutoPlan}
+      onCreateFollowUp={onCreateFollowUp}
       stepLive={stepLive}
       onOpenPullRequest={(url) => {
         // Refresh on the way out: clicking through is the moment the user is
@@ -1352,7 +1481,16 @@ export function BoardCardDetail({
       onSetAutoMerge={(autoMerge) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, autoMerge } }))
       }
-      autoMergeFromBoardSetting={boardWideAutoMerge}
+      // Nearest wins (T3O-28): the board-wide setting is ignored inside a group.
+      autoMergeFromBoardSetting={card.parentCardId === null && boardWideAutoMerge}
+      autoMergeFromGroup={
+        card.parentCardId !== null &&
+        boardShellAutoMergeArmed({
+          shells: board?.cards ?? [],
+          shell: { parentCardId: card.parentCardId },
+          boardWide: false,
+        })
+      }
       resolveModelDisplayName={resolveModelDisplayName}
       // Queued counts as running for this note's purpose: a queued step has
       // already been selected onto the run row, so its model and authority are
@@ -1418,6 +1556,17 @@ export function BoardCardDetail({
         }}
       />
       {view}
+      {archiveGroupOpen && cardShell !== undefined ? (
+        <BoardArchiveGroupDialog
+          group={cardShell}
+          onClose={() => setArchiveGroupOpen(false)}
+          onConfirm={(confirmCardKey) =>
+            runCommand(archiveCard({ environmentId, input: { cardId: card.id, confirmCardKey } }))
+          }
+          shells={groupShells}
+          stages={stageState}
+        />
+      ) : null}
     </>
   );
 }

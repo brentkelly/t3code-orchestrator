@@ -19,6 +19,8 @@ import {
   ProviderInstanceId,
   ThreadId,
   BOARD_SEED_STAGE_IDS,
+  defaultBoardCardGroup,
+  EMPTY_BOARD_STATE,
   type BoardCard,
   type BoardCardStepState,
   type BoardLabel,
@@ -58,6 +60,7 @@ function makeCard(
     dependsOn: [],
     parentCardId: null,
     sourcePlanId: null,
+    group: null,
     threadLinks: [],
     attachments: [],
     externalRef: null,
@@ -1814,6 +1817,12 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       const reopenCard = makeCard({ id: "card-reopen", stage: BOARD_SEED_STAGE_IDS.review });
       // set-project only accepts a card that has never been built (T3O-33).
       const projectCard = makeCard({ id: "card-project", stage: "ready" });
+      // mark-auto-plan only accepts a leaf in planning (T3O-32).
+      const autoPlanCard = makeCard({ id: "card-auto-plan", stage: "planning" });
+      const autoPlanningCard = {
+        ...makeCard({ id: "card-auto-planning", stage: "planning" }),
+        autoPlan: { mode: "build" as const, requestedAt: NOW, endedAt: null },
+      };
       const briefAttachment = {
         id: BoardCardAttachmentId.make("att-1"),
         name: "bug.png",
@@ -1821,6 +1830,17 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         mimeType: "image/png",
         sizeBytes: 1024,
         addedAt: NOW,
+      };
+      // An empty heading (T3O-27), for the group-settings command.
+      const groupCard = {
+        ...makeCard({ id: "card-group", stage: "sprint" }),
+        group: defaultBoardCardGroup(
+          EMPTY_BOARD_STATE,
+          { stage: BOARD_SEED_STAGE_IDS.sprint },
+          {
+            heading: true,
+          },
+        ),
       };
       // Not in Backlog: the catalog's stage delete expects that column empty.
       const attachedCard = makeCard({
@@ -1849,8 +1869,11 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             settleCard,
             splitCard,
             attachedCard,
+            groupCard,
             reopenCard,
             projectCard,
+            autoPlanCard,
+            autoPlanningCard,
           ],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
           plans: [readyPlan, ...splitPlans],
@@ -1899,6 +1922,27 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         "board.card.create": createCommand({ cardId: "card-new" }),
         // The one legitimate path into building — explicit, user-originated.
         "board.card.move": moveCommand({ cardId: "card-ready", toStage: "building" }),
+        "board.card.move-cards": {
+          type: "board.card.move-cards",
+          commandId: CommandId.make("cmd-move-cards"),
+          cardId: BoardCardId.make("card-project"),
+          cardIds: [BoardCardId.make("card-project")],
+          parentCardId: BoardCardId.make("card-group"),
+          createdAt: NOW,
+        },
+        "board.card.set-group-settings": {
+          type: "board.card.set-group-settings",
+          commandId: CommandId.make("cmd-group-settings"),
+          cardId: BoardCardId.make("card-group"),
+          autoBuild: true,
+          createdAt: NOW,
+        },
+        "board.card.sync-groups": {
+          type: "board.card.sync-groups",
+          commandId: CommandId.make("cmd-sync-groups"),
+          cardId: BoardCardId.make("card-group"),
+          createdAt: NOW,
+        },
         "board.card.reorder": {
           type: "board.card.reorder",
           commandId: CommandId.make("cmd-reorder"),
@@ -1953,6 +1997,13 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           type: "board.card.archive",
           commandId: CommandId.make("cmd-archive"),
           cardId: BoardCardId.make("card-ready"),
+          createdAt: NOW,
+        },
+        "board.card.cancel-work": {
+          type: "board.card.cancel-work",
+          commandId: CommandId.make("cmd-cancel-work"),
+          cardId: BoardCardId.make("card-building"),
+          confirmCardKey: "CARD-1",
           createdAt: NOW,
         },
         "board.card.unarchive": {
@@ -2095,6 +2146,36 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         },
         // Reporting only: it writes an activity row and touches no card field,
         // so it cannot possibly emit a move.
+        "board.card.record-decisions": {
+          type: "board.card.record-decisions",
+          commandId: CommandId.make("cmd-record-decisions"),
+          cardId: BoardCardId.make("card-ready"),
+          decisions: [
+            {
+              question: "Ship behind a flag?",
+              decision: "No flag",
+              reason: "Small and reversible.",
+              flag: "unclear",
+              decidedBy: "agent",
+            },
+          ],
+          stepId: null,
+          threadId: null,
+          createdAt: NOW,
+        },
+        "board.card.mark-auto-plan": {
+          type: "board.card.mark-auto-plan",
+          commandId: CommandId.make("cmd-mark-auto-plan"),
+          cardId: BoardCardId.make("card-auto-plan"),
+          mode: "build",
+          createdAt: NOW,
+        },
+        "board.card.end-auto-plan": {
+          type: "board.card.end-auto-plan",
+          commandId: CommandId.make("cmd-end-auto-plan"),
+          cardId: BoardCardId.make("card-auto-planning"),
+          createdAt: NOW,
+        },
         "board.card.record-note": {
           type: "board.card.record-note",
           commandId: CommandId.make("cmd-record-note"),
@@ -4062,13 +4143,31 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       }),
     );
 
-    it.effect("refuses to arm a sub-board child, which already cascades", () =>
+    it.effect("arms a leaf inside a group — any leaf may be armed (T3O-27)", () =>
       Effect.gen(function* () {
-        const error = yield* decideFail(
+        const event = yield* decide(
           arm(true),
           boardWith(waiting({ parentCardId: BoardCardId.make("card-parent") })),
         );
-        assert.include(String(error), "sub-board child");
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        assert.isTrue(event.payload.card.autoStart);
+      }),
+    );
+
+    it.effect("refuses to arm a group, whose children start themselves (T3O-27)", () =>
+      Effect.gen(function* () {
+        const error = yield* decideFail(
+          arm(true),
+          boardWith(
+            waiting({
+              group: defaultBoardCardGroup(EMPTY_BOARD_STATE, {
+                stage: BOARD_SEED_STAGE_IDS.ready,
+              }),
+            }),
+          ),
+        );
+        assert.include(String(error), "is a group");
       }),
     );
 
@@ -4304,11 +4403,21 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       }),
     );
 
-    it.effect("refuses a sub-board child, which already merges itself down", () =>
+    it.effect("arms a leaf inside a group with its own override (T3O-27)", () =>
       Effect.gen(function* () {
         const child = at("merge", { parentCardId: BoardCardId.make("card-parent") });
-        const error = yield* decideFail(arm(true), boardWith(child));
-        assert.include(String(error), "sub-board child");
+        const event = yield* decide(arm(true), boardWith(child));
+        assert.strictEqual(event.type, "board.card-updated");
+      }),
+    );
+
+    it.effect("refuses a group, whose children do the merging (T3O-27)", () =>
+      Effect.gen(function* () {
+        const group = at("sprint", {
+          group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.sprint }),
+        });
+        const error = yield* decideFail(arm(true), boardWith(group));
+        assert.include(String(error), "is a group");
       }),
     );
 

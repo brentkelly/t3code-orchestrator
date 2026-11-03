@@ -25,6 +25,11 @@ import {
   type BoardStepQueuedBy,
   type BoardWorkerId,
   boardCardAutoArchiveDue,
+  BOARD_AUTO_PLAN_INSTRUCTION,
+  BOARD_DECISION_REASON_MAX_LENGTH,
+  BOARD_DECISION_TEXT_MAX_LENGTH,
+  isBoardCardAutoPlanPending,
+  type BoardAutoPlanCardResult,
   boardCardAutoStartDue,
   boardCardChildren,
   boardBuildHumanInLoopDefault,
@@ -106,6 +111,18 @@ import {
   type BoardStageRole,
   type BoardState,
   type BoardEvent,
+  boardCardActiveChildren,
+  boardCardAncestors,
+  boardCardGroupOf,
+  boardCardInheritedDependsOn,
+  boardCardDisplayPullRequest,
+  boardCardIntegrationAncestor,
+  boardCardLiveChildren,
+  boardCardWorktreeIsCancelledWork,
+  boardGroupRevertsToCard,
+  boardCardMergesIntoIntegrationBranch,
+  deriveBoardGroupStage,
+  isBoardCardPlanned,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -402,7 +419,15 @@ export interface SupervisorReactorShape {
   readonly requestReviewRound: (
     cardId: BoardCardId,
   ) => Effect.Effect<BoardRequestReviewRoundResult>;
+  /** Auto-plan → Build (T3O-32, decision 7): steer the live planning thread to
+      decide, record and propose, or start an unattended planning step. The
+      plan that arrives is approved and the card goes on to Building. */
+  readonly autoPlanCard: (cardId: BoardCardId) => Effect.Effect<BoardAutoPlanCardResult>;
 }
+
+/** A string cut to `max` characters, ending in an ellipsis when cut. */
+const clip = (text: string, max: number): string =>
+  text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
 
 /** Epoch millis off the Effect clock, never `new Date()`, so a test's
     `TestClock` moves every due-time comparison the reactor makes. */
@@ -446,6 +471,36 @@ interface BoardWorld {
 }
 
 /**
+ * A card whose work was cancelled to make it a parent (T3O-28) and whose
+ * checkout is still there. Only an own-branch group legitimately holds a ready
+ * worktree, and the decider refuses `target=own` until this one is reclaimed
+ * and refuses dropping `own` while a group's integration worktree exists.
+ */
+function holdsCancelledWork(card: BoardCard): boolean {
+  return boardCardWorktreeIsCancelledWork(card) && card.worktree?.status === "ready";
+}
+
+/** The children of `card` archived before it, with everything under them. */
+function earlierArchivedSubtrees(
+  cards: ReadonlyArray<BoardCard>,
+  card: BoardCard,
+): ReadonlyArray<BoardCard> {
+  const out: BoardCard[] = [];
+  const seen = new Set<string>([String(card.id)]);
+  const walk = (parentId: BoardCardId, all: boolean) => {
+    for (const child of cards) {
+      if (child.parentCardId !== parentId || seen.has(String(child.id))) continue;
+      if (!all && (child.archivedAt === null || child.archivedAt === card.archivedAt)) continue;
+      seen.add(String(child.id));
+      out.push(child);
+      walk(child.id, true);
+    }
+  };
+  walk(card.id, false);
+  return out;
+}
+
+/**
  * The model/access override in force for a card's CURRENT stage (t3o-29),
  * resolved through the parent for a sub-board child, or null when the
  * workspace config governs.
@@ -456,9 +511,9 @@ interface BoardWorld {
  * `model` (see `BoardStageExecutorConfig.cardOverride`). That is what keeps the
  * reactor from having to know that a review stage treats it differently.
  *
- * Free: the parent is already in the aggregate every caller holds, so this is
- * an in-memory find, not a read. Sub-boards are one level deep, so there is no
- * chain to walk.
+ * Free: the ancestors are already in the aggregate every caller holds, so this
+ * is an in-memory walk, not a read. Groups nest (T3O-27), so the whole chain is
+ * consulted, nearest first.
  */
 function cardStageModelOverride(
   board: BoardState,
@@ -466,10 +521,7 @@ function cardStageModelOverride(
 ): BoardCardStageModelOverride | null {
   return resolveBoardCardStageModelOverride({
     card,
-    parent:
-      card.parentCardId === null
-        ? null
-        : (board.cards.find((candidate) => candidate.id === card.parentCardId) ?? null),
+    ancestors: boardCardAncestors(board, card),
     stageId: card.stage,
   });
 }
@@ -779,6 +831,17 @@ const make = Effect.gen(function* () {
   // first time a settle lands, so the set stays bounded by "abandoned this
   // process".
   const abandonedThreads = new Set<string>();
+  /** Thread → the interview run auto-plan interrupted to steer (T3O-32). Only
+      that run's question, Stop and end are ignored; the next turn end clears it. */
+  const steeredThreads = new Map<string, string>();
+  /** The live thread is still running the run auto-plan interrupted. */
+  const stillOnSteeredRun = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const runId = steeredThreads.get(String(threadId));
+      if (runId === undefined) return false;
+      const shell = yield* liveThread(threadId).pipe(Effect.orElseSucceed(() => undefined));
+      return shell?.activeTurnRef === runId;
+    });
 
   /**
    * Settle every thread the board is finished with (t3o-13).
@@ -815,6 +878,7 @@ const make = Effect.gen(function* () {
     const released = [...boardReleasedThreadIds(board, abandonedThreads)];
     const records = released.length === 0 ? new Map() : yield* threads.threadRecords(released);
     for (const threadId of released) {
+      steeredThreads.delete(String(threadId));
       const thread = records.get(threadId);
       // No record is no answer: the thread's worker couldn't be asked
       // (T3O-66), so an abandoned thread there is kept for the next pass.
@@ -1050,7 +1114,7 @@ const make = Effect.gen(function* () {
     board: BoardState,
     exec: BoardStageExecution,
     card: BoardCard,
-  ): boolean => boardBuildHumanInLoopDefault(exec, card, boardCardPlans(board, card.id).length > 0);
+  ): boolean => boardBuildHumanInLoopDefault(exec, isBoardCardPlanned(board, card.id));
 
   /** The resolved human-in-the-loop stance for a fresh (first-entry) run of a
       stage (D5/D6). The build role reads the per-card toggle over its two
@@ -1067,6 +1131,9 @@ const make = Effect.gen(function* () {
     if (stage?.role === "build") {
       return card.humanInLoop ?? buildHumanInLoopDefault(board, exec, card);
     }
+    // An auto-planned card is planned unattended (T3O-32): the click, or the
+    // group's setting, is the human act, and nobody is there to answer.
+    if (stage?.role === "plan" && isBoardCardAutoPlanPending(card)) return false;
     return exec.humanInLoop;
   };
 
@@ -1249,7 +1316,9 @@ const make = Effect.gen(function* () {
     } | null = null;
     if (card.parentCardId !== null) {
       const board = yield* readBoard;
-      const parent = board.cards.find((candidate) => candidate.id === card.parentCardId);
+      // The group whose integration branch this card is cut from (T3O-27):
+      // the nearest own-target ancestor; inherit groups pass through.
+      const parent = boardCardIntegrationAncestor(board, card) ?? undefined;
       const buildStage = boardStageWithRole(board, "build");
       const branchLive =
         parent?.worktree != null &&
@@ -1807,6 +1876,7 @@ const make = Effect.gen(function* () {
         stepLabel: state.stepLabel,
         prompt: state.prompt,
         humanInLoop: state.humanInLoop,
+        ...(role === "plan" && isBoardCardAutoPlanPending(card) ? { autoPlan: true } : {}),
       },
       role,
     });
@@ -2543,6 +2613,9 @@ const make = Effect.gen(function* () {
     // board.
     if (card.parentCardId === null) return false;
     const board = yield* readBoard;
+    // Only cards merging into an integration branch (T3O-27): a child of an
+    // inherit group lands on trunk like a top-level card.
+    if (!boardCardMergesIntoIntegrationBranch(board, card)) return false;
     const recorded = boardCardStepState(board, card.id)?.baseTipAtRoundStart ?? null;
     if (recorded === null) return false;
     const tip = yield* measureBaseTip(card);
@@ -2571,7 +2644,10 @@ const make = Effect.gen(function* () {
       // answers from its own field, and a child from its parent's slice — so
       // the common case of this check (which runs at every stage plan and every
       // merge crossing) does no I/O at all.
-      const needsDefault = card.parentCardId === null && card.baseBranch === null;
+      const needsDefault =
+        card.parentCardId === null
+          ? card.baseBranch === null
+          : !boardCardMergesIntoIntegrationBranch(yield* readBoard, card);
       const defaultBranch = needsDefault
         ? yield* Effect.gen(function* () {
             const workspace = yield* workspaceFor(card);
@@ -2580,9 +2656,11 @@ const make = Effect.gen(function* () {
             return resolved.defaultBranch === "" ? null : resolved.defaultBranch;
           })
         : null;
+      // A child always needs the cards: an inherit group resolves through its
+      // own parent chain, which can end at a pinned or unpinned top level.
       const effective = resolveBoardCardEffectiveBase({
         card,
-        cards: needsDefault ? [] : (yield* readBoard).cards,
+        cards: card.parentCardId === null ? [] : (yield* readBoard).cards,
         defaultBranch,
       });
       return effective !== null && effective !== recorded ? effective : null;
@@ -2635,6 +2713,18 @@ const make = Effect.gen(function* () {
     // could only watch. Its review-stage entry, which only happens after the
     // last child finished, kicks off normally.
     if (boardCardUnfinishedChildren(board, card.id).length > 0) return;
+    // A group's pipeline is paused (T3O-27): it runs only the integration
+    // review of its own branch, once every active child is done. An inherit
+    // group or an empty heading never runs anything.
+    {
+      const group = boardCardGroupOf(board, card);
+      if (
+        group !== null &&
+        (group.target !== "own" || boardCardActiveChildren(board, card.id).length === 0)
+      ) {
+        return;
+      }
+    }
     const settings = yield* boardSettings;
     const exec = resolveBoardStageExecution(settings, card.stage);
     const mergeRole = effectiveBoardStageRole(stage) === "merge";
@@ -2736,8 +2826,16 @@ const make = Effect.gen(function* () {
     }
     // Auto-kickoff fires only for an auto-executing stage; on-demand runs any
     // stage that has work (gated above).
-    if (!onDemand && !exec.autoExecute) return;
-    const completions = boardCardStepCompletions(board, card.id);
+    // An auto-plan run is always a fresh planning run (T3O-32): it starts
+    // whether or not Planning auto-executes, and a card that was planned
+    // before is re-planned unattended rather than handed the empty re-entry
+    // conversation, so its earlier planning step is set aside.
+    const autoPlanRun =
+      effectiveBoardStageRole(stage) === "plan" && isBoardCardAutoPlanPending(card);
+    if (!onDemand && !exec.autoExecute && !autoPlanRun) return;
+    const completions = boardCardStepCompletions(board, card.id).filter(
+      (completion) => !autoPlanRun || completion.stepId !== card.stage,
+    );
     // First entry vs re-entry (D7): a recorded completion for this stage's step
     // means the card has been here before, so re-run nothing — open a clean
     // human-in-the-loop conversation. This is reactor policy, orthogonal to the
@@ -3033,36 +3131,36 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const parent = board.cards.find((candidate) => candidate.id === parentCardId);
     if (parent === undefined || parent.archivedAt !== null) return;
+    const group = boardCardGroupOf(board, parent);
+    // Only a group with auto-build on starts its own children (T3O-27); one
+    // with it off is started child by child.
+    if (group === null || !group.autoBuild) return;
     const buildStage = boardStageWithRole(board, "build");
     const floor = boardSubBoardFloorStage(board);
     if (buildStage === null || floor === null) return;
-    // Fire once the split has BEGUN — not only while the parent sits exactly at
-    // build. "Begun" = some live child has already left the floor for the build
-    // stage or beyond (a building, reviewing, merging or done child). Before
-    // that, approval alone must start nothing (t3o-28 D1) — the human has not
-    // pressed Begin build. But once a child is underway, the split runs to
-    // completion no matter WHERE the human parked the parent: dragging the
-    // supervising card back to the floor must not silently strand the freed
-    // siblings, which is the production bug this replaced. The parent arriving
-    // at build (its own move) still triggers the first cascade; this only widens
-    // the child-finished / child-deleted re-runs to survive a parked parent.
+    // Fire once the group has BEGUN — not only while it sits exactly at
+    // build. "Begun" = the human started it, or some active child is already
+    // at the build stage or beyond. Before that, approval alone starts nothing
+    // (t3o-28 D1). After it, the group runs to completion wherever the human
+    // parked it, so dragging it back must not strand freed siblings.
     const begun =
+      group.started ||
       parent.stage === buildStage.stageId ||
-      boardCardChildren(board, parent.id).some(
-        (child) => child.archivedAt === null && isBoardStageAtOrAfterBuild(board, child.stage),
+      boardCardActiveChildren(board, parent.id).some((child) =>
+        isBoardStageAtOrAfterBuild(board, child.stage),
       );
     if (!begun) return;
-    for (const child of boardCardChildren(board, parent.id)) {
-      if (child.archivedAt !== null) continue;
+    for (const child of boardCardActiveChildren(board, parent.id)) {
       // Waiting on the floor is the only state this starts. A child further
       // along is already running, done, or parked somewhere by a human — and
-      // none of those want a move.
+      // none of those want a move. A child group on the floor is started the
+      // same way, and its own arrival cascades one level down.
       if (child.stage !== floor.stageId) continue;
       // The D11 dependency gate would refuse this move anyway; skipping it
       // here keeps the cascade from teaching the rule by refusal.
       const unmet = unmetBoardCardDependencies({
         board,
-        dependsOn: child.dependsOn,
+        dependsOn: boardCardInheritedDependsOn(board, child),
         cards: board.cards,
       });
       if (unmet.length > 0) continue;
@@ -3076,86 +3174,77 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // A split parent advances when its last child finishes (t3o-23, D4; the
-  // D18 carve-out "a parent card advances when its last child plan card
-  // reaches Done"). Rides the ordinary move like `advanceStage` — the
-  // decider's ceiling has lifted (no unfinished children left), and the target
-  // is the NEXT stage in order, not a hardcoded review, so a custom stage
-  // between Build and Review is not skipped. Only a parent still sitting in
-  // the build-role stage advances: that is where the human's Begin build put
-  // it (t3o-28, D1/D3), so a parent still short of build, one already dragged
-  // onward, or one that never split is left alone — which is also what makes
-  // a raced double-fire harmless, the second call finding the parent moved.
-  const advanceParentIfChildrenDone = Effect.fn("board-supervisor-advanceParent")(function* (
-    parentCardId: BoardCardId,
+  /**
+   * What a regrouping means for the supervisor (T3O-27). Grouping never
+   * touches git; it only stops what can no longer run and starts what now
+   * may. A card that became a group abandons its live step — an unstarted
+   * leaf's planning, cheap to drop, its plans kept as a record. A card that
+   * landed in a started group with auto-build on may start right away.
+   */
+  const applyRegroup = Effect.fn("board-supervisor-applyRegroup")(function* (
+    updated: BoardCard,
+    marks: { readonly becameGroup: boolean; readonly regrouped: boolean },
   ) {
+    if (!marks.becameGroup && !marks.regrouped) return;
     const board = yield* readBoard;
-    const parent = board.cards.find((candidate) => candidate.id === parentCardId);
-    if (parent === undefined || parent.archivedAt !== null) return;
-    const buildStage = boardStageWithRole(board, "build");
-    if (buildStage === null) return;
-    // All children deleted is NOT completion — the parent unfreezes where it
-    // stands and the human decides what the empty split means.
-    if (boardCardChildren(board, parent.id).length === 0) return;
-    if (boardCardUnfinishedChildren(board, parent.id).length > 0) return;
-    // The parent's build-through-children is finished, so it advances to the
-    // stage after build — its own integration review — from WHEREVER it sits.
-    // A human may have parked it back on the floor (`ready`) while the children
-    // ran; leaving it there once every child is done is the mirror of the
-    // stranded-cascade bug, so the target is the stage after build rather than
-    // the stage after the parent's current position. A parent already at or
-    // past that target (its review has started, or it is further on) needs no
-    // move.
-    const next = boardNextStageId(board, buildStage.stageId);
-    if (next === null) return;
-    const parentIndex = boardStageIndex(board, parent.stage);
-    const targetIndex = boardStageIndex(board, next);
-    if (parentIndex < 0 || targetIndex < 0 || parentIndex >= targetIndex) return;
-    yield* dispatch({
-      type: "board.card.move",
-      commandId: yield* commandId("advance-parent"),
-      cardId: parent.id,
-      toStage: next,
-      // The parent may be parked several stages below build; the advance is
-      // machinery, not a drag, but it forces adjacency the same way the t3o-24
-      // regression does.
-      override: true,
-      createdAt: yield* nowIso,
-    });
+    const card = board.cards.find((candidate) => candidate.id === updated.id);
+    if (card === undefined || card.archivedAt !== null) return;
+    if (marks.becameGroup) {
+      const state = boardCardStepState(board, card.id);
+      if (state !== null && !isBoardTerminalStepStatus(state.status)) {
+        yield* settleStep({ card, state, outcome: "abandoned" });
+        yield* schedule();
+      }
+    }
+    // Only a card that just landed in a group may start; any other edit must
+    // not restart a child a human parked on the floor.
+    if (marks.regrouped && card.parentCardId !== null) {
+      yield* cascadeUnblockedChildren(card.parentCardId);
+    }
   });
 
-  // The mirror check (t3o-24, D4): a child leaving the done-role stage while
-  // its parent sits PAST the build-role stage leaves the parent ahead of
-  // reality — its review (or merge, or Done) describes an integration branch
-  // whose children are no longer all finished. Move the parent back to the
-  // build-role stage: an ordinary move (the decider's freeze-guard admits
-  // exactly this regression), whose own `handleCardMoved` abandons any live
-  // parent review step through the existing abandon path. When the child
-  // finishes again, `advanceParentIfChildrenDone` re-advances the parent and
-  // its review starts a fresh round against the changed integration branch —
-  // D1–D3 applied one level up. Guarded on the freeze actually re-engaging
-  // (unfinished children exist), so it is a cheap no-op on every other move.
-  const regressParentIfChildLeftDone = Effect.fn("board-supervisor-regressParent")(function* (
-    parentCardId: BoardCardId,
+  /** Cascade every group holding a card that waits on `cardId`, directly or
+      through a group it sits in (T3O-27). */
+  const cascadeDependentGroups = Effect.fn("board-supervisor-cascadeDependentGroups")(function* (
+    cardId: BoardCardId,
   ) {
     const board = yield* readBoard;
-    const parent = board.cards.find((candidate) => candidate.id === parentCardId);
-    if (parent === undefined || parent.archivedAt !== null) return;
-    const buildStage = boardStageWithRole(board, "build");
-    if (buildStage === null) return;
-    const parentIndex = boardStageIndex(board, parent.stage);
-    const buildIndex = boardStageIndex(board, buildStage.stageId);
-    if (parentIndex < 0 || buildIndex < 0 || parentIndex <= buildIndex) return;
-    if (boardCardUnfinishedChildren(board, parent.id).length === 0) return;
+    const parents = new Set<BoardCardId>();
+    for (const candidate of board.cards) {
+      if (candidate.archivedAt !== null || candidate.parentCardId === null) continue;
+      if (boardCardInheritedDependsOn(board, candidate).includes(cardId)) {
+        parents.add(candidate.parentCardId);
+      }
+    }
+    for (const parentId of parents) yield* cascadeUnblockedChildren(parentId);
+  });
+
+  /**
+   * Heal a group out of step with its children (T3O-27). The decider derives
+   * every group in the same decision as the child change, so this normally
+   * finds nothing; it catches an event the decider did not shape — a boot
+   * after migration, a legacy log — by asking the decider to re-derive.
+   */
+  const syncAncestorGroups = Effect.fn("board-supervisor-syncAncestorGroups")(function* (
+    cardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined) return;
+    const stale = [card, ...boardCardAncestors(board, card)].some((candidate) => {
+      if (candidate.archivedAt !== null) return false;
+      const group = boardCardGroupOf(board, candidate);
+      if (group === null) return false;
+      if (boardCardLiveChildren(board, candidate.id).length === 0) {
+        return boardGroupRevertsToCard(board, candidate, group);
+      }
+      return deriveBoardGroupStage(board, candidate) !== candidate.stage;
+    });
+    if (!stale) return;
     yield* dispatch({
-      type: "board.card.move",
-      commandId: yield* commandId("regress-parent"),
-      cardId: parent.id,
-      toStage: buildStage.stageId,
-      // The parent may be two or more stages ahead (merge, Done); the
-      // regression is machinery, not a drag, but it forces adjacency the same
-      // way.
-      override: true,
+      type: "board.card.sync-groups",
+      commandId: yield* commandId("sync-groups"),
+      cardId: card.id,
       createdAt: yield* nowIso,
     });
   });
@@ -3869,7 +3958,13 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
   ) {
     // The board's own interrupts (see `interruptOrphan` / `abandonedThreads`).
-    if (orphanedThreads.has(String(threadId)) || abandonedThreads.has(String(threadId))) return;
+    if (
+      orphanedThreads.has(String(threadId)) ||
+      abandonedThreads.has(String(threadId)) ||
+      (yield* stillOnSteeredRun(threadId))
+    ) {
+      return;
+    }
     const board = yield* readBoard;
     const found = stepThreadCard(board, threadId);
     if (found === null || found.card.archivedAt !== null) return;
@@ -5159,6 +5254,8 @@ const make = Effect.gen(function* () {
    * cached `open` may have merged on the forge since, and the refresh settles
    * it. That set is tiny by construction, so it is the one forge call here.
    */
+  // Pending group-archive discards the sweep has already retried this process.
+  const sweptDiscards = new Set<BoardCardId>();
   const sweepWorktrees = Effect.fn("board-supervisor-sweepWorktrees")(function* (options: {
     readonly refreshOpenPullRequests: boolean;
   }) {
@@ -5182,9 +5279,25 @@ const make = Effect.gen(function* () {
         yield* refreshCardPullRequest(card);
         continue;
       }
+      // A confirmed group archive whose branch deletion has not finished:
+      // retried here, as the one queued at archive may have failed or been
+      // lost to a restart. Once per process: some remote refusals never clear,
+      // and each attempt is a push of up to 30s.
+      if (card.archivedAt !== null && card.worktree?.discardPending === true) {
+        if (!sweptDiscards.has(card.id)) {
+          sweptDiscards.add(card.id);
+          yield* discardCardBranchWork(card.id);
+        }
+        continue;
+      }
       if (card.worktree === null || card.worktree.status !== "ready") continue;
       if (card.archivedAt !== null) {
         yield* reclaimCardWorktree(card, fetchedBases);
+        continue;
+      }
+      // Retried here, since the one reclaim on cancel may have kept it.
+      if (holdsCancelledWork(card)) {
+        yield* reclaimCancelledCardWorktree(card.id);
         continue;
       }
       if (!settings.lifecycle.reclaimWorktreeOnDone) continue;
@@ -5271,15 +5384,26 @@ const make = Effect.gen(function* () {
     (
       request:
         | { readonly kind: "settle"; readonly card: BoardCard }
-        | { readonly kind: "reclaim"; readonly cardId: BoardCardId },
+        | { readonly kind: "reclaim"; readonly cardId: BoardCardId }
+        | { readonly kind: "discard"; readonly cardId: BoardCardId }
+        | { readonly kind: "cancelled"; readonly cardId: BoardCardId },
     ) =>
       Effect.gen(function* () {
         if (request.kind === "settle") {
           yield* settleCardAtDone(request.card);
           return;
         }
+        if (request.kind === "discard") {
+          yield* discardCardBranchWork(request.cardId);
+          return;
+        }
+        if (request.kind === "cancelled") {
+          yield* reclaimCancelledCardWorktree(request.cardId);
+          return;
+        }
         const card = yield* readCard(request.cardId);
         if (card !== null) yield* reclaimCardWorktree(card);
+        if (card !== null) yield* reclaimArchivedIntegrationBranch(card);
       }).pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
@@ -5360,7 +5484,8 @@ const make = Effect.gen(function* () {
     const stage = boardStageById(board, card.stage);
     const finished =
       card.archivedAt !== null || (stage !== null && effectiveBoardStageRole(stage) === "done");
-    if (!finished) return { outcome: "not-finished" } as const;
+    const cancelled = holdsCancelledWork(card);
+    if (!finished && !cancelled) return { outcome: "not-finished" } as const;
     const workspace = yield* workspaceFor(card);
     if (workspace.checkoutPath === null) {
       // The card does hold a worktree; it is the project that cannot be found.
@@ -5391,6 +5516,7 @@ const make = Effect.gen(function* () {
       ...(hookWarning === null ? {} : { hookWarning }),
       createdAt: yield* nowIso,
     });
+    if (cancelled) yield* deleteCancelledCardBranch(card.id);
     return { outcome: "removed" } as const;
   });
 
@@ -5405,7 +5531,9 @@ const make = Effect.gen(function* () {
     const refreshed = yield* readCard(cardId);
     if (refreshed === null) return { outcome: "unknown-card" } as const;
     if (refreshed.worktree?.status !== "ready") return { outcome: "no-worktree" } as const;
-    const attempt = yield* settleCardAtDone(refreshed);
+    const attempt = holdsCancelledWork(refreshed)
+      ? yield* reclaimCancelledCardWorktree(refreshed.id)
+      : yield* settleCardAtDone(refreshed);
     if (attempt === null) {
       // Ready a moment ago: either it went meanwhile, or the card is not one
       // the cleanup reclaims (left Done, or the setting is off).
@@ -6404,11 +6532,307 @@ const make = Effect.gen(function* () {
     completedTurnId: string | undefined,
   ) {
     const board = yield* readBoard;
-    yield* handleTurnCompleted(board, threadId, completedTurnId);
+    // The interrupted interview run's end is the steer's to follow, not an
+    // ending. Any turn end clears the marker: the projection that named the run
+    // may have been stale, and the steer turn's own end must be read.
+    const steeredRun = steeredThreads.get(String(threadId));
+    steeredThreads.delete(String(threadId));
+    if (steeredRun === undefined || completedTurnId !== steeredRun) {
+      yield* handleTurnCompleted(board, threadId, completedTurnId);
+    }
     const owned =
       resolveBoardCardForThread(board, threadId) !== null || abandonedThreads.has(String(threadId));
     if (!owned) return;
     yield* releaseFinishedThreads;
+  });
+
+  /** A rail row for something auto-planning did, or could not do (T3O-32). */
+  const autoPlanNote = Effect.fn("board-supervisor-autoPlanNote")(function* (
+    cardId: BoardCardId,
+    detail: string,
+  ) {
+    yield* dispatch({
+      type: "board.card.record-note",
+      commandId: yield* commandId("auto-plan-note"),
+      cardId,
+      kind: "card-auto-planned",
+      detail,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
+   * End a pending auto-plan request without approving anything (T3O-32). The
+   * card goes back to ordinary planning: later runs are human-in-the-loop
+   * again, their plan waits on the gate, and the Auto-plan button is back.
+   */
+  const endAutoPlan = Effect.fn("board-supervisor-endAutoPlan")(function* (
+    cardId: BoardCardId,
+    detail: string,
+  ) {
+    const ended = yield* dispatchOptional({
+      type: "board.card.end-auto-plan",
+      commandId: yield* commandId("end-auto-plan"),
+      cardId,
+      createdAt: yield* nowIso,
+    });
+    if (ended) yield* autoPlanNote(cardId, detail);
+  });
+
+  /**
+   * An auto-plan run the board has stopped driving ends the request (T3O-32):
+   * a step parked on a human (a question, a Stop, an escalation with no retry
+   * coming) or settled `failed`. An `abandoned` settle is a restart superseding
+   * the step, or the card leaving planning, which ends the request itself.
+   * Reads the live step, not the event's, so a step already put back to work
+   * by the time this runs keeps its request.
+   */
+  const endAutoPlanIfUndriven = Effect.fn("board-supervisor-endAutoPlanIfUndriven")(function* (
+    cardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined || !isBoardCardAutoPlanPending(card)) return;
+    const stage = boardStageById(board, card.stage);
+    if (stage === null || effectiveBoardStageRole(stage) !== "plan") return;
+    const state = boardCardStepState(board, card.id);
+    if (state === null || state.stepId !== card.stage) return;
+    const undriven =
+      state.status === "awaiting-input" ||
+      state.status === "paused" ||
+      state.status === "failed" ||
+      (state.status === "stalled" && state.retryAt === null);
+    if (!undriven) return;
+    yield* endAutoPlan(
+      card.id,
+      "Auto-plan stopped: the planning run stopped or is waiting on you, so nothing will be approved automatically. Finish planning by hand, or click Auto-plan again.",
+    );
+  });
+
+  /**
+   * Approve an auto-planned card's plan (T3O-32, decisions 4 and 7) — always,
+   * unclear decisions included. A single plan walks to Ready, and on to
+   * Building for an Auto-plan → Build click (D18: the click is the human act).
+   * A split is approved with the agent's recommended settings and logged as an
+   * important decision; for a click the group is then started, which builds
+   * every ready child whose dependencies are met only when auto-build is on.
+   * Every gate still applies; a refused approval ends the request, with the
+   * reason on the rail.
+   */
+  const approveAutoPlannedCard = Effect.fn("board-supervisor-approveAutoPlannedCard")(function* (
+    card: BoardCard,
+    state: BoardCardStepState,
+  ) {
+    const board = yield* readBoard;
+    const mode = card.autoPlan?.mode ?? "ready";
+    const plans = boardCardPlans(board, card.id).toSorted(
+      (left, right) => left.ordinal - right.ordinal,
+    );
+    if (plans.length === 0) {
+      yield* endAutoPlan(
+        card.id,
+        "Auto-plan finished without proposing a plan, so nothing was approved. Plan the card by hand, or auto-plan it again.",
+      );
+      return;
+    }
+    const buildStage = boardStageWithRole(board, "build");
+    if (plans.length >= 2) {
+      const refusal = yield* dispatchRefusal({
+        type: "board.plans.approve",
+        commandId: yield* commandId("auto-plan-approve-split"),
+        cardId: card.id,
+        createdAt: yield* nowIso,
+      });
+      if (refusal !== null) {
+        yield* endAutoPlan(card.id, `Auto-plan could not approve the split: ${refusal}`);
+        return;
+      }
+      const titles = plans.map((plan) => plan.title).join("; ");
+      yield* dispatch({
+        type: "board.card.record-decisions",
+        commandId: yield* commandId("auto-plan-split-decision"),
+        cardId: card.id,
+        decisions: [
+          {
+            question: "Build this card as one plan, or split it?",
+            decision: clip(
+              `Split into ${plans.length} cards: ${titles}`,
+              BOARD_DECISION_TEXT_MAX_LENGTH,
+            ),
+            reason: clip(
+              card.splitRationale ?? "The agent proposed a split.",
+              BOARD_DECISION_REASON_MAX_LENGTH,
+            ),
+            flag: "important",
+            decidedBy: "agent",
+          },
+        ],
+        stepId: state.stepId,
+        threadId: state.threadId,
+        createdAt: yield* nowIso,
+      });
+      const group = boardCardGroupOf(yield* readBoard, (yield* readCard(card.id)) ?? card);
+      if (mode !== "build" || buildStage === null) {
+        yield* autoPlanNote(card.id, `Auto-plan approved the split into ${plans.length} cards.`);
+        return;
+      }
+      if (group === null || !group.autoBuild) {
+        yield* autoPlanNote(
+          card.id,
+          `Auto-plan approved the split into ${plans.length} cards. Auto-build is off, so nothing starts until you start the group.`,
+        );
+        return;
+      }
+      const started = yield* dispatchRefusal({
+        type: "board.card.move",
+        commandId: yield* commandId("auto-plan-start-group"),
+        cardId: card.id,
+        toStage: buildStage.stageId,
+        override: true,
+        createdAt: yield* nowIso,
+      });
+      yield* autoPlanNote(
+        card.id,
+        started === null
+          ? `Auto-plan approved the split into ${plans.length} cards and started the group.`
+          : `Auto-plan approved the split into ${plans.length} cards; the group did not start: ${started}`,
+      );
+      return;
+    }
+    const next = boardNextStageId(board, card.stage);
+    if (next === null) return;
+    const toReady = yield* dispatchRefusal({
+      type: "board.card.move",
+      commandId: yield* commandId("auto-plan-approve"),
+      cardId: card.id,
+      toStage: next,
+      createdAt: yield* nowIso,
+    });
+    if (toReady !== null) {
+      yield* endAutoPlan(card.id, `Auto-plan could not approve the plan: ${toReady}`);
+      return;
+    }
+    if (mode !== "build" || buildStage === null || next === buildStage.stageId) return;
+    const toBuild = yield* dispatchRefusal({
+      type: "board.card.move",
+      commandId: yield* commandId("auto-plan-build"),
+      cardId: card.id,
+      toStage: buildStage.stageId,
+      createdAt: yield* nowIso,
+    });
+    if (toBuild !== null) {
+      yield* autoPlanNote(
+        card.id,
+        `Auto-plan approved the plan; the build did not start: ${toBuild}`,
+      );
+    }
+  });
+
+  /**
+   * Group auto-plan (T3O-32, decision 4): a leaf arriving in planning inside a
+   * group with auto-plan on is marked for an unattended planning run whose
+   * plan is approved to Ready. Returns the card the kickoff should use.
+   */
+  const markGroupAutoPlan = Effect.fn("board-supervisor-markGroupAutoPlan")(function* (
+    card: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    const planStage = boardStageWithRole(board, "plan");
+    if (planStage === null || card.stage !== planStage.stageId) return card;
+    if (card.parentCardId === null || isBoardCardAutoPlanPending(card)) return card;
+    if (boardCardGroupOf(board, card) !== null) return card;
+    const parent = board.cards.find((candidate) => candidate.id === card.parentCardId);
+    if (parent === undefined || boardCardGroupOf(board, parent)?.autoPlan !== true) return card;
+    const marked = yield* dispatchOptional({
+      type: "board.card.mark-auto-plan",
+      commandId: yield* commandId("group-auto-plan"),
+      cardId: card.id,
+      mode: "ready",
+      createdAt: yield* nowIso,
+    });
+    if (!marked) return card;
+    const after = yield* readCard(card.id);
+    return after?.autoPlan === undefined ? card : { ...card, autoPlan: after.autoPlan };
+  });
+
+  /**
+   * Auto-plan → Build (T3O-32, decision 7). Request-scoped and total, like
+   * the other buttons: every refusal is a sentence the card shows.
+   */
+  const autoPlanCard = Effect.fn("board-supervisor-autoPlanCard")(function* (cardId: BoardCardId) {
+    const card = yield* readCard(cardId);
+    if (card === null || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
+    const refusal = yield* dispatchRefusal({
+      type: "board.card.mark-auto-plan",
+      commandId: yield* commandId("auto-plan"),
+      cardId: card.id,
+      mode: "build",
+      createdAt: yield* nowIso,
+    });
+    if (refusal !== null) return { outcome: "refused", detail: refusal } as const;
+    yield* autoPlanNote(
+      card.id,
+      "Auto-plan requested: the agent decides what is left, and its plan is approved and built when it arrives.",
+    );
+    const board = yield* readBoard;
+    const state = boardCardStepState(board, card.id);
+    // Only a RUNNING planning thread is steered: it is mid-interview and reads
+    // the turn next. A step parked on a question, a Stop or an escalation has
+    // nobody reading, so it is replaced by a fresh unattended run, as is a
+    // steer that did not land.
+    if (
+      state !== null &&
+      state.threadId !== null &&
+      state.stepId === card.stage &&
+      state.status === "running"
+    ) {
+      const threadId = state.threadId;
+      // Supervised as unattended BEFORE the steer lands, and the in-flight
+      // interview turn interrupted, so a question it was about to ask does not
+      // park the step behind the queued steer.
+      if (state.humanInLoop) {
+        yield* dispatch({
+          type: "board.card.retune-step",
+          commandId: yield* commandId("auto-plan-retune"),
+          cardId: card.id,
+          stepId: state.stepId,
+          humanInLoop: false,
+          createdAt: yield* nowIso,
+        });
+      }
+      const shell = yield* liveThread(threadId);
+      if (shell?.activeTurnRef != null) {
+        steeredThreads.set(String(threadId), shell.activeTurnRef);
+        const interrupted = yield* optional(
+          "thread.interrupt",
+          threads.interrupt({ commandId: yield* commandId("auto-plan-interrupt"), threadId }),
+        );
+        if (!interrupted) steeredThreads.delete(String(threadId));
+      }
+      const steered = yield* optional(
+        "thread.send",
+        threads.send({
+          commandId: yield* commandId("auto-plan-steer"),
+          threadId: state.threadId,
+          text: BOARD_AUTO_PLAN_INSTRUCTION,
+          attachments: [],
+          runtimeMode: state.runtimeMode,
+          interactionMode: "default",
+        }),
+      );
+      if (steered) return { outcome: "steered" } as const;
+      steeredThreads.delete(String(threadId));
+    }
+    const started = yield* dispatchRefusal({
+      type: "board.card.start-stage-thread",
+      commandId: yield* commandId("auto-plan-start"),
+      cardId: card.id,
+      createdAt: yield* nowIso,
+    });
+    if (started === null) return { outcome: "started" } as const;
+    // Nothing will run, so the request must not outlive the click.
+    yield* endAutoPlan(card.id, `Auto-plan could not start a planning run: ${started}`);
+    return { outcome: "refused", detail: started } as const;
   });
 
   const handleStepCompleted = Effect.fn("board-supervisor-handleStepCompleted")(function* (
@@ -6596,6 +7020,18 @@ const make = Effect.gen(function* () {
           }
           return;
         }
+        // An auto-planned card's plan is approved by the board (T3O-32): the
+        // click or the group's setting authorised it, so the plan never waits
+        // on the gate — and the stage's own auto-advance must not move it too.
+        if (stageRole === "plan") {
+          const planned = yield* readCard(card.id);
+          if (planned !== null && isBoardCardAutoPlanPending(planned)) {
+            yield* approveAutoPlannedCard(planned, state);
+            yield* releaseFinishedThreads;
+            yield* schedule();
+            return;
+          }
+        }
         // Ask the stage executor what runs next (t3o-16): a single-step stage
         // reports `complete` and this auto-advances to the next stage in order
         // on a successful unattended run (D8), re-triggering auto-kickoff there;
@@ -6640,6 +7076,7 @@ const make = Effect.gen(function* () {
   const handleInputRequested = Effect.fn("board-supervisor-handleInputRequested")(function* (
     threadId: ThreadId,
   ) {
+    if (yield* stillOnSteeredRun(threadId)) return;
     const board = yield* readBoard;
     const watched = stepThreadCard(board, threadId);
     if (watched === null || watched.state.status !== "running") return;
@@ -6874,13 +7311,13 @@ const make = Effect.gen(function* () {
   const startArmedCards = Effect.fn("board-supervisor-startArmedCards")(function* (
     /** Which cards to consider. The targeted paths narrow to the one card that
         could have changed; the sweep and boot reconciliation pass everything. */
-    select: (card: BoardCard) => boolean,
+    select: (card: BoardCard, board: BoardState) => boolean,
   ) {
     const board = yield* readBoard;
     const buildStage = boardStageWithRole(board, "build");
     if (buildStage === null) return;
     for (const card of board.cards) {
-      if (!select(card)) continue;
+      if (!select(card, board)) continue;
       if (!boardCardAutoStartDue({ board, card })) continue;
       // A move the decider would refuse for a NON-dependency reason (D5). The
       // card stays ARMED and nothing is said: a pending split is already a
@@ -6903,7 +7340,9 @@ const make = Effect.gen(function* () {
       on an ordinary board costs one board read and a filter rather than a
       whole-board dependency resolution. */
   const startArmedDependents = (dependencyId: BoardCardId) =>
-    startArmedCards((card) => card.dependsOn.includes(dependencyId));
+    startArmedCards((card, board) =>
+      boardCardInheritedDependsOn(board, card).includes(dependencyId),
+    );
 
   /**
    * Requeue every step whose backoff rung has arrived (T3O-22, D7/D10).
@@ -7050,6 +7489,10 @@ const make = Effect.gen(function* () {
   const handleCardUpdated = Effect.fn("board-supervisor-handleCardUpdated")(function* (
     event: Extract<BoardEvent, { type: "board.card-updated" }>,
   ) {
+    yield* applyRegroup(event.payload.card, {
+      becameGroup: event.payload.becameGroup === true,
+      regrouped: event.payload.regrouped === true,
+    });
     // A schedule edit acts FIRST and on its own terms (T3O-19, D3): it is the
     // one edit that must reach a card with no live step row at all, and the one
     // that acts on a step this handler's other arms would have returned past.
@@ -7169,6 +7612,201 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /** Interrupt every live turn on a card's threads (T3O-28). The release
+      sweep settles them once their turns have ended. */
+  const stopCardThreads = Effect.fn("board-supervisor-stopCardThreads")(function* (
+    card: BoardCard,
+  ) {
+    for (const link of card.threadLinks) {
+      if (link.tombstonedAt !== null) continue;
+      const shell = yield* liveThread(link.threadId).pipe(
+        Effect.catchCause(() => Effect.succeed(undefined)),
+      );
+      if (shell?.activeTurnRef == null) continue;
+      yield* logged(
+        "thread.interrupt",
+        threads.interrupt({
+          commandId: yield* commandId("interrupt-discarded"),
+          threadId: link.threadId,
+        }),
+      );
+    }
+  });
+
+  /** Close a card's open pull request on the forge (T3O-28). Best-effort: a
+      refusal is logged, and the branch deletion that follows a discard closes
+      it on most hosts anyway. */
+  const closeCardPullRequest = Effect.fn("board-supervisor-closeCardPullRequest")(function* (
+    card: BoardCard,
+    pullRequest: BoardCard["pullRequest"],
+  ) {
+    if (pullRequest === null || pullRequest.state !== "open") return;
+    const workspace = yield* workspaceFor(card);
+    yield* workspace.closePullRequest({ number: pullRequest.number }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: closing a discarded pull request failed", {
+          cardId: card.id,
+          number: pullRequest.number,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+  });
+
+  /** Report a branch deletion onto the card's rail, as Done's cleanup does. */
+  const recordBranchDeletion = Effect.fn("board-supervisor-recordBranchDeletion")(function* (
+    card: BoardCard,
+    branch: string,
+    result: {
+      readonly remoteDeleted: boolean;
+      readonly localDeleted: boolean;
+      readonly skippedReason: string | null;
+    },
+  ) {
+    const deleted = [
+      ...(result.remoteDeleted ? ["remote"] : []),
+      ...(result.localDeleted ? ["local"] : []),
+    ];
+    const skipped = result.skippedReason === null ? "" : ` — ${result.skippedReason}`;
+    yield* dispatchOptional({
+      type: "board.card.record-note",
+      commandId: yield* commandId("branch-cleanup"),
+      cardId: card.id,
+      kind: "card-branch-deleted",
+      detail:
+        deleted.length === 0
+          ? `Kept branch ${branch}${skipped}`
+          : `Deleted ${deleted.join(" and ")} branch ${branch}${skipped}`,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
+   * A confirmed group archive's git half (T3O-28, decision 14): the card's
+   * worktree goes, forced, then its branch — local and remote — including a
+   * group's `branch-only` integration branch. No further work, ever.
+   */
+  const discardCardBranchWork = Effect.fn("board-supervisor-discardCardBranchWork")(function* (
+    cardId: BoardCardId,
+  ) {
+    const card = yield* readCard(cardId);
+    if (card === null || card.archivedAt === null) return;
+    const worktree = card.worktree;
+    // A reclaimed slice still names its branch: the archive's own reclaim
+    // may have removed the checkout first, and the branch outlives it.
+    if (worktree === null) return;
+    if (worktree.status === "ready" && worktree.path !== null) {
+      yield* forceRemoveCardWorktree(card.id);
+    }
+    const workspace = yield* workspaceFor(card);
+    if (workspace.checkoutPath === null) return;
+    const result = yield* workspace.deleteCardBranch({ branch: worktree.branch }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: branch cleanup on group archive failed", {
+          cardId: card.id,
+          branch: worktree.branch,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (result === null) return;
+    yield* recordBranchDeletion(card, worktree.branch, result);
+    // Settled only once both copies are gone: until then the pending discard
+    // stays on the card for the sweep to retry, so a failed remote delete is
+    // never forgotten.
+    if (!result.localDeleted || !(result.remoteDeleted || result.remoteAbsent)) {
+      // The rail refuses notes on archived cards, so the log is the record.
+      yield* Effect.logWarning("board supervisor: group archive's branch discard still pending", {
+        cardId: card.id,
+        branch: worktree.branch,
+        reason: result.skippedReason,
+      });
+      return;
+    }
+    const after = yield* readCard(card.id);
+    if (after?.worktree == null) return;
+    if (after.worktree.status === "reclaimed" && after.worktree.discardPending !== true) return;
+    yield* dispatchOptional({
+      type: "board.card.reclaim-worktree",
+      commandId: yield* commandId("discard-reclaim-worktree"),
+      cardId: card.id,
+      outcome: "removed",
+      forced: true,
+      discardSettled: true,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
+   * An archived group's `branch-only` integration branch (T3O-28): it has no
+   * checkout for the reclaim to remove, so without this it outlives its card.
+   * A plain archive is reversible, so the branch goes only once its merge made
+   * the work durable; a confirmed group archive deletes it regardless.
+   */
+  const reclaimArchivedIntegrationBranch = Effect.fn(
+    "board-supervisor-reclaimArchivedIntegrationBranch",
+  )(function* (card: BoardCard) {
+    if (card.archivedAt === null || card.worktree?.status !== "branch-only") return;
+    if (boardCardDisplayPullRequest(card)?.state !== "merged") return;
+    yield* discardCardBranchWork(card.id);
+  });
+
+  /**
+   * A cancelled card's worktree (T3O-28, decision 12): reclaimed by the usual
+   * safety rule, so work that exists nowhere else is kept and said so. The
+   * branch is kept until that reclaim removes the checkout, and goes with it.
+   */
+  const reclaimCancelledCardWorktree = Effect.fn("board-supervisor-reclaimCancelledCardWorktree")(
+    function* (cardId: BoardCardId) {
+      const card = yield* readCard(cardId);
+      if (card === null) return null;
+      const attempt = yield* reclaimCardWorktree(card);
+      if (attempt?.outcome === "removed") yield* deleteCancelledCardBranch(cardId);
+      return attempt;
+    },
+  );
+
+  const deleteCancelledCardBranch = Effect.fn("board-supervisor-deleteCancelledCardBranch")(
+    function* (cardId: BoardCardId) {
+      const after = yield* readCard(cardId);
+      const branch = after?.worktree?.branch ?? null;
+      if (after === null || branch === null) return;
+      const workspace = yield* workspaceFor(after);
+      if (workspace.checkoutPath === null) return;
+      const result = yield* workspace.deleteCardBranch({ branch }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: cancelled card's branch cleanup failed", {
+            cardId,
+            branch,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      if (result !== null) yield* recordBranchDeletion(after, branch, result);
+    },
+  );
+
+  /**
+   * A started leaf's work was cancelled to make it a parent (T3O-28, decision
+   * 12): its step is abandoned, its threads stop, its pull request closes, and
+   * its worktree is reclaimed — the card is already a group.
+   */
+  const handleWorkCancelled = Effect.fn("board-supervisor-handleWorkCancelled")(function* (
+    cancelled: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cancelled.id) ?? cancelled;
+    const state = boardCardStepState(board, card.id);
+    if (state !== null && !isBoardTerminalStepStatus(state.status)) {
+      yield* settleStep({ card, state, outcome: "abandoned" });
+      yield* schedule();
+    }
+    yield* stopCardThreads(card);
+    yield* closeCardPullRequest(card, card.pullRequestHistory.at(-1) ?? null);
+    yield* cardCleanupWorker.enqueue({ kind: "cancelled", cardId: card.id });
+    yield* releaseFinishedThreads;
+  });
+
   const handleArchived = Effect.fn("board-supervisor-handleArchived")(function* (
     event: Extract<BoardEvent, { type: "board.card-archived" }>,
   ) {
@@ -7194,8 +7832,21 @@ const make = Effect.gen(function* () {
     // is reclaimed EARLIER, at Done, and never whether it is reclaimed at all.
     // A worktree may not outlive its card.
     //
-    // Off this worker (T3O-52): the reclaim fetches from the remote first.
-    yield* cardCleanupWorker.enqueue({ kind: "reclaim", cardId: card.id });
+    if (event.payload.discard === true) {
+      // A confirmed group archive (T3O-28): nothing here is coming back.
+      yield* stopCardThreads(card);
+      yield* closeCardPullRequest(card, card.pullRequest);
+      yield* cardCleanupWorker.enqueue({ kind: "discard", cardId: card.id });
+      // Children archived before this one were left out of the subtree's
+      // events, but their branches are just as dead now.
+      for (const earlier of earlierArchivedSubtrees(board.cards, card)) {
+        yield* closeCardPullRequest(earlier, earlier.pullRequest);
+        yield* cardCleanupWorker.enqueue({ kind: "discard", cardId: earlier.id });
+      }
+    } else {
+      // Off this worker (T3O-52): the reclaim fetches from the remote first.
+      yield* cardCleanupWorker.enqueue({ kind: "reclaim", cardId: card.id });
+    }
     // An archived card is done with every thread it holds (t3o-13).
     yield* releaseFinishedThreads;
     // An archived child counts as finished (t3o-23, D6), so this may have
@@ -7203,11 +7854,13 @@ const make = Effect.gen(function* () {
     // unblocks a sibling still waiting on the floor (t3o-28, D3).
     if (card.parentCardId !== null) {
       yield* cascadeUnblockedChildren(card.parentCardId);
-      yield* advanceParentIfChildrenDone(card.parentCardId);
+      yield* syncAncestorGroups(card.parentCardId);
     }
     // An ARCHIVED dependency stops gating (t3o-13, D1), so archiving a blocker
-    // frees its dependents exactly as finishing it would (T3O-24, D6).
+    // frees its dependents exactly as finishing it would (T3O-24, D6) — in
+    // any group (T3O-27).
     yield* startArmedDependents(card.id);
+    yield* cascadeDependentGroups(card.id);
   });
 
   /**
@@ -7300,7 +7953,7 @@ const make = Effect.gen(function* () {
     // refuses when NO children remain: an emptied split waits for the human).
     if (card.parentCardId !== null) {
       yield* cascadeUnblockedChildren(card.parentCardId);
-      yield* advanceParentIfChildrenDone(card.parentCardId);
+      yield* syncAncestorGroups(card.parentCardId);
     }
   });
 
@@ -7327,112 +7980,135 @@ const make = Effect.gen(function* () {
   // was nothing to do): a child that triggered the attempt quotes the reason on
   // its own card (T3O-15). `transient` marks git itself failing on a repo that
   // is otherwise fine — the child retries on its next pass rather than parking.
+  // A nested own group is cut from its own integration ancestor (T3O-27), so
+  // the chain is ensured outermost first; the first failure stops it.
   const ensureIntegrationBranch = Effect.fn("board-supervisor-ensureIntegrationBranch")(function* (
     card: BoardCard,
   ) {
-    if (
-      card.worktree !== null &&
-      card.worktree.status !== "failed" &&
-      card.worktree.status !== "reclaimed"
-    ) {
-      return null;
+    const board = yield* readBoard;
+    const chain: Array<BoardCard> = [];
+    let outer = boardCardIntegrationAncestor(board, card);
+    while (outer !== null && !chain.some((seen) => seen.id === outer!.id)) {
+      chain.unshift(outer);
+      outer = boardCardIntegrationAncestor(board, outer);
     }
-    type Failure = {
-      readonly reason: string;
-      readonly transient: boolean;
-      /** The parent's worker is out of reach (T3O-64): nothing was recorded,
+    for (const ancestor of chain) {
+      if (boardCardHasLiveBranch(ancestor)) continue;
+      const failure = yield* ensureOneIntegrationBranch(ancestor);
+      if (failure !== null) return failure;
+    }
+    return yield* ensureOneIntegrationBranch(card);
+  });
+
+  const ensureOneIntegrationBranch = Effect.fn("board-supervisor-ensureOneIntegrationBranch")(
+    function* (card: BoardCard) {
+      if (
+        card.worktree !== null &&
+        card.worktree.status !== "failed" &&
+        card.worktree.status !== "reclaimed"
+      ) {
+        return null;
+      }
+      type Failure = {
+        readonly reason: string;
+        readonly transient: boolean;
+        /** The parent's worker is out of reach (T3O-64): nothing was recorded,
           and the child retries on its next pass. */
-      readonly unavailable?: boolean;
-    } | null;
-    const fail = (reason: string, transient = false) =>
-      failWorktree(card, reason).pipe(Effect.as<Failure>({ reason, transient }));
-    const unreachable: Failure = {
-      reason: "The card's worker is unreachable.",
-      transient: true,
-      unavailable: true,
-    };
-    // Cut on the PARENT's worker and pushed (D12): a child placed elsewhere
-    // cuts its own branch from the remote copy.
-    const workspace = yield* workspaceFor(card);
-    const cwd = workspace.checkoutPath;
-    if (cwd === null) {
-      return yield* fail(noWorkspaceFolderReason(workspace));
-    }
-    const branch = boardCardWorktreeBranchName(card);
-    const resolved = yield* resolveDefaultBranch(workspace);
-    if (resolved.unavailable) return unreachable;
-    const { defaultBranch } = resolved;
-    if (defaultBranch === "") {
-      return yield* fail(noDefaultBranchReason(cwd, resolved, "the integration branch"));
-    }
-    // The integration branch is cut from the PARENT's base (T3O-5, D8), not
-    // unconditionally from the project default. This is a latent bug the
-    // per-card base exposes rather than new behaviour: without it a split
-    // parent based on `release/2.4` would get an integration branch cut from
-    // `main`, and every child would silently inherit the error. A parent with
-    // no pin resolves to the default, which is exactly what this used to do.
-    const integrationBase =
-      resolveBoardCardEffectiveBase({
-        card,
-        cards: (yield* readBoard).cards,
-        defaultBranch,
-      }) ?? defaultBranch;
-    const baseExists = yield* ensureLocalBaseBranch(workspace, integrationBase);
-    if (baseExists === "unavailable") return unreachable;
-    if (!baseExists) {
-      return yield* fail(
-        `The card's base branch '${integrationBase}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the integration branch from.`,
+        readonly unavailable?: boolean;
+      } | null;
+      const fail = (reason: string, transient = false) =>
+        failWorktree(card, reason).pipe(Effect.as<Failure>({ reason, transient }));
+      const unreachable: Failure = {
+        reason: "The card's worker is unreachable.",
+        transient: true,
+        unavailable: true,
+      };
+      // An inherit group has no branch of its own (T3O-27), and grouping alone
+      // never touches git.
+      if (boardCardGroupOf(yield* readBoard, card)?.target === "inherit") return null;
+      // Cut on the PARENT's worker and pushed (D12): a child placed elsewhere
+      // cuts its own branch from the remote copy.
+      const workspace = yield* workspaceFor(card);
+      const cwd = workspace.checkoutPath;
+      if (cwd === null) {
+        return yield* fail(noWorkspaceFolderReason(workspace));
+      }
+      const branch = boardCardWorktreeBranchName(card);
+      const resolved = yield* resolveDefaultBranch(workspace);
+      if (resolved.unavailable) return unreachable;
+      const { defaultBranch } = resolved;
+      if (defaultBranch === "") {
+        return yield* fail(noDefaultBranchReason(cwd, resolved, "the integration branch"));
+      }
+      // The integration branch is cut from the PARENT's base (T3O-5, D8), not
+      // unconditionally from the project default. This is a latent bug the
+      // per-card base exposes rather than new behaviour: without it a split
+      // parent based on `release/2.4` would get an integration branch cut from
+      // `main`, and every child would silently inherit the error. A parent with
+      // no pin resolves to the default, which is exactly what this used to do.
+      const integrationBase =
+        resolveBoardCardEffectiveBase({
+          card,
+          cards: (yield* readBoard).cards,
+          defaultBranch,
+        }) ?? defaultBranch;
+      const baseExists = yield* ensureLocalBaseBranch(workspace, integrationBase);
+      if (baseExists === "unavailable") return unreachable;
+      if (!baseExists) {
+        return yield* fail(
+          `The card's base branch '${integrationBase}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the integration branch from.`,
+        );
+      }
+      // Idempotent on retry: an existing branch is the desired state, not an
+      // error (an earlier attempt may have created it and died before the
+      // record landed, or a raced sibling created it a moment ago).
+      type Cut = BoardWorkspaceIntegrationBranch | "unavailable";
+      const cut = yield* workspace.createIntegrationBranch({ branch, base: integrationBase }).pipe(
+        Effect.map((result): Cut => result),
+        Effect.catch((error): Effect.Effect<Cut> =>
+          error._tag === "WorkerUnavailable"
+            ? Effect.succeed("unavailable" as const)
+            : Effect.logWarning("board supervisor: integration branch creation failed", {
+                cardId: card.id,
+                detail: error.detail,
+              }).pipe(Effect.as({ outcome: "create-failed" } as const)),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: integration branch creation failed", {
+            cardId: card.id,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ outcome: "create-failed" } as const)),
+        ),
       );
-    }
-    // Idempotent on retry: an existing branch is the desired state, not an
-    // error (an earlier attempt may have created it and died before the
-    // record landed, or a raced sibling created it a moment ago).
-    type Cut = BoardWorkspaceIntegrationBranch | "unavailable";
-    const cut = yield* workspace.createIntegrationBranch({ branch, base: integrationBase }).pipe(
-      Effect.map((result): Cut => result),
-      Effect.catch((error): Effect.Effect<Cut> =>
-        error._tag === "WorkerUnavailable"
-          ? Effect.succeed("unavailable" as const)
-          : Effect.logWarning("board supervisor: integration branch creation failed", {
-              cardId: card.id,
-              detail: error.detail,
-            }).pipe(Effect.as({ outcome: "create-failed" } as const)),
-      ),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("board supervisor: integration branch creation failed", {
+      if (cut === "unavailable") return unreachable;
+      if (cut.outcome === "create-failed") {
+        return yield* fail(
+          `Could not create the integration branch '${branch}' from '${integrationBase}'.`,
+          true,
+        );
+      }
+      const pushed = cut.pushed;
+      if (!pushed) {
+        yield* dispatch({
+          type: "board.card.record-note",
+          commandId: yield* commandId("push-skipped"),
           cardId: card.id,
-          cause: Cause.pretty(cause),
-        }).pipe(Effect.as({ outcome: "create-failed" } as const)),
-      ),
-    );
-    if (cut === "unavailable") return unreachable;
-    if (cut.outcome === "create-failed") {
-      return yield* fail(
-        `Could not create the integration branch '${branch}' from '${integrationBase}'.`,
-        true,
-      );
-    }
-    const pushed = cut.pushed;
-    if (!pushed) {
+          kind: "card-branch-push-skipped",
+          detail: `Created '${branch}' locally but could not push it; child pull requests will have no remote base until it is pushed.`,
+          createdAt: yield* nowIso,
+        });
+      }
       yield* dispatch({
-        type: "board.card.record-note",
-        commandId: yield* commandId("push-skipped"),
+        type: "board.card.record-integration-branch",
+        commandId: yield* commandId("record-integration-branch"),
         cardId: card.id,
-        kind: "card-branch-push-skipped",
-        detail: `Created '${branch}' locally but could not push it; child pull requests will have no remote base until it is pushed.`,
+        branch,
+        baseRefName: integrationBase,
         createdAt: yield* nowIso,
       });
-    }
-    yield* dispatch({
-      type: "board.card.record-integration-branch",
-      commandId: yield* commandId("record-integration-branch"),
-      cardId: card.id,
-      branch,
-      baseRefName: integrationBase,
-      createdAt: yield* nowIso,
-    });
-    return null;
-  });
+      return null;
+    },
+  );
 
   const handlePlansApproved = Effect.fn("board-supervisor-handlePlansApproved")(function* (
     event: Extract<BoardEvent, { type: "board.plans-approved" }>,
@@ -7462,10 +8138,12 @@ const make = Effect.gen(function* () {
     // agents. Each child's build is a deliberate later "Begin build" — a drag
     // (`board.card-moved`) which DOES kick off. The decider cannot enforce
     // this (it has no settings, D8), so the reactor does, keyed on the child's
-    // `parentCardId`. An ordinary card created straight into an auto stage
-    // (D10) has no parent and still kicks off here.
-    if (card.parentCardId !== null) return;
-    yield* beginStageRun({ card, onDemand: false });
+    // `sourcePlanId`. Any other card created straight into an auto stage
+    // (D10) kicks off here — including one a human created inside a group
+    // (T3O-27), which arrives exactly as a card moved into it would.
+    if (card.sourcePlanId !== null) return;
+    yield* beginStageRun({ card: yield* markGroupAutoPlan(card), onDemand: false });
+    if (card.parentCardId !== null) yield* cascadeUnblockedChildren(card.parentCardId);
   });
 
   /**
@@ -7689,6 +8367,7 @@ const make = Effect.gen(function* () {
       });
     }
 
+    kickoffCard = yield* markGroupAutoPlan(kickoffCard);
     yield* beginStageRun({ card: kickoffCard, onDemand: false });
     // The card changed stage, so the threads it left behind are finished work
     // (t3o-13). Run AFTER the kickoff, so the destination's own freshly linked
@@ -7756,29 +8435,25 @@ const make = Effect.gen(function* () {
       yield* clearAutoMergeHold(moved);
     }
 
-    // A child changing stage may have been the parent's last unfinished one
-    // (t3o-23, D4) — the advance helper's own guards make a non-final move a
-    // cheap no-op — or the one whose finishing frees a sibling to start
-    // (t3o-28, D3). The mirror (t3o-24, D4): the same move may have dragged a
-    // child back OUT of Done under a parent that already advanced. Every
-    // helper guards itself, so all three are safe to ask every time.
+    // A child changing stage may free a sibling to start (t3o-28, D3); the
+    // decider already re-derived its groups in the same decision (T3O-27), so
+    // the sync is a cheap check that heals an event it did not shape.
     if (card.parentCardId !== null) {
       yield* cascadeUnblockedChildren(card.parentCardId);
-      yield* advanceParentIfChildrenDone(card.parentCardId);
-      yield* regressParentIfChildLeftDone(card.parentCardId);
+      yield* syncAncestorGroups(card.parentCardId);
     }
-    // The PARENT itself arriving at the build-role stage is the Begin build
-    // for the whole split (t3o-28, D3): start every child the plan graph does
-    // not block. This is also how the t3o-24 regression back to build
-    // restarts a corrected parent's sub-board — the helper is keyed on where
-    // the parent now stands, not on how it got there. Gated on the card
-    // HAVING children so an ordinary card's every move does not pay a board
-    // read to be told it has no sub-board. LIVE children only: a fully-wrapped
-    // split (every child archived) can cascade nothing, so it should not pay
-    // the helper's own board read to be told so — and `cascadeUnblockedChildren`
-    // only ever moves a live child off the floor anyway.
-    else if (boardCardChildren(board, card.id).some((child) => child.archivedAt === null)) {
+    // A group arriving at the build-role stage is the Begin build for its
+    // children (t3o-28, D3): start every child the dependency graph does not
+    // block. Groups nest, so a child group's own arrival cascades one level
+    // further down. LIVE children only: a fully-wrapped group can cascade
+    // nothing, so it should not pay the helper's own board read.
+    if (boardCardChildren(board, card.id).some((child) => child.archivedAt === null)) {
       yield* cascadeUnblockedChildren(card.id);
+    }
+    // Dependencies cross groups (T3O-27): a card reaching Done may free a
+    // card waiting in another group.
+    if (boardStageWithRole(board, "done")?.stageId === event.payload.toStage) {
+      yield* cascadeDependentGroups(card.id);
     }
     // Arriving in the done-role stage is what SATISFIES this card as a
     // dependency (T3O-24, D6), so it is the moment an armed dependent can
@@ -8575,9 +9250,15 @@ const make = Effect.gen(function* () {
         // On-demand kickoff (D7), the counterpart of auto-kickoff.
         return handleStageThreadRequested(event);
       case "board.card-updated":
-        return handleCardUpdated(event);
+        return event.payload.workCancelled === true
+          ? handleWorkCancelled(event.payload.card).pipe(Effect.andThen(handleCardUpdated(event)))
+          : handleCardUpdated(event);
       case "board.card-step-completed":
         return handleStepCompleted(event);
+      case "board.card-step-awaiting-input":
+      case "board.card-step-paused":
+      case "board.card-step-settled":
+        return endAutoPlanIfUndriven(event.payload.cardId);
       case "board.card-step-force-start-requested":
         // A human took a slot over the cap (t3o-33). Scheduling here is what
         // makes the click start the card: without it the override would sit on
@@ -8606,6 +9287,7 @@ const make = Effect.gen(function* () {
             // neither needs a private path into the governor.
             event.payload.state.status === "queued" ? schedule() : Effect.void,
           ),
+          Effect.andThen(endAutoPlanIfUndriven(event.payload.cardId)),
         );
       case "board.card-archived":
         return handleArchived(event);
@@ -8996,6 +9678,11 @@ const make = Effect.gen(function* () {
           // below the volume that made thread activity need filtering at the
           // gateway (`ThreadGatewayV1.observe`).
           event.type !== "board.card-step-recovered" &&
+          // T3O-32: a step parked or settled may end a pending auto-plan
+          // request. Step boundaries, so a handful an hour.
+          event.type !== "board.card-step-awaiting-input" &&
+          event.type !== "board.card-step-paused" &&
+          event.type !== "board.card-step-settled" &&
           event.type !== "board.card-archived" &&
           event.type !== "board.card-deleted" &&
           event.type !== "board.plans-approved" &&
@@ -9182,6 +9869,15 @@ const make = Effect.gen(function* () {
           // round did not start" rather than as an unhandled failure on a
           // button click.
           Effect.logWarning("board supervisor: review round request failed", {
+            cardId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ outcome: "failed" } as const)),
+        ),
+      ),
+    autoPlanCard: (cardId) =>
+      autoPlanCard(cardId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: auto-plan failed", {
             cardId,
             cause: Cause.pretty(cause),
           }).pipe(Effect.as({ outcome: "failed" } as const)),

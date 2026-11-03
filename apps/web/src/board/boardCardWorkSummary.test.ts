@@ -39,6 +39,7 @@ function card(overrides?: Partial<BoardCard>): BoardCard {
     dependsOn: [],
     parentCardId: null,
     sourcePlanId: null,
+    group: null,
     threadLinks: [],
     attachments: [],
     externalRef: null,
@@ -76,11 +77,13 @@ function detail(
     plans,
     children: edges?.children ?? [],
     dependencies: [],
+    groupDependencies: [],
     dependents: [],
     activity: [],
     parentModelOverrides: null,
     stepError: null,
     stepCompletions: edges?.stepCompletions ?? [],
+    decisions: [],
   };
 }
 
@@ -111,6 +114,24 @@ const openPr = {
 };
 
 describe("boardCardHasSummaryPane", () => {
+  it("shows from Ready onward once the card has a decision log (T3O-32)", () => {
+    const at = (
+      stage: (typeof BOARD_SEED_STAGE_IDS)[keyof typeof BOARD_SEED_STAGE_IDS],
+      count: number,
+    ) =>
+      boardCardHasSummaryPane({
+        stages: BOARD_SEED_STAGES,
+        stage,
+        stepCompletions: [],
+        card: card({ stage }),
+        decisionCount: count,
+      });
+    expect(at(BOARD_SEED_STAGE_IDS.planning, 3)).toBe(false);
+    expect(at(BOARD_SEED_STAGE_IDS.ready, 3)).toBe(true);
+    expect(at(BOARD_SEED_STAGE_IDS.building, 3)).toBe(true);
+    expect(at(BOARD_SEED_STAGE_IDS.ready, 0)).toBe(false);
+  });
+
   it("shows from Code review through Done", () => {
     expect(
       boardCardHasSummaryPane({

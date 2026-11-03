@@ -20,6 +20,8 @@ import {
   BOARD_LABEL_NAME_MAX_LENGTH,
   BOARD_SEED_STAGE_IDS,
   boardCardAutoMergeArmed,
+  boardShellAutoMergeArmed,
+  boardShellAutoMergeArmedByCard,
   boardCardAutoMergeGaveUp,
   boardCardAutoStartDue,
   boardCardCanArmAutoMerge,
@@ -43,6 +45,7 @@ import {
   boardArrivalOrderKey,
   boardColumnOrderKeys,
   boardPrependOrderKey,
+  boardOrderKeyBetween,
   BoardStageId,
   LEGACY_BOARD_CARD_ORDER_KEY,
   boardBuildHumanInLoopDefault,
@@ -86,6 +89,7 @@ import {
   type BoardState,
   BoardShellSnapshot,
 } from "./board.ts";
+import { defaultBoardCardGroup } from "./boardGroups.ts";
 import type { BoardCardAutoMergeHold, BoardCardWorktree } from "./board.ts";
 import { ProjectId, ThreadId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -218,6 +222,7 @@ const typicalCard = (index: number): BoardCard => ({
   dependsOn: [],
   parentCardId: null,
   sourcePlanId: null,
+  group: null,
   attachments: [],
   threadLinks: [
     {
@@ -1271,21 +1276,21 @@ describe("sub-boards (t3o-23)", () => {
       ).toBe(false);
     });
 
-    it("derives the same from the shell, and never for a child card", () => {
+    it("derives the same from the shell, for a child card too (T3O-27)", () => {
       expect(
         boardCardShellPendingSplit(
           { stage: BOARD_SEED_STAGE_IDS.planning, planCount: 2 },
           BOARD_SEED_STAGES,
         ),
       ).toBe(true);
-      // A child (parentCardId set) or a parent-with-children (planTotal set) is
-      // never pending.
+      // Splits nest, so a child may pend; a parent-with-children (planTotal
+      // set) never does.
       expect(
         boardCardShellPendingSplit(
           { stage: BOARD_SEED_STAGE_IDS.planning, planCount: 2, parentCardId: parent.id },
           BOARD_SEED_STAGES,
         ),
-      ).toBe(false);
+      ).toBe(true);
       expect(
         boardCardShellPendingSplit(
           { stage: BOARD_SEED_STAGE_IDS.planning, planCount: 2, planTotal: 2 },
@@ -1315,7 +1320,7 @@ describe("per-card model overrides (t3o-29)", () => {
     expect(
       resolveBoardCardStageModelOverride({
         card: { modelOverrides: { [build]: opus } },
-        parent: { modelOverrides: { [build]: haiku } },
+        ancestors: [{ modelOverrides: { [build]: haiku } }],
         stageId: build,
       }),
     ).toEqual(opus);
@@ -1325,7 +1330,7 @@ describe("per-card model overrides (t3o-29)", () => {
     expect(
       resolveBoardCardStageModelOverride({
         card: { modelOverrides: null },
-        parent: { modelOverrides: { [build]: haiku } },
+        ancestors: [{ modelOverrides: { [build]: haiku } }],
         stageId: build,
       }),
     ).toEqual(haiku);
@@ -1335,7 +1340,7 @@ describe("per-card model overrides (t3o-29)", () => {
     expect(
       resolveBoardCardStageModelOverride({
         card: { modelOverrides: null },
-        parent: { modelOverrides: { [build]: haiku } },
+        ancestors: [{ modelOverrides: { [build]: haiku } }],
         stageId: review,
       }),
     ).toBeNull();
@@ -1345,10 +1350,27 @@ describe("per-card model overrides (t3o-29)", () => {
     expect(
       resolveBoardCardStageModelOverride({
         card: { modelOverrides: null },
-        parent: null,
+        ancestors: [],
         stageId: build,
       }),
     ).toBeNull();
+  });
+
+  it("walks the whole ancestor chain, nearest group first (T3O-27)", () => {
+    expect(
+      resolveBoardCardStageModelOverride({
+        card: { modelOverrides: null },
+        ancestors: [{ modelOverrides: null }, { modelOverrides: { [build]: haiku } }],
+        stageId: build,
+      }),
+    ).toEqual(haiku);
+    expect(
+      resolveBoardCardStageModelOverride({
+        card: { modelOverrides: null },
+        ancestors: [{ modelOverrides: { [build]: opus } }, { modelOverrides: { [build]: haiku } }],
+        stageId: build,
+      }),
+    ).toEqual(opus);
   });
 
   it("narrows an override to its model half, dropping the access level", () => {
@@ -1363,29 +1385,19 @@ describe("per-card model overrides (t3o-29)", () => {
   });
 });
 
-describe("build-stage human-in-the-loop default (t3o-15 D6, sub-board children)", () => {
+describe("build-stage human-in-the-loop default (t3o-15 D6, T3O-27)", () => {
   // The shipped defaults: a plan-less card pauses for a human, a planned one
   // runs unattended.
   const shipped = { humanInLoopWithPlan: false, humanInLoopWithoutPlan: true };
-  const topLevel = { parentCardId: null };
-  const child = { parentCardId: BoardCardId.make("card-parent") };
 
-  it("flips a top-level card's default on whether it has a plan", () => {
-    expect(boardBuildHumanInLoopDefault(shipped, topLevel, false)).toBe(true);
-    expect(boardBuildHumanInLoopDefault(shipped, topLevel, true)).toBe(false);
+  it("flips a card's default on whether it has a plan", () => {
+    expect(boardBuildHumanInLoopDefault(shipped, false)).toBe(true);
+    expect(boardBuildHumanInLoopDefault(shipped, true)).toBe(false);
   });
 
-  it("reads the with-plan default for a sub-board child that owns no plan row", () => {
-    // Materialisation made the child's plan its brief; it has no plan of its
-    // own, and the plan-less pause must not park the cascade (t3o-28, D3).
-    expect(boardBuildHumanInLoopDefault(shipped, child, false)).toBe(false);
-    expect(boardBuildHumanInLoopDefault(shipped, child, true)).toBe(false);
-  });
-
-  it("still honours a with-plan pause the user switched on, for children too", () => {
+  it("still honours a with-plan pause the user switched on", () => {
     const pauseAll = { humanInLoopWithPlan: true, humanInLoopWithoutPlan: true };
-    expect(boardBuildHumanInLoopDefault(pauseAll, child, false)).toBe(true);
-    expect(boardBuildHumanInLoopDefault(pauseAll, topLevel, true)).toBe(true);
+    expect(boardBuildHumanInLoopDefault(pauseAll, true)).toBe(true);
   });
 });
 
@@ -1457,6 +1469,24 @@ describe("cards that need a human (boardCardAttention)", () => {
     // no claim and takes no colour.
     expect(attention({ stepAwaiting: "paused" })?.tone).toBe("neutral");
     expect(attention({ stepAwaiting: "paused" })?.label).toBe("Paused");
+  });
+
+  it("reads a pending split as violet Input needed, naming the split (T3O-31)", () => {
+    // No `planTotal`: the card has no children yet, so the split is pending.
+    const {
+      planTotal: _none,
+      planDone: _noneDone,
+      ...shell
+    } = card({
+      stage: BOARD_SEED_STAGE_IDS.planning,
+      planCount: 3,
+    });
+    const pending = boardCardAttention({ card: shell, stages: BOARD_SEED_STAGES });
+    expect(pending?.reason).toBe("approval");
+    // A plan waiting on the human's approval is violet, not amber.
+    expect(pending?.tone).toBe("attention");
+    expect(pending?.label).toBe("Input needed");
+    expect(pending?.detail).toContain("Split proposed · 3 cards");
   });
 
   it("paints every reading of stalled amber, never red", () => {
@@ -2319,6 +2349,29 @@ describe("a pull request link's draft flag (T3O-12)", () => {
   });
 });
 
+describe("boardOrderKeyBetween (T3O-27)", () => {
+  it("returns a key strictly between its bounds", () => {
+    for (const [low, high] of [
+      ["", "m"],
+      ["m", null],
+      ["m", "n"],
+      ["mz", "n"],
+      ["b", "bb"],
+    ] as const) {
+      const key = boardOrderKeyBetween(low, high)!;
+      expect(key > low).toBe(true);
+      if (high !== null) expect(key < high).toBe(true);
+    }
+  });
+
+  it("returns null when no key fits", () => {
+    expect(boardOrderKeyBetween("", "a")).toBeNull();
+    expect(boardOrderKeyBetween("x", "xa")).toBeNull();
+    expect(boardOrderKeyBetween("n", "m")).toBeNull();
+    expect(boardOrderKeyBetween("m", "m")).toBeNull();
+  });
+});
+
 describe("top-of-column order keys (T3O-15)", () => {
   const sorted = (keys: ReadonlyArray<string>) => [...keys].sort();
 
@@ -2444,12 +2497,17 @@ describe("auto-start (T3O-24)", () => {
       expect(boardCardCanArmAutoStart(on(waiting({ dependsOn: [] })))).toBe(false);
     });
 
-    it("refuses a sub-board child, which already cascades", () => {
+    it("arms any leaf, a child included, and never a group (T3O-27)", () => {
       const child = waiting({
         dependsOn: [open.id],
         parentCardId: BoardCardId.make("card-parent"),
       });
-      expect(boardCardCanArmAutoStart(on(child, open))).toBe(false);
+      expect(boardCardCanArmAutoStart(on(child, open))).toBe(true);
+      const group = waiting({
+        dependsOn: [open.id],
+        group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.ready }),
+      });
+      expect(boardCardCanArmAutoStart(on(group, open))).toBe(false);
     });
 
     it("refuses a card at or past the build role, and one still in ideation", () => {
@@ -2512,13 +2570,27 @@ describe("auto-start (T3O-24)", () => {
       expect(boardCardAutoStartDue(on(waiting({ dependsOn: [done.id] }), done))).toBe(false);
     });
 
-    it("is never due for a sub-board child, an archived card, or one past Ready", () => {
+    it("waits on the dependencies of every group the card sits in (T3O-26)", () => {
+      const parentId = BoardCardId.make("card-parent");
+      const groupCard = (dependsOn: ReadonlyArray<BoardCardId>) => ({
+        ...waiting({ id: parentId, dependsOn }),
+        group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.ready }),
+      });
+      const armed = waiting({ autoStart: true, dependsOn: [done.id], parentCardId: parentId });
+      expect(boardCardAutoStartDue(on(armed, groupCard([open.id]), done, open))).toBe(false);
+      expect(boardCardAutoStartDue(on(armed, groupCard([done.id]), done))).toBe(true);
+      // Nothing of its own to wait on, but its group does: armable.
+      const bare = waiting({ parentCardId: parentId });
+      expect(boardCardCanArmAutoStart(on(bare, groupCard([open.id]), open))).toBe(true);
+    });
+
+    it("is due for an armed child, and never for an archived card or one past Ready", () => {
       const armed = { autoStart: true, dependsOn: [done.id] } as const;
       expect(
         boardCardAutoStartDue(
           on(waiting({ ...armed, parentCardId: BoardCardId.make("card-parent") }), done),
         ),
-      ).toBe(false);
+      ).toBe(true);
       expect(boardCardAutoStartDue(on(waiting({ ...armed, archivedAt: NOW }), done))).toBe(false);
       expect(
         boardCardAutoStartDue(
@@ -2586,7 +2658,7 @@ describe("auto-merge (T3O-38)", () => {
       }
     });
 
-    it("refuses a card in Done, an archived card, and a sub-board child", () => {
+    it("refuses a card in Done, an archived card, and a group — not a child (T3O-27)", () => {
       const done = at(BOARD_SEED_STAGE_IDS.done);
       expect(boardCardCanArmAutoMerge({ board: board(done), card: done })).toBe(false);
       const archived = at(BOARD_SEED_STAGE_IDS.merge, { archivedAt: NOW });
@@ -2594,7 +2666,195 @@ describe("auto-merge (T3O-38)", () => {
       const child = at(BOARD_SEED_STAGE_IDS.merge, {
         parentCardId: BoardCardId.make("card-parent"),
       });
-      expect(boardCardCanArmAutoMerge({ board: board(child), card: child })).toBe(false);
+      expect(boardCardCanArmAutoMerge({ board: board(child), card: child })).toBe(true);
+      const group = at(BOARD_SEED_STAGE_IDS.sprint, {
+        group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.sprint }),
+      });
+      expect(boardCardCanArmAutoMerge({ board: board(group), card: group })).toBe(false);
+    });
+
+    it("arms a child by its group: integration branches under auto-build, trunk under auto-merge", () => {
+      const ownGroup = at(BOARD_SEED_STAGE_IDS.building, {
+        id: BoardCardId.make("card-own"),
+        group: defaultBoardCardGroup(
+          EMPTY_BOARD_STATE,
+          { stage: BOARD_SEED_STAGE_IDS.ready },
+          { target: "own", autoBuild: false },
+        ),
+      });
+      const ownChild = at(BOARD_SEED_STAGE_IDS.merge, { parentCardId: ownGroup.id });
+      const ownBoard = { ...EMPTY_BOARD_STATE, cards: [ownGroup, ownChild] };
+      expect(boardCardAutoMergeArmed({ board: ownBoard, card: ownChild })).toBe(false);
+      const ownBuilding = { ...ownGroup, group: { ...ownGroup.group!, autoBuild: true } };
+      expect(
+        boardCardAutoMergeArmed({
+          board: { ...ownBoard, cards: [ownBuilding, ownChild] },
+          card: ownChild,
+        }),
+      ).toBe(true);
+      const epic = at(BOARD_SEED_STAGE_IDS.building, {
+        id: BoardCardId.make("card-epic"),
+        group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.sprint }),
+      });
+      const epicChild = at(BOARD_SEED_STAGE_IDS.merge, { parentCardId: epic.id });
+      const epicBoard = { ...EMPTY_BOARD_STATE, cards: [epic, epicChild] };
+      expect(boardCardAutoMergeArmed({ board: epicBoard, card: epicChild })).toBe(false);
+      const merging = { ...epic, group: { ...epic.group!, autoMerge: true } };
+      expect(
+        boardCardAutoMergeArmed({
+          board: { ...epicBoard, cards: [merging, epicChild] },
+          card: epicChild,
+        }),
+      ).toBe(true);
+    });
+
+    it("resolves nearest wins: an inherit group under an own group decides by its own auto-build (T3O-28)", () => {
+      const own = at(BOARD_SEED_STAGE_IDS.building, {
+        id: BoardCardId.make("card-own"),
+        group: defaultBoardCardGroup(
+          EMPTY_BOARD_STATE,
+          { stage: BOARD_SEED_STAGE_IDS.ready },
+          { target: "own", autoBuild: true },
+        ),
+      });
+      const heading = at(BOARD_SEED_STAGE_IDS.building, {
+        id: BoardCardId.make("card-heading"),
+        parentCardId: own.id,
+        group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.ready }),
+      });
+      const leaf = at(BOARD_SEED_STAGE_IDS.merge, { parentCardId: heading.id });
+      const nested = { ...EMPTY_BOARD_STATE, cards: [own, heading, leaf] };
+      // The heading's auto-build is off: the own group's being on does not reach past it.
+      expect(boardCardAutoMergeArmed({ board: nested, card: leaf })).toBe(false);
+      const headingOn = { ...heading, group: { ...heading.group!, autoBuild: true } };
+      expect(
+        boardCardAutoMergeArmed({
+          board: { ...nested, cards: [own, headingOn, leaf] },
+          card: leaf,
+        }),
+      ).toBe(true);
+      // Its "Auto-merge to trunk" is irrelevant: the leaf lands on an integration branch.
+      const headingMerge = { ...heading, group: { ...heading.group!, autoMerge: true } };
+      expect(
+        boardCardAutoMergeArmed({
+          board: { ...nested, cards: [own, headingMerge, leaf] },
+          card: leaf,
+        }),
+      ).toBe(false);
+    });
+
+    describe("resolution table (T3O-28)", () => {
+      const group = (
+        id: string,
+        overrides: Partial<NonNullable<BoardCard["group"]>>,
+        parentCardId: BoardCardId | null = null,
+      ) =>
+        at(BOARD_SEED_STAGE_IDS.building, {
+          id: BoardCardId.make(id),
+          parentCardId,
+          group: defaultBoardCardGroup(
+            EMPTY_BOARD_STATE,
+            { stage: BOARD_SEED_STAGE_IDS.sprint },
+            overrides,
+          ),
+        });
+      type Row = {
+        readonly name: string;
+        readonly own: boolean;
+        readonly chain: ReadonlyArray<Partial<NonNullable<BoardCard["group"]>>>;
+        readonly boardWide: boolean;
+        readonly armed: boolean;
+      };
+      const rows: ReadonlyArray<Row> = [
+        {
+          name: "top-level, board-wide off",
+          own: false,
+          chain: [],
+          boardWide: false,
+          armed: false,
+        },
+        { name: "top-level, board-wide on", own: false, chain: [], boardWide: true, armed: true },
+        { name: "top-level, own override", own: true, chain: [], boardWide: false, armed: true },
+        {
+          name: "trunk group, auto-merge off, board-wide on (ignored)",
+          own: false,
+          chain: [{ target: "inherit", autoMerge: false }],
+          boardWide: true,
+          armed: false,
+        },
+        {
+          name: "trunk group, auto-merge on",
+          own: false,
+          chain: [{ target: "inherit", autoMerge: true }],
+          boardWide: false,
+          armed: true,
+        },
+        {
+          name: "trunk group, auto-build on does not arm a trunk merge",
+          own: false,
+          chain: [{ target: "inherit", autoBuild: true }],
+          boardWide: false,
+          armed: false,
+        },
+        {
+          name: "trunk group, own override wins",
+          own: true,
+          chain: [{ target: "inherit", autoMerge: false }],
+          boardWide: false,
+          armed: true,
+        },
+        {
+          name: "integration branch, auto-build on",
+          own: false,
+          chain: [{ target: "own", autoBuild: true }],
+          boardWide: false,
+          armed: true,
+        },
+        {
+          name: "integration branch, auto-build off, auto-merge on (ignored)",
+          own: false,
+          chain: [{ target: "own", autoBuild: false, autoMerge: true }],
+          boardWide: true,
+          armed: false,
+        },
+        {
+          name: "nested trunk group under an auto-merging trunk group: nearest wins",
+          own: false,
+          chain: [
+            { target: "inherit", autoMerge: false },
+            { target: "inherit", autoMerge: true },
+          ],
+          boardWide: false,
+          armed: false,
+        },
+      ];
+      it.each(rows)("$name", (row) => {
+        const groups: Array<BoardCard> = [];
+        // chain[0] is the nearest group; build it outermost first.
+        let parentId: BoardCardId | null = null;
+        for (let index = row.chain.length - 1; index >= 0; index -= 1) {
+          const next = group(`card-g${index}`, row.chain[index]!, parentId);
+          groups.push(next);
+          parentId = next.id;
+        }
+        const leaf = at(BOARD_SEED_STAGE_IDS.merge, {
+          parentCardId: parentId,
+          autoMerge: row.own,
+        });
+        const board = { ...EMPTY_BOARD_STATE, cards: [...groups, leaf] };
+        expect(boardCardAutoMergeArmed({ board, card: leaf, boardWide: row.boardWide })).toBe(
+          row.armed,
+        );
+        // The client's shell resolution agrees with the aggregate's.
+        const shells = board.cards.map((card) => boardCardShellFromCard(card));
+        const leafShell = shells.find((shell) => shell.cardId === leaf.id)!;
+        expect(
+          boardShellAutoMergeArmed({ shells, shell: leafShell, boardWide: row.boardWide }),
+        ).toBe(row.armed);
+        expect(
+          boardShellAutoMergeArmedByCard({ shells, boardWide: row.boardWide }).get(String(leaf.id)),
+        ).toBe(row.armed);
+      });
     });
   });
 

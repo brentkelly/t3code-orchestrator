@@ -218,7 +218,7 @@ it.effect("fires when the blocking card is ARCHIVED rather than finished", () =>
   ),
 );
 
-it.effect("never fires for a sub-board child — its siblings already cascade", () =>
+it.effect("fires for a leaf inside a group too — any leaf may be armed (T3O-27)", () =>
   withGovernor(
     setup([
       makeBoardCard({ id: "parent", stage: BUILDING, orderKey: "a" }),
@@ -227,20 +227,11 @@ it.effect("never fires for a sub-board child — its siblings already cascade", 
     ]),
     (h) =>
       Effect.gen(function* () {
-        const { board, commands } = h;
+        const { board } = h;
         yield* deliver(h, cardMoved(blocker("dep", DONE), BUILDING, DONE, 1));
-
-        // A child is started by `cascadeUnblockedChildren` off its PARENT's
-        // Begin build (t3o-28 D3). Its dependency finishing here is not a
-        // parent's Begin build, and a second mechanism firing on it would be
-        // two answers to one question.
-        assert.strictEqual(stageOf(yield* board, "waiter"), READY);
-        assert.lengthOf(
-          moveTypes(yield* commands).filter(
-            (command) => command.cardId === BoardCardId.make("waiter"),
-          ),
-          0,
-        );
+        // The per-card arm is the card's own trigger; group auto-build is an
+        // additional one, not a replacement.
+        assert.strictEqual(stageOf(yield* board, "waiter"), BUILDING);
       }),
   ),
 );

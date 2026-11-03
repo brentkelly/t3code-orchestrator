@@ -45,6 +45,9 @@ type CommandInput<T extends CommandType> = Omit<
 export type CreateBoardCardInput = CommandInput<"board.card.create">;
 export type MoveBoardCardInput = CommandInput<"board.card.move">;
 export type ReorderBoardCardInput = CommandInput<"board.card.reorder">;
+export type MoveBoardCardsInput = CommandInput<"board.card.move-cards">;
+export type SetBoardCardGroupSettingsInput = CommandInput<"board.card.set-group-settings">;
+export type CancelBoardCardWorkInput = CommandInput<"board.card.cancel-work">;
 export type UpdateBoardCardInput = CommandInput<"board.card.update">;
 export type SetBoardCardProjectInput = CommandInput<"board.card.set-project">;
 export type PinBoardCardWorkerInput = CommandInput<"board.card.pin-worker">;
@@ -129,6 +132,11 @@ export const submitBoardCardForMerge = (input: { readonly cardId: BoardCardId })
     before the card moves, and the server owns that order. */
 export const requestBoardReviewRound = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.requestReviewRound, input);
+
+/** Auto-plan → Build (T3O-32): end planning, let the agent decide the rest,
+    approve the plan and start building. */
+export const autoPlanBoardCard = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.autoPlanCard, input);
 
 /** "Remove worktree" on a finished card that kept one (T3O-52): removes it
     past the safety rule. The branch is kept. */
@@ -303,6 +311,45 @@ export const archiveBoardCard: (input: ArchiveBoardCardInput) => CommandEffect =
   return yield* dispatch({
     ...input,
     type: "board.card.archive",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** Regroup cards (T3O-27): into a group, out of one, or within one. */
+export const moveBoardCards: (input: MoveBoardCardsInput) => CommandEffect = Effect.fn(
+  "BoardCommands.moveBoardCards",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.move-cards",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** A group's merge target, auto-build, auto-merge and auto-plan (T3O-29). */
+export const setBoardCardGroupSettings: (input: SetBoardCardGroupSettingsInput) => CommandEffect =
+  Effect.fn("BoardCommands.setBoardCardGroupSettings")(function* (input) {
+    const metadata = yield* commandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "board.card.set-group-settings",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+/** Cancel a started leaf's work so it can become a group (T3O-28). The
+    caller has confirmed it by the card's typed key. */
+export const cancelBoardCardWork: (input: CancelBoardCardWorkInput) => CommandEffect = Effect.fn(
+  "BoardCommands.cancelBoardCardWork",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.cancel-work",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

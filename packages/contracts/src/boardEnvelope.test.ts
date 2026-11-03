@@ -21,6 +21,8 @@ import {
   effectiveBoardStageRole,
 } from "./board.ts";
 import {
+  BOARD_AUTO_PLAN_INSTRUCTION,
+  BOARD_ENVELOPE_DECISION_LOG,
   BOARD_ENVELOPE_BUILD_DELIVERABLE,
   BOARD_ENVELOPE_MOVE_GUARD,
   BOARD_ENVELOPE_PLAN_DELIVERABLE,
@@ -126,6 +128,40 @@ describe("boardStepPostamble (envelope split)", () => {
     expect(postamble.indexOf(BOARD_ENVELOPE_PLAN_DELIVERABLE)).toBeGreaterThan(-1);
     expect(postamble.indexOf(BOARD_ENVELOPE_PLAN_DELIVERABLE)).toBeLessThan(
       postamble.indexOf(BOARD_ENVELOPE_MOVE_GUARD),
+    );
+  });
+});
+
+describe("decision log and auto-plan (T3O-32)", () => {
+  it("tells every planning run to record decisions before proposing, attended or not", () => {
+    for (const humanInLoop of [true, false]) {
+      const postamble = boardStepPostamble({ humanInLoop, role: "plan", step: stepOf(null) });
+      expect(postamble).toContain(BOARD_ENVELOPE_DECISION_LOG);
+      expect(postamble.indexOf("board_record_decisions")).toBeLessThan(
+        postamble.indexOf("record it with board_propose_plans"),
+      );
+    }
+    expect(
+      boardStepPostamble({ humanInLoop: false, role: "build", step: stepOf(null) }),
+    ).not.toContain("board_record_decisions");
+  });
+
+  it("carries the auto-plan instruction only on an auto-planned planning run", () => {
+    const auto = composeStepPrompt({
+      card: { key: "T3-1", title: "Ship it", stage: "planning" },
+      stageLabel: "Planning",
+      step: {
+        stepId: "planning",
+        stepLabel: null,
+        prompt: "Plan.",
+        humanInLoop: false,
+        autoPlan: true,
+      },
+      role: "plan",
+    });
+    expect(auto).toContain(BOARD_AUTO_PLAN_INSTRUCTION);
+    expect(promptFor({ role: "plan", humanInLoop: false })).not.toContain(
+      BOARD_AUTO_PLAN_INSTRUCTION,
     );
   });
 });

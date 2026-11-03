@@ -9,6 +9,8 @@ import {
   BoardCardId,
   BoardStageId,
   CommandId,
+  defaultBoardCardGroup,
+  EMPTY_BOARD_STATE,
   ProjectId,
   ThreadId,
   type BoardCard,
@@ -44,6 +46,7 @@ function makeCard(
     dependsOn: [],
     parentCardId: null,
     sourcePlanId: null,
+    group: null,
     threadLinks: [],
     attachments: [],
     externalRef: null,
@@ -200,8 +203,7 @@ it.layer(NodeServices.layer)("board.card.set-project", (it) => {
           setProjectCommand({ cardId: "child", projectId: otherProjectId }),
           makeReadModel({ cards: [parent, child], nextCardNumberByProject: {} }),
         );
-        assert.include(String(failure), "sub-board child");
-        assert.include(String(failure), "parent");
+        assert.include(String(failure), "integration branch of 'parent'");
       }),
     );
 
@@ -220,7 +222,31 @@ it.layer(NodeServices.layer)("board.card.set-project", (it) => {
           setProjectCommand({ cardId: "parent", projectId: otherProjectId }),
           makeReadModel({ cards: [parent, child], nextCardNumberByProject: {} }),
         );
-        assert.include(String(failure), "split into 1 sub-board card");
+        assert.include(String(failure), "own integration branch for 1 card");
+      }),
+    );
+
+    // An inherit group's children land on trunk, so the group may span projects.
+    it.effect("moves a child of an inherit group, and an unbuilt inherit group itself", () =>
+      Effect.gen(function* () {
+        const parent = makeCard({
+          id: "parent",
+          stage: "ready",
+          group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BoardStageId.make("ready") }),
+        });
+        const child = makeCard({
+          id: "child",
+          stage: "ready",
+          parentCardId: BoardCardId.make("parent"),
+        });
+        const readModel = makeReadModel({ cards: [parent, child], nextCardNumberByProject: {} });
+        for (const cardId of ["child", "parent"]) {
+          const event = yield* decide(
+            setProjectCommand({ cardId, projectId: otherProjectId }),
+            readModel,
+          );
+          assert.strictEqual(event.type, "board.card-project-changed");
+        }
       }),
     );
 

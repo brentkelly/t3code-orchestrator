@@ -5,9 +5,11 @@ front of you, because the board is where work is planned, watched and picked up.
 
 ## Switching modes
 
-**Board** and **Threads** sit side by side as a pair of tabs. Selecting one takes you back to where
+**Board**, **List** and **Threads** sit side by side as tabs. Selecting one takes you back to where
 you were the last time you were in that mode — the thread you were reading, or the board scoped to
-the project you were watching — rather than dumping you at that mode's front page.
+the project you were watching — rather than dumping you at that mode's front page. The command
+palette offers the same switch: **Go to Board**, **Go to List** and **Go to Threads**. The List view
+is described in [Groups on the board](board-groups.md#regrouping-in-the-list-view).
 
 Going home stays going home. Deleting a thread, discarding a draft or closing settings returns you
 to your threads, exactly as before. Only opening the app fresh takes you to the board. Finishing a
@@ -15,7 +17,7 @@ pairing does too, so a newly connected device starts where everyone else does.
 
 ## Where the tabs sit
 
-In board mode the tabs are in the top bar, next to the T3 Code wordmark.
+In board and list mode the tabs are in the top bar, next to the T3 Code wordmark.
 
 In threads mode they move up into the sidebar's header, beside the same wordmark, whenever that
 header is wide enough to hold them. Drag the sidebar narrower and the tabs move back down into the

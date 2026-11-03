@@ -14,6 +14,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardScopeCollapseKey,
+  boardScopeColumnCollapsedByDefault,
   boardScopeStages,
   filterBoardColumnsByScope,
   isBoardCardInScope,
@@ -36,13 +37,13 @@ function shell(
   cardId: string,
   stage: string,
   parentCardId?: BoardCardId,
-): Pick<BoardCardShell, "cardId" | "stage" | "orderKey" | "parentCardId"> {
+): Pick<BoardCardShell, "cardId" | "stage" | "orderKey" | "parentCardId" | "group"> {
   return {
     cardId: BoardCardId.make(cardId),
     stage,
     orderKey: "m",
     ...(parentCardId === undefined ? {} : { parentCardId }),
-  } as Pick<BoardCardShell, "cardId" | "stage" | "orderKey" | "parentCardId">;
+  } as Pick<BoardCardShell, "cardId" | "stage" | "orderKey" | "parentCardId" | "group">;
 }
 
 describe("isBoardCardInScope", () => {
@@ -78,20 +79,49 @@ describe("filterBoardColumnsByScope", () => {
 
 describe("boardScopeStages", () => {
   it("renders every stage on the root board", () => {
-    expect(boardScopeStages(BOARD_SEED_STAGES, STAGE_STATE, ROOT_BOARD_SCOPE)).toEqual(
-      BOARD_SEED_STAGES,
-    );
+    expect(boardScopeStages(BOARD_SEED_STAGES, ROOT_BOARD_SCOPE)).toEqual(BOARD_SEED_STAGES);
   });
 
-  it("renders the materialisation floor onward inside a sub-board", () => {
-    const stages = boardScopeStages(BOARD_SEED_STAGES, STAGE_STATE, SUB_SCOPE);
+  it("renders Deferred and then every stage inside a group (T3O-29)", () => {
+    const stages = boardScopeStages(BOARD_SEED_STAGES, SUB_SCOPE);
     expect(stages.map((stage) => stage.stageId)).toEqual([
-      "ready",
-      "building",
-      "review",
-      "merge",
-      "done",
+      "deferred",
+      ...BOARD_SEED_STAGES.map((stage) => stage.stageId),
     ]);
+  });
+});
+
+describe("boardScopeColumnCollapsedByDefault", () => {
+  const collapsed = (
+    scope: BoardScope,
+    stageId: string,
+    renderedIndex: number,
+    cardCount: number,
+  ) =>
+    boardScopeColumnCollapsedByDefault({
+      scope,
+      stageState: STAGE_STATE,
+      stageId: stageId as BoardCardShell["stage"],
+      renderedIndex,
+      cardCount,
+    });
+
+  it("collapses only the root board's first column", () => {
+    expect(collapsed(ROOT_BOARD_SCOPE, "backlog", 0, 3)).toBe(true);
+    expect(collapsed(ROOT_BOARD_SCOPE, "sprint", 1, 0)).toBe(false);
+  });
+
+  it("collapses an empty Deferred column and empty columns before Ready in a group", () => {
+    expect(collapsed(SUB_SCOPE, "deferred", 0, 0)).toBe(true);
+    expect(collapsed(SUB_SCOPE, "backlog", 1, 0)).toBe(true);
+    expect(collapsed(SUB_SCOPE, "planning", 3, 0)).toBe(true);
+  });
+
+  it("keeps Ready onward open, and any column holding cards", () => {
+    expect(collapsed(SUB_SCOPE, "ready", 4, 0)).toBe(false);
+    expect(collapsed(SUB_SCOPE, "done", 8, 0)).toBe(false);
+    expect(collapsed(SUB_SCOPE, "deferred", 0, 2)).toBe(false);
+    expect(collapsed(SUB_SCOPE, "backlog", 1, 1)).toBe(false);
   });
 });
 
@@ -117,6 +147,26 @@ describe("resolveSubBoardEntry", () => {
 
   it("admits a parent with children", () => {
     expect(resolveSubBoardEntry(cards, parentId)).toEqual({ kind: "sub-board" });
+  });
+
+  it("admits an empty heading, which is a group with no children yet", () => {
+    const heading = {
+      ...shell("card-heading", "backlog"),
+      group: {
+        target: "inherit",
+        autoBuild: false,
+        autoMerge: false,
+        autoPlan: false,
+        started: false,
+        placed: "backlog",
+        prevStage: "backlog",
+        heading: true,
+        integrated: false,
+      },
+    } as (typeof cards)[number];
+    expect(resolveSubBoardEntry([...cards, heading], BoardCardId.make("card-heading"))).toEqual({
+      kind: "sub-board",
+    });
   });
 
   it("resolves a childless card's URL up to the root board with its sheet open (D3)", () => {
