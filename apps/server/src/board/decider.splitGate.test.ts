@@ -376,6 +376,60 @@ it.layer(NodeServices.layer)("split gate (T3O-31)", (it) => {
     }),
   );
 
+  it.effect("never gives an own branch to a split with Needs-planning children", () =>
+    Effect.gen(function* () {
+      const plans = [
+        makePlan({ key: "p1", ordinal: 0 }),
+        makePlan({ key: "p2", ordinal: 1, planned: false }),
+      ];
+      // A human who chose own is told why; their children could never leave Backlog.
+      const refused = yield* Effect.flip(
+        decideEvents(approve({ mergeTarget: "own" }), makeBoard({ plans })),
+      );
+      assert.include(String(refused), "still need planning");
+      // A recommendation of own falls back to inherit.
+      const approved = approvedEvent(
+        yield* decideEvents(
+          approve(),
+          makeBoard({
+            parent: {
+              splitRationale: WHY,
+              splitRecommendation: { autoBuild: true, mergeTarget: "own" },
+            },
+            plans,
+          }),
+        ),
+      );
+      expect(approved.payload.card.group).toMatchObject({ target: "inherit", autoBuild: true });
+    }),
+  );
+
+  it.effect("refuses splitting a card with a live build worktree", () =>
+    Effect.gen(function* () {
+      const refused = yield* Effect.flip(
+        decideEvents(
+          approve(),
+          makeBoard({
+            parent: {
+              stage: "building",
+              worktree: {
+                branch: "board/t3-190",
+                baseRefName: "main",
+                path: "/tmp/wt",
+                status: "ready",
+                attempts: 1,
+                lastError: null,
+                reclaimBlockedReason: null,
+              },
+            },
+            plans: [makePlan({ key: "p1", ordinal: 0 }), makePlan({ key: "p2", ordinal: 1 })],
+          }),
+        ),
+      );
+      assert.include(String(refused), "cannot become a group");
+    }),
+  );
+
   it.effect("applies the human's edited settings over the recommendation", () =>
     Effect.gen(function* () {
       const approved = approvedEvent(

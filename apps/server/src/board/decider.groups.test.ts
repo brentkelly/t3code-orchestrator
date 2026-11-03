@@ -958,4 +958,116 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
       expect(stagesAfter(events).get("g1")?.card.group?.target).toBe("inherit");
     }),
   );
+
+  it.effect("archiving a Done group's last child leaves the group Done", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "done", {
+          group: group("ready", { target: "own", started: true, integrated: true }),
+        }),
+        child("a", "done", "g"),
+      ];
+      const events = yield* decideEvents(
+        {
+          type: "board.card.archive",
+          commandId: CommandId.make("cmd-archive-a"),
+          cardId: BoardCardId.make("a"),
+          createdAt: NOW,
+        },
+        model(cards),
+      );
+      expect(stagesAfter(events).has("g")).toBe(false);
+    }),
+  );
+
+  it.effect("a group derived out of Done retires its merged pull request", () =>
+    Effect.gen(function* () {
+      const pullRequest: NonNullable<BoardCard["pullRequest"]> = {
+        number: 7,
+        title: "Integration",
+        url: "https://example.test/pr/7",
+        baseRef: "main",
+        headBranch: "board/t3-1",
+        state: "merged",
+        checkedAt: NOW,
+      };
+      const cards = [
+        card("g", "done", {
+          group: group("ready", { target: "own", started: true, integrated: true }),
+          pullRequest,
+        }),
+        child("a", "done", "g"),
+        child("b", "done", "g"),
+      ];
+      const events = yield* decideEvents(move("b", "review"), model(cards));
+      const after = stagesAfter(events).get("g")?.card;
+      expect(after?.stage).toBe("building");
+      expect(after?.pullRequest).toBeNull();
+      expect(after?.pullRequestHistory.map((entry) => entry.number)).toEqual([7]);
+      expect(after?.pullRequestFloor).toBe(7);
+    }),
+  );
+
+  it.effect("an emptied own group's unused integration branch is no one-way door", () =>
+    Effect.gen(function* () {
+      const slice: NonNullable<BoardCard["worktree"]> = {
+        branch: "board/t3-1",
+        baseRefName: "main",
+        path: null,
+        status: "branch-only",
+        attempts: 1,
+        lastError: null,
+        reclaimBlockedReason: null,
+      };
+      const reverted = card("g1", "sprint", { worktree: slice });
+      const into = yield* decideEvents(
+        moveCards(["b2"], "g1"),
+        model([reverted, card("b2", "backlog")]),
+      );
+      expect(stagesAfter(into).get("b2")?.card.parentCardId).toBe(BoardCardId.make("g1"));
+      const deferred = yield* decideEvents(
+        move("g1", BOARD_DEFERRED_STAGE_ID),
+        model([
+          card("h0", "sprint", { group: group("sprint") }),
+          { ...reverted, parentCardId: BoardCardId.make("h0") },
+        ]),
+      );
+      expect(stagesAfter(deferred).get("g1")?.stage).toBe(BOARD_DEFERRED_STAGE_ID);
+    }),
+  );
+
+  it.effect("unarchive returns a card whose parent can no longer hold it to the top level", () =>
+    Effect.gen(function* () {
+      const at = "2026-01-02T00:00:00.000Z";
+      const unarchive: BoardCommand = {
+        type: "board.card.unarchive",
+        commandId: CommandId.make("cmd-unarchive-a"),
+        cardId: BoardCardId.make("a"),
+        createdAt: NOW,
+      };
+      const restoredCard = (events: ReadonlyArray<PlannedBoardEvent>) => {
+        const event = events.find((candidate) => candidate.type === "board.card-unarchived");
+        assert.ok(event?.type === "board.card-unarchived");
+        return event.payload.card;
+      };
+      // The old parent is now a leaf being built.
+      const started = yield* decideEvents(
+        unarchive,
+        model([
+          card("p", "building"),
+          child("a", BOARD_DEFERRED_STAGE_ID, "p", { archivedAt: at }),
+        ]),
+      );
+      expect(restoredCard(started).parentCardId).toBeNull();
+      expect(restoredCard(started).stage).toBe("backlog");
+      expect(stagesAfter(started).has("p")).toBe(false);
+      // An unbuilt leaf takes it back and becomes a group again.
+      const unbuilt = yield* decideEvents(
+        unarchive,
+        model([card("p", "sprint"), child("a", "backlog", "p", { archivedAt: at })]),
+      );
+      expect(restoredCard(unbuilt).parentCardId).toBe(BoardCardId.make("p"));
+      expect(stagesAfter(unbuilt).get("p")?.card.group).not.toBeNull();
+    }),
+  );
 });
