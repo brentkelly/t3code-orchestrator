@@ -240,9 +240,12 @@ export function boardListIndent(
 }
 
 /** Outdent: the selection goes directly after its parent, one level up. */
+/** `allShells` includes hidden projects: a card whose group is in one is
+    still inside it, though the tree draws it at the top level. */
 export function boardListOutdent(
   tree: BoardListTree,
   selected: ReadonlySet<string>,
+  allShells: Shells,
 ): BoardListStep {
   const cards = boardListSelection(tree, selected);
   if (cards.length === 0) return { kind: "refused", reason: "Select cards first" };
@@ -250,7 +253,8 @@ export function boardListOutdent(
   if (parentId === null) return { kind: "refused", reason: "Already at the top level" };
   if (parentId === undefined)
     return { kind: "refused", reason: "Select cards that share a parent" };
-  const parent = tree.byId.get(parentId);
+  const parent =
+    tree.byId.get(parentId) ?? allShells.find((card) => String(card.cardId) === parentId);
   if (parent === undefined) return { kind: "refused", reason: "Already at the top level" };
   return {
     kind: "ok",

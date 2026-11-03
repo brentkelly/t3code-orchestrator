@@ -174,7 +174,7 @@ describe("boardListIndent and boardListOutdent", () => {
       kind: "refused",
       reason: "Select cards first",
     });
-    expect(boardListOutdent(tree, new Set())).toEqual({
+    expect(boardListOutdent(tree, new Set(), shells)).toEqual({
       kind: "refused",
       reason: "Select cards first",
     });
@@ -211,18 +211,32 @@ describe("boardListIndent and boardListOutdent", () => {
   it("refuses cards that don't share a parent", () => {
     const reason = "Select cards that share a parent";
     expect(boardListIndent(tree, new Set(["b", "k2"]))).toEqual({ kind: "refused", reason });
-    expect(boardListOutdent(tree, new Set(["k1", "b"]))).toEqual({ kind: "refused", reason });
+    expect(boardListOutdent(tree, new Set(["k1", "b"]), shells)).toEqual({
+      kind: "refused",
+      reason,
+    });
   });
 
   it("outdents to directly after the parent, one level up", () => {
-    expect(boardListOutdent(tree, new Set(["k2"]))).toEqual({
+    expect(boardListOutdent(tree, new Set(["k2"]), shells)).toEqual({
       kind: "ok",
       request: { ids: ["k2"], parentId: null, afterId: "g" },
       label: "Move out of G",
     });
-    expect(boardListOutdent(tree, new Set(["a"]))).toEqual({
+    expect(boardListOutdent(tree, new Set(["a"]), shells)).toEqual({
       kind: "refused",
       reason: "Already at the top level",
+    });
+  });
+
+  it("outdents a card whose group is in a hidden project out of that group", () => {
+    // The tree is built without the hidden project, so k1 draws at the top
+    // level, yet it is still inside g.
+    const visible = shells.filter((card) => card.cardId !== BoardCardId.make("g"));
+    expect(boardListOutdent(treeOf(visible), new Set(["k1"]), shells)).toEqual({
+      kind: "ok",
+      request: { ids: ["k1"], parentId: null, afterId: "g" },
+      label: "Move out of G",
     });
   });
 });

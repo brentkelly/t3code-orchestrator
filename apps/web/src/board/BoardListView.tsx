@@ -197,7 +197,10 @@ export function BoardListView(props: BoardListViewProps) {
     () => boardListIndent(tree, selected, filtering ? new Set(visibleIds) : undefined),
     [filtering, selected, tree, visibleIds],
   );
-  const outdent = useMemo(() => boardListOutdent(tree, selected), [selected, tree]);
+  const outdent = useMemo(
+    () => boardListOutdent(tree, selected, allShells),
+    [allShells, selected, tree],
+  );
   const dragBlocked = useMemo(
     () => (dragIds === null ? null : boardListDragBlocked(shells, dragIds)),
     [dragIds, shells],
@@ -739,7 +742,7 @@ export function BoardListView(props: BoardListViewProps) {
             setAnchorId(cardId);
           }}
           projects={props.projects}
-          shells={shells}
+          shells={allShells}
           stages={stages}
         />
       ) : null}
