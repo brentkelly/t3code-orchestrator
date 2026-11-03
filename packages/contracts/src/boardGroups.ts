@@ -448,3 +448,85 @@ export function boardShellDescendantIds(
   walk(String(cardId));
   return out;
 }
+
+/**
+ * A new phase (T3O-29): a group's deferred cards move out to a fresh sibling
+ * group, a heading created next to it, and land in that group's Backlog. One
+ * rule set shared by the board's dialog and `board_new_phase`, which both
+ * compose it from create, move-cards and move.
+ */
+export type BoardNewPhasePlan =
+  | { readonly kind: "refused"; readonly reason: string }
+  | {
+      readonly kind: "ok";
+      readonly group: BoardCard;
+      /** Where the new heading sits: beside the group, under its parent. */
+      readonly parentCardId: BoardCardId | null;
+      /** The heading's stage: the first stage, or the floor under an `own`
+          parent, whose children live from there onward. */
+      readonly headingStage: BoardStageId;
+      /** The deferred cards to move, in board order. */
+      readonly cardIds: ReadonlyArray<BoardCardId>;
+      /** Where the moved cards land inside the new heading. */
+      readonly cardStage: BoardStageId;
+    };
+
+/** A new phase heading's stage: the first stage, or the floor under an `own`
+    parent, whose children live from there onward. */
+export function boardNewPhaseHeadingStage(board: BoardState, parentOwn: boolean): BoardStageId {
+  const first = boardStagesInOrder(board)[0]!.stageId;
+  return parentOwn ? (boardStageBeforeBuild(board)?.stageId ?? first) : first;
+}
+
+export function boardNewPhasePlan(
+  board: BoardState,
+  groupId: BoardCardId,
+  cardIds: ReadonlyArray<BoardCardId>,
+): BoardNewPhasePlan {
+  const group = board.cards.find((card) => card.id === groupId && card.archivedAt === null);
+  if (group === undefined || boardCardGroupOf(board, group) === null) {
+    return { kind: "refused", reason: `Card '${groupId}' is not a group.` };
+  }
+  if (cardIds.length === 0) {
+    return { kind: "refused", reason: "Pick at least one deferred card for the new phase." };
+  }
+  const deferred = boardCardLiveChildren(board, group.id).filter((card) =>
+    isBoardDeferredStage(card.stage),
+  );
+  const wanted = new Set(cardIds);
+  const stray = cardIds.find((id) => !deferred.some((card) => card.id === id));
+  if (stray !== undefined) {
+    const key = board.cards.find((card) => card.id === stray)?.key ?? stray;
+    return {
+      kind: "refused",
+      reason: `'${key}' is not a deferred card of '${group.key}'; only deferred cards move to a new phase.`,
+    };
+  }
+  const first = boardStagesInOrder(board)[0]!.stageId;
+  const parent =
+    group.parentCardId === null
+      ? undefined
+      : board.cards.find((card) => card.id === group.parentCardId);
+  const parentOwn = parent !== undefined && boardCardGroupOf(board, parent)?.target === "own";
+  return {
+    kind: "ok",
+    group,
+    parentCardId: group.parentCardId,
+    headingStage: boardNewPhaseHeadingStage(board, parentOwn),
+    cardIds: deferred.filter((card) => wanted.has(card.id)).map((card) => card.id),
+    cardStage: first,
+  };
+}
+
+/** The new phase's default title: `‹Group›: Phase 2`, or `Phase n+1` when the
+    group's title already ends `: Phase n`. */
+export function boardNextPhaseTitle(title: string): string {
+  const match = /^(.*): Phase (\d+)$/.exec(title.trim());
+  if (match !== null) return `${match[1]}: Phase ${Number(match[2]) + 1}`;
+  return `${title.trim()}: Phase 2`;
+}
+
+/** The brief a new phase's heading is created with. */
+export function boardNewPhaseBrief(group: Pick<BoardCard, "key" | "title">): string {
+  return `Next phase of ${group.key} · ${group.title}.`;
+}

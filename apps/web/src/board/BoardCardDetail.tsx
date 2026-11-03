@@ -104,6 +104,9 @@ import {
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
 import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
+import { BoardArchiveGroupDialog } from "./BoardGroupDialogs";
+import { BoardGroupSettings } from "./BoardGroupSettings";
+import { boardDeferredChildren, boardGroupNote, isBoardGroupShell } from "./boardGroups";
 import { boardMoveLeavesPlanningUnwritten } from "./boardStageActions";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
@@ -448,6 +451,8 @@ export function BoardCardDetail({
   const workers = useAtomValue(boardEnvironment.workersAtom(environmentId));
   // "today" in a move divider is measured from when the card was opened.
   const [openedAt] = useState(() => Date.now());
+  // The group archive confirmation (T3O-29): a group always warns.
+  const [archiveGroupOpen, setArchiveGroupOpen] = useState(false);
   const threadLinks = useMemo<ReadonlyArray<BoardDetailThreadLink>>(() => {
     if (card === null) return [];
     const threads = snapshot?.threads ?? [];
@@ -1032,8 +1037,46 @@ export function BoardCardDetail({
     );
   };
 
+  // The group popup (T3O-29): Open board, the group's note, its settings and
+  // the archive warning, all from the shells the board already holds.
+  const groupShells = board?.cards ?? EMPTY_SHELL_CARDS;
+  const groupStats =
+    cardShell === undefined || !isBoardGroupShell(groupShells, cardShell)
+      ? null
+      : { shells: groupShells, stages: stageState, attentionFor: () => null };
+  const deferredKeys =
+    groupStats === null
+      ? []
+      : boardDeferredChildren(groupShells, String(card.id)).map((child) => child.key);
+  const groupView =
+    groupStats === null || cardShell === undefined
+      ? null
+      : {
+          chip: `Group · ${childShells.length} ${childShells.length === 1 ? "card" : "cards"}`,
+          note: boardGroupNote(groupStats, cardShell),
+          onOpenBoard: onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card.id),
+          settings: (
+            <BoardGroupSettings
+              card={cardShell}
+              environmentId={environmentId}
+              shells={groupShells}
+              stages={stageState}
+            />
+          ),
+          onArchive: () => setArchiveGroupOpen(true),
+          reopenPrompt:
+            deferredKeys.length === 0
+              ? null
+              : `Let's plan the deferred cards (${deferredKeys.join(", ")}) as the next phase of ${card.key}.`,
+        };
+  // A group's child can be parked in Deferred (T3O-29).
+  const parentIsGroup =
+    card.parentCardId !== null && groupShells.some((shell) => shell.cardId === card.parentCardId);
+
   const view = (
     <BoardCardDetailView
+      group={groupView}
+      stageLadderDeferred={parentIsGroup && groupView === null}
       stalledReason={cardShell?.stalledReason}
       workerShell={cardShell}
       nav={nav}
@@ -1460,6 +1503,17 @@ export function BoardCardDetail({
         }}
       />
       {view}
+      {archiveGroupOpen && cardShell !== undefined ? (
+        <BoardArchiveGroupDialog
+          group={cardShell}
+          onClose={() => setArchiveGroupOpen(false)}
+          onConfirm={(confirmCardKey) =>
+            runCommand(archiveCard({ environmentId, input: { cardId: card.id, confirmCardKey } }))
+          }
+          shells={groupShells}
+          stages={stageState}
+        />
+      ) : null}
     </>
   );
 }

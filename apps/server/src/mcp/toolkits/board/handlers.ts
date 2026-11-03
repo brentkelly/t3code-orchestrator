@@ -54,6 +54,8 @@ import {
   type BoardState,
   unmetBoardCardDependencies,
   boardCardGroupOf,
+  boardNewPhaseBrief,
+  boardNewPhasePlan,
   type BoardCommand,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -1528,6 +1530,60 @@ export const boardHandlers = {
       return { groupCardId, groupKey, cardIds: moved.cardIds };
     }),
 
+  board_new_phase: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      yield* requireRegroupApproval(input.approved);
+      const board = yield* readBoardState(deps);
+      const group = yield* findCardByKeyOrId(board, input.groupCardId);
+      const cards = yield* resolveCardRefs(board, input.cardIds);
+      for (const card of [group, ...cards]) {
+        yield* refuseOtherWorkersCard(board, deps.scope, card);
+      }
+      const plan = boardNewPhasePlan(
+        board,
+        group.id,
+        cards.map((card) => card.id),
+      );
+      if (plan.kind === "refused") return yield* regroupRefused(plan.reason);
+      const projects = yield* listProjects(deps);
+      const projectTitle =
+        projects.find((project) => project.id === plan.group.projectId)?.title ?? "";
+      const groupCardId = BoardCardId.make(yield* mintUuid);
+      const create: BoardCardCreateCommand = {
+        type: "board.card.create",
+        commandId: yield* mintCommandId,
+        cardId: groupCardId,
+        projectId: plan.group.projectId,
+        title: input.title,
+        brief: boardNewPhaseBrief(plan.group),
+        heading: true,
+        stage: plan.headingStage,
+        ...(plan.parentCardId === null ? {} : { parentCardId: plan.parentCardId }),
+        keyPrefix: yield* resolveCardKeyPrefix(plan.group.projectId, projectTitle),
+        createdAt: yield* nowIso,
+      };
+      yield* dispatch(deps, create);
+      // As board_group_cards: a refused move leaves the empty heading visible.
+      const moved = yield* dispatchMoveCards(deps, {
+        cardIds: plan.cardIds,
+        parentCardId: groupCardId,
+      });
+      for (const cardId of plan.cardIds) {
+        const move: BoardCardMoveCommand = {
+          type: "board.card.move",
+          commandId: yield* mintCommandId,
+          cardId,
+          toStage: plan.cardStage,
+          createdAt: yield* nowIso,
+        };
+        yield* dispatch(deps, move);
+      }
+      const after = yield* readBoardState(deps);
+      const groupKey = after.cards.find((card) => card.id === groupCardId)?.key ?? groupCardId;
+      return { groupCardId, groupKey, cardIds: moved.cardIds };
+    }),
+
   board_cancel_card_work: (input) =>
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
@@ -1896,6 +1952,9 @@ export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
   ),
   board_share_parent: McpToolAccess.writesWithCapability(
     relayable("board_share_parent", boardHandlers.board_share_parent),
+  ),
+  board_new_phase: McpToolAccess.writesWithCapability(
+    relayable("board_new_phase", boardHandlers.board_new_phase),
   ),
   board_cancel_card_work: McpToolAccess.writesWithCapability(
     relayable("board_cancel_card_work", boardHandlers.board_cancel_card_work),
