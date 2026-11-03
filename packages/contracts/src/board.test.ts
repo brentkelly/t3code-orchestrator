@@ -218,6 +218,7 @@ const typicalCard = (index: number): BoardCard => ({
   dependsOn: [],
   parentCardId: null,
   sourcePlanId: null,
+  group: null,
   attachments: [],
   threadLinks: [
     {
@@ -1363,29 +1364,19 @@ describe("per-card model overrides (t3o-29)", () => {
   });
 });
 
-describe("build-stage human-in-the-loop default (t3o-15 D6, sub-board children)", () => {
+describe("build-stage human-in-the-loop default (t3o-15 D6, T3O-27)", () => {
   // The shipped defaults: a plan-less card pauses for a human, a planned one
   // runs unattended.
   const shipped = { humanInLoopWithPlan: false, humanInLoopWithoutPlan: true };
-  const topLevel = { parentCardId: null };
-  const child = { parentCardId: BoardCardId.make("card-parent") };
 
-  it("flips a top-level card's default on whether it has a plan", () => {
-    expect(boardBuildHumanInLoopDefault(shipped, topLevel, false)).toBe(true);
-    expect(boardBuildHumanInLoopDefault(shipped, topLevel, true)).toBe(false);
+  it("flips a card's default on whether it has a plan", () => {
+    expect(boardBuildHumanInLoopDefault(shipped, false)).toBe(true);
+    expect(boardBuildHumanInLoopDefault(shipped, true)).toBe(false);
   });
 
-  it("reads the with-plan default for a sub-board child that owns no plan row", () => {
-    // Materialisation made the child's plan its brief; it has no plan of its
-    // own, and the plan-less pause must not park the cascade (t3o-28, D3).
-    expect(boardBuildHumanInLoopDefault(shipped, child, false)).toBe(false);
-    expect(boardBuildHumanInLoopDefault(shipped, child, true)).toBe(false);
-  });
-
-  it("still honours a with-plan pause the user switched on, for children too", () => {
+  it("still honours a with-plan pause the user switched on", () => {
     const pauseAll = { humanInLoopWithPlan: true, humanInLoopWithoutPlan: true };
-    expect(boardBuildHumanInLoopDefault(pauseAll, child, false)).toBe(true);
-    expect(boardBuildHumanInLoopDefault(pauseAll, topLevel, true)).toBe(true);
+    expect(boardBuildHumanInLoopDefault(pauseAll, true)).toBe(true);
   });
 });
 

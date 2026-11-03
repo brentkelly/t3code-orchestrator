@@ -1213,6 +1213,46 @@ export const BoardCardPlacementOrphan = Schema.Struct({
 });
 export type BoardCardPlacementOrphan = typeof BoardCardPlacementOrphan.Type;
 
+/**
+ * Where a group's children merge (T3O-27): `own` cuts the group its own
+ * integration branch, `inherit` passes the children through to whatever the
+ * group itself lands on (its own parent's target, or trunk).
+ */
+export const BOARD_CARD_GROUP_TARGETS = ["inherit", "own"] as const;
+export const BoardCardGroupTarget = Schema.Literals(BOARD_CARD_GROUP_TARGETS);
+export type BoardCardGroupTarget = typeof BoardCardGroupTarget.Type;
+
+/**
+ * A group's settings (T3O-27, D12). Non-null exactly while the card is a
+ * group: a card gains it with its first child and loses it when its last live
+ * child leaves, unless `heading` marks a group created empty on purpose.
+ *
+ * The group's `stage` is DERIVED from its children (`deriveBoardGroupStage`),
+ * never set by hand; `placed` is the column the human last put it in, which
+ * is where it sits while no child has started.
+ */
+export const BoardCardGroup = Schema.Struct({
+  target: BoardCardGroupTarget,
+  /** Ready children with their dependencies met start themselves once the
+      group is `started`. */
+  autoBuild: Schema.Boolean,
+  /** Children merging to trunk merge themselves. */
+  autoMerge: Schema.Boolean,
+  /** Children entering planning are planned by the agent. */
+  autoPlan: Schema.Boolean,
+  /** The human started the group (moved it to the build stage). */
+  started: Schema.Boolean,
+  placed: BoardStageId,
+  /** The leaf stage the card had before it became a group, restored (capped
+      at Sprint) when it reverts to an ordinary card. */
+  prevStage: Schema.NullOr(BoardStageId),
+  /** Created empty on purpose: stays a group with no children. */
+  heading: Schema.Boolean,
+  /** An `own` group's integration branch has merged — it reached Done. */
+  integrated: Schema.Boolean,
+});
+export type BoardCardGroup = typeof BoardCardGroup.Type;
+
 export const BoardCard = Schema.Struct({
   id: BoardCardId,
   /** Generated `<prefix>-<cardNumber>`, e.g. "T3-195" (D14). */
@@ -1238,14 +1278,16 @@ export const BoardCard = Schema.Struct({
       ride the read model); null when the card has no brief. */
   briefRef: Schema.NullOr(TrimmedNonEmptyString),
   dependsOn: Schema.Array(BoardCardId),
-  /** Null for top-level cards; set for sub-board plan cards materialised by
-      `board.plans.approve` (t3o-23, D12). Depth 1: a parented card can never
-      itself approve a split. */
+  /** Null for top-level cards; set for every card inside a group (T3O-27,
+      D12). Groups nest to any depth. */
   parentCardId: Schema.NullOr(BoardCardId),
   /** The plan a sub-board child was materialised from (t3o-23, D2), so the
       parent's plan pane can chip each plan with its card. Null for top-level
       cards and for pre-t3o-23 rows. */
   sourcePlanId: Schema.NullOr(BoardPlanId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Group settings (T3O-27); null for a leaf. Decodes to null on every
+      payload written before migration 051, matching its NULL columns. */
+  group: Schema.NullOr(BoardCardGroup).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   threadLinks: Schema.Array(BoardCardThreadLink),
   /** The brief's attachments (t3o-32, K5), in `sortBoardCardAttachments`
       order. On the aggregate like `threadLinks` — the decider refuses a
@@ -1544,23 +1586,6 @@ export function deriveBoardCardBlocked(input: {
 }): boolean {
   if (!isBoardStageAtOrAfterBuild(input.board, input.stage)) return false;
   return unmetBoardCardDependencies(input).length > 0;
-}
-
-/**
- * Whether a card may depend on another, judged on where each one merges (T3O-10).
- * A child merges into its parent's integration branch, not the base, so only
- * its siblings ever see its work. A top-level card that depends on another
- * parent's child would wait for that parent to merge anyway, so it depends on
- * the parent. The edge is in scope only when both cards share a parent, or
- * both are top-level. The decider refuses new edges that fail this, and the
- * pickers only offer cards that pass it. `undefined` reads as top-level, the
- * way the bounded shell leaves `parentCardId` absent.
- */
-export function isBoardDependencyInScope(input: {
-  readonly dependentParentCardId: BoardCardId | null | undefined;
-  readonly dependencyParentCardId: BoardCardId | null | undefined;
-}): boolean {
-  return (input.dependentParentCardId ?? null) === (input.dependencyParentCardId ?? null);
 }
 
 // ── Agent write-path value types (t3o-08) ──────────────────────────────
@@ -2547,23 +2572,15 @@ export function boardCardPlans(board: BoardState, cardId: BoardCardId): Readonly
  * `humanInLoopWithPlan`, one without reads `humanInLoopWithoutPlan` — so
  * writing a plan moves the default with it.
  *
- * A sub-board child (t3o-23) is a PLANNED build whatever its own plan rows say:
- * materialisation cut it from one of the parent's approved plans and made that
- * plan's body its brief, so it owns no `board_plans` row of its own — and read
- * as plan-less it would take the without-plan pause. The cascade (t3o-28, D3)
- * exists to run children through build → PR → merge "with no human in
- * between"; the human act was Begin build on the parent. So a child reads the
- * with-plan default. `hasPlan` still decides for a top-level card. The
- * explicit per-card toggle is applied by the caller and wins over both.
+ * A split child owns a copy of the plan it was cut from (T3O-27), so `hasPlan`
+ * alone decides. The explicit per-card toggle is applied by the caller and
+ * wins over both.
  */
 export function boardBuildHumanInLoopDefault(
   exec: Pick<BoardStageExecution, "humanInLoopWithPlan" | "humanInLoopWithoutPlan">,
-  card: Pick<BoardCard, "parentCardId">,
   hasPlan: boolean,
 ): boolean {
-  return hasPlan || card.parentCardId !== null
-    ? exec.humanInLoopWithPlan
-    : exec.humanInLoopWithoutPlan;
+  return hasPlan ? exec.humanInLoopWithPlan : exec.humanInLoopWithoutPlan;
 }
 
 /**
@@ -2716,9 +2733,12 @@ export function boardStageBeforeBuild(board: BoardState): BoardStageDefinition |
  */
 function isBoardCardAtAutoStartGate(input: {
   readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt">;
+  readonly card: Pick<BoardCard, "stage" | "archivedAt"> & {
+    readonly group?: BoardCard["group"] | undefined;
+  };
 }): boolean {
-  if (input.card.archivedAt !== null || input.card.parentCardId !== null) return false;
+  // Any leaf may be armed (T3O-27); a group starts through its children.
+  if (input.card.archivedAt !== null || (input.card.group ?? null) !== null) return false;
   const before = boardStageBeforeBuild(input.board);
   return before !== null && input.card.stage === before.stageId;
 }
@@ -2738,7 +2758,9 @@ function isBoardCardAtAutoStartGate(input: {
  */
 export function boardCardCanArmAutoStart(input: {
   readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt" | "dependsOn">;
+  readonly card: Pick<BoardCard, "stage" | "archivedAt" | "dependsOn"> & {
+    readonly group?: BoardCard["group"] | undefined;
+  };
 }): boolean {
   if (!isBoardCardAtAutoStartGate(input)) return false;
   return (
@@ -2763,10 +2785,9 @@ export function boardCardCanArmAutoStart(input: {
  */
 export function boardCardAutoStartDue(input: {
   readonly board: BoardState;
-  readonly card: Pick<
-    BoardCard,
-    "stage" | "parentCardId" | "archivedAt" | "dependsOn" | "autoStart"
-  >;
+  readonly card: Pick<BoardCard, "stage" | "archivedAt" | "dependsOn" | "autoStart"> & {
+    readonly group?: BoardCard["group"] | undefined;
+  };
 }): boolean {
   if (!input.card.autoStart) return false;
   if (!isBoardCardAtAutoStartGate(input)) return false;
@@ -2803,9 +2824,59 @@ export function boardCardAutoMergeArmed(input: {
   readonly boardWide?: boolean | undefined;
 }): boolean {
   if (input.card.archivedAt !== null) return false;
-  if (input.card.parentCardId !== null) return true;
   if (input.card.autoMerge) return true;
+  const parent =
+    input.card.parentCardId === null
+      ? undefined
+      : input.board.cards.find((candidate) => candidate.id === input.card.parentCardId);
+  if (parent !== undefined) {
+    // A child merging into an integration branch merges itself under its
+    // group's auto-build (T3O-27); one merging to trunk only when a group on
+    // the way up asks for auto-merge. A legacy parent with no group settings
+    // keeps the old unconditional arm.
+    const group = parent.group;
+    if (group === null) return true;
+    if (boardCardMergesIntoIntegrationBranch(input.board, input.card)) return group.autoBuild;
+    let ancestor: BoardCard | undefined = parent;
+    const seen = new Set<BoardCardId>();
+    while (ancestor !== undefined && !seen.has(ancestor.id)) {
+      seen.add(ancestor.id);
+      if (ancestor.group?.autoMerge === true) return true;
+      const nextId: BoardCardId | null = ancestor.parentCardId;
+      ancestor =
+        nextId === null ? undefined : input.board.cards.find((candidate) => candidate.id === nextId);
+    }
+  }
   return input.boardWide === true;
+}
+
+/**
+ * Whether a card's own branch merges into an integration branch rather than
+ * trunk (T3O-27): some ancestor group has its own target. Inherit groups pass
+ * straight through. A legacy parent with no group settings always cut one.
+ */
+export function boardCardMergesIntoIntegrationBranch(
+  board: BoardState,
+  card: Pick<BoardCard, "parentCardId">,
+): boolean {
+  return boardCardIntegrationAncestor(board, card) !== null;
+}
+
+/** The nearest ancestor whose integration branch this card merges into, or
+    null when it lands on trunk. */
+export function boardCardIntegrationAncestor<
+  C extends Pick<BoardCard, "id" | "parentCardId" | "group">,
+>(board: { readonly cards: ReadonlyArray<C> }, card: Pick<BoardCard, "parentCardId">): C | null {
+  const seen = new Set<BoardCardId>();
+  let parentId = card.parentCardId;
+  while (parentId !== null && !seen.has(parentId)) {
+    seen.add(parentId);
+    const parent = board.cards.find((candidate) => candidate.id === parentId);
+    if (parent === undefined) return null;
+    if (parent.group === null || parent.group.target === "own") return parent;
+    parentId = parent.parentCardId;
+  }
+  return null;
 }
 
 /**
@@ -2823,9 +2894,12 @@ export function boardCardAutoMergeArmed(input: {
  */
 export function boardCardCanArmAutoMerge(input: {
   readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt">;
+  readonly card: Pick<BoardCard, "stage" | "archivedAt"> & {
+    readonly group?: BoardCard["group"] | undefined;
+  };
 }): boolean {
-  if (input.card.archivedAt !== null || input.card.parentCardId !== null) return false;
+  // Any live leaf may carry its own override (T3O-27); a group merges nothing.
+  if (input.card.archivedAt !== null || (input.card.group ?? null) !== null) return false;
   const done = boardStageWithRole(input.board, "done");
   return done === null || input.card.stage !== done.stageId;
 }
@@ -2911,8 +2985,13 @@ export function boardCardUnfinishedChildren(
   cardId: BoardCardId,
 ): ReadonlyArray<BoardCard> {
   const done = boardStageWithRole(board, "done");
+  // Deferred children (T3O-27) are not this round's work, so they never hold
+  // a group back.
   return boardCardChildren(board, cardId).filter(
-    (child) => child.archivedAt === null && (done === null || child.stage !== done.stageId),
+    (child) =>
+      child.archivedAt === null &&
+      child.stage !== "deferred" &&
+      (done === null || child.stage !== done.stageId),
   );
 }
 
@@ -2932,7 +3011,7 @@ export function boardCardUnfinishedChildren(
  */
 export function boardCardPendingSplit(board: BoardState, cardId: BoardCardId): boolean {
   const card = board.cards.find((candidate) => candidate.id === cardId);
-  if (card === undefined || card.parentCardId !== null || card.archivedAt !== null) return false;
+  if (card === undefined || card.archivedAt !== null) return false;
   // Only LIVE children clear the pending state, matching the re-approval
   // guard: a first round whose children all archived is gone from the board,
   // so the card is pending its second-round split again — and the shell
@@ -2968,7 +3047,6 @@ export function boardCardShellPendingSplit(
   card: Pick<BoardCardShell, "stage" | "planCount" | "planTotal" | "parentCardId">,
   stages: ReadonlyArray<BoardStageDefinition>,
 ): boolean {
-  if (card.parentCardId !== undefined) return false;
   // `planTotal` is derived from LIVE children only (D6), which is exactly the
   // read-model rule too: only live children clear the pending state.
   if (card.planTotal !== undefined) return false;
@@ -3859,14 +3937,13 @@ export const BoardCardCreateCommand = Schema.Struct({
       card is before Building, so this reads as "start the build at" — plan-mode
       steps are never withheld, and the create dialog's copy says so. */
   scheduledStartAt: Schema.optional(IsoDateTime),
-  /** Create the card as a sub-board child of this parent (t3o-25): the
-      drill-in view's create dialog presets it. The decider requires the
-      parent to be a live top-level card in the same project, restricts the
-      target stage to the materialisation floor onward (the same subset a
-      materialised child may occupy) and requires every dependency to be a
-      sibling — a child may only depend on siblings, exactly as materialised
-      edges are scoped. Absent creates an ordinary top-level card. */
+  /** Create the card inside this group (t3o-25, T3O-27). Any live card may be
+      the parent, at any depth, unless it is a started leaf. Absent creates an
+      ordinary top-level card. */
   parentCardId: Schema.optional(BoardCardId),
+  /** Create an empty group heading (T3O-27): a group that stays a group with
+      no children until its first one arrives. */
+  heading: Schema.optional(Schema.Boolean),
   /** Pin the card to a worker at birth (T3O-65, D20). Absent follows the
       board's default worker. The decider requires a registered worker. */
   pinnedWorkerId: Schema.optional(BoardWorkerId),
@@ -3887,6 +3964,52 @@ export const BoardCardMoveCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardCardMoveCommand = typeof BoardCardMoveCommand.Type;
+
+/**
+ * Move cards into a group, out of one, or within one (T3O-27) — the one
+ * regrouping primitive behind indent, outdent, drag and "Move to…". `cardId`
+ * is the aggregate anchor and must be the first of `cardIds`. `parentCardId`
+ * null moves to the top level. `afterCardId` / `beforeCardId` name a sibling
+ * under the new parent to place the cards next to.
+ */
+export const BoardCardMoveCardsCommand = Schema.Struct({
+  type: Schema.Literal("board.card.move-cards"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  cardIds: Schema.Array(BoardCardId),
+  parentCardId: Schema.NullOr(BoardCardId),
+  afterCardId: Schema.optional(BoardCardId),
+  beforeCardId: Schema.optional(BoardCardId),
+  createdAt: IsoDateTime,
+});
+export type BoardCardMoveCardsCommand = typeof BoardCardMoveCardsCommand.Type;
+
+/** A group's settings (T3O-27). Absent fields are unchanged. */
+export const BoardCardSetGroupSettingsCommand = Schema.Struct({
+  type: Schema.Literal("board.card.set-group-settings"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  target: Schema.optional(BoardCardGroupTarget),
+  autoBuild: Schema.optional(Schema.Boolean),
+  autoMerge: Schema.optional(Schema.Boolean),
+  autoPlan: Schema.optional(Schema.Boolean),
+  createdAt: IsoDateTime,
+});
+export type BoardCardSetGroupSettingsCommand = typeof BoardCardSetGroupSettingsCommand.Type;
+
+/**
+ * Re-derive the stages of a card's ancestor groups (T3O-27). The decider
+ * already derives inside every command that changes a child; the reactor sends
+ * this only when it finds a group out of step (an event it did not decide, a
+ * boot after migration), so it heals rather than drives.
+ */
+export const BoardCardSyncGroupsCommand = Schema.Struct({
+  type: Schema.Literal("board.card.sync-groups"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardCardSyncGroupsCommand = typeof BoardCardSyncGroupsCommand.Type;
 
 export const BoardCardReorderCommand = Schema.Struct({
   type: Schema.Literal("board.card.reorder"),
@@ -5045,6 +5168,8 @@ export const BoardCardCreatedPayload = Schema.Struct({
       create. */
   parentCardId: Schema.optionalKey(BoardCardId),
   sourcePlanId: Schema.optionalKey(BoardPlanId),
+  /** Group settings at birth (T3O-27): present only on an empty heading. */
+  group: Schema.optionalKey(BoardCardGroup),
   /** The card's pinned base branch (T3O-5, D1). Key-optional: absent on every
       event written before this spec and on every card created without an
       explicit base, both of which mean "follow the project default" — the same
@@ -6085,6 +6210,10 @@ export const BoardCardShell = Schema.Struct({
   /** Set on sub-board children (t3o-23) so a child's face can wear its
       "part of <parent key>" chip and t3o-25's drill-in can scope by it. */
   parentCardId: Schema.optionalKey(BoardCardId),
+  /** Group settings (T3O-27), absent on a leaf — which is nearly every card,
+      so a leaf's shell stays byte-identical. On the card aggregate, so both
+      producers carry it. */
+  group: Schema.optionalKey(BoardCardGroup),
   /** When the card is held until (T3O-19, D8), absent when it is not scheduled
       — which is nearly every card, and why this is KEY-optional rather than
       nullable: the shell is under a fixed per-card byte budget asserted in
@@ -6484,6 +6613,8 @@ export function makeBoardCardShell(input: {
       omitted for top-level cards to keep their shells byte-identical to
       pre-sub-board payloads. */
   readonly parentCardId?: BoardCardId | null | undefined;
+  /** Group settings (T3O-27), or null on a leaf. */
+  readonly group?: BoardCardGroup | null | undefined;
   /** When the card is held until (T3O-19), or null when it is not scheduled.
       Rides the card aggregate like `prNumber`, so every producer asserts it;
       the key is omitted for an unscheduled card to keep its shell
@@ -6579,6 +6710,7 @@ export function makeBoardCardShell(input: {
     // Sub-board membership (t3o-23): on the aggregate, so asserted whenever
     // present; omitted for top-level cards (see the input doc).
     ...(input.parentCardId == null ? {} : { parentCardId: input.parentCardId }),
+    ...(input.group == null ? {} : { group: input.group }),
     // The schedule (T3O-19, D8): on the aggregate like `parentCardId`, and
     // omitted when there is none, which keeps an unscheduled card's shell
     // exactly the size it was before this field existed.
@@ -6681,6 +6813,7 @@ export function boardCardShellFromCard(
     // `cardMetaShellFields.test.ts`.
     prNumber: boardCardDisplayPullRequest(card)?.number ?? null,
     parentCardId: card.parentCardId,
+    group: card.group,
     scheduledStartAt: card.scheduledStartAt,
     autoStart: card.autoStart,
     autoMergeHeldSince: card.autoMergeHold?.heldSince ?? null,
@@ -6987,6 +7120,8 @@ export function isBoardEvent<Event extends { readonly type: string }>(
 export const BOARD_CLIENT_COMMANDS = [
   BoardCardCreateCommand,
   BoardCardMoveCommand,
+  BoardCardMoveCardsCommand,
+  BoardCardSetGroupSettingsCommand,
   BoardCardReorderCommand,
   BoardCardUpdateCommand,
   // T3O-33: move a card to another project, before it has ever been built.
@@ -7028,6 +7163,7 @@ export const BOARD_CLIENT_COMMANDS = [
  * registry and touches no upstream-owned file.
  */
 export const BOARD_INTERNAL_COMMANDS = [
+  BoardCardSyncGroupsCommand,
   BoardCardProvisionWorktreeCommand,
   BoardCardRecordWorktreeCommand,
   BoardCardRecordIntegrationBranchCommand,
@@ -10205,12 +10341,21 @@ export function isBoardCardBaseBranchShape(value: string): boolean {
 export function resolveBoardCardEffectiveBase(input: {
   readonly card: Pick<BoardCard, "parentCardId" | "baseBranch">;
   readonly cards: ReadonlyArray<
-    Pick<BoardCard, "id" | "worktree" | "pullRequest" | "pullRequestHistory">
+    Pick<BoardCard, "id" | "worktree" | "pullRequest" | "pullRequestHistory"> &
+      Partial<Pick<BoardCard, "parentCardId" | "baseBranch" | "group">>
   >;
   readonly defaultBranch: string | null;
 }): string | null {
   if (input.card.parentCardId === null) return input.card.baseBranch ?? input.defaultBranch;
   const parent = input.cards.find((candidate) => candidate.id === input.card.parentCardId);
+  // An inherit group (T3O-27) has no branch of its own: its children land
+  // wherever the group itself would.
+  if (parent !== undefined && parent.group?.target === "inherit") {
+    return resolveBoardCardEffectiveBase({
+      ...input,
+      card: { parentCardId: parent.parentCardId ?? null, baseBranch: parent.baseBranch ?? null },
+    });
+  }
   const worktree = parent?.worktree ?? null;
   const liveBranch =
     worktree !== null &&

@@ -81,6 +81,7 @@ const makeCard = (overrides: Partial<BoardCard> = {}): BoardCard => ({
   dependsOn: [],
   parentCardId: null,
   sourcePlanId: null,
+  group: null,
   threadLinks: [
     {
       threadId: ThreadId.make("thread-build"),

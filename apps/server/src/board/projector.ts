@@ -16,6 +16,7 @@
  */
 import {
   BOARD_CARD_BRIEF_BODY_KIND,
+  boardSplitChildPlanCopy,
   BoardCardArchivedPayload,
   boardCardCreatedDependsOn,
   boardCardCreatedLabels,
@@ -245,6 +246,8 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // approve decider emits; absent on every other create.
     parentCardId: payload.parentCardId ?? null,
     sourcePlanId: payload.sourcePlanId ?? null,
+    // A heading is born a group (T3O-27); every other card is born a leaf.
+    group: payload.group ?? null,
     threadLinks: [],
     attachments: [],
     externalRef: null,
@@ -592,9 +595,19 @@ export function projectBoardEvent<M extends BoardReadModel>(
     case "board.card-created":
       return decodeBoardCardCreatedPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
-        Effect.map((payload) =>
-          bumpNextCardNumber(upsertCard(model, boardCardFromCreatedPayload(payload)), payload),
-        ),
+        Effect.map((payload) => {
+          const card = boardCardFromCreatedPayload(payload);
+          const next = bumpNextCardNumber(upsertCard(model, card), payload);
+          // A split child owns a copy of its plan (T3O-27), mirroring the SQL
+          // projection's row.
+          const source =
+            payload.briefFromPlanId === undefined
+              ? undefined
+              : next.board?.plans?.find((plan) => plan.planId === payload.briefFromPlanId);
+          return source === undefined
+            ? next
+            : upsertPlan(next, boardSplitChildPlanCopy(source, card));
+        }),
       );
 
     case "board.card-moved":
