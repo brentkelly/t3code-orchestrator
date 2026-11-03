@@ -266,7 +266,9 @@ export function boardGroupArchiveLosses(
     (card) =>
       card.worktreeReady === true ||
       boardShellGroup(shells, card)?.target === "own" ||
-      (!isBoardGroupShell(shells, card) && isBoardStageAtOrAfterBuild(stages, card.stage)),
+      (!isBoardGroupShell(shells, card) &&
+        isBoardStageAtOrAfterBuild(stages, card.stage) &&
+        card.stage !== doneStageId),
   );
   const keys = (cards: Shells) => cards.map((card) => card.key).join(", ");
   return [

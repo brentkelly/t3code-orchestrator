@@ -308,6 +308,11 @@ describe("BoardArchiveGroupDialog", () => {
     expect(boardGroupArchiveLosses([...shells, nested], STAGES, group).at(-1)).toBe(
       "Branches deleted, remote copies included: board/t3o-26, board/t3o-27, board/t3o-29",
     );
+    // A leaf already in Done had its branch reclaimed after merge, so it is not listed.
+    const merged = shell("c-3", "done", { key: "T3O-30", parentCardId: group.cardId });
+    expect(boardGroupArchiveLosses([...shells, merged], STAGES, group).at(-1)).toBe(
+      "Branches deleted, remote copies included: board/t3o-26, board/t3o-27",
+    );
     const onConfirm = vi.fn();
     await using _screen = await render(
       <BoardArchiveGroupDialog
