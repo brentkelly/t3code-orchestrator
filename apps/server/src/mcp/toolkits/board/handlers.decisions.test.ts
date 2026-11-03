@@ -253,9 +253,38 @@ it.layer(layer)("decision log and ancestor context (T3O-32)", (it) => {
       assert.deepStrictEqual(
         context.decisions.map((entry) => [entry.question, entry.flag, entry.threadId]),
         [
-          ["leaf normal", "normal", childThread],
           ["leaf unclear", "unclear", childThread],
+          ["leaf normal", "normal", childThread],
         ],
+      );
+    }),
+  );
+
+  it.effect("caps the card's own decisions in its context, flagged first", () =>
+    Effect.gen(function* () {
+      yield* seedTree();
+      yield* boardHandlers
+        .board_record_decisions({
+          decisions: Array.from({ length: 40 }, (_, index) =>
+            decision(`normal ${index}`, "normal"),
+          ),
+        })
+        .pipe(asChild);
+      yield* boardHandlers
+        .board_record_decisions({ decisions: [decision("late unclear", "unclear")] })
+        .pipe(asChild);
+      const context = yield* boardHandlers.board_get_card_context().pipe(asChild);
+      // The layer is shared, so earlier tests' decisions may sit on the card too.
+      const questions = context.decisions.map((entry) => entry.question);
+      assert.strictEqual(questions.length, 40);
+      assert.include(questions, "late unclear");
+      const firstNormal = context.decisions.findIndex((entry) => entry.flag === "normal");
+      assert.isTrue(context.decisions.slice(firstNormal).every((entry) => entry.flag === "normal"));
+      // Recorded order holds past ten entries in one batch ("evt:10" vs "evt:2").
+      const batch = questions.filter((question) => question.startsWith("normal "));
+      assert.deepStrictEqual(
+        batch,
+        Array.from({ length: batch.length }, (_, index) => `normal ${index}`),
       );
     }),
   );

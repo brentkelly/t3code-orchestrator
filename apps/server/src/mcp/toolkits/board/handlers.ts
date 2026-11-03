@@ -95,8 +95,8 @@ import { BoardToolError, BoardToolkit } from "./tools.ts";
 /** How much of an ancestor's brief the context carries (T3O-32): enough to
     plan against, while a deep tree of long briefs stays bounded. */
 const ANCESTOR_BRIEF_MAX_CHARS = 6_000;
-/** How many of an ancestor's decisions ride the context, flagged first. */
-const ANCESTOR_DECISIONS_MAX = 40;
+/** How many decisions per card ride the context, flagged first. */
+const CONTEXT_DECISIONS_MAX = 40;
 
 const nonEmpty = (value: string | undefined, fallback: string): string =>
   value !== undefined && value.trim().length > 0 ? value : fallback;
@@ -825,7 +825,7 @@ const describeAncestors = (deps: BoardToolDeps, board: BoardState, card: BoardCa
         brief: truncated ? `${brief.slice(0, ANCESTOR_BRIEF_MAX_CHARS)}…` : brief,
         briefTruncated: truncated,
         plans: boardCardPlans(board, ancestor.id),
-        decisions: sortBoardCardDecisions(decisions).slice(0, ANCESTOR_DECISIONS_MAX),
+        decisions: sortBoardCardDecisions(decisions).slice(0, CONTEXT_DECISIONS_MAX),
       };
     }),
   );
@@ -919,7 +919,7 @@ export const boardHandlers = {
         threads,
         ancestors: yield* describeAncestors(deps, board, card),
         sourcePlan: yield* describeSourcePlan(deps, board, card, detail?.brief ?? null),
-        decisions: detail?.decisions ?? [],
+        decisions: sortBoardCardDecisions(detail?.decisions ?? []).slice(0, CONTEXT_DECISIONS_MAX),
       };
     }),
 

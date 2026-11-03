@@ -2195,7 +2195,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         created_at AS "createdAt"
       FROM board_card_decisions
       WHERE card_id = ${cardId}
-      ORDER BY created_at, decision_id
+      -- rowid, not decision_id: "evt:10" sorts before "evt:2" as text.
+      ORDER BY created_at, rowid
     `,
   });
 

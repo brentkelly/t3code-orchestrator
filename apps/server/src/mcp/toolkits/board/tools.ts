@@ -148,7 +148,8 @@ const BoardCardContextAncestor = Schema.Struct({
   brief: Schema.NullOr(Schema.String),
   briefTruncated: Schema.Boolean,
   plans: Schema.Array(BoardPlan),
-  /** The decisions its planning recorded, unclear and important first. */
+  /** The decisions its planning recorded, unclear and important first,
+      capped at 40 entries. */
   decisions: Schema.Array(BoardCardDecision),
 });
 
@@ -206,7 +207,8 @@ const BoardCardContext = Schema.Struct({
       that was not cut from a plan. `body` is null when it is the brief word for
       word, which it is unless the brief was edited since. */
   sourcePlan: Schema.NullOr(Schema.Struct({ plan: BoardPlan, body: Schema.NullOr(Schema.String) })),
-  /** This card's own decision log so far (T3O-32). */
+  /** This card's own decision log so far (T3O-32), unclear and important
+      first, capped at 40 entries like each ancestor's. */
   decisions: Schema.Array(BoardCardDecision),
 });
 
