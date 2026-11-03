@@ -924,6 +924,8 @@ export function makeLocalBoardWorkspace(
         .pipe(Effect.mapError(forgeFailed("mergeState"))),
     markPullRequestReady: ({ projectId, number }) =>
       pullRequests.markReady({ projectId, number }).pipe(Effect.mapError(forgeFailed("markReady"))),
+    closePullRequest: ({ projectId, number }) =>
+      pullRequests.close({ projectId, number }).pipe(Effect.mapError(forgeFailed("close"))),
     pullRequestRepository: ({ projectId }) =>
       pullRequests.repository(projectId).pipe(Effect.mapError(forgeFailed("repository"))),
     reclaimWorktree,

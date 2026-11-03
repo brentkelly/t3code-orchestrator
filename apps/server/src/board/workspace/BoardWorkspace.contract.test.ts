@@ -167,6 +167,11 @@ const scriptedForge = (asked: Array<string>) =>
         asked.push(`markReady:${input.number}`);
         return "readied" as const;
       }),
+    close: (input) =>
+      Effect.sync(() => {
+        asked.push(`close:${input.number}`);
+        return "closed" as const;
+      }),
     repository: () =>
       Effect.sync(() => {
         asked.push("repository");
@@ -316,6 +321,7 @@ const scenario = (ws: BoardWorkspace, env: Env, forgeAsked: Array<string>) =>
     out.mergePullRequest = yield* ws.mergePullRequest({ ...p, number: 7, method: "squash" });
     out.pullRequestMergeState = yield* ws.pullRequestMergeState({ ...p, number: 7 });
     out.markPullRequestReady = yield* ws.markPullRequestReady({ ...p, number: 7 });
+    out.closePullRequest = yield* ws.closePullRequest({ ...p, number: 7 });
     out.pullRequestRepository = yield* ws.pullRequestRepository(p);
     out.forgeAsked = [...forgeAsked];
 
@@ -384,6 +390,7 @@ describe("BoardWorkspace contract (T3O-64)", () => {
         "merge:7:squash",
         "mergeState:7",
         "markReady:7",
+        "close:7",
         "repository",
       ]);
       // The remote run reached the worker for every one of them.

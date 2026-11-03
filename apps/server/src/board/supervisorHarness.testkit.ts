@@ -441,6 +441,8 @@ export type Harness = {
   readonly mergeStateProbes: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** Every mark-ready request the reactor made (T3O-12), in order. */
   readonly markReadyCalls: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
+  /** Every pull request the reactor asked the forge to close (T3O-28), in order. */
+  readonly closePullRequestCalls: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** T3o (T3O-48): every pull request lookup, with whether it was FORCED — so a
       test can tell a human's "Check again" from the automatic cached refresh. */
   readonly pullRequestLookups: Effect.Effect<ReadonlyArray<{ readonly forced: boolean }>>;
@@ -979,7 +981,12 @@ export function withGovernor(
       ReadonlyArray<{ readonly number: number; readonly forced: boolean }>
     >([]);
     const markReadyCalls = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
+    const closePullRequestCalls = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
     const pullRequestStub = BoardPullRequestGateway.of({
+      close: (request) =>
+        Ref.update(closePullRequestCalls, (calls) => [...calls, { number: request.number }]).pipe(
+          Effect.as("closed" as const),
+        ),
       repository: () =>
         Effect.succeed(
           boardRepositoryOf(projectRepositoryIdentity, input.projectOriginUrl ?? null),
@@ -1180,6 +1187,7 @@ export function withGovernor(
           mergeAttempts: Ref.get(mergeAttempts),
           mergeStateProbes: Ref.get(mergeStateProbes),
           markReadyCalls: Ref.get(markReadyCalls),
+          closePullRequestCalls: Ref.get(closePullRequestCalls),
           pullRequestLookups: Ref.get(pullRequestLookups),
           pullRequestGets: Ref.get(pullRequestGets),
           removedWorktrees: Ref.get(removedWorktrees),

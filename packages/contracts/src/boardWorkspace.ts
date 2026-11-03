@@ -203,6 +203,7 @@ export const BOARD_WORKER_GIT_WS_METHODS = {
   mergePullRequest: "boardWorker.git.mergePullRequest",
   pullRequestMergeState: "boardWorker.git.pullRequestMergeState",
   markPullRequestReady: "boardWorker.git.markPullRequestReady",
+  closePullRequest: "boardWorker.git.closePullRequest",
   pullRequestRepository: "boardWorker.git.pullRequestRepository",
 } as const;
 
@@ -380,6 +381,11 @@ export const BOARD_WORKER_GIT_RPCS = [
     success: Schema.Literals(["readied", "not-draft"]),
     error: gitError,
   }),
+  Rpc.make(M.closePullRequest, {
+    payload: { ...onProject, number: PositiveInt },
+    success: Schema.Literals(["closed", "not-open"]),
+    error: gitError,
+  }),
   Rpc.make(M.pullRequestRepository, {
     payload: onProject,
     success: BoardWorkspaceRepository,
@@ -427,6 +433,7 @@ export const BOARD_WORKER_GIT_RPC_SCOPES = {
   [M.mergePullRequest]: AuthSourceControlWriteScope,
   [M.pullRequestMergeState]: AuthOrchestrationReadScope,
   [M.markPullRequestReady]: AuthSourceControlWriteScope,
+  [M.closePullRequest]: AuthSourceControlWriteScope,
   [M.pullRequestRepository]: AuthOrchestrationReadScope,
 } as const satisfies Record<BoardWorkerGitMethod, string>;
 
