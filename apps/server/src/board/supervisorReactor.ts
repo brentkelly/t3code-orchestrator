@@ -7278,7 +7278,9 @@ const make = Effect.gen(function* () {
     const card = yield* readCard(cardId);
     if (card === null || card.archivedAt === null) return;
     const worktree = card.worktree;
-    if (worktree === null || worktree.status === "reclaimed") return;
+    // A reclaimed slice still names its branch: the archive's own reclaim
+    // may have removed the checkout first, and the branch outlives it.
+    if (worktree === null) return;
     if (worktree.status === "ready" && worktree.path !== null) {
       yield* forceRemoveCardWorktree(card.id);
     }
