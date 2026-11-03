@@ -5270,6 +5270,9 @@ export type BoardCardReorderedPayload = typeof BoardCardReorderedPayload.Type;
 
 export const BoardCardUpdatedPayload = Schema.Struct({
   cardId: BoardCardId,
+  /** Set when this update turned a leaf into a group (T3O-27), so the
+      supervisor abandons the leaf's live planning step. */
+  becameGroup: Schema.optional(Schema.Boolean),
   /** Absent: brief unchanged. Null: brief cleared. String: new body text for
       `board_card_bodies` (the body deliberately never enters the read
       model — D8). */
@@ -10254,16 +10257,18 @@ export function boardModelSelectionOfOverride(
  */
 export function resolveBoardCardStageModelOverride(input: {
   readonly card: Pick<BoardCard, "modelOverrides">;
-  /** The card's parent, for a sub-board child; null for a top-level card or
-      when the caller could not resolve it. */
-  readonly parent: Pick<BoardCard, "modelOverrides"> | null;
+  /** The card's ancestors, nearest first (T3O-27): groups nest, and the
+      nearest one that sets the stage wins. Empty for a top-level card. */
+  readonly ancestors: ReadonlyArray<Pick<BoardCard, "modelOverrides">>;
   readonly stageId: BoardStageId;
 }): BoardCardStageModelOverride | null {
-  return (
-    input.card.modelOverrides?.[input.stageId] ??
-    input.parent?.modelOverrides?.[input.stageId] ??
-    null
-  );
+  const own = input.card.modelOverrides?.[input.stageId];
+  if (own !== undefined) return own;
+  for (const ancestor of input.ancestors) {
+    const inherited = ancestor.modelOverrides?.[input.stageId];
+    if (inherited !== undefined) return inherited;
+  }
+  return null;
 }
 
 /**

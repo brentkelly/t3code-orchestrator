@@ -529,12 +529,12 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
     }),
   );
 
-  it.effect("refuses a split on a card that is itself a plan card (depth 1)", () =>
+  it.effect("splits a card that is itself inside a group — splits nest (T3O-27)", () =>
     Effect.gen(function* () {
       const board = makeBoard({
         extraCards: [makeChild("card-child", "ready")],
       });
-      // Give the child its own two plans, then try to split it.
+      // Give the child its own two plans, then split it.
       const withPlans: BoardState = {
         ...board,
         plans: [
@@ -542,8 +542,16 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
           makePlan({ cardId: BoardCardId.make("card-child"), key: "q2", ordinal: 1 }),
         ],
       };
-      const failure = yield* decideFail(approve("card-child"), makeReadModel(withPlans));
-      assert.include(String(failure), "do not nest");
+      const events = yield* decideEvents(approve("card-child"), makeReadModel(withPlans));
+      const grandchildren = events.filter((event) => event.type === "board.card-created");
+      expect(grandchildren).toHaveLength(2);
+      for (const event of grandchildren) {
+        assert.ok(event.type === "board.card-created");
+        expect(event.payload.parentCardId).toBe(BoardCardId.make("card-child"));
+      }
+      const approved = events.find((event) => event.type === "board.plans-approved");
+      assert.ok(approved?.type === "board.plans-approved");
+      expect(approved.payload.card.group?.target).toBe("own");
     }),
   );
 
@@ -1048,25 +1056,42 @@ it.layer(NodeServices.layer)("sub-board child create (t3o-25)", (it) => {
     }),
   );
 
-  it.effect("refuses a child created before the materialisation floor", () =>
+  it.effect("refuses a split child created before the materialisation floor", () =>
     Effect.gen(function* () {
+      // A parent that already split is a fully planned (own-branch) group.
       const failure = yield* decideFail(
         createCommand({ parentCardId: "card-parent", stage: "planning" }),
-        makeReadModel(makeBoard()),
+        makeReadModel(makeBoard({ extraCards: [makeChild("card-child", "ready")] })),
       );
       assert.include(String(failure), "materialisation floor");
     }),
   );
 
-  it.effect("refuses a dependency on a non-sibling — a child depends on siblings only", () =>
+  it.effect("lets an ordinary group hold a child in any stage (T3O-27)", () =>
     Effect.gen(function* () {
-      const failure = yield* decideFail(
+      const events = yield* decideEvents(
+        createCommand({ parentCardId: "card-parent", stage: "backlog" }),
+        makeReadModel(makeBoard()),
+      );
+      assert.ok(events[0]?.type === "board.card-created");
+      // The parent became a group in the same decision.
+      const converted = events.find(
+        (event) => event.type === "board.card-updated" && event.payload.cardId === parentId,
+      );
+      assert.ok(converted?.type === "board.card-updated");
+      expect(converted.payload.card.group?.target).toBe("inherit");
+    }),
+  );
+
+  it.effect("accepts a dependency across groups (T3O-27)", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(
         createCommand({ parentCardId: "card-parent", dependsOn: ["card-top"] }),
         makeReadModel(
           makeBoard({ extraCards: [makeCard({ id: "card-top", key: "T3-1", stage: "ready" })] }),
         ),
       );
-      assert.include(String(failure), "not a sibling");
+      assert.ok(events[0]?.type === "board.card-created");
     }),
   );
 
@@ -1086,23 +1111,35 @@ it.layer(NodeServices.layer)("sub-board child create (t3o-25)", (it) => {
     }),
   );
 
-  it.effect("refuses a parent belonging to a different project", () =>
+  it.effect("lets a group span projects (T3O-27)", () =>
     Effect.gen(function* () {
-      const failure = yield* decideFail(
+      const events = yield* decideEvents(
         createCommand({ parentCardId: "card-parent" }),
         makeReadModel(makeBoard({ parent: { projectId: ProjectId.make("project-2") } })),
       );
-      assert.include(String(failure), "different project");
+      assert.ok(events[0]?.type === "board.card-created");
     }),
   );
 
-  it.effect("refuses nesting — a child of a child", () =>
+  it.effect("nests — a child of a child (T3O-27)", () =>
     Effect.gen(function* () {
-      const failure = yield* decideFail(
+      const events = yield* decideEvents(
         createCommand({ parentCardId: "card-child" }),
         makeReadModel(makeBoard({ extraCards: [makeChild("card-child", "ready")] })),
       );
-      assert.include(String(failure), "do not nest");
+      const created = events[0]!;
+      assert.ok(created.type === "board.card-created");
+      expect(created.payload.parentCardId).toBe(BoardCardId.make("card-child"));
+    }),
+  );
+
+  it.effect("refuses a started leaf as a parent (T3O-27)", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        createCommand({ parentCardId: "card-child" }),
+        makeReadModel(makeBoard({ extraCards: [makeChild("card-child", "building")] })),
+      );
+      assert.include(String(failure), "cannot become a group");
     }),
   );
 
@@ -1116,7 +1153,7 @@ it.layer(NodeServices.layer)("sub-board child create (t3o-25)", (it) => {
   );
 });
 
-// ── Dependency scope (T3O-10): a card depends only within its own level ──
+// ── Dependency scope (T3O-10, T3O-27): dependencies cross groups ──
 
 it.layer(NodeServices.layer)("dependency scope (T3O-10)", (it) => {
   const update = (
@@ -1166,14 +1203,11 @@ it.layer(NodeServices.layer)("dependency scope (T3O-10)", (it) => {
       ],
     });
 
-  it.effect(
-    "refuses a new top-level card depending on another card's child, naming the parent",
-    () =>
-      Effect.gen(function* () {
-        const failure = yield* decideFail(createTopLevel(["card-child-2"]), makeReadModel(board()));
-        assert.include(String(failure), "'T3-2' is a sub-board child of 'T3-190'");
-        assert.include(String(failure), "Depend on 'T3-190' instead");
-      }),
+  it.effect("lets a new top-level card depend on another group's child (T3O-27)", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(createTopLevel(["card-child-2"]), makeReadModel(board()));
+      assert.ok(events[0]?.type === "board.card-created");
+    }),
   );
 
   it.effect("lets a new top-level card depend on the parent and on other top-level cards", () =>
@@ -1188,19 +1222,18 @@ it.layer(NodeServices.layer)("dependency scope (T3O-10)", (it) => {
     }),
   );
 
-  it.effect("refuses a top-level card adding another card's child, whole-set or incremental", () =>
+  it.effect("lets a top-level card add another group's child, whole-set or incremental", () =>
     Effect.gen(function* () {
-      const whole = yield* decideFail(
+      const whole = yield* decideEvents(
         update("card-top-7", { dependsOn: ["card-top-8", "card-child-2"] }),
         makeReadModel(board()),
       );
-      assert.include(String(whole), "Depend on 'T3-190' instead");
-
-      const added = yield* decideFail(
+      assert.ok(whole[0]?.type === "board.card-updated");
+      const added = yield* decideEvents(
         update("card-top-7", { addDependsOn: ["card-child-3"] }),
         makeReadModel(board()),
       );
-      assert.include(String(added), "'T3-3' is a sub-board child of 'T3-190'");
+      assert.ok(added[0]?.type === "board.card-updated");
     }),
   );
 
@@ -1216,13 +1249,18 @@ it.layer(NodeServices.layer)("dependency scope (T3O-10)", (it) => {
     }),
   );
 
-  it.effect("refuses a child adding a dependency outside its sibling group", () =>
+  it.effect("lets a child depend outside its group, but never on its own group", () =>
     Effect.gen(function* () {
-      const failure = yield* decideFail(
+      const outside = yield* decideEvents(
         update("card-child-2", { addDependsOn: ["card-top-7"] }),
         makeReadModel(board()),
       );
-      assert.include(String(failure), "not a sibling in the sub-board of 'T3-190'");
+      assert.ok(outside[0]?.type === "board.card-updated");
+      const ancestor = yield* decideFail(
+        update("card-child-2", { addDependsOn: ["card-parent"] }),
+        makeReadModel(board()),
+      );
+      assert.include(String(ancestor), "a card inside a group finishes before its group does");
     }),
   );
 

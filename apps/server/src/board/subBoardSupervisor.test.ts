@@ -10,6 +10,7 @@ import {
   BoardStageId,
   boardCardStepState,
   boardPlanId,
+  boardSplitChildPlanCopy,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
@@ -472,12 +473,23 @@ const materialisedChild = (id: string, stage: string): BoardCard => ({
 });
 
 it.effect(
-  "runs a cascaded child unattended even though it owns no plan row (its plan is its brief)",
+  "runs a cascaded child unattended: it owns a copy of the plan it was cut from (T3O-27)",
   () =>
     withGovernor(
       {
         board: {
           cards: [parentCard(), materialisedChild("card-one", "ready")],
+          plans: [
+            boardSplitChildPlanCopy(
+              {
+                planId: boardPlanId(parentId, "one"),
+                cardId: parentId,
+                title: "Plan one",
+                summary: "The first part",
+              },
+              { id: BoardCardId.make("card-one"), createdAt: NOW },
+            ),
+          ],
           nextCardNumberByProject: {},
         },
         settings: settingsPausingPlanless(),
@@ -500,7 +512,7 @@ it.effect(
           assert.isNotNull(state);
           // The whole point of the sub-board: dependency resolution → build →
           // PR → merge with no human in between (t3o-28, D3). A materialised
-          // child is a planned build — the plan-less pause must not apply.
+          // child owns its plan, so the plan-less pause does not apply.
           assert.strictEqual(state!.humanInLoop, false);
         }),
     ),

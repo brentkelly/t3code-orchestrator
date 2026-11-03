@@ -1316,7 +1316,7 @@ describe("per-card model overrides (t3o-29)", () => {
     expect(
       resolveBoardCardStageModelOverride({
         card: { modelOverrides: { [build]: opus } },
-        parent: { modelOverrides: { [build]: haiku } },
+        ancestors: [{ modelOverrides: { [build]: haiku } }],
         stageId: build,
       }),
     ).toEqual(opus);
@@ -1326,7 +1326,7 @@ describe("per-card model overrides (t3o-29)", () => {
     expect(
       resolveBoardCardStageModelOverride({
         card: { modelOverrides: null },
-        parent: { modelOverrides: { [build]: haiku } },
+        ancestors: [{ modelOverrides: { [build]: haiku } }],
         stageId: build,
       }),
     ).toEqual(haiku);
@@ -1336,7 +1336,7 @@ describe("per-card model overrides (t3o-29)", () => {
     expect(
       resolveBoardCardStageModelOverride({
         card: { modelOverrides: null },
-        parent: { modelOverrides: { [build]: haiku } },
+        ancestors: [{ modelOverrides: { [build]: haiku } }],
         stageId: review,
       }),
     ).toBeNull();
@@ -1346,10 +1346,27 @@ describe("per-card model overrides (t3o-29)", () => {
     expect(
       resolveBoardCardStageModelOverride({
         card: { modelOverrides: null },
-        parent: null,
+        ancestors: [],
         stageId: build,
       }),
     ).toBeNull();
+  });
+
+  it("walks the whole ancestor chain, nearest group first (T3O-27)", () => {
+    expect(
+      resolveBoardCardStageModelOverride({
+        card: { modelOverrides: null },
+        ancestors: [{ modelOverrides: null }, { modelOverrides: { [build]: haiku } }],
+        stageId: build,
+      }),
+    ).toEqual(haiku);
+    expect(
+      resolveBoardCardStageModelOverride({
+        card: { modelOverrides: null },
+        ancestors: [{ modelOverrides: { [build]: opus } }, { modelOverrides: { [build]: haiku } }],
+        stageId: build,
+      }),
+    ).toEqual(opus);
   });
 
   it("narrows an override to its model half, dropping the access level", () => {

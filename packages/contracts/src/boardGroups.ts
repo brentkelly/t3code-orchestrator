@@ -313,3 +313,22 @@ export function boardGroupAutoBuilds(board: BoardState, card: BoardCard): boolea
   const group = boardCardGroupOf(board, card);
   return group !== null && group.autoBuild && group.started;
 }
+
+/** Whether two group settings are the same, field for field. */
+export function boardCardGroupsEqual(
+  left: BoardCardGroup | null,
+  right: BoardCardGroup | null,
+): boolean {
+  if (left === null || right === null) return left === right;
+  return (
+    left.target === right.target &&
+    left.autoBuild === right.autoBuild &&
+    left.autoMerge === right.autoMerge &&
+    left.autoPlan === right.autoPlan &&
+    left.started === right.started &&
+    left.placed === right.placed &&
+    left.prevStage === right.prevStage &&
+    left.heading === right.heading &&
+    left.integrated === right.integrated
+  );
+}

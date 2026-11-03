@@ -106,6 +106,14 @@ import {
   type BoardStageRole,
   type BoardState,
   type BoardEvent,
+  boardCardActiveChildren,
+  boardCardAncestors,
+  boardCardGroupOf,
+  boardCardIntegrationAncestor,
+  boardCardLiveChildren,
+  boardCardMergesIntoIntegrationBranch,
+  deriveBoardGroupStage,
+  isBoardCardPlanned,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -456,9 +464,9 @@ interface BoardWorld {
  * `model` (see `BoardStageExecutorConfig.cardOverride`). That is what keeps the
  * reactor from having to know that a review stage treats it differently.
  *
- * Free: the parent is already in the aggregate every caller holds, so this is
- * an in-memory find, not a read. Sub-boards are one level deep, so there is no
- * chain to walk.
+ * Free: the ancestors are already in the aggregate every caller holds, so this
+ * is an in-memory walk, not a read. Groups nest (T3O-27), so the whole chain is
+ * consulted, nearest first.
  */
 function cardStageModelOverride(
   board: BoardState,
@@ -466,10 +474,7 @@ function cardStageModelOverride(
 ): BoardCardStageModelOverride | null {
   return resolveBoardCardStageModelOverride({
     card,
-    parent:
-      card.parentCardId === null
-        ? null
-        : (board.cards.find((candidate) => candidate.id === card.parentCardId) ?? null),
+    ancestors: boardCardAncestors(board, card),
     stageId: card.stage,
   });
 }
@@ -1050,7 +1055,7 @@ const make = Effect.gen(function* () {
     board: BoardState,
     exec: BoardStageExecution,
     card: BoardCard,
-  ): boolean => boardBuildHumanInLoopDefault(exec, card, boardCardPlans(board, card.id).length > 0);
+  ): boolean => boardBuildHumanInLoopDefault(exec, isBoardCardPlanned(board, card.id));
 
   /** The resolved human-in-the-loop stance for a fresh (first-entry) run of a
       stage (D5/D6). The build role reads the per-card toggle over its two
@@ -1249,7 +1254,9 @@ const make = Effect.gen(function* () {
     } | null = null;
     if (card.parentCardId !== null) {
       const board = yield* readBoard;
-      const parent = board.cards.find((candidate) => candidate.id === card.parentCardId);
+      // The group whose integration branch this card is cut from (T3O-27):
+      // the nearest own-target ancestor; inherit groups pass through.
+      const parent = boardCardIntegrationAncestor(board, card) ?? undefined;
       const buildStage = boardStageWithRole(board, "build");
       const branchLive =
         parent?.worktree != null &&
@@ -2543,6 +2550,9 @@ const make = Effect.gen(function* () {
     // board.
     if (card.parentCardId === null) return false;
     const board = yield* readBoard;
+    // Only cards merging into an integration branch (T3O-27): a child of an
+    // inherit group lands on trunk like a top-level card.
+    if (!boardCardMergesIntoIntegrationBranch(board, card)) return false;
     const recorded = boardCardStepState(board, card.id)?.baseTipAtRoundStart ?? null;
     if (recorded === null) return false;
     const tip = yield* measureBaseTip(card);
@@ -2571,7 +2581,10 @@ const make = Effect.gen(function* () {
       // answers from its own field, and a child from its parent's slice — so
       // the common case of this check (which runs at every stage plan and every
       // merge crossing) does no I/O at all.
-      const needsDefault = card.parentCardId === null && card.baseBranch === null;
+      const needsDefault =
+        card.parentCardId === null
+          ? card.baseBranch === null
+          : !boardCardMergesIntoIntegrationBranch(yield* readBoard, card);
       const defaultBranch = needsDefault
         ? yield* Effect.gen(function* () {
             const workspace = yield* workspaceFor(card);
@@ -2635,6 +2648,18 @@ const make = Effect.gen(function* () {
     // could only watch. Its review-stage entry, which only happens after the
     // last child finished, kicks off normally.
     if (boardCardUnfinishedChildren(board, card.id).length > 0) return;
+    // A group's pipeline is paused (T3O-27): it runs only the integration
+    // review of its own branch, once every active child is done. An inherit
+    // group or an empty heading never runs anything.
+    {
+      const group = boardCardGroupOf(board, card);
+      if (
+        group !== null &&
+        (group.target !== "own" || boardCardActiveChildren(board, card.id).length === 0)
+      ) {
+        return;
+      }
+    }
     const settings = yield* boardSettings;
     const exec = resolveBoardStageExecution(settings, card.stage);
     const mergeRole = effectiveBoardStageRole(stage) === "merge";
@@ -3033,30 +3058,30 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const parent = board.cards.find((candidate) => candidate.id === parentCardId);
     if (parent === undefined || parent.archivedAt !== null) return;
+    const group = boardCardGroupOf(board, parent);
+    // Only a group with auto-build on starts its own children (T3O-27); one
+    // with it off is started child by child.
+    if (group === null || !group.autoBuild) return;
     const buildStage = boardStageWithRole(board, "build");
     const floor = boardSubBoardFloorStage(board);
     if (buildStage === null || floor === null) return;
-    // Fire once the split has BEGUN — not only while the parent sits exactly at
-    // build. "Begun" = some live child has already left the floor for the build
-    // stage or beyond (a building, reviewing, merging or done child). Before
-    // that, approval alone must start nothing (t3o-28 D1) — the human has not
-    // pressed Begin build. But once a child is underway, the split runs to
-    // completion no matter WHERE the human parked the parent: dragging the
-    // supervising card back to the floor must not silently strand the freed
-    // siblings, which is the production bug this replaced. The parent arriving
-    // at build (its own move) still triggers the first cascade; this only widens
-    // the child-finished / child-deleted re-runs to survive a parked parent.
+    // Fire once the group has BEGUN — not only while it sits exactly at
+    // build. "Begun" = the human started it, or some active child is already
+    // at the build stage or beyond. Before that, approval alone starts nothing
+    // (t3o-28 D1). After it, the group runs to completion wherever the human
+    // parked it, so dragging it back must not strand freed siblings.
     const begun =
+      group.started ||
       parent.stage === buildStage.stageId ||
-      boardCardChildren(board, parent.id).some(
-        (child) => child.archivedAt === null && isBoardStageAtOrAfterBuild(board, child.stage),
+      boardCardActiveChildren(board, parent.id).some((child) =>
+        isBoardStageAtOrAfterBuild(board, child.stage),
       );
     if (!begun) return;
-    for (const child of boardCardChildren(board, parent.id)) {
-      if (child.archivedAt !== null) continue;
+    for (const child of boardCardActiveChildren(board, parent.id)) {
       // Waiting on the floor is the only state this starts. A child further
       // along is already running, done, or parked somewhere by a human — and
-      // none of those want a move.
+      // none of those want a move. A child group on the floor is started the
+      // same way, and its own arrival cascades one level down.
       if (child.stage !== floor.stageId) continue;
       // The D11 dependency gate would refuse this move anyway; skipping it
       // here keeps the cascade from teaching the rule by refusal.
@@ -3076,86 +3101,69 @@ const make = Effect.gen(function* () {
     }
   });
 
-  // A split parent advances when its last child finishes (t3o-23, D4; the
-  // D18 carve-out "a parent card advances when its last child plan card
-  // reaches Done"). Rides the ordinary move like `advanceStage` — the
-  // decider's ceiling has lifted (no unfinished children left), and the target
-  // is the NEXT stage in order, not a hardcoded review, so a custom stage
-  // between Build and Review is not skipped. Only a parent still sitting in
-  // the build-role stage advances: that is where the human's Begin build put
-  // it (t3o-28, D1/D3), so a parent still short of build, one already dragged
-  // onward, or one that never split is left alone — which is also what makes
-  // a raced double-fire harmless, the second call finding the parent moved.
-  const advanceParentIfChildrenDone = Effect.fn("board-supervisor-advanceParent")(function* (
-    parentCardId: BoardCardId,
+  /**
+   * What a regrouping means for the supervisor (T3O-27). Grouping never
+   * touches git; it only stops what can no longer run and starts what now
+   * may. A card that became a group abandons its live step — an unstarted
+   * leaf's planning, cheap to drop, its plans kept as a record. A card that
+   * landed in a started group with auto-build on may start right away.
+   */
+  const applyRegroup = Effect.fn("board-supervisor-applyRegroup")(function* (
+    updated: BoardCard,
+    becameGroup: boolean,
   ) {
     const board = yield* readBoard;
-    const parent = board.cards.find((candidate) => candidate.id === parentCardId);
-    if (parent === undefined || parent.archivedAt !== null) return;
-    const buildStage = boardStageWithRole(board, "build");
-    if (buildStage === null) return;
-    // All children deleted is NOT completion — the parent unfreezes where it
-    // stands and the human decides what the empty split means.
-    if (boardCardChildren(board, parent.id).length === 0) return;
-    if (boardCardUnfinishedChildren(board, parent.id).length > 0) return;
-    // The parent's build-through-children is finished, so it advances to the
-    // stage after build — its own integration review — from WHEREVER it sits.
-    // A human may have parked it back on the floor (`ready`) while the children
-    // ran; leaving it there once every child is done is the mirror of the
-    // stranded-cascade bug, so the target is the stage after build rather than
-    // the stage after the parent's current position. A parent already at or
-    // past that target (its review has started, or it is further on) needs no
-    // move.
-    const next = boardNextStageId(board, buildStage.stageId);
-    if (next === null) return;
-    const parentIndex = boardStageIndex(board, parent.stage);
-    const targetIndex = boardStageIndex(board, next);
-    if (parentIndex < 0 || targetIndex < 0 || parentIndex >= targetIndex) return;
-    yield* dispatch({
-      type: "board.card.move",
-      commandId: yield* commandId("advance-parent"),
-      cardId: parent.id,
-      toStage: next,
-      // The parent may be parked several stages below build; the advance is
-      // machinery, not a drag, but it forces adjacency the same way the t3o-24
-      // regression does.
-      override: true,
-      createdAt: yield* nowIso,
-    });
+    const card = board.cards.find((candidate) => candidate.id === updated.id);
+    if (card === undefined || card.archivedAt !== null) return;
+    if (becameGroup) {
+      const state = boardCardStepState(board, card.id);
+      if (state !== null && !isBoardTerminalStepStatus(state.status)) {
+        yield* settleStep({ card, state, outcome: "abandoned" });
+        yield* schedule();
+      }
+    }
+    if (card.parentCardId !== null) yield* cascadeUnblockedChildren(card.parentCardId);
   });
 
-  // The mirror check (t3o-24, D4): a child leaving the done-role stage while
-  // its parent sits PAST the build-role stage leaves the parent ahead of
-  // reality — its review (or merge, or Done) describes an integration branch
-  // whose children are no longer all finished. Move the parent back to the
-  // build-role stage: an ordinary move (the decider's freeze-guard admits
-  // exactly this regression), whose own `handleCardMoved` abandons any live
-  // parent review step through the existing abandon path. When the child
-  // finishes again, `advanceParentIfChildrenDone` re-advances the parent and
-  // its review starts a fresh round against the changed integration branch —
-  // D1–D3 applied one level up. Guarded on the freeze actually re-engaging
-  // (unfinished children exist), so it is a cheap no-op on every other move.
-  const regressParentIfChildLeftDone = Effect.fn("board-supervisor-regressParent")(function* (
-    parentCardId: BoardCardId,
+  /** Cascade every group holding a card that waits on `cardId` (T3O-27). */
+  const cascadeDependentGroups = Effect.fn("board-supervisor-cascadeDependentGroups")(function* (
+    cardId: BoardCardId,
   ) {
     const board = yield* readBoard;
-    const parent = board.cards.find((candidate) => candidate.id === parentCardId);
-    if (parent === undefined || parent.archivedAt !== null) return;
-    const buildStage = boardStageWithRole(board, "build");
-    if (buildStage === null) return;
-    const parentIndex = boardStageIndex(board, parent.stage);
-    const buildIndex = boardStageIndex(board, buildStage.stageId);
-    if (parentIndex < 0 || buildIndex < 0 || parentIndex <= buildIndex) return;
-    if (boardCardUnfinishedChildren(board, parent.id).length === 0) return;
+    const parents = new Set<BoardCardId>();
+    for (const candidate of board.cards) {
+      if (candidate.archivedAt !== null || candidate.parentCardId === null) continue;
+      if (candidate.dependsOn.includes(cardId)) parents.add(candidate.parentCardId);
+    }
+    for (const parentId of parents) yield* cascadeUnblockedChildren(parentId);
+  });
+
+  /**
+   * Heal a group out of step with its children (T3O-27). The decider derives
+   * every group in the same decision as the child change, so this normally
+   * finds nothing; it catches an event the decider did not shape — a boot
+   * after migration, a legacy log — by asking the decider to re-derive.
+   */
+  const syncAncestorGroups = Effect.fn("board-supervisor-syncAncestorGroups")(function* (
+    cardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined) return;
+    const stale = [card, ...boardCardAncestors(board, card)].some((candidate) => {
+      if (candidate.archivedAt !== null) return false;
+      const group = boardCardGroupOf(board, candidate);
+      if (group === null) return false;
+      if (boardCardLiveChildren(board, candidate.id).length === 0) {
+        return candidate.group !== null && !group.heading;
+      }
+      return deriveBoardGroupStage(board, candidate) !== candidate.stage;
+    });
+    if (!stale) return;
     yield* dispatch({
-      type: "board.card.move",
-      commandId: yield* commandId("regress-parent"),
-      cardId: parent.id,
-      toStage: buildStage.stageId,
-      // The parent may be two or more stages ahead (merge, Done); the
-      // regression is machinery, not a drag, but it forces adjacency the same
-      // way.
-      override: true,
+      type: "board.card.sync-groups",
+      commandId: yield* commandId("sync-groups"),
+      cardId: card.id,
       createdAt: yield* nowIso,
     });
   });
@@ -7050,6 +7058,7 @@ const make = Effect.gen(function* () {
   const handleCardUpdated = Effect.fn("board-supervisor-handleCardUpdated")(function* (
     event: Extract<BoardEvent, { type: "board.card-updated" }>,
   ) {
+    yield* applyRegroup(event.payload.card, event.payload.becameGroup === true);
     // A schedule edit acts FIRST and on its own terms (T3O-19, D3): it is the
     // one edit that must reach a card with no live step row at all, and the one
     // that acts on a step this handler's other arms would have returned past.
@@ -7203,11 +7212,13 @@ const make = Effect.gen(function* () {
     // unblocks a sibling still waiting on the floor (t3o-28, D3).
     if (card.parentCardId !== null) {
       yield* cascadeUnblockedChildren(card.parentCardId);
-      yield* advanceParentIfChildrenDone(card.parentCardId);
+      yield* syncAncestorGroups(card.parentCardId);
     }
     // An ARCHIVED dependency stops gating (t3o-13, D1), so archiving a blocker
-    // frees its dependents exactly as finishing it would (T3O-24, D6).
+    // frees its dependents exactly as finishing it would (T3O-24, D6) — in
+    // any group (T3O-27).
     yield* startArmedDependents(card.id);
+    yield* cascadeDependentGroups(card.id);
   });
 
   /**
@@ -7300,7 +7311,7 @@ const make = Effect.gen(function* () {
     // refuses when NO children remain: an emptied split waits for the human).
     if (card.parentCardId !== null) {
       yield* cascadeUnblockedChildren(card.parentCardId);
-      yield* advanceParentIfChildrenDone(card.parentCardId);
+      yield* syncAncestorGroups(card.parentCardId);
     }
   });
 
@@ -7327,7 +7338,27 @@ const make = Effect.gen(function* () {
   // was nothing to do): a child that triggered the attempt quotes the reason on
   // its own card (T3O-15). `transient` marks git itself failing on a repo that
   // is otherwise fine — the child retries on its next pass rather than parking.
+  // A nested own group is cut from its own integration ancestor (T3O-27), so
+  // the chain is ensured outermost first; the first failure stops it.
   const ensureIntegrationBranch = Effect.fn("board-supervisor-ensureIntegrationBranch")(function* (
+    card: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    const chain: Array<BoardCard> = [];
+    let outer = boardCardIntegrationAncestor(board, card);
+    while (outer !== null && !chain.some((seen) => seen.id === outer!.id)) {
+      chain.unshift(outer);
+      outer = boardCardIntegrationAncestor(board, outer);
+    }
+    for (const ancestor of chain) {
+      if (boardCardHasLiveBranch(ancestor)) continue;
+      const failure = yield* ensureOneIntegrationBranch(ancestor);
+      if (failure !== null) return failure;
+    }
+    return yield* ensureOneIntegrationBranch(card);
+  });
+
+  const ensureOneIntegrationBranch = Effect.fn("board-supervisor-ensureOneIntegrationBranch")(function* (
     card: BoardCard,
   ) {
     if (
@@ -7351,6 +7382,9 @@ const make = Effect.gen(function* () {
       transient: true,
       unavailable: true,
     };
+    // An inherit group has no branch of its own (T3O-27), and grouping alone
+    // never touches git.
+    if (boardCardGroupOf(yield* readBoard, card)?.target === "inherit") return null;
     // Cut on the PARENT's worker and pushed (D12): a child placed elsewhere
     // cuts its own branch from the remote copy.
     const workspace = yield* workspaceFor(card);
@@ -7756,29 +7790,25 @@ const make = Effect.gen(function* () {
       yield* clearAutoMergeHold(moved);
     }
 
-    // A child changing stage may have been the parent's last unfinished one
-    // (t3o-23, D4) — the advance helper's own guards make a non-final move a
-    // cheap no-op — or the one whose finishing frees a sibling to start
-    // (t3o-28, D3). The mirror (t3o-24, D4): the same move may have dragged a
-    // child back OUT of Done under a parent that already advanced. Every
-    // helper guards itself, so all three are safe to ask every time.
+    // A child changing stage may free a sibling to start (t3o-28, D3); the
+    // decider already re-derived its groups in the same decision (T3O-27), so
+    // the sync is a cheap check that heals an event it did not shape.
     if (card.parentCardId !== null) {
       yield* cascadeUnblockedChildren(card.parentCardId);
-      yield* advanceParentIfChildrenDone(card.parentCardId);
-      yield* regressParentIfChildLeftDone(card.parentCardId);
+      yield* syncAncestorGroups(card.parentCardId);
     }
-    // The PARENT itself arriving at the build-role stage is the Begin build
-    // for the whole split (t3o-28, D3): start every child the plan graph does
-    // not block. This is also how the t3o-24 regression back to build
-    // restarts a corrected parent's sub-board — the helper is keyed on where
-    // the parent now stands, not on how it got there. Gated on the card
-    // HAVING children so an ordinary card's every move does not pay a board
-    // read to be told it has no sub-board. LIVE children only: a fully-wrapped
-    // split (every child archived) can cascade nothing, so it should not pay
-    // the helper's own board read to be told so — and `cascadeUnblockedChildren`
-    // only ever moves a live child off the floor anyway.
-    else if (boardCardChildren(board, card.id).some((child) => child.archivedAt === null)) {
+    // A group arriving at the build-role stage is the Begin build for its
+    // children (t3o-28, D3): start every child the dependency graph does not
+    // block. Groups nest, so a child group's own arrival cascades one level
+    // further down. LIVE children only: a fully-wrapped group can cascade
+    // nothing, so it should not pay the helper's own board read.
+    if (boardCardChildren(board, card.id).some((child) => child.archivedAt === null)) {
       yield* cascadeUnblockedChildren(card.id);
+    }
+    // Dependencies cross groups (T3O-27): a card reaching Done may free a
+    // card waiting in another group.
+    if (boardStageWithRole(board, "done")?.stageId === event.payload.toStage) {
+      yield* cascadeDependentGroups(card.id);
     }
     // Arriving in the done-role stage is what SATISFIES this card as a
     // dependency (T3O-24, D6), so it is the moment an armed dependent can
