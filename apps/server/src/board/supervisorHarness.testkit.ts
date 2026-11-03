@@ -937,7 +937,11 @@ export function withGovernor(
           request.args?.[0] === "push" &&
           request.args.includes("--delete")
         ) {
-          return Effect.succeed({ stdout: "", stderr: "fatal: Authentication failed", exitCode: 128 });
+          return Effect.succeed({
+            stdout: "",
+            stderr: "fatal: Authentication failed",
+            exitCode: 128,
+          });
         }
         if (request.args?.[0] === "worktree" && request.args[1] === "list") {
           return Effect.succeed({
