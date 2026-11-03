@@ -902,11 +902,12 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
       assert.include(String(notStarted), "nothing to cancel");
 
       const events = yield* decideEvents(cancel("T3-1"), model([started]));
-      const moved = events.find((event) => event.type === "board.card-moved");
-      assert(moved !== undefined && moved.type === "board.card-moved");
-      expect(moved.payload.workCancelled).toBe(true);
-      expect(moved.payload.toStage).toBe("sprint");
-      const after = moved.payload.card;
+      const updated = events.find((event) => event.type === "board.card-updated");
+      assert(updated !== undefined && updated.type === "board.card-updated");
+      expect(updated.payload.workCancelled).toBe(true);
+      expect(events.some((event) => event.type === "board.card-moved")).toBe(false);
+      const after = updated.payload.card;
+      expect(after.stage).toBe("sprint");
       expect(after.group?.heading).toBe(true);
       expect(after.group?.prevStage).toBe("sprint");
       expect(after.pullRequest).toBeNull();

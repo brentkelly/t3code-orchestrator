@@ -1994,8 +1994,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         "board.card.cancel-work": {
           type: "board.card.cancel-work",
           commandId: CommandId.make("cmd-cancel-work"),
-          cardId: BoardCardId.make("card-ready"),
-          confirmCardKey: "T3-1",
+          cardId: BoardCardId.make("card-building"),
+          confirmCardKey: "CARD-1",
           createdAt: NOW,
         },
         "board.card.unarchive": {

@@ -5335,10 +5335,6 @@ export const BoardCardMovedPayload = Schema.Struct({
   fromStage: BoardStageId,
   toStage: BoardStageId,
   card: BoardCard,
-  /** Set when the move cancelled a started leaf's work to make it a parent
-      (T3O-28): the supervisor stops its threads, closes its pull request and
-      reclaims its worktree. */
-  workCancelled: Schema.optional(Schema.Boolean),
 });
 export type BoardCardMovedPayload = typeof BoardCardMovedPayload.Type;
 
@@ -5380,8 +5376,9 @@ export const BoardCardUpdatedPayload = Schema.Struct({
   /** Set when this update moved the card under a different parent (T3O-27),
       so the supervisor cascades the group it landed in. */
   regrouped: Schema.optional(Schema.Boolean),
-  /** As on `BoardCardMovedPayload`, for a cancelled card whose stage did not
-      change (T3O-28). */
+  /** Set when this update cancelled a started leaf's work to make it a
+      parent (T3O-28): the supervisor stops its threads, closes its pull
+      request and reclaims its worktree. */
   workCancelled: Schema.optional(Schema.Boolean),
   /** Absent: brief unchanged. Null: brief cleared. String: new body text for
       `board_card_bodies` (the body deliberately never enters the read

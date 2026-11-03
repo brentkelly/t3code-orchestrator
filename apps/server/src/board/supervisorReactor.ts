@@ -8797,9 +8797,7 @@ const make = Effect.gen(function* () {
         // — not just Building. The stage's `autoExecute` setting gates it. The
         // handler first clears any leftover step from the stage the card left,
         // so a card carrying a stalled/in-flight step still starts the new one.
-        return event.payload.workCancelled === true
-          ? handleWorkCancelled(event.payload.card).pipe(Effect.andThen(handleCardMoved(event)))
-          : handleCardMoved(event);
+        return handleCardMoved(event);
       case "board.card-project-changed":
         // T3O-33: the card is now in a different repository, so anything live
         // is working the wrong checkout. Abandon it and restart the stage.

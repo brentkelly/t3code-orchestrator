@@ -2985,28 +2985,17 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         }),
         updatedAt: command.createdAt,
       };
-      const base = yield* makeBoardEventBase({
-        cardId: card.id,
-        occurredAt: command.createdAt,
-        commandId: command.commandId,
-      });
-      return capped === card.stage
-        ? {
-            ...base,
-            type: "board.card-updated",
-            payload: { cardId: card.id, card: nextCard, workCancelled: true },
-          }
-        : {
-            ...base,
-            type: "board.card-moved",
-            payload: {
-              cardId: card.id,
-              fromStage: card.stage,
-              toStage: capped,
-              card: nextCard,
-              workCancelled: true,
-            },
-          };
+      // An update, not a move: only an explicit move emits `card-moved`, and
+      // the stage rides the whole card the projection upserts.
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: card.id,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-updated",
+        payload: { cardId: card.id, card: nextCard, workCancelled: true },
+      };
     }
 
     case "board.card.delete": {
