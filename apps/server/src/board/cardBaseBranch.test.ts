@@ -250,8 +250,9 @@ describe("a split's integration branch is cut from the parent's base (T3O-5, D8)
             (yield* h.gitInvocations).some(
               (args) =>
                 args[0] === "branch" &&
-                args[1] === "board/card-parent" &&
-                args[2] === "release/2.4",
+                args[1] === "--no-track" &&
+                args[2] === "board/card-parent" &&
+                args[3] === "release/2.4",
             ),
           );
         }),

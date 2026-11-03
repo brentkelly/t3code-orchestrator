@@ -938,11 +938,15 @@ export function withGovernor(
             exitCode: 0,
           });
         }
-        if (request.args?.[0] === "branch" && request.args[1] !== undefined) {
+        const createdBranch =
+          request.args?.[0] === "branch"
+            ? request.args.slice(1).find((arg) => !arg.startsWith("-"))
+            : undefined;
+        if (createdBranch !== undefined) {
           if (input.gitFailure === "branch-create") {
             return Effect.succeed({ stdout: "", stderr: "fatal: cannot lock ref", exitCode: 128 });
           }
-          createdBranches.add(request.args[1]);
+          createdBranches.add(createdBranch);
           return Effect.succeed({ stdout: "", stderr: "", exitCode: 0 });
         }
         // `git log -1 --format=%cI` answers the configured commit time (the
