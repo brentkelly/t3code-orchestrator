@@ -328,6 +328,22 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
     }),
   );
 
+  it.effect("leaving Deferred walks back in before build, but needs override to skip ahead", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "sprint", { group: group("sprint") }),
+        child("a", BOARD_DEFERRED_STAGE_ID, "g"),
+        child("b", "ready", "g"),
+      ];
+      const skip = yield* decideFail(move("a", "done", false), model(cards));
+      assert.include(String(skip), "is not adjacent");
+      const review = yield* decideFail(move("a", "review", false), model(cards));
+      assert.include(String(review), "is not adjacent");
+      const back = yield* decideEvents(move("a", "ready", false), model(cards));
+      expect(stagesAfter(back).get("a")?.stage).toBe("ready");
+    }),
+  );
+
   // ── Empty groups ─────────────────────────────────────────────────────
 
   it.effect("a group losing its last child reverts at its previous stage, capped at Sprint", () =>
@@ -425,6 +441,23 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
     }),
   );
 
+  it.effect("refuses indenting a pre-floor card into an own group", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "sprint", { group: group("sprint", { target: "own" }) }),
+        child("a", "ready", "g"),
+        card("x", "backlog"),
+      ];
+      const failure = yield* decideFail(moveCards(["x"], "g"), model(cards));
+      assert.include(String(failure), "live from the materialisation floor onward");
+      const ready = cards.map((c) =>
+        c.id === "x" ? { ...c, stage: BoardStageId.make("ready") } : c,
+      );
+      const events = yield* decideEvents(moveCards(["x"], "g"), model(ready));
+      expect(stagesAfter(events).get("x")?.card.parentCardId).toBe(BoardCardId.make("g"));
+    }),
+  );
+
   it.effect("refuses moving a started card onto a different integration branch", () =>
     Effect.gen(function* () {
       const cards = [
@@ -484,6 +517,23 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
       ];
       const failure = yield* decideFail(update("b", ["a"]), model(cards));
       assert.include(String(failure), "cycle");
+    }),
+  );
+
+  it.effect("a cycle that predates a regrouping or an update does not block it", () =>
+    Effect.gen(function* () {
+      // A legacy child -> own-parent edge, from before the scope rule.
+      const cards = [
+        card("g", "building", { group: group("ready", { target: "own" }) }),
+        child("c", "ready", "g", { dependsOn: [BoardCardId.make("g")] }),
+        card("h", "sprint", { group: group("sprint", { heading: true }) }),
+        card("x", "ready"),
+        card("y", "ready"),
+      ];
+      const moved = yield* decideEvents(moveCards(["x"], "h"), model(cards));
+      expect(stagesAfter(moved).get("x")?.card.parentCardId).toBe(BoardCardId.make("h"));
+      const updated = yield* decideEvents(update("c", ["y"]), model(cards));
+      assert.ok(updated[0]?.type === "board.card-updated");
     }),
   );
 

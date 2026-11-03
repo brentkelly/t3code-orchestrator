@@ -2832,13 +2832,13 @@ export function boardCardAutoMergeArmed(input: {
   // A child whose parent this board slice cannot see keeps the legacy arm.
   if (input.card.parentCardId !== null && parent === undefined) return true;
   if (parent !== undefined) {
-    // A child merging into an integration branch merges itself under its
-    // group's auto-build (T3O-27); one merging to trunk only when a group on
+    // A child merging into an integration branch merges itself under the
+    // auto-build of the group that owns that branch (T3O-27), however many
+    // inherit groups sit between; one merging to trunk only when a group on
     // the way up asks for auto-merge. A legacy parent with no group settings
     // keeps the old unconditional arm.
-    const group = parent.group;
-    if (group === null) return true;
-    if (boardCardMergesIntoIntegrationBranch(input.board, input.card)) return group.autoBuild;
+    const owner = boardCardIntegrationAncestor(input.board, input.card);
+    if (owner !== null) return owner.group === null ? true : owner.group.autoBuild;
     let ancestor: BoardCard | undefined = parent;
     const seen = new Set<BoardCardId>();
     while (ancestor !== undefined && !seen.has(ancestor.id)) {
@@ -3797,6 +3797,39 @@ function boardOrderKeyBelow(key: string): string | null {
     BOARD_ORDER_KEY_DIGITS[0] +
     BOARD_ORDER_KEY_DIGITS.charAt(BOARD_ORDER_KEY_DIGITS.length >> 1)
   );
+}
+
+/**
+ * A key strictly between `low` and `high` (`""` = unbounded below, null =
+ * unbounded above), or null when none fits: `high` is not above `low`, or
+ * nothing sorts between them (`"x"` and `"xa"`). Callers fall back to the
+ * column's arrival key.
+ */
+export function boardOrderKeyBetween(low: string, high: string | null): string | null {
+  if (high !== null && high <= low) return null;
+  let out = "";
+  let upper = high;
+  for (let index = 0; ; index += 1) {
+    const lowDigit = Math.max(
+      index < low.length ? BOARD_ORDER_KEY_DIGITS.indexOf(low.charAt(index)) : 0,
+      0,
+    );
+    const highDigit =
+      upper !== null && index < upper.length
+        ? BOARD_ORDER_KEY_DIGITS.indexOf(upper.charAt(index))
+        : BOARD_ORDER_KEY_DIGITS.length;
+    if (lowDigit === highDigit) {
+      out += BOARD_ORDER_KEY_DIGITS.charAt(lowDigit);
+      continue;
+    }
+    const middle = Math.floor((lowDigit + highDigit) / 2);
+    if (middle > lowDigit) {
+      const key = out + BOARD_ORDER_KEY_DIGITS.charAt(middle);
+      return key > low && (high === null || key < high) ? key : null;
+    }
+    out += BOARD_ORDER_KEY_DIGITS.charAt(lowDigit);
+    upper = null;
+  }
 }
 
 /**

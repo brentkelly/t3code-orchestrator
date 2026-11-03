@@ -43,6 +43,7 @@ import {
   boardStageBeforeBuild,
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterSubBoardFloor,
+  boardOrderKeyBetween,
   boardCardPullRequestsEqual,
   boardPullRequestPredatesCard,
   isBoardCardPullRequestTerminal,
@@ -282,6 +283,8 @@ function findDependencyCycle(input: {
   readonly board: BoardState;
   readonly cardId: BoardCardId;
   readonly proposed: ReadonlyArray<BoardCardId>;
+  /** The edges to test; the rest of `proposed` already existed. */
+  readonly added: ReadonlyArray<BoardCardId>;
 }): {
   readonly edgeFrom: BoardCardId;
   readonly edgeTo: BoardCardId;
@@ -312,7 +315,7 @@ function findDependencyCycle(input: {
     return null;
   };
 
-  for (const dependency of input.proposed) {
+  for (const dependency of input.added) {
     const path = pathTo(dependency, input.cardId, new Set());
     if (path !== null) {
       return { edgeFrom: input.cardId, edgeTo: dependency, path: [input.cardId, ...path] };
@@ -361,30 +364,41 @@ function boardTreeDependencyGraph(
   return graph;
 }
 
-/** The first dependency cycle anywhere in the tree, as a path, or null. */
-function findTreeDependencyCycle(
-  cards: ReadonlyArray<BoardCard>,
+/** A tree-wide dependency cycle through `id`, as a path from and back to
+    it, or null. */
+function treeDependencyCycleThrough(
+  graph: ReadonlyMap<BoardCardId, ReadonlyArray<BoardCardId>>,
+  id: BoardCardId,
 ): ReadonlyArray<BoardCardId> | null {
-  const graph = boardTreeDependencyGraph(cards);
-  const state = new Map<BoardCardId, "open" | "closed">();
-  const stack: Array<BoardCardId> = [];
-  const visit = (id: BoardCardId): ReadonlyArray<BoardCardId> | null => {
-    const seen = state.get(id);
-    if (seen === "closed") return null;
-    if (seen === "open") return [...stack.slice(stack.indexOf(id)), id];
-    state.set(id, "open");
-    stack.push(id);
-    for (const next of graph.get(id) ?? []) {
-      const cycle = visit(next);
-      if (cycle !== null) return cycle;
+  const seen = new Set<BoardCardId>();
+  const pathBack = (from: BoardCardId): ReadonlyArray<BoardCardId> | null => {
+    for (const next of graph.get(from) ?? []) {
+      if (next === id) return [from, id];
+      if (seen.has(next)) continue;
+      seen.add(next);
+      const rest = pathBack(next);
+      if (rest !== null) return [from, ...rest];
     }
-    stack.pop();
-    state.set(id, "closed");
     return null;
   };
-  for (const card of cards) {
-    const cycle = visit(card.id);
-    if (cycle !== null) return cycle;
+  return pathBack(id);
+}
+
+/**
+ * A dependency cycle a regrouping creates through one of `ids`, or null. A
+ * cycle that already ran through a card before the move is not the move's
+ * doing, so it does not block it.
+ */
+function findNewTreeDependencyCycle(input: {
+  readonly before: ReadonlyArray<BoardCard>;
+  readonly after: ReadonlyArray<BoardCard>;
+  readonly ids: Iterable<BoardCardId>;
+}): ReadonlyArray<BoardCardId> | null {
+  const beforeGraph = boardTreeDependencyGraph(input.before);
+  const afterGraph = boardTreeDependencyGraph(input.after);
+  for (const id of input.ids) {
+    const cycle = treeDependencyCycleThrough(afterGraph, id);
+    if (cycle !== null && treeDependencyCycleThrough(beforeGraph, id) === null) return cycle;
   }
   return null;
 }
@@ -1131,7 +1145,13 @@ const resolveCardUpdateEdits = Effect.fn("resolveCardUpdateEdits")(function* (in
       const treeRefusal = dependencyTreeRefusal({ board, dependent: card, dependency });
       if (treeRefusal !== null) return yield* invariant(command, treeRefusal);
     }
-    const cycle = findDependencyCycle({ board, cardId: command.cardId, proposed: dependsOn });
+    // As above, only new edges can close a cycle the update is blamed for.
+    const cycle = findDependencyCycle({
+      board,
+      cardId: command.cardId,
+      proposed: dependsOn,
+      added: dependsOn.filter((id) => !card.dependsOn.includes(id)),
+    });
     if (cycle !== null) {
       return yield* invariant(
         command,
@@ -1231,30 +1251,6 @@ const groupConversionEvents = Effect.fn("groupConversionEvents")(function* (inpu
   ];
 });
 
-const BOARD_ORDER_DIGITS = "abcdefghijklmnopqrstuvwxyz";
-
-/** A key strictly between `low` and `high` (null = unbounded above). */
-function boardOrderKeyBetween(low: string, high: string | null): string {
-  let out = "";
-  let upper = high;
-  for (let index = 0; ; index += 1) {
-    const lowDigit = index < low.length ? BOARD_ORDER_DIGITS.indexOf(low.charAt(index)) : 0;
-    const highDigit =
-      upper !== null && index < upper.length
-        ? BOARD_ORDER_DIGITS.indexOf(upper.charAt(index))
-        : BOARD_ORDER_DIGITS.length;
-    const safeLow = Math.max(lowDigit, 0);
-    if (safeLow === highDigit) {
-      out += BOARD_ORDER_DIGITS.charAt(safeLow);
-      continue;
-    }
-    const middle = Math.floor((safeLow + highDigit) / 2);
-    if (middle > safeLow) return out + BOARD_ORDER_DIGITS.charAt(middle);
-    out += BOARD_ORDER_DIGITS.charAt(safeLow);
-    upper = null;
-  }
-}
-
 /** The order key a card takes when it lands under a new parent: next to the
     named sibling when it shares the card's column, else the column's arrival
     position. */
@@ -1274,11 +1270,11 @@ function regroupOrderKey(input: {
   const anchor = input.anchor;
   if (anchor !== null && anchor.card.stage === input.stage) {
     const key = anchor.card.orderKey;
-    if (anchor.side === "after") {
-      return boardOrderKeyBetween(key, column.find((candidate) => candidate > key) ?? null);
-    }
-    const below = column.filter((candidate) => candidate < key).at(-1) ?? "";
-    return boardOrderKeyBetween(below, key);
+    const between =
+      anchor.side === "after"
+        ? boardOrderKeyBetween(key, column.find((candidate) => candidate > key) ?? null)
+        : boardOrderKeyBetween(column.filter((candidate) => candidate < key).at(-1) ?? "", key);
+    if (between !== null) return between;
   }
   return boardArrivalOrderKey({
     cards: input.cards.filter((candidate) => candidate.id !== input.card.id),
@@ -1746,8 +1742,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (!toDeferred && boardStageById(board, command.toStage) === null) {
         return yield* invariant(command, `Stage '${command.toStage}' does not exist.`);
       }
-      // Deferred (T3O-27): a parking lot inside a group, outside the stage
-      // order, so moves in and out need no adjacency.
+      // Deferred (T3O-27): a parking lot inside a group, just before the
+      // first stage. Cards enter it from anywhere unstarted, and leave it for
+      // any stage before build; further needs override, like any other skip.
       if (toDeferred) {
         if (card.parentCardId === null) {
           return yield* invariant(
@@ -1774,9 +1771,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // A group's own moves (T3O-27): its stage is derived from its children,
       // so a human move only places it before build, or starts it.
       const group = boardCardGroupOf(board, card);
+      const buildStageForDeferred = boardStageWithRole(board, "build");
+      const leavesDeferredBeforeBuild =
+        fromDeferred &&
+        (buildStageForDeferred === null ||
+          boardStageIndex(board, command.toStage) <
+            boardStageIndex(board, buildStageForDeferred.stageId));
       if (
         !toDeferred &&
-        !fromDeferred &&
+        !leavesDeferredBeforeBuild &&
         command.override !== true &&
         !areBoardStagesAdjacent(board, card.stage, command.toStage)
       ) {
@@ -2125,6 +2128,17 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         // A deferred card leaving every group lands in Backlog.
         const stage =
           parent === null && isBoardDeferredStage(mover.stage) ? firstStage : mover.stage;
+        if (
+          parent !== null &&
+          nextParentGroup?.target === "own" &&
+          !isBoardDeferredStage(stage) &&
+          !isBoardStageAtOrAfterSubBoardFloor(board, stage)
+        ) {
+          return yield* invariant(
+            command,
+            `Card '${mover.key}' cannot move inside '${parent.key}' from '${stage}'; that group's children live from the materialisation floor onward.`,
+          );
+        }
         const next: BoardCard = {
           ...mover,
           parentCardId: command.parentCardId,
@@ -2193,7 +2207,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           if (refusal !== null) return yield* invariant(command, refusal);
         }
       }
-      const cycle = findTreeDependencyCycle(after.cards);
+      const cycle = findNewTreeDependencyCycle({
+        before: board.cards,
+        after: after.cards,
+        ids: affectedIds,
+      });
       if (cycle !== null) {
         const keyOf = (id: BoardCardId) => after.cards.find((c) => c.id === id)?.key ?? id;
         return yield* invariant(

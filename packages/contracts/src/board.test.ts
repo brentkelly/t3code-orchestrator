@@ -43,6 +43,7 @@ import {
   boardArrivalOrderKey,
   boardColumnOrderKeys,
   boardPrependOrderKey,
+  boardOrderKeyBetween,
   BoardStageId,
   LEGACY_BOARD_CARD_ORDER_KEY,
   boardBuildHumanInLoopDefault,
@@ -2328,6 +2329,29 @@ describe("a pull request link's draft flag (T3O-12)", () => {
   });
 });
 
+describe("boardOrderKeyBetween (T3O-27)", () => {
+  it("returns a key strictly between its bounds", () => {
+    for (const [low, high] of [
+      ["", "m"],
+      ["m", null],
+      ["m", "n"],
+      ["mz", "n"],
+      ["b", "bb"],
+    ] as const) {
+      const key = boardOrderKeyBetween(low, high)!;
+      expect(key > low).toBe(true);
+      if (high !== null) expect(key < high).toBe(true);
+    }
+  });
+
+  it("returns null when no key fits", () => {
+    expect(boardOrderKeyBetween("", "a")).toBeNull();
+    expect(boardOrderKeyBetween("x", "xa")).toBeNull();
+    expect(boardOrderKeyBetween("n", "m")).toBeNull();
+    expect(boardOrderKeyBetween("m", "m")).toBeNull();
+  });
+});
+
 describe("top-of-column order keys (T3O-15)", () => {
   const sorted = (keys: ReadonlyArray<string>) => [...keys].sort();
 
@@ -2648,6 +2672,33 @@ describe("auto-merge (T3O-38)", () => {
           card: epicChild,
         }),
       ).toBe(true);
+    });
+
+    it("arms a leaf under an inherit heading by the own group whose branch it merges into", () => {
+      const own = at(BOARD_SEED_STAGE_IDS.building, {
+        id: BoardCardId.make("card-own"),
+        group: defaultBoardCardGroup(
+          EMPTY_BOARD_STATE,
+          { stage: BOARD_SEED_STAGE_IDS.ready },
+          { target: "own", autoBuild: true },
+        ),
+      });
+      const heading = at(BOARD_SEED_STAGE_IDS.building, {
+        id: BoardCardId.make("card-heading"),
+        parentCardId: own.id,
+        group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.ready }),
+      });
+      expect(heading.group!.autoBuild).toBe(false);
+      const leaf = at(BOARD_SEED_STAGE_IDS.merge, { parentCardId: heading.id });
+      const nested = { ...EMPTY_BOARD_STATE, cards: [own, heading, leaf] };
+      expect(boardCardAutoMergeArmed({ board: nested, card: leaf })).toBe(true);
+      const ownOff = { ...own, group: { ...own.group!, autoBuild: false } };
+      expect(
+        boardCardAutoMergeArmed({
+          board: { ...nested, cards: [ownOff, heading, leaf] },
+          card: leaf,
+        }),
+      ).toBe(false);
     });
   });
 
