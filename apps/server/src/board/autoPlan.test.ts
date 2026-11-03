@@ -520,3 +520,71 @@ it.effect(
     );
   },
 );
+
+it.effect(
+  "a steer behind an interview run that had already ended still parks on the steer turn's own question",
+  () => {
+    const card = planningCard("staleturn");
+    return withGovernor(
+      { board: { cards: [card], nextCardNumberByProject: {} }, settings },
+      ({ pumpDomain, pumpRuntime, board, reactor, shells }) =>
+        Effect.gen(function* () {
+          const id = BoardCardId.make("staleturn");
+          yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+          const interview = boardCardStepState(yield* board, id);
+          assert.ok(interview?.threadId != null);
+          const threadId = interview.threadId;
+          const showRun = (activeTurnRef: string | null) =>
+            Ref.update(shells, (map) =>
+              new Map(map).set(String(threadId), aliveThread(String(threadId), { activeTurnRef })),
+            );
+          // The interview run has ended, and its end has been read, but the
+          // projection still names it when auto-plan looks.
+          yield* showRun("turn-interview");
+          assert.deepStrictEqual(yield* reactor.autoPlanCard(id), { outcome: "steered" });
+
+          // The steer turn runs and asks a question: that is a real park.
+          yield* showRun("turn-steer");
+          yield* pumpRuntime(userInputRequested(threadId));
+          assert.strictEqual(boardCardStepState(yield* board, id)?.status, "awaiting-input");
+        }),
+    );
+  },
+);
+
+it.effect(
+  "the steer turn's own end is read, even when the interrupted run's end never arrives",
+  () => {
+    const card = planningCard("steerend");
+    return withGovernor(
+      { board: { cards: [card], nextCardNumberByProject: {} }, settings },
+      ({ pumpDomain, pumpRuntime, board, reactor, shells }) =>
+        Effect.gen(function* () {
+          const id = BoardCardId.make("steerend");
+          yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+          const interview = boardCardStepState(yield* board, id);
+          assert.ok(interview?.threadId != null);
+          const threadId = interview.threadId;
+          yield* Ref.update(shells, (map) =>
+            new Map(map).set(
+              String(threadId),
+              aliveThread(String(threadId), { activeTurnRef: "turn-interview" }),
+            ),
+          );
+          assert.deepStrictEqual(yield* reactor.autoPlanCard(id), { outcome: "steered" });
+
+          // The steer turn ends without completing the step: death detection runs.
+          yield* Ref.update(shells, (map) =>
+            new Map(map).set(
+              String(threadId),
+              aliveThread(String(threadId), { activeTurnRef: null }),
+            ),
+          );
+          yield* pumpRuntime(turnCompleted(threadId, "turn-steer"));
+          const after = boardCardStepState(yield* board, id);
+          assert.strictEqual(after?.status, "stalled");
+          assert.strictEqual(after?.stallCount, 1);
+        }),
+    );
+  },
+);

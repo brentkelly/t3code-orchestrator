@@ -797,9 +797,17 @@ const make = Effect.gen(function* () {
   // first time a settle lands, so the set stays bounded by "abandoned this
   // process".
   const abandonedThreads = new Set<string>();
-  /** Threads whose interview turn auto-plan interrupted to steer (T3O-32): that
-      turn's question, interrupt and end belong to the dead turn, not the steer. */
-  const steeredThreads = new Set<string>();
+  /** Thread → the interview run auto-plan interrupted to steer (T3O-32). Only
+      that run's question, Stop and end are ignored; the next turn end clears it. */
+  const steeredThreads = new Map<string, string>();
+  /** The live thread is still running the run auto-plan interrupted. */
+  const stillOnSteeredRun = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const runId = steeredThreads.get(String(threadId));
+      if (runId === undefined) return false;
+      const shell = yield* liveThread(threadId).pipe(Effect.orElseSucceed(() => undefined));
+      return shell?.activeTurnRef === runId;
+    });
 
   /**
    * Settle every thread the board is finished with (t3o-13).
@@ -836,6 +844,7 @@ const make = Effect.gen(function* () {
     const released = [...boardReleasedThreadIds(board, abandonedThreads)];
     const records = released.length === 0 ? new Map() : yield* threads.threadRecords(released);
     for (const threadId of released) {
+      steeredThreads.delete(String(threadId));
       const thread = records.get(threadId);
       // No record is no answer: the thread's worker couldn't be asked
       // (T3O-66), so an abandoned thread there is kept for the next pass.
@@ -3913,7 +3922,7 @@ const make = Effect.gen(function* () {
     if (
       orphanedThreads.has(String(threadId)) ||
       abandonedThreads.has(String(threadId)) ||
-      steeredThreads.has(String(threadId))
+      (yield* stillOnSteeredRun(threadId))
     ) {
       return;
     }
@@ -6451,9 +6460,12 @@ const make = Effect.gen(function* () {
     completedTurnId: string | undefined,
   ) {
     const board = yield* readBoard;
-    // The first turn to end after a steer is the interrupted interview turn; the
-    // queued steer turn runs next and its own end is handled as usual.
-    if (!steeredThreads.delete(String(threadId))) {
+    // The interrupted interview run's end is the steer's to follow, not an
+    // ending. Any turn end clears the marker: the projection that named the run
+    // may have been stale, and the steer turn's own end must be read.
+    const steeredRun = steeredThreads.get(String(threadId));
+    steeredThreads.delete(String(threadId));
+    if (steeredRun === undefined || completedTurnId !== steeredRun) {
       yield* handleTurnCompleted(board, threadId, completedTurnId);
     }
     const owned =
@@ -6718,7 +6730,7 @@ const make = Effect.gen(function* () {
       }
       const shell = yield* liveThread(threadId);
       if (shell?.activeTurnRef != null) {
-        steeredThreads.add(String(threadId));
+        steeredThreads.set(String(threadId), shell.activeTurnRef);
         const interrupted = yield* optional(
           "thread.interrupt",
           threads.interrupt({ commandId: yield* commandId("auto-plan-interrupt"), threadId }),
@@ -6992,7 +7004,7 @@ const make = Effect.gen(function* () {
   const handleInputRequested = Effect.fn("board-supervisor-handleInputRequested")(function* (
     threadId: ThreadId,
   ) {
-    if (steeredThreads.has(String(threadId))) return;
+    if (yield* stillOnSteeredRun(threadId)) return;
     const board = yield* readBoard;
     const watched = stepThreadCard(board, threadId);
     if (watched === null || watched.state.status !== "running") return;
