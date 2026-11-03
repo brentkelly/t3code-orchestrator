@@ -68,7 +68,11 @@ export function boardIndentPlan(
   for (let index = first - 1; index >= 0; index -= 1) {
     const target = siblings[index]!;
     if (!ids.has(target.id)) {
-      return { kind: "move", cardIds: picked.cards.map((card) => card.id), parentCardId: target.id };
+      return {
+        kind: "move",
+        cardIds: picked.cards.map((card) => card.id),
+        parentCardId: target.id,
+      };
     }
   }
   return { kind: "refused", reason: "There is nothing above these cards to indent under." };
@@ -82,9 +86,11 @@ export function boardOutdentPlan(
   const picked = selection(board, cardIds);
   if ("reason" in picked) return { kind: "refused", reason: picked.reason };
   const parentId = picked.cards[0]!.parentCardId;
-  if (parentId === null) return { kind: "refused", reason: "These cards are already at the top level." };
+  if (parentId === null)
+    return { kind: "refused", reason: "These cards are already at the top level." };
   const parent = board.cards.find((card) => card.id === parentId);
-  if (parent === undefined) return { kind: "refused", reason: `Parent '${parentId}' does not exist.` };
+  if (parent === undefined)
+    return { kind: "refused", reason: `Parent '${parentId}' does not exist.` };
   return {
     kind: "move",
     cardIds: picked.cards.map((card) => card.id),
@@ -102,7 +108,11 @@ export function boardGroupIntoNewPlan(
   board: BoardState,
   cardIds: ReadonlyArray<BoardCardId>,
 ):
-  | { readonly kind: "group"; readonly parent: BoardCard | null; readonly cards: ReadonlyArray<BoardCard> }
+  | {
+      readonly kind: "group";
+      readonly parent: BoardCard | null;
+      readonly cards: ReadonlyArray<BoardCard>;
+    }
   | { readonly kind: "refused"; readonly reason: string } {
   const picked = selection(board, cardIds);
   if ("reason" in picked) return { kind: "refused", reason: picked.reason };

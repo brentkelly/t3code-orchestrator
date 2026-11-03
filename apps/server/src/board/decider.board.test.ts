@@ -1828,9 +1828,13 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       // An empty heading (T3O-27), for the group-settings command.
       const groupCard = {
         ...makeCard({ id: "card-group", stage: "sprint" }),
-        group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.sprint }, {
-          heading: true,
-        }),
+        group: defaultBoardCardGroup(
+          EMPTY_BOARD_STATE,
+          { stage: BOARD_SEED_STAGE_IDS.sprint },
+          {
+            heading: true,
+          },
+        ),
       };
       // Not in Backlog: the catalog's stage delete expects that column empty.
       const attachedCard = makeCard({
@@ -4112,7 +4116,9 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           arm(true),
           boardWith(
             waiting({
-              group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.ready }),
+              group: defaultBoardCardGroup(EMPTY_BOARD_STATE, {
+                stage: BOARD_SEED_STAGE_IDS.ready,
+              }),
             }),
           ),
         );

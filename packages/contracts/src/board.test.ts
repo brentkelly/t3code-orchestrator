@@ -2629,7 +2629,10 @@ describe("auto-merge (T3O-38)", () => {
       expect(boardCardAutoMergeArmed({ board: ownBoard, card: ownChild })).toBe(false);
       const ownBuilding = { ...ownGroup, group: { ...ownGroup.group!, autoBuild: true } };
       expect(
-        boardCardAutoMergeArmed({ board: { ...ownBoard, cards: [ownBuilding, ownChild] }, card: ownChild }),
+        boardCardAutoMergeArmed({
+          board: { ...ownBoard, cards: [ownBuilding, ownChild] },
+          card: ownChild,
+        }),
       ).toBe(true);
       const epic = at(BOARD_SEED_STAGE_IDS.building, {
         id: BoardCardId.make("card-epic"),
@@ -2640,7 +2643,10 @@ describe("auto-merge (T3O-38)", () => {
       expect(boardCardAutoMergeArmed({ board: epicBoard, card: epicChild })).toBe(false);
       const merging = { ...epic, group: { ...epic.group!, autoMerge: true } };
       expect(
-        boardCardAutoMergeArmed({ board: { ...epicBoard, cards: [merging, epicChild] }, card: epicChild }),
+        boardCardAutoMergeArmed({
+          board: { ...epicBoard, cards: [merging, epicChild] },
+          card: epicChild,
+        }),
       ).toBe(true);
     });
   });

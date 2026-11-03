@@ -248,20 +248,22 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
     }),
   );
 
-  it.effect("a group returns to Building when a child leaves Done, and is no longer integrated", () =>
-    Effect.gen(function* () {
-      const cards = [
-        card("g", "done", {
-          group: group("ready", { target: "own", started: true, integrated: true }),
-        }),
-        child("a", "done", "g"),
-        child("b", "done", "g"),
-      ];
-      const events = yield* decideEvents(move("b", "review"), model(cards));
-      const after = stagesAfter(events).get("g");
-      expect(after?.stage).toBe("building");
-      expect(after?.card.group?.integrated).toBe(false);
-    }),
+  it.effect(
+    "a group returns to Building when a child leaves Done, and is no longer integrated",
+    () =>
+      Effect.gen(function* () {
+        const cards = [
+          card("g", "done", {
+            group: group("ready", { target: "own", started: true, integrated: true }),
+          }),
+          child("a", "done", "g"),
+          child("b", "done", "g"),
+        ];
+        const events = yield* decideEvents(move("b", "review"), model(cards));
+        const after = stagesAfter(events).get("g");
+        expect(after?.stage).toBe("building");
+        expect(after?.card.group?.integrated).toBe(false);
+      }),
   );
 
   it.effect("a group sits in `placed` while no child has started", () =>
@@ -331,7 +333,9 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
   it.effect("a group losing its last child reverts at its previous stage, capped at Sprint", () =>
     Effect.gen(function* () {
       const cards = [
-        card("g", "planning", { group: { ...group("planning"), prevStage: BoardStageId.make("planning") } }),
+        card("g", "planning", {
+          group: { ...group("planning"), prevStage: BoardStageId.make("planning") },
+        }),
         child("a", "ready", "g"),
       ];
       const events = yield* decideEvents(moveCards(["a"], null), model(cards));
@@ -555,7 +559,10 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
 
   it.effect("refuses settings on a leaf", () =>
     Effect.gen(function* () {
-      const failure = yield* decideFail(settings("a", { autoBuild: true }), model([card("a", "ready")]));
+      const failure = yield* decideFail(
+        settings("a", { autoBuild: true }),
+        model([card("a", "ready")]),
+      );
       assert.include(String(failure), "is not a group");
     }),
   );

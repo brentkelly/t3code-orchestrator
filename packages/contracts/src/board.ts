@@ -1218,7 +1218,7 @@ export type BoardCardPlacementOrphan = typeof BoardCardPlacementOrphan.Type;
  * integration branch, `inherit` passes the children through to whatever the
  * group itself lands on (its own parent's target, or trunk).
  */
-export const BOARD_CARD_GROUP_TARGETS = ["inherit", "own"] as const;
+const BOARD_CARD_GROUP_TARGETS = ["inherit", "own"] as const;
 export const BoardCardGroupTarget = Schema.Literals(BOARD_CARD_GROUP_TARGETS);
 export type BoardCardGroupTarget = typeof BoardCardGroupTarget.Type;
 
@@ -2846,7 +2846,9 @@ export function boardCardAutoMergeArmed(input: {
       if (ancestor.group?.autoMerge === true) return true;
       const nextId: BoardCardId | null = ancestor.parentCardId;
       ancestor =
-        nextId === null ? undefined : input.board.cards.find((candidate) => candidate.id === nextId);
+        nextId === null
+          ? undefined
+          : input.board.cards.find((candidate) => candidate.id === nextId);
     }
   }
   return input.boardWide === true;

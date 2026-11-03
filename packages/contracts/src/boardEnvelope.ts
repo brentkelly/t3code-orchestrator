@@ -212,7 +212,7 @@ function boardLinkedPullRequestLines(
 
 /** Regrouping needs a human (T3O-27): an unattended run has no one to confirm
     it, so it never regroups. */
-export const BOARD_ENVELOPE_REGROUP_GUARD =
+const BOARD_ENVELOPE_REGROUP_GUARD =
   "Do not regroup cards (move them between groups, indent, outdent, group them, or change a group's settings) without a human's explicit confirmation.";
 
 /** The system postamble (D5): branches on human-in-the-loop (an unattended run

@@ -1166,7 +1166,6 @@ const resolveCardUpdateEdits = Effect.fn("resolveCardUpdateEdits")(function* (in
   };
 });
 
-
 // ── Groups (T3O-27, D12) ───────────────────────────────────────────────
 
 /** Why `parent` cannot take a child, or null when it can. A leaf already
@@ -1330,7 +1329,8 @@ const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
       ),
     );
   }
-  let board = model.board ?? before;
+  const derivedFrom = model.board ?? before;
+  let board: BoardState = derivedFrom;
   const touched = new Set<BoardCardId>();
   for (const event of planned) {
     if (event.aggregateKind === "card") touched.add(event.aggregateId as BoardCardId);
@@ -1350,7 +1350,10 @@ const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
     addChain(board, id);
     addChain(before, id);
   }
-  if (command.type === "board.card.sync-groups" || command.type === "board.card.set-group-settings") {
+  if (
+    command.type === "board.card.sync-groups" ||
+    command.type === "board.card.set-group-settings"
+  ) {
     candidates.set(command.cardId, Math.max(candidates.get(command.cardId) ?? 0, 1_000_000));
   }
   if (command.type === "board.card.move") candidates.delete(command.cardId);
@@ -1421,7 +1424,8 @@ const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
     );
     const crossesDone =
       doneStageId !== null && (card.stage === doneStageId) !== (next.stage === doneStageId);
-    board = { ...board, cards: board.cards.map((c) => (c.id === card.id ? next : c)) };
+    const cards = board.cards.map((c) => (c.id === card.id ? next : c));
+    board = { ...derivedFrom, cards };
     if (crossesDone) {
       events.push(...(yield* boardDependentBlockedEvents({ board, command, changed: next })));
     }
@@ -2143,7 +2147,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         };
         working = working.map((candidate) => (candidate.id === mover.id ? next : candidate));
         moved.push(next);
-        if (anchor !== null && anchor.card.stage === stage) anchor = { ...anchor, card: next };
+        if (anchor !== null && anchor.card.stage === stage)
+          anchor = { side: anchor.side, card: next };
       }
       const after: BoardState = { ...board, cards: working };
 
@@ -2171,7 +2176,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // Dependencies may cross groups, but never along a card's own ancestry,
       // and never into a cycle through a group (T3O-27).
       const affectedIds = new Set<BoardCardId>(
-        roots.flatMap((root) => [root.id, ...boardCardLiveDescendants(board, root.id).map((d) => d.id)]),
+        roots.flatMap((root) => [
+          root.id,
+          ...boardCardLiveDescendants(board, root.id).map((d) => d.id),
+        ]),
       );
       for (const card of after.cards) {
         if (card.archivedAt !== null) continue;

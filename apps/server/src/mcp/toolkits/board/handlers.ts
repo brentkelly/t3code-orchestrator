@@ -1210,9 +1210,7 @@ export const boardHandlers = {
         yield* requireRegroupApproval(input.approved);
         const target = yield* requireTargetCard(board, input.cardId);
         const parent =
-          input.parentCardId === null
-            ? null
-            : yield* findCardByKeyOrId(board, input.parentCardId);
+          input.parentCardId === null ? null : yield* findCardByKeyOrId(board, input.parentCardId);
         const after =
           input.afterCardId === undefined
             ? undefined

@@ -99,14 +99,46 @@ it.effect("backfills split parents as groups and copies each child's plan", () =
       ORDER BY card_id
     `;
     assert.deepStrictEqual(rows, [
-      { cardId: "parent-building", target: "own", autoBuild: 1, started: 1, placed: "ready", integrated: 0 },
-      { cardId: "parent-done", target: "own", autoBuild: 1, started: 1, placed: "ready", integrated: 1 },
-      { cardId: "parent-planning", target: "own", autoBuild: 1, started: 0, placed: "planning", integrated: 0 },
-      { cardId: "parent-wrapped", target: null, autoBuild: 0, started: 0, placed: null, integrated: 0 },
+      {
+        cardId: "parent-building",
+        target: "own",
+        autoBuild: 1,
+        started: 1,
+        placed: "ready",
+        integrated: 0,
+      },
+      {
+        cardId: "parent-done",
+        target: "own",
+        autoBuild: 1,
+        started: 1,
+        placed: "ready",
+        integrated: 1,
+      },
+      {
+        cardId: "parent-planning",
+        target: "own",
+        autoBuild: 1,
+        started: 0,
+        placed: "planning",
+        integrated: 0,
+      },
+      {
+        cardId: "parent-wrapped",
+        target: null,
+        autoBuild: 0,
+        started: 0,
+        placed: null,
+        integrated: 0,
+      },
       { cardId: "plain", target: null, autoBuild: 0, started: 0, placed: null, integrated: 0 },
     ]);
 
-    const plans = yield* sql<{ readonly planId: string; readonly cardId: string; readonly body: string }>`
+    const plans = yield* sql<{
+      readonly planId: string;
+      readonly cardId: string;
+      readonly body: string;
+    }>`
       SELECT plan_id AS "planId", card_id AS "cardId", body FROM board_plans
       WHERE card_id = 'child-a'
     `;

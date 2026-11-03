@@ -7358,115 +7358,115 @@ const make = Effect.gen(function* () {
     return yield* ensureOneIntegrationBranch(card);
   });
 
-  const ensureOneIntegrationBranch = Effect.fn("board-supervisor-ensureOneIntegrationBranch")(function* (
-    card: BoardCard,
-  ) {
-    if (
-      card.worktree !== null &&
-      card.worktree.status !== "failed" &&
-      card.worktree.status !== "reclaimed"
-    ) {
-      return null;
-    }
-    type Failure = {
-      readonly reason: string;
-      readonly transient: boolean;
-      /** The parent's worker is out of reach (T3O-64): nothing was recorded,
+  const ensureOneIntegrationBranch = Effect.fn("board-supervisor-ensureOneIntegrationBranch")(
+    function* (card: BoardCard) {
+      if (
+        card.worktree !== null &&
+        card.worktree.status !== "failed" &&
+        card.worktree.status !== "reclaimed"
+      ) {
+        return null;
+      }
+      type Failure = {
+        readonly reason: string;
+        readonly transient: boolean;
+        /** The parent's worker is out of reach (T3O-64): nothing was recorded,
           and the child retries on its next pass. */
-      readonly unavailable?: boolean;
-    } | null;
-    const fail = (reason: string, transient = false) =>
-      failWorktree(card, reason).pipe(Effect.as<Failure>({ reason, transient }));
-    const unreachable: Failure = {
-      reason: "The card's worker is unreachable.",
-      transient: true,
-      unavailable: true,
-    };
-    // An inherit group has no branch of its own (T3O-27), and grouping alone
-    // never touches git.
-    if (boardCardGroupOf(yield* readBoard, card)?.target === "inherit") return null;
-    // Cut on the PARENT's worker and pushed (D12): a child placed elsewhere
-    // cuts its own branch from the remote copy.
-    const workspace = yield* workspaceFor(card);
-    const cwd = workspace.checkoutPath;
-    if (cwd === null) {
-      return yield* fail(noWorkspaceFolderReason(workspace));
-    }
-    const branch = boardCardWorktreeBranchName(card);
-    const resolved = yield* resolveDefaultBranch(workspace);
-    if (resolved.unavailable) return unreachable;
-    const { defaultBranch } = resolved;
-    if (defaultBranch === "") {
-      return yield* fail(noDefaultBranchReason(cwd, resolved, "the integration branch"));
-    }
-    // The integration branch is cut from the PARENT's base (T3O-5, D8), not
-    // unconditionally from the project default. This is a latent bug the
-    // per-card base exposes rather than new behaviour: without it a split
-    // parent based on `release/2.4` would get an integration branch cut from
-    // `main`, and every child would silently inherit the error. A parent with
-    // no pin resolves to the default, which is exactly what this used to do.
-    const integrationBase =
-      resolveBoardCardEffectiveBase({
-        card,
-        cards: (yield* readBoard).cards,
-        defaultBranch,
-      }) ?? defaultBranch;
-    const baseExists = yield* ensureLocalBaseBranch(workspace, integrationBase);
-    if (baseExists === "unavailable") return unreachable;
-    if (!baseExists) {
-      return yield* fail(
-        `The card's base branch '${integrationBase}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the integration branch from.`,
+        readonly unavailable?: boolean;
+      } | null;
+      const fail = (reason: string, transient = false) =>
+        failWorktree(card, reason).pipe(Effect.as<Failure>({ reason, transient }));
+      const unreachable: Failure = {
+        reason: "The card's worker is unreachable.",
+        transient: true,
+        unavailable: true,
+      };
+      // An inherit group has no branch of its own (T3O-27), and grouping alone
+      // never touches git.
+      if (boardCardGroupOf(yield* readBoard, card)?.target === "inherit") return null;
+      // Cut on the PARENT's worker and pushed (D12): a child placed elsewhere
+      // cuts its own branch from the remote copy.
+      const workspace = yield* workspaceFor(card);
+      const cwd = workspace.checkoutPath;
+      if (cwd === null) {
+        return yield* fail(noWorkspaceFolderReason(workspace));
+      }
+      const branch = boardCardWorktreeBranchName(card);
+      const resolved = yield* resolveDefaultBranch(workspace);
+      if (resolved.unavailable) return unreachable;
+      const { defaultBranch } = resolved;
+      if (defaultBranch === "") {
+        return yield* fail(noDefaultBranchReason(cwd, resolved, "the integration branch"));
+      }
+      // The integration branch is cut from the PARENT's base (T3O-5, D8), not
+      // unconditionally from the project default. This is a latent bug the
+      // per-card base exposes rather than new behaviour: without it a split
+      // parent based on `release/2.4` would get an integration branch cut from
+      // `main`, and every child would silently inherit the error. A parent with
+      // no pin resolves to the default, which is exactly what this used to do.
+      const integrationBase =
+        resolveBoardCardEffectiveBase({
+          card,
+          cards: (yield* readBoard).cards,
+          defaultBranch,
+        }) ?? defaultBranch;
+      const baseExists = yield* ensureLocalBaseBranch(workspace, integrationBase);
+      if (baseExists === "unavailable") return unreachable;
+      if (!baseExists) {
+        return yield* fail(
+          `The card's base branch '${integrationBase}' does not exist in ${cwd}, locally or on a remote, so there is nothing to cut the integration branch from.`,
+        );
+      }
+      // Idempotent on retry: an existing branch is the desired state, not an
+      // error (an earlier attempt may have created it and died before the
+      // record landed, or a raced sibling created it a moment ago).
+      type Cut = BoardWorkspaceIntegrationBranch | "unavailable";
+      const cut = yield* workspace.createIntegrationBranch({ branch, base: integrationBase }).pipe(
+        Effect.map((result): Cut => result),
+        Effect.catch((error): Effect.Effect<Cut> =>
+          error._tag === "WorkerUnavailable"
+            ? Effect.succeed("unavailable" as const)
+            : Effect.logWarning("board supervisor: integration branch creation failed", {
+                cardId: card.id,
+                detail: error.detail,
+              }).pipe(Effect.as({ outcome: "create-failed" } as const)),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: integration branch creation failed", {
+            cardId: card.id,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ outcome: "create-failed" } as const)),
+        ),
       );
-    }
-    // Idempotent on retry: an existing branch is the desired state, not an
-    // error (an earlier attempt may have created it and died before the
-    // record landed, or a raced sibling created it a moment ago).
-    type Cut = BoardWorkspaceIntegrationBranch | "unavailable";
-    const cut = yield* workspace.createIntegrationBranch({ branch, base: integrationBase }).pipe(
-      Effect.map((result): Cut => result),
-      Effect.catch((error): Effect.Effect<Cut> =>
-        error._tag === "WorkerUnavailable"
-          ? Effect.succeed("unavailable" as const)
-          : Effect.logWarning("board supervisor: integration branch creation failed", {
-              cardId: card.id,
-              detail: error.detail,
-            }).pipe(Effect.as({ outcome: "create-failed" } as const)),
-      ),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("board supervisor: integration branch creation failed", {
+      if (cut === "unavailable") return unreachable;
+      if (cut.outcome === "create-failed") {
+        return yield* fail(
+          `Could not create the integration branch '${branch}' from '${integrationBase}'.`,
+          true,
+        );
+      }
+      const pushed = cut.pushed;
+      if (!pushed) {
+        yield* dispatch({
+          type: "board.card.record-note",
+          commandId: yield* commandId("push-skipped"),
           cardId: card.id,
-          cause: Cause.pretty(cause),
-        }).pipe(Effect.as({ outcome: "create-failed" } as const)),
-      ),
-    );
-    if (cut === "unavailable") return unreachable;
-    if (cut.outcome === "create-failed") {
-      return yield* fail(
-        `Could not create the integration branch '${branch}' from '${integrationBase}'.`,
-        true,
-      );
-    }
-    const pushed = cut.pushed;
-    if (!pushed) {
+          kind: "card-branch-push-skipped",
+          detail: `Created '${branch}' locally but could not push it; child pull requests will have no remote base until it is pushed.`,
+          createdAt: yield* nowIso,
+        });
+      }
       yield* dispatch({
-        type: "board.card.record-note",
-        commandId: yield* commandId("push-skipped"),
+        type: "board.card.record-integration-branch",
+        commandId: yield* commandId("record-integration-branch"),
         cardId: card.id,
-        kind: "card-branch-push-skipped",
-        detail: `Created '${branch}' locally but could not push it; child pull requests will have no remote base until it is pushed.`,
+        branch,
+        baseRefName: integrationBase,
         createdAt: yield* nowIso,
       });
-    }
-    yield* dispatch({
-      type: "board.card.record-integration-branch",
-      commandId: yield* commandId("record-integration-branch"),
-      cardId: card.id,
-      branch,
-      baseRefName: integrationBase,
-      createdAt: yield* nowIso,
-    });
-    return null;
-  });
+      return null;
+    },
+  );
 
   const handlePlansApproved = Effect.fn("board-supervisor-handlePlansApproved")(function* (
     event: Extract<BoardEvent, { type: "board.plans-approved" }>,

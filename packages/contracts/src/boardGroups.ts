@@ -62,7 +62,7 @@ export function boardCardGroupOf(board: BoardState, card: BoardCard): BoardCardG
 }
 
 /** Whether a card is a group. */
-export function isBoardCardGroup(board: BoardState, card: BoardCard): boolean {
+function isBoardCardGroup(board: BoardState, card: BoardCard): boolean {
   return boardCardGroupOf(board, card) !== null;
 }
 
@@ -102,9 +102,7 @@ export function boardCardActiveChildren(
   board: BoardState,
   cardId: BoardCardId,
 ): ReadonlyArray<BoardCard> {
-  return boardCardLiveChildren(board, cardId).filter(
-    (card) => !isBoardDeferredStage(card.stage),
-  );
+  return boardCardLiveChildren(board, cardId).filter((card) => !isBoardDeferredStage(card.stage));
 }
 
 /** The ancestor chain of a card, nearest first. Guards against a corrupt
@@ -151,9 +149,7 @@ export function isBoardCardSelfOrAncestor(
   card: Pick<BoardCard, "id" | "parentCardId">,
   ancestorId: BoardCardId,
 ): boolean {
-  return (
-    card.id === ancestorId || boardCardAncestors(board, card).some((a) => a.id === ancestorId)
-  );
+  return card.id === ancestorId || boardCardAncestors(board, card).some((a) => a.id === ancestorId);
 }
 
 /**
@@ -171,7 +167,7 @@ export function isBoardCardStarted(board: BoardState, card: BoardCard): boolean 
  * stage at or past build (or Deferred, or an unknown id) clamps to the stage
  * immediately before build, so a placed group never claims to be running.
  */
-export function boardGroupPlacedStage(board: BoardState, stageId: BoardStageId): BoardStageId {
+function boardGroupPlacedStage(board: BoardState, stageId: BoardStageId): BoardStageId {
   if (boardStageIndex(board, stageId) >= 0 && !isBoardStageAtOrAfterBuild(board, stageId)) {
     return stageId;
   }
@@ -308,16 +304,6 @@ export function boardGroupTargetLockReason(board: BoardState, card: BoardCard): 
  */
 export function isBoardCardPlanned(board: BoardState, cardId: BoardCardId): boolean {
   return boardCardPlans(board, cardId).length > 0;
-}
-
-/**
- * Whether a group's ready children may start themselves now: auto-build is on
- * and the human has started the group. A group nested inside another starts
- * when its own parent's cascade reaches it, so only the nearest group is read.
- */
-export function boardGroupAutoBuilds(board: BoardState, card: BoardCard): boolean {
-  const group = boardCardGroupOf(board, card);
-  return group !== null && group.autoBuild && group.started;
 }
 
 /** Whether two group settings are the same, field for field. */
