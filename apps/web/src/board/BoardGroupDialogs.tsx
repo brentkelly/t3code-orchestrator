@@ -16,7 +16,9 @@ import {
   boardNewPhaseBrief,
   boardNextPhaseTitle,
   boardStageBeforeBuild,
+  boardStageWithRole,
   boardStagesInOrder,
+  isBoardStageAtOrAfterBuild,
   type BoardCardShell,
   type BoardStageId,
   type BoardState,
@@ -32,10 +34,14 @@ import { BoardDialogShell } from "./BoardDialogShell";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import {
   boardDeferredChildren,
+  boardGroupBranchName,
   boardGroupStartPlan,
   boardShellAncestors,
+  boardShellDescendants,
   boardShellGroup,
+  isBoardGroupShell,
 } from "./boardGroups";
+import { boardStageLabel } from "./boardStages";
 import { boardToast } from "./boardToast";
 
 type Shells = ReadonlyArray<BoardCardShell>;
@@ -232,6 +238,226 @@ export function BoardNewPhaseDialog({
       open
       title="Move deferred cards to a new phase"
       titleInput={{ label: "Phase title", value: title, onChange: setTitle }}
+    />
+  );
+}
+
+/** What archiving a group throws away (T3O-28, decision 14), read off the
+    subtree's shells: children still building, pull requests open, and the
+    branches the cleanup deletes, remote copies included. */
+export function boardGroupArchiveLosses(
+  shells: Shells,
+  stages: BoardState,
+  group: BoardCardShell,
+): ReadonlyArray<string> {
+  const doneStageId = boardStageWithRole(stages, "done")?.stageId ?? null;
+  const subtree = [group, ...boardShellDescendants(shells, String(group.cardId))];
+  const building = subtree.filter(
+    (card) =>
+      card.cardId !== group.cardId &&
+      !isBoardGroupShell(shells, card) &&
+      isBoardStageAtOrAfterBuild(stages, card.stage) &&
+      card.stage !== doneStageId,
+  );
+  const pullRequests = subtree.filter((card) => card.hasPr && card.stage !== doneStageId);
+  const branches = subtree.filter(
+    (card) =>
+      card.worktreeReady === true ||
+      (boardShellGroup(shells, card)?.target === "own" && card.cardId === group.cardId) ||
+      (!isBoardGroupShell(shells, card) && isBoardStageAtOrAfterBuild(stages, card.stage)),
+  );
+  const keys = (cards: Shells) => cards.map((card) => card.key).join(", ");
+  return [
+    ...(building.length === 0
+      ? []
+      : [`${building.length} building now, whose threads stop: ${keys(building)}`]),
+    ...(pullRequests.length === 0
+      ? []
+      : [
+          `${pullRequests.length} pull ${pullRequests.length === 1 ? "request" : "requests"} closed: ${keys(pullRequests)}`,
+        ]),
+    ...(branches.length === 0
+      ? []
+      : [
+          `Branches deleted, remote copies included: ${branches
+            .map((card) => boardGroupBranchName(card))
+            .join(", ")}`,
+        ]),
+  ];
+}
+
+export function BoardArchiveGroupDialog({
+  group,
+  shells,
+  stages,
+  onClose,
+  onConfirm,
+}: {
+  readonly group: BoardCardShell;
+  readonly shells: Shells;
+  readonly stages: BoardState;
+  readonly onClose: () => void;
+  /** Called with the typed key, which the server checks again. */
+  readonly onConfirm: (confirmCardKey: string) => void;
+}) {
+  const [typed, setTyped] = useState("");
+  const count = boardShellDescendants(shells, String(group.cardId)).length;
+  const losses = boardGroupArchiveLosses(shells, stages, group);
+  return (
+    <BoardDialogShell
+      afterNote="Unarchiving restores the cards, their plans and their history, but not the work on their branches."
+      body={`Archives ${group.key} and all ${count} ${count === 1 ? "card" : "cards"} inside it, deferred ones included.`}
+      confirmDanger
+      confirmLabel="Archive group"
+      losses={{
+        title: "This is lost",
+        items:
+          losses.length === 0
+            ? ["Nothing has started yet: no threads, pull requests or branches."]
+            : losses,
+      }}
+      onConfirm={() => {
+        onClose();
+        onConfirm(typed.trim());
+      }}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      open
+      title={`Archive ${group.key} and everything in it?`}
+      typedKey={{ key: group.key, value: typed, onChange: setTyped }}
+    />
+  );
+}
+
+/**
+ * A started leaf asked to take children (T3O-28, decision 12). The default
+ * keeps its work: a new group holds it and the moving cards side by side. The
+ * destructive branch cancels its work so it can become the group — its thread
+ * stops and its pull request closes; its branch is kept until the worktree is
+ * reclaimed, not deleted here — and needs the card's typed key.
+ */
+export function BoardStartedParentDialog({
+  environmentId,
+  started,
+  moving,
+  stages,
+  onClose,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly started: BoardCardShell;
+  readonly moving: Shells;
+  readonly stages: BoardState;
+  readonly onClose: () => void;
+}) {
+  const createCard = useAtomCommand(boardEnvironment.createCard);
+  const moveCards = useAtomCommand(boardEnvironment.moveCards);
+  const cancelCardWork = useAtomCommand(boardEnvironment.cancelCardWork);
+  const [choice, setChoice] = useState<"parent" | "cancel">("parent");
+  const [title, setTitle] = useState("");
+  const [typed, setTyped] = useState("");
+  const movingLabel = moving.length === 1 ? moving[0]!.key : `${moving.length} cards`;
+  const movingIds = moving.map((card) => card.cardId);
+  const fail = (heading: string, result: unknown) =>
+    boardToast({ tone: "error", title: heading, description: describeBoardCommandFailure(result) });
+  const confirm = () => {
+    onClose();
+    void (async () => {
+      if (choice === "cancel") {
+        const cancelled = await cancelCardWork({
+          environmentId,
+          input: { cardId: started.cardId, confirmCardKey: typed.trim() },
+        });
+        if (failed(cancelled)) return fail(`Could not cancel work on ${started.key}`, cancelled);
+        if (movingIds.length === 0) return;
+        const moved = await moveCards({
+          environmentId,
+          input: { cardId: movingIds[0]!, cardIds: movingIds, parentCardId: started.cardId },
+        });
+        if (failed(moved))
+          return fail(`${started.key} is a group now, but the cards did not move`, moved);
+        return;
+      }
+      const groupId = BoardCardId.make(randomUUID());
+      const created = await createCard({
+        environmentId,
+        input: {
+          cardId: groupId,
+          projectId: started.projectId,
+          title: title.trim(),
+          heading: true,
+          ...(started.parentCardId === undefined ? {} : { parentCardId: started.parentCardId }),
+          keyPrefix: started.key.replace(/-\d+$/, ""),
+        },
+      });
+      if (failed(created)) return fail("Could not create the shared parent", created);
+      const ids = [started.cardId, ...movingIds];
+      const moved = await moveCards({
+        environmentId,
+        input: { cardId: ids[0]!, cardIds: ids, parentCardId: groupId },
+      });
+      if (failed(moved))
+        return fail("The shared parent was created, but the cards did not move", moved);
+    })();
+  };
+  const cancelling = choice === "cancel";
+  return (
+    <BoardDialogShell
+      body={`${started.key} · ${started.title} has a worktree and a branch, so it can't become the parent of ${movingLabel}.`}
+      confirmDanger={cancelling}
+      confirmDisabled={!cancelling && title.trim().length === 0}
+      confirmLabel={cancelling ? "Cancel work and make it the parent" : "Create parent"}
+      losses={
+        cancelling
+          ? {
+              title: "This is abandoned",
+              items: [
+                <>
+                  The commits on{" "}
+                  <code className="font-mono text-[11.5px]">{boardGroupBranchName(started)}</code>{" "}
+                  stop being built on. The branch is kept until its worktree is reclaimed, not
+                  deleted.
+                </>,
+                `The ${boardStageLabel(stages.stages ?? [], started.stage).toLowerCase()} thread stops now`,
+                ...(started.hasPr ? ["Its pull request will be closed"] : []),
+              ],
+            }
+          : undefined
+      }
+      onConfirm={confirm}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      open
+      options={{
+        items: [
+          {
+            id: "parent",
+            label: "Create a shared parent",
+            description: `A new group holds ${started.key} and ${movingLabel} side by side. Nothing is lost.`,
+          },
+          {
+            id: "cancel",
+            label: `Cancel work on ${started.key} and make it the parent`,
+            description: `Abandons what's been built so ${started.key} can become a group.`,
+            danger: true,
+          },
+        ],
+        value: choice,
+        onChange: (id) => setChoice(id === "cancel" ? "cancel" : "parent"),
+      }}
+      title={`Work has started on ${started.key}`}
+      titleInput={
+        cancelling
+          ? undefined
+          : {
+              label: "New parent's title",
+              value: title,
+              placeholder: "e.g. Event log overhaul",
+              onChange: setTitle,
+            }
+      }
+      typedKey={cancelling ? { key: started.key, value: typed, onChange: setTyped } : undefined}
     />
   );
 }

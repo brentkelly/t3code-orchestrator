@@ -39,6 +39,7 @@ import {
   boardStageById,
   boardStageWithRole,
   effectiveBoardStageRole,
+  isBoardDeferredStage,
   liveBoardCardDependents,
   parseReviewStepId,
   sortBoardCardThreadLinks,
@@ -100,7 +101,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
@@ -178,6 +179,7 @@ import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
 import { BoardHint } from "./BoardHint";
+import { BOARD_DEFERRED_STAGE } from "./boardScope";
 import { BoardSplitGate } from "./BoardSplitGate";
 import { BOARD_SPLIT_CHANGE_REQUEST_PREFILL, type BoardSplitGateSettings } from "./boardSplitGate";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -351,6 +353,21 @@ export interface BoardSplitGateContext {
   readonly landsOn: string;
   readonly readyLabel: string;
   readonly backlogLabel: string;
+}
+
+export interface BoardCardDetailGroup {
+  /** "Group · N cards". */
+  readonly chip: string;
+  /** Why the group is in its stage, under Open board. */
+  readonly note: string;
+  readonly onOpenBoard: (() => void) | undefined;
+  /** The Group settings controls, which replace the Stage ladder. */
+  readonly settings: ReactNode;
+  /** Opens the group archive confirmation. */
+  readonly onArchive: () => void;
+  /** What reopening the planning thread pre-fills: planning the deferred
+      cards as the next phase, or null when none are deferred. */
+  readonly reopenPrompt: string | null;
 }
 
 export interface BoardCardDetailViewProps {
@@ -601,6 +618,12 @@ export interface BoardCardDetailViewProps {
   /** The children's shells, for the Plans panel's live per-child state
       (t3o-29, D1). Empty on every card without a split. */
   readonly childShells?: ReadonlyArray<BoardCardShell> | undefined;
+  /** The group popup (T3O-29), or null for a leaf: Open board instead of the
+      stage's actions, Group settings instead of the Stage ladder, and the
+      archive confirmation instead of a one-click archive. */
+  readonly group?: BoardCardDetailGroup | null | undefined;
+  /** A group's child also lists Deferred on its Stage ladder (T3O-29). */
+  readonly stageLadderDeferred?: boolean | undefined;
   /** The card's base branch (T3O-5, D13): what it branches off and merges back
       into, resolved through `resolveBoardCardEffectiveBase` by the container —
       the one layer that can see the project's default branch. */
@@ -1181,14 +1204,20 @@ function StageLadder({
   stage,
   stages,
   onMoveStage,
+  deferred = false,
 }: {
   readonly stage: BoardStageId;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly onMoveStage: (toStage: BoardStageId) => void;
+  /** Lists Deferred first: only a group's child may sit there (T3O-29). */
+  readonly deferred?: boolean | undefined;
 }) {
+  const ladder = deferred
+    ? [BOARD_DEFERRED_STAGE, ...boardStagesInOrder(stageStateOf(stages))]
+    : boardStagesInOrder(stageStateOf(stages));
   return (
     <div className="flex flex-col gap-px">
-      {boardStagesInOrder(stageStateOf(stages)).map((candidate) => {
+      {ladder.map((candidate) => {
         const current = candidate.stageId === stage;
         const rung = (
           <>
@@ -1203,7 +1232,11 @@ function StageLadder({
         );
         // The build role onward is granted by the pipeline, not chosen — those
         // rungs render as plain rows so the ladder still reads whole.
-        if (current || !isBoardStageManuallySelectable(stages, candidate.stageId)) {
+        if (
+          current ||
+          (!isBoardDeferredStage(candidate.stageId) &&
+            !isBoardStageManuallySelectable(stages, candidate.stageId))
+        ) {
           return (
             <div
               aria-current={current ? "true" : undefined}
@@ -1424,6 +1457,47 @@ function BoardStepRecoveryButton({
 
 /** Stage action, blocked reason and archive — the things you *do* to a card,
     kept together at the top of the rail. */
+/** A group's action area (T3O-29): Open board and why the group sits where
+    it does — no advance button, its stage is derived — and the planning
+    thread, reopenable to plan what was deferred. */
+function GroupActionsSection({
+  group,
+  hasPlanningThread,
+  threadReopened,
+  onReopenThread,
+}: {
+  readonly group: BoardCardDetailGroup;
+  readonly hasPlanningThread: boolean;
+  readonly threadReopened: boolean;
+  readonly onReopenThread: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 border-t border-border p-3.5">
+      <div className="flex flex-col gap-1.5">
+        <Button disabled={group.onOpenBoard === undefined} onClick={group.onOpenBoard}>
+          <LayersIcon />
+          Open board
+        </Button>
+        <p className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">{group.note}</p>
+      </div>
+      {hasPlanningThread ? (
+        <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/50 p-2.5">
+          <span className="text-[12px] font-medium text-foreground">Planning thread</span>
+          <span className="text-[11.5px]/[1.45] text-pretty text-muted-foreground">
+            {group.reopenPrompt === null
+              ? "Settled when the group split. Reopen it to keep planning with the agent."
+              : "Some cards are deferred. Reopen the thread to plan them as the next phase."}
+          </span>
+          <Button disabled={threadReopened} onClick={onReopenThread} size="sm" variant="outline">
+            <MessageSquareIcon />
+            {threadReopened ? "Thread reopened" : "Reopen thread"}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ActionsSection({
   props,
   unmet,
@@ -2220,11 +2294,18 @@ function PaneTabs({
   hasPlan,
   planCount,
   onSelect,
+  threadLocked = null,
+  plansLabel = null,
 }: {
   readonly pane: BoardCardPane;
   readonly hasReview: boolean;
   readonly hasSummary: boolean;
   readonly hasPlan: boolean;
+  /** Why the Thread pill is locked (T3O-29: a group's settled planning
+      thread), or null. */
+  readonly threadLocked?: string | null | undefined;
+  /** The plans pill's label when it lists a group's cards. */
+  readonly plansLabel?: string | null | undefined;
   /** Non-null once the card has materialised children (t3o-29): the plan pill
       then labels the Plans panel by how many rows it holds — "4 plans", not
       "Plan" — because the pill names its pane's contents. */
@@ -2240,10 +2321,26 @@ function PaneTabs({
     );
   return (
     <div className="flex shrink-0 items-center gap-0.5 rounded-[9px] bg-accent p-0.5">
-      <button className={tab("thread")} onClick={() => onSelect("thread")} type="button">
-        <MessageSquareIcon className="size-3" />
-        Thread
-      </button>
+      {threadLocked === null ? (
+        <button className={tab("thread")} onClick={() => onSelect("thread")} type="button">
+          <MessageSquareIcon className="size-3" />
+          Thread
+        </button>
+      ) : (
+        <BoardHint label={threadLocked}>
+          <button
+            aria-disabled
+            className={cn(
+              tab("thread"),
+              "cursor-not-allowed opacity-60 hover:text-muted-foreground",
+            )}
+            type="button"
+          >
+            <LockIcon className="size-3" />
+            Thread
+          </button>
+        </BoardHint>
+      )}
       {hasReview ? (
         <BoardHint label="Adversarial review loop">
           <button className={tab("review")} onClick={() => onSelect("review")} type="button">
@@ -2263,7 +2360,8 @@ function PaneTabs({
       {hasPlan ? (
         <button className={tab("plan")} onClick={() => onSelect("plan")} type="button">
           {planCount === null ? <FileIcon className="size-3" /> : <LayersIcon className="size-3" />}
-          {planCount === null ? "Plan" : `${planCount} ${planCount === 1 ? "plan" : "plans"}`}
+          {plansLabel ??
+            (planCount === null ? "Plan" : `${planCount} ${planCount === 1 ? "plan" : "plans"}`)}
         </button>
       ) : null}
       <button className={tab("brief")} onClick={() => onSelect("brief")} type="button">
@@ -2440,7 +2538,20 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         : null,
     [isSplitParent, props.detail.plans, props.detail.children, props.childShells, props.stages],
   );
-  const pane = paneChoice ?? initialBoardCardPane(props.stages, card.stage, liveChildCount);
+  const group = props.group ?? null;
+  // A group's planning thread is settled once it split (T3O-29): the tab
+  // stays locked until the human reopens it from the Planning thread box.
+  const [threadReopened, setThreadReopened] = useState(false);
+  const threadLocked =
+    group !== null && !threadReopened
+      ? "The planning thread is settled. Reopen it from the Planning thread box."
+      : null;
+  const groupDefaultPane: BoardCardPane = (planRows?.rows.length ?? 0) > 0 ? "plan" : "brief";
+  const pane =
+    paneChoice ??
+    (group !== null
+      ? groupDefaultPane
+      : initialBoardCardPane(props.stages, card.stage, liveChildCount));
   // The plan is a first-class entity, so its pill only exists once one is
   // written; if the card loses its plans while the pane is open, fall back to
   // the thread rather than render an empty surface. The review pane exists at
@@ -2470,11 +2581,13 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       (link) => link.threadId === activeThreadId && link.threadState === "working",
     );
   const reviewStalled = onReviewStage && boardReviewPaneStopped(props.stepFailure);
+  const fallbackPane: BoardCardPane = group !== null && threadLocked !== null ? "brief" : "thread";
   const activePane: BoardCardPane =
     (pane === "plan" && !hasPlan) ||
-    (pane === "review" && !hasReview) ||
-    (pane === "summary" && !hasSummary)
-      ? "thread"
+    (pane === "review" && (!hasReview || group !== null)) ||
+    (pane === "summary" && (!hasSummary || group !== null)) ||
+    (pane === "thread" && threadLocked !== null)
+      ? fallbackPane
       : pane;
   // Derived only while the Summary pane is showing: the panel re-renders on
   // every thread-link or detail push, and the walk over step completions is
@@ -2533,6 +2646,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             </button>
           </BoardHint>
         ) : null}
+        {group === null ? null : (
+          <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground">
+            <LayersIcon className="size-2.5" />
+            {group.chip}
+          </span>
+        )}
         <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
         {/* On a done card the stage chip IS the completion badge, cut to the
             same block as the label chips beside it (t3o-36): the sheet no
@@ -2611,11 +2730,13 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         <span className="flex-1" />
         <PaneTabs
           hasPlan={hasPlan}
-          hasReview={hasReview}
-          hasSummary={hasSummary}
+          hasReview={hasReview && group === null}
+          hasSummary={hasSummary && group === null}
           onSelect={setPane}
           pane={activePane}
           planCount={planRows === null ? null : planRows.rows.length}
+          plansLabel={group === null || planRows === null ? null : "Cards"}
+          threadLocked={threadLocked}
         />
         <Menu>
           <MenuTrigger
@@ -2648,6 +2769,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             ) : null}
             <MenuItem
               onClick={() => {
+                if (!archived && group !== null) {
+                  group.onArchive();
+                  return;
+                }
                 if (!archived && archiveNeedsConfirmation) {
                   setArchiveConfirmOpen(true);
                   return;
@@ -2892,7 +3017,29 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
           {/* The rail: everything about the card that is not the conversation. */}
           <div className="flex min-h-0 flex-col overflow-y-auto [&>*:first-child]:border-t-0">
-            <ActionsSection onReviewSplit={() => setPane("thread")} props={props} unmet={unmet} />
+            {group === null ? (
+              <ActionsSection onReviewSplit={() => setPane("thread")} props={props} unmet={unmet} />
+            ) : (
+              <GroupActionsSection
+                group={group}
+                hasPlanningThread={selectedThread !== null}
+                onReopenThread={() => {
+                  setThreadReopened(true);
+                  setPane("thread");
+                  const link = props.threadLinks.find(
+                    (candidate) => candidate.threadId === selectedThread,
+                  );
+                  if (group.reopenPrompt === null || link === undefined || link.tombstoned) return;
+                  useComposerDraftStore
+                    .getState()
+                    .setPrompt(
+                      scopeThreadRef(link.worker.environmentId, link.threadId),
+                      group.reopenPrompt,
+                    );
+                }}
+                threadReopened={threadReopened}
+              />
+            )}
             <QueueSection props={props} />
             {props.stepFailure !== null ? (
               <BoardCardStepFailure
@@ -2942,12 +3089,17 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               />
             </div>
             <div className="flex flex-col gap-2 border-t border-border p-3.5">
-              <SectionHeading>Stage</SectionHeading>
-              <StageLadder
-                onMoveStage={props.onMoveStage}
-                stage={card.stage}
-                stages={props.stages}
-              />
+              <SectionHeading>{group === null ? "Stage" : "Group settings"}</SectionHeading>
+              {group === null ? (
+                <StageLadder
+                  deferred={props.stageLadderDeferred}
+                  onMoveStage={props.onMoveStage}
+                  stage={card.stage}
+                  stages={props.stages}
+                />
+              ) : (
+                group.settings
+              )}
             </div>
             <InfoSection onOpenThread={setSelectedThreadId} props={props} />
           </div>
@@ -3022,7 +3174,34 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
             {/* ── Right: what you can do with it ──────────────────────── */}
             <div className="flex w-[244px] shrink-0 flex-col border-l border-border [&>*:first-child]:border-t-0">
-              <ActionsSection onReviewSplit={() => setPane("thread")} props={props} unmet={unmet} />
+              {group === null ? (
+                <ActionsSection
+                  onReviewSplit={() => setPane("thread")}
+                  props={props}
+                  unmet={unmet}
+                />
+              ) : (
+                <GroupActionsSection
+                  group={group}
+                  hasPlanningThread={selectedThread !== null}
+                  onReopenThread={() => {
+                    setThreadReopened(true);
+                    setPane("thread");
+                    const link = props.threadLinks.find(
+                      (candidate) => candidate.threadId === selectedThread,
+                    );
+                    if (group.reopenPrompt === null || link === undefined || link.tombstoned)
+                      return;
+                    useComposerDraftStore
+                      .getState()
+                      .setPrompt(
+                        scopeThreadRef(link.worker.environmentId, link.threadId),
+                        group.reopenPrompt,
+                      );
+                  }}
+                  threadReopened={threadReopened}
+                />
+              )}
               <div className="flex flex-col gap-2 border-t border-border p-3.5">
                 <LabelSection
                   catalogue={props.catalogue}
@@ -3035,12 +3214,17 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 />
               </div>
               <div className="flex flex-col gap-2 border-t border-border p-3.5">
-                <SectionHeading>Stage</SectionHeading>
-                <StageLadder
-                  onMoveStage={props.onMoveStage}
-                  stage={card.stage}
-                  stages={props.stages}
-                />
+                <SectionHeading>{group === null ? "Stage" : "Group settings"}</SectionHeading>
+                {group === null ? (
+                  <StageLadder
+                    deferred={props.stageLadderDeferred}
+                    onMoveStage={props.onMoveStage}
+                    stage={card.stage}
+                    stages={props.stages}
+                  />
+                ) : (
+                  group.settings
+                )}
               </div>
               <InfoSection onOpenThread={setSelectedThreadId} props={props} />
             </div>

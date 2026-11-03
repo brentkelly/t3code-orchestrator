@@ -35,7 +35,12 @@ vi.mock(import("../state/use-atom-command"), () => ({
 }));
 
 import { BoardDialogShell } from "./BoardDialogShell";
-import { BoardNewPhaseDialog } from "./BoardGroupDialogs";
+import {
+  BoardArchiveGroupDialog,
+  BoardNewPhaseDialog,
+  BoardStartedParentDialog,
+  boardGroupArchiveLosses,
+} from "./BoardGroupDialogs";
 
 /** A DOM click: Base UI's modal guard intercepts Playwright's pointer inside
     a dialog opened without a trigger, as `ThreadDetailsPrRow`'s test found. */
@@ -177,5 +182,96 @@ describe("BoardNewPhaseDialog", () => {
     });
     expect(moveCards!.input).toMatchObject({ cardIds: ["c-2"] });
     expect(move!.input).toMatchObject({ cardId: "c-2", toStage: "backlog" });
+  });
+});
+
+describe("BoardStartedParentDialog", () => {
+  const started = shell("t3o-40", "building", { key: "T3O-40", hasPr: true });
+  const moving = [shell("t3o-41", "backlog", { key: "T3O-41" })];
+  const renderStarted = () =>
+    render(
+      <BoardStartedParentDialog
+        environmentId={environmentId}
+        moving={moving}
+        onClose={() => undefined}
+        stages={STAGES}
+        started={started}
+      />,
+    );
+
+  it("defaults to a shared parent, which needs a title and keeps the work", async () => {
+    commands.setup();
+    await using _screen = await renderStarted();
+    const create = page.getByRole("button", { name: "Create parent" });
+    await expect.element(create).toBeDisabled();
+    await userEvent.type(page.getByLabelText("New parent's title"), "Event log overhaul");
+    await press(create);
+    await vi.waitFor(() => expect(commands.calls).toHaveLength(2));
+    expect(commands.calls[0]!.input).toMatchObject({ title: "Event log overhaul", heading: true });
+    expect(commands.calls[1]!.input).toMatchObject({ cardIds: ["t3o-40", "t3o-41"] });
+  });
+
+  it("gates cancelling the work behind the typed key, and keeps the branch", async () => {
+    commands.setup();
+    await using _screen = await renderStarted();
+    await press(page.getByRole("radio", { name: /Cancel work on T3O-40/ }));
+    await expect
+      .element(page.getByText(/branch is kept until its worktree is reclaimed/))
+      .toBeInTheDocument();
+    await expect.element(page.getByText("Its pull request will be closed")).toBeInTheDocument();
+    const confirm = page.getByRole("button", { name: "Cancel work and make it the parent" });
+    await expect.element(confirm).toBeDisabled();
+    await userEvent.type(page.getByLabelText("Type T3O-40 to confirm"), "t3o-40");
+    await press(confirm);
+    await vi.waitFor(() => expect(commands.calls).toHaveLength(2));
+    expect(commands.calls[0]!.label).toContain("cancel-card-work");
+    expect(commands.calls[0]!.input).toMatchObject({ cardId: "t3o-40", confirmCardKey: "t3o-40" });
+    expect(commands.calls[1]!.input).toMatchObject({ cardIds: ["t3o-41"], parentCardId: "t3o-40" });
+  });
+});
+
+describe("BoardArchiveGroupDialog", () => {
+  it("lists what is lost and archives only once the key is typed", async () => {
+    const group = shell("g-1", "building", {
+      key: "T3O-26",
+      group: {
+        target: "own",
+        autoBuild: true,
+        autoMerge: false,
+        autoPlan: false,
+        started: true,
+        placed: BoardStageId.make("planning"),
+        prevStage: null,
+        heading: false,
+        integrated: false,
+      },
+    });
+    const shells = [
+      group,
+      shell("c-1", "building", { key: "T3O-27", parentCardId: group.cardId, hasPr: true }),
+      shell("c-2", "deferred", { key: "T3O-28", parentCardId: group.cardId }),
+    ];
+    expect(boardGroupArchiveLosses(shells, STAGES, group)).toEqual([
+      "1 building now, whose threads stop: T3O-27",
+      "1 pull request closed: T3O-27",
+      "Branches deleted, remote copies included: board/t3o-26, board/t3o-27",
+    ]);
+    const onConfirm = vi.fn();
+    await using _screen = await render(
+      <BoardArchiveGroupDialog
+        group={group}
+        onClose={() => undefined}
+        onConfirm={onConfirm}
+        shells={shells}
+        stages={STAGES}
+      />,
+    );
+    await expect.element(page.getByText(/all 2 cards inside it/)).toBeInTheDocument();
+    await expect.element(page.getByText(/but not the work on their branches/)).toBeInTheDocument();
+    const archive = page.getByRole("button", { name: "Archive group" });
+    await expect.element(archive).toBeDisabled();
+    await userEvent.type(page.getByLabelText("Type T3O-26 to confirm"), "T3O-26");
+    await press(archive);
+    expect(onConfirm).toHaveBeenCalledWith("T3O-26");
   });
 });
