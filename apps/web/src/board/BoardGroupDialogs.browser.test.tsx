@@ -148,6 +148,43 @@ describe("BoardNewPhaseDialog", () => {
     );
   };
 
+  it("names the floor stage when the parent group has its own branch", async () => {
+    commands.setup();
+    const ownGroup = {
+      target: "own" as const,
+      autoBuild: false,
+      autoMerge: false,
+      autoPlan: false,
+      started: false,
+      placed: BoardStageId.make("planning"),
+      prevStage: null,
+      heading: false,
+      integrated: false,
+    };
+    const parent = shell("p-1", "planning", { group: ownGroup });
+    const group = shell("g-1", "ready", {
+      title: "Event log",
+      parentCardId: parent.cardId,
+      group: { ...ownGroup, target: "inherit" },
+    });
+    const shells = [parent, group, shell("c-1", "deferred", { parentCardId: group.cardId })];
+    await using _screen = await render(
+      <BoardNewPhaseDialog
+        environmentId={environmentId}
+        group={group}
+        keyPrefix="EVT"
+        onClose={() => undefined}
+        onOpenBoard={() => undefined}
+        shells={shells}
+        stages={STAGES}
+      />,
+    );
+    await expect.element(page.getByText(/in the Ready of P-1\./)).toBeInTheDocument();
+    await press(page.getByRole("button", { name: "Create phase with 1" }));
+    await vi.waitFor(() => expect(commands.calls.length).toBeGreaterThan(0));
+    expect(commands.calls[0]!.input).toMatchObject({ heading: true, stage: "ready" });
+  });
+
   it("pre-fills `‹Group›: Phase 2` and ticks every deferred card", async () => {
     commands.setup();
     await using _screen = await renderPhase("Event log");
@@ -262,6 +299,15 @@ describe("BoardArchiveGroupDialog", () => {
       "1 pull request closed: T3O-27",
       "Branches deleted, remote copies included: board/t3o-26, board/t3o-27",
     ]);
+    // A nested own-branch group's integration branch goes too, so it is listed.
+    const nested = shell("g-2", "building", {
+      key: "T3O-29",
+      parentCardId: group.cardId,
+      group: { ...group.group!, started: true },
+    });
+    expect(boardGroupArchiveLosses([...shells, nested], STAGES, group).at(-1)).toBe(
+      "Branches deleted, remote copies included: board/t3o-26, board/t3o-27, board/t3o-29",
+    );
     const onConfirm = vi.fn();
     await using _screen = await render(
       <BoardArchiveGroupDialog

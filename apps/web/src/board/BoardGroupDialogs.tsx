@@ -150,15 +150,16 @@ export function BoardNewPhaseDialog({
   );
   const chosen = deferred.filter((card) => picked.has(String(card.cardId)));
   const parent = boardShellAncestors(shells, group)[0];
+  const headingStage = boardNewPhaseHeadingStage(
+    stages,
+    parent !== undefined && boardShellGroup(shells, parent)?.target === "own",
+  );
+  const headingPlace = `the ${boardStageLabel(stages.stages ?? [], headingStage)} of ${parent?.key ?? "the board"}`;
   const confirm = () => {
     const trimmed = title.trim();
     if (trimmed.length === 0 || chosen.length === 0) return;
     onClose();
     const first = boardStagesInOrder(stages)[0]!.stageId;
-    const headingStage = boardNewPhaseHeadingStage(
-      stages,
-      parent !== undefined && boardShellGroup(shells, parent)?.target === "own",
-    );
     const cardId = BoardCardId.make(randomUUID());
     const ids = chosen.map((card) => card.cardId);
     void (async () => {
@@ -208,14 +209,14 @@ export function BoardNewPhaseDialog({
         return;
       }
       boardToast({
-        title: `New phase created with ${ids.length} ${ids.length === 1 ? "card" : "cards"} in the Backlog of ${parent?.key ?? "the board"}.`,
+        title: `New phase created with ${ids.length} ${ids.length === 1 ? "card" : "cards"} in ${headingPlace}.`,
         action: { label: "Open board", run: () => onOpenBoard(cardId) },
       });
     })();
   };
   return (
     <BoardDialogShell
-      body={`Creates a new group next to ${group.key}, in the Backlog of ${parent?.key ?? "the board"}. The ticked cards move into its Backlog.`}
+      body={`Creates a new group next to ${group.key}, in ${headingPlace}. The ticked cards move into its ${boardStageLabel(stages.stages ?? [], boardStagesInOrder(stages)[0]!.stageId)}.`}
       checks={{
         items: deferred.map((card) => ({
           id: String(card.cardId),
@@ -264,7 +265,7 @@ export function boardGroupArchiveLosses(
   const branches = subtree.filter(
     (card) =>
       card.worktreeReady === true ||
-      (boardShellGroup(shells, card)?.target === "own" && card.cardId === group.cardId) ||
+      boardShellGroup(shells, card)?.target === "own" ||
       (!isBoardGroupShell(shells, card) && isBoardStageAtOrAfterBuild(stages, card.stage)),
   );
   const keys = (cards: Shells) => cards.map((card) => card.key).join(", ");
