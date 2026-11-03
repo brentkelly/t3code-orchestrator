@@ -75,6 +75,7 @@ import {
   boardCardActiveChildren,
   boardCardAncestors,
   boardCardGroupOf,
+  boardCardInheritedDependsOn,
   boardCardGroupsEqual,
   boardCardIntegrationAncestor,
   boardCardLiveChildren,
@@ -1956,9 +1957,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         !isBoardStageAtOrAfterBuild(board, card.stage) &&
         isBoardStageAtOrAfterBuild(board, command.toStage)
       ) {
+        // A group's dependencies hold back every card inside it (T3O-27).
         const unmet = unmetBoardCardDependencies({
           board,
-          dependsOn: card.dependsOn,
+          dependsOn: boardCardInheritedDependsOn(board, card),
           cards: board.cards,
         });
         if (unmet.length > 0) {

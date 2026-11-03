@@ -114,6 +114,7 @@ import {
   boardCardActiveChildren,
   boardCardAncestors,
   boardCardGroupOf,
+  boardCardInheritedDependsOn,
   boardCardDisplayPullRequest,
   boardCardIntegrationAncestor,
   boardCardLiveChildren,
@@ -3155,7 +3156,7 @@ const make = Effect.gen(function* () {
       // here keeps the cascade from teaching the rule by refusal.
       const unmet = unmetBoardCardDependencies({
         board,
-        dependsOn: child.dependsOn,
+        dependsOn: boardCardInheritedDependsOn(board, child),
         cards: board.cards,
       });
       if (unmet.length > 0) continue;

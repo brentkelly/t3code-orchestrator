@@ -1070,4 +1070,22 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
       expect(stagesAfter(unbuilt).get("p")?.card.group).not.toBeNull();
     }),
   );
+
+  it.effect("a group's own dependencies hold back the cards inside it", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("dep", "building"),
+        card("g", "ready", { group: group("ready"), dependsOn: [BoardCardId.make("dep")] }),
+        child("a", "ready", "g"),
+      ];
+      const refused = yield* decideFail(move("a", "building", false), model(cards));
+      assert.include(String(refused), "T3-");
+      assert.include(String(refused), "cannot enter");
+      const met = cards.map((c) =>
+        c.id === "dep" ? { ...c, stage: BoardStageId.make("done") } : c,
+      );
+      const events = yield* decideEvents(move("a", "building", false), model(met));
+      expect(stagesAfter(events).get("a")?.stage).toBe("building");
+    }),
+  );
 });
