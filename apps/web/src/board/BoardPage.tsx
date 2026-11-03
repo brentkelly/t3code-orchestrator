@@ -62,13 +62,6 @@ import * as Option from "effect/Option";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
 import { Button } from "../components/ui/button";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "../components/ui/select";
 import { SidebarInset } from "../components/ui/sidebar";
 import { toastManager } from "../components/ui/toast";
 import { isEditableFocused } from "../lib/editableFocus";
@@ -110,6 +103,7 @@ import {
   type BoardScope,
 } from "./boardScope";
 import { BoardSubBoardHeader } from "./BoardSubBoardHeader";
+import { BoardProjectScopeSelect } from "./BoardProjectScopeSelect";
 import { BoardHint } from "./BoardHint";
 import { BoardGroupStartDialog, BoardNewPhaseDialog } from "./BoardGroupDialogs";
 import {
@@ -135,8 +129,6 @@ const EMPTY_COLUMNS: BoardStageColumns = mergeBoardStageColumns([]);
 const EMPTY_CARDS: ReadonlyArray<BoardCardShell> = [];
 const EMPTY_QUEUE_INFO: ReadonlyMap<string, BoardQueueInfo> = new Map();
 const EMPTY_CARD_THREADS: ReadonlyArray<BoardCardThreadShell> = [];
-
-const ALL_PROJECTS = "__all__";
 
 /** A `BoardState` view over a bare ordered stage list, so the read-model stage
     helpers (`areBoardStagesAdjacent`, `boardStageWithRole`, …) apply. */
@@ -1504,66 +1496,19 @@ function EnvironmentBoard({
             </>
           ) : (
             <>
-              <Select
-                items={[
-                  { value: ALL_PROJECTS, label: "All projects" },
-                  ...projects.map((project) => ({
-                    value: project.id as string,
-                    label: project.title,
-                  })),
-                  ...(scopeIsStale
-                    ? [
-                        {
-                          value: scopeProjectId,
-                          label: scopeIsHidden ? "Hidden project" : "Unknown project",
-                        },
-                      ]
-                    : []),
-                ]}
-                modal={false}
-                onValueChange={(value: string | null) => {
+              <BoardProjectScopeSelect
+                accentNameFor={accentNameFor}
+                onChange={(projectId) =>
                   patchSearch((previous) => {
                     const { project: _project, ...rest } = previous;
-                    return value === null || value === ALL_PROJECTS
-                      ? rest
-                      : { ...rest, project: value };
-                  });
-                }}
-                value={scopeProjectId ?? ALL_PROJECTS}
-              >
-                <SelectTrigger aria-label="Project scope" size="xs" variant="ghost">
-                  <span
-                    className={cn(
-                      "size-2 rounded-full",
-                      scopeProjectId === null
-                        ? "bg-muted-foreground/40"
-                        : projectAccent(scopeProjectId, accentNameFor(scopeProjectId)).dot,
-                    )}
-                  />
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectPopup>
-                  <SelectItem value={ALL_PROJECTS}>All projects</SelectItem>
-                  {projects.map((project) => (
-                    <SelectItem key={project.id} value={project.id}>
-                      <span className="inline-flex items-center gap-1.5">
-                        <span
-                          className={cn(
-                            "size-2 rounded-full",
-                            projectAccent(project.id, accentNameFor(project.id)).dot,
-                          )}
-                        />
-                        {project.title}
-                      </span>
-                    </SelectItem>
-                  ))}
-                  {scopeIsStale ? (
-                    <SelectItem value={scopeProjectId}>
-                      {scopeIsHidden ? "Hidden project" : "Unknown project"}
-                    </SelectItem>
-                  ) : null}
-                </SelectPopup>
-              </Select>
+                    return projectId === null ? rest : { ...rest, project: projectId };
+                  })
+                }
+                projects={projects}
+                scopeIsHidden={scopeIsHidden}
+                scopeIsStale={scopeIsStale}
+                scopeProjectId={scopeProjectId}
+              />
               {/* The legend: which colour is which project, for as long as the board
                 is showing more than one project's cards. The prototype's swatch is
                 a short bar, not the scope picker's dot — the two never read as the

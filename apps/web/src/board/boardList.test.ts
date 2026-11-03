@@ -74,7 +74,10 @@ function shell(
 const everything = () => true;
 const NO_FILTER = { query: "", stages: new Set<string>() };
 
-function treeOf(shells: ReadonlyArray<BoardCardShell>, inScope = everything) {
+function treeOf(
+  shells: ReadonlyArray<BoardCardShell>,
+  inScope: (card: BoardCardShell) => boolean = everything,
+) {
   return buildBoardListTree({ shells, stages: STAGES, inScope });
 }
 
