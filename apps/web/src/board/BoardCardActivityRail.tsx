@@ -49,6 +49,7 @@ import {
   ArrowRightLeftIcon,
   ServerIcon,
   ServerOffIcon,
+  FastForwardIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
@@ -156,6 +157,10 @@ function ActivityIcon({
     // CI starting is work about to run, not a verdict, so it stays neutral.
     case "card-pull-request-ready":
       return <PullRequestGlyph.pullRequest className={className} />;
+    // Auto-planning approving a plan is a board-driven move, so it stays
+    // neutral like the other notes that explain one (T3O-32).
+    case "card-auto-planned":
+      return <FastForwardIcon className={className} />;
     // T3O-52: a kept worktree is a cleanup that is blocked — amber; a removal
     // is disk given back, which claims nothing and stays neutral.
     case "card-worktree-kept":
@@ -387,6 +392,8 @@ function activitySentence(
       ) : (
         <>{payload.detail}</>
       );
+    case "card-auto-planned":
+      return payload.detail === undefined ? <>auto-planned the card</> : <>{payload.detail}</>;
     case "card-worktree-kept":
       return payload.detail === undefined ? (
         <>kept the worktree</>

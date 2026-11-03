@@ -116,6 +116,7 @@ import {
   describeBoardRefreshOutcome,
   describeBoardRemoveWorktreeOutcome,
   describeBoardReviewRoundOutcome,
+  describeBoardAutoPlanOutcome,
   describeBoardSubmitOutcome,
 } from "./boardCommandFeedback";
 import { useOpenLink } from "../browser/useOpenLink";
@@ -238,6 +239,9 @@ export function BoardCardDetail({
   const requestReviewRound = useAtomCommand(boardEnvironment.requestReviewRound, {
     reportFailure: false,
   });
+  // Auto-plan → Build (T3O-32). Same reason again: a refusal is an answer.
+  const autoPlanCard = useAtomCommand(boardEnvironment.autoPlanCard, { reportFailure: false });
+  const createCard = useAtomCommand(boardEnvironment.createCard);
   // "Remove worktree" (T3O-52). Same reason again: a refusal is an answer.
   const removeCardWorktree = useAtomCommand(boardEnvironment.removeCardWorktree, {
     reportFailure: false,
@@ -917,6 +921,40 @@ export function BoardCardDetail({
     });
   };
 
+  /** Auto-plan → Build (T3O-32): one RPC that steers the planning thread or
+      starts an unattended one; the plan it proposes is approved on arrival. */
+  const onAutoPlan = () => {
+    setFeedback(null);
+    void autoPlanCard({ environmentId, input: { cardId: card.id } }).then((result) => {
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
+        return;
+      }
+      setFeedback(describeBoardAutoPlanOutcome(result.value));
+    });
+  };
+
+  /** A follow-up card in the first stage, for a decision worth revisiting. */
+  const onCreateFollowUp = (draft: { readonly title: string; readonly brief: string }) => {
+    const firstStage = stageState.stages?.[0];
+    if (firstStage === undefined) return;
+    runCommand(
+      createCard({
+        environmentId,
+        input: {
+          cardId: BoardCardId.make(randomUUID()),
+          projectId: card.projectId,
+          title: draft.title,
+          brief: draft.brief,
+          stage: firstStage.stageId,
+          orderKey: boardColumnAppendOrderKey(
+            (board?.cards ?? []).filter((shell) => shell.stage === firstStage.stageId),
+          ),
+        },
+      }),
+    );
+  };
+
   // Restart is a server command (D2): the reactor runs the stage's configured
   // prompt through the same envelope the automatic trigger uses, so the two
   // entry points cannot drift. Failure logs and stops (D4).
@@ -1302,6 +1340,8 @@ export function BoardCardDetail({
         });
       }}
       onRequestReviewRound={onRequestReviewRound}
+      onAutoPlan={onAutoPlan}
+      onCreateFollowUp={onCreateFollowUp}
       stepLive={stepLive}
       onOpenPullRequest={(url) => {
         // Refresh on the way out: clicking through is the moment the user is
