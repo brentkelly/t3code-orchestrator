@@ -2801,22 +2801,23 @@ export function boardCardAutoStartDue(input: {
 }
 
 /**
- * Whether this card's merge runs itself (T3O-38, D1) — ONE predicate for all
- * THREE arming conditions, shared by the reactor that merges, the decider that
- * clears a hold, and every surface that draws a chip.
+ * Whether this card's merge runs itself (T3O-38, D1) — ONE predicate for every
+ * arming condition, shared by the reactor that merges, the decider that clears
+ * a hold, and every surface that draws a chip.
  *
- * Shared for the reason `unmetBoardCardDependencies` is: the flag, the refusal
- * and the chip must never disagree about the same card. Two auto-merge paths
- * with different refusal behaviour is the kind of divergence that rots, and
- * the sub-board case is the MORE exposed of the two — a held child blocks its
- * whole split.
+ * Nearest wins (T3O-28):
  *
- * A sub-board child is armed unconditionally (t3o-28 D3, unchanged): the
- * initiating act was Begin build on the parent, and a child parked at the
- * merge stage strands every sibling whose dependency it holds.
+ * 1. The card's own `autoMerge` override.
+ * 2. Inside a group, the nearest group — its parent — decides: merging into an
+ *    integration branch, under that group's auto-build; merging to trunk,
+ *    under its "Auto-merge to trunk". The board-wide setting is ignored there.
+ * 3. A top-level card follows the board-wide merge-stage setting.
+ *
+ * A parent this board slice cannot see, or one with no group settings (a
+ * split parent written before groups), keeps the legacy unconditional arm.
  */
 export function boardCardAutoMergeArmed(input: {
-  readonly board: BoardState;
+  readonly board: { readonly cards: ReadonlyArray<BoardAutoMergeNode> };
   readonly card: Pick<BoardCard, "parentCardId" | "archivedAt" | "autoMerge">;
   /** The merge-role stage's resolved execution config, when the caller has the
       settings in hand. Omitted by a caller that does not — which reads as the
@@ -2824,34 +2825,75 @@ export function boardCardAutoMergeArmed(input: {
   readonly boardWide?: boolean | undefined;
 }): boolean {
   if (input.card.archivedAt !== null) return false;
-  if (input.card.autoMerge) return true;
-  const parent =
-    input.card.parentCardId === null
-      ? undefined
-      : input.board.cards.find((candidate) => candidate.id === input.card.parentCardId);
-  // A child whose parent this board slice cannot see keeps the legacy arm.
-  if (input.card.parentCardId !== null && parent === undefined) return true;
-  if (parent !== undefined) {
-    // A child merging into an integration branch merges itself under the
-    // auto-build of the group that owns that branch (T3O-27), however many
-    // inherit groups sit between; one merging to trunk only when a group on
-    // the way up asks for auto-merge. A legacy parent with no group settings
-    // keeps the old unconditional arm.
-    const owner = boardCardIntegrationAncestor(input.board, input.card);
-    if (owner !== null) return owner.group === null ? true : owner.group.autoBuild;
-    let ancestor: BoardCard | undefined = parent;
-    const seen = new Set<BoardCardId>();
-    while (ancestor !== undefined && !seen.has(ancestor.id)) {
-      seen.add(ancestor.id);
-      if (ancestor.group?.autoMerge === true) return true;
-      const nextId: BoardCardId | null = ancestor.parentCardId;
-      ancestor =
-        nextId === null
-          ? undefined
-          : input.board.cards.find((candidate) => candidate.id === nextId);
+  return resolveBoardAutoMerge(input.board.cards, input.card, input.boardWide === true);
+}
+
+/** The tree fields auto-merge resolution reads — a card or a client shell. */
+type BoardAutoMergeNode = {
+  readonly id: string;
+  readonly parentCardId?: string | null | undefined;
+  readonly autoMerge?: boolean | undefined;
+  readonly group?: BoardCardGroup | null | undefined;
+};
+
+function resolveBoardAutoMerge(
+  nodes: ReadonlyArray<BoardAutoMergeNode>,
+  card: Pick<BoardAutoMergeNode, "parentCardId" | "autoMerge">,
+  boardWide: boolean,
+): boolean {
+  if (card.autoMerge === true) return true;
+  const parentId = card.parentCardId ?? null;
+  if (parentId === null) return boardWide;
+  const byId = (id: string) => nodes.find((node) => String(node.id) === String(id));
+  const parent = byId(parentId);
+  if (parent === undefined || parent.group == null) return true;
+  // Where the card lands: the nearest ancestor with its own branch, through
+  // any inherit groups, or trunk.
+  let intoIntegration = false;
+  const seen = new Set<string>();
+  let ancestor: BoardAutoMergeNode | undefined = parent;
+  while (ancestor !== undefined && !seen.has(String(ancestor.id))) {
+    seen.add(String(ancestor.id));
+    if (ancestor.group == null || ancestor.group.target === "own") {
+      intoIntegration = true;
+      break;
     }
+    const next = ancestor.parentCardId ?? null;
+    ancestor = next === null ? undefined : byId(next);
   }
-  return input.boardWide === true;
+  return intoIntegration ? parent.group.autoBuild : parent.group.autoMerge;
+}
+
+/**
+ * `boardCardAutoMergeArmed` over the client's shells (T3O-28): the shell's own
+ * `autoMergeArmed` is the per-card override, and its tree position and group
+ * settings ride the shells, so a board resolves every card's arm without the
+ * aggregate.
+ */
+export function boardShellAutoMergeArmed(input: {
+  readonly shells: ReadonlyArray<{
+    readonly cardId: string;
+    readonly parentCardId?: string | null | undefined;
+    readonly group?: BoardCardGroup | null | undefined;
+    readonly autoMergeArmed?: boolean | undefined;
+  }>;
+  readonly shell: {
+    readonly parentCardId?: string | null | undefined;
+    readonly autoMergeArmed?: boolean | undefined;
+  };
+  readonly boardWide: boolean;
+}): boolean {
+  const nodes = input.shells.map((shell) => ({
+    id: shell.cardId,
+    parentCardId: shell.parentCardId,
+    autoMerge: shell.autoMergeArmed,
+    group: shell.group,
+  }));
+  return resolveBoardAutoMerge(
+    nodes,
+    { parentCardId: input.shell.parentCardId, autoMerge: input.shell.autoMergeArmed },
+    input.boardWide,
+  );
 }
 
 /**
@@ -6291,15 +6333,11 @@ export const BoardCardShell = Schema.Struct({
       `Merge needs you` with an alert glyph — and never its colour: both board
       states are amber (D12). */
   autoMergeGaveUp: Schema.optionalKey(Schema.Boolean),
-  /** Whether the card's merge runs itself by its OWN arming — a sub-board
-      child, or the per-card flag. Absent otherwise.
-
-      Deliberately not the full `boardCardAutoMergeArmed` reading: the third
-      arming condition is the board-wide merge-stage setting, which the SQL
-      snapshot producer cannot see and the client already holds, so the client
-      ORs it in. A shell field only one of the two producers could compute is
-      precisely the reconnect flicker `cardMetaShellFields.test.ts` exists to
-      catch. Draws the small grey `Auto` glyph, in the merge-role stage only. */
+  /** The card's own per-card auto-merge override, absent otherwise. The full
+      arm — the nearest group's settings, the board-wide setting — resolves
+      client-side through `boardShellAutoMergeArmed`, over shells that already
+      carry the tree and the group settings (T3O-28). Draws the small grey
+      `Auto` glyph, in the merge-role stage only. */
   autoMergeArmed: Schema.optionalKey(Schema.Boolean),
   /** Whether the card still holds a worktree on disk (T3O-52, D5), absent when
       it does not. Half of the amber "Worktree kept" flag: the other half — is
@@ -6861,13 +6899,10 @@ export function boardCardShellFromCard(
     autoStart: card.autoStart,
     autoMergeHeldSince: card.autoMergeHold?.heldSince ?? null,
     autoMergeGaveUp: boardCardAutoMergeGaveUp(card.autoMergeHold),
-    // The AGGREGATE half of the arm only (T3O-38, D14): a sub-board child or
-    // an explicit per-card flag. The board-wide merge-stage setting is ORed in
-    // CLIENT-side, where the settings already live — the SQL snapshot producer
-    // cannot see them, and a shell field only one of the two producers could
-    // compute is exactly the reconnect-flicker `cardMetaShellFields.test.ts`
-    // exists to catch.
-    autoMergeArmed: card.parentCardId !== null || card.autoMerge,
+    // The card's OWN override only (T3O-28): the client resolves the rest
+    // with `boardShellAutoMergeArmed`, because a group's settings and the
+    // board-wide setting both live outside this card's delta.
+    autoMergeArmed: card.autoMerge,
     prDraft: boardCardPullRequestIsOpenDraft(card.pullRequest),
     worktreeReady: card.worktree?.status === "ready",
     worktreeKeptReason: card.worktree?.reclaimBlockedReason ?? null,

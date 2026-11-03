@@ -20,6 +20,7 @@ import {
   BOARD_LABEL_NAME_MAX_LENGTH,
   BOARD_SEED_STAGE_IDS,
   boardCardAutoMergeArmed,
+  boardShellAutoMergeArmed,
   boardCardAutoMergeGaveUp,
   boardCardAutoStartDue,
   boardCardCanArmAutoMerge,
@@ -2674,7 +2675,7 @@ describe("auto-merge (T3O-38)", () => {
       ).toBe(true);
     });
 
-    it("arms a leaf under an inherit heading by the own group whose branch it merges into", () => {
+    it("resolves nearest wins: an inherit group under an own group decides by its own auto-build (T3O-28)", () => {
       const own = at(BOARD_SEED_STAGE_IDS.building, {
         id: BoardCardId.make("card-own"),
         group: defaultBoardCardGroup(
@@ -2688,17 +2689,138 @@ describe("auto-merge (T3O-38)", () => {
         parentCardId: own.id,
         group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.ready }),
       });
-      expect(heading.group!.autoBuild).toBe(false);
       const leaf = at(BOARD_SEED_STAGE_IDS.merge, { parentCardId: heading.id });
       const nested = { ...EMPTY_BOARD_STATE, cards: [own, heading, leaf] };
-      expect(boardCardAutoMergeArmed({ board: nested, card: leaf })).toBe(true);
-      const ownOff = { ...own, group: { ...own.group!, autoBuild: false } };
+      // The heading's auto-build is off: the own group's being on does not reach past it.
+      expect(boardCardAutoMergeArmed({ board: nested, card: leaf })).toBe(false);
+      const headingOn = { ...heading, group: { ...heading.group!, autoBuild: true } };
       expect(
         boardCardAutoMergeArmed({
-          board: { ...nested, cards: [ownOff, heading, leaf] },
+          board: { ...nested, cards: [own, headingOn, leaf] },
+          card: leaf,
+        }),
+      ).toBe(true);
+      // Its "Auto-merge to trunk" is irrelevant: the leaf lands on an integration branch.
+      const headingMerge = { ...heading, group: { ...heading.group!, autoMerge: true } };
+      expect(
+        boardCardAutoMergeArmed({
+          board: { ...nested, cards: [own, headingMerge, leaf] },
           card: leaf,
         }),
       ).toBe(false);
+    });
+
+    describe("resolution table (T3O-28)", () => {
+      const group = (
+        id: string,
+        overrides: Partial<NonNullable<BoardCard["group"]>>,
+        parentCardId: BoardCardId | null = null,
+      ) =>
+        at(BOARD_SEED_STAGE_IDS.building, {
+          id: BoardCardId.make(id),
+          parentCardId,
+          group: defaultBoardCardGroup(
+            EMPTY_BOARD_STATE,
+            { stage: BOARD_SEED_STAGE_IDS.sprint },
+            overrides,
+          ),
+        });
+      type Row = {
+        readonly name: string;
+        readonly own: boolean;
+        readonly chain: ReadonlyArray<Partial<NonNullable<BoardCard["group"]>>>;
+        readonly boardWide: boolean;
+        readonly armed: boolean;
+      };
+      const rows: ReadonlyArray<Row> = [
+        {
+          name: "top-level, board-wide off",
+          own: false,
+          chain: [],
+          boardWide: false,
+          armed: false,
+        },
+        { name: "top-level, board-wide on", own: false, chain: [], boardWide: true, armed: true },
+        { name: "top-level, own override", own: true, chain: [], boardWide: false, armed: true },
+        {
+          name: "trunk group, auto-merge off, board-wide on (ignored)",
+          own: false,
+          chain: [{ target: "inherit", autoMerge: false }],
+          boardWide: true,
+          armed: false,
+        },
+        {
+          name: "trunk group, auto-merge on",
+          own: false,
+          chain: [{ target: "inherit", autoMerge: true }],
+          boardWide: false,
+          armed: true,
+        },
+        {
+          name: "trunk group, auto-build on does not arm a trunk merge",
+          own: false,
+          chain: [{ target: "inherit", autoBuild: true }],
+          boardWide: false,
+          armed: false,
+        },
+        {
+          name: "trunk group, own override wins",
+          own: true,
+          chain: [{ target: "inherit", autoMerge: false }],
+          boardWide: false,
+          armed: true,
+        },
+        {
+          name: "integration branch, auto-build on",
+          own: false,
+          chain: [{ target: "own", autoBuild: true }],
+          boardWide: false,
+          armed: true,
+        },
+        {
+          name: "integration branch, auto-build off, auto-merge on (ignored)",
+          own: false,
+          chain: [{ target: "own", autoBuild: false, autoMerge: true }],
+          boardWide: true,
+          armed: false,
+        },
+        {
+          name: "nested trunk group under an auto-merging trunk group: nearest wins",
+          own: false,
+          chain: [
+            { target: "inherit", autoMerge: false },
+            { target: "inherit", autoMerge: true },
+          ],
+          boardWide: false,
+          armed: false,
+        },
+      ];
+      for (const row of rows) {
+        it(row.name, () => {
+          const groups: Array<BoardCard> = [];
+          // chain[0] is the nearest group; build it outermost first.
+          let parentId: BoardCardId | null = null;
+          for (let index = row.chain.length - 1; index >= 0; index -= 1) {
+            const next = group(`card-g${index}`, row.chain[index]!, parentId);
+            groups.push(next);
+            parentId = next.id;
+          }
+          const leaf = at(BOARD_SEED_STAGE_IDS.merge, {
+            parentCardId: parentId,
+            autoMerge: row.own,
+          });
+          const board = { ...EMPTY_BOARD_STATE, cards: [...groups, leaf] };
+          expect(boardCardAutoMergeArmed({ board, card: leaf, boardWide: row.boardWide })).toBe(
+            row.armed,
+          );
+          // The client's shell resolution agrees with the aggregate's.
+          const shells = board.cards.map((card) => boardCardShellFromCard(card));
+          const leafShell = shells.find((shell) => shell.cardId === leaf.id)!;
+          expect(
+            boardShellAutoMergeArmed({ shells, shell: leafShell, boardWide: row.boardWide }),
+          ).toBe(row.armed);
+        });
+      }
     });
   });
 
