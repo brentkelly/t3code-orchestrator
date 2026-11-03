@@ -1103,33 +1103,31 @@ function EnvironmentBoard({
     },
     [allCards, columns, stageState],
   );
-  const handleColumnDragOver = useCallback(
-    (stage: BoardStageId, event: DragEvent<HTMLElement>) => {
-      if (dragRef.current === null) return;
-      const refusal = dropRefusalFor(stage);
-      if (refusal !== null) {
-        // The position follows the pointer through the DOM, not state: a
-        // dragover fires per pointer move, and the board must not re-render
-        // that often.
-        const tip = dragTipRef.current;
-        if (tip !== null)
-          tip.style.transform = `translate(${event.clientX + 14}px, ${event.clientY + 16}px)`;
-        setDragTip(refusal);
-        setDragOver((current) => (current?.stage === stage ? current : { stage, index: 0 }));
-        return;
+  // The tip follows the pointer through the DOM, not state: a dragover fires
+  // per pointer move, and the board must not re-render that often.
+  const handleRefusedDragOver = useCallback(
+    (stage: BoardStageId, refusal: string, event: DragEvent<HTMLElement>) => {
+      const tip = dragTipRef.current;
+      if (tip !== null) {
+        tip.style.transform = `translate(${event.clientX + 14}px, ${event.clientY + 16}px)`;
       }
-      setDragTip(null);
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
-      const index = boardDropIndexIn(event.currentTarget, event.clientY);
-      setDragOver((current) =>
-        current !== null && current.stage === stage && current.index === index
-          ? current
-          : { stage, index },
-      );
+      setDragTip(refusal);
+      setDragOver((current) => (current?.stage === stage ? current : { stage, index: 0 }));
     },
-    [dropRefusalFor],
+    [],
   );
+  const handleColumnDragOver = useCallback((stage: BoardStageId, event: DragEvent<HTMLElement>) => {
+    if (dragRef.current === null) return;
+    setDragTip(null);
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    const index = boardDropIndexIn(event.currentTarget, event.clientY);
+    setDragOver((current) =>
+      current !== null && current.stage === stage && current.index === index
+        ? current
+        : { stage, index },
+    );
+  }, []);
 
   const handleColumnDrop = useCallback(
     (stage: BoardStageId, event: DragEvent<HTMLElement>) => {
@@ -1658,6 +1656,7 @@ function EnvironmentBoard({
                   onCardReorder={handleCardReorder}
                   onCardDragStart={handleCardDragStart}
                   onColumnDragOver={handleColumnDragOver}
+                  onRefusedDragOver={handleRefusedDragOver}
                   onColumnDrop={handleColumnDrop}
                   onOpenSubBoard={handleOpenSubBoard}
                   onRequestCreate={openCreate}

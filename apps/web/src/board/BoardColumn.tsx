@@ -60,6 +60,11 @@ export interface BoardColumnDragProps {
   readonly dragHeight: number;
   readonly onColumnDragOver: (stage: BoardStageId, event: DragEvent<HTMLElement>) => void;
   readonly onColumnDrop: (stage: BoardStageId, event: DragEvent<HTMLElement>) => void;
+  /** A drag over a REFUSED column (T3O-29): never `preventDefault`ed, so the
+      browser shows its no-drop cursor; the page shows why at the pointer. */
+  readonly onRefusedDragOver?:
+    | ((stage: BoardStageId, refusal: string, event: DragEvent<HTMLElement>) => void)
+    | undefined;
   readonly onCardDragStart: (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => void;
   readonly onCardDragEnd: () => void;
   /** Keyboard reorder (Ctrl/Cmd+ArrowUp/Down on a focused card): the pointer
@@ -128,21 +133,32 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   readonly headerAction?: ReactNode;
 }
 
+/** The column's drag-over and drop handlers, which route a refused column to
+    `onRefusedDragOver` and drop nothing on it. */
+function columnDropHandlers(props: BoardColumnProps) {
+  const refusal = props.draggedCardId !== null ? (props.dropRefusal ?? null) : null;
+  return {
+    onDragOver: (event: DragEvent<HTMLElement>) => {
+      if (refusal !== null) {
+        props.onRefusedDragOver?.(props.stage, refusal, event);
+        return;
+      }
+      props.onColumnDragOver(props.stage, event);
+    },
+    onDrop: (event: DragEvent<HTMLElement>) => {
+      if (refusal !== null) return;
+      props.onColumnDrop(props.stage, event);
+    },
+  };
+}
+
 export function BoardColumn(props: BoardColumnProps) {
   return props.collapsed ? <CollapsedColumn {...props} /> : <ExpandedColumn {...props} />;
 }
 
-function CollapsedColumn({
-  stage,
-  label,
-  cards,
-  draggedCardId,
-  dragOverIndex,
-  dropRefusal,
-  onSetCollapsed,
-  onColumnDragOver,
-  onColumnDrop,
-}: BoardColumnProps) {
+function CollapsedColumn(props: BoardColumnProps) {
+  const { stage, label, cards, draggedCardId, dragOverIndex, dropRefusal, onSetCollapsed } = props;
+  const dropHandlers = columnDropHandlers(props);
   // The rail stays a drop target so a card can be dropped on a collapsed
   // column (it appends at the column tail).
   const refused = draggedCardId !== null && dropRefusal != null;
@@ -160,8 +176,8 @@ function CollapsedColumn({
         )}
         data-board-drop-refused={refused ? "" : undefined}
         onClick={() => onSetCollapsed(stage, false)}
-        onDragOver={(event) => onColumnDragOver(stage, event)}
-        onDrop={(event) => onColumnDrop(stage, event)}
+        onDragOver={dropHandlers.onDragOver}
+        onDrop={dropHandlers.onDrop}
         type="button"
       >
         <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
@@ -174,41 +190,43 @@ function CollapsedColumn({
   );
 }
 
-function ExpandedColumn({
-  stage,
-  atMergeStage,
-  autoMergeArmedFor,
-  label,
-  cards,
-  labelsById,
-  queueSlots,
-  todosFor,
-  selectedCardId,
-  addProjects,
-  accentNameFor,
-  parentKeyFor,
-  attentionFor,
-  childAttentionFor,
-  childRunningFor,
-  noPullRequestFor,
-  worktreeKeptFor,
-  draggedCardId,
-  dragOverIndex,
-  dragHeight,
-  onSetCollapsed,
-  onSelectCard,
-  onRequestCreate,
-  onColumnDragOver,
-  onColumnDrop,
-  onCardDragStart,
-  onCardDragEnd,
-  onCardReorder,
-  onOpenSubBoard,
-  groupFor,
-  dropRefusal,
-  hint,
-  headerAction,
-}: BoardColumnProps) {
+function ExpandedColumn(props: BoardColumnProps) {
+  const dropHandlers = columnDropHandlers(props);
+  const {
+    stage,
+    atMergeStage,
+    autoMergeArmedFor,
+    label,
+    cards,
+    labelsById,
+    queueSlots,
+    todosFor,
+    selectedCardId,
+    addProjects,
+    accentNameFor,
+    parentKeyFor,
+    attentionFor,
+    childAttentionFor,
+    childRunningFor,
+    noPullRequestFor,
+    worktreeKeptFor,
+    draggedCardId,
+    dragOverIndex,
+    dragHeight,
+    onSetCollapsed,
+    onSelectCard,
+    onRequestCreate,
+    onColumnDragOver,
+    onColumnDrop,
+    onCardDragStart,
+    onCardDragEnd,
+    onCardReorder,
+    onOpenSubBoard,
+    groupFor,
+    dropRefusal,
+    hint,
+    headerAction,
+  } = props;
   // Cards may be created only into Backlog, Sprint or Planning (t3o-06a); the
   // add affordance is absent from the other five columns entirely.
   const canAdd = addProjects.length > 0;
@@ -290,8 +308,8 @@ function ExpandedColumn({
           fills the empty-column floor so the whole panel stays a drop target. */}
       <div
         className="flex flex-1 flex-col gap-2"
-        onDragOver={(event) => onColumnDragOver(stage, event)}
-        onDrop={(event) => onColumnDrop(stage, event)}
+        onDragOver={dropHandlers.onDragOver}
+        onDrop={dropHandlers.onDrop}
       >
         {cards.length === 0 && !showPlaceholder ? (
           <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border/60 text-xs text-muted-foreground">
