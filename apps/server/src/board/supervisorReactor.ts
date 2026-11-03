@@ -478,6 +478,26 @@ function holdsCancelledWork(card: BoardCard): boolean {
   return card.group !== null && card.group.target !== "own" && card.worktree?.status === "ready";
 }
 
+/** The children of `card` archived before it, with everything under them. */
+function earlierArchivedSubtrees(
+  cards: ReadonlyArray<BoardCard>,
+  card: BoardCard,
+): ReadonlyArray<BoardCard> {
+  const out: BoardCard[] = [];
+  const seen = new Set<string>([String(card.id)]);
+  const walk = (parentId: BoardCardId, all: boolean) => {
+    for (const child of cards) {
+      if (child.parentCardId !== parentId || seen.has(String(child.id))) continue;
+      if (!all && (child.archivedAt === null || child.archivedAt === card.archivedAt)) continue;
+      seen.add(String(child.id));
+      out.push(child);
+      walk(child.id, true);
+    }
+  };
+  walk(card.id, false);
+  return out;
+}
+
 function cardStageModelOverride(
   board: BoardState,
   card: BoardCard,
@@ -7425,6 +7445,12 @@ const make = Effect.gen(function* () {
       yield* stopCardThreads(card);
       yield* closeCardPullRequest(card, card.pullRequest);
       yield* cardCleanupWorker.enqueue({ kind: "discard", cardId: card.id });
+      // Children archived before this one were left out of the subtree's
+      // events, but their branches are just as dead now.
+      for (const earlier of earlierArchivedSubtrees(board.cards, card)) {
+        yield* closeCardPullRequest(earlier, earlier.pullRequest);
+        yield* cardCleanupWorker.enqueue({ kind: "discard", cardId: earlier.id });
+      }
     } else {
       // Off this worker (T3O-52): the reclaim fetches from the remote first.
       yield* cardCleanupWorker.enqueue({ kind: "reclaim", cardId: card.id });

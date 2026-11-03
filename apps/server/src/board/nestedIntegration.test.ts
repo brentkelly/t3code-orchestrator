@@ -384,6 +384,38 @@ describe("archiving a group discards its subtree's work (T3O-28)", () => {
     },
   );
 
+  it.effect("also discards a child that was archived before the group", () => {
+    const group = card("card-group", review, {
+      group: ownGroup(),
+      worktree: branchOnly("card-group", "main"),
+      archivedAt: NOW,
+    });
+    const earlier = card("card-early", building, {
+      parent: "card-group",
+      worktree: {
+        ...readyWorktree("card-early"),
+        baseRefName: "board/card-group",
+        path: null,
+        status: "reclaimed",
+      },
+      pullRequest: openPullRequest(8, "board/card-early"),
+      archivedAt: "2025-12-01T00:00:00.000Z" as BoardCard["archivedAt"],
+    });
+    return withGovernor(
+      { board: { cards: [group, earlier], nextCardNumberByProject: {} }, settings },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(archivedEvent(group, 1, true));
+          yield* h.reactor.drain;
+          assert.deepStrictEqual(yield* h.closePullRequestCalls, [{ number: 8 }]);
+          assert.sameMembers(remoteDeletes(yield* h.gitInvocations), [
+            "board/card-group",
+            "board/card-early",
+          ]);
+        }),
+    );
+  });
+
   it.effect(
     "a plain archive keeps an unmerged branch-only branch, and deletes a merged one",
     () => {
