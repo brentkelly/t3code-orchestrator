@@ -854,7 +854,7 @@ function EnvironmentBoard({
       if (
         boardMoveLeavesPlanningUnwritten({
           stages: orderedStages,
-          card: { stage: source.stage, parentCardId: source.card.parentCardId ?? null },
+          card: { stage: source.stage },
           toStage: targetStage,
           planCount: source.card.planCount ?? 0,
         })

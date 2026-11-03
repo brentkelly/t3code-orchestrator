@@ -338,3 +338,41 @@ export function boardCardGroupsEqual(
     left.integrated === right.integrated
   );
 }
+
+/** A card shell's place in the tree, as clients hold it. */
+type BoardShellTreeNode = { readonly cardId: string; readonly parentCardId?: string | undefined };
+
+/** The ids of a card's ancestors, from its parent up, over client shells. */
+export function boardShellAncestorIds(
+  shells: ReadonlyArray<BoardShellTreeNode>,
+  parentCardId: string | null | undefined,
+): ReadonlySet<string> {
+  const byId = new Map(shells.map((shell) => [String(shell.cardId), shell]));
+  const out = new Set<string>();
+  let current = parentCardId == null ? null : String(parentCardId);
+  while (current !== null && !out.has(current)) {
+    out.add(current);
+    const parent = byId.get(current)?.parentCardId;
+    current = parent == null ? null : String(parent);
+  }
+  return out;
+}
+
+/** The ids of every card below `cardId`, over client shells. */
+export function boardShellDescendantIds(
+  shells: ReadonlyArray<BoardShellTreeNode>,
+  cardId: string,
+): ReadonlySet<string> {
+  const out = new Set<string>();
+  const walk = (id: string) => {
+    for (const shell of shells) {
+      if (shell.parentCardId == null || String(shell.parentCardId) !== id) continue;
+      const childId = String(shell.cardId);
+      if (out.has(childId)) continue;
+      out.add(childId);
+      walk(childId);
+    }
+  };
+  walk(String(cardId));
+  return out;
+}
