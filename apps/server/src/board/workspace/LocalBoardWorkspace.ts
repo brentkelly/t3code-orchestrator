@@ -592,7 +592,8 @@ export function makeLocalBoardWorkspace(
           .execute({
             operation: "boardIntegrationBranch.create",
             cwd,
-            args: ["branch", branch, remoteBase ?? base],
+            // --no-track: a remote start point would otherwise make the base this branch's upstream.
+            args: ["branch", "--no-track", branch, remoteBase ?? base],
             timeoutMs: 10_000,
             allowNonZeroExit: true,
           })

@@ -522,6 +522,10 @@ describe("BoardWorkspace contract (T3O-64)", () => {
           yield* git(env.checkout, ["rev-parse", "refs/heads/board/t-inner"]),
           outerTip,
         );
+        const upstream = yield* Effect.exit(
+          git(env.checkout, ["config", "--get", "branch.board/t-inner.merge"]),
+        );
+        assert.isTrue(upstream._tag === "Failure", "the inner branch must not track its base");
       }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
