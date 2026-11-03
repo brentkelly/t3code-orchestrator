@@ -158,6 +158,14 @@ const scopeFor = (threadId: ThreadId): McpInvocationScope => ({
 const withScope = (threadId: ThreadId) =>
   Effect.provideService(McpInvocationContext.McpInvocationContext, scopeFor(threadId));
 
+const withSubagentScope = (threadId: ThreadId) => {
+  const scope = scopeFor(threadId);
+  return Effect.provideService(McpInvocationContext.McpInvocationContext, {
+    ...scope,
+    thread: { ...scope.thread!, subagent: true },
+  });
+};
+
 /** Create a project, a card, a real thread, and link the thread to the card,
     so a handler call from `linkedThread` resolves `card-1`. */
 const seed = Effect.fn("seed")(function* () {
@@ -1604,6 +1612,27 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       );
       assert.strictEqual(failure.code, "invalid-input");
       assert.include(failure.message, "unattended");
+      const cards = yield* readCards;
+      assert.isNull(cards.find((card) => card.id === a.cardId)?.parentCardId ?? null);
+    }),
+  );
+
+  it.effect("refuses approved: true from a delegated child thread", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const a = yield* boardHandlers
+        .board_create_card({ projectId, title: "A", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const b = yield* boardHandlers
+        .board_create_card({ projectId, title: "B", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_group_cards({ cardIds: [a.key, b.key], title: "Epic", approved: true })
+          .pipe(withSubagentScope(ThreadId.make("thread-child"))),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "delegated task");
       const cards = yield* readCards;
       assert.isNull(cards.find((card) => card.id === a.cardId)?.parentCardId ?? null);
     }),

@@ -760,9 +760,16 @@ const dispatch = (
 };
 
 /** `approved` is the agent's own word; a run with no human in the loop has
-    nobody who could have given it. */
+    nobody who could have given it, and a delegated child never spoke to one. */
 const refuseUnattendedApproval = (deps: BoardToolDeps, message: string) =>
   Effect.gen(function* () {
+    if (deps.scope.thread.subagent === true) {
+      return yield* new BoardToolError({
+        code: "invalid-input",
+        message:
+          "A delegated task cannot pass approved: true, because it never spoke to the human. Report the change back to the thread that delegated you instead.",
+      });
+    }
     const board = yield* readBoardState(deps);
     const own = resolveBoardCardForThread(board, deps.scope.thread.threadId);
     const state = own === null ? null : boardCardStepState(board, own.id);
