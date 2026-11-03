@@ -786,3 +786,141 @@ it.layer(NodeServices.layer)("integration branches across projects and targets (
     }),
   );
 });
+
+it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
+  const archive = (id: string, confirmCardKey?: string): BoardCommand => ({
+    type: "board.card.archive",
+    commandId: CommandId.make(`cmd-archive-${id}`),
+    cardId: BoardCardId.make(id),
+    ...(confirmCardKey === undefined ? {} : { confirmCardKey }),
+    createdAt: NOW,
+  });
+  const archivedIds = (events: ReadonlyArray<PlannedBoardEvent>) =>
+    events.flatMap((event) =>
+      event.type === "board.card-archived"
+        ? [{ id: String(event.payload.cardId), discard: event.payload.discard === true }]
+        : [],
+    );
+
+  const tree = () => [
+    card("g1", "building", { group: group("ready", { target: "own", started: true }) }),
+    child("a2", "building", "g1"),
+    child("d3", BOARD_DEFERRED_STAGE_ID, "g1"),
+    child("g4", "building", "g1", { group: group("ready", { target: "own", started: true }) }),
+    child("b5", "review", "g4"),
+    card("x6", "ready", { dependsOn: [BoardCardId.make("a2")], blocked: true }),
+  ];
+
+  it.effect("archives a group's whole subtree for good, only with its key", () =>
+    Effect.gen(function* () {
+      const plain = yield* decideFail(archive("g1"), model(tree()));
+      assert.include(String(plain), "archive the whole group by confirming its key");
+      const wrong = yield* decideFail(archive("g1", "T3-4"), model(tree()));
+      assert.include(String(wrong), "does not match");
+      const leaf = yield* decideFail(archive("x6", "T3-6"), model(tree()));
+      assert.include(String(leaf), "is not a group");
+
+      const events = yield* decideEvents(archive("g1", "T3-1"), model(tree()));
+      expect(archivedIds(events)).toEqual([
+        { id: "g1", discard: true },
+        { id: "a2", discard: true },
+        { id: "d3", discard: true },
+        { id: "g4", discard: true },
+        { id: "b5", discard: true },
+      ]);
+      // A dependent outside the subtree stops waiting on an archived card.
+      expect(stagesAfter(events).get("x6")?.card.blocked).toBe(false);
+    }),
+  );
+
+  it.effect("unarchiving the group restores the subtree archived with it, nothing else", () =>
+    Effect.gen(function* () {
+      const at = "2026-01-02T00:00:00.000Z";
+      const earlier = "2025-12-31T00:00:00.000Z";
+      const cards = [
+        card("g1", "building", {
+          group: group("ready", { target: "own", started: true }),
+          archivedAt: at,
+        }),
+        child("a2", "building", "g1", { archivedAt: at }),
+        child("g4", "building", "g1", {
+          group: group("ready", { target: "own" }),
+          archivedAt: at,
+        }),
+        child("b5", "review", "g4", { archivedAt: at }),
+        child("c7", "ready", "g1", { archivedAt: earlier }),
+      ];
+      const events = yield* decideEvents(
+        {
+          type: "board.card.unarchive",
+          commandId: CommandId.make("cmd-unarchive-g1"),
+          cardId: BoardCardId.make("g1"),
+          createdAt: NOW,
+        },
+        model(cards),
+      );
+      const restored = events.flatMap((event) =>
+        event.type === "board.card-unarchived" ? [String(event.payload.cardId)] : [],
+      );
+      expect(restored).toEqual(["g1", "a2", "g4", "b5"]);
+    }),
+  );
+
+  it.effect("cancels a started leaf's work and makes it an empty group at Sprint", () =>
+    Effect.gen(function* () {
+      const pullRequest: NonNullable<BoardCard["pullRequest"]> = {
+        number: 41,
+        title: "Work",
+        url: "https://example.test/pr/41",
+        baseRef: "main",
+        headBranch: "board/t3-1",
+        state: "open",
+        checkedAt: NOW,
+      };
+      const started = card("x1", "review", {
+        worktree: {
+          branch: "board/t3-1",
+          baseRefName: "main",
+          path: "/tmp/wt",
+          status: "ready",
+          attempts: 1,
+          lastError: null,
+          reclaimBlockedReason: null,
+        },
+        pullRequest,
+      });
+      const cancel = (key: string): BoardCommand => ({
+        type: "board.card.cancel-work",
+        commandId: CommandId.make(`cmd-cancel-${key}`),
+        cardId: BoardCardId.make("x1"),
+        confirmCardKey: key,
+        createdAt: NOW,
+      });
+      const wrong = yield* decideFail(cancel("T3-2"), model([started]));
+      assert.include(String(wrong), "does not match");
+      const notStarted = yield* decideFail(cancel("T3-1"), model([card("x1", "sprint")]));
+      assert.include(String(notStarted), "nothing to cancel");
+
+      const events = yield* decideEvents(cancel("T3-1"), model([started]));
+      const moved = events.find((event) => event.type === "board.card-moved");
+      assert(moved !== undefined && moved.type === "board.card-moved");
+      expect(moved.payload.workCancelled).toBe(true);
+      expect(moved.payload.toStage).toBe("sprint");
+      const after = moved.payload.card;
+      expect(after.group?.heading).toBe(true);
+      expect(after.group?.prevStage).toBe("sprint");
+      expect(after.pullRequest).toBeNull();
+      expect(after.pullRequestHistory.map((entry) => entry.number)).toEqual([41]);
+      // The branch stays until the worktree is reclaimed.
+      expect(after.worktree?.status).toBe("ready");
+
+      // Now a group, so it takes cards; it can't take its own branch until
+      // the cancelled work's worktree is gone.
+      const next = [after, card("y2", "ready")];
+      const into = yield* decideEvents(moveCards(["y2"], "x1"), model(next));
+      expect(stagesAfter(into).get("y2")?.card.parentCardId).toBe(BoardCardId.make("x1"));
+      const own = yield* decideFail(settings("x1", { target: "own" }), model(next));
+      assert.include(String(own), "cancelled work");
+    }),
+  );
+});
