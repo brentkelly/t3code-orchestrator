@@ -694,3 +694,95 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
     }),
   );
 });
+
+it.layer(NodeServices.layer)("integration branches across projects and targets (T3O-28)", (it) => {
+  const otherProject = ProjectId.make("project-2");
+  const twoProjects = (cards: ReadonlyArray<BoardCard>): BoardOrchestrationReadModel => {
+    const base = model(cards);
+    return {
+      ...base,
+      projects: [
+        ...base.projects,
+        { id: otherProject, title: "Other", workspaceRoot: "/tmp/q", deletedAt: null },
+      ],
+    };
+  };
+
+  it.effect("refuses an own branch for a group whose subtree spans projects", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "sprint", { group: group("sprint") }),
+        child("a", "ready", "g"),
+        child("b", "ready", "g", { projectId: otherProject }),
+      ];
+      const failure = yield* decideFail(settings("g", { target: "own" }), twoProjects(cards));
+      assert.include(String(failure), "is in another project");
+      // An inherit group may span projects: its children land on trunk.
+      const same = cards.filter((c) => c.id !== "b");
+      const events = yield* decideEvents(settings("g", { target: "own" }), twoProjects(same));
+      expect(stagesAfter(events).get("g")?.card.group?.target).toBe("own");
+    }),
+  );
+
+  it.effect("refuses moving a card from another project onto an integration branch", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("own", "sprint", { group: group("sprint", { target: "own" }) }),
+        child("a", "ready", "own"),
+        // An inherit group under the own group: its children still land on own's branch.
+        child("h", "ready", "own", { group: group("ready") }),
+        child("h1", "ready", "h"),
+        card("epic", "sprint", { group: group("sprint") }),
+        card("x", "ready", { projectId: otherProject }),
+      ];
+      const intoOwn = yield* decideFail(moveCards(["x"], "own"), twoProjects(cards));
+      assert.include(String(intoOwn), "in another project");
+      const intoNested = yield* decideFail(moveCards(["x"], "h"), twoProjects(cards));
+      assert.include(String(intoNested), "in another project");
+      // A top-level inherit group lands on trunk, so projects may mix there.
+      const events = yield* decideEvents(moveCards(["x"], "epic"), twoProjects(cards));
+      expect(stagesAfter(events).get("x")?.card.parentCardId).toBe(BoardCardId.make("epic"));
+    }),
+  );
+
+  it.effect("refuses creating a card from another project on an integration branch", () =>
+    Effect.gen(function* () {
+      const cards = [card("own", "sprint", { group: group("sprint", { target: "own" }) })];
+      const failure = yield* decideFail(
+        {
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-create-foreign"),
+          cardId: BoardCardId.make("new"),
+          projectId: otherProject,
+          title: "Foreign",
+          parentCardId: BoardCardId.make("own"),
+          stage: BoardStageId.make("ready"),
+          createdAt: NOW,
+        },
+        twoProjects(cards),
+      );
+      assert.include(String(failure), "in another project");
+    }),
+  );
+
+  it.effect("moves a subtree whose started leaf sits under its own-branch group", () =>
+    Effect.gen(function* () {
+      // outer (own) > mid (inherit) > inner (own) > leaf (building). Moving mid
+      // to the top level leaves leaf on inner's branch: it isn't checked.
+      const cards = [
+        card("outer", "building", { group: group("ready", { target: "own", started: true }) }),
+        child("mid", "building", "outer", { group: group("ready") }),
+        child("inner", "building", "mid", {
+          group: group("ready", { target: "own", started: true }),
+        }),
+        child("leaf", "building", "inner"),
+      ];
+      const events = yield* decideEvents(moveCards(["mid"], null), model(cards));
+      expect(stagesAfter(events).get("mid")?.card.parentCardId).toBeNull();
+      // A started leaf directly under mid is checked, and refused.
+      const direct = [...cards, child("lone", "building", "mid")];
+      const failure = yield* decideFail(moveCards(["mid"], null), model(direct));
+      assert.include(String(failure), "Rebase onto trunk first");
+    }),
+  );
+});

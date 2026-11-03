@@ -81,6 +81,8 @@ import {
   boardNextStageId,
   defaultBoardCardGroup,
   deriveBoardGroupStage,
+  boardGroupOwnTargetProjectRefusal,
+  boardGroupProjectRefusal,
   isBoardCardSelfOrAncestor,
   isBoardCardStarted,
   isBoardDeferredStage,
@@ -1608,6 +1610,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.heading === true
           ? defaultBoardCardGroup(board, { stage }, { heading: true })
           : null;
+      if (parent !== undefined) {
+        const refusal = boardGroupProjectRefusal(board, parent, [
+          { key: command.title, projectId: command.projectId },
+        ]);
+        if (refusal !== null) return yield* invariant(command, refusal);
+      }
       // The parent becoming a group is part of this decision: its first child
       // turns it from a leaf into a group (T3O-27).
       const becomesGroup =
@@ -2170,6 +2178,18 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           anchor = { side: anchor.side, card: next };
       }
       const after: BoardState = { ...board, cards: working };
+      if (parent !== null) {
+        const arriving = roots.flatMap((root) => [
+          root,
+          ...boardCardLiveDescendants(board, root.id),
+        ]);
+        const refusal = boardGroupProjectRefusal(
+          after,
+          after.cards.find((candidate) => candidate.id === parent.id)!,
+          arriving,
+        );
+        if (refusal !== null) return yield* invariant(command, refusal);
+      }
 
       // A started card's branch was cut from where it lands today; moving it
       // under a different integration branch would retarget work in flight.
@@ -2259,6 +2279,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         if (locked !== null) return yield* invariant(command, locked);
       }
       if (command.target === "own" && group.target !== "own") {
+        const spans = boardGroupOwnTargetProjectRefusal(board, card);
+        if (spans !== null) return yield* invariant(command, spans);
         const belowFloor = board.cards.find(
           (child) =>
             child.parentCardId === card.id &&
