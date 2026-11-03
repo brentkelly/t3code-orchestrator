@@ -1817,6 +1817,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       const reopenCard = makeCard({ id: "card-reopen", stage: BOARD_SEED_STAGE_IDS.review });
       // set-project only accepts a card that has never been built (T3O-33).
       const projectCard = makeCard({ id: "card-project", stage: "ready" });
+      // mark-auto-plan only accepts a leaf in planning (T3O-32).
+      const autoPlanCard = makeCard({ id: "card-auto-plan", stage: "planning" });
       const briefAttachment = {
         id: BoardCardAttachmentId.make("att-1"),
         name: "bug.png",
@@ -1866,6 +1868,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             groupCard,
             reopenCard,
             projectCard,
+            autoPlanCard,
           ],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
           plans: [readyPlan, ...splitPlans],
@@ -2151,7 +2154,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         "board.card.mark-auto-plan": {
           type: "board.card.mark-auto-plan",
           commandId: CommandId.make("cmd-mark-auto-plan"),
-          cardId: BoardCardId.make("card-ready"),
+          cardId: BoardCardId.make("card-auto-plan"),
           mode: "build",
           createdAt: NOW,
         },
