@@ -455,24 +455,10 @@ interface BoardWorld {
 }
 
 /**
- * The model/access override in force for a card's CURRENT stage (t3o-29),
- * resolved through the parent for a sub-board child, or null when the
- * workspace config governs.
- *
- * The reactor resolves it because it is the only layer that can see both the
- * card and the board it sits on; what the override then GOVERNS is the
- * executor's call, so this is handed down on the config rather than folded into
- * `model` (see `BoardStageExecutorConfig.cardOverride`). That is what keeps the
- * reactor from having to know that a review stage treats it differently.
- *
- * Free: the ancestors are already in the aggregate every caller holds, so this
- * is an in-memory walk, not a read. Groups nest (T3O-27), so the whole chain is
- * consulted, nearest first.
- */
-/**
  * A card whose work was cancelled to make it a parent (T3O-28) and whose
  * checkout is still there. Only an own-branch group legitimately holds a ready
- * worktree, and the decider refuses `target=own` until this one is reclaimed.
+ * worktree, and the decider refuses `target=own` until this one is reclaimed
+ * and refuses dropping `own` while a group's integration worktree exists.
  */
 function holdsCancelledWork(card: BoardCard): boolean {
   return card.group !== null && card.group.target !== "own" && card.worktree?.status === "ready";
@@ -498,6 +484,21 @@ function earlierArchivedSubtrees(
   return out;
 }
 
+/**
+ * The model/access override in force for a card's CURRENT stage (t3o-29),
+ * resolved through the parent for a sub-board child, or null when the
+ * workspace config governs.
+ *
+ * The reactor resolves it because it is the only layer that can see both the
+ * card and the board it sits on; what the override then GOVERNS is the
+ * executor's call, so this is handed down on the config rather than folded into
+ * `model` (see `BoardStageExecutorConfig.cardOverride`). That is what keeps the
+ * reactor from having to know that a review stage treats it differently.
+ *
+ * Free: the ancestors are already in the aggregate every caller holds, so this
+ * is an in-memory walk, not a read. Groups nest (T3O-27), so the whole chain is
+ * consulted, nearest first.
+ */
 function cardStageModelOverride(
   board: BoardState,
   card: BoardCard,

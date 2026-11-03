@@ -17,9 +17,11 @@
  *   group's key to say no further work happens on the subtree, ever.
  * - **Archive of a `branch-only` integration branch whose PR merged** (T3O-28).
  *   It has no checkout for a reclaim to remove, and its merge made it durable.
- * - **Cancelled work, after its worktree goes** (T3O-28, decision 12). The
- *   reclaim's own safety rule, or a human's forced removal, already decided the
- *   work is safe or not wanted; the branch goes with the checkout.
+ * - **Cancelled work, after its worktree goes** (T3O-28, decision 12). A human
+ *   confirmed the cancellation by typing the card's key and its PR was closed,
+ *   so the work is not wanted. The reclaim's safety rule only proves the work
+ *   is pushed, not merged, so this deletes the remote copy on that confirmation
+ *   alone; the branch goes with the checkout.
  *
  * Each caller runs two deletions, with different risk:
  *
