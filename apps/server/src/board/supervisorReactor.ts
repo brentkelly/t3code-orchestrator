@@ -2654,9 +2654,11 @@ const make = Effect.gen(function* () {
             return resolved.defaultBranch === "" ? null : resolved.defaultBranch;
           })
         : null;
+      // A child always needs the cards: an inherit group resolves through its
+      // own parent chain, which can end at a pinned or unpinned top level.
       const effective = resolveBoardCardEffectiveBase({
         card,
-        cards: needsDefault ? [] : (yield* readBoard).cards,
+        cards: card.parentCardId === null ? [] : (yield* readBoard).cards,
         defaultBranch,
       });
       return effective !== null && effective !== recorded ? effective : null;
