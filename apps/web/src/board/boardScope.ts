@@ -107,6 +107,11 @@ export function boardScopeCollapseKey(scope: BoardScope, stageId: string): strin
   return scope.kind === "root" ? stageId : `sub/${scope.parentCardId}/${stageId}`;
 }
 
+/** Which board's filter text a scope reads (T3O-29). */
+export function boardScopeQueryKey(scope: BoardScope): string {
+  return scope.kind === "root" ? "root" : `sub/${scope.parentCardId}`;
+}
+
 /**
  * Where a sub-board URL should land (D3): on the sub-board when the parent
  * exists and is a group; on the root board with the parent's sheet open

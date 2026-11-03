@@ -267,7 +267,7 @@ export function boardGroupReadyChildren(
 }
 
 function roleOfStage(stages: BoardState, stageId: BoardStageId) {
-  const stage = stages.stages.find((candidate) => candidate.stageId === stageId);
+  const stage = (stages.stages ?? []).find((candidate) => candidate.stageId === stageId);
   return stage === undefined ? null : effectiveBoardStageRole(stage);
 }
 
@@ -296,6 +296,17 @@ export function boardDropRefusal(input: {
       return `Work has started on ${startedInside.key} inside ${card.key}. Let it finish, or archive it.`;
     }
     return null;
+  }
+  // An own-branch group's children are materialised work, from Ready onward.
+  const parent = boardShellAncestors(shells, card)[0];
+  const floor = boardStageBeforeBuild(stages);
+  if (
+    parent !== undefined &&
+    floor !== null &&
+    boardShellGroup(shells, parent)?.target === "own" &&
+    boardStageIndex(stages, toStage) < boardStageIndex(stages, floor.stageId)
+  ) {
+    return `${parent.key} has its own integration branch, so its cards live from ${floor.label} onward.`;
   }
   const group = boardShellGroup(shells, card);
   if (group === null) return null;

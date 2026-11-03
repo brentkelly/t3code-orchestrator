@@ -121,6 +121,11 @@ interface BoardUiStore extends BoardUiState {
       sub-board drill, clicking a different card) leaves this id behind, and a
       sheet is fullscreen only while it matches. The board clears it on close. */
   detailMaximisedCardId: string | null;
+  /** Each board's filter text (T3O-29), keyed by `boardScopeQueryKey`: the
+      root board and every sub-board keep their own. Transient — typing state,
+      not a preference. */
+  queryByBoard: Partial<Record<string, string>>;
+  setBoardQuery: (boardKey: string, query: string) => void;
   recordModeLocation: (mode: WorkspaceMode, href: string) => void;
   setColumnCollapsed: (stageKey: string, collapsed: boolean) => void;
   setUtilityMenuCollapsed: (collapsed: boolean) => void;
@@ -191,6 +196,13 @@ export const useBoardUiStore = create<BoardUiStore>()(
       utilityMenuCollapsed: false,
       sidebarHostsModeTabs: false,
       detailMaximisedCardId: null,
+      queryByBoard: {},
+      setBoardQuery: (boardKey, query) =>
+        set((state) =>
+          (state.queryByBoard[boardKey] ?? "") === query
+            ? state
+            : { queryByBoard: { ...state.queryByBoard, [boardKey]: query } },
+        ),
       recordModeLocation: (mode, href) =>
         set((state) => {
           // The mounting surface fixes `mode`, but the router location updates
