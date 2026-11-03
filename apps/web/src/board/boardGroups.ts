@@ -26,14 +26,37 @@ type Shells = ReadonlyArray<BoardCardShell>;
     branch name. */
 const BOARD_TRUNK_LABEL = "trunk";
 
+// Indexes built once per shells array: every helper below is called per card
+// and per column on each board delta, and a linear scan per call is quadratic.
+// Shell arrays are never mutated, so array identity is a safe cache key.
+const idIndexes = new WeakMap<Shells, ReadonlyMap<string, BoardCardShell>>();
+const childIndexes = new WeakMap<Shells, ReadonlyMap<string, Shells>>();
+const NO_CHILDREN: Shells = [];
+
 function byId(shells: Shells): ReadonlyMap<string, BoardCardShell> {
-  return new Map(shells.map((shell) => [String(shell.cardId), shell]));
+  let index = idIndexes.get(shells);
+  if (index === undefined) {
+    index = new Map(shells.map((shell) => [String(shell.cardId), shell]));
+    idIndexes.set(shells, index);
+  }
+  return index;
 }
 
 function boardShellChildren(shells: Shells, cardId: string): Shells {
-  return shells.filter(
-    (shell) => shell.parentCardId !== undefined && String(shell.parentCardId) === cardId,
-  );
+  let index = childIndexes.get(shells);
+  if (index === undefined) {
+    const built = new Map<string, BoardCardShell[]>();
+    for (const shell of shells) {
+      if (shell.parentCardId === undefined) continue;
+      const parentId = String(shell.parentCardId);
+      const siblings = built.get(parentId);
+      if (siblings === undefined) built.set(parentId, [shell]);
+      else siblings.push(shell);
+    }
+    index = built;
+    childIndexes.set(shells, index);
+  }
+  return index.get(cardId) ?? NO_CHILDREN;
 }
 
 /** A card is a group while it has settings or a live child (a split parent
@@ -142,8 +165,17 @@ export interface BoardGroupStatsInput {
   readonly attentionFor: (card: BoardCardShell) => BoardCardAttention | null;
 }
 
+// One memo per input object, so a page building every group's face from one
+// input computes each subtree once rather than once per enclosing group.
+const statsMemos = new WeakMap<BoardGroupStatsInput, Map<string, BoardGroupStats>>();
+
 export function boardGroupStats(input: BoardGroupStatsInput, cardId: string): BoardGroupStats {
-  return statsWithMemo(input, cardId, new Map(), new Set());
+  let memo = statsMemos.get(input);
+  if (memo === undefined) {
+    memo = new Map();
+    statsMemos.set(input, memo);
+  }
+  return statsWithMemo(input, cardId, memo, new Set());
 }
 
 function statsWithMemo(
@@ -475,7 +507,7 @@ export function boardDeferredChildren(shells: Shells, groupId: string): Shells {
   return boardShellChildren(shells, groupId).filter((child) => isBoardDeferredStage(child.stage));
 }
 
-/** The typed-ID gate: the card's key, case-insensitive, ignoring outer space. */
+/** The typed-ID gate: the card's exact key, ignoring outer space. The server compares exactly. */
 export function isBoardTypedKeyConfirmed(typed: string, key: string): boolean {
-  return typed.trim().toLowerCase() === key.trim().toLowerCase();
+  return typed.trim() === key.trim();
 }

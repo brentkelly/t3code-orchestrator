@@ -15,7 +15,7 @@ import {
   areBoardStagesAdjacent,
   boardNewPhaseBrief,
   boardNextPhaseTitle,
-  boardStageBeforeBuild,
+  boardNewPhaseHeadingStage,
   boardStageWithRole,
   boardStagesInOrder,
   isBoardStageAtOrAfterBuild,
@@ -125,6 +125,7 @@ export function BoardGroupStartDialog({
 export function BoardNewPhaseDialog({
   environmentId,
   group,
+  keyPrefix,
   shells,
   stages,
   onClose,
@@ -132,6 +133,8 @@ export function BoardNewPhaseDialog({
 }: {
   readonly environmentId: EnvironmentId;
   readonly group: BoardCardShell;
+  /** The project's key prefix, resolved as `board_new_phase` resolves it. */
+  readonly keyPrefix: string;
   readonly shells: Shells;
   readonly stages: BoardState;
   readonly onClose: () => void;
@@ -152,12 +155,10 @@ export function BoardNewPhaseDialog({
     if (trimmed.length === 0 || chosen.length === 0) return;
     onClose();
     const first = boardStagesInOrder(stages)[0]!.stageId;
-    // Under an own-branch parent the heading sits on the floor, its first
-    // legal column; the moved cards land in the heading's own Backlog.
-    const headingStage =
-      parent !== undefined && boardShellGroup(shells, parent)?.target === "own"
-        ? (boardStageBeforeBuild(stages)?.stageId ?? first)
-        : first;
+    const headingStage = boardNewPhaseHeadingStage(
+      stages,
+      parent !== undefined && boardShellGroup(shells, parent)?.target === "own",
+    );
     const cardId = BoardCardId.make(randomUUID());
     const ids = chosen.map((card) => card.cardId);
     void (async () => {
@@ -171,7 +172,7 @@ export function BoardNewPhaseDialog({
           heading: true,
           stage: headingStage,
           ...(group.parentCardId === undefined ? {} : { parentCardId: group.parentCardId }),
-          keyPrefix: group.key.replace(/-\d+$/, ""),
+          keyPrefix,
         },
       });
       if (failed(created)) {
@@ -340,12 +341,15 @@ export function BoardArchiveGroupDialog({
 export function BoardStartedParentDialog({
   environmentId,
   started,
+  keyPrefix,
   moving,
   stages,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
   readonly started: BoardCardShell;
+  /** The project's key prefix, resolved as the create dialog resolves it. */
+  readonly keyPrefix: string;
   readonly moving: Shells;
   readonly stages: BoardState;
   readonly onClose: () => void;
@@ -387,7 +391,7 @@ export function BoardStartedParentDialog({
           title: title.trim(),
           heading: true,
           ...(started.parentCardId === undefined ? {} : { parentCardId: started.parentCardId }),
-          keyPrefix: started.key.replace(/-\d+$/, ""),
+          keyPrefix,
         },
       });
       if (failed(created)) return fail("Could not create the shared parent", created);

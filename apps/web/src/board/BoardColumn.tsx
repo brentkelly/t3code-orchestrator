@@ -65,6 +65,8 @@ export interface BoardColumnDragProps {
   readonly onRefusedDragOver?:
     | ((stage: BoardStageId, refusal: string, event: DragEvent<HTMLElement>) => void)
     | undefined;
+  /** The drag left a refused column, so its pointer tip goes. */
+  readonly onRefusedDragLeave?: (() => void) | undefined;
   readonly onCardDragStart: (card: BoardCardShell, event: DragEvent<HTMLDivElement>) => void;
   readonly onCardDragEnd: () => void;
   /** Keyboard reorder (Ctrl/Cmd+ArrowUp/Down on a focused card): the pointer
@@ -145,6 +147,12 @@ function columnDropHandlers(props: BoardColumnProps) {
       }
       props.onColumnDragOver(props.stage, event);
     },
+    onDragLeave: (event: DragEvent<HTMLElement>) => {
+      if (refusal === null) return;
+      const next = event.relatedTarget;
+      if (next instanceof Node && event.currentTarget.contains(next)) return;
+      props.onRefusedDragLeave?.();
+    },
     onDrop: (event: DragEvent<HTMLElement>) => {
       if (refusal !== null) return;
       props.onColumnDrop(props.stage, event);
@@ -176,6 +184,7 @@ function CollapsedColumn(props: BoardColumnProps) {
         )}
         data-board-drop-refused={refused ? "" : undefined}
         onClick={() => onSetCollapsed(stage, false)}
+        onDragLeave={dropHandlers.onDragLeave}
         onDragOver={dropHandlers.onDragOver}
         onDrop={dropHandlers.onDrop}
         type="button"
@@ -306,6 +315,7 @@ function ExpandedColumn(props: BoardColumnProps) {
           fills the empty-column floor so the whole panel stays a drop target. */}
       <div
         className="flex flex-1 flex-col gap-2"
+        onDragLeave={dropHandlers.onDragLeave}
         onDragOver={dropHandlers.onDragOver}
         onDrop={dropHandlers.onDrop}
       >

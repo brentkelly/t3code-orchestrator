@@ -469,9 +469,14 @@ export type BoardNewPhasePlan =
       readonly cardIds: ReadonlyArray<BoardCardId>;
       /** Where the moved cards land inside the new heading. */
       readonly cardStage: BoardStageId;
-      /** The new card's key prefix, the group's own. */
-      readonly keyPrefix: string;
     };
+
+/** A new phase heading's stage: the first stage, or the floor under an `own`
+    parent, whose children live from there onward. */
+export function boardNewPhaseHeadingStage(board: BoardState, parentOwn: boolean): BoardStageId {
+  const first = boardStagesInOrder(board)[0]!.stageId;
+  return parentOwn ? (boardStageBeforeBuild(board)?.stageId ?? first) : first;
+}
 
 export function boardNewPhasePlan(
   board: BoardState,
@@ -503,15 +508,13 @@ export function boardNewPhasePlan(
       ? undefined
       : board.cards.find((card) => card.id === group.parentCardId);
   const parentOwn = parent !== undefined && boardCardGroupOf(board, parent)?.target === "own";
-  const headingStage = parentOwn ? (boardStageBeforeBuild(board)?.stageId ?? first) : first;
   return {
     kind: "ok",
     group,
     parentCardId: group.parentCardId,
-    headingStage,
+    headingStage: boardNewPhaseHeadingStage(board, parentOwn),
     cardIds: deferred.filter((card) => wanted.has(card.id)).map((card) => card.id),
     cardStage: first,
-    keyPrefix: group.key.replace(/-\d+$/, ""),
   };
 }
 

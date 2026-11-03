@@ -105,7 +105,7 @@ describe("boardNewPhasePlan", () => {
   });
   const active = card("c4", { key: "T3O-14", parentCardId: group.id });
 
-  it("plans a top-level sibling heading in Backlog with the group's key prefix", () => {
+  it("plans a top-level sibling heading in Backlog", () => {
     const plan = boardNewPhasePlan(board([group, deferredA, deferredB, active]), group.id, [
       deferredB.id,
       deferredA.id,
@@ -115,7 +115,6 @@ describe("boardNewPhasePlan", () => {
       parentCardId: null,
       headingStage: "backlog",
       cardStage: "backlog",
-      keyPrefix: "T3O",
     });
     // Board order, not the order the caller ticked them in.
     expect(plan.kind === "ok" ? plan.cardIds : []).toEqual([deferredA.id, deferredB.id]);

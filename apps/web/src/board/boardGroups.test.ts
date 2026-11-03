@@ -277,8 +277,9 @@ describe("targets and settings", () => {
 });
 
 describe("isBoardTypedKeyConfirmed", () => {
-  it("matches the key case-insensitively, ignoring outer space", () => {
-    expect(isBoardTypedKeyConfirmed(" t3o-26 ", "T3O-26")).toBe(true);
+  it("matches the key exactly, ignoring outer space", () => {
+    expect(isBoardTypedKeyConfirmed(" T3O-26 ", "T3O-26")).toBe(true);
+    expect(isBoardTypedKeyConfirmed("t3o-26", "T3O-26")).toBe(false);
     expect(isBoardTypedKeyConfirmed("T3O-2", "T3O-26")).toBe(false);
     expect(isBoardTypedKeyConfirmed("", "T3O-26")).toBe(false);
   });

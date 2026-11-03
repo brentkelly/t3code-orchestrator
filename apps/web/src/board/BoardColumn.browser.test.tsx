@@ -96,6 +96,24 @@ describe("BoardColumn drop refusal", () => {
     );
   });
 
+  it("clears the refusal tip once the drag leaves the refused column", async () => {
+    const onRefusedDragLeave = vi.fn();
+    await using screen = await render(
+      <BoardColumn
+        {...columnProps({
+          draggedCardId: "group-2",
+          dropRefusal: "Reached automatically.",
+          onRefusedDragLeave,
+        })}
+      />,
+    );
+    const zone = screen.getByText("No cards").element();
+    zone.dispatchEvent(new DragEvent("dragleave", { bubbles: true, relatedTarget: zone }));
+    expect(onRefusedDragLeave).not.toHaveBeenCalled();
+    zone.dispatchEvent(new DragEvent("dragleave", { bubbles: true, relatedTarget: document.body }));
+    expect(onRefusedDragLeave).toHaveBeenCalledOnce();
+  });
+
   it("accepts the drop on a column with no refusal", async () => {
     const onColumnDragOver = vi.fn((_stage: BoardStageIdType, event: { preventDefault(): void }) =>
       event.preventDefault(),

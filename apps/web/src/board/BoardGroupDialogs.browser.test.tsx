@@ -89,12 +89,12 @@ describe("BoardDialogShell typed-ID gate", () => {
     expect(onConfirm).toHaveBeenCalledOnce();
   });
 
-  it("accepts the key in any case", async () => {
+  it("refuses the key in the wrong case, as the server does", async () => {
     const onConfirm = vi.fn();
     await using _screen = await render(<TypedKeyDialog onConfirm={onConfirm} />);
-    await userEvent.type(page.getByLabelText("Type T3O-26 to confirm"), "t3o-26");
-    await press(page.getByRole("button", { name: "Archive group" }));
-    expect(onConfirm).toHaveBeenCalledOnce();
+    await userEvent.type(page.getByLabelText("Type T3O-26 to confirm"), "t3o-26{Enter}");
+    await expect.element(page.getByRole("button", { name: "Archive group" })).toBeDisabled();
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 });
 
@@ -139,6 +139,7 @@ describe("BoardNewPhaseDialog", () => {
       <BoardNewPhaseDialog
         environmentId={environmentId}
         group={group}
+        keyPrefix="EVT"
         onClose={() => undefined}
         onOpenBoard={() => undefined}
         shells={shells}
@@ -178,7 +179,7 @@ describe("BoardNewPhaseDialog", () => {
       title: "Event log: Phase 2",
       heading: true,
       stage: "backlog",
-      keyPrefix: "G",
+      keyPrefix: "EVT",
     });
     expect(moveCards!.input).toMatchObject({ cardIds: ["c-2"] });
     expect(move!.input).toMatchObject({ cardId: "c-2", toStage: "backlog" });
@@ -192,6 +193,7 @@ describe("BoardStartedParentDialog", () => {
     render(
       <BoardStartedParentDialog
         environmentId={environmentId}
+        keyPrefix="T3O"
         moving={moving}
         onClose={() => undefined}
         stages={STAGES}
@@ -222,10 +224,14 @@ describe("BoardStartedParentDialog", () => {
     const confirm = page.getByRole("button", { name: "Cancel work and make it the parent" });
     await expect.element(confirm).toBeDisabled();
     await userEvent.type(page.getByLabelText("Type T3O-40 to confirm"), "t3o-40");
+    // The server compares the key exactly, so a lowercase key must not confirm.
+    await expect.element(confirm).toBeDisabled();
+    await userEvent.clear(page.getByLabelText("Type T3O-40 to confirm"));
+    await userEvent.type(page.getByLabelText("Type T3O-40 to confirm"), "T3O-40");
     await press(confirm);
     await vi.waitFor(() => expect(commands.calls).toHaveLength(2));
     expect(commands.calls[0]!.label).toContain("cancel-card-work");
-    expect(commands.calls[0]!.input).toMatchObject({ cardId: "t3o-40", confirmCardKey: "t3o-40" });
+    expect(commands.calls[0]!.input).toMatchObject({ cardId: "t3o-40", confirmCardKey: "T3O-40" });
     expect(commands.calls[1]!.input).toMatchObject({ cardIds: ["t3o-41"], parentCardId: "t3o-40" });
   });
 });

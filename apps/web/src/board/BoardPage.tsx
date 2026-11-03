@@ -36,6 +36,7 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
+  assignBoardKeyPrefix,
 } from "@t3tools/contracts";
 import {
   applyBoardCardPlacements,
@@ -70,6 +71,7 @@ import {
 } from "../components/ui/select";
 import { SidebarInset } from "../components/ui/sidebar";
 import { toastManager } from "../components/ui/toast";
+import { isEditableFocused } from "../lib/editableFocus";
 import { cn } from "../lib/utils";
 import { environmentShell } from "../state/shell";
 import { boardEnvironment, environmentBoard } from "../state/board";
@@ -633,11 +635,12 @@ function EnvironmentBoard({
     [ancestors, openRootBoard, openSubBoard, scope],
   );
   // Alt+Up leaves a sub-board for the level above, wherever focus is on the
-  // board — but not out of an open dialog or the card sheet.
+  // board — but not out of an open dialog, the card sheet or a text field.
   useEffect(() => {
     if (scope.kind !== "sub-board") return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (!event.altKey || event.key !== "ArrowUp" || event.defaultPrevented) return;
+      if (isEditableFocused(event.target)) return;
       if (document.querySelector("[role=dialog],[role=alertdialog]") !== null) return;
       event.preventDefault();
       goUpOneLevel();
@@ -1116,6 +1119,7 @@ function EnvironmentBoard({
     },
     [],
   );
+  const handleRefusedDragLeave = useCallback(() => setDragTip(null), []);
   const handleColumnDragOver = useCallback((stage: BoardStageId, event: DragEvent<HTMLElement>) => {
     if (dragRef.current === null) return;
     setDragTip(null);
@@ -1705,6 +1709,7 @@ function EnvironmentBoard({
                   onCardDragStart={handleCardDragStart}
                   onColumnDragOver={handleColumnDragOver}
                   onRefusedDragOver={handleRefusedDragOver}
+                  onRefusedDragLeave={handleRefusedDragLeave}
                   onColumnDrop={handleColumnDrop}
                   onOpenSubBoard={handleOpenSubBoard}
                   onRequestCreate={openCreate}
@@ -1768,6 +1773,15 @@ function EnvironmentBoard({
             <BoardNewPhaseDialog
               environmentId={environmentId}
               group={group}
+              // The prefix `board_new_phase` would use: the project's setting, not the group's key.
+              keyPrefix={
+                assignBoardKeyPrefix({
+                  board: boardSettings,
+                  projectId: group.projectId,
+                  projectTitle:
+                    allProjects.find((project) => project.id === group.projectId)?.title ?? "",
+                }).prefix
+              }
               key={group.cardId}
               onClose={() => setPhaseGroupId(null)}
               onOpenBoard={(groupCardId) => openSubBoard(groupCardId)}

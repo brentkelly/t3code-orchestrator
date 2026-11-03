@@ -2539,13 +2539,31 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     [isSplitParent, props.detail.plans, props.detail.children, props.childShells, props.stages],
   );
   const group = props.group ?? null;
+  // Which tab the thread pane is on. Absent means "whichever thread the card's
+  // stage makes current", so the pane follows the card until the user picks a
+  // thread, and a since-unlinked selection falls back to that same default.
+  const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
+  const selectedThread =
+    props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
+    initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
   // A group's planning thread is settled once it split (T3O-29): the tab
-  // stays locked until the human reopens it from the Planning thread box.
+  // stays locked until the human reopens it from the Planning thread box. A
+  // group with no planning thread has no box, so nothing to lock.
   const [threadReopened, setThreadReopened] = useState(false);
   const threadLocked =
-    group !== null && !threadReopened
+    group !== null && selectedThread !== null && !threadReopened
       ? "The planning thread is settled. Reopen it from the Planning thread box."
       : null;
+  const reopenGroupThread = () => {
+    setThreadReopened(true);
+    setPane("thread");
+    const link = props.threadLinks.find((candidate) => candidate.threadId === selectedThread);
+    if (group === null || group.reopenPrompt === null || link === undefined || link.tombstoned)
+      return;
+    useComposerDraftStore
+      .getState()
+      .setPrompt(scopeThreadRef(link.worker.environmentId, link.threadId), group.reopenPrompt);
+  };
   const groupDefaultPane: BoardCardPane = (planRows?.rows.length ?? 0) > 0 ? "plan" : "brief";
   const pane =
     paneChoice ??
@@ -2616,13 +2634,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       reviewMaxRounds,
     ],
   );
-  // Which tab the thread pane is on. Absent means "whichever thread the card's
-  // stage makes current", so the pane follows the card until the user picks a
-  // thread, and a since-unlinked selection falls back to that same default.
-  const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
-  const selectedThread =
-    props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
-    initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
 
   return (
     <>
@@ -3023,20 +3034,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               <GroupActionsSection
                 group={group}
                 hasPlanningThread={selectedThread !== null}
-                onReopenThread={() => {
-                  setThreadReopened(true);
-                  setPane("thread");
-                  const link = props.threadLinks.find(
-                    (candidate) => candidate.threadId === selectedThread,
-                  );
-                  if (group.reopenPrompt === null || link === undefined || link.tombstoned) return;
-                  useComposerDraftStore
-                    .getState()
-                    .setPrompt(
-                      scopeThreadRef(link.worker.environmentId, link.threadId),
-                      group.reopenPrompt,
-                    );
-                }}
+                onReopenThread={reopenGroupThread}
                 threadReopened={threadReopened}
               />
             )}
@@ -3184,21 +3182,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 <GroupActionsSection
                   group={group}
                   hasPlanningThread={selectedThread !== null}
-                  onReopenThread={() => {
-                    setThreadReopened(true);
-                    setPane("thread");
-                    const link = props.threadLinks.find(
-                      (candidate) => candidate.threadId === selectedThread,
-                    );
-                    if (group.reopenPrompt === null || link === undefined || link.tombstoned)
-                      return;
-                    useComposerDraftStore
-                      .getState()
-                      .setPrompt(
-                        scopeThreadRef(link.worker.environmentId, link.threadId),
-                        group.reopenPrompt,
-                      );
-                  }}
+                  onReopenThread={reopenGroupThread}
                   threadReopened={threadReopened}
                 />
               )}
