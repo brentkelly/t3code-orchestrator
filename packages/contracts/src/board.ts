@@ -1253,6 +1253,19 @@ export const BoardCardGroup = Schema.Struct({
 });
 export type BoardCardGroup = typeof BoardCardGroup.Type;
 
+/**
+ * The planning agent's advice for a proposed split (T3O-31): the group
+ * settings the split gate pre-sets, and approval applies unless the human
+ * edits them. Resolved by the decider at propose time (falling back to
+ * `boardSplitRecommendationFallback` for an omitted field), so a stored value
+ * is always complete.
+ */
+export const BoardSplitRecommendation = Schema.Struct({
+  autoBuild: Schema.Boolean,
+  mergeTarget: BoardCardGroupTarget,
+});
+export type BoardSplitRecommendation = typeof BoardSplitRecommendation.Type;
+
 export const BoardCard = Schema.Struct({
   id: BoardCardId,
   /** Generated `<prefix>-<cardNumber>`, e.g. "T3-195" (D14). */
@@ -1389,6 +1402,11 @@ export const BoardCard = Schema.Struct({
   splitRationale: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** The agent's recommended group settings for the split it proposed
+      (T3O-31). Present exactly while `splitRationale` is, on proposals made
+      since T3O-31; absent on older ones, which read the fallback rules
+      (`boardSplitRecommendationOf`). Migration 052's NULL column. */
+  splitRecommendation: Schema.optionalKey(BoardSplitRecommendation),
   /** The branch this card's work is cut from and merges back into (T3O-5, D1),
       or null to FOLLOW THE PROJECT DEFAULT — resolved LIVE on every read, never
       snapshotted into this column when the card is provisioned.
@@ -2047,10 +2065,21 @@ export const BoardPlan = Schema.Struct({
   /** True once materialised to `.plans/` at Building entry (t3o-12); a locked
       plan rejects `board_write_plan`, pointing the agent at the file. */
   locked: Schema.Boolean,
+  /** A split child's plan is PLANNED (T3O-31) when its body is a full
+      implementation plan: the child owns it and lands ready to build. False
+      marks a brief that still needs planning: the child lands in the first
+      stage with the body as its brief only. Absent means planned — every plan
+      written before T3O-31, and a single-plan proposal, where it is moot. */
+  planned: Schema.optionalKey(Schema.Boolean),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 export type BoardPlan = typeof BoardPlan.Type;
+
+/** Whether a plan is a full implementation plan (T3O-31); absent reads true. */
+export function isBoardPlanPlanned(plan: Pick<BoardPlan, "planned">): boolean {
+  return plan.planned !== false;
+}
 
 /** A plan plus its body — the event-carried and table-stored shape. The read
     model keeps only the `BoardPlan` metadata; the body rides `board_plans`. */
@@ -4514,6 +4543,10 @@ export const BoardProposedPlanInput = Schema.Struct({
   summary: TrimmedNonEmptyString,
   dependsOn: Schema.Array(TrimmedNonEmptyString),
   body: Schema.String,
+  /** True (the default when absent): the body is a full implementation plan
+      and the child lands ready to build. False: the body is a brief, and the
+      child lands in the first stage to be planned on its own (T3O-31). */
+  planned: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardProposedPlanInput = typeof BoardProposedPlanInput.Type;
 
@@ -4534,6 +4567,11 @@ export const BoardPlansProposeCommand = Schema.Struct({
       surfacing a decode error. Forced to null below two plans, so a non-null
       value means "a split was proposed", exactly. */
   splitRationale: Schema.NullOr(TrimmedNonEmptyString),
+  /** The agent's recommended group settings for a split (T3O-31). Either may
+      be omitted; the decider fills it from `boardSplitRecommendationFallback`.
+      Ignored below two plans. */
+  recommendedAutoBuild: Schema.optionalKey(Schema.Boolean),
+  recommendedMergeTarget: Schema.optionalKey(BoardCardGroupTarget),
   createdAt: IsoDateTime,
 });
 export type BoardPlansProposeCommand = typeof BoardPlansProposeCommand.Type;
@@ -4560,6 +4598,10 @@ export const BoardPlansApproveCommand = Schema.Struct({
   type: Schema.Literal("board.plans.approve"),
   commandId: CommandId,
   cardId: BoardCardId,
+  /** The human's final group settings from the split gate (T3O-31); each
+      defaults to the card's split recommendation when absent. */
+  autoBuild: Schema.optionalKey(Schema.Boolean),
+  mergeTarget: Schema.optionalKey(BoardCardGroupTarget),
   createdAt: IsoDateTime,
 });
 export type BoardPlansApproveCommand = typeof BoardPlansApproveCommand.Type;
@@ -5230,6 +5272,11 @@ export const BoardCardCreatedPayload = Schema.Struct({
       the log, and approval freezes the plans, so the body resolved at any
       replay equals the body at approval. Mutually exclusive with `brief`. */
   briefFromPlanId: Schema.optionalKey(BoardPlanId),
+  /** With `briefFromPlanId`: the child takes the plan's body as its brief
+      but NOT a copy of the plan row (T3O-31), because the plan was a brief
+      that still needs planning. Absent copies the plan, as every split child
+      before T3O-31 did. */
+  briefOnly: Schema.optionalKey(Schema.Boolean),
   stage: BoardStageId.pipe(
     Schema.withDecodingDefault(Effect.succeed(BOARD_SEED_STAGE_IDS.backlog)),
   ),
@@ -5563,6 +5610,9 @@ export const BoardPlansProposedPayload = Schema.Struct({
   splitRationale: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** The resolved recommendation (T3O-31): present exactly when
+      `splitRationale` is non-null. Absent clears the card's. */
+  splitRecommendation: Schema.optionalKey(BoardSplitRecommendation),
 });
 export type BoardPlansProposedPayload = typeof BoardPlansProposedPayload.Type;
 

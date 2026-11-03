@@ -550,6 +550,7 @@ function setCardSplitRationale<M extends BoardReadModel>(
   model: M,
   cardId: BoardCardId,
   splitRationale: BoardCard["splitRationale"],
+  splitRecommendation: BoardCard["splitRecommendation"],
 ): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   if (!board.cards.some((card) => card.id === cardId)) return model;
@@ -557,7 +558,15 @@ function setCardSplitRationale<M extends BoardReadModel>(
     ...model,
     board: {
       ...board,
-      cards: board.cards.map((card) => (card.id === cardId ? { ...card, splitRationale } : card)),
+      cards: board.cards.map((card) => {
+        if (card.id !== cardId) return card;
+        const { splitRecommendation: _prior, ...rest } = card;
+        return {
+          ...rest,
+          splitRationale,
+          ...(splitRecommendation === undefined ? {} : { splitRecommendation }),
+        };
+      }),
     },
   };
 }
@@ -601,7 +610,7 @@ export function projectBoardEvent<M extends BoardReadModel>(
           // A split child owns a copy of its plan (T3O-27), mirroring the SQL
           // projection's row.
           const source =
-            payload.briefFromPlanId === undefined
+            payload.briefFromPlanId === undefined || payload.briefOnly === true
               ? undefined
               : next.board?.plans?.find((plan) => plan.planId === payload.briefFromPlanId);
           return source === undefined
@@ -729,7 +738,12 @@ export function projectBoardEvent<M extends BoardReadModel>(
           // carries the card id and the plans, never the card itself. Applied
           // BEFORE the plans so an unknown card id is a no-op on both.
           replaceCardPlans(
-            setCardSplitRationale(model, payload.cardId, payload.splitRationale),
+            setCardSplitRationale(
+              model,
+              payload.cardId,
+              payload.splitRationale,
+              payload.splitRecommendation,
+            ),
             payload.cardId,
             // Strip the body — read model holds metadata only (D8).
             payload.plans.map(({ body: _body, ...plan }) => plan),

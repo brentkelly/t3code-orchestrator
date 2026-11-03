@@ -9,7 +9,9 @@
 import {
   BoardStageId,
   boardCardHasLiveBranch,
+  boardCardMergesIntoIntegrationBranch,
   boardCardPlans,
+  isBoardPlanPlanned,
   boardNextStageId,
   boardStageBeforeBuild,
   boardStageIndex,
@@ -21,6 +23,7 @@ import {
   type BoardCardGroup,
   type BoardCardId,
   type BoardPlan,
+  type BoardSplitRecommendation,
   type BoardState,
 } from "./board.ts";
 
@@ -304,6 +307,39 @@ export function boardGroupTargetLockReason(board: BoardState, card: BoardCard): 
  */
 export function isBoardCardPlanned(board: BoardState, cardId: BoardCardId): boolean {
   return boardCardPlans(board, cardId).length > 0;
+}
+
+/**
+ * The split recommendation's fallback rules (T3O-31), for a field the agent
+ * omitted: every child planned → auto-build on with its own branch (today's
+ * sub-board); otherwise an epic breakdown → auto-build off, inherit. A card
+ * that already merges into an ancestor's integration branch prefers inherit,
+ * so a nested split does not stack a second integration review.
+ */
+export function boardSplitRecommendationFallback(input: {
+  readonly plans: ReadonlyArray<Pick<BoardPlan, "planned">>;
+  readonly underIntegrationBranch: boolean;
+}): BoardSplitRecommendation {
+  const allPlanned = input.plans.every(isBoardPlanPlanned);
+  return {
+    autoBuild: allPlanned,
+    mergeTarget: allPlanned && !input.underIntegrationBranch ? "own" : "inherit",
+  };
+}
+
+/** A card's split recommendation: the stored one, or the fallback for a
+    proposal made before T3O-31 recorded one. */
+export function boardSplitRecommendationOf(
+  board: BoardState,
+  card: BoardCard,
+): BoardSplitRecommendation {
+  return (
+    card.splitRecommendation ??
+    boardSplitRecommendationFallback({
+      plans: boardCardPlans(board, card.id),
+      underIntegrationBranch: boardCardMergesIntoIntegrationBranch(board, card),
+    })
+  );
 }
 
 /** Whether two group settings are the same, field for field. */
