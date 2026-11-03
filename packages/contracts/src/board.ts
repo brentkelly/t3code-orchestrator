@@ -3145,14 +3145,12 @@ export function isBoardStageAtOrAfterSubBoardFloor(
  * A pure stage test is wrong in both directions: a card dragged back out of
  * Building still owns a worktree on the old project's checkout, and a Done card
  * whose branch was cleaned up still has its key printed on a merged pull
- * request. Both halves of a sub-board refuse outright — a child inherits its
- * parent's project and integration branch, and a split parent builds THROUGH
- * its children, so moving one would cascade key reissues and thread kills
- * across the whole sub-board.
+ * request. An integration branch lives in one repository, so a card landing
+ * on one and a group cutting one are both pinned; an inherit group's cards
+ * land on trunk and may span projects.
  *
- * `childCount` is passed rather than derived because the client holds card
- * shells, not the aggregate list `boardCardChildren` needs; the server passes
- * `boardCardChildren(board, card.id).length`.
+ * `childCount` and `integrationParentId` are passed rather than derived because
+ * the client holds card shells, not the aggregate the server reads.
  */
 export type BoardCardProjectLock =
   | { readonly kind: "child"; readonly parentCardId: BoardCardId }
@@ -3161,12 +3159,20 @@ export type BoardCardProjectLock =
 
 export function boardCardProjectLock(input: {
   readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "worktree" | "pullRequestHistory" | "parentCardId">;
+  readonly card: Pick<BoardCard, "stage" | "worktree" | "pullRequestHistory" | "group">;
   readonly childCount: number;
+  /** The group whose integration branch the card lands on, if any. */
+  readonly integrationParentId: BoardCardId | null;
 }): BoardCardProjectLock | null {
   const card = input.card;
-  if (card.parentCardId !== null) return { kind: "child", parentCardId: card.parentCardId };
-  if (input.childCount > 0) return { kind: "parent", childCount: input.childCount };
+  // An integration branch lives in one repository; inherit groups may span projects.
+  if (input.integrationParentId !== null) {
+    return { kind: "child", parentCardId: input.integrationParentId };
+  }
+  // A parent with no settings is a legacy split parent: its own branch.
+  if (input.childCount > 0 && (card.group?.target ?? "own") === "own") {
+    return { kind: "parent", childCount: input.childCount };
+  }
   if (
     isBoardStageAtOrAfterBuild(input.board, card.stage) ||
     card.worktree !== null ||

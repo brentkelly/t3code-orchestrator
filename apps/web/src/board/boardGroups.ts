@@ -104,6 +104,17 @@ export function boardShellAncestors(shells: Shells, card: BoardCardShell): Shell
   return out;
 }
 
+/** The nearest ancestor cutting its own integration branch, which the card lands on. */
+export function boardShellIntegrationAncestor(
+  shells: Shells,
+  card: BoardCardShell,
+): BoardCardShell | null {
+  for (const ancestor of boardShellAncestors(shells, card)) {
+    if (boardShellGroup(shells, ancestor)?.target === "own") return ancestor;
+  }
+  return null;
+}
+
 /** Where a group's CHILDREN merge: its own branch, else whatever it lands on. */
 export function boardGroupTargetLabel(shells: Shells, card: BoardCardShell): string {
   const group = boardShellGroup(shells, card);

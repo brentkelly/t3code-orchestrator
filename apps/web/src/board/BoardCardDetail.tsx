@@ -110,6 +110,7 @@ import {
   boardDeferredChildren,
   boardGroupNote,
   boardShellGroup,
+  boardShellIntegrationAncestor,
   isBoardGroupShell,
 } from "./boardGroups";
 import { boardMoveLeavesPlanningUnwritten } from "./boardStageActions";
@@ -683,12 +684,15 @@ export function BoardCardDetail({
   // ── Project (T3O-33) ───────────────────────────────────────────────────
   // The lock comes from the SAME predicate the decider refuses on, so the row
   // and the rejection cannot disagree. `detail.children` carries archived
-  // children too, which is what the parent refusal needs: an archived child is
-  // still a card holding a number in the parent's project namespace.
+  // children too, as the server's count does.
   const projectLock = boardCardProjectLock({
     board: stageState,
     card,
     childCount: detail.children.length,
+    integrationParentId:
+      cardShell === undefined
+        ? card.parentCardId
+        : (boardShellIntegrationAncestor(allShellCards, cardShell)?.cardId ?? null),
   });
   const projectOptions =
     projectLock === null

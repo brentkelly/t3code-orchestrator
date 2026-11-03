@@ -1802,19 +1802,20 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         board,
         card,
         childCount: boardCardChildren(board, card.id).length,
+        integrationParentId: boardCardIntegrationAncestor(board, card)?.id ?? null,
       });
       switch (lock?.kind) {
         case "child":
           return yield* invariant(
             command,
-            `Card '${card.key}' is a sub-board child of '${lock.parentCardId}' and lives in that card's project; it cannot be moved on its own.`,
+            `Card '${card.key}' lands on the integration branch of '${lock.parentCardId}' and lives in that card's project; it cannot be moved on its own.`,
           );
         case "parent":
           return yield* invariant(
             command,
-            `Card '${card.key}' was split into ${lock.childCount} sub-board card${
+            `Card '${card.key}' cuts its own integration branch for ${lock.childCount} card${
               lock.childCount === 1 ? "" : "s"
-            }; moving it would reissue every child's key too.`,
+            } in this project, so its project is pinned.`,
           );
         case "built":
           return yield* invariant(
