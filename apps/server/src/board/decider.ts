@@ -1293,10 +1293,15 @@ function movedGroupSettings(input: {
   readonly card: BoardCard;
   readonly toStage: BoardStageId;
 }): BoardCardGroup {
-  const { board, group, card, toStage } = input;
+  const { board, card, toStage } = input;
+  const done = boardStageWithRole(board, "done");
+  // Leaving Done reopens the round; a stale `integrated` would snap it back.
+  const group =
+    done !== null && card.stage === done.stageId && toStage !== done.stageId
+      ? { ...input.group, integrated: false }
+      : input.group;
   if (isBoardDeferredStage(toStage)) return group;
   const build = boardStageWithRole(board, "build");
-  const done = boardStageWithRole(board, "done");
   if (build !== null && toStage === build.stageId) return { ...group, started: true };
   if (done !== null && toStage === done.stageId) return { ...group, integrated: true };
   if (!isBoardStageAtOrAfterBuild(board, toStage)) {
@@ -2411,6 +2416,14 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (command.target === "own" && group.target !== "own") {
         const spans = boardGroupOwnTargetProjectRefusal(board, card);
         if (spans !== null) return yield* invariant(command, spans);
+        const doneStage = boardStageWithRole(board, "done")?.stageId ?? null;
+        const active = boardCardActiveChildren(board, card.id);
+        if (active.length > 0 && active.every((child) => child.stage === doneStage)) {
+          return yield* invariant(
+            command,
+            `Every card under '${card.key}' has already merged, so its own branch would have nothing to integrate.`,
+          );
+        }
         // A leaf whose work was cancelled to make it a parent (T3O-28) still
         // holds that work's checkout until it is reclaimed; its branch must not
         // be mistaken for an integration branch.

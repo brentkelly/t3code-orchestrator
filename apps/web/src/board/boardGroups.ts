@@ -447,6 +447,10 @@ export function boardGroupSettingsVm(
     (descendant) =>
       isBoardShellStarted(shells, stages, descendant) && descendant.stage !== doneStageId,
   );
+  const active = boardShellChildren(shells, String(card.cardId)).filter(
+    (child) => !isBoardDeferredStage(child.stage),
+  );
+  const allMerged = active.length > 0 && active.every((child) => child.stage === doneStageId);
   const resolved = boardGroupTargetLabel(shells, card);
   const landsOn = boardCardLandsOnLabel(shells, card);
   const atTrunk = resolved === BOARD_TRUNK_LABEL;
@@ -458,9 +462,11 @@ export function boardGroupSettingsVm(
         ? `Children merge into ${resolved}. Once they are all done, its review merges it into ${landsOn}.`
         : `Children merge straight into ${resolved}; the group has no review of its own.`,
     targetLockReason:
-      started.length === 0
-        ? null
-        : `Locked: work has started on ${started.map((s) => s.key).join(", ")}, whose branch was cut from the current target.`,
+      started.length > 0
+        ? `Locked: work has started on ${started.map((s) => s.key).join(", ")}, whose branch was cut from the current target.`
+        : group.target === "inherit" && allMerged
+          ? "Locked: every card here has already merged, so an own branch would have nothing to integrate."
+          : null,
     autoBuild: {
       on: group.autoBuild,
       note: group.autoBuild

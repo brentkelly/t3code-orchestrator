@@ -699,6 +699,33 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
     }),
   );
 
+  it.effect("refuses an own branch for an inherit group whose children have all merged", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "done", { group: group("sprint", { started: true }) }),
+        child("a", "done", "g"),
+        child("b", "done", "g"),
+      ];
+      const failure = yield* decideFail(settings("g", { target: "own" }), model(cards));
+      assert.include(String(failure), "has already merged");
+    }),
+  );
+
+  it.effect("walking an integrated own group back into its lane clears integrated", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "done", {
+          group: group("ready", { target: "own", started: true, integrated: true }),
+        }),
+        child("a", "done", "g"),
+      ];
+      const events = yield* decideEvents(move("g", "review"), model(cards));
+      const after = stagesAfter(events).get("g");
+      expect(after?.stage).toBe("review");
+      expect(after?.card.group?.integrated).toBe(false);
+    }),
+  );
+
   it.effect("refuses settings on a leaf", () =>
     Effect.gen(function* () {
       const failure = yield* decideFail(
