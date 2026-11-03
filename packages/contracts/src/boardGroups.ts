@@ -7,7 +7,6 @@
  * refusal and the control that would trigger it can never disagree.
  */
 import {
-  BOARD_DEFERRED_STAGE_ID,
   BoardStageId,
   boardCardHasLiveBranch,
   boardCardIntegrationAncestor,

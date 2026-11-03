@@ -2604,6 +2604,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     !threadReopened
       ? "The planning thread is settled. Reopen it from the Planning thread box."
       : null;
+  // Not the selected thread: that falls back to an integration-review thread.
+  const hasGroupPlanningThread = props.threadLinks.some(
+    (candidate) => planStageId !== null && candidate.role === planStageId && !candidate.tombstoned,
+  );
   const reopenGroupThread = () => {
     setThreadReopened(true);
     setPane("thread");
@@ -3166,7 +3170,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             ) : (
               <GroupActionsSection
                 group={group}
-                hasPlanningThread={selectedThread !== null}
+                hasPlanningThread={hasGroupPlanningThread}
                 onReopenThread={reopenGroupThread}
                 threadReopened={threadReopened}
               />
@@ -3315,7 +3319,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               ) : (
                 <GroupActionsSection
                   group={group}
-                  hasPlanningThread={selectedThread !== null}
+                  hasPlanningThread={hasGroupPlanningThread}
                   onReopenThread={reopenGroupThread}
                   threadReopened={threadReopened}
                 />
