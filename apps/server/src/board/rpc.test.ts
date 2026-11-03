@@ -170,6 +170,7 @@ const supervisorStub: SupervisorReactorShape = {
       supervisorCalls.requestRound.push(String(cardId));
       return { outcome: "started", round: 2 } as const;
     }),
+  autoPlanCard: () => Effect.succeed({ outcome: "started" } as const),
 };
 
 const makeHandlers = (scopes: ReadonlyArray<AuthenticatedSession["scopes"][number]>) =>
