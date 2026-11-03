@@ -12,7 +12,6 @@ import {
   ProjectId,
   type BoardCard,
   type BoardCardGroupTarget,
-  type BoardEvent,
   type BoardPlan,
   type BoardProposedPlanInput,
   type BoardState,
@@ -21,7 +20,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
+import { boardDecidedEvents, type BoardCommand, type PlannedBoardEvent } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 import type { BoardOrchestrationReadModel } from "./decisionContext.testkit.ts";
 
@@ -185,19 +184,19 @@ const approve = (input?: {
   createdAt: NOW,
 });
 
-const proposedEvent = (events: ReadonlyArray<BoardEvent>) => {
+const proposedEvent = (events: ReadonlyArray<PlannedBoardEvent>) => {
   const event = events.find((candidate) => candidate.type === "board.plans-proposed");
   assert.ok(event?.type === "board.plans-proposed");
   return event;
 };
 
-const approvedEvent = (events: ReadonlyArray<BoardEvent>) => {
+const approvedEvent = (events: ReadonlyArray<PlannedBoardEvent>) => {
   const event = events.find((candidate) => candidate.type === "board.plans-approved");
   assert.ok(event?.type === "board.plans-approved");
   return event;
 };
 
-const createdEvents = (events: ReadonlyArray<BoardEvent>) =>
+const createdEvents = (events: ReadonlyArray<PlannedBoardEvent>) =>
   events.flatMap((event) => (event.type === "board.card-created" ? [event] : []));
 
 /** An own-branch group holding the card that is being split. */
