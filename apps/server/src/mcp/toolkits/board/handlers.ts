@@ -51,6 +51,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   type BoardState,
   unmetBoardCardDependencies,
+  boardCardGroupOf,
   type BoardCommand,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -1149,6 +1150,11 @@ export const boardHandlers = {
         input.parentCardId === undefined
           ? undefined
           : yield* findCardByKeyOrId(board, input.parentCardId);
+      // Creating under a leaf converts it to a group: the same regrouping
+      // board_indent_cards gates behind a human.
+      if (parent !== undefined && boardCardGroupOf(board, parent) === null) {
+        yield* requireRegroupApproval(input.approved);
+      }
       const cardId = BoardCardId.make(yield* mintUuid);
       // ONE atomic command: the create command carries `brief` and `dependsOn`
       // natively (t3o-06), so the card lands whole — no follow-up update whose
@@ -1197,7 +1203,7 @@ export const boardHandlers = {
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
       let board = yield* readBoardState(deps);
-      const card = board.cards.find((candidate) => candidate.id === input.cardId);
+      let card = board.cards.find((candidate) => candidate.id === input.cardId);
       if (card !== undefined) yield* refuseOtherWorkersCard(board, deps.scope, card);
       if (input.toStage === undefined && input.parentCardId === undefined) {
         return yield* new BoardToolError({
@@ -1230,6 +1236,8 @@ export const boardHandlers = {
           return { cardId: target.id, stage: moved?.stage ?? target.stage };
         }
         board = yield* readBoardState(deps);
+        // The order key below must come from the new group's column.
+        card = board.cards.find((candidate) => candidate.id === target.id);
       }
       const toStage = input.toStage!;
       // A bottom key in the target column, so a cross-stage move lands last.

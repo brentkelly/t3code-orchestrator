@@ -1534,15 +1534,22 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
             .board_set_group_settings({ cardId: a.key, autoBuild: true })
             .pipe(withScope(orphanThread)),
         ),
+        // Creating under a leaf turns it into a group: the same regroup.
+        yield* Effect.flip(
+          boardHandlers
+            .board_create_card({ projectId, title: "Under A", parentCardId: a.key })
+            .pipe(withScope(orphanThread)),
+        ),
       ];
       for (const failure of refusals) {
         assert.strictEqual(failure.code, "invalid-input");
         assert.include(failure.message, "approved: true");
         assert.include(failure.message, "ask them to confirm");
       }
-      // Nothing moved.
+      // Nothing moved, and nothing was created under A.
       const cards = yield* readCards;
       assert.isNull(cards.find((card) => card.id === b.cardId)?.parentCardId ?? null);
+      assert.isFalse(cards.some((card) => card.parentCardId === a.cardId));
     }),
   );
 
@@ -1560,11 +1567,23 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
             title: "Inside A",
             stage: BoardStageId.make("backlog"),
             parentCardId: a.key,
+            approved: true,
           })
           .pipe(withScope(orphanThread));
         let cards = yield* readCards;
         assert.strictEqual(cards.find((card) => card.id === inside.cardId)?.parentCardId, a.cardId);
         assert.isNotNull(cards.find((card) => card.id === a.cardId)?.group ?? null);
+        // A is a group now, so creating another card inside it is no regroup.
+        const second = yield* boardHandlers
+          .board_create_card({
+            projectId,
+            title: "Also inside A",
+            stage: BoardStageId.make("backlog"),
+            parentCardId: a.key,
+          })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        assert.strictEqual(cards.find((card) => card.id === second.cardId)?.parentCardId, a.cardId);
 
         const b = yield* boardHandlers
           .board_create_card({ projectId, title: "B", stage: BoardStageId.make("backlog") })
