@@ -57,6 +57,33 @@ Open **Group settings** from the group board's header, or from the group's popup
   merge into trunk, and is off by default.
 - **Auto-plan** — children entering Planning are planned by the agent and stop at Ready.
 
+## Regrouping in the List view
+
+The **List** tab, between Board and Threads (also **Go to List** in the command palette), shows
+every card in the project scope as an outline, with each group's children indented under it. It
+uses the same project picker as the board and keeps its own filter text. Filtering by text or by
+stage keeps the matching cards and the groups above them; those groups are dimmed and open
+automatically.
+
+Click a row to select it, shift-click to select a range, and Cmd/Ctrl-click to add or remove one.
+Escape clears the selection, and double-click opens the card. With cards selected:
+
+- **Indent** (Tab) puts them under the card just above them. **Outdent** (Shift+Tab) moves them out
+  of their group, to just after it. Both need the selected cards to share a parent, and each says
+  why when it can't be used. Tab only does this while the list has focus.
+- **Move to…** picks any group, or the top level.
+- **Group into new…** creates a group where the cards sit and moves them into it. **New group**,
+  with nothing selected, creates an empty one to fill later.
+- **Archive** archives one card. A group asks first, as above.
+
+You can also drag rows. Dropping on the top or bottom edge of a row places the cards beside it;
+dropping on the middle puts them inside it. Moving cards never touches git, but some moves are
+refused: a card can't go inside itself, a started card can't move somewhere that merges into a
+different branch until it is rebased, and a card can't join a group whose integration branch lives
+in another project's repository. Putting cards under a card that has already started asks whether to
+create a shared parent for both instead. A group that loses its last child becomes an ordinary card
+again, back in Sprint at the latest.
+
 ## Archiving a group
 
 Archiving a group archives everything inside it, and it always asks first. The warning lists the

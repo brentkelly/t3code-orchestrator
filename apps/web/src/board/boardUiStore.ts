@@ -16,7 +16,9 @@ import { resolveStorage } from "../lib/storage";
 
 export const BOARD_UI_STATE_STORAGE_KEY = "t3code:board-ui:v1";
 
-export type WorkspaceMode = "threads" | "board";
+export type WorkspaceMode = "threads" | "board" | "list";
+
+const WORKSPACE_MODES: ReadonlyArray<WorkspaceMode> = ["threads", "board", "list"];
 
 /**
  * Routes that are not a workspace location at all: settings (which replaces
@@ -45,7 +47,7 @@ function pathnameOf(href: string): string {
 /**
  * Which workspace mode an href belongs to, or `null` when it belongs to
  * neither. The board surface lives under `/board` (optionally with
- * `?project`/`?card`); threads, drafts and the root are threads-surface
+ * `?project`/`?card`), the List view (T3O-30) at `/list`; threads, drafts and the root are threads-surface
  * locations; everything in `NON_WORKSPACE_ROOTS` (settings, the auth flow,
  * onboarding, project links, usage) is not a workspace location.
  *
@@ -58,7 +60,14 @@ export function modeForHref(href: string): WorkspaceMode | null {
   if (NON_WORKSPACE_ROOTS.some((root) => pathname === root || pathname.startsWith(`${root}/`))) {
     return null;
   }
+  if (pathname === "/list" || pathname.startsWith("/list/")) return "list";
   return pathname === "/board" || pathname.startsWith("/board/") ? "board" : "threads";
+}
+
+/** The board-owned, full-bleed surfaces: the board and the List view. */
+export function isBoardSurfacePath(pathname: string): boolean {
+  const mode = modeForHref(pathname);
+  return mode === "board" || mode === "list";
 }
 
 /**
@@ -171,7 +180,7 @@ export function migratePersistedBoardUiState(persistedState: unknown): BoardUiSt
   }
   const candidate = persistedState as Partial<BoardUiState>;
   const lastLocationByMode: BoardUiState["lastLocationByMode"] = {};
-  for (const mode of ["threads", "board"] as const) {
+  for (const mode of WORKSPACE_MODES) {
     const href = candidate.lastLocationByMode?.[mode];
     // Must be an in-app path AND belong to the mode it is filed under. The
     // second check repairs stores poisoned by the pre-guard bugs: a
@@ -192,7 +201,10 @@ export function migratePersistedBoardUiState(persistedState: unknown): BoardUiSt
     }
   }
   return {
-    mode: candidate.mode === "board" ? "board" : "threads",
+    mode:
+      typeof candidate.mode === "string" && WORKSPACE_MODES.includes(candidate.mode)
+        ? candidate.mode
+        : "threads",
     lastLocationByMode,
     collapsedByStage,
     // A blob persisted before T3O-34 has no such field; the menu opens.
