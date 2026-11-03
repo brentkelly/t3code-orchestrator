@@ -2946,6 +2946,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Work has not started on '${card.key}', so there is nothing to cancel; give it children directly.`,
         );
       }
+      if (card.stage === "done") {
+        return yield* invariant(
+          command,
+          `'${card.key}' is Done and its work has merged, so there is nothing to cancel; use a shared parent instead.`,
+        );
+      }
       const capped = boardGroupRevertStage(board, { stage: card.stage, group: null });
       const retired =
         card.pullRequest === null

@@ -900,6 +900,9 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
       assert.include(String(wrong), "does not match");
       const notStarted = yield* decideFail(cancel("T3-1"), model([card("x1", "sprint")]));
       assert.include(String(notStarted), "nothing to cancel");
+      // A merged card's dependents rely on it; cancelling would revert it silently.
+      const done = yield* decideFail(cancel("T3-1"), model([{ ...started, stage: "done" }]));
+      assert.include(String(done), "is Done");
 
       const events = yield* decideEvents(cancel("T3-1"), model([started]));
       const updated = events.find((event) => event.type === "board.card-updated");
