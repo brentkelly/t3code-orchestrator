@@ -409,7 +409,7 @@ export function BoardListView(props: BoardListViewProps) {
   const archiveSelected = () => {
     const card = selection[0];
     if (card === undefined || selection.length !== 1) return;
-    if (boardShellGroup(shells, card) !== null) {
+    if (boardShellGroup(allShells, card) !== null) {
       setArchiveGroupId(String(card.cardId));
       return;
     }
@@ -678,7 +678,9 @@ export function BoardListView(props: BoardListViewProps) {
             return (
               <BoardListRowView
                 accentNameFor={props.accentNameFor}
-                blocked={!row.isGroup && row.card.blocked}
+                blocked={
+                  !row.isGroup && (row.card.blocked || attention?.tone === "warning")
+                }
                 card={row.card}
                 childCount={row.childCount}
                 context={row.context}
@@ -767,7 +769,7 @@ export function BoardListView(props: BoardListViewProps) {
               boardToast({ title: `Archived ${archiveGroup.key} and everything in it.` });
             });
           }}
-          shells={shells}
+          shells={allShells}
           stages={stages}
         />
       ) : null}
@@ -798,7 +800,6 @@ function StepButton({
       <Button
         aria-describedby={hintId}
         aria-disabled={step.kind === "refused" ? true : undefined}
-        className={cn(step.kind === "refused" && "cursor-not-allowed opacity-60")}
         onClick={onRun}
         size="xs"
         variant="outline"

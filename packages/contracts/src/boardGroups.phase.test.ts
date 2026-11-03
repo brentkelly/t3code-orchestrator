@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  BOARD_DEFERRED_STAGE_ID,
   BOARD_SEED_STAGES,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
@@ -13,7 +14,6 @@ import {
 } from "./board.ts";
 import { ProjectId } from "./baseSchemas.ts";
 import {
-  BOARD_DEFERRED_STAGE_ID,
   boardNewPhasePlan,
   boardNextPhaseTitle,
   defaultBoardCardGroup,

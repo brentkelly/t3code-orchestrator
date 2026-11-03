@@ -7,6 +7,7 @@
  * refusal and the control that would trigger it can never disagree.
  */
 import {
+  BOARD_DEFERRED_STAGE_ID,
   BoardStageId,
   boardCardHasLiveBranch,
   boardCardIntegrationAncestor,
@@ -27,19 +28,8 @@ import {
   type BoardPlan,
   type BoardSplitRecommendation,
   type BoardState,
+  isBoardDeferredStage,
 } from "./board.ts";
-
-/**
- * The fixed system stage before Backlog: work set aside for a later round.
- * Deliberately NOT a configurable stage — it never appears in the board's
- * stage list, so settings cannot rename, reorder or delete it, and the root
- * board never draws a column for it. Only a card inside a group may sit here.
- */
-export const BOARD_DEFERRED_STAGE_ID = BoardStageId.make("deferred");
-
-export function isBoardDeferredStage(stageId: string): boolean {
-  return stageId === BOARD_DEFERRED_STAGE_ID;
-}
 
 /**
  * A card's group settings, or null for a leaf. A card that has live children

@@ -11,6 +11,7 @@ import type { BoardCardShell, BoardState, EnvironmentId } from "@t3tools/contrac
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { SettingsIcon } from "lucide-react";
 
+import { Button } from "../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import { Switch } from "../components/ui/switch";
 import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
@@ -139,11 +140,8 @@ export function BoardGroupSettings({
 export function BoardGroupSettingsPopover(props: BoardGroupSettingsProps) {
   return (
     <Popover>
-      <PopoverTrigger
-        className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border border-border bg-popover px-2.5 text-[11.5px] font-medium whitespace-nowrap text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
-        type="button"
-      >
-        <SettingsIcon className="size-3" />
+      <PopoverTrigger render={<Button size="xs" variant="outline" />}>
+        <SettingsIcon />
         Group settings
       </PopoverTrigger>
       <PopoverPopup align="end" className="w-[320px] p-3">

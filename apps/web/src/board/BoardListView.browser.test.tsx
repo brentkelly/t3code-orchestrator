@@ -10,6 +10,7 @@ import {
   EnvironmentId,
   ProjectId,
   makeBoardCardShell,
+  type BoardCardAttention,
   type BoardCardGroup,
   type BoardCardShell,
 } from "@t3tools/contracts";
@@ -93,6 +94,7 @@ function renderList(
   shells: ReadonlyArray<BoardCardShell>,
   query = "",
   allShells: ReadonlyArray<BoardCardShell> = shells,
+  attentionFor: (card: BoardCardShell) => BoardCardAttention | null = () => null,
 ) {
   commands.setup();
   return render(
@@ -101,7 +103,7 @@ function renderList(
       <BoardListView
         accentNameFor={() => null}
         allShells={allShells}
-        attentionFor={() => null}
+        attentionFor={attentionFor}
         environmentId={EnvironmentId.make("environment-1")}
         inScope={() => true}
         keyPrefixFor={() => "T3"}
@@ -269,6 +271,35 @@ describe("BoardListView", () => {
         "H has no children left and is an ordinary card again, back in Backlog.",
       ]),
     );
+  });
+
+  it("marks a stalled child Blocked, as its group's roll-up counts it", async () => {
+    const cards = [
+      shell("g", "building", { orderKey: "a", group: group({ started: true }) }),
+      shell("s", "building", { parent: "g" }),
+    ];
+    const stalled: BoardCardAttention = {
+      reason: "stalled",
+      tone: "warning",
+      label: "Stalled",
+      detail: "The step stalled.",
+    };
+    await using _screen = await renderList(cards, "", cards, (card) =>
+      card.cardId === "s" ? stalled : null,
+    );
+    await vi.waitFor(() => expect(row("g").textContent).toContain("1 blocked"));
+    expect(row("s").textContent).toContain("Blocked");
+  });
+
+  it("archives a legacy group whose children sit in a hidden project as a group", async () => {
+    const legacy = shell("g", "backlog", { orderKey: "a" });
+    const hiddenChild = shell("x", "backlog", { parent: "g", projectId: ProjectId.make("p2") });
+    await using _screen = await renderList([legacy], "", [legacy, hiddenChild]);
+    await userEvent.click(await rowReady("g"));
+    await userEvent.click(page.getByRole("button", { name: "Archive", exact: true }));
+    await expect.element(page.getByText("Archive G and everything in it?")).toBeVisible();
+    await expect.element(page.getByText(/all 1 card inside it/)).toBeVisible();
+    expect(commands.calls.some((call) => call.label.includes("archive"))).toBe(false);
   });
 
   it("drops before, into or after a row by thirds, and dims the dragged subtree", async () => {
