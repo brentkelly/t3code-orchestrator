@@ -661,7 +661,7 @@ export const BoardWritePlanTool = Tool.make("board_write_plan", {
   dependencies,
 }).annotate(Tool.Title, "Write board plan");
 
-export const BoardRecordDecisionsTool = Tool.make("board_record_decisions", {
+const BoardRecordDecisionsTool = Tool.make("board_record_decisions", {
   description:
     "Record the decisions a planning session made on your card's decision log, in one batch. Record a decision for every planning session, attended or automatic, before you call board_propose_plans: what was asked, what was decided, a one-line reason, and who decided (agent when you made the call, human when the user answered). Flag a call you were not sure about as unclear, so a human reviews it, and a call that shapes the work as important; everything else is normal. The log is shown on the card's Summary pane and handed to the planning agents of any child cards. Your card is resolved from your thread.",
   parameters: Schema.Struct({
@@ -675,7 +675,7 @@ export const BoardRecordDecisionsTool = Tool.make("board_record_decisions", {
   dependencies,
 }).annotate(Tool.Title, "Record planning decisions");
 
-export const BoardAutoPlanTool = Tool.make("board_auto_plan", {
+const BoardAutoPlanTool = Tool.make("board_auto_plan", {
   description:
     "Auto-plan a card that is in planning: its planning agent stops asking questions, decides everything left itself, records each decision, and proposes the plan, which is then approved without review and built (a split is approved with the agent's recommended settings, and its group starts when auto-build is on). It takes the place of a human approving the plan and starting the build, so only call it when the user explicitly asks for that card to be auto-planned: confirm with them, then pass approved: true. The server refuses without it, and refuses a group or a card whose split is waiting for approval.",
   parameters: Schema.Struct({

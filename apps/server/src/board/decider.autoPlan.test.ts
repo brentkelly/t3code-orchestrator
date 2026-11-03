@@ -144,7 +144,11 @@ it.layer(NodeServices.layer)("auto-plan and the decision log (T3O-32)", (it) => 
         yield* decideEvents(mark("ready"), readModel([makeCard({ id: "card-auto" })])),
       );
       expect(event.payload.autoPlanMarked).toBe(true);
-      expect(event.payload.card.autoPlan).toEqual({ mode: "ready", requestedAt: NOW, endedAt: null });
+      expect(event.payload.card.autoPlan).toEqual({
+        mode: "ready",
+        requestedAt: NOW,
+        endedAt: null,
+      });
     }),
   );
 
@@ -185,10 +189,7 @@ it.layer(NodeServices.layer)("auto-plan and the decision log (T3O-32)", (it) => 
         id: "card-auto",
         splitRationale: "Two parts that review separately and ship one at a time.",
       });
-      const error = yield* decideFail(
-        mark(),
-        readModel([card], [plan("a", 0), plan("b", 1)]),
-      );
+      const error = yield* decideFail(mark(), readModel([card], [plan("a", 0), plan("b", 1)]));
       expect(error.message).toContain("proposed split");
     }),
   );
@@ -294,9 +295,9 @@ it.layer(NodeServices.layer)("auto-plan and the decision log (T3O-32)", (it) => 
         createdAt: NOW,
       });
       expect((yield* decideFail(record(0), model)).message).toContain("at least one");
-      expect((yield* decideFail(record(BOARD_DECISIONS_PER_CALL_MAX + 1), model)).message).toContain(
-        `at most ${BOARD_DECISIONS_PER_CALL_MAX}`,
-      );
+      expect(
+        (yield* decideFail(record(BOARD_DECISIONS_PER_CALL_MAX + 1), model)).message,
+      ).toContain(`at most ${BOARD_DECISIONS_PER_CALL_MAX}`);
     }),
   );
 });

@@ -1285,9 +1285,9 @@ export const BoardCardAutoPlan = Schema.Struct({
 export type BoardCardAutoPlan = typeof BoardCardAutoPlan.Type;
 
 /** Whether an auto-plan request is still waiting on its plan. */
-export function isBoardCardAutoPlanPending(
-  card: { readonly autoPlan?: BoardCardAutoPlan | null | undefined },
-): boolean {
+export function isBoardCardAutoPlanPending(card: {
+  readonly autoPlan?: BoardCardAutoPlan | null | undefined;
+}): boolean {
   return card.autoPlan != null && card.autoPlan.endedAt === null;
 }
 
@@ -1304,15 +1304,13 @@ export const BoardCardDecisionMaker = Schema.Literals(["agent", "human"]);
 export type BoardCardDecisionMaker = typeof BoardCardDecisionMaker.Type;
 
 /** Caps on what one decision may carry: the log rides every detail frame. */
-export const BOARD_DECISION_QUESTION_MAX_LENGTH = 300;
+const BOARD_DECISION_QUESTION_MAX_LENGTH = 300;
 export const BOARD_DECISION_TEXT_MAX_LENGTH = 600;
 export const BOARD_DECISION_REASON_MAX_LENGTH = 400;
 export const BOARD_DECISIONS_PER_CALL_MAX = 40;
 
 export const BoardCardDecisionInput = Schema.Struct({
-  question: TrimmedNonEmptyString.check(
-    Schema.isMaxLength(BOARD_DECISION_QUESTION_MAX_LENGTH),
-  ),
+  question: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_DECISION_QUESTION_MAX_LENGTH)),
   decision: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_DECISION_TEXT_MAX_LENGTH)),
   reason: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_DECISION_REASON_MAX_LENGTH)),
   flag: BoardCardDecisionFlag,
@@ -1344,10 +1342,10 @@ export function sortBoardCardDecisions<T extends Pick<BoardCardDecision, "flag">
 ): ReadonlyArray<T> {
   return decisions
     .map((decision, index) => ({ decision, index }))
-    .toSorted(
+    .sort(
       (left, right) =>
-        BOARD_DECISION_FLAG_RANK[left.decision.flag] - BOARD_DECISION_FLAG_RANK[right.decision.flag] ||
-        left.index - right.index,
+        BOARD_DECISION_FLAG_RANK[left.decision.flag] -
+          BOARD_DECISION_FLAG_RANK[right.decision.flag] || left.index - right.index,
     )
     .map((entry) => entry.decision);
 }

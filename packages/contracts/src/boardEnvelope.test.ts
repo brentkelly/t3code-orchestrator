@@ -141,20 +141,28 @@ describe("decision log and auto-plan (T3O-32)", () => {
         postamble.indexOf("record it with board_propose_plans"),
       );
     }
-    expect(boardStepPostamble({ humanInLoop: false, role: "build", step: stepOf(null) })).not.toContain(
-      "board_record_decisions",
-    );
+    expect(
+      boardStepPostamble({ humanInLoop: false, role: "build", step: stepOf(null) }),
+    ).not.toContain("board_record_decisions");
   });
 
   it("carries the auto-plan instruction only on an auto-planned planning run", () => {
     const auto = composeStepPrompt({
       card: { key: "T3-1", title: "Ship it", stage: "planning" },
       stageLabel: "Planning",
-      step: { stepId: "planning", stepLabel: null, prompt: "Plan.", humanInLoop: false, autoPlan: true },
+      step: {
+        stepId: "planning",
+        stepLabel: null,
+        prompt: "Plan.",
+        humanInLoop: false,
+        autoPlan: true,
+      },
       role: "plan",
     });
     expect(auto).toContain(BOARD_AUTO_PLAN_INSTRUCTION);
-    expect(promptFor({ role: "plan", humanInLoop: false })).not.toContain(BOARD_AUTO_PLAN_INSTRUCTION);
+    expect(promptFor({ role: "plan", humanInLoop: false })).not.toContain(
+      BOARD_AUTO_PLAN_INSTRUCTION,
+    );
   });
 });
 

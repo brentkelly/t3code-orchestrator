@@ -3,10 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { boardDecisionFollowUp, boardDecisionLogView } from "./boardDecisionLog";
 
-const decision = (
-  question: string,
-  flag: BoardCardDecision["flag"],
-): BoardCardDecision => ({
+const decision = (question: string, flag: BoardCardDecision["flag"]): BoardCardDecision => ({
   decisionId: `d-${question}`,
   cardId: BoardCardId.make("card-1"),
   stepId: null,
@@ -38,7 +35,9 @@ describe("boardDecisionLogView", () => {
 
   it("offers the follow-up actions only on an auto-planned card past Building", () => {
     const decisions = [decision("a", "unclear")];
-    expect(boardDecisionLogView({ decisions, autoPlanned: true, pastBuild: true })?.canAct).toBe(true);
+    expect(boardDecisionLogView({ decisions, autoPlanned: true, pastBuild: true })?.canAct).toBe(
+      true,
+    );
     expect(boardDecisionLogView({ decisions, autoPlanned: false, pastBuild: true })?.canAct).toBe(
       false,
     );

@@ -2778,12 +2778,13 @@ const make = Effect.gen(function* () {
     }
     // Auto-kickoff fires only for an auto-executing stage; on-demand runs any
     // stage that has work (gated above).
-    if (!onDemand && !exec.autoExecute) return;
-    // An auto-plan run is always a fresh planning run (T3O-32): a card that
-    // was planned before is re-planned unattended rather than handed the
-    // empty re-entry conversation, so its earlier planning step is set aside.
+    // An auto-plan run is always a fresh planning run (T3O-32): it starts
+    // whether or not Planning auto-executes, and a card that was planned
+    // before is re-planned unattended rather than handed the empty re-entry
+    // conversation, so its earlier planning step is set aside.
     const autoPlanRun =
       effectiveBoardStageRole(stage) === "plan" && isBoardCardAutoPlanPending(card);
+    if (!onDemand && !exec.autoExecute && !autoPlanRun) return;
     const completions = boardCardStepCompletions(board, card.id).filter(
       (completion) => !autoPlanRun || completion.stepId !== card.stage,
     );
@@ -6508,7 +6509,10 @@ const make = Effect.gen(function* () {
         decisions: [
           {
             question: "Build this card as one plan, or split it?",
-            decision: clip(`Split into ${plans.length} cards: ${titles}`, BOARD_DECISION_TEXT_MAX_LENGTH),
+            decision: clip(
+              `Split into ${plans.length} cards: ${titles}`,
+              BOARD_DECISION_TEXT_MAX_LENGTH,
+            ),
             reason: clip(
               card.splitRationale ?? "The agent proposed a split.",
               BOARD_DECISION_REASON_MAX_LENGTH,
@@ -6571,7 +6575,10 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     if (toBuild !== null) {
-      yield* autoPlanNote(card.id, `Auto-plan approved the plan; the build did not start: ${toBuild}`);
+      yield* autoPlanNote(
+        card.id,
+        `Auto-plan approved the plan; the build did not start: ${toBuild}`,
+      );
     }
   });
 
@@ -6617,6 +6624,10 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     if (refusal !== null) return { outcome: "refused", detail: refusal } as const;
+    yield* autoPlanNote(
+      card.id,
+      "Auto-plan requested: the agent decides what is left, and its plan is approved and built when it arrives.",
+    );
     const board = yield* readBoard;
     const state = boardCardStepState(board, card.id);
     // A live planning thread is told to finish on its own terms; a stalled

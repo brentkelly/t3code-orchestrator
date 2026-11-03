@@ -114,7 +114,10 @@ const openPr = {
 
 describe("boardCardHasSummaryPane", () => {
   it("shows from Ready onward once the card has a decision log (T3O-32)", () => {
-    const at = (stage: (typeof BOARD_SEED_STAGE_IDS)[keyof typeof BOARD_SEED_STAGE_IDS], count: number) =>
+    const at = (
+      stage: (typeof BOARD_SEED_STAGE_IDS)[keyof typeof BOARD_SEED_STAGE_IDS],
+      count: number,
+    ) =>
       boardCardHasSummaryPane({
         stages: BOARD_SEED_STAGES,
         stage,

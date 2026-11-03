@@ -66,7 +66,10 @@ const scope = (threadId: ThreadId): McpInvocationScope => ({
   issuedAt: 0,
 });
 
-const asChild = Effect.provideService(McpInvocationContext.McpInvocationContext, scope(childThread));
+const asChild = Effect.provideService(
+  McpInvocationContext.McpInvocationContext,
+  scope(childThread),
+);
 
 const plan = (key: string) => ({
   key,
