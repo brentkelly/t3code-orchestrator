@@ -288,6 +288,13 @@ itself while auto-build is on. Children of an `own` group branch off its integra
 pull requests target it, and the group's own review is the final integration review against its
 target. **Grouping alone never touches git**: an inherit group has no branch at all.
 
+Auto-merge resolves **nearest wins**: a card's own override arms it; inside a group its parent
+decides — auto-build when the card lands on an integration branch, "Auto-merge to trunk" when it
+lands on trunk — and the board-wide merge-stage setting applies to top-level cards only. An
+integration branch never spans projects. Archiving a group (decision 14) archives its whole subtree
+for good once the human types its key: threads stop, pull requests close, worktrees and branches go,
+remote copies included.
+
 **Deferred** is a fixed system stage before Backlog, outside the stage list, open only inside a
 group; a started card cannot be deferred, and a deferred card moved to the top level lands in
 Backlog. A group whose last live child leaves reverts to an ordinary card at its previous stage,
