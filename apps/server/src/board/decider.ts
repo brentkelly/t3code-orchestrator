@@ -1301,6 +1301,7 @@ const GROUP_DERIVING_COMMANDS: ReadonlySet<BoardCommand["type"]> = new Set([
   "board.card.archive",
   "board.card.unarchive",
   "board.card.delete",
+  "board.card.cancel-work",
   "board.plans.approve",
   "board.card.set-group-settings",
   "board.card.sync-groups",
@@ -2281,6 +2282,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (command.target === "own" && group.target !== "own") {
         const spans = boardGroupOwnTargetProjectRefusal(board, card);
         if (spans !== null) return yield* invariant(command, spans);
+        // A leaf whose work was cancelled to make it a parent (T3O-28) still
+        // holds that work's checkout until it is reclaimed; its branch must not
+        // be mistaken for an integration branch.
+        if (card.worktree?.status === "ready" || card.worktree?.status === "provisioning") {
+          return yield* invariant(
+            command,
+            `Can't give '${card.key}' its own branch while the worktree of its cancelled work is still there; it can once that worktree is reclaimed.`,
+          );
+        }
         const belowFloor = board.cards.find(
           (child) =>
             child.parentCardId === card.id &&
@@ -2753,6 +2763,64 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (card.archivedAt !== null) {
         return yield* invariant(command, `Card '${command.cardId}' is already archived.`);
       }
+      // A confirmed group archive (T3O-28, decision 14): the whole subtree,
+      // for good.
+      if (command.confirmCardKey !== undefined) {
+        if (boardCardGroupOf(board, card) === null) {
+          return yield* invariant(
+            command,
+            `Card '${card.key}' is not a group; archive it without a confirmation key.`,
+          );
+        }
+        if (command.confirmCardKey !== card.key) {
+          return yield* invariant(
+            command,
+            `The confirmation '${command.confirmCardKey}' does not match '${card.key}'; type the group's key to archive it.`,
+          );
+        }
+        const subtree = [card, ...boardCardLiveDescendants(board, card.id)];
+        const archivedIds = new Set(subtree.map((member) => member.id));
+        let after: BoardState = {
+          ...board,
+          cards: board.cards.map((candidate) =>
+            archivedIds.has(candidate.id)
+              ? { ...candidate, archivedAt: command.createdAt, updatedAt: command.createdAt }
+              : candidate,
+          ),
+        };
+        const events: Array<PlannedBoardEvent> = [];
+        for (const member of subtree) {
+          const nextCard = after.cards.find((candidate) => candidate.id === member.id)!;
+          events.push({
+            ...(yield* makeBoardEventBase({
+              cardId: member.id,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "board.card-archived",
+            payload: {
+              cardId: member.id,
+              archivedAt: command.createdAt,
+              card: nextCard,
+              discard: true,
+            },
+          });
+        }
+        for (const member of subtree) {
+          const changed = after.cards.find((candidate) => candidate.id === member.id)!;
+          const reflagged = yield* boardDependentBlockedEvents({ board: after, command, changed });
+          for (const event of reflagged) {
+            if (event.type !== "board.card-updated") continue;
+            const next = event.payload.card;
+            after = {
+              ...after,
+              cards: after.cards.map((candidate) => (candidate.id === next.id ? next : candidate)),
+            };
+          }
+          events.push(...reflagged);
+        }
+        return events;
+      }
       // Archiving the supervisor of running work strands it (t3o-23, D7). A
       // parent whose children are all done/archived archives normally.
       {
@@ -2762,7 +2830,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             command,
             `Card '${card.key}' still has ${unfinished.length} unfinished plan card${
               unfinished.length === 1 ? "" : "s"
-            } (${unfinished.map((child) => child.key).join(", ")}); finish or archive those first.`,
+            } (${unfinished.map((child) => child.key).join(", ")}); finish or archive those first, or archive the whole group by confirming its key.`,
           );
         }
       }
@@ -2798,37 +2866,147 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (card.archivedAt === null) {
         return yield* invariant(command, `Card '${command.cardId}' is not archived.`);
       }
+      // A group archived with its subtree (T3O-28) comes back with it: every
+      // descendant archived in that same instant. Cards, plans and history
+      // return; the discarded branch work does not.
+      const restoring: Array<BoardCard> = [card];
+      {
+        const walk = (parentId: BoardCardId) => {
+          for (const child of board.cards) {
+            if (child.parentCardId !== parentId || child.archivedAt !== card.archivedAt) continue;
+            if (restoring.some((seen) => seen.id === child.id)) continue;
+            restoring.push(child);
+            walk(child.id);
+          }
+        };
+        walk(card.id);
+      }
+      const restoredIds = new Set(restoring.map((member) => member.id));
+      let after: BoardState = {
+        ...board,
+        cards: board.cards.map((candidate) =>
+          restoredIds.has(candidate.id) ? { ...candidate, archivedAt: null } : candidate,
+        ),
+      };
+      after = {
+        ...after,
+        cards: after.cards.map((candidate) =>
+          restoredIds.has(candidate.id)
+            ? {
+                ...candidate,
+                // Dependencies may have finished while the card sat in the
+                // archive; restore with a fresh derivation rather than the
+                // stale flag.
+                blocked: deriveBoardCardBlocked({
+                  board: after,
+                  stage: candidate.stage,
+                  dependsOn: candidate.dependsOn,
+                  cards: after.cards,
+                }),
+                updatedAt: command.createdAt,
+              }
+            : candidate,
+        ),
+      };
+      const events: Array<PlannedBoardEvent> = [];
+      for (const member of restoring) {
+        const nextCard = after.cards.find((candidate) => candidate.id === member.id)!;
+        events.push({
+          ...(yield* makeBoardEventBase({
+            cardId: member.id,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "board.card-unarchived",
+          payload: { cardId: member.id, card: nextCard },
+        });
+      }
+      // Restoring re-arms the gate the archive released (D1/D5): dependents
+      // that these cards block again are re-flagged alongside them.
+      for (const member of restoring) {
+        const changed = after.cards.find((candidate) => candidate.id === member.id)!;
+        const reflagged = yield* boardDependentBlockedEvents({ board: after, command, changed });
+        for (const event of reflagged) {
+          if (event.type !== "board.card-updated") continue;
+          const next = event.payload.card;
+          after = {
+            ...after,
+            cards: after.cards.map((candidate) => (candidate.id === next.id ? next : candidate)),
+          };
+        }
+        events.push(...reflagged);
+      }
+      return events;
+    }
+
+    case "board.card.cancel-work": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      if (command.confirmCardKey !== card.key) {
+        return yield* invariant(
+          command,
+          `The confirmation '${command.confirmCardKey}' does not match '${card.key}'; type the card's key to cancel its work.`,
+        );
+      }
+      if (!isBoardCardStarted(board, card)) {
+        return yield* invariant(
+          command,
+          `Work has not started on '${card.key}', so there is nothing to cancel; give it children directly.`,
+        );
+      }
+      const capped = boardGroupRevertStage(board, { stage: card.stage, group: null });
+      const retired =
+        card.pullRequest === null
+          ? card.pullRequestHistory
+          : [...card.pullRequestHistory, card.pullRequest];
       const nextCard: BoardCard = {
         ...card,
-        archivedAt: null,
-        // Dependencies may have finished while the card sat in the archive;
-        // restore with a fresh derivation rather than the stale flag.
+        stage: capped,
+        // A heading: it stays a group while the human moves cards into it.
+        group: defaultBoardCardGroup(
+          board,
+          { stage: capped },
+          { heading: true, prevStage: capped },
+        ),
+        pullRequest: null,
+        pullRequestHistory: retired,
+        pullRequestFloor: retired.reduce<BoardCard["pullRequestFloor"]>(
+          (highest, entry) => (highest === null || entry.number > highest ? entry.number : highest),
+          card.pullRequestFloor,
+        ),
+        autoMerge: false,
+        autoMergeHold: null,
+        autoStart: false,
+        scheduledStartAt: null,
         blocked: deriveBoardCardBlocked({
           board,
-          stage: card.stage,
+          stage: capped,
           dependsOn: card.dependsOn,
           cards: board.cards,
         }),
         updatedAt: command.createdAt,
       };
-      // Restoring re-arms the gate the archive released (D1/D5): dependents
-      // that this card blocks again are re-flagged alongside it.
-      const unarchived: PlannedBoardEvent = {
-        ...(yield* makeBoardEventBase({
-          cardId: command.cardId,
-          occurredAt: command.createdAt,
-          commandId: command.commandId,
-        })),
-        type: "board.card-unarchived",
-        payload: {
-          cardId: command.cardId,
-          card: nextCard,
-        },
-      };
-      return [
-        unarchived,
-        ...(yield* boardDependentBlockedEvents({ board, command, changed: nextCard })),
-      ];
+      const base = yield* makeBoardEventBase({
+        cardId: card.id,
+        occurredAt: command.createdAt,
+        commandId: command.commandId,
+      });
+      return capped === card.stage
+        ? {
+            ...base,
+            type: "board.card-updated",
+            payload: { cardId: card.id, card: nextCard, workCancelled: true },
+          }
+        : {
+            ...base,
+            type: "board.card-moved",
+            payload: {
+              cardId: card.id,
+              fromStage: card.stage,
+              toStage: capped,
+              card: nextCard,
+              workCancelled: true,
+            },
+          };
     }
 
     case "board.card.delete": {

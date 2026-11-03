@@ -2858,7 +2858,7 @@ function resolveBoardAutoMerge(
       intoIntegration = true;
       break;
     }
-    const next = ancestor.parentCardId ?? null;
+    const next: string | null = ancestor.parentCardId ?? null;
     ancestor = next === null ? undefined : byId(next);
   }
   return intoIntegration ? parent.group.autoBuild : parent.group.autoMerge;
@@ -4305,9 +4305,30 @@ export const BoardCardArchiveCommand = Schema.Struct({
   type: Schema.Literal("board.card.archive"),
   commandId: CommandId,
   cardId: BoardCardId,
+  /** Archive a GROUP for good (T3O-28, decision 14): the card's own key,
+      typed by the human. Archives the whole subtree, Deferred children
+      included, and discards its work — threads stop, pull requests close,
+      worktrees and branches (remote copies included) are deleted. Refused on
+      a leaf, and on any key but the card's own. */
+  confirmCardKey: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 export type BoardCardArchiveCommand = typeof BoardCardArchiveCommand.Type;
+
+/**
+ * Cancel a started leaf's work and make it a parent (T3O-28, decision 12):
+ * confirmed by the card's own key. Its threads stop, its pull request closes,
+ * its branch is kept until its worktree is reclaimed, and the card becomes an
+ * empty group (a heading) at its stage capped at Sprint, ready to take cards.
+ */
+export const BoardCardCancelWorkCommand = Schema.Struct({
+  type: Schema.Literal("board.card.cancel-work"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  confirmCardKey: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+export type BoardCardCancelWorkCommand = typeof BoardCardCancelWorkCommand.Type;
 
 export const BoardCardUnarchiveCommand = Schema.Struct({
   type: Schema.Literal("board.card.unarchive"),
@@ -5314,6 +5335,10 @@ export const BoardCardMovedPayload = Schema.Struct({
   fromStage: BoardStageId,
   toStage: BoardStageId,
   card: BoardCard,
+  /** Set when the move cancelled a started leaf's work to make it a parent
+      (T3O-28): the supervisor stops its threads, closes its pull request and
+      reclaims its worktree. */
+  workCancelled: Schema.optional(Schema.Boolean),
 });
 export type BoardCardMovedPayload = typeof BoardCardMovedPayload.Type;
 
@@ -5355,6 +5380,9 @@ export const BoardCardUpdatedPayload = Schema.Struct({
   /** Set when this update moved the card under a different parent (T3O-27),
       so the supervisor cascades the group it landed in. */
   regrouped: Schema.optional(Schema.Boolean),
+  /** As on `BoardCardMovedPayload`, for a cancelled card whose stage did not
+      change (T3O-28). */
+  workCancelled: Schema.optional(Schema.Boolean),
   /** Absent: brief unchanged. Null: brief cleared. String: new body text for
       `board_card_bodies` (the body deliberately never enters the read
       model — D8). */
@@ -5443,6 +5471,10 @@ export const BoardCardArchivedPayload = Schema.Struct({
   cardId: BoardCardId,
   archivedAt: IsoDateTime,
   card: BoardCard,
+  /** Archived as part of a confirmed group archive (T3O-28): the supervisor
+      stops its threads, closes its pull request, and deletes its worktree
+      and branches, remote copies included. */
+  discard: Schema.optional(Schema.Boolean),
 });
 export type BoardCardArchivedPayload = typeof BoardCardArchivedPayload.Type;
 
@@ -7211,6 +7243,8 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardCardArchiveCommand,
   BoardCardUnarchiveCommand,
   BoardCardDeleteCommand,
+  // T3O-28: cancel a started leaf's work to make it a parent.
+  BoardCardCancelWorkCommand,
   BoardLabelCreateCommand,
   BoardLabelUpdateCommand,
   BoardLabelDeleteCommand,

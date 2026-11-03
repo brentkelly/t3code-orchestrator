@@ -109,6 +109,7 @@ import {
   boardCardActiveChildren,
   boardCardAncestors,
   boardCardGroupOf,
+  boardCardDisplayPullRequest,
   boardCardIntegrationAncestor,
   boardCardLiveChildren,
   boardCardMergesIntoIntegrationBranch,
@@ -5284,15 +5285,26 @@ const make = Effect.gen(function* () {
     (
       request:
         | { readonly kind: "settle"; readonly card: BoardCard }
-        | { readonly kind: "reclaim"; readonly cardId: BoardCardId },
+        | { readonly kind: "reclaim"; readonly cardId: BoardCardId }
+        | { readonly kind: "discard"; readonly cardId: BoardCardId }
+        | { readonly kind: "cancelled"; readonly cardId: BoardCardId },
     ) =>
       Effect.gen(function* () {
         if (request.kind === "settle") {
           yield* settleCardAtDone(request.card);
           return;
         }
+        if (request.kind === "discard") {
+          yield* discardCardBranchWork(request.cardId);
+          return;
+        }
+        if (request.kind === "cancelled") {
+          yield* reclaimCancelledCardWorktree(request.cardId);
+          return;
+        }
         const card = yield* readCard(request.cardId);
         if (card !== null) yield* reclaimCardWorktree(card);
+        if (card !== null) yield* reclaimArchivedIntegrationBranch(card);
       }).pipe(
         Effect.catchCause((cause) =>
           Cause.hasInterruptsOnly(cause)
@@ -7186,6 +7198,182 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /** Interrupt every live turn on a card's threads (T3O-28). The release
+      sweep settles them once their turns have ended. */
+  const stopCardThreads = Effect.fn("board-supervisor-stopCardThreads")(function* (
+    card: BoardCard,
+  ) {
+    for (const link of card.threadLinks) {
+      if (link.tombstonedAt !== null) continue;
+      const shell = yield* liveThread(link.threadId).pipe(
+        Effect.catchCause(() => Effect.succeed(undefined)),
+      );
+      if (shell?.activeTurnRef == null) continue;
+      yield* logged(
+        "thread.interrupt",
+        threads.interrupt({
+          commandId: yield* commandId("interrupt-discarded"),
+          threadId: link.threadId,
+        }),
+      );
+    }
+  });
+
+  /** Close a card's open pull request on the forge (T3O-28). Best-effort: a
+      refusal is logged, and the branch deletion that follows a discard closes
+      it on most hosts anyway. */
+  const closeCardPullRequest = Effect.fn("board-supervisor-closeCardPullRequest")(function* (
+    card: BoardCard,
+    pullRequest: BoardCard["pullRequest"],
+  ) {
+    if (pullRequest === null || pullRequest.state !== "open") return;
+    const workspace = yield* workspaceFor(card);
+    yield* workspace.closePullRequest({ number: pullRequest.number }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: closing a discarded pull request failed", {
+          cardId: card.id,
+          number: pullRequest.number,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+  });
+
+  /** Report a branch deletion onto the card's rail, as Done's cleanup does. */
+  const recordBranchDeletion = Effect.fn("board-supervisor-recordBranchDeletion")(function* (
+    card: BoardCard,
+    branch: string,
+    result: {
+      readonly remoteDeleted: boolean;
+      readonly localDeleted: boolean;
+      readonly skippedReason: string | null;
+    },
+  ) {
+    const deleted = [
+      ...(result.remoteDeleted ? ["remote"] : []),
+      ...(result.localDeleted ? ["local"] : []),
+    ];
+    const skipped = result.skippedReason === null ? "" : ` — ${result.skippedReason}`;
+    yield* dispatchOptional({
+      type: "board.card.record-note",
+      commandId: yield* commandId("branch-cleanup"),
+      cardId: card.id,
+      kind: "card-branch-deleted",
+      detail:
+        deleted.length === 0
+          ? `Kept branch ${branch}${skipped}`
+          : `Deleted ${deleted.join(" and ")} branch ${branch}${skipped}`,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /**
+   * A confirmed group archive's git half (T3O-28, decision 14): the card's
+   * worktree goes, forced, then its branch — local and remote — including a
+   * group's `branch-only` integration branch. No further work, ever.
+   */
+  const discardCardBranchWork = Effect.fn("board-supervisor-discardCardBranchWork")(function* (
+    cardId: BoardCardId,
+  ) {
+    const card = yield* readCard(cardId);
+    if (card === null || card.archivedAt === null) return;
+    const worktree = card.worktree;
+    if (worktree === null || worktree.status === "reclaimed") return;
+    if (worktree.status === "ready" && worktree.path !== null) {
+      yield* forceRemoveCardWorktree(card.id);
+    }
+    const workspace = yield* workspaceFor(card);
+    if (workspace.checkoutPath === null) return;
+    const result = yield* workspace.deleteCardBranch({ branch: worktree.branch }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("board supervisor: branch cleanup on group archive failed", {
+          cardId: card.id,
+          branch: worktree.branch,
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (result === null) return;
+    yield* recordBranchDeletion(card, worktree.branch, result);
+    // A branch-only slice has no checkout to retire; its branch is the whole
+    // of it, so it is reclaimed once the branch is gone.
+    const after = yield* readCard(card.id);
+    if (after?.worktree !== null && after?.worktree.status !== "reclaimed" && result.localDeleted) {
+      yield* dispatchOptional({
+        type: "board.card.reclaim-worktree",
+        commandId: yield* commandId("discard-reclaim-worktree"),
+        cardId: card.id,
+        outcome: "removed",
+        forced: true,
+        createdAt: yield* nowIso,
+      });
+    }
+  });
+
+  /**
+   * An archived group's `branch-only` integration branch (T3O-28): it has no
+   * checkout for the reclaim to remove, so without this it outlives its card.
+   * A plain archive is reversible, so the branch goes only once its merge made
+   * the work durable; a confirmed group archive deletes it regardless.
+   */
+  const reclaimArchivedIntegrationBranch = Effect.fn(
+    "board-supervisor-reclaimArchivedIntegrationBranch",
+  )(function* (card: BoardCard) {
+    if (card.archivedAt === null || card.worktree?.status !== "branch-only") return;
+    if (boardCardDisplayPullRequest(card)?.state !== "merged") return;
+    yield* discardCardBranchWork(card.id);
+  });
+
+  /**
+   * A cancelled card's worktree (T3O-28, decision 12): reclaimed by the usual
+   * safety rule, so work that exists nowhere else is kept and said so. The
+   * branch is kept until that reclaim removes the checkout, and goes with it.
+   */
+  const reclaimCancelledCardWorktree = Effect.fn("board-supervisor-reclaimCancelledCardWorktree")(
+    function* (cardId: BoardCardId) {
+      const card = yield* readCard(cardId);
+      if (card === null) return;
+      const attempt = yield* reclaimCardWorktree(card);
+      if (attempt?.outcome !== "removed") return;
+      const after = yield* readCard(cardId);
+      const branch = after?.worktree?.branch ?? null;
+      if (after === null || branch === null) return;
+      const workspace = yield* workspaceFor(after);
+      if (workspace.checkoutPath === null) return;
+      const result = yield* workspace.deleteCardBranch({ branch }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: cancelled card's branch cleanup failed", {
+            cardId,
+            branch,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      if (result !== null) yield* recordBranchDeletion(after, branch, result);
+    },
+  );
+
+  /**
+   * A started leaf's work was cancelled to make it a parent (T3O-28, decision
+   * 12): its step is abandoned, its threads stop, its pull request closes, and
+   * its worktree is reclaimed — the card is already a group.
+   */
+  const handleWorkCancelled = Effect.fn("board-supervisor-handleWorkCancelled")(function* (
+    cancelled: BoardCard,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cancelled.id) ?? cancelled;
+    const state = boardCardStepState(board, card.id);
+    if (state !== null && !isBoardTerminalStepStatus(state.status)) {
+      yield* settleStep({ card, state, outcome: "abandoned" });
+      yield* schedule();
+    }
+    yield* stopCardThreads(card);
+    yield* closeCardPullRequest(card, card.pullRequestHistory.at(-1) ?? null);
+    yield* cardCleanupWorker.enqueue({ kind: "cancelled", cardId: card.id });
+    yield* releaseFinishedThreads;
+  });
+
   const handleArchived = Effect.fn("board-supervisor-handleArchived")(function* (
     event: Extract<BoardEvent, { type: "board.card-archived" }>,
   ) {
@@ -7211,8 +7399,15 @@ const make = Effect.gen(function* () {
     // is reclaimed EARLIER, at Done, and never whether it is reclaimed at all.
     // A worktree may not outlive its card.
     //
-    // Off this worker (T3O-52): the reclaim fetches from the remote first.
-    yield* cardCleanupWorker.enqueue({ kind: "reclaim", cardId: card.id });
+    if (event.payload.discard === true) {
+      // A confirmed group archive (T3O-28): nothing here is coming back.
+      yield* stopCardThreads(card);
+      yield* closeCardPullRequest(card, card.pullRequest);
+      yield* cardCleanupWorker.enqueue({ kind: "discard", cardId: card.id });
+    } else {
+      // Off this worker (T3O-52): the reclaim fetches from the remote first.
+      yield* cardCleanupWorker.enqueue({ kind: "reclaim", cardId: card.id });
+    }
     // An archived card is done with every thread it holds (t3o-13).
     yield* releaseFinishedThreads;
     // An archived child counts as finished (t3o-23, D6), so this may have
@@ -8600,7 +8795,9 @@ const make = Effect.gen(function* () {
         // — not just Building. The stage's `autoExecute` setting gates it. The
         // handler first clears any leftover step from the stage the card left,
         // so a card carrying a stalled/in-flight step still starts the new one.
-        return handleCardMoved(event);
+        return event.payload.workCancelled === true
+          ? handleWorkCancelled(event.payload.card).pipe(Effect.andThen(handleCardMoved(event)))
+          : handleCardMoved(event);
       case "board.card-project-changed":
         // T3O-33: the card is now in a different repository, so anything live
         // is working the wrong checkout. Abandon it and restart the stage.
@@ -8613,7 +8810,9 @@ const make = Effect.gen(function* () {
         // On-demand kickoff (D7), the counterpart of auto-kickoff.
         return handleStageThreadRequested(event);
       case "board.card-updated":
-        return handleCardUpdated(event);
+        return event.payload.workCancelled === true
+          ? handleWorkCancelled(event.payload.card).pipe(Effect.andThen(handleCardUpdated(event)))
+          : handleCardUpdated(event);
       case "board.card-step-completed":
         return handleStepCompleted(event);
       case "board.card-step-force-start-requested":
