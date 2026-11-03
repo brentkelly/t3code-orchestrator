@@ -1609,6 +1609,60 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("refuses destructive flows and auto-plan from an unattended run", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("unattended-destroy");
+      yield* startStep({ ...own, suffix: "unattended-destroy" });
+      const group = yield* boardHandlers
+        .board_create_card({ projectId, title: "G", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      yield* boardHandlers
+        .board_create_card({
+          projectId,
+          title: "Inside G",
+          stage: BoardStageId.make("backlog"),
+          parentCardId: group.key,
+          approved: true,
+        })
+        .pipe(withScope(orphanThread));
+      const leaf = yield* boardHandlers
+        .board_create_card({ projectId, title: "Leaf", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const refusals = [
+        yield* Effect.flip(
+          boardHandlers
+            .board_archive_card({
+              cardId: group.cardId,
+              confirmCardKey: group.key,
+              approved: true,
+            })
+            .pipe(withScope(own.ownThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers
+            .board_cancel_card_work({
+              cardId: leaf.cardId,
+              confirmCardKey: leaf.key,
+              approved: true,
+            })
+            .pipe(withScope(own.ownThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers
+            .board_auto_plan({ cardId: leaf.cardId, approved: true })
+            .pipe(withScope(own.ownThread)),
+        ),
+      ];
+      for (const failure of refusals) {
+        assert.strictEqual(failure.code, "invalid-input");
+        assert.include(failure.message, "unattended");
+      }
+      const cards = yield* readCards;
+      assert.isNull(cards.find((card) => card.id === group.cardId)?.archivedAt ?? null);
+    }),
+  );
+
   it.effect(
     "regroups with approval: create inside, indent, outdent, group into new, settings",
     () =>

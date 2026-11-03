@@ -759,6 +759,23 @@ const dispatch = (
   return deps.boardEngine.dispatch(command).pipe(Effect.mapError(dispatchError));
 };
 
+/** `approved` is the agent's own word; a run with no human in the loop has
+    nobody who could have given it. */
+const refuseUnattendedApproval = (deps: BoardToolDeps, message: string) =>
+  Effect.gen(function* () {
+    const board = yield* readBoardState(deps);
+    const own = resolveBoardCardForThread(board, deps.scope.thread.threadId);
+    const state = own === null ? null : boardCardStepState(board, own.id);
+    if (
+      state !== null &&
+      !state.humanInLoop &&
+      !isBoardTerminalStepStatus(state.status) &&
+      state.threadId === deps.scope.thread.threadId
+    ) {
+      return yield* new BoardToolError({ code: "invalid-input", message });
+    }
+  });
+
 /**
  * Regrouping is direct but needs a human's say-so (T3O-27): the agent must
  * describe the change, get explicit confirmation, and pass `approved: true`.
@@ -775,32 +792,23 @@ const requireRegroupApproval = (
           "Regrouping changes how cards build and where they merge, so it needs a human. Describe the regrouping to the user, ask them to confirm it, and once they have, call again with approved: true.",
       });
     }
-    // `approved` is the agent's own word; a run with no human in the loop
-    // has nobody who could have given it.
-    const board = yield* readBoardState(deps);
-    const own = resolveBoardCardForThread(board, deps.scope.thread.threadId);
-    const state = own === null ? null : boardCardStepState(board, own.id);
-    if (
-      state !== null &&
-      !state.humanInLoop &&
-      !isBoardTerminalStepStatus(state.status) &&
-      state.threadId === deps.scope.thread.threadId
-    ) {
-      return yield* new BoardToolError({
-        code: "invalid-input",
-        message:
-          "This run is unattended, so nobody can confirm a regrouping. Leave the board's grouping as it is and mention the suggestion in your summary for a human to apply.",
-      });
-    }
+    yield* refuseUnattendedApproval(
+      deps,
+      "This run is unattended, so nobody can confirm a regrouping. Leave the board's grouping as it is and mention the suggestion in your summary for a human to apply.",
+    );
   });
 
 /** A destructive group flow needs a human's explicit say-so (T3O-28). */
 const requireDestructiveApproval = (
+  deps: BoardToolDeps,
   approved: boolean | undefined,
   what: string,
-): Effect.Effect<void, BoardToolError> =>
+) =>
   approved === true
-    ? Effect.void
+    ? refuseUnattendedApproval(
+        deps,
+        `This run is unattended, so nobody can confirm this. ${what} cannot be undone; leave it alone and mention it in your summary for a human to do.`,
+      )
     : Effect.fail(
         new BoardToolError({
           code: "invalid-input",
@@ -1636,6 +1644,7 @@ export const boardHandlers = {
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
       yield* requireDestructiveApproval(
+        deps,
         input.approved,
         "Cancelling a card's work stops its threads, closes its pull request and deletes its branch, which",
       );
@@ -1698,6 +1707,7 @@ export const boardHandlers = {
       );
       if (input.confirmCardKey !== undefined) {
         yield* requireDestructiveApproval(
+          deps,
           input.approved,
           "Archiving a whole group stops its threads, closes its pull requests and deletes its branches, which",
         );
@@ -1976,6 +1986,10 @@ export const boardHandlers = {
             "Auto-planning approves the plan without review and starts the build, so it needs a human. Ask the user to confirm they want this card auto-planned, and once they have, call again with approved: true.",
         });
       }
+      yield* refuseUnattendedApproval(
+        deps,
+        "This run is unattended, so nobody can confirm auto-planning. Leave the card as it is and mention the suggestion in your summary for a human to apply.",
+      );
       const board = yield* readBoardState(deps);
       const card = yield* findCardByKeyOrId(board, input.cardId);
       yield* refuseOtherWorkersCard(board, deps.scope, card);
