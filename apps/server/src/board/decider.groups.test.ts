@@ -896,6 +896,42 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
     }),
   );
 
+  it.effect("a group archive leaves each branch's discard pending until it is settled", () =>
+    Effect.gen(function* () {
+      const worktree: NonNullable<BoardCard["worktree"]> = {
+        branch: "board/t3-2",
+        baseRefName: "board/t3-1",
+        path: null,
+        status: "reclaimed",
+        attempts: 1,
+        lastError: null,
+        reclaimBlockedReason: null,
+      };
+      const cards = tree().map((c) => (c.id === "a2" ? { ...c, worktree } : c));
+      const events = yield* decideEvents(archive("g1", "T3-1"), model(cards));
+      const archived = events.flatMap((event) =>
+        event.type === "board.card-archived" && event.payload.cardId === "a2"
+          ? [event.payload.card]
+          : [],
+      );
+      expect(archived[0]?.worktree?.discardPending).toBe(true);
+
+      const settled = yield* decideEvents(
+        {
+          type: "board.card.reclaim-worktree",
+          commandId: CommandId.make("cmd-settle-a2"),
+          cardId: BoardCardId.make("a2"),
+          outcome: "removed",
+          forced: true,
+          discardSettled: true,
+          createdAt: NOW,
+        },
+        model(cards.map((c) => (c.id === "a2" ? archived[0]! : c))),
+      );
+      expect(stagesAfter(settled).get("a2")?.card.worktree?.discardPending).toBeUndefined();
+    }),
+  );
+
   it.effect("unarchiving the group restores the subtree archived with it, nothing else", () =>
     Effect.gen(function* () {
       const at = "2026-01-02T00:00:00.000Z";

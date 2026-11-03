@@ -384,6 +384,43 @@ describe("archiving a group discards its subtree's work (T3O-28)", () => {
     },
   );
 
+  it.effect("the worktree sweep finishes a discard the archive left pending", () => {
+    // As a restart leaves it: archived for good, the queued discard lost.
+    const group = card("card-group", review, {
+      group: ownGroup(),
+      worktree: { ...branchOnly("card-group", "main"), discardPending: true },
+      archivedAt: NOW,
+    });
+    const child = card("card-child", merge, {
+      parent: "card-group",
+      worktree: {
+        ...readyWorktree("card-child"),
+        baseRefName: "board/card-group",
+        discardPending: true,
+      },
+      archivedAt: NOW,
+    });
+    return withGovernor(
+      { board: { cards: [group, child], nextCardNumberByProject: {} }, settings },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.reactor.sweepWorktrees();
+          yield* h.reactor.drainWorktreeSweep;
+          assert.sameMembers(remoteDeletes(yield* h.gitInvocations), [
+            "board/card-group",
+            "board/card-child",
+          ]);
+          assert.include(yield* h.removedWorktrees, "/tmp/wt/card-child");
+          const after = yield* h.board;
+          for (const id of ["card-group", "card-child"]) {
+            const found = after.cards.find((candidate) => candidate.id === id);
+            assert.strictEqual(found?.worktree?.status, "reclaimed");
+            assert.isUndefined(found?.worktree?.discardPending);
+          }
+        }),
+    );
+  });
+
   it.effect("also discards a child that was archived before the group", () => {
     const group = card("card-group", review, {
       group: ownGroup(),

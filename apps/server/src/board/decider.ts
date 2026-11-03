@@ -2944,7 +2944,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         const archivedIds = new Set(subtree.map((member) => member.id));
         let cards = board.cards.map((candidate) =>
           archivedIds.has(candidate.id)
-            ? { ...candidate, archivedAt: command.createdAt, updatedAt: command.createdAt }
+            ? {
+                ...candidate,
+                archivedAt: command.createdAt,
+                updatedAt: command.createdAt,
+                worktree:
+                  candidate.worktree === null
+                    ? null
+                    : { ...candidate.worktree, discardPending: true },
+              }
             : candidate,
         );
         const events: Array<PlannedBoardEvent> = [];
@@ -4822,6 +4830,18 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // A reclaimed worktree is gone; neither a repeat `removed` nor a late
       // `blocked` re-flag should touch it (symmetric idempotency).
       if (card.worktree.status === "reclaimed") {
+        if (command.discardSettled === true && card.worktree.discardPending === true) {
+          const { discardPending: _settled, ...worktree } = card.worktree;
+          return {
+            ...(yield* makeBoardEventBase({
+              cardId: command.cardId,
+              occurredAt: command.createdAt,
+              commandId: command.commandId,
+            })),
+            type: "board.card-updated",
+            payload: { cardId: command.cardId, card: { ...card, worktree } },
+          };
+        }
         return yield* invariant(command, `Card '${command.cardId}' worktree is already reclaimed.`);
       }
       // `removed`: the service deleted a clean-and-pushed tree — the worktree
@@ -4830,12 +4850,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // worktree and records why, never silently discarding uncommitted work.
       const reason = command.reason ?? null;
       const blockedReason = reason ?? "Worktree not clean and pushed.";
+      const { discardPending: _settled, ...settledWorktree } = card.worktree;
       const nextCard: BoardCard =
         command.outcome === "removed"
           ? {
               ...card,
               worktree: {
-                ...card.worktree,
+                ...(command.discardSettled === true ? settledWorktree : card.worktree),
                 path: null,
                 status: "reclaimed",
                 reclaimBlockedReason: null,

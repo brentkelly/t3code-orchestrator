@@ -5277,6 +5277,13 @@ const make = Effect.gen(function* () {
         yield* refreshCardPullRequest(card);
         continue;
       }
+      // A confirmed group archive whose branch deletion has not finished:
+      // retried here, as the one queued at archive may have failed or been
+      // lost to a restart.
+      if (card.archivedAt !== null && card.worktree?.discardPending === true) {
+        yield* discardCardBranchWork(card.id);
+        continue;
+      }
       if (card.worktree === null || card.worktree.status !== "ready") continue;
       if (card.archivedAt !== null) {
         yield* reclaimCardWorktree(card, fetchedBases);
@@ -7699,18 +7706,21 @@ const make = Effect.gen(function* () {
     if (result === null) return;
     yield* recordBranchDeletion(card, worktree.branch, result);
     // A branch-only slice has no checkout to retire; its branch is the whole
-    // of it, so it is reclaimed once the branch is gone.
+    // of it, so it is reclaimed once the branch is gone. Until then the
+    // pending discard stays on the card for the sweep to retry.
     const after = yield* readCard(card.id);
-    if (after?.worktree !== null && after?.worktree.status !== "reclaimed" && result.localDeleted) {
-      yield* dispatchOptional({
-        type: "board.card.reclaim-worktree",
-        commandId: yield* commandId("discard-reclaim-worktree"),
-        cardId: card.id,
-        outcome: "removed",
-        forced: true,
-        createdAt: yield* nowIso,
-      });
-    }
+    if (after?.worktree == null) return;
+    if (after.worktree.status !== "reclaimed" && !result.localDeleted) return;
+    if (after.worktree.status === "reclaimed" && after.worktree.discardPending !== true) return;
+    yield* dispatchOptional({
+      type: "board.card.reclaim-worktree",
+      commandId: yield* commandId("discard-reclaim-worktree"),
+      cardId: card.id,
+      outcome: "removed",
+      forced: true,
+      discardSettled: true,
+      createdAt: yield* nowIso,
+    });
   });
 
   /**

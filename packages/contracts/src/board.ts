@@ -686,6 +686,9 @@ export const BoardCardWorktree = Schema.Struct({
       reclaim never deletes uncommitted work to save disk, it flags the card
       and skips (D6). Null when no reclaim has been blocked. */
   reclaimBlockedReason: Schema.NullOr(TrimmedNonEmptyString),
+  /** A confirmed group archive (T3O-28) has not yet deleted this branch; the
+      worktree sweep retries until it has. */
+  discardPending: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardCardWorktree = typeof BoardCardWorktree.Type;
 
@@ -4999,6 +5002,9 @@ export const BoardCardReclaimWorktreeCommand = Schema.Struct({
   /** T3O-23: a `removed` worktree whose `runOnWorktreeRemove` script failed or
       timed out. The removal went ahead; this says what the script did not do. */
   hookWarning: Schema.optional(TrimmedNonEmptyString),
+  /** A group archive's branch deletion finished (T3O-28): clears
+      `discardPending`, on an already-reclaimed worktree too. */
+  discardSettled: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardCardReclaimWorktreeCommand = typeof BoardCardReclaimWorktreeCommand.Type;
