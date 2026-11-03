@@ -86,6 +86,7 @@ import {
   type BoardState,
   BoardShellSnapshot,
 } from "./board.ts";
+import { defaultBoardCardGroup } from "./boardGroups.ts";
 import type { BoardCardAutoMergeHold, BoardCardWorktree } from "./board.ts";
 import { ProjectId, ThreadId } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -1272,21 +1273,21 @@ describe("sub-boards (t3o-23)", () => {
       ).toBe(false);
     });
 
-    it("derives the same from the shell, and never for a child card", () => {
+    it("derives the same from the shell, for a child card too (T3O-27)", () => {
       expect(
         boardCardShellPendingSplit(
           { stage: BOARD_SEED_STAGE_IDS.planning, planCount: 2 },
           BOARD_SEED_STAGES,
         ),
       ).toBe(true);
-      // A child (parentCardId set) or a parent-with-children (planTotal set) is
-      // never pending.
+      // Splits nest, so a child may pend; a parent-with-children (planTotal
+      // set) never does.
       expect(
         boardCardShellPendingSplit(
           { stage: BOARD_SEED_STAGE_IDS.planning, planCount: 2, parentCardId: parent.id },
           BOARD_SEED_STAGES,
         ),
-      ).toBe(false);
+      ).toBe(true);
       expect(
         boardCardShellPendingSplit(
           { stage: BOARD_SEED_STAGE_IDS.planning, planCount: 2, planTotal: 2 },
@@ -2452,12 +2453,17 @@ describe("auto-start (T3O-24)", () => {
       expect(boardCardCanArmAutoStart(on(waiting({ dependsOn: [] })))).toBe(false);
     });
 
-    it("refuses a sub-board child, which already cascades", () => {
+    it("arms any leaf, a child included, and never a group (T3O-27)", () => {
       const child = waiting({
         dependsOn: [open.id],
         parentCardId: BoardCardId.make("card-parent"),
       });
-      expect(boardCardCanArmAutoStart(on(child, open))).toBe(false);
+      expect(boardCardCanArmAutoStart(on(child, open))).toBe(true);
+      const group = waiting({
+        dependsOn: [open.id],
+        group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.ready }),
+      });
+      expect(boardCardCanArmAutoStart(on(group, open))).toBe(false);
     });
 
     it("refuses a card at or past the build role, and one still in ideation", () => {
@@ -2520,13 +2526,13 @@ describe("auto-start (T3O-24)", () => {
       expect(boardCardAutoStartDue(on(waiting({ dependsOn: [done.id] }), done))).toBe(false);
     });
 
-    it("is never due for a sub-board child, an archived card, or one past Ready", () => {
+    it("is due for an armed child, and never for an archived card or one past Ready", () => {
       const armed = { autoStart: true, dependsOn: [done.id] } as const;
       expect(
         boardCardAutoStartDue(
           on(waiting({ ...armed, parentCardId: BoardCardId.make("card-parent") }), done),
         ),
-      ).toBe(false);
+      ).toBe(true);
       expect(boardCardAutoStartDue(on(waiting({ ...armed, archivedAt: NOW }), done))).toBe(false);
       expect(
         boardCardAutoStartDue(
@@ -2594,7 +2600,7 @@ describe("auto-merge (T3O-38)", () => {
       }
     });
 
-    it("refuses a card in Done, an archived card, and a sub-board child", () => {
+    it("refuses a card in Done, an archived card, and a group — not a child (T3O-27)", () => {
       const done = at(BOARD_SEED_STAGE_IDS.done);
       expect(boardCardCanArmAutoMerge({ board: board(done), card: done })).toBe(false);
       const archived = at(BOARD_SEED_STAGE_IDS.merge, { archivedAt: NOW });
@@ -2602,7 +2608,40 @@ describe("auto-merge (T3O-38)", () => {
       const child = at(BOARD_SEED_STAGE_IDS.merge, {
         parentCardId: BoardCardId.make("card-parent"),
       });
-      expect(boardCardCanArmAutoMerge({ board: board(child), card: child })).toBe(false);
+      expect(boardCardCanArmAutoMerge({ board: board(child), card: child })).toBe(true);
+      const group = at(BOARD_SEED_STAGE_IDS.sprint, {
+        group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.sprint }),
+      });
+      expect(boardCardCanArmAutoMerge({ board: board(group), card: group })).toBe(false);
+    });
+
+    it("arms a child by its group: integration branches under auto-build, trunk under auto-merge", () => {
+      const ownGroup = at(BOARD_SEED_STAGE_IDS.building, {
+        id: BoardCardId.make("card-own"),
+        group: defaultBoardCardGroup(
+          EMPTY_BOARD_STATE,
+          { stage: BOARD_SEED_STAGE_IDS.ready },
+          { target: "own", autoBuild: false },
+        ),
+      });
+      const ownChild = at(BOARD_SEED_STAGE_IDS.merge, { parentCardId: ownGroup.id });
+      const ownBoard = { ...EMPTY_BOARD_STATE, cards: [ownGroup, ownChild] };
+      expect(boardCardAutoMergeArmed({ board: ownBoard, card: ownChild })).toBe(false);
+      const ownBuilding = { ...ownGroup, group: { ...ownGroup.group!, autoBuild: true } };
+      expect(
+        boardCardAutoMergeArmed({ board: { ...ownBoard, cards: [ownBuilding, ownChild] }, card: ownChild }),
+      ).toBe(true);
+      const epic = at(BOARD_SEED_STAGE_IDS.building, {
+        id: BoardCardId.make("card-epic"),
+        group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.sprint }),
+      });
+      const epicChild = at(BOARD_SEED_STAGE_IDS.merge, { parentCardId: epic.id });
+      const epicBoard = { ...EMPTY_BOARD_STATE, cards: [epic, epicChild] };
+      expect(boardCardAutoMergeArmed({ board: epicBoard, card: epicChild })).toBe(false);
+      const merging = { ...epic, group: { ...epic.group!, autoMerge: true } };
+      expect(
+        boardCardAutoMergeArmed({ board: { ...epicBoard, cards: [merging, epicChild] }, card: epicChild }),
+      ).toBe(true);
     });
   });
 

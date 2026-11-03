@@ -2829,6 +2829,8 @@ export function boardCardAutoMergeArmed(input: {
     input.card.parentCardId === null
       ? undefined
       : input.board.cards.find((candidate) => candidate.id === input.card.parentCardId);
+  // A child whose parent this board slice cannot see keeps the legacy arm.
+  if (input.card.parentCardId !== null && parent === undefined) return true;
   if (parent !== undefined) {
     // A child merging into an integration branch merges itself under its
     // group's auto-build (T3O-27); one merging to trunk only when a group on

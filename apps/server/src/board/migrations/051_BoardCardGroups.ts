@@ -3,7 +3,7 @@
 // `board_cards.group_*` — a group's settings, NULL `group_target` on every
 // leaf, matching the decoding default of `BoardCard.group`.
 //
-// Backfill: every existing split parent becomes a group exactly as approval
+// Backfill: every existing split parent with a live child becomes a group exactly as approval
 // now makes one — its own integration branch, auto-build on — started if it
 // has reached the build stage, placed at its current pre-build stage (the
 // stage before build when it is already past), and integrated once it is
@@ -62,7 +62,10 @@ export default Effect.gen(function* () {
         WHEN board_cards.stage IN (SELECT stage_id FROM board_stages WHERE role = 'done')
         THEN 1 ELSE 0 END
     WHERE group_target IS NULL
-      AND EXISTS (SELECT 1 FROM board_cards AS child WHERE child.parent_card_id = board_cards.card_id)
+      AND EXISTS (
+        SELECT 1 FROM board_cards AS child
+        WHERE child.parent_card_id = board_cards.card_id AND child.archived_at IS NULL
+      )
   `;
   yield* sql`
     UPDATE board_cards SET group_prev_stage = group_placed

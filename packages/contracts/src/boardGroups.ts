@@ -37,14 +37,20 @@ export function isBoardDeferredStage(stageId: string): boolean {
 }
 
 /**
- * A card's group settings, or null for a leaf. A card that has children but
- * no settings is a split parent written before groups existed: it reads as
+ * A card's group settings, or null for a leaf. A card that has live children
+ * but no settings is a split parent written before groups existed: it reads as
  * what migration 051 backfills — its own integration branch, auto-build on —
  * so a legacy log and a migrated table agree.
  */
 export function boardCardGroupOf(board: BoardState, card: BoardCard): BoardCardGroup | null {
   if (card.group !== null) return card.group;
-  if (!board.cards.some((candidate) => candidate.parentCardId === card.id)) return null;
+  if (
+    !board.cards.some(
+      (candidate) => candidate.parentCardId === card.id && candidate.archivedAt === null,
+    )
+  ) {
+    return null;
+  }
   const done = boardStageWithRole(board, "done")?.stageId ?? null;
   return defaultBoardCardGroup(board, card, {
     target: "own",

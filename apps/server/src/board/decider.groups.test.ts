@@ -1,0 +1,583 @@
+/**
+ * General grouping in the decider (T3O-27, D12): nesting to any depth, the
+ * derived group stage, Deferred, revert-on-empty, headings, regrouping, cross-
+ * group dependencies and the target lock.
+ */
+import {
+  BOARD_DEFERRED_STAGE_ID,
+  BoardCardId,
+  BoardStageId,
+  CommandId,
+  defaultBoardCardGroup,
+  EMPTY_BOARD_STATE,
+  ProjectId,
+  type BoardCard,
+  type BoardCardGroup,
+  type BoardState,
+} from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+
+import { boardDecidedEvents, type BoardCommand, type PlannedBoardEvent } from "./decider.ts";
+import {
+  decideBoardCommandOnModel,
+  type BoardOrchestrationReadModel,
+} from "./decisionContext.testkit.ts";
+
+const NOW = "2026-01-01T00:00:00.000Z";
+const projectId = ProjectId.make("project-1");
+
+function card(
+  id: string,
+  stage: string,
+  overrides: Omit<Partial<BoardCard>, "id" | "stage"> = {},
+): BoardCard {
+  return {
+    id: BoardCardId.make(id),
+    key: `T3-${id.replace(/\D/g, "") || "1"}`,
+    cardNumber: 1,
+    projectId,
+    labels: [],
+    stage: BoardStageId.make(stage),
+    orderKey: "m",
+    title: `Card ${id}`,
+    briefRef: null,
+    dependsOn: [],
+    parentCardId: null,
+    sourcePlanId: null,
+    group: null,
+    threadLinks: [],
+    attachments: [],
+    externalRef: null,
+    humanInLoop: null,
+    reviewOverrides: null,
+    modelOverrides: null,
+    splitRationale: null,
+    baseBranch: null,
+    scheduledStartAt: null,
+    autoStart: false,
+    autoMerge: false,
+    autoMergeHold: null,
+    pinnedWorkerId: null,
+    placedWorkerId: null,
+    workerMove: null,
+    placementOrphaned: null,
+    worktree: null,
+    pullRequest: null,
+    pullRequestHistory: [],
+    pullRequestFloor: null,
+    blocked: false,
+    archivedAt: null,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  };
+}
+
+const group = (stage: string, overrides: Partial<BoardCardGroup> = {}): BoardCardGroup =>
+  defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BoardStageId.make(stage) }, overrides);
+
+const child = (
+  id: string,
+  stage: string,
+  parent: string,
+  overrides: Omit<Partial<BoardCard>, "id" | "stage"> = {},
+) => card(id, stage, { parentCardId: BoardCardId.make(parent), ...overrides });
+
+function model(cards: ReadonlyArray<BoardCard>): BoardOrchestrationReadModel {
+  const board: BoardState = { cards, nextCardNumberByProject: { [projectId]: 100 } };
+  return {
+    projects: [{ id: projectId, title: "Project", workspaceRoot: "/tmp/p", deletedAt: null }],
+    threads: [],
+    board,
+  };
+}
+
+const decideEvents = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
+  decideBoardCommandOnModel({ command, readModel }).pipe(Effect.map(boardDecidedEvents));
+
+const decideFail = (command: BoardCommand, readModel: BoardOrchestrationReadModel) =>
+  Effect.flip(decideEvents(command, readModel));
+
+const move = (id: string, toStage: string, override = true): BoardCommand => ({
+  type: "board.card.move",
+  commandId: CommandId.make(`cmd-move-${id}-${toStage}`),
+  cardId: BoardCardId.make(id),
+  toStage: BoardStageId.make(toStage),
+  override,
+  createdAt: NOW,
+});
+
+const moveCards = (
+  ids: ReadonlyArray<string>,
+  parent: string | null,
+  position: { readonly after?: string; readonly before?: string } = {},
+): BoardCommand => ({
+  type: "board.card.move-cards",
+  commandId: CommandId.make(`cmd-move-cards-${ids.join("-")}`),
+  cardId: BoardCardId.make(ids[0]!),
+  cardIds: ids.map((id) => BoardCardId.make(id)),
+  parentCardId: parent === null ? null : BoardCardId.make(parent),
+  ...(position.after === undefined ? {} : { afterCardId: BoardCardId.make(position.after) }),
+  ...(position.before === undefined ? {} : { beforeCardId: BoardCardId.make(position.before) }),
+  createdAt: NOW,
+});
+
+const settings = (
+  id: string,
+  fields: Omit<
+    Extract<BoardCommand, { type: "board.card.set-group-settings" }>,
+    "type" | "commandId" | "cardId" | "createdAt"
+  >,
+): BoardCommand => ({
+  type: "board.card.set-group-settings",
+  commandId: CommandId.make(`cmd-settings-${id}`),
+  cardId: BoardCardId.make(id),
+  ...fields,
+  createdAt: NOW,
+});
+
+/** Where each card ends up after the decision's events. */
+function stagesAfter(
+  events: ReadonlyArray<PlannedBoardEvent>,
+): ReadonlyMap<string, { readonly stage: string; readonly card: BoardCard }> {
+  const out = new Map<string, { readonly stage: string; readonly card: BoardCard }>();
+  for (const event of events) {
+    if (event.type === "board.card-moved" || event.type === "board.card-updated") {
+      out.set(String(event.payload.cardId), {
+        stage: event.payload.card.stage,
+        card: event.payload.card,
+      });
+    }
+  }
+  return out;
+}
+
+it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
+  // ── Nesting ──────────────────────────────────────────────────────────
+
+  it.effect("nests three deep and derives Building all the way up", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g1", "sprint", { group: group("sprint") }),
+        child("g2", "sprint", "g1", { group: group("sprint") }),
+        child("g3", "sprint", "g2", { group: group("sprint") }),
+        child("leaf", "ready", "g3"),
+      ];
+      const events = yield* decideEvents(move("leaf", "building"), model(cards));
+      const after = stagesAfter(events);
+      expect(after.get("leaf")?.stage).toBe("building");
+      expect(after.get("g3")?.stage).toBe("building");
+      expect(after.get("g2")?.stage).toBe("building");
+      expect(after.get("g1")?.stage).toBe("building");
+      // Every derived change is a move, so the supervisor sees each group's
+      // arrival the way it sees a drag.
+      for (const id of ["g1", "g2", "g3"]) {
+        const event = events.find(
+          (candidate) =>
+            candidate.type === "board.card-moved" && String(candidate.payload.cardId) === id,
+        );
+        assert.ok(event !== undefined, `${id} moved`);
+      }
+    }),
+  );
+
+  it.effect("creates a card three levels down", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g1", "sprint", { group: group("sprint") }),
+        child("g2", "sprint", "g1", { group: group("sprint") }),
+        child("leaf", "backlog", "g2"),
+      ];
+      const events = yield* decideEvents(
+        {
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-create-deep"),
+          cardId: BoardCardId.make("card-deep"),
+          projectId,
+          title: "Deep",
+          stage: BoardStageId.make("backlog"),
+          parentCardId: BoardCardId.make("leaf"),
+          createdAt: NOW,
+        },
+        model(cards),
+      );
+      assert.ok(events[0]?.type === "board.card-created");
+      // The leaf it landed under became a group.
+      expect(stagesAfter(events).get("leaf")?.card.group?.placed).toBe("backlog");
+    }),
+  );
+
+  // ── The derived stage ────────────────────────────────────────────────
+
+  it.effect("an inherit group is Done when every active child is", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "building", { group: group("sprint", { started: true }) }),
+        child("a", "done", "g"),
+        child("b", "merge", "g"),
+      ];
+      const events = yield* decideEvents(move("b", "done", false), model(cards));
+      expect(stagesAfter(events).get("g")?.stage).toBe("done");
+    }),
+  );
+
+  it.effect("an own group sits in its integration review until integrated", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "building", { group: group("ready", { target: "own", started: true }) }),
+        child("a", "done", "g"),
+        child("b", "merge", "g"),
+      ];
+      const events = yield* decideEvents(move("b", "done", false), model(cards));
+      expect(stagesAfter(events).get("g")?.stage).toBe("review");
+    }),
+  );
+
+  it.effect("an own group that reached Done is integrated, and stays Done", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "merge", { group: group("ready", { target: "own", started: true }) }),
+        child("a", "done", "g"),
+      ];
+      const events = yield* decideEvents(move("g", "done", false), model(cards));
+      const after = stagesAfter(events).get("g");
+      expect(after?.stage).toBe("done");
+      expect(after?.card.group?.integrated).toBe(true);
+    }),
+  );
+
+  it.effect("a group returns to Building when a child leaves Done, and is no longer integrated", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "done", {
+          group: group("ready", { target: "own", started: true, integrated: true }),
+        }),
+        child("a", "done", "g"),
+        child("b", "done", "g"),
+      ];
+      const events = yield* decideEvents(move("b", "review"), model(cards));
+      const after = stagesAfter(events).get("g");
+      expect(after?.stage).toBe("building");
+      expect(after?.card.group?.integrated).toBe(false);
+    }),
+  );
+
+  it.effect("a group sits in `placed` while no child has started", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "building", { group: group("sprint") }),
+        child("a", "building", "g"),
+        child("b", "ready", "g"),
+      ];
+      const events = yield* decideEvents(move("a", "ready"), model(cards));
+      expect(stagesAfter(events).get("g")?.stage).toBe("sprint");
+    }),
+  );
+
+  it.effect("Deferred children do not count toward done", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "building", { group: group("sprint", { started: true }) }),
+        child("a", "done", "g"),
+        child("b", "ready", "g"),
+      ];
+      const events = yield* decideEvents(move("b", BOARD_DEFERRED_STAGE_ID), model(cards));
+      const after = stagesAfter(events);
+      expect(after.get("b")?.stage).toBe(BOARD_DEFERRED_STAGE_ID);
+      expect(after.get("g")?.stage).toBe("done");
+    }),
+  );
+
+  // ── Deferred ─────────────────────────────────────────────────────────
+
+  it.effect("refuses Deferred at the root", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        move("a", BOARD_DEFERRED_STAGE_ID),
+        model([card("a", "backlog")]),
+      );
+      assert.include(String(failure), "only a group's cards can be deferred");
+    }),
+  );
+
+  it.effect("refuses deferring a started card", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        move("a", BOARD_DEFERRED_STAGE_ID),
+        model([card("g", "building", { group: group("sprint") }), child("a", "building", "g")]),
+      );
+      assert.include(String(failure), "Work has started on 'T3-1'");
+    }),
+  );
+
+  it.effect("a deferred card moved to the root lands in Backlog", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "sprint", { group: group("sprint") }),
+        child("a", BOARD_DEFERRED_STAGE_ID, "g"),
+        child("b", "ready", "g"),
+      ];
+      const events = yield* decideEvents(moveCards(["a"], null), model(cards));
+      const after = stagesAfter(events).get("a");
+      expect(after?.stage).toBe("backlog");
+      expect(after?.card.parentCardId).toBeNull();
+    }),
+  );
+
+  // ── Empty groups ─────────────────────────────────────────────────────
+
+  it.effect("a group losing its last child reverts at its previous stage, capped at Sprint", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "planning", { group: { ...group("planning"), prevStage: BoardStageId.make("planning") } }),
+        child("a", "ready", "g"),
+      ];
+      const events = yield* decideEvents(moveCards(["a"], null), model(cards));
+      const after = stagesAfter(events).get("g");
+      expect(after?.card.group).toBeNull();
+      expect(after?.stage).toBe("sprint");
+    }),
+  );
+
+  it.effect("a heading stays a group with no children", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "backlog", { group: group("backlog", { heading: true }) }),
+        child("a", "backlog", "g"),
+      ];
+      const events = yield* decideEvents(moveCards(["a"], null), model(cards));
+      expect(stagesAfter(events).has("g")).toBe(false);
+    }),
+  );
+
+  it.effect("creates an empty heading", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(
+        {
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-heading"),
+          cardId: BoardCardId.make("card-heading"),
+          projectId,
+          title: "Epic",
+          heading: true,
+          createdAt: NOW,
+        },
+        model([]),
+      );
+      const created = events[0]!;
+      assert.ok(created.type === "board.card-created");
+      expect(created.payload.group?.heading).toBe(true);
+    }),
+  );
+
+  // ── Regrouping ───────────────────────────────────────────────────────
+
+  it.effect("refuses moving a card inside itself", () =>
+    Effect.gen(function* () {
+      const cards = [card("g", "sprint", { group: group("sprint") }), child("a", "ready", "g")];
+      const failure = yield* decideFail(moveCards(["g"], "a"), model(cards));
+      assert.include(String(failure), "can't move inside itself");
+    }),
+  );
+
+  it.effect("refuses making a started leaf a parent", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        moveCards(["b"], "a"),
+        model([card("a", "building"), card("b", "backlog")]),
+      );
+      assert.include(String(failure), "cannot become a group");
+    }),
+  );
+
+  it.effect("moves ancestors first: a descendant travels with its group", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "sprint", { group: group("sprint") }),
+        child("a", "ready", "g"),
+        card("h", "sprint", { group: group("sprint", { heading: true }) }),
+      ];
+      const events = yield* decideEvents(moveCards(["g", "a"], "h"), model(cards));
+      const after = stagesAfter(events);
+      expect(after.get("g")?.card.parentCardId).toBe(BoardCardId.make("h"));
+      // The child was not re-parented out from under its group.
+      expect(after.get("a")).toBeUndefined();
+    }),
+  );
+
+  it.effect("places moved cards next to the named sibling", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "sprint", { group: group("sprint") }),
+        child("a", "backlog", "g", { orderKey: "c" }),
+        child("b", "backlog", "g", { orderKey: "e" }),
+        card("x", "backlog", { orderKey: "m" }),
+      ];
+      const events = yield* decideEvents(moveCards(["x"], "g", { after: "a" }), model(cards));
+      const key = stagesAfter(events).get("x")?.card.orderKey ?? "";
+      expect(key > "c" && key < "e").toBe(true);
+    }),
+  );
+
+  it.effect("refuses moving a started card onto a different integration branch", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("own", "building", { group: group("ready", { target: "own", started: true }) }),
+        child("a", "building", "own"),
+      ];
+      const failure = yield* decideFail(moveCards(["a"], null), model(cards));
+      assert.include(String(failure), "Rebase onto trunk first");
+    }),
+  );
+
+  it.effect("abandons a converted leaf's planning: the conversion is flagged", () =>
+    Effect.gen(function* () {
+      const events = yield* decideEvents(
+        moveCards(["b"], "a"),
+        model([card("a", "planning"), card("b", "backlog")]),
+      );
+      const conversion = events.find(
+        (event) => event.type === "board.card-updated" && String(event.payload.cardId) === "a",
+      );
+      assert.ok(conversion?.type === "board.card-updated");
+      expect(conversion.payload.becameGroup).toBe(true);
+      expect(conversion.payload.card.group?.prevStage).toBe("planning");
+    }),
+  );
+
+  // ── Dependencies ─────────────────────────────────────────────────────
+
+  const update = (id: string, addDependsOn: ReadonlyArray<string>): BoardCommand => ({
+    type: "board.card.update",
+    commandId: CommandId.make(`cmd-update-${id}`),
+    cardId: BoardCardId.make(id),
+    addDependsOn: addDependsOn.map((dep) => BoardCardId.make(dep)),
+    createdAt: NOW,
+  });
+
+  it.effect("accepts a dependency across groups", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g1", "sprint", { group: group("sprint") }),
+        child("a", "ready", "g1"),
+        card("g2", "sprint", { group: group("sprint") }),
+        child("b", "ready", "g2"),
+      ];
+      const events = yield* decideEvents(update("a", ["b"]), model(cards));
+      assert.ok(events[0]?.type === "board.card-updated");
+    }),
+  );
+
+  it.effect("refuses a cycle that runs through a group", () =>
+    Effect.gen(function* () {
+      // a waits on group g; g waits on its child b; b waiting on a closes it.
+      const cards = [
+        card("a", "ready", { dependsOn: [BoardCardId.make("g")] }),
+        card("g", "sprint", { group: group("sprint") }),
+        child("b", "ready", "g"),
+      ];
+      const failure = yield* decideFail(update("b", ["a"]), model(cards));
+      assert.include(String(failure), "cycle");
+    }),
+  );
+
+  it.effect("refuses a regrouping that closes a cycle through a group", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("a", "ready", { dependsOn: [BoardCardId.make("g")] }),
+        card("g", "sprint", { group: group("sprint", { heading: true }) }),
+        card("b", "ready", { dependsOn: [BoardCardId.make("a")] }),
+      ];
+      const failure = yield* decideFail(moveCards(["b"], "g"), model(cards));
+      assert.include(String(failure), "dependency cycle");
+    }),
+  );
+
+  it.effect("refuses depending on your own ancestor, and a group on its own child", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g1", "sprint", { group: group("sprint") }),
+        child("g2", "sprint", "g1", { group: group("sprint") }),
+        child("leaf", "ready", "g2"),
+      ];
+      const ancestor = yield* decideFail(update("leaf", ["g1"]), model(cards));
+      assert.include(String(ancestor), "cannot also wait for it");
+      const descendant = yield* decideFail(update("g1", ["leaf"]), model(cards));
+      assert.include(String(descendant), "already waits for everything inside it");
+    }),
+  );
+
+  it.effect("a dependency on a group is met when the group reaches Done", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "building", { group: group("sprint", { started: true }) }),
+        child("a", "merge", "g"),
+        card("waiting", "building", { dependsOn: [BoardCardId.make("g")], blocked: true }),
+      ];
+      const events = yield* decideEvents(move("a", "done", false), model(cards));
+      const after = stagesAfter(events);
+      expect(after.get("g")?.stage).toBe("done");
+      expect(after.get("waiting")?.card.blocked).toBe(false);
+    }),
+  );
+
+  // ── Settings ─────────────────────────────────────────────────────────
+
+  it.effect("sets a group's settings", () =>
+    Effect.gen(function* () {
+      const cards = [card("g", "sprint", { group: group("sprint") }), child("a", "ready", "g")];
+      const events = yield* decideEvents(
+        settings("g", { autoBuild: true, autoPlan: true }),
+        model(cards),
+      );
+      const after = stagesAfter(events).get("g");
+      expect(after?.card.group?.autoBuild).toBe(true);
+      expect(after?.card.group?.autoPlan).toBe(true);
+    }),
+  );
+
+  it.effect("locks the target while a descendant leaf has started", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "building", { group: group("sprint", { started: true }) }),
+        child("inner", "building", "g", { group: group("sprint", { started: true }) }),
+        child("a", "building", "inner"),
+      ];
+      const failure = yield* decideFail(settings("g", { target: "own" }), model(cards));
+      assert.include(String(failure), "merge target is locked");
+      // Auto-build is not locked: turning it off never interrupts a child.
+      const events = yield* decideEvents(settings("g", { autoBuild: true }), model(cards));
+      assert.ok(events[0]?.type === "board.card-updated");
+    }),
+  );
+
+  it.effect("refuses settings on a leaf", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(settings("a", { autoBuild: true }), model([card("a", "ready")]));
+      assert.include(String(failure), "is not a group");
+    }),
+  );
+
+  // ── Healing ──────────────────────────────────────────────────────────
+
+  it.effect("sync-groups re-derives a group left out of step", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "sprint", { group: group("sprint", { started: true }) }),
+        child("a", "done", "g"),
+      ];
+      const events = yield* decideEvents(
+        {
+          type: "board.card.sync-groups",
+          commandId: CommandId.make("cmd-sync"),
+          cardId: BoardCardId.make("a"),
+          createdAt: NOW,
+        },
+        model(cards),
+      );
+      expect(stagesAfter(events).get("g")?.stage).toBe("done");
+    }),
+  );
+});
