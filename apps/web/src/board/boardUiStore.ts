@@ -85,6 +85,14 @@ export function isModeTabDestination(mode: WorkspaceMode, href: string): boolean
   return modeForHref(href) === mode && !isTablessLocation(href);
 }
 
+/** One board action the command palette lists. */
+export interface BoardPaletteAction {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly run: () => void;
+}
+
 interface BoardUiState {
   /** The mode the client was last in. */
   mode: WorkspaceMode;
@@ -126,6 +134,11 @@ interface BoardUiStore extends BoardUiState {
       not a preference. */
   queryByBoard: Partial<Record<string, string>>;
   setBoardQuery: (boardKey: string, query: string) => void;
+  /** What the mounted board offers the command palette (T3O-29): drill into
+      the selected group, go up a level. Transient, and empty off the board,
+      so the palette never subscribes to the board itself. */
+  paletteActions: ReadonlyArray<BoardPaletteAction>;
+  setPaletteActions: (actions: ReadonlyArray<BoardPaletteAction>) => void;
   recordModeLocation: (mode: WorkspaceMode, href: string) => void;
   setColumnCollapsed: (stageKey: string, collapsed: boolean) => void;
   setUtilityMenuCollapsed: (collapsed: boolean) => void;
@@ -197,6 +210,13 @@ export const useBoardUiStore = create<BoardUiStore>()(
       sidebarHostsModeTabs: false,
       detailMaximisedCardId: null,
       queryByBoard: {},
+      paletteActions: [],
+      setPaletteActions: (actions) =>
+        set((state) =>
+          state.paletteActions.length === 0 && actions.length === 0
+            ? state
+            : { paletteActions: actions },
+        ),
       setBoardQuery: (boardKey, query) =>
         set((state) =>
           (state.queryByBoard[boardKey] ?? "") === query

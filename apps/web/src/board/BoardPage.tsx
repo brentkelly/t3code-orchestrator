@@ -108,6 +108,7 @@ import {
   type BoardScope,
 } from "./boardScope";
 import { BoardSubBoardHeader } from "./BoardSubBoardHeader";
+import { BoardHint } from "./BoardHint";
 import { BoardGroupStartDialog, BoardNewPhaseDialog } from "./BoardGroupDialogs";
 import {
   boardDropRefusal,
@@ -633,7 +634,6 @@ function EnvironmentBoard({
   );
   // Alt+Up leaves a sub-board for the level above, wherever focus is on the
   // board — but not out of an open dialog or the card sheet.
-  // oxlint-disable-next-line t3code/react-effect-budget -- a window keybinding is a subscription outside React
   useEffect(() => {
     if (scope.kind !== "sub-board") return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1305,6 +1305,53 @@ function EnvironmentBoard({
     }
   }, [liveColumns, openRootBoard, scope, snapshotArrived]);
 
+  // The command palette's board actions (T3O-29): published while this board
+  // is mounted, cleared when it goes.
+  const setPaletteActions = useBoardUiStore((state) => state.setPaletteActions);
+  const selectedShell =
+    selectedCardId === null ? null : (findBoardCard(columns, selectedCardId)?.card ?? null);
+  const selectedGroup =
+    selectedShell !== null && isBoardGroupShell(allCards, selectedShell) ? selectedShell : null;
+  const selectedGroupId = selectedGroup === null ? null : String(selectedGroup.cardId);
+  const selectedGroupKey = selectedGroup?.key ?? null;
+  const selectedGroupTitle = selectedGroup?.title ?? null;
+  const upKey = ancestors.at(-1)?.key ?? null;
+  useEffect(() => {
+    const actions = [
+      ...(scope.kind === "sub-board"
+        ? [
+            {
+              id: "up",
+              title: "Board: back up one level",
+              description: `To ${upKey ?? "the board"} (Alt+↑)`,
+              run: () => goUpOneLevel(),
+            },
+          ]
+        : []),
+      ...(selectedGroupId === null
+        ? []
+        : [
+            {
+              id: `open:${selectedGroupId}`,
+              title: `Open ${selectedGroupKey}'s board`,
+              description: selectedGroupTitle ?? "",
+              run: () => openSubBoard(selectedGroupId),
+            },
+          ]),
+    ];
+    setPaletteActions(actions);
+    return () => setPaletteActions([]);
+  }, [
+    goUpOneLevel,
+    openSubBoard,
+    scope.kind,
+    selectedGroupId,
+    selectedGroupKey,
+    selectedGroupTitle,
+    setPaletteActions,
+    upKey,
+  ]);
+
   // ── Create dialog ───────────────────────────────────────────────────
   // Both the column add buttons and the top-bar button open the same dialog
   // (t3o-06). The dialog owns creation (title, brief, labels, project, stage
@@ -1425,14 +1472,15 @@ function EnvironmentBoard({
                 {ancestors.map((ancestor) => (
                   <span className="flex min-w-0 items-center gap-1" key={ancestor.cardId}>
                     <span aria-hidden>›</span>
-                    <button
-                      className="truncate hover:text-foreground hover:underline"
-                      onClick={() => openSubBoard(ancestor.cardId)}
-                      title={ancestor.title}
-                      type="button"
-                    >
-                      {ancestor.key}
-                    </button>
+                    <BoardHint label={ancestor.title}>
+                      <button
+                        className="truncate hover:text-foreground hover:underline"
+                        onClick={() => openSubBoard(ancestor.cardId)}
+                        type="button"
+                      >
+                        {ancestor.key}
+                      </button>
+                    </BoardHint>
                   </span>
                 ))}
                 <span aria-hidden>›</span>

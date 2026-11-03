@@ -216,8 +216,6 @@ function ExpandedColumn(props: BoardColumnProps) {
     onSetCollapsed,
     onSelectCard,
     onRequestCreate,
-    onColumnDragOver,
-    onColumnDrop,
     onCardDragStart,
     onCardDragEnd,
     onCardReorder,
