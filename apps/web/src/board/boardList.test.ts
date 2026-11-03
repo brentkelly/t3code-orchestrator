@@ -384,6 +384,11 @@ describe("planBoardListMove", () => {
       input: { beforeCardId: BoardCardId.make("top") },
       reverting: [],
     });
+    // A group moved with its only child keeps that child, so nothing reverts.
+    expect(plan(shells, { ids: ["g", "k"], parentId: "h" })).toMatchObject({
+      kind: "move",
+      reverting: [],
+    });
     // An anchor under another parent is dropped rather than refused by the server.
     expect(plan(shells, { ids: ["top"], parentId: "h", afterId: "g" })).toEqual({
       kind: "move",

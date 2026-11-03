@@ -473,9 +473,11 @@ export function planBoardListMove(input: {
     anchor !== undefined &&
     (anchor.parentCardId === undefined ? undefined : String(anchor.parentCardId)) === parentKey;
   const cardIds = movers.map((card) => card.cardId);
+  // Only roots leave their parent: a mover inside another mover travels with it.
+  const rootIds = new Set(roots.map((card) => String(card.cardId)));
   const reverting = [
     ...new Set(
-      movers.flatMap((card) =>
+      roots.flatMap((card) =>
         card.parentCardId === undefined || String(card.parentCardId) === parentKey
           ? []
           : [String(card.parentCardId)],
@@ -485,7 +487,7 @@ export function planBoardListMove(input: {
     const old = byId.get(oldParentId);
     if (old === undefined || old.group === undefined || old.group.heading) return [];
     const left = boardShellChildren(shells, oldParentId).filter(
-      (child) => !moverIds.has(String(child.cardId)),
+      (child) => !rootIds.has(String(child.cardId)),
     );
     if (left.length > 0) return [];
     return [
