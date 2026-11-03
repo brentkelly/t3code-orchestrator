@@ -11,7 +11,13 @@ import * as NodeVM from "node:vm";
 import * as NodeZlib from "node:zlib";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { OrchestratorMcpTaskRole, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  BOARD_AUTO_PLAN_INSTRUCTION,
+  BOARD_ENVELOPE_PLAN_DELIVERABLE,
+  BOARD_ENVELOPE_REGROUP_GUARD,
+  OrchestratorMcpTaskRole,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -194,6 +200,35 @@ export const McpToolUseCase = Schema.Struct({
   notes: Schema.optional(Schema.String),
 });
 export type McpToolUseCase = typeof McpToolUseCase.Type;
+/**
+ * Model-facing text a case quotes by name instead of copying, so it always
+ * tests the current wording: `{{NAME}}` in a case's prompt or context.
+ */
+const CASE_TEXT: Record<string, string> = {
+  BOARD_AUTO_PLAN_INSTRUCTION,
+  BOARD_ENVELOPE_PLAN_DELIVERABLE,
+  BOARD_ENVELOPE_REGROUP_GUARD,
+};
+
+const expandText = (text: string): string =>
+  text.replace(/\{\{([A-Z_]+)\}\}/g, (_, name: string) => {
+    const value = CASE_TEXT[name];
+    if (value === undefined) throw new Error(`Unknown case text '{{${name}}}'.`);
+    return value;
+  });
+
+/** A case with its `{{NAME}}` references to T3 text filled in. */
+export const expandCaseText = (testCase: McpToolUseCase): McpToolUseCase => ({
+  ...testCase,
+  prompt: expandText(testCase.prompt),
+  setup: {
+    ...testCase.setup,
+    ...(testCase.setup.context === undefined
+      ? {}
+      : { context: expandText(testCase.setup.context) }),
+  },
+});
+
 const AnyBlock = Schema.StructWithRest(
   Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) }),
   Rest,
@@ -1686,7 +1721,9 @@ const main = Effect.gen(function* () {
       .filter((name) => name.endsWith(".jsonl"))
       .toSorted()
       .map((name) => path.join(casesDir, name));
-  const cases = (yield* Effect.forEach(caseFiles, (file) => readJsonl(file, decodeCase))).flat();
+  const cases = (yield* Effect.forEach(caseFiles, (file) => readJsonl(file, decodeCase)))
+    .flat()
+    .map(expandCaseText);
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);
   const harness = codex ? "codex" : "claude";

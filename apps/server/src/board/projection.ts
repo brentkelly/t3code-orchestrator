@@ -57,6 +57,8 @@ import {
   BoardCardPullRequest,
   BoardCardModelOverrides,
   BoardSplitRecommendation,
+  BoardCardAutoPlan,
+  BoardCardDecision,
   BoardCardReviewOverrides,
   BoardCardReviewSummary,
   deriveBoardCardReviewSummary,
@@ -152,6 +154,7 @@ const BoardCardDbRow = Schema.Struct({
   /** NULL for every row written before migration 052 and for every card with
       no split proposed since T3O-31 (D8: replay equals rehydration). */
   splitRecommendation: Schema.NullOr(Schema.fromJsonString(BoardSplitRecommendation)),
+  autoPlan: Schema.NullOr(Schema.fromJsonString(BoardCardAutoPlan)),
   /** NULL for every row written before migration 036, and for every card that
       follows its project's default branch — indistinguishable on purpose, which
       is what makes replay equal rehydration (T3O-5, D1). */
@@ -653,6 +656,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
       : card.modelOverrides,
     splitRationale: card.splitRationale,
     splitRecommendation: card.splitRecommendation ?? null,
+    autoPlan: card.autoPlan ?? null,
     baseBranch: card.baseBranch,
     scheduledStartAt: card.scheduledStartAt,
     autoStart: card.autoStart ? 1 : 0,
@@ -747,6 +751,7 @@ function rowToBoardCard(
     modelOverrides: row.modelOverrides,
     splitRationale: row.splitRationale,
     ...(row.splitRecommendation === null ? {} : { splitRecommendation: row.splitRecommendation }),
+    ...(row.autoPlan === null ? {} : { autoPlan: row.autoPlan }),
     baseBranch: row.baseBranch,
     scheduledStartAt: row.scheduledStartAt,
     autoStart: row.autoStart !== 0,
@@ -816,6 +821,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides,
         split_rationale,
         split_recommendation,
+        auto_plan,
         base_branch,
         scheduled_start_at,
         auto_start,
@@ -861,6 +867,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.modelOverrides},
         ${row.splitRationale},
         ${row.splitRecommendation},
+        ${row.autoPlan},
         ${row.baseBranch},
         ${row.scheduledStartAt},
         ${row.autoStart},
@@ -906,6 +913,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides = excluded.model_overrides,
         split_rationale = excluded.split_rationale,
         split_recommendation = excluded.split_recommendation,
+        auto_plan = excluded.auto_plan,
         base_branch = excluded.base_branch,
         scheduled_start_at = excluded.scheduled_start_at,
         auto_start = excluded.auto_start,
@@ -961,6 +969,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
         split_recommendation AS "splitRecommendation",
+        auto_plan AS "autoPlan",
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
@@ -1312,6 +1321,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
         split_recommendation AS "splitRecommendation",
+        auto_plan AS "autoPlan",
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
@@ -2148,6 +2158,52 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
 
   // Wholesale rewrite of a card's plan rows from the proposal: idempotent, and
   // structurally incapable of drifting from the read model.
+  // The decision log (T3O-32). `INSERT OR IGNORE` on the event-derived id
+  // makes a re-projected event a no-op.
+  const insertBoardCardDecisionRow = SqlSchema.void({
+    Request: BoardCardDecision,
+    execute: (row) => sql`
+      INSERT OR IGNORE INTO board_card_decisions (
+        decision_id, card_id, step_id, thread_id, question, decision, reason,
+        flag, decided_by, created_at
+      ) VALUES (
+        ${row.decisionId}, ${row.cardId}, ${row.stepId}, ${row.threadId},
+        ${row.question}, ${row.decision}, ${row.reason}, ${row.flag},
+        ${row.decidedBy}, ${row.createdAt}
+      )
+    `,
+  });
+
+  const listBoardCardDecisionRowsForCard = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardDecision,
+    execute: (cardId) => sql`
+      SELECT
+        decision_id AS "decisionId",
+        card_id AS "cardId",
+        step_id AS "stepId",
+        thread_id AS "threadId",
+        question,
+        decision,
+        reason,
+        flag,
+        decided_by AS "decidedBy",
+        created_at AS "createdAt"
+      FROM board_card_decisions
+      WHERE card_id = ${cardId}
+      -- rowid, not decision_id: "evt:10" sorts before "evt:2" as text.
+      ORDER BY created_at, rowid
+    `,
+  });
+
+  const deleteBoardCardDecisionsForCard = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      DELETE FROM board_card_decisions
+      WHERE card_id = ${cardId}
+    `,
+  });
+
   const deleteBoardPlansForCard = SqlSchema.void({
     Request: BoardCardId,
     execute: (cardId) => sql`
@@ -2323,6 +2379,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     findBoardDefaultWorkerRow,
     findBoardCardStepErrorRow,
     deleteBoardPlansForCard,
+    insertBoardCardDecisionRow,
+    listBoardCardDecisionRowsForCard,
+    deleteBoardCardDecisionsForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
     listBoardPlanRows,
@@ -2377,6 +2436,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       yield* queries.deleteBoardCardStepStateForCard(card.id);
       yield* queries.deleteBoardThreadTodoRowsForCard(card.id);
       yield* queries.deleteBoardPlansForCard(card.id);
+      yield* queries.deleteBoardCardDecisionsForCard(card.id);
     }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.purge:query")));
 
   // Wholesale rewrite of a card's link rows from the event's card state:
@@ -2903,6 +2963,13 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         });
         return;
       }
+
+      case "board.card-decisions-recorded":
+        // Table-only (D8): the log never rides the read model.
+        yield* Effect.forEach(event.payload.decisions, queries.insertBoardCardDecisionRow, {
+          discard: true,
+        }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.decisions:insert")));
+        return;
 
       case "board.card-note-recorded":
         // No card write: the event exists only so the deletion (or the reason
@@ -3856,6 +3923,7 @@ export function makeBoardCardDetailLoader(
       queries.listBoardCardStepRowsForCard(cardId),
       queries.listBoardCardActivityRowsForCard(cardId),
       queries.findBoardCardStepErrorRow(cardId),
+      queries.listBoardCardDecisionRowsForCard(cardId),
     ]).pipe(
       Effect.map(
         ([
@@ -3871,6 +3939,7 @@ export function makeBoardCardDetailLoader(
           stepRows,
           activityRows,
           stepErrorRow,
+          decisionRows,
         ]) => {
           if (Option.isNone(cardRow)) return null;
           const links = sortBoardCardThreadLinks(
@@ -3925,6 +3994,7 @@ export function makeBoardCardDetailLoader(
             // Why the live step stopped (t3o-30, D2), or null when it is
             // healthy or absent — the failure banner's text.
             stepError: Option.getOrNull(stepErrorRow)?.lastError ?? null,
+            decisions: decisionRows,
             // Filled below for a sub-board child; a top-level card has no
             // parent to inherit from and keeps the null.
             parentModelOverrides: null,
@@ -4018,6 +4088,10 @@ export interface BoardQueriesShape {
   readonly boardCardBrief: (
     cardId: BoardCardId,
   ) => Effect.Effect<string | null, ProjectionRepositoryError>;
+  /** A card's decision log (T3O-32), oldest first. */
+  readonly boardCardDecisions: (
+    cardId: BoardCardId,
+  ) => Effect.Effect<ReadonlyArray<BoardCardDecision>, ProjectionRepositoryError>;
   /** One plan's body for `board_get_plan` (t3o-08); null when absent. */
   readonly boardPlanBody: (
     planId: BoardPlanId,
@@ -4100,6 +4174,11 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
     // Board-only readers for the MCP context / plan tools (t3o-08).
     boardCardActivity: makeBoardCardActivityLoader(queries),
     boardPlanBody: makeBoardPlanBodyLoader(queries),
+    // A card's decision log (T3O-32): ancestor context for planning agents.
+    boardCardDecisions: (cardId) =>
+      queries
+        .listBoardCardDecisionRowsForCard(cardId)
+        .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.decisions:query"))),
     // The brief alone, for the engine's pre-decide read (T3O-53).
     boardCardBrief: (cardId) =>
       queries

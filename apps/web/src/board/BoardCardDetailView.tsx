@@ -69,6 +69,7 @@ import {
   type RuntimeMode,
   type BoardCardStepStalledReason,
   type BoardSplitRecommendation,
+  isBoardCardAutoPlanPending,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
@@ -99,6 +100,7 @@ import {
   Trash2Icon,
   TriangleAlertIcon,
   XIcon,
+  FastForwardIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { Fragment, Suspense, lazy, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -179,6 +181,8 @@ import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
 import { BoardHint } from "./BoardHint";
+import { BoardDecisionLog } from "./BoardDecisionLog";
+import { boardDecisionFollowUp, boardDecisionLogView } from "./boardDecisionLog";
 import { BOARD_DEFERRED_STAGE } from "./boardScope";
 import { BoardSplitGate } from "./BoardSplitGate";
 import { BOARD_SPLIT_CHANGE_REQUEST_PREFILL, type BoardSplitGateSettings } from "./boardSplitGate";
@@ -510,6 +514,12 @@ export interface BoardCardDetailViewProps {
       round" at Code review and Ready for merge, "Request review" on a card
       that has never had one. Absent hides the button entirely. */
   readonly onRequestReviewRound?: (() => void) | undefined;
+  /** Auto-plan → Build (T3O-32). Absent hides the button. */
+  readonly onAutoPlan?: (() => void) | undefined;
+  /** Create a follow-up card from the decision log (T3O-32). */
+  readonly onCreateFollowUp?:
+    | ((draft: { readonly title: string; readonly brief: string }) => void)
+    | undefined;
   /** Whether ANY step is live on the card — running, queued, or parked
       (stalled / awaiting input / paused). One step at a time is a decider
       invariant, so "Another review round" is disabled rather than hidden while
@@ -1502,11 +1512,14 @@ function ActionsSection({
   props,
   unmet,
   onReviewSplit,
+  onAutoPlan,
 }: {
   readonly props: BoardCardDetailViewProps;
   readonly unmet: ReadonlyArray<BoardDetailDependency>;
   /** Opens the split gate's pane (T3O-31). */
   readonly onReviewSplit: () => void;
+  /** Auto-plan → Build (T3O-32), or null where it is not offered. */
+  readonly onAutoPlan: (() => void) | null;
 }) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
@@ -1707,7 +1720,8 @@ function ActionsSection({
     // T3o (T3O-48): a card with nothing but the missing-PR notice still needs
     // the section, or the one thing it has to say has nowhere to render.
     missingPullRequest === null &&
-    linkPullRequest === null
+    linkPullRequest === null &&
+    onAutoPlan === null
   ) {
     return null;
   }
@@ -1882,6 +1896,18 @@ function ActionsSection({
           ) : null}
         </div>
       ) : null}
+      {onAutoPlan === null ? null : (
+        <BoardHint label="Ends planning. The agent makes every remaining decision, approves the plan and starts the build. Decisions are logged on the Summary pane.">
+          <button
+            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent"
+            onClick={onAutoPlan}
+            type="button"
+          >
+            <FastForwardIcon className="size-3.5" />
+            Auto-plan → Build
+          </button>
+        </BoardHint>
+      )}
       {/* Between the forward button and View PR, giving the approved mockup's
           order: Merge → Another review round → View PR, all three full width.
           Styled off its shipped sibling below rather than the prototype's
@@ -2586,6 +2612,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     stage: card.stage,
     stepCompletions: props.detail.stepCompletions,
     card,
+    decisionCount: props.detail.decisions.length,
   });
   // The card-level running/queued signals describe the review loop only while
   // the card sits ON the review stage — anywhere else the live step is some
@@ -2634,6 +2661,46 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       reviewMaxRounds,
     ],
   );
+
+  // The decision log (T3O-32). Null open state means "the default rule".
+  const [logOpen, setLogOpen] = useState<boolean | null>(null);
+  const stagesState = stageStateOf(props.stages);
+  const buildStage = boardStageWithRole(stagesState, "build");
+  const pastBuild =
+    buildStage !== null &&
+    boardStageIndex(stagesState, card.stage) > boardStageIndex(stagesState, buildStage.stageId);
+  const decisionLog = summaryShown
+    ? boardDecisionLogView({
+        decisions: props.detail.decisions,
+        autoPlanned: card.autoPlan !== undefined,
+        pastBuild,
+      })
+    : null;
+  const buildPending =
+    !isStageAtOrAfterReview(props.stages, card.stage) &&
+    !props.detail.stepCompletions.some(
+      (completion) =>
+        buildStage !== null &&
+        completion.stepId === buildStage.stageId &&
+        completion.outcome === "succeeded",
+    );
+  // Auto-plan → Build (T3O-32): a leaf in planning with no split waiting and
+  // no auto-plan already under way. The click opens the Summary pane with the
+  // log expanded, so the decisions are what the human sees once it builds.
+  const onAutoPlan = props.onAutoPlan;
+  const autoPlanAction =
+    onAutoPlan === undefined ||
+    card.archivedAt !== null ||
+    card.group !== null ||
+    props.canApproveSplit ||
+    isBoardCardAutoPlanPending(card) ||
+    boardStageWithRole(stagesState, "plan")?.stageId !== card.stage
+      ? null
+      : () => {
+          onAutoPlan();
+          setLogOpen(true);
+          setPane("summary");
+        };
 
   return (
     <>
@@ -2911,6 +2978,34 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onOpenPullRequest={props.onOpenPullRequest}
                 onSelectReview={() => setPane("review")}
                 summary={workSummary}
+                buildPending={buildPending}
+                decisionLog={
+                  decisionLog === null ? null : (
+                    <BoardDecisionLog
+                      view={decisionLog}
+                      open={logOpen}
+                      onOpenChange={setLogOpen}
+                      onSendBack={
+                        buildStage === null
+                          ? undefined
+                          : () => {
+                              props.onMoveStage(buildStage.stageId);
+                              setPane("thread");
+                            }
+                      }
+                      onFollowUp={(() => {
+                        const create = props.onCreateFollowUp;
+                        const draft = boardDecisionFollowUp({
+                          cardKey: card.key,
+                          rows: decisionLog.rows,
+                        });
+                        return create === undefined || draft === null
+                          ? undefined
+                          : () => create(draft);
+                      })()}
+                    />
+                  )
+                }
               />
             </Suspense>
           ) : activePane === "review" ? (
@@ -3029,7 +3124,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           {/* The rail: everything about the card that is not the conversation. */}
           <div className="flex min-h-0 flex-col overflow-y-auto [&>*:first-child]:border-t-0">
             {group === null ? (
-              <ActionsSection onReviewSplit={() => setPane("thread")} props={props} unmet={unmet} />
+              <ActionsSection
+                onAutoPlan={autoPlanAction}
+                onReviewSplit={() => setPane("thread")}
+                props={props}
+                unmet={unmet}
+              />
             ) : (
               <GroupActionsSection
                 group={group}
@@ -3174,6 +3274,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             <div className="flex w-[244px] shrink-0 flex-col border-l border-border [&>*:first-child]:border-t-0">
               {group === null ? (
                 <ActionsSection
+                  onAutoPlan={null}
                   onReviewSplit={() => setPane("thread")}
                   props={props}
                   unmet={unmet}

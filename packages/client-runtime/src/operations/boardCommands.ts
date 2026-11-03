@@ -133,6 +133,11 @@ export const submitBoardCardForMerge = (input: { readonly cardId: BoardCardId })
 export const requestBoardReviewRound = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.requestReviewRound, input);
 
+/** Auto-plan → Build (T3O-32): end planning, let the agent decide the rest,
+    approve the plan and start building. */
+export const autoPlanBoardCard = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.autoPlanCard, input);
+
 /** "Remove worktree" on a finished card that kept one (T3O-52): removes it
     past the safety rule. The branch is kept. */
 export const removeBoardCardWorktree = (input: { readonly cardId: BoardCardId }) =>

@@ -1817,6 +1817,12 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       const reopenCard = makeCard({ id: "card-reopen", stage: BOARD_SEED_STAGE_IDS.review });
       // set-project only accepts a card that has never been built (T3O-33).
       const projectCard = makeCard({ id: "card-project", stage: "ready" });
+      // mark-auto-plan only accepts a leaf in planning (T3O-32).
+      const autoPlanCard = makeCard({ id: "card-auto-plan", stage: "planning" });
+      const autoPlanningCard = {
+        ...makeCard({ id: "card-auto-planning", stage: "planning" }),
+        autoPlan: { mode: "build" as const, requestedAt: NOW, endedAt: null },
+      };
       const briefAttachment = {
         id: BoardCardAttachmentId.make("att-1"),
         name: "bug.png",
@@ -1866,6 +1872,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             groupCard,
             reopenCard,
             projectCard,
+            autoPlanCard,
+            autoPlanningCard,
           ],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
           plans: [readyPlan, ...splitPlans],
@@ -2138,6 +2146,36 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         },
         // Reporting only: it writes an activity row and touches no card field,
         // so it cannot possibly emit a move.
+        "board.card.record-decisions": {
+          type: "board.card.record-decisions",
+          commandId: CommandId.make("cmd-record-decisions"),
+          cardId: BoardCardId.make("card-ready"),
+          decisions: [
+            {
+              question: "Ship behind a flag?",
+              decision: "No flag",
+              reason: "Small and reversible.",
+              flag: "unclear",
+              decidedBy: "agent",
+            },
+          ],
+          stepId: null,
+          threadId: null,
+          createdAt: NOW,
+        },
+        "board.card.mark-auto-plan": {
+          type: "board.card.mark-auto-plan",
+          commandId: CommandId.make("cmd-mark-auto-plan"),
+          cardId: BoardCardId.make("card-auto-plan"),
+          mode: "build",
+          createdAt: NOW,
+        },
+        "board.card.end-auto-plan": {
+          type: "board.card.end-auto-plan",
+          commandId: CommandId.make("cmd-end-auto-plan"),
+          cardId: BoardCardId.make("card-auto-planning"),
+          createdAt: NOW,
+        },
         "board.card.record-note": {
           type: "board.card.record-note",
           commandId: CommandId.make("cmd-record-note"),

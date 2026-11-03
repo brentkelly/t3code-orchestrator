@@ -424,6 +424,15 @@ a human act unless listed below.
 - Once a human has started a group with auto-build on, each ready child whose dependencies are met
   starts itself (D12). Turning auto-build off stops new starts and never interrupts a running child.
 - Done → archived after the configured window, when auto-archive is enabled (D15).
+- **Auto-plan → Build** (T3O-32): the click is the human act that authorises Planning → Ready →
+  Building for that one card. The agent decides what is left of planning and logs each decision;
+  when its plan arrives the board approves it, unclear decisions included, and makes both moves
+  (every gate still applies). A split is approved with the agent's recommended settings and, with
+  auto-build on, its group is started.
+- **Group auto-plan** (T3O-32): a child entering Planning inside a group with auto-plan on is
+  planned unattended and its plan approved — a board-driven Planning → Ready. It stops at Ready;
+  whether it then builds is up to the group's auto-build. These runs are the only planning runs that
+  are not human-in-the-loop.
 - A card whose worker is removed while it has no worktree falls back to the default worker, with an
   activity entry (D22).
 

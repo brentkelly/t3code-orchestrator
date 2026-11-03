@@ -54,6 +54,9 @@ import {
   type BoardState,
   unmetBoardCardDependencies,
   boardCardGroupOf,
+  boardCardAncestors,
+  sortBoardCardDecisions,
+  type BoardCardRecordDecisionsCommand,
   boardNewPhaseBrief,
   boardNewPhasePlan,
   type BoardCommand,
@@ -93,6 +96,12 @@ import {
 } from "../../../board/groupOperations.ts";
 import { BoardRelayInvocation, relayable } from "./relay.ts";
 import { BoardToolError, BoardToolkit } from "./tools.ts";
+
+/** How much of an ancestor's brief the context carries (T3O-32): enough to
+    plan against, while a deep tree of long briefs stays bounded. */
+const ANCESTOR_BRIEF_MAX_CHARS = 6_000;
+/** How many decisions per card ride the context, flagged first. */
+const CONTEXT_DECISIONS_MAX = 40;
 
 const nonEmpty = (value: string | undefined, fallback: string): string =>
   value !== undefined && value.trim().length > 0 ? value : fallback;
@@ -817,6 +826,45 @@ const dispatchMoveCards = (
     return { cardIds: input.cardIds, parentKey };
   });
 
+/** The groups a card sits in, nearest first (T3O-32, decision 9). */
+const describeAncestors = (deps: BoardToolDeps, board: BoardState, card: BoardCard) =>
+  Effect.forEach(boardCardAncestors(board, card), (ancestor) =>
+    Effect.gen(function* () {
+      const brief = yield* deps.board
+        .boardCardBrief(ancestor.id)
+        .pipe(Effect.mapError(internalError));
+      const decisions = yield* deps.board
+        .boardCardDecisions(ancestor.id)
+        .pipe(Effect.mapError(internalError));
+      const truncated = brief !== null && brief.length > ANCESTOR_BRIEF_MAX_CHARS;
+      return {
+        cardId: ancestor.id,
+        key: ancestor.key,
+        title: ancestor.title,
+        brief: truncated ? `${brief.slice(0, ANCESTOR_BRIEF_MAX_CHARS)}…` : brief,
+        briefTruncated: truncated,
+        plans: boardCardPlans(board, ancestor.id),
+        decisions: sortBoardCardDecisions(decisions).slice(0, CONTEXT_DECISIONS_MAX),
+      };
+    }),
+  );
+
+/** The plan a card was cut from, its body omitted when it is the brief. */
+const describeSourcePlan = (
+  deps: BoardToolDeps,
+  board: BoardState,
+  card: BoardCard,
+  brief: string | null,
+) =>
+  Effect.gen(function* () {
+    if (card.sourcePlanId === null) return null;
+    const planId = card.sourcePlanId;
+    const plan = (board.plans ?? []).find((candidate) => candidate.planId === planId);
+    if (plan === undefined) return null;
+    const body = yield* deps.board.boardPlanBody(planId).pipe(Effect.mapError(internalError));
+    return { plan, body: body === null || body.trim() === brief?.trim() ? null : body };
+  });
+
 export const boardHandlers = {
   board_get_card_context: () =>
     Effect.gen(function* () {
@@ -888,6 +936,9 @@ export const boardHandlers = {
         plans: boardCardPlans(board, card.id),
         activity,
         threads,
+        ancestors: yield* describeAncestors(deps, board, card),
+        sourcePlan: yield* describeSourcePlan(deps, board, card, detail?.brief ?? null),
+        decisions: sortBoardCardDecisions(detail?.decisions ?? []).slice(0, CONTEXT_DECISIONS_MAX),
       };
     }),
 
@@ -1853,13 +1904,16 @@ export const boardHandlers = {
       const deps = yield* boardToolDeps;
       const board = yield* readBoardState(deps);
       const card = yield* requireCallerCard(board, deps.scope);
-      const plan = boardCardPlans(board, card.id).find(
-        (candidate) => candidate.planId === input.planId,
+      // The caller's card or a group it sits in (T3O-32): child planning reads
+      // its ancestors' plans.
+      const readable = new Set([card.id, ...boardCardAncestors(board, card).map((a) => a.id)]);
+      const plan = (board.plans ?? []).find(
+        (candidate) => candidate.planId === input.planId && readable.has(candidate.cardId),
       );
       if (plan === undefined) {
         return yield* new BoardToolError({
           code: "plan-not-found",
-          message: `No plan '${input.planId}' on your card.`,
+          message: `No plan '${input.planId}' on your card or the groups it sits in.`,
         });
       }
       const body = yield* deps.board
@@ -1892,6 +1946,66 @@ export const boardHandlers = {
       };
       yield* dispatch(deps, command);
       return { planId: input.planId };
+    }),
+
+  board_record_decisions: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      const board = yield* readBoardState(deps);
+      const card = yield* requireCallerCard(board, deps.scope);
+      // The caller's live step names the session, when it is the caller's.
+      const state = boardCardStepState(board, card.id);
+      const ownStep =
+        state !== null &&
+        !isBoardTerminalStepStatus(state.status) &&
+        state.threadId === deps.scope.thread.threadId
+          ? state.stepId
+          : null;
+      const command: BoardCardRecordDecisionsCommand = {
+        type: "board.card.record-decisions",
+        commandId: yield* mintCommandId,
+        cardId: card.id,
+        decisions: input.decisions,
+        stepId: ownStep,
+        threadId: deps.scope.thread.threadId,
+        createdAt: yield* nowIso,
+      };
+      yield* dispatch(deps, command);
+      return { recorded: input.decisions.length };
+    }),
+
+  board_auto_plan: (input) =>
+    Effect.gen(function* () {
+      const deps = yield* boardToolDeps;
+      if (input.approved !== true) {
+        return yield* new BoardToolError({
+          code: "invalid-input",
+          message:
+            "Auto-planning approves the plan without review and starts the build, so it needs a human. Ask the user to confirm they want this card auto-planned, and once they have, call again with approved: true.",
+        });
+      }
+      const board = yield* readBoardState(deps);
+      const card = yield* findCardByKeyOrId(board, input.cardId);
+      yield* refuseOtherWorkersCard(board, deps.scope, card);
+      const supervisor = yield* SupervisorReactor;
+      const result = yield* supervisor.autoPlanCard(card.id);
+      switch (result.outcome) {
+        case "steered":
+        case "started":
+          return { cardId: card.id, key: card.key, outcome: result.outcome };
+        case "refused":
+          return yield* new BoardToolError({ code: "rejected", message: result.detail });
+        case "unknown-card":
+          return yield* new BoardToolError({
+            code: "card-not-found",
+            message: `Card '${input.cardId}' is archived or gone.`,
+          });
+        case "failed":
+          return yield* new BoardToolError({
+            code: "internal",
+            message: "Auto-planning could not start. Retry the call.",
+          });
+      }
     }),
 } satisfies Parameters<typeof BoardToolkit.toLayer>[0];
 
@@ -1970,5 +2084,11 @@ export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
   ),
   board_write_plan: McpToolAccess.writesWithCapability(
     relayable("board_write_plan", boardHandlers.board_write_plan),
+  ),
+  board_record_decisions: McpToolAccess.writesWithCapability(
+    relayable("board_record_decisions", boardHandlers.board_record_decisions),
+  ),
+  board_auto_plan: McpToolAccess.writesWithCapability(
+    relayable("board_auto_plan", boardHandlers.board_auto_plan),
   ),
 });

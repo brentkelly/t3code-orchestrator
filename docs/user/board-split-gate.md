@@ -33,3 +33,6 @@ branch usually inherits.
 **Approve split** creates the children and makes the card a group. It starts nothing: the group
 stays in Planning until you start it. **Ask for changes** puts a reply in the planning thread's
 composer, so you can tell the agent what to change and it can propose again.
+
+A card planned with **Auto-plan → Build** skips this gate: its split is approved with the agent's
+recommended settings. See [Auto-plan and the decision log](board-auto-plan.md).

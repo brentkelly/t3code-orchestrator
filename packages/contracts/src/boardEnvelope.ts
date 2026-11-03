@@ -52,6 +52,17 @@ export const BOARD_ENVELOPE_QUESTION_MECHANISM =
 export const BOARD_ENVELOPE_MOVE_GUARD =
   "Never move the card between stages yourself; finish your work and the board or a human moves the card on.";
 
+/** The decision log (T3O-32), stated on every planning run, attended or
+    not, so the log exists however the plan was reached. */
+export const BOARD_ENVELOPE_DECISION_LOG =
+  "Before you call board_propose_plans, record every decision this planning session made with board_record_decisions: what was asked, what was decided, a one-line reason and who decided (agent, or human when the user answered). Flag a call you were not sure about as unclear, and a call that shapes the work as important.";
+
+/** What an auto-planned run is told (T3O-32): no more questions, and the plan
+    it proposes is approved without a human. Rides the postamble of a fresh
+    auto-plan run and is the steering turn sent into a live planning thread. */
+export const BOARD_AUTO_PLAN_INSTRUCTION =
+  "Auto-plan: stop interviewing and do not ask any more questions. Decide every remaining question yourself, record each decision with board_record_decisions (flag any you are unsure of as unclear), propose the plan with board_propose_plans, then call board_complete_step. The plan you propose is approved automatically, unclear decisions included, so make each call the way you would defend it in review.";
+
 /** The `plan` role's deliverable contract (role-keyed so a user rewrite of the
     editable Planning prompt cannot break the plan pipeline).
 
@@ -64,6 +75,7 @@ export const BOARD_ENVELOPE_MOVE_GUARD =
     a user who has already customised their Planning prompt still gets the rule,
     and no rewrite can delete it. */
 export const BOARD_ENVELOPE_PLAN_DELIVERABLE = [
+  BOARD_ENVELOPE_DECISION_LOG,
   "When the plan is agreed, record it with board_propose_plans, as ONE plan.",
   "Two or more plans is not a longer plan — it splits this card into that many child cards, each with its own branch, build and code review, and holds the card behind a human approval gate until someone approves it.",
   "Split only when this card is a large feature whose parts are worth building and reviewing one at a time, or whose parts could be built concurrently for a real speed-up; then pass splitRationale saying why.",
@@ -97,6 +109,8 @@ export interface ComposeStepPromptStep {
   readonly prompt: string;
   /** Frozen human-in-the-loop stance (D5): governs the postamble. */
   readonly humanInLoop: boolean;
+  /** An auto-planned planning run (T3O-32). */
+  readonly autoPlan?: boolean;
 }
 
 export interface ComposeStepPromptInput {
@@ -213,7 +227,7 @@ function boardLinkedPullRequestLines(
 
 /** Regrouping needs a human (T3O-27): an unattended run has no one to confirm
     it, so it never regroups. */
-const BOARD_ENVELOPE_REGROUP_GUARD =
+export const BOARD_ENVELOPE_REGROUP_GUARD =
   "Do not regroup cards (move them between groups, indent, outdent, group them, or change a group's settings) without a human's explicit confirmation.";
 
 /** The system postamble (D5): branches on human-in-the-loop (an unattended run
@@ -226,6 +240,8 @@ export function boardStepPostamble(input: {
   readonly humanInLoop: boolean;
   readonly role: BoardStageRole | null;
   readonly step: Pick<ComposeStepPromptStep, "stepId" | "stepLabel">;
+  /** An auto-planned planning run (T3O-32). */
+  readonly autoPlan?: boolean;
 }): string {
   const { step } = input;
   const call = completionCall(step);
@@ -251,7 +267,9 @@ export function boardStepPostamble(input: {
       ];
   const deliverable =
     input.role === "plan"
-      ? [BOARD_ENVELOPE_PLAN_DELIVERABLE]
+      ? input.autoPlan === true
+        ? [BOARD_ENVELOPE_PLAN_DELIVERABLE, BOARD_AUTO_PLAN_INSTRUCTION]
+        : [BOARD_ENVELOPE_PLAN_DELIVERABLE]
       : input.role === "build"
         ? [BOARD_ENVELOPE_BUILD_DELIVERABLE]
         : [];
@@ -269,6 +287,7 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
     humanInLoop: input.step.humanInLoop,
     role: input.role,
     step: input.step,
+    ...(input.step.autoPlan === true ? { autoPlan: true } : {}),
   });
   // The build draft line (T3O-12) rides on the body, so an empty-body
   // re-entry (D7) stays the clean conversational thread it is.

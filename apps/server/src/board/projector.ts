@@ -847,6 +847,8 @@ export function projectBoardEvent<M extends BoardReadModel>(
     // unchanged and a replay that includes it lands exactly where a replay
     // without it would.
     case "board.card-note-recorded":
+    // The decision log is table-only (T3O-32, D8).
+    case "board.card-decisions-recorded":
       return Effect.succeed(model);
 
     case "board.stage-created":
@@ -1353,6 +1355,7 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     // Branch cleanup is card DETAIL too: it lands on the activity rail, which
     // rides `board.subscribeCard`, and changes nothing a column card renders.
     case "board.card-note-recorded":
+    case "board.card-decisions-recorded":
       // Agent write-path events are card DETAIL, not column-card shell fields
       // (D7): an agent's progress note, a non-review step completion or a plan
       // BODY rewrite changes nothing a column card renders, so they emit no

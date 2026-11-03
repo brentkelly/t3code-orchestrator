@@ -19,6 +19,9 @@
 import {
   BoardCard,
   BoardCardActivityEntry,
+  BoardCardDecision,
+  BoardCardDecisionInput,
+  BOARD_DECISIONS_PER_CALL_MAX,
   BoardCardThreadShell,
   BoardCardExternalRef,
   BoardCardAttachmentId,
@@ -134,6 +137,22 @@ const BoardCardContextAttachment = Schema.Struct({
   path: TrimmedNonEmptyString,
 });
 
+/** One ancestor of the card (T3O-32, decision 9): the group it sits in, then
+    that group's group, nearest first. Plans are metadata only — read a body
+    with board_get_plan, which accepts an ancestor's plan ids. The brief is cut
+    at a few thousand characters (read the whole card with board_get_card). */
+const BoardCardContextAncestor = Schema.Struct({
+  cardId: BoardCardId,
+  key: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  brief: Schema.NullOr(Schema.String),
+  briefTruncated: Schema.Boolean,
+  plans: Schema.Array(BoardPlan),
+  /** The decisions its planning recorded, unclear and important first,
+      capped at 40 entries. */
+  decisions: Schema.Array(BoardCardDecision),
+});
+
 const BoardCardContext = Schema.Struct({
   card: BoardCard,
   brief: Schema.NullOr(Schema.String),
@@ -180,6 +199,17 @@ const BoardCardContext = Schema.Struct({
       were doing", but "what is each thread on this card working through right
       now". */
   threads: Schema.Array(BoardCardThreadShell),
+  /** The groups this card sits in, nearest first (T3O-32). Read their
+      decisions before planning, so a child does not re-decide what its parent
+      settled. Empty for a top-level card. */
+  ancestors: Schema.Array(BoardCardContextAncestor),
+  /** The plan this card was cut from, with its full body; null for a card
+      that was not cut from a plan. `body` is null when it is the brief word for
+      word, which it is unless the brief was edited since. */
+  sourcePlan: Schema.NullOr(Schema.Struct({ plan: BoardPlan, body: Schema.NullOr(Schema.String) })),
+  /** This card's own decision log so far (T3O-32), unclear and important
+      first, capped at 40 entries like each ancestor's. */
+  decisions: Schema.Array(BoardCardDecision),
 });
 
 /** A card's pull request as an agent checks it (T3O-18). `linked` is true
@@ -674,7 +704,7 @@ export const BoardProposePlansTool = Tool.make("board_propose_plans", {
 
 export const BoardGetPlanTool = Tool.make("board_get_plan", {
   description:
-    "Read one plan of your card — its metadata and full markdown body — by plan id (from board_get_card_context or board_propose_plans). Your card is resolved from your thread; a plan belonging to another card is not returned.",
+    "Read one plan of your card, or of a group your card sits in, with its metadata and full markdown body, by plan id (from board_get_card_context or board_propose_plans). Your card is resolved from your thread; a plan belonging to any other card is not returned.",
   parameters: Schema.Struct({
     planId: BoardPlan.fields.planId,
   }),
@@ -697,6 +727,39 @@ export const BoardWritePlanTool = Tool.make("board_write_plan", {
   failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Write board plan");
+
+const BoardRecordDecisionsTool = Tool.make("board_record_decisions", {
+  description:
+    "Record the decisions a planning session made on your card's decision log, in one batch. Record a decision for every planning session, attended or automatic, before you call board_propose_plans: what was asked, what was decided, a one-line reason, and who decided (agent when you made the call, human when the user answered). Flag a call you were not sure about as unclear, so a human reviews it, and a call that shapes the work as important; everything else is normal. The log is shown on the card's Summary pane and handed to the planning agents of any child cards. Your card is resolved from your thread.",
+  parameters: Schema.Struct({
+    decisions: Schema.Array(BoardCardDecisionInput).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(BOARD_DECISIONS_PER_CALL_MAX),
+    ),
+  }),
+  success: Schema.Struct({ recorded: Schema.Number }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Record planning decisions");
+
+const BoardAutoPlanTool = Tool.make("board_auto_plan", {
+  description:
+    "Auto-plan a card that is in planning: its planning agent stops asking questions, decides everything left itself, records each decision, and proposes the plan, which is then approved without review and built (a split is approved with the agent's recommended settings, and its group starts when auto-build is on). It takes the place of a human approving the plan and starting the build, so only call it when the user explicitly asks for that card to be auto-planned: confirm with them, then pass approved: true. The server refuses without it, and refuses a group or a card whose split is waiting for approval.",
+  parameters: Schema.Struct({
+    /** Card key or id. */
+    cardId: TrimmedNonEmptyString,
+    approved: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Struct({
+    cardId: BoardCardId,
+    key: TrimmedNonEmptyString,
+    /** `steered`: the live planning thread was told to finish. `started`: an
+        unattended planning run began. */
+    outcome: Schema.Literals(["steered", "started"]),
+  }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Auto-plan a board card");
 
 export const BoardToolkit = Toolkit.make(
   BoardGetCardContextTool,
@@ -721,4 +784,6 @@ export const BoardToolkit = Toolkit.make(
   BoardProposePlansTool,
   BoardGetPlanTool,
   BoardWritePlanTool,
+  BoardRecordDecisionsTool,
+  BoardAutoPlanTool,
 );
