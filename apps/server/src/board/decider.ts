@@ -80,6 +80,7 @@ import {
   boardCardGroupsEqual,
   boardCardIntegrationAncestor,
   boardCardLiveChildren,
+  boardGroupRevertsToCard,
   boardCardLiveDescendants,
   boardGroupRevertStage,
   boardGroupTargetLockReason,
@@ -1463,11 +1464,7 @@ const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
     if (group === null) continue;
     let next: BoardCard;
     if (boardCardLiveChildren(board, card.id).length === 0) {
-      // Archiving is not regrouping: a finished group archives its children
-      // first and must stay where it finished, not revert to a card.
-      if (group.heading || card.group === null || command.type === "board.card.archive") {
-        continue;
-      }
+      if (!boardGroupRevertsToCard(board, card, group)) continue;
       next = { ...card, group: null, stage: boardGroupRevertStage(board, card) };
     } else {
       const derived = deriveBoardGroupStage(board, card);

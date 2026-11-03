@@ -1016,6 +1016,26 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
     }),
   );
 
+  it.effect("a sync-groups heal after the last child is archived leaves the group Done", () =>
+    Effect.gen(function* () {
+      const settled = group("ready", { target: "own", started: true, integrated: true });
+      const cards = [
+        card("g", "done", { group: settled }),
+        child("a", "done", "g", { archivedAt: NOW }),
+      ];
+      const events = yield* decideEvents(
+        {
+          type: "board.card.sync-groups",
+          commandId: CommandId.make("cmd-sync-g"),
+          cardId: BoardCardId.make("g"),
+          createdAt: NOW,
+        },
+        model(cards),
+      );
+      expect(stagesAfter(events).has("g")).toBe(false);
+    }),
+  );
+
   it.effect("a group derived out of Done retires its merged pull request", () =>
     Effect.gen(function* () {
       const pullRequest: NonNullable<BoardCard["pullRequest"]> = {

@@ -118,6 +118,7 @@ import {
   boardCardDisplayPullRequest,
   boardCardIntegrationAncestor,
   boardCardLiveChildren,
+  boardGroupRevertsToCard,
   boardCardMergesIntoIntegrationBranch,
   deriveBoardGroupStage,
   isBoardCardPlanned,
@@ -3234,7 +3235,7 @@ const make = Effect.gen(function* () {
       const group = boardCardGroupOf(board, candidate);
       if (group === null) return false;
       if (boardCardLiveChildren(board, candidate.id).length === 0) {
-        return candidate.group !== null && !group.heading;
+        return boardGroupRevertsToCard(board, candidate, group);
       }
       return deriveBoardGroupStage(board, candidate) !== candidate.stage;
     });

@@ -102,6 +102,20 @@ export function boardCardLiveChildren(
   return board.cards.filter((card) => card.parentCardId === cardId && card.archivedAt === null);
 }
 
+/**
+ * Whether a childless group should revert to a plain card. A group whose
+ * children were archived finished as a group and stays one; only a group
+ * emptied by regrouping or deletion reverts.
+ */
+export function boardGroupRevertsToCard(
+  board: BoardState,
+  card: Pick<BoardCard, "id" | "group">,
+  group: Pick<BoardCardGroup, "heading">,
+): boolean {
+  if (group.heading || card.group === null) return false;
+  return !board.cards.some((candidate) => candidate.parentCardId === card.id);
+}
+
 /** The children that count toward a group's progress: live and not deferred. */
 export function boardCardActiveChildren(
   board: BoardState,
