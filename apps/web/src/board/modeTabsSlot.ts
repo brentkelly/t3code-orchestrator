@@ -12,13 +12,14 @@
 import { isTablessLocation, modeForHref } from "./boardUiStore";
 
 /**
- * The rendered width of `BoardModeTabs` with both labels showing: two
- * `h-[26px]` buttons carrying a 14px icon, a 6px gap and 10px of padding
- * either side, inside a 2px track with a 3px gap. Measured at 169px in the
- * default theme; rounded up because the control's metrics are in fixed pixels
- * but its glyphs are not — a custom interface font is wider or narrower.
+ * The rendered width of `BoardModeTabs` with every label showing: three
+ * `h-[26px]` buttons (Board, List, Threads) carrying a 14px icon, a 6px gap
+ * and 10px of padding either side, inside a 2px track with 3px gaps. Two tabs
+ * measured 169px in the default theme and List adds about 65px; rounded up
+ * because the control's metrics are in fixed pixels but its glyphs are not —
+ * a custom interface font is wider or narrower.
  */
-const MODE_TABS_WIDTH = 172;
+const MODE_TABS_WIDTH = 238;
 
 /**
  * Breathing room the slot must have on top of the control. Two jobs: it keeps
