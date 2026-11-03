@@ -280,9 +280,14 @@ the ancestors and emits a move for each group whose stage changed. The reactor o
 finds out of step, by asking the decider to re-derive. A human moving a group places it before
 build, or starts it at build; the integration-review lane of an `own` group is walked as any card's.
 
-The planning agent _proposes_ a split; the human approves it at the "Approve plan" gate, which
-creates the children (each owning a copy of its plan, so "planned" is a property of the card) and
-makes the card an `own`, auto-building group. Approval starts nothing: the human starting the group
+The planning agent _proposes_ a split, marking each child Planned (a full plan) or Needs planning
+(a brief), and recommends the group's auto-build and merge target (T3O-31). The human approves it at
+the split gate with those settings or edited ones. Approval creates the children — a Planned child
+owns a copy of its plan and lands in Ready, so "planned" is a property of the card; a Needs-planning
+child gets the body as its brief only and lands in Backlog — and makes the card a group with the
+chosen settings. Omitted advice falls back to: every child planned → `own` with auto-build;
+otherwise inherit, auto-build off; under an ancestor with its own branch → inherit. Approval starts
+nothing: the human starting the group
 (moving it to build) does, and from then on every ready child whose dependencies are met starts
 itself while auto-build is on. Children of an `own` group branch off its integration branch, their
 pull requests target it, and the group's own review is the final integration review against its
