@@ -24,13 +24,13 @@ type Shells = ReadonlyArray<BoardCardShell>;
 
 /** The name trunk goes by on the client, which never sees a project's default
     branch name. */
-export const BOARD_TRUNK_LABEL = "trunk";
+const BOARD_TRUNK_LABEL = "trunk";
 
 function byId(shells: Shells): ReadonlyMap<string, BoardCardShell> {
   return new Map(shells.map((shell) => [String(shell.cardId), shell]));
 }
 
-export function boardShellChildren(shells: Shells, cardId: string): Shells {
+function boardShellChildren(shells: Shells, cardId: string): Shells {
   return shells.filter(
     (shell) => shell.parentCardId !== undefined && String(shell.parentCardId) === cardId,
   );
@@ -115,11 +115,7 @@ export function boardShellDescendants(shells: Shells, cardId: string): Shells {
 }
 
 /** Whether work has started on a leaf; a group never has, its children have. */
-export function isBoardShellStarted(
-  shells: Shells,
-  stages: BoardState,
-  card: BoardCardShell,
-): boolean {
+function isBoardShellStarted(shells: Shells, stages: BoardState, card: BoardCardShell): boolean {
   return !isBoardGroupShell(shells, card) && isLeafStarted(stages, card);
 }
 
@@ -254,7 +250,7 @@ export function boardGroupAutoBuildLabel(group: BoardCardGroup): string {
 // ── Drag rules ──────────────────────────────────────────────────────────
 
 /** Ready children with their dependencies met: what a start would move. */
-export function boardGroupReadyChildren(
+function boardGroupReadyChildren(
   shells: Shells,
   stages: BoardState,
   group: BoardCardShell,

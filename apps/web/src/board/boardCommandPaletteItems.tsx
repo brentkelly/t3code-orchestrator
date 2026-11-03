@@ -9,7 +9,7 @@ import { ITEM_ICON_CLASS, type CommandPaletteActionItem } from "../components/Co
 import { useBoardUiStore, type BoardPaletteAction } from "./boardUiStore";
 
 /** The palette rows for the board's published actions. */
-export function boardCommandPaletteItems(
+function boardCommandPaletteItems(
   actions: ReadonlyArray<BoardPaletteAction>,
 ): ReadonlyArray<CommandPaletteActionItem> {
   return actions.map((action) => ({

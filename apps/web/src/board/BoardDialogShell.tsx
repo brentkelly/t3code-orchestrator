@@ -90,7 +90,7 @@ export interface BoardDialogShellProps {
 }
 
 /** Whether the shell's confirm is live: the caller's gate, then the typed ID. */
-export function isBoardDialogConfirmable(
+function isBoardDialogConfirmable(
   props: Pick<BoardDialogShellProps, "confirmDisabled" | "typedKey">,
 ): boolean {
   if (props.confirmDisabled === true) return false;

@@ -5,8 +5,8 @@
  */
 import { toastManager } from "../components/ui/toast";
 
-export const BOARD_TOAST_TIMEOUT_MS = 6_000;
-export const BOARD_TOAST_ERROR_TIMEOUT_MS = 9_000;
+const BOARD_TOAST_TIMEOUT_MS = 6_000;
+const BOARD_TOAST_ERROR_TIMEOUT_MS = 9_000;
 
 export function boardToast(input: {
   readonly title: string;
