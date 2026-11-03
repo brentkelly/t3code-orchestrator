@@ -456,6 +456,15 @@ function EnvironmentBoard({
   // (t3o-29, D1). The FULL columns, not the scoped ones: a child is filtered
   // out of what renders, never out of what the client knows.
   const allCards = useMemo(() => Object.values(columns).flat(), [columns]);
+  // Group rules read across every project, as the server's do: `?project=` and
+  // hidden projects filter what renders, never a group's children.
+  const groupShells = useMemo(() => {
+    const seen = new Set(allCards.map((card) => String(card.cardId)));
+    const elsewhere = [...cardsByProject.values()]
+      .flatMap((projectColumns) => Object.values(projectColumns).flat())
+      .filter((card) => !seen.has(String(card.cardId)));
+    return elsewhere.length === 0 ? allCards : [...allCards, ...elsewhere];
+  }, [allCards, cardsByProject]);
   // …and when each card's thread last went quiet, plus the clock that ticks once
   // when a grace expires (T3O-29). Both feed `boardCardAttention` below, which
   // withholds the "Needs a human" chips until the card has been still for
@@ -576,25 +585,25 @@ function EnvironmentBoard({
   // A group card's face, folded once per board render over the shells the
   // client already holds: no group adds a field to the wire.
   const groupVmByCard = useMemo(() => {
-    const input = { shells: allCards, stages: stageState, attentionFor };
+    const input = { shells: groupShells, stages: stageState, attentionFor };
     const parents = new Set(
-      allCards.flatMap((card) =>
+      groupShells.flatMap((card) =>
         card.parentCardId === undefined ? [] : [String(card.parentCardId)],
       ),
     );
     const out = new Map<string, NonNullable<ReturnType<typeof boardGroupCardVm>>>();
-    for (const card of allCards) {
+    for (const card of groupShells) {
       if (card.group === undefined && !parents.has(String(card.cardId))) continue;
       const vm = boardGroupCardVm(input, card);
       if (vm !== null) out.set(String(card.cardId), vm);
     }
     return out;
-  }, [allCards, stageState, attentionFor]);
+  }, [groupShells, stageState, attentionFor]);
   const groupFor = useCallback(
     (card: BoardCardShell) => groupVmByCard.get(String(card.cardId)) ?? null,
     [groupVmByCard],
   );
-  const parentGroup = parentShell === null ? null : boardShellGroup(allCards, parentShell);
+  const parentGroup = parentShell === null ? null : boardShellGroup(groupShells, parentShell);
   // The first stage a card may be created in here: under an own-branch group,
   // the floor its children live from.
   const floorStageId = boardStageBeforeBuild(stageState)?.stageId ?? null;
@@ -613,8 +622,8 @@ function EnvironmentBoard({
   // Ancestors of this sub-board's group, root first: the breadcrumb, and
   // where Back goes (one level up).
   const ancestors = useMemo(
-    () => (parentShell === null ? [] : [...boardShellAncestors(allCards, parentShell)].reverse()),
-    [allCards, parentShell],
+    () => (parentShell === null ? [] : [...boardShellAncestors(groupShells, parentShell)].reverse()),
+    [groupShells, parentShell],
   );
   /** One level up; `withSheet` opens this group's sheet there, which is
       where a group's own popup lives. */
@@ -956,7 +965,7 @@ function EnvironmentBoard({
   } | null>(null);
   const dispatchDrop = useCallback(
     (targetStage: BoardStageId, orderedIds: ReadonlyArray<string>, source: FoundCard) => {
-      const isGroup = isBoardGroupShell(allCards, source.card);
+      const isGroup = isBoardGroupShell(groupShells, source.card);
       // Dropping a group on Building is the start gesture (T3O-29): it opens
       // a confirmation rather than moving anything yet.
       if (isGroup && targetStage === buildStageId && source.stage !== buildStageId) {
@@ -978,7 +987,7 @@ function EnvironmentBoard({
       }
       performDrop(targetStage, orderedIds, source);
     },
-    [allCards, buildStageId, orderedStages, performDrop],
+    [groupShells, buildStageId, orderedStages, performDrop],
   );
 
   // Turns a target stage + raw insertion index into the settled card order.
@@ -1092,13 +1101,13 @@ function EnvironmentBoard({
       const source = findBoardCard(columns, active.cardId);
       if (source === null) return null;
       return boardDropRefusal({
-        shells: allCards,
+        shells: groupShells,
         stages: stageState,
         card: source.card,
         toStage: stage,
       });
     },
-    [allCards, columns, stageState],
+    [groupShells, columns, stageState],
   );
   // The tip follows the pointer through the DOM, not state: a dragover fires
   // per pointer move, and the board must not re-render that often.
@@ -1309,7 +1318,7 @@ function EnvironmentBoard({
   const selectedShell =
     selectedCardId === null ? null : (findBoardCard(columns, selectedCardId)?.card ?? null);
   const selectedGroup =
-    selectedShell !== null && isBoardGroupShell(allCards, selectedShell) ? selectedShell : null;
+    selectedShell !== null && isBoardGroupShell(groupShells, selectedShell) ? selectedShell : null;
   const selectedGroupId = selectedGroup === null ? null : String(selectedGroup.cardId);
   const selectedGroupKey = selectedGroup?.key ?? null;
   const selectedGroupTitle = selectedGroup?.title ?? null;
@@ -1491,7 +1500,7 @@ function EnvironmentBoard({
                 onToggleChart={() => setSubBoardChartOpen((open) => !open)}
                 parentCardId={scope.parentCardId}
                 parentShell={parentShell}
-                shells={allCards}
+                shells={groupShells}
                 stages={stageState}
                 attentionFor={attentionFor}
               />
@@ -1569,7 +1578,7 @@ function EnvironmentBoard({
           the columns (t3o-29), the order the prototype's drill-in uses. */}
         {scope.kind === "sub-board" ? (
           <BoardSubBoardPlanStrip
-            cards={allCards}
+            cards={groupShells}
             chartOpen={subBoardChartOpen}
             environmentId={environmentId}
             onOpenChild={(childCardId) =>
@@ -1708,7 +1717,7 @@ function EnvironmentBoard({
               group={group}
               key={group.cardId}
               onClose={() => setStartingGroupId(null)}
-              shells={allCards}
+              shells={groupShells}
               stages={stageState}
             />
           );
@@ -1732,7 +1741,7 @@ function EnvironmentBoard({
               key={group.cardId}
               onClose={() => setPhaseGroupId(null)}
               onOpenBoard={(groupCardId) => openSubBoard(groupCardId)}
-              shells={allCards}
+              shells={groupShells}
               stages={stageState}
             />
           );
