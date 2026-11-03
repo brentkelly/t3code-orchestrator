@@ -469,6 +469,15 @@ interface BoardWorld {
  * is an in-memory walk, not a read. Groups nest (T3O-27), so the whole chain is
  * consulted, nearest first.
  */
+/**
+ * A card whose work was cancelled to make it a parent (T3O-28) and whose
+ * checkout is still there. Only an own-branch group legitimately holds a ready
+ * worktree, and the decider refuses `target=own` until this one is reclaimed.
+ */
+function holdsCancelledWork(card: BoardCard): boolean {
+  return card.group !== null && card.group.target !== "own" && card.worktree?.status === "ready";
+}
+
 function cardStageModelOverride(
   board: BoardState,
   card: BoardCard,
@@ -5385,7 +5394,8 @@ const make = Effect.gen(function* () {
     const stage = boardStageById(board, card.stage);
     const finished =
       card.archivedAt !== null || (stage !== null && effectiveBoardStageRole(stage) === "done");
-    if (!finished) return { outcome: "not-finished" } as const;
+    const cancelled = holdsCancelledWork(card);
+    if (!finished && !cancelled) return { outcome: "not-finished" } as const;
     const workspace = yield* workspaceFor(card);
     if (workspace.checkoutPath === null) {
       // The card does hold a worktree; it is the project that cannot be found.
@@ -5416,6 +5426,7 @@ const make = Effect.gen(function* () {
       ...(hookWarning === null ? {} : { hookWarning }),
       createdAt: yield* nowIso,
     });
+    if (cancelled) yield* deleteCancelledCardBranch(card.id);
     return { outcome: "removed" } as const;
   });
 
@@ -5430,7 +5441,9 @@ const make = Effect.gen(function* () {
     const refreshed = yield* readCard(cardId);
     if (refreshed === null) return { outcome: "unknown-card" } as const;
     if (refreshed.worktree?.status !== "ready") return { outcome: "no-worktree" } as const;
-    const attempt = yield* settleCardAtDone(refreshed);
+    const attempt = holdsCancelledWork(refreshed)
+      ? yield* reclaimCancelledCardWorktree(refreshed.id)
+      : yield* settleCardAtDone(refreshed);
     if (attempt === null) {
       // Ready a moment ago: either it went meanwhile, or the card is not one
       // the cleanup reclaims (left Done, or the setting is off).
@@ -7334,9 +7347,15 @@ const make = Effect.gen(function* () {
   const reclaimCancelledCardWorktree = Effect.fn("board-supervisor-reclaimCancelledCardWorktree")(
     function* (cardId: BoardCardId) {
       const card = yield* readCard(cardId);
-      if (card === null) return;
+      if (card === null) return null;
       const attempt = yield* reclaimCardWorktree(card);
-      if (attempt?.outcome !== "removed") return;
+      if (attempt?.outcome === "removed") yield* deleteCancelledCardBranch(cardId);
+      return attempt;
+    },
+  );
+
+  const deleteCancelledCardBranch = Effect.fn("board-supervisor-deleteCancelledCardBranch")(
+    function* (cardId: BoardCardId) {
       const after = yield* readCard(cardId);
       const branch = after?.worktree?.branch ?? null;
       if (after === null || branch === null) return;

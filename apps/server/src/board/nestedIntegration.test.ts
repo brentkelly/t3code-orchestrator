@@ -18,8 +18,10 @@ import {
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 
 import {
+  aliveThreadShell,
   cardMoved,
   cardStage,
   codexStep,
@@ -99,8 +101,8 @@ describe("a depth-3 tree: an own group nested in an own group (T3O-28)", () => {
             );
             const git = yield* h.gitInvocations;
             const cutOrder = git
-              .filter((args) => args[0] === "branch" && args.length === 3)
-              .map((args) => `${args[1]}<-${args[2]}`);
+              .filter((args) => args[0] === "branch" && args[1] === "--no-track")
+              .map((args) => `${args[2]}<-${args[3]}`);
             assert.deepStrictEqual(cutOrder, [
               "board/card-outer<-main",
               "board/card-inner<-board/card-outer",
@@ -444,11 +446,120 @@ describe("a second-round split after reclaim (T3O-28)", () => {
           );
           assert.isTrue(
             (yield* h.gitInvocations).some(
-              (args) => args[0] === "branch" && args[1] === "board/card-parent",
+              (args) => args[0] === "branch" && args[2] === "board/card-parent",
             ),
           );
           const after = (yield* h.board).cards.find((candidate) => candidate.id === parent.id);
           assert.strictEqual(after?.worktree?.status, "branch-only");
+        }),
+    );
+  });
+});
+
+const workCancelledEvent = (cancelled: BoardCard, sequence: number): HarnessEvent =>
+  ({
+    type: "board.card-updated",
+    sequence,
+    payload: { cardId: cancelled.id, card: cancelled, workCancelled: true },
+  }) as unknown as HarnessEvent;
+
+/** What the decider leaves after cancel-work: a heading group at Sprint whose
+    pull request is retired and whose worktree is still there. */
+const asCancelled = (started: BoardCard): BoardCard => ({
+  ...started,
+  stage: BOARD_SEED_STAGE_IDS.sprint,
+  group: defaultBoardCardGroup(
+    EMPTY_BOARD_STATE,
+    { stage: BOARD_SEED_STAGE_IDS.sprint },
+    { heading: true, prevStage: BOARD_SEED_STAGE_IDS.sprint },
+  ),
+  pullRequest: null,
+  pullRequestHistory: [openPullRequest(41, `board/${started.id}`)],
+});
+
+describe("cancelling a started leaf's work to make it a parent (T3O-28)", () => {
+  it.effect(
+    "abandons the step, stops its thread, closes the PR, then reclaims and deletes the branch",
+    () =>
+      withGovernor(
+        {
+          board: {
+            cards: [card("card-x", "ready", { worktree: readyWorktree("card-x") })],
+            nextCardNumberByProject: {},
+          },
+          settings,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const leaf = card("card-x", building, { worktree: readyWorktree("card-x") });
+            yield* h.pumpDomain(movedToBuilding(leaf, 1));
+            const running = (yield* h.board).stepStates?.find((state) => state.cardId === leaf.id);
+            assert.strictEqual(running?.status, "running");
+            const threadId = String(running!.threadId);
+            yield* Ref.update(
+              h.shells,
+              (current) => new Map([...current, [threadId, aliveThreadShell(threadId)]]),
+            );
+
+            const started = (yield* h.board).cards.find((candidate) => candidate.id === leaf.id)!;
+            yield* h.pumpDomain(workCancelledEvent(asCancelled(started), 2));
+            yield* h.reactor.drain;
+
+            const after = yield* h.board;
+            const state = after.stepStates?.find((candidate) => candidate.cardId === leaf.id);
+            assert.strictEqual(state?.status, "abandoned");
+            assert.isTrue(
+              (yield* h.commands).some(
+                (command) => command.type === "thread.interrupt" && command.threadId === threadId,
+              ),
+            );
+            assert.deepStrictEqual(yield* h.closePullRequestCalls, [{ number: 41 }]);
+            assert.include(yield* h.removedWorktrees, "/tmp/wt/card-x");
+            assert.deepStrictEqual(remoteDeletes(yield* h.gitInvocations), ["board/card-x"]);
+          }),
+      ),
+  );
+
+  it.effect("a kept worktree keeps its branch, and Remove worktree then takes both", () => {
+    const cancelled = asCancelled(card("card-x", building, { worktree: readyWorktree("card-x") }));
+    return withGovernor(
+      {
+        board: { cards: [cancelled], nextCardNumberByProject: {} },
+        settings,
+        worktreeUndurable: true,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(workCancelledEvent(cancelled, 1));
+          yield* h.reactor.drain;
+          assert.deepStrictEqual(yield* h.removedWorktrees, []);
+          assert.lengthOf(remoteDeletes(yield* h.gitInvocations), 0);
+
+          const removed = yield* h.reactor.forceRemoveWorktree(cancelled.id);
+          assert.deepStrictEqual(removed, { outcome: "removed" });
+          assert.include(yield* h.removedWorktrees, "/tmp/wt/card-x");
+          assert.deepStrictEqual(remoteDeletes(yield* h.gitInvocations), ["board/card-x"]);
+        }),
+    );
+  });
+
+  it.effect("Check again reclaims a kept cancelled worktree once its work is safe", () => {
+    const cancelled = asCancelled(card("card-x", building, { worktree: readyWorktree("card-x") }));
+    return withGovernor(
+      {
+        board: { cards: [cancelled], nextCardNumberByProject: {} },
+        settings,
+        worktreeUndurable: true,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(workCancelledEvent(cancelled, 1));
+          yield* h.reactor.drain;
+          assert.deepStrictEqual(yield* h.removedWorktrees, []);
+          h.setWorktreeUndurable(false);
+          const result = yield* h.reactor.checkWorktree(cancelled.id);
+          assert.deepStrictEqual(result, { outcome: "removed" });
+          assert.deepStrictEqual(remoteDeletes(yield* h.gitInvocations), ["board/card-x"]);
         }),
     );
   });
