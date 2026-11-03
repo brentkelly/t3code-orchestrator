@@ -797,6 +797,9 @@ const make = Effect.gen(function* () {
   // first time a settle lands, so the set stays bounded by "abandoned this
   // process".
   const abandonedThreads = new Set<string>();
+  /** Threads whose interview turn auto-plan interrupted to steer (T3O-32): that
+      turn's question, interrupt and end belong to the dead turn, not the steer. */
+  const steeredThreads = new Set<string>();
 
   /**
    * Settle every thread the board is finished with (t3o-13).
@@ -3907,7 +3910,13 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
   ) {
     // The board's own interrupts (see `interruptOrphan` / `abandonedThreads`).
-    if (orphanedThreads.has(String(threadId)) || abandonedThreads.has(String(threadId))) return;
+    if (
+      orphanedThreads.has(String(threadId)) ||
+      abandonedThreads.has(String(threadId)) ||
+      steeredThreads.has(String(threadId))
+    ) {
+      return;
+    }
     const board = yield* readBoard;
     const found = stepThreadCard(board, threadId);
     if (found === null || found.card.archivedAt !== null) return;
@@ -6442,7 +6451,11 @@ const make = Effect.gen(function* () {
     completedTurnId: string | undefined,
   ) {
     const board = yield* readBoard;
-    yield* handleTurnCompleted(board, threadId, completedTurnId);
+    // The first turn to end after a steer is the interrupted interview turn; the
+    // queued steer turn runs next and its own end is handled as usual.
+    if (!steeredThreads.delete(String(threadId))) {
+      yield* handleTurnCompleted(board, threadId, completedTurnId);
+    }
     const owned =
       resolveBoardCardForThread(board, threadId) !== null || abandonedThreads.has(String(threadId));
     if (!owned) return;
@@ -6519,7 +6532,8 @@ const make = Effect.gen(function* () {
    * A split is approved with the agent's recommended settings and logged as an
    * important decision; for a click the group is then started, which builds
    * every ready child whose dependencies are met only when auto-build is on.
-   * Every gate still applies, and a refusal lands on the rail.
+   * Every gate still applies; a refused approval ends the request, with the
+   * reason on the rail.
    */
   const approveAutoPlannedCard = Effect.fn("board-supervisor-approveAutoPlannedCard")(function* (
     card: BoardCard,
@@ -6546,7 +6560,7 @@ const make = Effect.gen(function* () {
         createdAt: yield* nowIso,
       });
       if (refusal !== null) {
-        yield* autoPlanNote(card.id, `Auto-plan could not approve the split: ${refusal}`);
+        yield* endAutoPlan(card.id, `Auto-plan could not approve the split: ${refusal}`);
         return;
       }
       const titles = plans.map((plan) => plan.title).join("; ");
@@ -6611,7 +6625,7 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     if (toReady !== null) {
-      yield* autoPlanNote(card.id, `Auto-plan could not approve the plan: ${toReady}`);
+      yield* endAutoPlan(card.id, `Auto-plan could not approve the plan: ${toReady}`);
       return;
     }
     if (mode !== "build" || buildStage === null || next === buildStage.stageId) return;
@@ -6688,6 +6702,29 @@ const make = Effect.gen(function* () {
       state.stepId === card.stage &&
       state.status === "running"
     ) {
+      const threadId = state.threadId;
+      // Supervised as unattended BEFORE the steer lands, and the in-flight
+      // interview turn interrupted, so a question it was about to ask does not
+      // park the step behind the queued steer.
+      if (state.humanInLoop) {
+        yield* dispatch({
+          type: "board.card.retune-step",
+          commandId: yield* commandId("auto-plan-retune"),
+          cardId: card.id,
+          stepId: state.stepId,
+          humanInLoop: false,
+          createdAt: yield* nowIso,
+        });
+      }
+      const shell = yield* liveThread(threadId);
+      if (shell?.activeTurnRef != null) {
+        steeredThreads.add(String(threadId));
+        const interrupted = yield* optional(
+          "thread.interrupt",
+          threads.interrupt({ commandId: yield* commandId("auto-plan-interrupt"), threadId }),
+        );
+        if (!interrupted) steeredThreads.delete(String(threadId));
+      }
       const steered = yield* optional(
         "thread.send",
         threads.send({
@@ -6699,19 +6736,8 @@ const make = Effect.gen(function* () {
           interactionMode: "default",
         }),
       );
-      if (steered) {
-        if (state.humanInLoop) {
-          yield* dispatch({
-            type: "board.card.retune-step",
-            commandId: yield* commandId("auto-plan-retune"),
-            cardId: card.id,
-            stepId: state.stepId,
-            humanInLoop: false,
-            createdAt: yield* nowIso,
-          });
-        }
-        return { outcome: "steered" } as const;
-      }
+      if (steered) return { outcome: "steered" } as const;
+      steeredThreads.delete(String(threadId));
     }
     const started = yield* dispatchRefusal({
       type: "board.card.start-stage-thread",
@@ -6966,6 +6992,7 @@ const make = Effect.gen(function* () {
   const handleInputRequested = Effect.fn("board-supervisor-handleInputRequested")(function* (
     threadId: ThreadId,
   ) {
+    if (steeredThreads.has(String(threadId))) return;
     const board = yield* readBoard;
     const watched = stepThreadCard(board, threadId);
     if (watched === null || watched.state.status !== "running") return;

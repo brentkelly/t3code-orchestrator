@@ -21,8 +21,10 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 
 import { ThreadCommandRefusedError } from "./ThreadGateway.ts";
+import { aliveThread } from "./threadGateway.testkit.ts";
 
 import {
   cardMoved,
@@ -32,6 +34,9 @@ import {
   NOW,
   settingsWith,
   stepCompleted,
+  turnCompleted,
+  turnInterruptRequested,
+  userInputRequested,
   withGovernor,
 } from "./supervisorHarness.testkit.ts";
 
@@ -433,3 +438,85 @@ it.effect("a steering turn that does not land falls back to a fresh unattended r
       }),
   );
 });
+
+it.effect("a refused auto-approval ends the request, so planning is gated again", () => {
+  const card = splitCard("refused", true);
+  // A live child already on the board: the split approve refuses ("approved once").
+  const stray = {
+    ...makeBoardCard({ id: "stray", stage: "done", orderKey: "n" }),
+    parentCardId: BoardCardId.make("refused"),
+  };
+  return withGovernor(
+    {
+      board: {
+        cards: [card, stray],
+        plans: splitPlans("refused"),
+        nextCardNumberByProject: {},
+      },
+      settings,
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("refused");
+        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        yield* pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
+
+        const after = yield* board;
+        assert.strictEqual(cardStage(after, id), BOARD_SEED_STAGE_IDS.planning);
+        assert.isString(cardOf(after.cards, "refused")?.autoPlan?.endedAt);
+      }),
+  );
+});
+
+it.effect(
+  "steering interrupts the in-flight interview turn, so its question does not end the request",
+  () => {
+    const card = planningCard("midturn");
+    return withGovernor(
+      { board: { cards: [card], nextCardNumberByProject: {} }, settings },
+      ({ pumpDomain, pumpRuntime, board, commands, reactor, shells }) =>
+        Effect.gen(function* () {
+          const id = BoardCardId.make("midturn");
+          yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+          const interview = boardCardStepState(yield* board, id);
+          assert.ok(interview?.threadId != null);
+          const threadId = interview.threadId;
+          yield* Ref.update(shells, (map) =>
+            new Map(map).set(
+              String(threadId),
+              aliveThread(String(threadId), { activeTurnRef: "turn-interview" }),
+            ),
+          );
+
+          const result = yield* reactor.autoPlanCard(id);
+          assert.deepStrictEqual(result, { outcome: "steered" });
+          const calls = yield* commands;
+          const interrupted = calls.findIndex(
+            (command) => command.type === "thread.interrupt" && command.threadId === threadId,
+          );
+          const steered = calls.findIndex(
+            (command) =>
+              command.type === "thread.send" && command.text === BOARD_AUTO_PLAN_INSTRUCTION,
+          );
+          assert.isAtLeast(interrupted, 0);
+          assert.isAbove(steered, interrupted);
+
+          // The interrupted turn's own question, its interrupt and its end.
+          yield* pumpRuntime(userInputRequested(threadId));
+          yield* pumpRuntime(turnInterruptRequested(threadId));
+          yield* Ref.update(shells, (map) =>
+            new Map(map).set(
+              String(threadId),
+              aliveThread(String(threadId), { activeTurnRef: "turn-interview" }),
+            ),
+          );
+          yield* pumpRuntime(turnCompleted(threadId, "turn-interview"));
+
+          const after = yield* board;
+          assert.strictEqual(boardCardStepState(after, id)?.status, "running");
+          assert.isFalse(boardCardStepState(after, id)?.humanInLoop);
+          assert.strictEqual(cardOf(after.cards, "midturn")?.autoPlan?.endedAt, null);
+        }),
+    );
+  },
+);
