@@ -1258,6 +1258,40 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // The ancestors' dependencies, minus the card's own (T3O-27). The depth cap
+  // guards a corrupt parent cycle, as `boardCardAncestors` does.
+  const listBoardCardGroupDependencyRefRows = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardDependencyRefDbRow,
+    execute: (cardId) => sql`
+      WITH RECURSIVE ancestors(card_id, depth) AS (
+        SELECT parent_card_id, 1 FROM board_cards
+        WHERE card_id = ${cardId} AND parent_card_id IS NOT NULL
+        UNION ALL
+        SELECT board_cards.parent_card_id, ancestors.depth + 1
+        FROM board_cards JOIN ancestors ON board_cards.card_id = ancestors.card_id
+        WHERE board_cards.parent_card_id IS NOT NULL AND ancestors.depth < 64
+      )
+      SELECT
+        card_id AS "cardId",
+        key,
+        title,
+        stage,
+        archived_at AS "archivedAt"
+      FROM board_cards
+      WHERE card_id IN (
+        SELECT dependency.value
+        FROM ancestors
+        JOIN board_cards AS group_card ON group_card.card_id = ancestors.card_id,
+        json_each(group_card.depends_on) AS dependency
+      )
+      AND card_id NOT IN (
+        SELECT value FROM json_each((SELECT depends_on FROM board_cards WHERE card_id = ${cardId}))
+      )
+      AND card_id <> ${cardId}
+    `,
+  });
+
   const listBoardCardDependentRefRows = SqlSchema.findAll({
     Request: BoardCardId,
     Result: BoardCardDependencyRefDbRow,
@@ -2326,6 +2360,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardShellRows,
     listArchivedBoardCardShellRows,
     listBoardCardDependencyRefRows,
+    listBoardCardGroupDependencyRefRows,
     listBoardCardDependentRefRows,
     listBoardCardChildRefRows,
     findBoardCardRow,
@@ -3924,6 +3959,7 @@ export function makeBoardCardDetailLoader(
       queries.listBoardCardActivityRowsForCard(cardId),
       queries.findBoardCardStepErrorRow(cardId),
       queries.listBoardCardDecisionRowsForCard(cardId),
+      queries.listBoardCardGroupDependencyRefRows(cardId),
     ]).pipe(
       Effect.map(
         ([
@@ -3940,6 +3976,7 @@ export function makeBoardCardDetailLoader(
           activityRows,
           stepErrorRow,
           decisionRows,
+          groupDependencyRows,
         ]) => {
           if (Option.isNone(cardRow)) return null;
           const links = sortBoardCardThreadLinks(
@@ -3976,6 +4013,7 @@ export function makeBoardCardDetailLoader(
               const row = dependencyRefsById.get(dependencyId);
               return row === undefined ? [] : [row];
             }),
+            groupDependencies: groupDependencyRows,
             dependents: dependentRows,
             hasPlan: plans.length > 0,
             plans,

@@ -505,8 +505,8 @@ const makeBoardEventBase = Effect.fn("makeBoardEventBase")(function* (input: {
  * gives the post-event answer, and only a card whose flag actually flips
  * emits, so a no-op archive stays a one-event command.
  *
- * One level deep is complete: the gate reads only a card's own `dependsOn`,
- * so blocking never propagates past the direct dependents.
+ * A group's dependencies hold back every card inside it (T3O-27), so a
+ * dependent is any card whose INHERITED dependencies name `changed`.
  */
 const boardDependentBlockedEvents = Effect.fn("boardDependentBlockedEvents")(function* (input: {
   readonly board: BoardState;
@@ -516,16 +516,37 @@ const boardDependentBlockedEvents = Effect.fn("boardDependentBlockedEvents")(fun
   const cards = input.board.cards.map((card) =>
     card.id === input.changed.id ? input.changed : card,
   );
+  return yield* boardReflagBlockedEvents({
+    board: input.board,
+    command: input.command,
+    cards,
+    includes: (card) =>
+      card.id !== input.changed.id &&
+      boardCardInheritedDependsOn({ cards }, card).includes(input.changed.id),
+  });
+});
+
+/**
+ * Re-derive the stored `blocked` of every live card `includes` selects,
+ * against the post-command `cards`, and emit an update only where it flips.
+ * The descendants of a group whose own dependencies or ancestry changed
+ * inherit that change, so callers pass them through here too.
+ */
+const boardReflagBlockedEvents = Effect.fn("boardReflagBlockedEvents")(function* (input: {
+  readonly board: BoardState;
+  readonly command: BoardCardCommand;
+  readonly cards: ReadonlyArray<BoardCard>;
+  readonly includes: (card: BoardCard) => boolean;
+}): Effect.fn.Return<ReadonlyArray<PlannedBoardEvent>, PlatformError.PlatformError, Crypto.Crypto> {
   const events: PlannedBoardEvent[] = [];
-  for (const dependent of cards) {
-    if (dependent.id === input.changed.id) continue;
+  for (const dependent of input.cards) {
     if (dependent.archivedAt !== null) continue;
-    if (!dependent.dependsOn.includes(input.changed.id)) continue;
+    if (!input.includes(dependent)) continue;
     const blocked = deriveBoardCardBlocked({
       board: input.board,
       stage: dependent.stage,
-      dependsOn: dependent.dependsOn,
-      cards,
+      dependsOn: boardCardInheritedDependsOn({ cards: input.cards }, dependent),
+      cards: input.cards,
     });
     if (blocked === dependent.blocked) continue;
     const nextCard: BoardCard = {
@@ -548,6 +569,15 @@ const boardDependentBlockedEvents = Effect.fn("boardDependentBlockedEvents")(fun
   }
   return events;
 });
+
+/** Whether `ancestorId` is a strict ancestor of `card` within `cards`. */
+const hasBoardAncestor = (
+  board: BoardState,
+  cards: ReadonlyArray<BoardCard>,
+  card: BoardCard,
+  ancestorId: BoardCardId,
+): boolean =>
+  card.id !== ancestorId && isBoardCardSelfOrAncestor({ ...board, cards }, card, ancestorId);
 
 /**
  * Per-card model overrides (t3o-29, D1). One rule: every key must name a stage
@@ -1469,7 +1499,7 @@ const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
       blocked: deriveBoardCardBlocked({
         board,
         stage: next.stage,
-        dependsOn: card.dependsOn,
+        dependsOn: boardCardInheritedDependsOn(board, card),
         cards: board.cards,
       }),
       updatedAt: command.createdAt,
@@ -1620,7 +1650,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // a card cannot be created directly into a build-or-later stage while it
       // has unmet dependencies, exactly as it cannot be moved there.
       if (isBoardStageAtOrAfterBuild(board, stage)) {
-        const unmet = unmetBoardCardDependencies({ board, dependsOn, cards: board.cards });
+        const unmet = unmetBoardCardDependencies({
+          board,
+          dependsOn: boardCardInheritedDependsOn(board, {
+            id: command.cardId,
+            parentCardId: command.parentCardId ?? null,
+            dependsOn,
+          }),
+          cards: board.cards,
+        });
         if (unmet.length > 0) {
           return yield* invariant(
             command,
@@ -2087,7 +2125,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         blocked: deriveBoardCardBlocked({
           board,
           stage: command.toStage,
-          dependsOn: card.dependsOn,
+          dependsOn: boardCardInheritedDependsOn(board, card),
           cards: board.cards,
         }),
         ...(startsNewRound ? retireBoardCardPullRequest(card) : {}),
@@ -2228,7 +2266,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           blocked: deriveBoardCardBlocked({
             board,
             stage,
-            dependsOn: mover.dependsOn,
+            dependsOn: boardCardInheritedDependsOn(board, {
+              ...mover,
+              parentCardId: command.parentCardId,
+            }),
             cards: board.cards,
           }),
           updatedAt: command.createdAt,
@@ -2326,6 +2367,18 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           },
         });
       }
+      // A moved group's cards now inherit their new ancestors' dependencies.
+      const movedIds = new Set(moved.map((card) => card.id));
+      events.push(
+        ...(yield* boardReflagBlockedEvents({
+          board: after,
+          command,
+          cards: after.cards,
+          includes: (card) =>
+            !movedIds.has(card.id) &&
+            roots.some((root) => hasBoardAncestor(after, after.cards, card, root.id)),
+        })),
+      );
       return events;
     }
 
@@ -2581,7 +2634,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         blocked:
           proposedDependsOn === undefined
             ? card.blocked
-            : deriveBoardCardBlocked({ board, stage: card.stage, dependsOn, cards: board.cards }),
+            : deriveBoardCardBlocked({
+                board,
+                stage: card.stage,
+                dependsOn: boardCardInheritedDependsOn(board, { ...card, dependsOn }),
+                cards: board.cards,
+              }),
         humanInLoop: command.humanInLoop === undefined ? card.humanInLoop : command.humanInLoop,
         reviewOverrides,
         modelOverrides,
@@ -2602,7 +2660,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         autoMergeHold: command.autoMerge === false ? null : card.autoMergeHold,
         updatedAt: command.createdAt,
       };
-      return {
+      const updated: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -2652,6 +2710,20 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...(edits.edit === undefined ? {} : { edit: edits.edit }),
         },
       };
+      if (proposedDependsOn === undefined) return updated;
+      // A group's dependencies hold back every card inside it (T3O-27).
+      const cards = board.cards.map((candidate) =>
+        candidate.id === card.id ? nextCard : candidate,
+      );
+      return [
+        updated,
+        ...(yield* boardReflagBlockedEvents({
+          board,
+          command,
+          cards,
+          includes: (candidate) => hasBoardAncestor(board, cards, candidate, card.id),
+        })),
+      ];
     }
 
     case "board.card.link-thread": {
@@ -3000,7 +3072,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               blocked: deriveBoardCardBlocked({
                 board: { ...board, cards: unarchivedCards },
                 stage: candidate.stage,
-                dependsOn: candidate.dependsOn,
+                dependsOn: boardCardInheritedDependsOn({ cards: unarchivedCards }, candidate),
                 cards: unarchivedCards,
               }),
               updatedAt: command.createdAt,
@@ -3077,7 +3149,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         blocked: deriveBoardCardBlocked({
           board,
           stage: capped,
-          dependsOn: card.dependsOn,
+          dependsOn: boardCardInheritedDependsOn(board, card),
           cards: board.cards,
         }),
         updatedAt: command.createdAt,
@@ -3140,17 +3212,23 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // deleted one can never come back, and `unmetBoardCardDependencies`
       // counts an unresolvable id as unmet forever, so leaving the edge would
       // block every dependent permanently with no card left to unblock them.
+      const rewritten = remaining.map((candidate) =>
+        candidate.dependsOn.includes(command.cardId)
+          ? { ...candidate, dependsOn: candidate.dependsOn.filter((id) => id !== command.cardId) }
+          : candidate,
+      );
+      const edgeHolders = remaining.filter((candidate) =>
+        candidate.dependsOn.includes(command.cardId),
+      );
       const edited: Array<PlannedBoardEvent> = [];
-      for (const dependent of remaining) {
-        if (!dependent.dependsOn.includes(command.cardId)) continue;
-        const dependsOn = dependent.dependsOn.filter((id) => id !== command.cardId);
+      for (const dependent of edgeHolders) {
+        const rewrittenCard = rewritten.find((candidate) => candidate.id === dependent.id)!;
         const nextCard: BoardCard = {
-          ...dependent,
-          dependsOn,
+          ...rewrittenCard,
           blocked: deriveBoardCardBlocked({
             board,
             stage: dependent.stage,
-            dependsOn,
+            dependsOn: boardCardInheritedDependsOn({ cards: rewritten }, rewrittenCard),
             cards: remaining,
           }),
           updatedAt: command.createdAt,
@@ -3168,6 +3246,17 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           },
         });
       }
+      // Cards inside a group that held the edge lose it too (T3O-27).
+      edited.push(
+        ...(yield* boardReflagBlockedEvents({
+          board,
+          command,
+          cards: rewritten,
+          includes: (candidate) =>
+            !edgeHolders.some((holder) => holder.id === candidate.id) &&
+            edgeHolders.some((holder) => hasBoardAncestor(board, rewritten, candidate, holder.id)),
+        })),
+      );
       // The edits ride FIRST. Each carries a `card` the projector upserts
       // wholesale, and an upsert of a dependent computed without the deleted
       // card is only correct once — or before — the deleted card is gone;
@@ -4856,7 +4945,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (!mergeRole && isBoardStageAtOrAfterBuild(board, card.stage)) {
         const unmet = unmetBoardCardDependencies({
           board,
-          dependsOn: card.dependsOn,
+          dependsOn: boardCardInheritedDependsOn(board, card),
           cards: board.cards,
         });
         if (unmet.length > 0) {

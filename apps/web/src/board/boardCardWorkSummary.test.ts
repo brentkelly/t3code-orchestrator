@@ -77,6 +77,7 @@ function detail(
     plans,
     children: edges?.children ?? [],
     dependencies: [],
+    groupDependencies: [],
     dependents: [],
     activity: [],
     parentModelOverrides: null,

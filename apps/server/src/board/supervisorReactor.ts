@@ -3199,7 +3199,8 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** Cascade every group holding a card that waits on `cardId` (T3O-27). */
+  /** Cascade every group holding a card that waits on `cardId`, directly or
+      through a group it sits in (T3O-27). */
   const cascadeDependentGroups = Effect.fn("board-supervisor-cascadeDependentGroups")(function* (
     cardId: BoardCardId,
   ) {
@@ -3207,7 +3208,9 @@ const make = Effect.gen(function* () {
     const parents = new Set<BoardCardId>();
     for (const candidate of board.cards) {
       if (candidate.archivedAt !== null || candidate.parentCardId === null) continue;
-      if (candidate.dependsOn.includes(cardId)) parents.add(candidate.parentCardId);
+      if (boardCardInheritedDependsOn(board, candidate).includes(cardId)) {
+        parents.add(candidate.parentCardId);
+      }
     }
     for (const parentId of parents) yield* cascadeUnblockedChildren(parentId);
   });
@@ -7286,13 +7289,13 @@ const make = Effect.gen(function* () {
   const startArmedCards = Effect.fn("board-supervisor-startArmedCards")(function* (
     /** Which cards to consider. The targeted paths narrow to the one card that
         could have changed; the sweep and boot reconciliation pass everything. */
-    select: (card: BoardCard) => boolean,
+    select: (card: BoardCard, board: BoardState) => boolean,
   ) {
     const board = yield* readBoard;
     const buildStage = boardStageWithRole(board, "build");
     if (buildStage === null) return;
     for (const card of board.cards) {
-      if (!select(card)) continue;
+      if (!select(card, board)) continue;
       if (!boardCardAutoStartDue({ board, card })) continue;
       // A move the decider would refuse for a NON-dependency reason (D5). The
       // card stays ARMED and nothing is said: a pending split is already a
@@ -7315,7 +7318,9 @@ const make = Effect.gen(function* () {
       on an ordinary board costs one board read and a filter rather than a
       whole-board dependency resolution. */
   const startArmedDependents = (dependencyId: BoardCardId) =>
-    startArmedCards((card) => card.dependsOn.includes(dependencyId));
+    startArmedCards((card, board) =>
+      boardCardInheritedDependsOn(board, card).includes(dependencyId),
+    );
 
   /**
    * Requeue every step whose backoff rung has arrived (T3O-22, D7/D10).

@@ -1089,6 +1089,61 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
     }),
   );
 
+  it.effect("a group's dependencies feed every build gate, not only the move", () =>
+    Effect.gen(function* () {
+      const dep = BoardCardId.make("dep");
+      const update = (
+        id: string,
+        fields: { dependsOn?: ReadonlyArray<BoardCardId>; autoStart?: boolean },
+      ): BoardCommand => ({
+        type: "board.card.update",
+        commandId: CommandId.make(`cmd-update-${id}`),
+        cardId: BoardCardId.make(id),
+        ...fields,
+        createdAt: NOW,
+      });
+      // Leaving Done re-blocks the cards building inside the group that waits on it.
+      const building = [
+        card("dep", "done"),
+        card("g", "building", { group: group("ready", { started: true }), dependsOn: [dep] }),
+        child("a", "building", "g"),
+      ];
+      const reopened = yield* decideEvents(move("dep", "review"), model(building));
+      expect(stagesAfter(reopened).get("a")?.card.blocked).toBe(true);
+      // Giving the group a dependency flags the cards already inside it.
+      const unflagged = [
+        card("dep", "review"),
+        card("g", "building", { group: group("ready", { started: true }) }),
+        child("a", "building", "g"),
+      ];
+      const edited = yield* decideEvents(update("g", { dependsOn: [dep] }), model(unflagged));
+      expect(stagesAfter(edited).get("a")?.card.blocked).toBe(true);
+      // A card with nothing of its own to wait on can be armed behind its group.
+      const waiting = [
+        card("dep", "review"),
+        card("g", "ready", { group: group("ready"), dependsOn: [dep] }),
+        child("a", "ready", "g"),
+      ];
+      const armed = yield* decideEvents(update("a", { autoStart: true }), model(waiting));
+      expect(stagesAfter(armed).get("a")?.card.autoStart).toBe(true);
+      // Nor can a card be created straight into Building behind a waiting group.
+      const created = yield* decideFail(
+        {
+          type: "board.card.create",
+          commandId: CommandId.make("cmd-create-behind"),
+          cardId: BoardCardId.make("n9"),
+          projectId,
+          title: "Behind the group",
+          stage: BoardStageId.make("building"),
+          parentCardId: BoardCardId.make("g"),
+          createdAt: NOW,
+        },
+        model(waiting),
+      );
+      assert.include(String(created), "unmet dependencies");
+    }),
+  );
+
   it.effect("a heading created under an own-branch group lands on its floor", () =>
     Effect.gen(function* () {
       const cards = [

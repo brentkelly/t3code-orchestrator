@@ -148,19 +148,6 @@ export function boardCardLiveDescendants(
   return out;
 }
 
-/** A card's own dependencies plus every ancestor group's: a group that is
-    waiting holds back everything inside it. */
-export function boardCardInheritedDependsOn(
-  board: BoardState,
-  card: Pick<BoardCard, "id" | "parentCardId" | "dependsOn">,
-): ReadonlyArray<BoardCardId> {
-  const out = new Set<BoardCardId>(card.dependsOn);
-  for (const ancestor of boardCardAncestors(board, card)) {
-    for (const id of ancestor.dependsOn) out.add(id);
-  }
-  return [...out];
-}
-
 /** Whether `ancestorId` is `card` itself or one of its ancestors. */
 export function isBoardCardSelfOrAncestor(
   board: BoardState,

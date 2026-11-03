@@ -2570,6 +2570,20 @@ describe("auto-start (T3O-24)", () => {
       expect(boardCardAutoStartDue(on(waiting({ dependsOn: [done.id] }), done))).toBe(false);
     });
 
+    it("waits on the dependencies of every group the card sits in (T3O-26)", () => {
+      const parentId = BoardCardId.make("card-parent");
+      const groupCard = (dependsOn: ReadonlyArray<BoardCardId>) => ({
+        ...waiting({ id: parentId, dependsOn }),
+        group: defaultBoardCardGroup(EMPTY_BOARD_STATE, { stage: BOARD_SEED_STAGE_IDS.ready }),
+      });
+      const armed = waiting({ autoStart: true, dependsOn: [done.id], parentCardId: parentId });
+      expect(boardCardAutoStartDue(on(armed, groupCard([open.id]), done, open))).toBe(false);
+      expect(boardCardAutoStartDue(on(armed, groupCard([done.id]), done))).toBe(true);
+      // Nothing of its own to wait on, but its group does: armable.
+      const bare = waiting({ parentCardId: parentId });
+      expect(boardCardCanArmAutoStart(on(bare, groupCard([open.id]), open))).toBe(true);
+    });
+
     it("is due for an armed child, and never for an archived card or one past Ready", () => {
       const armed = { autoStart: true, dependsOn: [done.id] } as const;
       expect(

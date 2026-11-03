@@ -1678,6 +1678,26 @@ export function unmetBoardCardDependencies(input: {
   });
 }
 
+/** A card's own dependencies plus every ancestor group's: a group that is
+    waiting holds back everything inside it (T3O-27). Every build gate reads
+    this, so the blocked flag, auto-start and the move gate agree. */
+export function boardCardInheritedDependsOn(
+  board: { readonly cards: ReadonlyArray<Pick<BoardCard, "id" | "parentCardId" | "dependsOn">> },
+  card: Pick<BoardCard, "id" | "parentCardId" | "dependsOn">,
+): ReadonlyArray<BoardCardId> {
+  const out = new Set<BoardCardId>(card.dependsOn);
+  const seen = new Set<BoardCardId>([card.id]);
+  let parentId = card.parentCardId;
+  while (parentId !== null && !seen.has(parentId)) {
+    seen.add(parentId);
+    const parent = board.cards.find((candidate) => candidate.id === parentId);
+    if (parent === undefined) break;
+    for (const id of parent.dependsOn) out.add(id);
+    parentId = parent.parentCardId;
+  }
+  return [...out];
+}
+
 /**
  * Blocked derivation (D11): unmet dependencies block a card from the `build`
  * role onward and never earlier — no Ready anchor, whatever the stages are
@@ -2876,7 +2896,7 @@ function isBoardCardAtAutoStartGate(input: {
  */
 export function boardCardCanArmAutoStart(input: {
   readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "archivedAt" | "dependsOn"> & {
+  readonly card: Pick<BoardCard, "id" | "parentCardId" | "stage" | "archivedAt" | "dependsOn"> & {
     readonly group?: BoardCard["group"] | undefined;
   };
 }): boolean {
@@ -2884,7 +2904,7 @@ export function boardCardCanArmAutoStart(input: {
   return (
     unmetBoardCardDependencies({
       board: input.board,
-      dependsOn: input.card.dependsOn,
+      dependsOn: boardCardInheritedDependsOn(input.board, input.card),
       cards: input.board.cards,
     }).length > 0
   );
@@ -2903,7 +2923,10 @@ export function boardCardCanArmAutoStart(input: {
  */
 export function boardCardAutoStartDue(input: {
   readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "archivedAt" | "dependsOn" | "autoStart"> & {
+  readonly card: Pick<
+    BoardCard,
+    "id" | "parentCardId" | "stage" | "archivedAt" | "dependsOn" | "autoStart"
+  > & {
     readonly group?: BoardCard["group"] | undefined;
   };
 }): boolean {
@@ -2912,7 +2935,7 @@ export function boardCardAutoStartDue(input: {
   return (
     unmetBoardCardDependencies({
       board: input.board,
-      dependsOn: input.card.dependsOn,
+      dependsOn: boardCardInheritedDependsOn(input.board, input.card),
       cards: input.board.cards,
     }).length === 0
   );
@@ -8487,6 +8510,12 @@ export const BoardCardDetail = Schema.Struct({
       must read as such rather than as a dangling id. An id with no row left
       is simply absent. */
   dependencies: Schema.Array(BoardCardDependencyRef),
+  /** Dependencies the card inherits from its ancestor groups and does not
+      hold itself (T3O-27): a waiting group holds back everything inside it,
+      so the detail's build gate must count them. */
+  groupDependencies: Schema.Array(BoardCardDependencyRef).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   /** Cards whose `dependsOn` names this one, archived included. Feeds the
       archive confirmation (t3o-13, D3), which counts only the live ones. */
   dependents: Schema.Array(BoardCardDependencyRef),

@@ -31,6 +31,9 @@ Drag the group to **Building**. You are asked to confirm first:
 - With it off, the ready children with no unmet dependencies start once. Children that become ready
   later wait for you.
 
+A group's own dependencies count for every card inside it, at any depth: none of them can start
+until what the group depends on is done.
+
 Dragging a group to **Backlog**, **Sprint** or **Planning** only moves where it sits, and only before
 any child has started. A column the group can't go to shows a dashed outline while you drag, and a
 note by the pointer says why. To pause a group that is building, turn off auto-build: running

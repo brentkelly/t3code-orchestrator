@@ -259,3 +259,49 @@ it.layer(makeTestLayer("t3o-board-archive-5-"))("the archive page's card list", 
     }),
   );
 });
+
+it.layer(makeTestLayer("t3o-board-archive-6-"))("card detail group dependency refs", (it) => {
+  it.effect("lists what a card's ancestor groups wait on, minus its own (T3O-26)", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      yield* engine.dispatch(createProject);
+      const create = (
+        cardId: BoardCardId,
+        fields: {
+          readonly parentCardId?: BoardCardId;
+          readonly dependsOn?: ReadonlyArray<BoardCardId>;
+          readonly heading?: boolean;
+        } = {},
+      ) =>
+        engine.dispatch({
+          type: "board.card.create",
+          commandId: CommandId.make(`cmd-create-${cardId}`),
+          cardId,
+          projectId,
+          title: `Card ${cardId}`,
+          ...fields,
+          createdAt,
+        });
+      const outer = BoardCardId.make("card-outer");
+      const inner = BoardCardId.make("card-inner");
+      const bare = BoardCardId.make("card-bare");
+      const own = BoardCardId.make("card-own");
+      yield* create(dependencyId);
+      yield* create(outer, { heading: true, dependsOn: [dependencyId] });
+      yield* create(inner, { heading: true, parentCardId: outer });
+      yield* create(bare, { parentCardId: inner });
+      yield* create(own, { parentCardId: inner, dependsOn: [dependencyId] });
+
+      const board = yield* BoardQueries;
+      assert.isNotNull(board);
+      if (board === null) return;
+      const groupDependencyIds = (cardId: BoardCardId) =>
+        board
+          .boardCardDetail(cardId)
+          .pipe(Effect.map((detail) => detail?.groupDependencies.map((entry) => entry.cardId)));
+      assert.deepStrictEqual(yield* groupDependencyIds(bare), [dependencyId]);
+      assert.deepStrictEqual(yield* groupDependencyIds(own), []);
+      assert.deepStrictEqual(yield* groupDependencyIds(outer), []);
+    }),
+  );
+});

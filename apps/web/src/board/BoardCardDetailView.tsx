@@ -2484,7 +2484,18 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
   // count at all (t3o-13, D1), and everything else must be done.
-  const unmet = props.dependencies.filter(
+  // A waiting group holds back every card inside it (T3O-27), as the decider's
+  // move gate does.
+  const groupDependencies: ReadonlyArray<BoardDetailDependency> =
+    props.detail.groupDependencies.map((dependency) => ({
+      cardId: dependency.cardId,
+      key: dependency.key,
+      title: dependency.title,
+      stage: dependency.stage,
+      known: true,
+      archived: dependency.archivedAt !== null,
+    }));
+  const unmet = [...props.dependencies, ...groupDependencies].filter(
     (dependency) => !dependency.known || (!dependency.archived && dependency.stage !== "done"),
   );
 
@@ -2624,15 +2635,17 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // An inherit group never reviews; an own-branch group's integration does.
   const integrates = group === null || group.ownBranch;
   const hasReview = integrates && (reviewStageId !== null || reviewStarted);
-  const hasSummary =
-    integrates &&
-    boardCardHasSummaryPane({
-      stages: props.stages,
-      stage: card.stage,
-      stepCompletions: props.detail.stepCompletions,
-      card,
-      decisionCount: props.detail.decisions.length,
-    });
+  // An inherit group's Summary is its decision log, which its children's
+  // planning inherits as context (T3O-32).
+  const hasSummary = !integrates
+    ? props.detail.decisions.length > 0
+    : boardCardHasSummaryPane({
+        stages: props.stages,
+        stage: card.stage,
+        stepCompletions: props.detail.stepCompletions,
+        card,
+        decisionCount: props.detail.decisions.length,
+      });
   // The card-level running/queued signals describe the review loop only while
   // the card sits ON the review stage — anywhere else the live step is some
   // other stage's, and feeding it in would spin the review pill during a

@@ -339,6 +339,38 @@ it.effect("starts the siblings a finishing child unblocks, with no human in betw
   ),
 );
 
+it.effect("starts the cards a group's own finished dependency frees (T3O-26)", () =>
+  withGovernor(
+    {
+      // The group waits on a top-level card that left Done for a fix round;
+      // one child already runs, the other was held back on the floor.
+      board: {
+        cards: [
+          makeBoardCard({ id: "card-dep", stage: "done", orderKey: "a" }),
+          { ...parentCard(), dependsOn: [BoardCardId.make("card-dep")] },
+          childCard("card-one", "building"),
+          childCard("card-two", "ready"),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(
+          cardMoved(
+            makeBoardCard({ id: "card-dep", stage: "done", orderKey: "a" }),
+            "merge",
+            "done",
+            1,
+          ),
+        );
+        const after = yield* board;
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "building");
+      }),
+  ),
+);
+
 it.effect("starts nothing while the parent is still short of the build stage", () =>
   withGovernor(
     {
