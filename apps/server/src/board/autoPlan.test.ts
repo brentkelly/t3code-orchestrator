@@ -38,6 +38,7 @@ import {
   turnInterruptRequested,
   userInputRequested,
   withGovernor,
+  type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
 const PLANNING = String(BOARD_SEED_STAGE_IDS.planning);
@@ -314,6 +315,26 @@ it.effect("a group with auto-plan plans a child unattended and stops it at Ready
 
         yield* pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
         assert.strictEqual(cardStage(yield* board, id), BOARD_SEED_STAGE_IDS.ready);
+      }),
+  );
+});
+
+it.effect("a child created straight into an auto-plan group's Planning is auto-planned", () => {
+  const group = planningCard("group", { group: autoPlanGroup });
+  const child = planningCard("child", { parentCardId: BoardCardId.make("group") });
+  return withGovernor(
+    { board: { cards: [group, child], nextCardNumberByProject: {} }, settings },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        // The reactor re-reads the card, so the payload needs only its id.
+        yield* pumpDomain({
+          type: "board.card-created",
+          sequence: 1,
+          payload: { cardId: child.id },
+        } as unknown as HarnessEvent);
+        const after = yield* board;
+        assert.strictEqual(cardOf(after.cards, "child")?.autoPlan?.mode, "ready");
+        assert.isFalse(boardCardStepState(after, BoardCardId.make("child"))?.humanInLoop);
       }),
   );
 });

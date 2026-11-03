@@ -201,7 +201,10 @@ it.effect(
       },
       ({ pumpDomain, board, slots }) =>
         Effect.gen(function* () {
-          const child = childCard("card-child", "building");
+          const child = {
+            ...childCard("card-child", "building"),
+            sourcePlanId: boardPlanId(parentId, "card-child"),
+          };
           yield* pumpDomain(cardCreated(child, 1));
           const after = yield* board;
           assert.strictEqual(stepStatus(after, BoardCardId.make("card-child")), null);
@@ -455,6 +458,40 @@ it.effect("starts a card that lands on the floor of a started auto-build group (
           payload: { cardId: landed.id, card: landed, regrouped: true },
         } as unknown as HarnessEvent);
         assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "building");
+      }),
+  ),
+);
+
+it.effect("starts a card a human creates on the floor of a started auto-build group (T3O-27)", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childCard("card-one", "ready")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(cardCreated(childCard("card-one", "ready"), 1));
+        assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "building");
+      }),
+  ),
+);
+
+it.effect("kicks off a card a human creates straight into a group's build stage (T3O-27)", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childCard("card-one", "building")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(cardCreated(childCard("card-one", "building"), 1));
+        assert.isNotNull(stepStatus(yield* board, BoardCardId.make("card-one")));
       }),
   ),
 );

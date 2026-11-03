@@ -8107,10 +8107,12 @@ const make = Effect.gen(function* () {
     // agents. Each child's build is a deliberate later "Begin build" — a drag
     // (`board.card-moved`) which DOES kick off. The decider cannot enforce
     // this (it has no settings, D8), so the reactor does, keyed on the child's
-    // `parentCardId`. An ordinary card created straight into an auto stage
-    // (D10) has no parent and still kicks off here.
-    if (card.parentCardId !== null) return;
-    yield* beginStageRun({ card, onDemand: false });
+    // `sourcePlanId`. Any other card created straight into an auto stage
+    // (D10) kicks off here — including one a human created inside a group
+    // (T3O-27), which arrives exactly as a card moved into it would.
+    if (card.sourcePlanId !== null) return;
+    yield* beginStageRun({ card: yield* markGroupAutoPlan(card), onDemand: false });
+    if (card.parentCardId !== null) yield* cascadeUnblockedChildren(card.parentCardId);
   });
 
   /**
