@@ -17,8 +17,8 @@ whatever column the card is in, so the switch is not hidden away in one stage.
 Turning it on for a card that is _already_ waiting at Ready for merge merges it straight away. That
 is the same thing the Merge button does; the switch just also covers next time.
 
-The plan cards inside a split are armed already. Approve a split and each child merges itself down
-as it finishes, which is what lets the next sibling start.
+The plan cards inside a split with **Auto-build** on are armed already: each child merges itself
+into the split's branch as it finishes, which is what lets the next sibling start.
 
 ## Arming the whole board
 
