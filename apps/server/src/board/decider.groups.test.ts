@@ -441,6 +441,29 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
     }),
   );
 
+  it.effect("marks only a change of parent as a regrouping, not a reorder", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "sprint", { group: group("sprint") }),
+        child("a", "backlog", "g", { orderKey: "c" }),
+        child("b", "backlog", "g", { orderKey: "e" }),
+        card("x", "backlog", { orderKey: "m" }),
+      ];
+      const regroupedOf = (events: ReadonlyArray<PlannedBoardEvent>, id: string) => {
+        const event = events.find(
+          (candidate) =>
+            candidate.type === "board.card-updated" && String(candidate.payload.cardId) === id,
+        );
+        assert.ok(event?.type === "board.card-updated");
+        return event.payload.regrouped;
+      };
+      const reorder = yield* decideEvents(moveCards(["b"], "g", { before: "a" }), model(cards));
+      expect(regroupedOf(reorder, "b")).toBeUndefined();
+      const indent = yield* decideEvents(moveCards(["x"], "g"), model(cards));
+      expect(regroupedOf(indent, "x")).toBe(true);
+    }),
+  );
+
   it.effect("refuses indenting a pre-floor card into an own group", () =>
     Effect.gen(function* () {
       const cards = [
@@ -537,6 +560,20 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
     }),
   );
 
+  it.effect("a cycle that predates a regrouping does not hide a new one it closes", () =>
+    Effect.gen(function* () {
+      // m <-> p is a legacy cycle; moving m into k closes k -> m -> q -> k.
+      const cards = [
+        card("m", "ready", { dependsOn: [BoardCardId.make("p"), BoardCardId.make("q")] }),
+        card("p", "ready", { dependsOn: [BoardCardId.make("m")] }),
+        card("q", "ready", { dependsOn: [BoardCardId.make("k")] }),
+        card("k", "sprint", { group: group("sprint", { heading: true }) }),
+      ];
+      const failure = yield* decideFail(moveCards(["m"], "k"), model(cards));
+      assert.include(String(failure), "dependency cycle");
+    }),
+  );
+
   it.effect("refuses a regrouping that closes a cycle through a group", () =>
     Effect.gen(function* () {
       const cards = [
@@ -604,6 +641,25 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
       // Auto-build is not locked: turning it off never interrupts a child.
       const events = yield* decideEvents(settings("g", { autoBuild: true }), model(cards));
       assert.ok(events[0]?.type === "board.card-updated");
+    }),
+  );
+
+  it.effect("refuses giving a group its own branch while a child is before the floor", () =>
+    Effect.gen(function* () {
+      const cards = [
+        card("g", "sprint", { group: group("sprint") }),
+        child("a", "ready", "g"),
+        child("b", "backlog", "g"),
+        child("d", BOARD_DEFERRED_STAGE_ID, "g"),
+      ];
+      const failure = yield* decideFail(settings("g", { target: "own" }), model(cards));
+      assert.include(String(failure), "is in 'backlog'");
+      // Deferred children wait outside the pipeline, so they do not block it.
+      const ready = cards.map((c) =>
+        c.id === "b" ? { ...c, stage: BoardStageId.make("ready") } : c,
+      );
+      const events = yield* decideEvents(settings("g", { target: "own" }), model(ready));
+      expect(stagesAfter(events).get("g")?.card.group?.target).toBe("own");
     }),
   );
 

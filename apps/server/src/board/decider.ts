@@ -364,41 +364,46 @@ function boardTreeDependencyGraph(
   return graph;
 }
 
-/** A tree-wide dependency cycle through `id`, as a path from and back to
-    it, or null. */
-function treeDependencyCycleThrough(
+/** A path from `start` to `target` along `graph`, or null. */
+function treeDependencyPath(
   graph: ReadonlyMap<BoardCardId, ReadonlyArray<BoardCardId>>,
-  id: BoardCardId,
+  start: BoardCardId,
+  target: BoardCardId,
 ): ReadonlyArray<BoardCardId> | null {
-  const seen = new Set<BoardCardId>();
-  const pathBack = (from: BoardCardId): ReadonlyArray<BoardCardId> | null => {
+  if (start === target) return [start];
+  const seen = new Set<BoardCardId>([start]);
+  const walk = (from: BoardCardId): ReadonlyArray<BoardCardId> | null => {
     for (const next of graph.get(from) ?? []) {
-      if (next === id) return [from, id];
+      if (next === target) return [from, target];
       if (seen.has(next)) continue;
       seen.add(next);
-      const rest = pathBack(next);
+      const rest = walk(next);
       if (rest !== null) return [from, ...rest];
     }
     return null;
   };
-  return pathBack(id);
+  return walk(start);
 }
 
 /**
- * A dependency cycle a regrouping creates through one of `ids`, or null. A
- * cycle that already ran through a card before the move is not the move's
- * doing, so it does not block it.
+ * A dependency cycle a regrouping creates, or null. Every new cycle runs
+ * through at least one edge the regrouping added, so only those are checked:
+ * a cycle that predates the move does not block it, and does not hide a new
+ * one through the same card.
  */
 function findNewTreeDependencyCycle(input: {
   readonly before: ReadonlyArray<BoardCard>;
   readonly after: ReadonlyArray<BoardCard>;
-  readonly ids: Iterable<BoardCardId>;
 }): ReadonlyArray<BoardCardId> | null {
   const beforeGraph = boardTreeDependencyGraph(input.before);
   const afterGraph = boardTreeDependencyGraph(input.after);
-  for (const id of input.ids) {
-    const cycle = treeDependencyCycleThrough(afterGraph, id);
-    if (cycle !== null && treeDependencyCycleThrough(beforeGraph, id) === null) return cycle;
+  for (const [from, targets] of afterGraph) {
+    const existing = beforeGraph.get(from) ?? [];
+    for (const to of targets) {
+      if (existing.includes(to)) continue;
+      const back = treeDependencyPath(afterGraph, to, from);
+      if (back !== null) return [from, ...back];
+    }
   }
   return null;
 }
@@ -2210,7 +2215,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const cycle = findNewTreeDependencyCycle({
         before: board.cards,
         after: after.cards,
-        ids: affectedIds,
       });
       if (cycle !== null) {
         const keyOf = (id: BoardCardId) => after.cards.find((c) => c.id === id)?.key ?? id;
@@ -2229,7 +2233,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             commandId: command.commandId,
           })),
           type: "board.card-updated",
-          payload: { cardId: next.id, card: next, regrouped: true },
+          payload: {
+            cardId: next.id,
+            card: next,
+            // A same-parent reorder is not a regrouping; the group cascade
+            // must not restart a sibling the human parked.
+            ...(next.parentCardId ===
+            board.cards.find((candidate) => candidate.id === next.id)?.parentCardId
+              ? {}
+              : { regrouped: true }),
+          },
         });
       }
       return events;
@@ -2244,6 +2257,21 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (command.target !== undefined && command.target !== group.target) {
         const locked = boardGroupTargetLockReason(board, card);
         if (locked !== null) return yield* invariant(command, locked);
+      }
+      if (command.target === "own" && group.target !== "own") {
+        const belowFloor = board.cards.find(
+          (child) =>
+            child.parentCardId === card.id &&
+            child.archivedAt === null &&
+            !isBoardDeferredStage(child.stage) &&
+            !isBoardStageAtOrAfterSubBoardFloor(board, child.stage),
+        );
+        if (belowFloor !== undefined) {
+          return yield* invariant(
+            command,
+            `Can't give '${card.key}' its own branch while '${belowFloor.key}' is in '${belowFloor.stage}'; that group's children live from the materialisation floor onward. Move it on or out first.`,
+          );
+        }
       }
       const nextGroup: BoardCardGroup = {
         ...group,
