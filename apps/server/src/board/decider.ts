@@ -2229,7 +2229,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             commandId: command.commandId,
           })),
           type: "board.card-updated",
-          payload: { cardId: next.id, card: next },
+          payload: { cardId: next.id, card: next, regrouped: true },
         });
       }
       return events;

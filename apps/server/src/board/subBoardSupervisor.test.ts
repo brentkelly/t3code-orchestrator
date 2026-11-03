@@ -29,6 +29,7 @@ import {
   cardArchived,
   cardMoved,
   cardStage,
+  cardTitleUpdated,
   codexStep,
   makeBoardCard,
   movedToBuilding,
@@ -382,6 +383,46 @@ it.effect("leaves a child a human parked past the floor alone", () =>
       Effect.gen(function* () {
         yield* pumpDomain(movedToBuilding(parentCard(), 1));
         assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "review");
+      }),
+  ),
+);
+
+it.effect("an unrelated sibling edit does not restart a child parked on the floor (T3O-27)", () =>
+  withGovernor(
+    {
+      // A human dragged card-one back to the floor to park it; card-two runs.
+      board: {
+        cards: [parentCard(), childCard("card-one", "ready"), childCard("card-two", "building")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(cardTitleUpdated(childCard("card-two", "building"), 1));
+        assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "ready");
+      }),
+  ),
+);
+
+it.effect("starts a card that lands on the floor of a started auto-build group (T3O-27)", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childCard("card-one", "ready")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        const landed = childCard("card-one", "ready");
+        yield* pumpDomain({
+          type: "board.card-updated",
+          sequence: 1,
+          payload: { cardId: landed.id, card: landed, regrouped: true },
+        } as unknown as HarnessEvent);
+        assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "building");
       }),
   ),
 );

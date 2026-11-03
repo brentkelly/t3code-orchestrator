@@ -3110,19 +3110,24 @@ const make = Effect.gen(function* () {
    */
   const applyRegroup = Effect.fn("board-supervisor-applyRegroup")(function* (
     updated: BoardCard,
-    becameGroup: boolean,
+    marks: { readonly becameGroup: boolean; readonly regrouped: boolean },
   ) {
+    if (!marks.becameGroup && !marks.regrouped) return;
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === updated.id);
     if (card === undefined || card.archivedAt !== null) return;
-    if (becameGroup) {
+    if (marks.becameGroup) {
       const state = boardCardStepState(board, card.id);
       if (state !== null && !isBoardTerminalStepStatus(state.status)) {
         yield* settleStep({ card, state, outcome: "abandoned" });
         yield* schedule();
       }
     }
-    if (card.parentCardId !== null) yield* cascadeUnblockedChildren(card.parentCardId);
+    // Only a card that just landed in a group may start; any other edit must
+    // not restart a child a human parked on the floor.
+    if (marks.regrouped && card.parentCardId !== null) {
+      yield* cascadeUnblockedChildren(card.parentCardId);
+    }
   });
 
   /** Cascade every group holding a card that waits on `cardId` (T3O-27). */
@@ -7058,7 +7063,10 @@ const make = Effect.gen(function* () {
   const handleCardUpdated = Effect.fn("board-supervisor-handleCardUpdated")(function* (
     event: Extract<BoardEvent, { type: "board.card-updated" }>,
   ) {
-    yield* applyRegroup(event.payload.card, event.payload.becameGroup === true);
+    yield* applyRegroup(event.payload.card, {
+      becameGroup: event.payload.becameGroup === true,
+      regrouped: event.payload.regrouped === true,
+    });
     // A schedule edit acts FIRST and on its own terms (T3O-19, D3): it is the
     // one edit that must reach a card with no live step row at all, and the one
     // that acts on a step this handler's other arms would have returned past.

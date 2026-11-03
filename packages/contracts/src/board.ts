@@ -5310,6 +5310,9 @@ export const BoardCardUpdatedPayload = Schema.Struct({
   /** Set when this update turned a leaf into a group (T3O-27), so the
       supervisor abandons the leaf's live planning step. */
   becameGroup: Schema.optional(Schema.Boolean),
+  /** Set when this update moved the card under a different parent (T3O-27),
+      so the supervisor cascades the group it landed in. */
+  regrouped: Schema.optional(Schema.Boolean),
   /** Absent: brief unchanged. Null: brief cleared. String: new body text for
       `board_card_bodies` (the body deliberately never enters the read
       model — D8). */
