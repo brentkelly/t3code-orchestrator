@@ -13,11 +13,7 @@ import {
   type BoardState,
 } from "./board.ts";
 import { ProjectId } from "./baseSchemas.ts";
-import {
-  boardNewPhasePlan,
-  boardNextPhaseTitle,
-  defaultBoardCardGroup,
-} from "./boardGroups.ts";
+import { boardNewPhasePlan, boardNextPhaseTitle, defaultBoardCardGroup } from "./boardGroups.ts";
 
 const PROJECT = ProjectId.make("project-1");
 const AT = "2026-01-01T00:00:00.000Z";

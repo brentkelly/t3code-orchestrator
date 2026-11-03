@@ -678,9 +678,7 @@ export function BoardListView(props: BoardListViewProps) {
             return (
               <BoardListRowView
                 accentNameFor={props.accentNameFor}
-                blocked={
-                  !row.isGroup && (row.card.blocked || attention?.tone === "warning")
-                }
+                blocked={!row.isGroup && (row.card.blocked || attention?.tone === "warning")}
                 card={row.card}
                 childCount={row.childCount}
                 context={row.context}

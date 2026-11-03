@@ -56,12 +56,14 @@ const mergedPr: BoardCardPullRequest = {
 
 describe("boardCardProjectLock", () => {
   it("leaves a card that has never been built editable", () => {
-    expect(boardCardProjectLock({
+    expect(
+      boardCardProjectLock({
         board: stageState,
         card: lockCard(),
         childCount: 0,
         integrationParentId: null,
-      })).toBeNull();
+      }),
+    ).toBeNull();
   });
 
   it("pins a card that has reached the build stage", () => {

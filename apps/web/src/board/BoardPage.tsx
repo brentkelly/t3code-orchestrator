@@ -622,7 +622,8 @@ function EnvironmentBoard({
   // Ancestors of this sub-board's group, root first: the breadcrumb, and
   // where Back goes (one level up).
   const ancestors = useMemo(
-    () => (parentShell === null ? [] : [...boardShellAncestors(groupShells, parentShell)].reverse()),
+    () =>
+      parentShell === null ? [] : [...boardShellAncestors(groupShells, parentShell)].reverse(),
     [groupShells, parentShell],
   );
   /** One level up; `withSheet` opens this group's sheet there, which is

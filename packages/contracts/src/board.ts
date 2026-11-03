@@ -322,7 +322,6 @@ export function isBoardDeferredStage(stageId: string): boolean {
   return stageId === BOARD_DEFERRED_STAGE_ID;
 }
 
-
 /**
  * The four product roles (D3). Exactly one stage holds each; every other
  * stage carries a null role. Plan-mode forcing and the plan deliverable
