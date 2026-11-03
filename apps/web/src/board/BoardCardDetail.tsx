@@ -33,6 +33,7 @@ import {
   isBoardCardBaseRetargeted,
   resolveBoardCardEffectiveBase,
   boardSubBoardFloorStage,
+  boardShellMergesIntoIntegrationBranch,
   boardSplitRecommendationFallback,
   boardStagesInOrder,
   isBoardStageAtOrAfterBuild,
@@ -990,8 +991,7 @@ export function BoardCardDetail({
     (!isBoardStageAtOrAfterBuild(stageState, card.stage) || card.stage === buildStage.stageId);
 
   // What the split gate shows (T3O-31). A proposal made before T3O-31 has no
-  // stored recommendation; the fallback treats any parent as one with its own
-  // branch, which every split parent from before then was.
+  // stored recommendation, so it falls back to the server's rule.
   const firstStage = boardStagesInOrder(stageState)[0] ?? null;
   const splitGate =
     canApproveSplit && floorStage !== null && firstStage !== null
@@ -1000,7 +1000,10 @@ export function BoardCardDetail({
             card.splitRecommendation ??
             boardSplitRecommendationFallback({
               plans: detail.plans,
-              underIntegrationBranch: card.parentCardId !== null,
+              underIntegrationBranch: boardShellMergesIntoIntegrationBranch(
+                board?.cards ?? [],
+                card,
+              ),
             }),
           ownBranch: `board/${sanitizeBranchFragment(card.key)}`,
           landsOn: baseBranchInfo.effective ?? "the default branch",

@@ -3067,22 +3067,22 @@ export function boardCardPendingSplit(board: BoardState, cardId: BoardCardId): b
   return true;
 }
 
-/**
- * The card-face counterpart of `boardCardPendingSplit`, derived CLIENT-SIDE
- * from the bounded shell (t3o-27): a top-level card (`parentCardId` absent)
- * with no children of its own (`planTotal` absent — the sub-board pip producer
- * only sets it for parents that HAVE children) and two or more plans
- * (`planCount`), still at or before the build stage. Lets a column card wear
- * the violet "Input needed" state without any extra payload — the same
- * zero-cost derivation the plan pips use (D6).
- */
 /** The card face's line for a pending split (T3O-31). */
 export function boardSplitProposedNote(childCount: number): string {
   return `Split proposed · ${childCount} cards`;
 }
 
+/**
+ * The card-face counterpart of `boardCardPendingSplit`, derived CLIENT-SIDE
+ * from the bounded shell (t3o-27): a card at any depth (T3O-31 allows nested
+ * splits) with no children of its own (`planTotal` absent — the sub-board pip
+ * producer only sets it for parents that HAVE children) and two or more plans
+ * (`planCount`), still at or before the build stage. Lets a column card wear
+ * the violet "Input needed" state without any extra payload — the same
+ * zero-cost derivation the plan pips use (D6).
+ */
 export function boardCardShellPendingSplit(
-  card: Pick<BoardCardShell, "stage" | "planCount" | "planTotal" | "parentCardId">,
+  card: Pick<BoardCardShell, "stage" | "planCount" | "planTotal">,
   stages: ReadonlyArray<BoardStageDefinition>,
 ): boolean {
   // `planTotal` is derived from LIVE children only (D6), which is exactly the

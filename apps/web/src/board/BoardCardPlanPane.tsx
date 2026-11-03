@@ -3,7 +3,7 @@
  * as markdown in the working surface where the thread and brief also live.
  *
  * A pending split is approved at the split gate in the planning thread
- * (T3O-31); the pane's **Approve split** button takes the human there.
+ * (T3O-31); the pane's **Review split** button takes the human there.
  *
  * Lazy, like the thread pane — it pulls in `ChatMarkdown` (highlighting,
  * tables, the lot), so the board chunk never pays for it until a card with a
@@ -65,7 +65,7 @@ export function BoardCardPlanPane({
             type="button"
           >
             <LayersIcon className="size-3" />
-            Approve split
+            Review split
           </button>
         )}
         <button

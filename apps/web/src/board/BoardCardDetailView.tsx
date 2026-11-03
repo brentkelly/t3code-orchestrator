@@ -2857,10 +2857,18 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                       {...props.splitGate}
                       onApprove={props.onApproveSplit}
                       onAskForChanges={() => {
+                        // The planning thread, not whichever tab is open: that
+                        // conversation proposed the split and must revise it.
+                        const planningThread = initialBoardCardThreadId(
+                          props.stages,
+                          card.stage,
+                          card.threadLinks,
+                        );
                         const link = props.threadLinks.find(
-                          (candidate) => candidate.threadId === selectedThread,
+                          (candidate) => candidate.threadId === planningThread,
                         );
                         if (link === undefined || link.tombstoned) return;
+                        setSelectedThreadId(link.threadId);
                         useComposerDraftStore
                           .getState()
                           .setPrompt(

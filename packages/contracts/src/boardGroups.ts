@@ -9,6 +9,7 @@
 import {
   BoardStageId,
   boardCardHasLiveBranch,
+  boardCardIntegrationAncestor,
   boardCardMergesIntoIntegrationBranch,
   boardCardPlans,
   isBoardPlanPlanned,
@@ -22,6 +23,7 @@ import {
   type BoardCard,
   type BoardCardGroup,
   type BoardCardId,
+  type BoardCardShell,
   type BoardPlan,
   type BoardSplitRecommendation,
   type BoardState,
@@ -325,6 +327,20 @@ export function boardSplitRecommendationFallback(input: {
     autoBuild: allPlanned,
     mergeTarget: allPlanned && !input.underIntegrationBranch ? "own" : "inherit",
   };
+}
+
+/** `boardCardMergesIntoIntegrationBranch` read from the client's shells,
+    which carry `cardId` and leave `parentCardId` / `group` absent for null. */
+export function boardShellMergesIntoIntegrationBranch(
+  shells: ReadonlyArray<Pick<BoardCardShell, "cardId" | "parentCardId" | "group">>,
+  card: Pick<BoardCardShell, "parentCardId">,
+): boolean {
+  const cards = shells.map((shell) => ({
+    id: shell.cardId,
+    parentCardId: shell.parentCardId ?? null,
+    group: shell.group ?? null,
+  }));
+  return boardCardIntegrationAncestor({ cards }, { parentCardId: card.parentCardId ?? null }) !== null;
 }
 
 /** A card's split recommendation: the stored one, or the fallback for a
