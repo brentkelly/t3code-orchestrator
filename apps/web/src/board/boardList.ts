@@ -485,6 +485,17 @@ export function planBoardListMove(input: {
   };
 }
 
+/** The selected ids still shown; the same set back when none are hidden. */
+export function boardListVisibleSelection(
+  selected: ReadonlySet<string>,
+  visibleIds: ReadonlyArray<string>,
+): ReadonlySet<string> {
+  if (selected.size === 0) return selected;
+  const visible = new Set(visibleIds);
+  const shown = [...selected].filter((id) => visible.has(id));
+  return shown.length === selected.size ? selected : new Set(shown);
+}
+
 /** Stage filter rows: every stage then Deferred, each with its count. */
 export function boardListStageCounts(tree: BoardListTree): ReadonlyMap<string, number> {
   const counts = new Map<string, number>();

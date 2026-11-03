@@ -84,6 +84,7 @@ import {
   boardListRows,
   boardListSelection,
   boardListStageCounts,
+  boardListVisibleSelection,
   buildBoardListTree,
   planBoardListMove,
   type BoardListDropZone,
@@ -112,6 +113,12 @@ const PIP_CLASS: Record<BoardGroupChildState, string> = {
   idle: "bg-foreground/13",
 };
 
+const toggled = (current: ReadonlySet<string>, id: string): ReadonlySet<string> => {
+  const next = new Set(current);
+  if (!next.delete(id)) next.add(id);
+  return next;
+};
+
 const failed = (result: { readonly _tag: string }) =>
   result._tag === "Failure" && !isAtomCommandInterrupted(result as never);
 
@@ -119,6 +126,11 @@ export interface BoardListViewProps {
   readonly environmentId: EnvironmentId;
   /** Every live card the client shows (hidden projects already dropped). */
   readonly shells: Shells;
+  /**
+   * Every live card, hidden projects included. The move planner reads these,
+   * as the server does: a group with a child in a hidden project isn't empty.
+   */
+  readonly allShells: Shells;
   readonly stages: BoardState;
   readonly inScope: (card: BoardCardShell) => boolean;
   /** "All projects", or the scoped project's name. */
@@ -139,7 +151,7 @@ interface DropTarget {
 }
 
 export function BoardListView(props: BoardListViewProps) {
-  const { environmentId, shells, stages, inScope, attentionFor } = props;
+  const { environmentId, shells, allShells, stages, inScope, attentionFor } = props;
   // `useAtomCommand` hands back a new function every render; read it through a
   // ref so the move path, and every memoised row's handlers, stay stable.
   const moveCards = useAtomCommand(boardEnvironment.moveCards);
@@ -149,7 +161,7 @@ export function BoardListView(props: BoardListViewProps) {
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
 
   // Session-scoped view state: none of it is worth a reload (D9).
-  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const [rawSelected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [anchorId, setAnchorId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [stageFilter, setStageFilter] = useState<ReadonlySet<string>>(() => new Set());
@@ -172,6 +184,12 @@ export function BoardListView(props: BoardListViewProps) {
   );
   const rows = useMemo(() => boardListRows({ tree, collapsed, filter }), [collapsed, filter, tree]);
   const visibleIds = useMemo(() => rows.map((row) => String(row.card.cardId)), [rows]);
+  // Every action reads only the selected rows still on screen: a filter or a
+  // collapse must not leave Tab, Move to… or a drag acting on hidden cards.
+  const selected = useMemo(
+    () => boardListVisibleSelection(rawSelected, visibleIds),
+    [rawSelected, visibleIds],
+  );
   const selection = useMemo(() => boardListSelection(tree, selected), [selected, tree]);
   const selectionIds = useMemo(() => selection.map((card) => String(card.cardId)), [selection]);
   const filtering = props.query.trim().length > 0 || stageFilter.size > 0;
@@ -193,7 +211,7 @@ export function BoardListView(props: BoardListViewProps) {
   // ── The one move path ────────────────────────────────────────────────
   const runMove = useCallback(
     (request: BoardListMoveRequest) => {
-      const plan = planBoardListMove({ shells, stages, request });
+      const plan = planBoardListMove({ shells: allShells, stages, request });
       if (plan.kind === "noop") return;
       if (plan.kind === "refused") {
         boardToast({ tone: "error", title: plan.reason });
@@ -241,7 +259,7 @@ export function BoardListView(props: BoardListViewProps) {
         }
       });
     },
-    [environmentId, shells, stageDefinitions, stages],
+    [allShells, environmentId, stageDefinitions, stages],
   );
 
   const runStep = useCallback(
@@ -290,27 +308,18 @@ export function BoardListView(props: BoardListViewProps) {
       return;
     }
     if (event.metaKey || event.ctrlKey) {
-      setSelected((current) => {
-        const next = new Set(current);
-        if (!next.delete(id)) next.add(id);
-        return next;
-      });
+      setSelected(toggled(state.selected, id));
       setAnchorId(id);
       return;
     }
     // The second click of a double-click must not deselect the row it opens.
     const again = event.detail === 1;
-    setSelected((current) =>
-      again && current.size === 1 && current.has(id) ? new Set() : new Set([id]),
-    );
+    const current = state.selected;
+    setSelected(again && current.size === 1 && current.has(id) ? new Set() : new Set([id]));
     setAnchorId(id);
   }, []);
   const onRowCheck = useCallback((id: string) => {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (!next.delete(id)) next.add(id);
-      return next;
-    });
+    setSelected(toggled(latest.current.selected, id));
     setAnchorId(id);
   }, []);
   const onRowToggle = useCallback((id: string) => {

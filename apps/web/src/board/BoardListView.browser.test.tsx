@@ -20,13 +20,22 @@ import { render } from "../../test/render";
 
 const commands = vi.hoisted(() => {
   const calls: Array<{ readonly label: string; readonly input: unknown }> = [];
+  const toasts: Array<string> = [];
   return {
     calls,
+    toasts,
     setup: () => {
       calls.length = 0;
+      toasts.length = 0;
     },
   };
 });
+
+vi.mock(import("./boardToast"), () => ({
+  boardToast: (input: { readonly title: string }) => {
+    commands.toasts.push(input.title);
+  },
+}));
 
 vi.mock(import("../state/use-atom-command"), () => ({
   useAtomCommand: ((command: { readonly label: string }) => async (value: { input: unknown }) => {
@@ -80,13 +89,18 @@ function shell(
   };
 }
 
-function renderList(shells: ReadonlyArray<BoardCardShell>, query = "") {
+function renderList(
+  shells: ReadonlyArray<BoardCardShell>,
+  query = "",
+  allShells: ReadonlyArray<BoardCardShell> = shells,
+) {
   commands.setup();
   return render(
     <>
       <input aria-label="Elsewhere" />
       <BoardListView
         accentNameFor={() => null}
+        allShells={allShells}
         attentionFor={() => null}
         environmentId={EnvironmentId.make("environment-1")}
         inScope={() => true}
@@ -211,6 +225,50 @@ describe("BoardListView", () => {
     await expect
       .element(page.getByRole("button", { name: /^Indent/ }))
       .toHaveAccessibleDescription("Indent under A · Match one (Tab)");
+  });
+
+  it("leaves a selected card alone once a collapse hides it", async () => {
+    await using _screen = await renderList([
+      shell("g", "backlog", { orderKey: "a", group: group() }),
+      shell("k1", "backlog", { orderKey: "a", parent: "g" }),
+      shell("k2", "backlog", { orderKey: "b", parent: "g" }),
+    ]);
+    await userEvent.click(await rowReady("k2"));
+    await expect.element(page.getByText("1 selected")).toBeInTheDocument();
+    await userEvent.click(page.getByRole("button", { name: "Collapse G" }));
+    await vi.waitFor(() => expect(row("k2")).toBeNull());
+    await expect.element(page.getByText("1 selected")).not.toBeInTheDocument();
+    await userEvent.keyboard("{Tab}");
+    expect(moves()).toHaveLength(0);
+  });
+
+  it("doesn't call a group emptied while a hidden project's child remains", async () => {
+    const visible = [
+      shell("g", "backlog", { orderKey: "a", group: group() }),
+      shell("k", "backlog", { parent: "g" }),
+      shell("h", "backlog", { orderKey: "b", group: group() }),
+      shell("m", "backlog", { parent: "h" }),
+      shell("t", "backlog", { orderKey: "c" }),
+    ];
+    const hiddenChild = shell("x", "backlog", { parent: "g", projectId: ProjectId.make("p2") });
+    await using _screen = await renderList(visible, "", [...visible, hiddenChild]);
+    expect(row("x")).toBeNull();
+    await userEvent.click(await rowReady("k"));
+    await userEvent.click(row("m"), { modifiers: ["ControlOrMeta"] });
+    const dataTransfer = new DataTransfer();
+    row("k").dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer }));
+    await vi.waitFor(() => expect(row("m").hasAttribute("data-drop-blocked")).toBe(true));
+    const rect = row("t").getBoundingClientRect();
+    const at = { bubbles: true, cancelable: true, dataTransfer, clientY: rect.bottom - 2 };
+    row("t").dispatchEvent(new DragEvent("dragover", at));
+    await vi.waitFor(() => expect(row("t").dataset.dropZone).toBe("after"));
+    row("t").dispatchEvent(new DragEvent("drop", at));
+    // H really is empty, so its toast marks the move as settled.
+    await vi.waitFor(() =>
+      expect(commands.toasts.filter((title) => title.includes("no children left"))).toEqual([
+        "H has no children left and is an ordinary card again, back in Backlog.",
+      ]),
+    );
   });
 
   it("drops before, into or after a row by thirds, and dims the dragged subtree", async () => {

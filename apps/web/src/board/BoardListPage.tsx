@@ -104,12 +104,13 @@ function EnvironmentList({ environmentId }: { readonly environmentId: Environmen
 
   // Every live card of every visible project: a group's rules read across
   // projects, and a child in another project still shows under its group.
+  const allShells = useMemo(
+    () => [...cardsByProject.values()].flatMap((columns) => Object.values(columns).flat()),
+    [cardsByProject],
+  );
   const shells = useMemo(
-    () =>
-      [...cardsByProject.entries()]
-        .filter(([projectId]) => !isBoardProjectHidden(boardSettings, projectId))
-        .flatMap(([, columns]) => Object.values(columns).flat()),
-    [boardSettings, cardsByProject],
+    () => allShells.filter((card) => !isBoardProjectHidden(boardSettings, card.projectId)),
+    [allShells, boardSettings],
   );
   const inScope = useCallback(
     (card: BoardCardShell) => scopeProjectId === null || card.projectId === scopeProjectId,
@@ -214,6 +215,7 @@ function EnvironmentList({ environmentId }: { readonly environmentId: Environmen
       </div>
       <BoardListView
         accentNameFor={accentNameFor}
+        allShells={allShells}
         attentionFor={attentionFor}
         environmentId={environmentId}
         inScope={inScope}

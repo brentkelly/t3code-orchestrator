@@ -26,6 +26,7 @@ import {
   boardListRowWindow,
   boardListRows,
   boardListStageCounts,
+  boardListVisibleSelection,
   buildBoardListTree,
   planBoardListMove,
 } from "./boardList";
@@ -364,6 +365,14 @@ describe("planBoardListMove", () => {
       },
       reverting: [],
     });
+  });
+});
+
+describe("boardListVisibleSelection", () => {
+  it("drops selected ids that are no longer shown, and keeps the set when all are", () => {
+    const selected = new Set(["a", "b"]);
+    expect([...boardListVisibleSelection(selected, ["a", "c"])]).toEqual(["a"]);
+    expect(boardListVisibleSelection(selected, ["b", "a"])).toBe(selected);
   });
 });
 
