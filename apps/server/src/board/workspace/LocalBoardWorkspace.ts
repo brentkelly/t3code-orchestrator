@@ -578,13 +578,16 @@ export function makeLocalBoardWorkspace(
                 remoteName,
                 base,
               ).pipe(
-                Effect.andThen(
-                  gitRef("boardIntegrationBranch.remoteBase", cwd, [
-                    "rev-parse",
-                    "--verify",
-                    "--quiet",
-                    `refs/remotes/${remoteName}/${base}`,
-                  ]),
+                // A failed fetch leaves a possibly stale remote-tracking ref; cut from the local base.
+                Effect.flatMap((fetched) =>
+                  fetched
+                    ? gitRef("boardIntegrationBranch.remoteBase", cwd, [
+                        "rev-parse",
+                        "--verify",
+                        "--quiet",
+                        `refs/remotes/${remoteName}/${base}`,
+                      ])
+                    : Effect.succeed(""),
                 ),
                 Effect.map((sha) => (sha === "" ? null : `${remoteName}/${base}`)),
               );

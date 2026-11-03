@@ -529,6 +529,30 @@ describe("BoardWorkspace contract (T3O-64)", () => {
       }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
+  it.effect(
+    "an integration branch cut while the fetch fails uses the local base, not a stale remote ref",
+    () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("stalefetch");
+        const workerA = (yield* workspacesOver(env.checkout)).local;
+        const staleRemote = yield* git(env.checkout, ["rev-parse", "refs/remotes/origin/main"]);
+        yield* git(env.checkout, ["checkout", "main"]);
+        const localTip = yield* commitFile(env.checkout, "local.txt", "l\n", "local only");
+        assert.notStrictEqual(localTip, staleRemote);
+        yield* git(env.checkout, ["remote", "set-url", "origin", `${env.root}/missing.git`]);
+
+        yield* workerA.createIntegrationBranch({
+          projectId,
+          branch: "board/t-stale",
+          base: "main",
+        });
+        assert.strictEqual(
+          yield* git(env.checkout, ["rev-parse", "refs/heads/board/t-stale"]),
+          localTip,
+        );
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
   it.effect("a card moved A→B→A lands on what B pushed, not A's stale local branch", () =>
     Effect.gen(function* () {
       const env = yield* makeEnv("roundtrip");
