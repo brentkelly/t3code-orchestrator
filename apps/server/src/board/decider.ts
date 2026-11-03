@@ -2279,6 +2279,20 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         const locked = boardGroupTargetLockReason(board, card);
         if (locked !== null) return yield* invariant(command, locked);
       }
+      // The reactor reads a non-own group holding a ready worktree as cancelled
+      // work and deletes its branch with the checkout, so an own group in final
+      // review must not shed its target while its integration worktree exists.
+      if (
+        command.target !== undefined &&
+        command.target !== "own" &&
+        group.target === "own" &&
+        (card.worktree?.status === "ready" || card.worktree?.status === "provisioning")
+      ) {
+        return yield* invariant(
+          command,
+          `Can't stop '${card.key}' using its own branch while its integration worktree is still there; it can once that worktree is reclaimed.`,
+        );
+      }
       if (command.target === "own" && group.target !== "own") {
         const spans = boardGroupOwnTargetProjectRefusal(board, card);
         if (spans !== null) return yield* invariant(command, spans);

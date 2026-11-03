@@ -930,4 +930,32 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
       assert.include(String(own), "cancelled work");
     }),
   );
+
+  it.effect("an own group can't drop to inherit while its integration worktree is there", () =>
+    Effect.gen(function* () {
+      const worktree: NonNullable<BoardCard["worktree"]> = {
+        branch: "board/t3-1",
+        baseRefName: "main",
+        path: "/tmp/wt",
+        status: "ready",
+        attempts: 1,
+        lastError: null,
+        reclaimBlockedReason: null,
+      };
+      // Final review: every child is Done, so the target lock no longer holds.
+      const cards = [
+        card("g1", "review", { group: group("review", { target: "own" }), worktree }),
+        child("c2", "done", "g1"),
+      ];
+      const refused = yield* decideFail(settings("g1", { target: "inherit" }), model(cards));
+      assert.include(String(refused), "integration worktree");
+      // Once the worktree is reclaimed the switch is allowed.
+      const reclaimed = [
+        { ...cards[0]!, worktree: { ...worktree, status: "reclaimed" as const } },
+        cards[1]!,
+      ];
+      const events = yield* decideEvents(settings("g1", { target: "inherit" }), model(reclaimed));
+      expect(stagesAfter(events).get("g1")?.card.group?.target).toBe("inherit");
+    }),
+  );
 });
