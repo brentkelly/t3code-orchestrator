@@ -2795,32 +2795,30 @@ describe("auto-merge (T3O-38)", () => {
           armed: false,
         },
       ];
-      for (const row of rows) {
-        it(row.name, () => {
-          const groups: Array<BoardCard> = [];
-          // chain[0] is the nearest group; build it outermost first.
-          let parentId: BoardCardId | null = null;
-          for (let index = row.chain.length - 1; index >= 0; index -= 1) {
-            const next = group(`card-g${index}`, row.chain[index]!, parentId);
-            groups.push(next);
-            parentId = next.id;
-          }
-          const leaf = at(BOARD_SEED_STAGE_IDS.merge, {
-            parentCardId: parentId,
-            autoMerge: row.own,
-          });
-          const board = { ...EMPTY_BOARD_STATE, cards: [...groups, leaf] };
-          expect(boardCardAutoMergeArmed({ board, card: leaf, boardWide: row.boardWide })).toBe(
-            row.armed,
-          );
-          // The client's shell resolution agrees with the aggregate's.
-          const shells = board.cards.map((card) => boardCardShellFromCard(card));
-          const leafShell = shells.find((shell) => shell.cardId === leaf.id)!;
-          expect(
-            boardShellAutoMergeArmed({ shells, shell: leafShell, boardWide: row.boardWide }),
-          ).toBe(row.armed);
+      it.each(rows)("$name", (row) => {
+        const groups: Array<BoardCard> = [];
+        // chain[0] is the nearest group; build it outermost first.
+        let parentId: BoardCardId | null = null;
+        for (let index = row.chain.length - 1; index >= 0; index -= 1) {
+          const next = group(`card-g${index}`, row.chain[index]!, parentId);
+          groups.push(next);
+          parentId = next.id;
+        }
+        const leaf = at(BOARD_SEED_STAGE_IDS.merge, {
+          parentCardId: parentId,
+          autoMerge: row.own,
         });
-      }
+        const board = { ...EMPTY_BOARD_STATE, cards: [...groups, leaf] };
+        expect(boardCardAutoMergeArmed({ board, card: leaf, boardWide: row.boardWide })).toBe(
+          row.armed,
+        );
+        // The client's shell resolution agrees with the aggregate's.
+        const shells = board.cards.map((card) => boardCardShellFromCard(card));
+        const leafShell = shells.find((shell) => shell.cardId === leaf.id)!;
+        expect(
+          boardShellAutoMergeArmed({ shells, shell: leafShell, boardWide: row.boardWide }),
+        ).toBe(row.armed);
+      });
     });
   });
 

@@ -2780,17 +2780,14 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         }
         const subtree = [card, ...boardCardLiveDescendants(board, card.id)];
         const archivedIds = new Set(subtree.map((member) => member.id));
-        let after: BoardState = {
-          ...board,
-          cards: board.cards.map((candidate) =>
-            archivedIds.has(candidate.id)
-              ? { ...candidate, archivedAt: command.createdAt, updatedAt: command.createdAt }
-              : candidate,
-          ),
-        };
+        let cards = board.cards.map((candidate) =>
+          archivedIds.has(candidate.id)
+            ? { ...candidate, archivedAt: command.createdAt, updatedAt: command.createdAt }
+            : candidate,
+        );
         const events: Array<PlannedBoardEvent> = [];
         for (const member of subtree) {
-          const nextCard = after.cards.find((candidate) => candidate.id === member.id)!;
+          const nextCard = cards.find((candidate) => candidate.id === member.id)!;
           events.push({
             ...(yield* makeBoardEventBase({
               cardId: member.id,
@@ -2807,15 +2804,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           });
         }
         for (const member of subtree) {
-          const changed = after.cards.find((candidate) => candidate.id === member.id)!;
-          const reflagged = yield* boardDependentBlockedEvents({ board: after, command, changed });
+          const changed = cards.find((candidate) => candidate.id === member.id)!;
+          const reflagged = yield* boardDependentBlockedEvents({
+            board: { ...board, cards },
+            command,
+            changed,
+          });
           for (const event of reflagged) {
             if (event.type !== "board.card-updated") continue;
             const next = event.payload.card;
-            after = {
-              ...after,
-              cards: after.cards.map((candidate) => (candidate.id === next.id ? next : candidate)),
-            };
+            cards = cards.map((candidate) => (candidate.id === next.id ? next : candidate));
           }
           events.push(...reflagged);
         }
@@ -2882,35 +2880,29 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         walk(card.id);
       }
       const restoredIds = new Set(restoring.map((member) => member.id));
-      let after: BoardState = {
-        ...board,
-        cards: board.cards.map((candidate) =>
-          restoredIds.has(candidate.id) ? { ...candidate, archivedAt: null } : candidate,
-        ),
-      };
-      after = {
-        ...after,
-        cards: after.cards.map((candidate) =>
-          restoredIds.has(candidate.id)
-            ? {
-                ...candidate,
-                // Dependencies may have finished while the card sat in the
-                // archive; restore with a fresh derivation rather than the
-                // stale flag.
-                blocked: deriveBoardCardBlocked({
-                  board: after,
-                  stage: candidate.stage,
-                  dependsOn: candidate.dependsOn,
-                  cards: after.cards,
-                }),
-                updatedAt: command.createdAt,
-              }
-            : candidate,
-        ),
-      };
+      const unarchivedCards = board.cards.map((candidate) =>
+        restoredIds.has(candidate.id) ? { ...candidate, archivedAt: null } : candidate,
+      );
+      let cards = unarchivedCards.map((candidate) =>
+        restoredIds.has(candidate.id)
+          ? {
+              ...candidate,
+              // Dependencies may have finished while the card sat in the
+              // archive; restore with a fresh derivation rather than the
+              // stale flag.
+              blocked: deriveBoardCardBlocked({
+                board: { ...board, cards: unarchivedCards },
+                stage: candidate.stage,
+                dependsOn: candidate.dependsOn,
+                cards: unarchivedCards,
+              }),
+              updatedAt: command.createdAt,
+            }
+          : candidate,
+      );
       const events: Array<PlannedBoardEvent> = [];
       for (const member of restoring) {
-        const nextCard = after.cards.find((candidate) => candidate.id === member.id)!;
+        const nextCard = cards.find((candidate) => candidate.id === member.id)!;
         events.push({
           ...(yield* makeBoardEventBase({
             cardId: member.id,
@@ -2924,15 +2916,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // Restoring re-arms the gate the archive released (D1/D5): dependents
       // that these cards block again are re-flagged alongside them.
       for (const member of restoring) {
-        const changed = after.cards.find((candidate) => candidate.id === member.id)!;
-        const reflagged = yield* boardDependentBlockedEvents({ board: after, command, changed });
+        const changed = cards.find((candidate) => candidate.id === member.id)!;
+        const reflagged = yield* boardDependentBlockedEvents({
+          board: { ...board, cards },
+          command,
+          changed,
+        });
         for (const event of reflagged) {
           if (event.type !== "board.card-updated") continue;
           const next = event.payload.card;
-          after = {
-            ...after,
-            cards: after.cards.map((candidate) => (candidate.id === next.id ? next : candidate)),
-          };
+          cards = cards.map((candidate) => (candidate.id === next.id ? next : candidate));
         }
         events.push(...reflagged);
       }

@@ -538,7 +538,7 @@ export const BoardGroupCardsTool = Tool.make("board_group_cards", {
   dependencies,
 }).annotate(Tool.Title, "Group board cards");
 
-export const BoardShareParentTool = Tool.make("board_share_parent", {
+const BoardShareParentTool = Tool.make("board_share_parent", {
   description:
     "Give a card that is already being built some sibling cards: a new group titled title is created where that card sits, and the card and cardIds all move into it, side by side. Use it when someone wants cards under a card whose work has started — a started card cannot become a group itself. The started card keeps its branch and where it merges. Returns the new group's key. REGROUPING NEEDS A HUMAN: describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
   parameters: Schema.Struct({
@@ -558,7 +558,7 @@ export const BoardShareParentTool = Tool.make("board_share_parent", {
   dependencies,
 }).annotate(Tool.Title, "Share a parent with a started card");
 
-export const BoardCancelCardWorkTool = Tool.make("board_cancel_card_work", {
+const BoardCancelCardWorkTool = Tool.make("board_cancel_card_work", {
   description:
     "Cancel a started card's work so it can become a group, then optionally move cardIds into it. DESTRUCTIVE: the card's threads stop, its pull request closes, and its branch — with every commit on it — is deleted once its worktree is reclaimed (work that exists nowhere else keeps the worktree until a human removes it). The card becomes an empty group no further on than Sprint. confirmCardKey must be the card's own key. Rejected on YOUR OWN card. Prefer board_share_parent, which keeps the work. Describe what is lost to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
   parameters: Schema.Struct({
