@@ -3082,7 +3082,7 @@ export function boardSplitProposedNote(childCount: number): string {
  * zero-cost derivation the plan pips use (D6).
  */
 export function boardCardShellPendingSplit(
-  card: Pick<BoardCardShell, "stage" | "planCount" | "planTotal">,
+  card: Pick<BoardCardShell, "stage" | "planCount" | "planTotal" | "parentCardId">,
   stages: ReadonlyArray<BoardStageDefinition>,
 ): boolean {
   // `planTotal` is derived from LIVE children only (D6), which is exactly the

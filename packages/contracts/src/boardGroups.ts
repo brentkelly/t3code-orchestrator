@@ -333,14 +333,16 @@ export function boardSplitRecommendationFallback(input: {
     which carry `cardId` and leave `parentCardId` / `group` absent for null. */
 export function boardShellMergesIntoIntegrationBranch(
   shells: ReadonlyArray<Pick<BoardCardShell, "cardId" | "parentCardId" | "group">>,
-  card: Pick<BoardCardShell, "parentCardId">,
+  card: { readonly parentCardId?: BoardCardId | null | undefined },
 ): boolean {
   const cards = shells.map((shell) => ({
     id: shell.cardId,
     parentCardId: shell.parentCardId ?? null,
     group: shell.group ?? null,
   }));
-  return boardCardIntegrationAncestor({ cards }, { parentCardId: card.parentCardId ?? null }) !== null;
+  return (
+    boardCardIntegrationAncestor({ cards }, { parentCardId: card.parentCardId ?? null }) !== null
+  );
 }
 
 /** A card's split recommendation: the stored one, or the fallback for a
