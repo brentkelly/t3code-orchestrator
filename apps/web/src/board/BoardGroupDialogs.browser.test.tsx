@@ -209,17 +209,18 @@ describe("BoardNewPhaseDialog", () => {
     await expect.element(page.getByRole("button", { name: "Create phase with 0" })).toBeDisabled();
     await press(page.getByRole("checkbox", { name: /C-2/ }));
     await press(page.getByRole("button", { name: "Create phase with 1" }));
-    await vi.waitFor(() => expect(commands.calls).toHaveLength(3));
-    const [create, moveCards, move] = commands.calls;
+    // One command: the heading, its cards and their landing stage decide together.
+    await vi.waitFor(() => expect(commands.calls).toHaveLength(1));
+    const [create] = commands.calls;
     expect(create!.label).toContain("create-card");
     expect(create!.input).toMatchObject({
       title: "Event log: Phase 2",
       heading: true,
       stage: "backlog",
       keyPrefix: "EVT",
+      adoptCardIds: ["c-2"],
+      adoptStage: "backlog",
     });
-    expect(moveCards!.input).toMatchObject({ cardIds: ["c-2"] });
-    expect(move!.input).toMatchObject({ cardId: "c-2", toStage: "backlog" });
   });
 });
 
@@ -245,9 +246,12 @@ describe("BoardStartedParentDialog", () => {
     await expect.element(create).toBeDisabled();
     await userEvent.type(page.getByLabelText("New parent's title"), "Event log overhaul");
     await press(create);
-    await vi.waitFor(() => expect(commands.calls).toHaveLength(2));
-    expect(commands.calls[0]!.input).toMatchObject({ title: "Event log overhaul", heading: true });
-    expect(commands.calls[1]!.input).toMatchObject({ cardIds: ["t3o-40", "t3o-41"] });
+    await vi.waitFor(() => expect(commands.calls).toHaveLength(1));
+    expect(commands.calls[0]!.input).toMatchObject({
+      title: "Event log overhaul",
+      heading: true,
+      adoptCardIds: ["t3o-40", "t3o-41"],
+    });
   });
 
   it("gates cancelling the work behind the typed key, and keeps the branch", async () => {
@@ -266,10 +270,13 @@ describe("BoardStartedParentDialog", () => {
     await userEvent.clear(page.getByLabelText("Type T3O-40 to confirm"));
     await userEvent.type(page.getByLabelText("Type T3O-40 to confirm"), "T3O-40");
     await press(confirm);
-    await vi.waitFor(() => expect(commands.calls).toHaveLength(2));
+    await vi.waitFor(() => expect(commands.calls).toHaveLength(1));
     expect(commands.calls[0]!.label).toContain("cancel-card-work");
-    expect(commands.calls[0]!.input).toMatchObject({ cardId: "t3o-40", confirmCardKey: "T3O-40" });
-    expect(commands.calls[1]!.input).toMatchObject({ cardIds: ["t3o-41"], parentCardId: "t3o-40" });
+    expect(commands.calls[0]!.input).toMatchObject({
+      cardId: "t3o-40",
+      confirmCardKey: "T3O-40",
+      adoptCardIds: ["t3o-41"],
+    });
   });
 });
 
