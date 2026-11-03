@@ -488,6 +488,43 @@ describe("BoardWorkspace contract (T3O-64)", () => {
     }).pipe(Effect.scoped, Effect.provide(TestLayer)),
   );
 
+  it.effect(
+    "a nested integration branch is cut from the remote tip of the outer one (T3O-28)",
+    () =>
+      Effect.gen(function* () {
+        // Worker A cuts the outer group's branch; a child's merge lands on it from
+        // worker B; A then cuts the inner group's branch off the outer, and must
+        // see the merge it never pulled.
+        const env = yield* makeEnv("nested");
+        const workerA = (yield* workspacesOver(env.checkout)).local;
+        yield* workerA.createIntegrationBranch({
+          projectId,
+          branch: "board/t-outer",
+          base: "main",
+        });
+        yield* git(env.pusher, ["fetch", "origin", "board/t-outer:board/t-outer"]);
+        yield* git(env.pusher, ["checkout", "board/t-outer"]);
+        yield* commitFile(env.pusher, "child.txt", "x\n", "a child merged into the outer branch");
+        yield* git(env.pusher, ["push", "origin", "board/t-outer"]);
+        const outerTip = yield* git(env.pusher, ["rev-parse", "HEAD"]);
+        assert.notStrictEqual(
+          yield* git(env.checkout, ["rev-parse", "refs/heads/board/t-outer"]),
+          outerTip,
+        );
+
+        const cut = yield* workerA.createIntegrationBranch({
+          projectId,
+          branch: "board/t-inner",
+          base: "board/t-outer",
+        });
+        assert.deepStrictEqual(cut, { outcome: "ready", pushed: true });
+        assert.strictEqual(
+          yield* git(env.checkout, ["rev-parse", "refs/heads/board/t-inner"]),
+          outerTip,
+        );
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+  );
+
   it.effect("a card moved A→B→A lands on what B pushed, not A's stale local branch", () =>
     Effect.gen(function* () {
       const env = yield* makeEnv("roundtrip");

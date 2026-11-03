@@ -565,11 +565,34 @@ export function makeLocalBoardWorkspace(
           `refs/heads/${branch}`,
         ]).pipe(Effect.map((sha) => sha !== ""));
       if (!(yield* exists())) {
+        // Cut from the REMOTE tip of the level above (T3O-28): on a nested
+        // group that is the outer integration branch, which another worker's
+        // merges may have moved without this checkout seeing it.
+        const remoteName = yield* primaryRemote(cwd);
+        const remoteBase =
+          remoteName === null
+            ? null
+            : yield* fetchRemoteBranch(
+                "boardIntegrationBranch.fetchBase",
+                cwd,
+                remoteName,
+                base,
+              ).pipe(
+                Effect.andThen(
+                  gitRef("boardIntegrationBranch.remoteBase", cwd, [
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    `refs/remotes/${remoteName}/${base}`,
+                  ]),
+                ),
+                Effect.map((sha) => (sha === "" ? null : `${remoteName}/${base}`)),
+              );
         const created = yield* git
           .execute({
             operation: "boardIntegrationBranch.create",
             cwd,
-            args: ["branch", branch, base],
+            args: ["branch", branch, remoteBase ?? base],
             timeoutMs: 10_000,
             allowNonZeroExit: true,
           })
