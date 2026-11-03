@@ -3040,33 +3040,50 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ? null
           : (board.cards.find((candidate) => candidate.id === card.parentCardId) ?? null);
       const parentIsGroup = formerParent !== null && boardCardGroupOf(board, formerParent) !== null;
-      const detach =
+      const firstStage = boardStagesInOrder(board)[0]!.stageId;
+      const restoreCards = (detach: boolean) =>
+        board.cards.map((candidate) => {
+          if (!restoredIds.has(candidate.id)) {
+            if (!detach && !parentIsGroup && candidate.id === formerParent?.id) {
+              return { ...candidate, group: defaultBoardCardGroup(board, candidate) };
+            }
+            return candidate;
+          }
+          if (candidate.id === card.id && detach) {
+            return {
+              ...candidate,
+              archivedAt: null,
+              parentCardId: null,
+              stage: isBoardDeferredStage(candidate.stage) ? firstStage : candidate.stage,
+            };
+          }
+          return { ...candidate, archivedAt: null };
+        });
+      // Dependencies taken on the card while it sat in the archive may now
+      // wait on the group it would rejoin; it returns to the top level instead
+      // of deadlocking both, and a cycle the detach cannot break is refused.
+      let detach =
         card.parentCardId !== null &&
         (formerParent === null ||
           formerParent.archivedAt !== null ||
           (!parentIsGroup && groupParentRefusal(board, formerParent) !== null));
+      if (!detach && card.parentCardId !== null) {
+        detach =
+          findNewTreeDependencyCycle({ before: board.cards, after: restoreCards(false) }) !== null;
+      }
+      const unarchivedCards = restoreCards(detach);
+      const cycle = findNewTreeDependencyCycle({ before: board.cards, after: unarchivedCards });
+      if (cycle !== null) {
+        const keyOf = (id: BoardCardId) => board.cards.find((c) => c.id === id)?.key ?? id;
+        return yield* invariant(
+          command,
+          `Restoring '${card.key}' would create a dependency cycle: ${cycle.map(keyOf).join(" -> ")}.`,
+        );
+      }
       const conversions =
         formerParent !== null && !detach && !parentIsGroup
           ? yield* groupConversionEvents({ board, command, card: formerParent })
           : [];
-      const firstStage = boardStagesInOrder(board)[0]!.stageId;
-      const unarchivedCards = board.cards.map((candidate) => {
-        if (!restoredIds.has(candidate.id)) {
-          if (conversions.length > 0 && candidate.id === formerParent?.id) {
-            return { ...candidate, group: defaultBoardCardGroup(board, candidate) };
-          }
-          return candidate;
-        }
-        if (candidate.id === card.id && detach) {
-          return {
-            ...candidate,
-            archivedAt: null,
-            parentCardId: null,
-            stage: isBoardDeferredStage(candidate.stage) ? firstStage : candidate.stage,
-          };
-        }
-        return { ...candidate, archivedAt: null };
-      });
       let cards = unarchivedCards.map((candidate) =>
         restoredIds.has(candidate.id)
           ? {

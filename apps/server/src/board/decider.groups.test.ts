@@ -1107,6 +1107,48 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
     }),
   );
 
+  it.effect("unarchive detaches a card its group's dependency waits on, rather than deadlock", () =>
+    Effect.gen(function* () {
+      const at = "2026-01-02T00:00:00.000Z";
+      const unarchive = (id: string): BoardCommand => ({
+        type: "board.card.unarchive",
+        commandId: CommandId.make(`cmd-unarchive-${id}`),
+        cardId: BoardCardId.make(id),
+        createdAt: NOW,
+      });
+      // g waits on x, and x took a dependency on c while c sat in the archive.
+      const events = yield* decideEvents(
+        unarchive("c"),
+        model([
+          card("x", "backlog", { dependsOn: [BoardCardId.make("c")] }),
+          card("g", "backlog", { group: group("backlog"), dependsOn: [BoardCardId.make("x")] }),
+          child("k", "backlog", "g"),
+          child("c", "backlog", "g", { archivedAt: at }),
+        ]),
+      );
+      const restored = events.find((candidate) => candidate.type === "board.card-unarchived");
+      assert.ok(restored?.type === "board.card-unarchived");
+      expect(restored.payload.card.parentCardId).toBeNull();
+      expect(restored.payload.card.archivedAt).toBeNull();
+
+      // A cycle the detach cannot break (x waits on a card inside c, which
+      // waits on x) is refused outright.
+      const failure = yield* decideFail(
+        unarchive("c"),
+        model([
+          card("x", "backlog", { dependsOn: [BoardCardId.make("d")] }),
+          card("c", "backlog", {
+            group: group("backlog"),
+            dependsOn: [BoardCardId.make("x")],
+            archivedAt: at,
+          }),
+          child("d", "backlog", "c", { archivedAt: at }),
+        ]),
+      );
+      assert.include(String(failure), "dependency cycle");
+    }),
+  );
+
   it.effect("a group's own dependencies hold back the cards inside it", () =>
     Effect.gen(function* () {
       const cards = [
