@@ -47,7 +47,7 @@ describe("BoardDecisionLog", () => {
     await expect.element(header).toHaveAttribute("aria-expanded", "true");
     const summary = screen.container.querySelector("button[aria-expanded]")?.textContent ?? "";
     expect(summary.replace(/\s+/g, " ")).toContain("4 decisions");
-    expect(summary).toContain("1 unclear · 1 important");
+    expect(summary).toContain("1 unclear·1 important");
 
     const rows = Array.from(screen.container.querySelectorAll("li[data-flag]"));
     expect(rows.map((row) => row.getAttribute("data-flag"))).toEqual([

@@ -5020,6 +5020,20 @@ export const BoardCardMarkAutoPlanCommand = Schema.Struct({
 });
 export type BoardCardMarkAutoPlanCommand = typeof BoardCardMarkAutoPlanCommand.Type;
 
+/**
+ * End a pending auto-plan request without approving anything (T3O-32): the
+ * run stopped being driven by the board — it failed, was paused, or is waiting
+ * on a human — so the card goes back to ordinary, human-gated planning.
+ * Server-internal, like marking.
+ */
+export const BoardCardEndAutoPlanCommand = Schema.Struct({
+  type: Schema.Literal("board.card.end-auto-plan"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  createdAt: IsoDateTime,
+});
+export type BoardCardEndAutoPlanCommand = typeof BoardCardEndAutoPlanCommand.Type;
+
 // Server-INTERNAL step-lifecycle commands (t3o-10, BOARD_INTERNAL_COMMANDS):
 // the supervisor reactor dispatches them as it drives a card's step through
 // its lifecycle. They are never client-dispatchable — a step advances only by
@@ -7409,6 +7423,7 @@ export const BOARD_INTERNAL_COMMANDS = [
   // T3O-32: the decision log and auto-planning.
   BoardCardRecordDecisionsCommand,
   BoardCardMarkAutoPlanCommand,
+  BoardCardEndAutoPlanCommand,
   BoardCardSelectStepCommand,
   BoardCardAdmitStepCommand,
   BoardCardAwaitStepInputCommand,

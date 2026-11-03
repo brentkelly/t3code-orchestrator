@@ -28,7 +28,8 @@ describe("boardDecisionLogView", () => {
       pastBuild: false,
     });
     expect(view?.count).toBe("2 decisions");
-    expect(view?.flags).toBe("1 important");
+    expect(view?.important).toBe("1 important");
+    expect(view?.unclear).toBeNull();
     expect(view?.defaultOpen).toBe(false);
     expect(view?.canAct).toBe(false);
   });
@@ -41,7 +42,7 @@ describe("boardDecisionLogView", () => {
     expect(boardDecisionLogView({ decisions, autoPlanned: false, pastBuild: true })?.canAct).toBe(
       false,
     );
-    expect(boardDecisionLogView({ decisions, autoPlanned: false, pastBuild: true })?.flags).toBe(
+    expect(boardDecisionLogView({ decisions, autoPlanned: false, pastBuild: true })?.unclear).toBe(
       "1 unclear",
     );
   });

@@ -6465,6 +6465,54 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * End a pending auto-plan request without approving anything (T3O-32). The
+   * card goes back to ordinary planning: later runs are human-in-the-loop
+   * again, their plan waits on the gate, and the Auto-plan button is back.
+   */
+  const endAutoPlan = Effect.fn("board-supervisor-endAutoPlan")(function* (
+    cardId: BoardCardId,
+    detail: string,
+  ) {
+    const ended = yield* dispatchOptional({
+      type: "board.card.end-auto-plan",
+      commandId: yield* commandId("end-auto-plan"),
+      cardId,
+      createdAt: yield* nowIso,
+    });
+    if (ended) yield* autoPlanNote(cardId, detail);
+  });
+
+  /**
+   * An auto-plan run the board has stopped driving ends the request (T3O-32):
+   * a step parked on a human (a question, a Stop, an escalation with no retry
+   * coming) or settled `failed`. An `abandoned` settle is a restart superseding
+   * the step, or the card leaving planning, which ends the request itself.
+   * Reads the live step, not the event's, so a step already put back to work
+   * by the time this runs keeps its request.
+   */
+  const endAutoPlanIfUndriven = Effect.fn("board-supervisor-endAutoPlanIfUndriven")(function* (
+    cardId: BoardCardId,
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined || !isBoardCardAutoPlanPending(card)) return;
+    const stage = boardStageById(board, card.stage);
+    if (stage === null || effectiveBoardStageRole(stage) !== "plan") return;
+    const state = boardCardStepState(board, card.id);
+    if (state === null || state.stepId !== card.stage) return;
+    const undriven =
+      state.status === "awaiting-input" ||
+      state.status === "paused" ||
+      state.status === "failed" ||
+      (state.status === "stalled" && state.retryAt === null);
+    if (!undriven) return;
+    yield* endAutoPlan(
+      card.id,
+      "Auto-plan stopped: the planning run stopped or is waiting on you, so nothing will be approved automatically. Finish planning by hand, or click Auto-plan again.",
+    );
+  });
+
+  /**
    * Approve an auto-planned card's plan (T3O-32, decisions 4 and 7) — always,
    * unclear decisions included. A single plan walks to Ready, and on to
    * Building for an Auto-plan → Build click (D18: the click is the human act).
@@ -6483,7 +6531,7 @@ const make = Effect.gen(function* () {
       (left, right) => left.ordinal - right.ordinal,
     );
     if (plans.length === 0) {
-      yield* autoPlanNote(
+      yield* endAutoPlan(
         card.id,
         "Auto-plan finished without proposing a plan, so nothing was approved. Plan the card by hand, or auto-plan it again.",
       );
@@ -6630,31 +6678,40 @@ const make = Effect.gen(function* () {
     );
     const board = yield* readBoard;
     const state = boardCardStepState(board, card.id);
-    // A live planning thread is told to finish on its own terms; a stalled
-    // one gave up, so it is replaced by a fresh unattended run like no thread.
+    // Only a RUNNING planning thread is steered: it is mid-interview and reads
+    // the turn next. A step parked on a question, a Stop or an escalation has
+    // nobody reading, so it is replaced by a fresh unattended run, as is a
+    // steer that did not land.
     if (
       state !== null &&
       state.threadId !== null &&
       state.stepId === card.stage &&
-      !isBoardTerminalStepStatus(state.status) &&
-      state.status !== "stalled"
+      state.status === "running"
     ) {
-      yield* sendTurn({
-        threadId: state.threadId,
-        text: BOARD_AUTO_PLAN_INSTRUCTION,
-        runtimeMode: state.runtimeMode,
-      });
-      if (state.humanInLoop) {
-        yield* dispatch({
-          type: "board.card.retune-step",
-          commandId: yield* commandId("auto-plan-retune"),
-          cardId: card.id,
-          stepId: state.stepId,
-          humanInLoop: false,
-          createdAt: yield* nowIso,
-        });
+      const steered = yield* optional(
+        "thread.send",
+        threads.send({
+          commandId: yield* commandId("auto-plan-steer"),
+          threadId: state.threadId,
+          text: BOARD_AUTO_PLAN_INSTRUCTION,
+          attachments: [],
+          runtimeMode: state.runtimeMode,
+          interactionMode: "default",
+        }),
+      );
+      if (steered) {
+        if (state.humanInLoop) {
+          yield* dispatch({
+            type: "board.card.retune-step",
+            commandId: yield* commandId("auto-plan-retune"),
+            cardId: card.id,
+            stepId: state.stepId,
+            humanInLoop: false,
+            createdAt: yield* nowIso,
+          });
+        }
+        return { outcome: "steered" } as const;
       }
-      return { outcome: "steered" } as const;
     }
     const started = yield* dispatchRefusal({
       type: "board.card.start-stage-thread",
@@ -6662,9 +6719,10 @@ const make = Effect.gen(function* () {
       cardId: card.id,
       createdAt: yield* nowIso,
     });
-    return started === null
-      ? ({ outcome: "started" } as const)
-      : ({ outcome: "refused", detail: started } as const);
+    if (started === null) return { outcome: "started" } as const;
+    // Nothing will run, so the request must not outlive the click.
+    yield* endAutoPlan(card.id, `Auto-plan could not start a planning run: ${started}`);
+    return { outcome: "refused", detail: started } as const;
   });
 
   const handleStepCompleted = Effect.fn("board-supervisor-handleStepCompleted")(function* (
@@ -8872,6 +8930,10 @@ const make = Effect.gen(function* () {
         return handleCardUpdated(event);
       case "board.card-step-completed":
         return handleStepCompleted(event);
+      case "board.card-step-awaiting-input":
+      case "board.card-step-paused":
+      case "board.card-step-settled":
+        return endAutoPlanIfUndriven(event.payload.cardId);
       case "board.card-step-force-start-requested":
         // A human took a slot over the cap (t3o-33). Scheduling here is what
         // makes the click start the card: without it the override would sit on
@@ -8900,6 +8962,7 @@ const make = Effect.gen(function* () {
             // neither needs a private path into the governor.
             event.payload.state.status === "queued" ? schedule() : Effect.void,
           ),
+          Effect.andThen(endAutoPlanIfUndriven(event.payload.cardId)),
         );
       case "board.card-archived":
         return handleArchived(event);
@@ -9290,6 +9353,11 @@ const make = Effect.gen(function* () {
           // below the volume that made thread activity need filtering at the
           // gateway (`ThreadGatewayV1.observe`).
           event.type !== "board.card-step-recovered" &&
+          // T3O-32: a step parked or settled may end a pending auto-plan
+          // request. Step boundaries, so a handful an hour.
+          event.type !== "board.card-step-awaiting-input" &&
+          event.type !== "board.card-step-paused" &&
+          event.type !== "board.card-step-settled" &&
           event.type !== "board.card-archived" &&
           event.type !== "board.card-deleted" &&
           event.type !== "board.plans-approved" &&

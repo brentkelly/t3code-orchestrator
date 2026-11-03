@@ -253,6 +253,30 @@ it.layer(NodeServices.layer)("auto-plan and the decision log (T3O-32)", (it) => 
     }),
   );
 
+  it.effect("ends a pending request on its own, leaving the card in planning", () =>
+    Effect.gen(function* () {
+      const endCommand = {
+        type: "board.card.end-auto-plan",
+        commandId: CommandId.make("cmd-end"),
+        cardId,
+        createdAt: LATER,
+      } as const;
+      const event = updatedCard(
+        yield* decideEvents(
+          endCommand,
+          readModel([makeCard({ id: "card-auto", autoPlan: pending })]),
+        ),
+      );
+      expect(event.payload.card.autoPlan).toEqual({ ...pending, endedAt: LATER });
+      expect(event.payload.card.stage).toBe(BOARD_SEED_STAGE_IDS.planning);
+      const error = yield* decideFail(
+        endCommand,
+        readModel([makeCard({ id: "card-auto", autoPlan: { ...pending, endedAt: NOW } })]),
+      );
+      expect(error.message).toContain("not being auto-planned");
+    }),
+  );
+
   it.effect("records decisions with ids derived from the event, in order", () =>
     Effect.gen(function* () {
       const events = yield* decideEvents(

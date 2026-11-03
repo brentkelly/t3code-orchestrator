@@ -225,7 +225,8 @@ const invariant = (command: BoardCommand, detail: string) =>
   new BoardCommandInvariantError({ commandType: command.type, detail });
 
 /** A pending auto-plan request marked spent (T3O-32): the plan was approved,
-    or the card left planning before it arrived. Anything else is untouched. */
+    the card left planning before it arrived, or the run stopped being driven
+    by the board. Anything else is untouched. */
 function endBoardCardAutoPlan(card: BoardCard, at: string): Pick<BoardCard, "autoPlan"> {
   return card.autoPlan !== undefined && card.autoPlan.endedAt === null
     ? { autoPlan: { ...card.autoPlan, endedAt: at } }
@@ -4302,6 +4303,29 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         })),
         type: "board.card-updated",
         payload: { cardId: card.id, card: nextCard, autoPlanMarked: true },
+      };
+    }
+
+    case "board.card.end-auto-plan": {
+      const card = yield* requireBoardCard({ board, command });
+      if (!isBoardCardAutoPlanPending(card)) {
+        return yield* invariant(command, `Card '${card.key}' is not being auto-planned.`);
+      }
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: card.id,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-updated",
+        payload: {
+          cardId: card.id,
+          card: {
+            ...card,
+            ...endBoardCardAutoPlan(card, command.createdAt),
+            updatedAt: command.createdAt,
+          },
+        },
       };
     }
 

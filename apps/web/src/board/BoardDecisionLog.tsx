@@ -42,8 +42,16 @@ export function BoardDecisionLog({
         )}
         <span className="text-[12px] font-semibold text-foreground">Decision log</span>
         <span className="text-[11.5px] text-muted-foreground">{view.count}</span>
-        {view.flags === null ? null : (
-          <span className="text-[11.5px] font-medium text-attention-foreground">{view.flags}</span>
+        {view.unclear === null ? null : (
+          <span className="text-[11.5px] font-medium text-attention-foreground">
+            {view.unclear}
+          </span>
+        )}
+        {view.unclear !== null && view.important !== null ? (
+          <span className="text-[11.5px] text-muted-foreground">·</span>
+        ) : null}
+        {view.important === null ? null : (
+          <span className="text-[11.5px] font-medium text-muted-foreground">{view.important}</span>
         )}
       </button>
       {open ? (

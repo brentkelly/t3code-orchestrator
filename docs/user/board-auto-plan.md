@@ -28,6 +28,9 @@ and are happy for the agent to settle the rest.
   until you start the group.
 - Dependencies still apply: a card waiting on another card stays in Ready until that card is done.
 - The button is not offered on a group, or on a card whose proposed split is waiting for you.
+- If the run stops before it proposes a plan (it asks you a question, you stop it, or it gives up),
+  auto-plan is cancelled and the card goes back to ordinary planning. Click the button again to
+  retry.
 
 Once an auto-planned card is past Building, the log offers **Send back to build with changes**, which
 moves the card back to Building for another pass, and **Create follow-up card**, which adds a Backlog

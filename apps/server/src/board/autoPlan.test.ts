@@ -15,11 +15,14 @@ import {
   boardPlanId,
   type BoardCard,
   type BoardCardGroup,
+  type BoardCardStepState,
   type BoardPlan,
   type BoardStepCompletion,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+
+import { ThreadCommandRefusedError } from "./ThreadGateway.ts";
 
 import {
   cardMoved,
@@ -340,6 +343,93 @@ it.effect("an auto-plan run that proposed nothing approves nothing and says so",
             command.type === "board.card.record-note" && command.kind === "card-auto-planned",
         );
         assert.ok(note !== undefined);
+      }),
+  );
+});
+
+/** The step event the decider emits once the reactor parks or settles a step;
+    the harness does not loop it back, so a test delivers it with the live row. */
+const stepEvent = (
+  type: "board.card-step-awaiting-input",
+  state: BoardCardStepState,
+  sequence: number,
+) => ({ type, sequence, payload: { cardId: state.cardId, state } }) as never;
+
+it.effect("an auto-plan run parked on a human ends the request, so planning is gated again", () => {
+  const card = planningCard("parked", { autoPlan: pendingAutoPlan("build") });
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("parked", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    ({ pumpDomain, board, reactor }) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("parked");
+        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        yield* pumpDomain(stepCompleted(id, "blocked", 2, PLANNING));
+        const parked = boardCardStepState(yield* board, id);
+        assert.strictEqual(parked?.status, "awaiting-input");
+        yield* pumpDomain(stepEvent("board.card-step-awaiting-input", parked!, 3));
+
+        const after = yield* board;
+        assert.isString(cardOf(after.cards, "parked")?.autoPlan?.endedAt);
+        // The way back in: Auto-plan is accepted again.
+        const again = yield* reactor.autoPlanCard(id);
+        assert.strictEqual(again.outcome, "started");
+      }),
+  );
+});
+
+it.effect("a planning step waiting on a question is replaced by a fresh run, not steered", () => {
+  const card = planningCard("asking");
+  return withGovernor(
+    { board: { cards: [card], nextCardNumberByProject: {} }, settings },
+    ({ pumpDomain, board, commands, reactor }) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("asking");
+        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        yield* pumpDomain(stepCompleted(id, "blocked", 2, PLANNING));
+        assert.strictEqual(boardCardStepState(yield* board, id)?.status, "awaiting-input");
+
+        const result = yield* reactor.autoPlanCard(id);
+        assert.deepStrictEqual(result, { outcome: "started" });
+        const steered = (yield* commands).some(
+          (command) =>
+            command.type === "thread.send" && command.text === BOARD_AUTO_PLAN_INSTRUCTION,
+        );
+        assert.isFalse(steered);
+      }),
+  );
+});
+
+it.effect("a steering turn that does not land falls back to a fresh unattended run", () => {
+  const card = planningCard("deaf");
+  return withGovernor(
+    {
+      board: { cards: [card], nextCardNumberByProject: {} },
+      settings,
+      gateway: (local) => ({
+        ...local,
+        send: (input) =>
+          input.text === BOARD_AUTO_PLAN_INSTRUCTION
+            ? Effect.fail(
+                new ThreadCommandRefusedError({
+                  command: "send",
+                  threadId: input.threadId,
+                  detail: "The session is gone.",
+                }),
+              )
+            : local.send(input),
+      }),
+    },
+    ({ pumpDomain, board, reactor }) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("deaf");
+        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        assert.strictEqual(boardCardStepState(yield* board, id)?.status, "running");
+
+        const result = yield* reactor.autoPlanCard(id);
+        assert.deepStrictEqual(result, { outcome: "started" });
       }),
   );
 });

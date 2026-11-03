@@ -22,8 +22,10 @@ export type BoardDecisionLogView = {
   readonly rows: ReadonlyArray<BoardDecisionLogRow>;
   /** "3 decisions". */
   readonly count: string;
-  /** "1 unclear · 2 important", or null when nothing is flagged. */
-  readonly flags: string | null;
+  /** "1 unclear", or null when nothing is unclear. */
+  readonly unclear: string | null;
+  /** "2 important", or null when nothing is important. */
+  readonly important: string | null;
   readonly autoPlanned: boolean;
   /** Open on first sight: an auto-planned card with unclear decisions, which
       a human has not yet reviewed. */
@@ -42,10 +44,6 @@ export function boardDecisionLogView(input: {
   const sorted = sortBoardCardDecisions(input.decisions);
   const unclear = sorted.filter((entry) => entry.flag === "unclear").length;
   const important = sorted.filter((entry) => entry.flag === "important").length;
-  const flags = [
-    unclear > 0 ? `${unclear} unclear` : null,
-    important > 0 ? `${important} important` : null,
-  ].filter((part) => part !== null);
   return {
     rows: sorted.map((entry) => ({
       id: entry.decisionId,
@@ -56,7 +54,8 @@ export function boardDecisionLogView(input: {
       flag: entry.flag,
     })),
     count: `${sorted.length} ${sorted.length === 1 ? "decision" : "decisions"}`,
-    flags: flags.length === 0 ? null : flags.join(" · "),
+    unclear: unclear > 0 ? `${unclear} unclear` : null,
+    important: important > 0 ? `${important} important` : null,
     autoPlanned: input.autoPlanned,
     defaultOpen: input.autoPlanned && unclear > 0,
     canAct: input.autoPlanned && input.pastBuild,
