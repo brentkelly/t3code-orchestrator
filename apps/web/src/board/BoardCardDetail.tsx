@@ -86,8 +86,12 @@ import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { usePaginatedBranches } from "../state/queries";
 import { environmentShell } from "../state/shell";
-import { olderSettledThreads, threadEnvironment } from "../state/threads";
-import { boardAdoptableThreads, useBoardAdoptThreadSearch } from "./boardAdoptThreadSearch";
+import { threadEnvironment } from "../state/threads";
+import {
+  boardAdoptableThreads,
+  useBoardAdoptKnownCardThreadIds,
+  useBoardAdoptThreadSearch,
+} from "./boardAdoptThreadSearch";
 import { boardQueueReason, boardThreadMoveDividers } from "./workers/cardWorker";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
@@ -569,12 +573,11 @@ export function BoardCardDetail({
     card?.projectId ?? null,
     adoptQuery,
   );
-  // The filtered read names every card thread the shell holds, whatever the Settled toggle says.
-  const olderSettled = useAtomValue(olderSettledThreads.olderSettledAtom(environmentId, true));
+  const [adoptOpen, setAdoptOpen] = useState(false);
+  const knownCardThreads = useBoardAdoptKnownCardThreadIds(environmentId, adoptOpen);
   const adoptableThreads = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
     const onCards = new Set((board?.cardThreads ?? []).map((entry) => entry.threadId));
-    const knownCardThreads = olderSettled?.boardCardThreadIds ?? null;
     return boardAdoptableThreads({
       projectId: card.projectId,
       cardThreadIds: card.threadLinks.map((link) => link.threadId),
@@ -582,9 +585,13 @@ export function BoardCardDetail({
         onCards.has(threadId) || (knownCardThreads?.has(threadId) ?? false),
       threads: [...(snapshot?.threads ?? []), ...adoptSearchRead.rows],
     });
-  }, [card, snapshot, board, olderSettled, adoptSearchRead.rows]);
+  }, [card, snapshot, board, knownCardThreads, adoptSearchRead.rows]);
   const adoptSearch = useMemo(
-    () => ({ onQueryChange: setAdoptQuery, pending: adoptSearchRead.pending }),
+    () => ({
+      onQueryChange: setAdoptQuery,
+      onOpenChange: setAdoptOpen,
+      pending: adoptSearchRead.pending,
+    }),
     [adoptSearchRead.pending],
   );
 

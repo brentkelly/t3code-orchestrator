@@ -34,6 +34,8 @@ import { BoardPickerSearchBody, type BoardPickerOption } from "./BoardSearchAddP
 /** The adopt list's server search (T3O-41): told the query as it is typed. */
 export interface BoardAdoptSearch {
   readonly onQueryChange: (query: string) => void;
+  /** Whether the adopt list is showing, so its card-thread read mounts only then. */
+  readonly onOpenChange?: ((open: boolean) => void) | undefined;
   readonly pending: boolean;
 }
 
@@ -172,7 +174,10 @@ export function BoardCardThreadAddMenu({
   // still fading out, which is the flicker `openCount` removes next door in
   // BoardSearchAddPicker.
   const [openCount, setOpenCount] = useState(0);
-  const close = () => setOpen(false);
+  const close = () => {
+    setOpen(false);
+    adoptSearch?.onOpenChange?.(false);
+  };
   return (
     <Popover
       open={open}
@@ -181,6 +186,8 @@ export function BoardCardThreadAddMenu({
         if (next) {
           setMode("menu");
           setOpenCount((count) => count + 1);
+        } else {
+          adoptSearch?.onOpenChange?.(false);
         }
       }}
     >
@@ -206,7 +213,10 @@ export function BoardCardThreadAddMenu({
             onCreateBlankThread();
             close();
           }}
-          onEnterAdoptMode={() => setMode("adopt")}
+          onEnterAdoptMode={() => {
+            setMode("adopt");
+            adoptSearch?.onOpenChange?.(true);
+          }}
           onRestartStage={() => {
             onRestartStage();
             close();

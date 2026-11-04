@@ -459,8 +459,8 @@ const refuseLiveWork = (
  *
  * 1. The caller owns the card's LIVE step → that step. The thread match is the
  *    point: `resolveBoardCardForThread` resolves a card from any live
- *    (non-tombstoned, non-retired) link, so a sibling thread on the same card must not be able to settle a run
- *    it did not perform.
+ *    (non-tombstoned, non-retired) link, so a sibling thread on the same card
+ *    must not be able to settle a run it did not perform.
  *    The planning thread a card kept when it left Planning unfinished (T3O-19)
  *    counts as owning its abandoned step: the interview runs on after the move,
  *    and its completion has to land.

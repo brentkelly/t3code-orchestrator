@@ -71,6 +71,28 @@ export function useBoardAdoptThreadSearch(
   };
 }
 
+const NO_CARD_THREAD_IDS = Atom.make<ReadonlySet<ThreadId> | null>(null).pipe(
+  Atom.withLabel("t3o:board:adopt-card-thread-ids:none"),
+);
+
+const knownCardThreadIds = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    (get) =>
+      get(olderSettledThreads.olderSettledAtom(environmentId, true))?.boardCardThreadIds ?? null,
+  ).pipe(Atom.withLabel(`t3o:board:adopt-card-thread-ids:${environmentId}`)),
+);
+
+/**
+ * Every card-thread id the filtered Settled read knows of, whatever the Settled toggle says.
+ * Mounted only while the picker is open, so a card modal alone does not run the filtered read.
+ */
+export function useBoardAdoptKnownCardThreadIds(
+  environmentId: EnvironmentId,
+  open: boolean,
+): ReadonlySet<ThreadId> | null {
+  return useAtomValue(open ? knownCardThreadIds(environmentId) : NO_CARD_THREAD_IDS);
+}
+
 /**
  * The threads the picker offers: the card's project, not archived, from the shell and the search,
  * and not linked to any card — a thread belongs to one card (D9), so offering one that is would
