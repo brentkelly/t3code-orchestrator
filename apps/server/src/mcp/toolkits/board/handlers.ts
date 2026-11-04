@@ -38,6 +38,7 @@ import {
   type BoardCardSetGroupSettingsCommand,
   type BoardCardSetAutomationCommand,
   boardWideAutoMergeOn,
+  boardAutomationTogglesTurnedOn,
   resolveBoardCardAutomationIn,
   type BoardCardCancelWorkCommand,
   type BoardCardUnarchiveCommand,
@@ -1989,8 +1990,18 @@ export const boardHandlers = {
   board_set_automation: (input) =>
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
+      const board = yield* readBoardState(deps);
+      const card = yield* findCardByKeyOrId(board, input.cardId);
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const boardWideAutoMerge = boardWideAutoMergeOn(
+        board,
+        (yield* settings.getSettings.pipe(Effect.mapError(internalError))).board,
+      );
+      // Judged on resolved values, so an inherit (null) that picks up a
+      // group's "on" needs the same approval as a true.
       const turningOn =
-        input.autoPlan === true || input.autoBuild === true || input.autoMerge === true;
+        boardAutomationTogglesTurnedOn({ board, card, change: input, boardWideAutoMerge }).length >
+        0;
       if (turningOn && input.approved !== true) {
         return yield* new BoardToolError({
           code: "invalid-input",
@@ -2003,10 +2014,6 @@ export const boardHandlers = {
           deps,
           "This run is unattended, so nobody can confirm turning automation on. Leave the card as it is and mention the suggestion in your summary for a human to apply.",
         );
-      }
-      const board = yield* readBoardState(deps);
-      const card = yield* findCardByKeyOrId(board, input.cardId);
-      if (turningOn) {
         // Auto-plan steers the card's planning thread by interrupting it, and
         // an agent never authorises its own card's work.
         yield* refuseOwnCard(
@@ -2029,12 +2036,10 @@ export const boardHandlers = {
       yield* dispatch(deps, command);
       const after = yield* readBoardState(deps);
       const updated = after.cards.find((candidate) => candidate.id === card.id) ?? card;
-      const settings = yield* ServerSettings.ServerSettingsService;
-      const current = yield* settings.getSettings.pipe(Effect.mapError(internalError));
       const resolved = resolveBoardCardAutomationIn({
         board: after,
         card: updated,
-        boardWideAutoMerge: boardWideAutoMergeOn(after, current.board),
+        boardWideAutoMerge,
       });
       const view = (toggle: (typeof resolved)["autoPlan"]) => ({
         value: toggle.value,

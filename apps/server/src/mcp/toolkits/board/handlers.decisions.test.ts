@@ -306,4 +306,25 @@ it.layer(layer)("decision log and ancestor context (T3O-32)", (it) => {
       assert.deepInclude(off.autoMerge, { value: false, source: null });
     }),
   );
+
+  it.effect("board_set_automation treats an inherit that turns a toggle on as turning it on", () =>
+    Effect.gen(function* () {
+      const { middle, leaf } = yield* seedTree();
+      yield* boardHandlers
+        .board_set_group_settings({ cardId: middle.key, autoMerge: true, approved: true })
+        .pipe(asChild);
+      const off = yield* boardHandlers
+        .board_set_automation({ cardId: leaf.key, autoMerge: false })
+        .pipe(asChild);
+      assert.deepInclude(off.autoMerge, { value: false, source: "own" });
+      const unapproved = yield* boardHandlers
+        .board_set_automation({ cardId: leaf.key, autoMerge: null })
+        .pipe(asChild, Effect.flip);
+      assert.include(unapproved.message, "approved: true");
+      const own = yield* boardHandlers
+        .board_set_automation({ cardId: leaf.key, autoMerge: null, approved: true })
+        .pipe(asChild, Effect.flip);
+      assert.include(own.message, "is the card you are working on");
+    }),
+  );
 });

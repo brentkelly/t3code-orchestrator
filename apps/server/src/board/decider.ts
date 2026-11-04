@@ -40,7 +40,7 @@ import {
   isBoardCardBaseBranchShape,
   isEmptyBoardCardModelOverrides,
   boardCardAutoMergeHoldsEqual,
-  BOARD_AUTOMATION_TOGGLES,
+  boardAutomationTogglesTurnedOn,
   boardCardAutoMergeArmed,
   BOARD_AUTOMATION_TOGGLE_LABELS,
   type BoardAutomationChanged,
@@ -2535,22 +2535,20 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
     case "board.card.set-automation": {
       const card = yield* requireActiveBoardCard({ board, command });
-      const resolved = resolveBoardCardAutomationIn({
+      // Compare resolved values, so an inherit that picks up the group's "on"
+      // is locked exactly like a true. The board-wide setting lives outside
+      // the board state; its lock is the reactor's and the UI's to show.
+      const turnedOn = boardAutomationTogglesTurnedOn({
         board,
         card,
-        // The board-wide setting lives outside the board state; its lock is
-        // the reactor's and the UI's to show, and an own value under it is
-        // harmless.
+        change: command,
         boardWideAutoMerge: false,
       });
-      for (const toggle of BOARD_AUTOMATION_TOGGLES) {
-        const requested = command[toggle];
-        if (requested !== true) continue;
-        const entry = resolved[toggle];
-        if (entry.locked && entry.own !== true) {
+      for (const { toggle, before } of turnedOn) {
+        if (before.locked) {
           return yield* invariant(
             command,
-            `Can't turn ${BOARD_AUTOMATION_TOGGLE_LABELS[toggle]} on for '${card.key}': ${entry.lockReason ?? "it is locked."}`,
+            `Can't turn ${BOARD_AUTOMATION_TOGGLE_LABELS[toggle]} on for '${card.key}': ${before.lockReason ?? "it is locked."}`,
           );
         }
       }

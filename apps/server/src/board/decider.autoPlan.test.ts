@@ -444,6 +444,39 @@ it.layer(NodeServices.layer)("automation toggles (T3O-38)", (it) => {
     }),
   );
 
+  it.effect("refuses an inherit that would turn a locked toggle on through its group", () =>
+    Effect.gen(function* () {
+      const group = makeCard({
+        id: "card-group",
+        stage: "building",
+        group: groupOf({ autoBuild: true, autoPlan: true, started: true }),
+      });
+      const overriding = makeCard({
+        id: "card-auto",
+        stage: "building",
+        parentCardId: BoardCardId.make("card-group"),
+        autoBuildSetting: false,
+        autoPlanSetting: false,
+      });
+      const model = readModel([group, overriding]);
+      expect((yield* decideFail(setAutomation({ autoBuild: null }), model)).message).toContain(
+        "Building now.",
+      );
+      expect((yield* decideFail(setAutomation({ autoPlan: null }), model)).message).toContain(
+        "Planning is finished.",
+      );
+      // An inherit that leaves the toggle off is still accepted.
+      const offGroup = readModel([
+        makeCard({ ...group, group: groupOf({ started: true }) }),
+        overriding,
+      ]);
+      const cleared = updatedCard(
+        yield* decideEvents(setAutomation({ autoBuild: null }), offGroup),
+      );
+      expect(cleared.payload.card.autoBuildSetting).toBe(null);
+    }),
+  );
+
   it.effect("turning Auto-merge off clears a held merge", () =>
     Effect.gen(function* () {
       const held = makeCard({

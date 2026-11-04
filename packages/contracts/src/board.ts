@@ -3040,6 +3040,38 @@ export function resolveBoardCardAutomationIn(input: {
   });
 }
 
+/** A partial write of a card's own Automation settings; null means inherit. */
+export type BoardAutomationSettingsChange = {
+  readonly [K in BoardAutomationToggle]?: boolean | null | undefined;
+};
+
+/**
+ * The toggles whose resolved value a settings change turns from off to on, so
+ * an inherit (null) that picks up a group's "on" counts exactly like a true.
+ */
+export function boardAutomationTogglesTurnedOn(input: {
+  readonly board: BoardState;
+  readonly card: BoardCard;
+  readonly change: BoardAutomationSettingsChange;
+  readonly boardWideAutoMerge: boolean;
+}): ReadonlyArray<{ toggle: BoardAutomationToggle; before: BoardResolvedAutomationToggle }> {
+  const { board, card, change, boardWideAutoMerge } = input;
+  const before = resolveBoardCardAutomationIn({ board, card, boardWideAutoMerge });
+  const after = resolveBoardCardAutomationIn({
+    board,
+    card: {
+      ...card,
+      autoPlanSetting: change.autoPlan === undefined ? card.autoPlanSetting : change.autoPlan,
+      autoBuildSetting: change.autoBuild === undefined ? card.autoBuildSetting : change.autoBuild,
+      autoMergeSetting: change.autoMerge === undefined ? card.autoMergeSetting : change.autoMerge,
+    },
+    boardWideAutoMerge,
+  });
+  return BOARD_AUTOMATION_TOGGLES.filter(
+    (toggle) => !before[toggle].value && after[toggle].value,
+  ).map((toggle) => ({ toggle, before: before[toggle] }));
+}
+
 /**
  * Whether a card's OWN Auto-build should start it now (T3O-38): a live leaf
  * with its own Auto-build on, waiting in the stage before build with every
