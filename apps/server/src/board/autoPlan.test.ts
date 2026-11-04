@@ -462,6 +462,55 @@ it.effect(
   },
 );
 
+it.effect("a group's start approves and builds a child plan that waited for it", () => {
+  const group = planningCard("group", { group: { ...autoPlanGroup, autoBuild: true } });
+  const child = planningCard("child", { parentCardId: BoardCardId.make("group") });
+  const sibling = makeBoardCard({
+    id: "sibling",
+    stage: "ready",
+    orderKey: "z",
+    parentCardId: "group",
+  });
+  return withGovernor(
+    {
+      board: {
+        cards: [group, child, sibling],
+        plans: [plan("child", "one", 0)],
+        nextCardNumberByProject: {},
+      },
+      settings,
+    },
+    ({ pumpDomain, board, model }) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("child");
+        yield* pumpDomain(cardMoved(child, "sprint", "planning", 1));
+        yield* pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
+        // Inherited Auto-build waits for the group to begin, so the plan waits.
+        assert.strictEqual(cardStage(yield* board, id), BOARD_SEED_STAGE_IDS.planning);
+
+        // A human starts a sibling, which begins the group.
+        let moved: BoardCard | undefined;
+        yield* Ref.update(model, (current) => ({
+          ...current,
+          board: {
+            ...current.board!,
+            cards: current.board!.cards.map((card) => {
+              if (card.id === BoardCardId.make("group")) {
+                return { ...card, group: { ...card.group!, started: true } };
+              }
+              if (card.id !== BoardCardId.make("sibling")) return card;
+              moved = { ...card, stage: BOARD_SEED_STAGE_IDS.building };
+              return moved;
+            }),
+          },
+        }));
+        yield* pumpDomain(cardMoved(moved!, "ready", "building", 3));
+
+        assert.strictEqual(cardStage(yield* board, id), BOARD_SEED_STAGE_IDS.building);
+      }),
+  );
+});
+
 it.effect("a child created straight into an auto-plan group's Planning is auto-planned", () => {
   const group = planningCard("group", { group: autoPlanGroup });
   const child = planningCard("child", { parentCardId: BoardCardId.make("group") });

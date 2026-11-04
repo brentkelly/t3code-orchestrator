@@ -15,6 +15,7 @@
 import {
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
+  boardCardStepState,
   BoardPlanId,
   type BoardCard,
   type BoardPlan,
@@ -440,3 +441,63 @@ it.effect("an auto-started card with no free slot queues honestly", () =>
       }),
   ),
 );
+
+// ── Automation toggles (T3O-38) ───────────────────────────────────────────
+
+const armEdit = (card: BoardCard, sequence: number) =>
+  ({
+    type: "board.card-updated",
+    sequence,
+    payload: { cardId: card.id, card, automationChanged: { autoBuild: true } },
+  }) as never;
+
+it.effect("a child's own Auto-build starts it without beginning its unstarted group", () => {
+  const group: BoardCard = {
+    ...makeBoardCard({ id: "group", stage: READY, orderKey: "a" }),
+    group: {
+      target: "inherit",
+      autoBuild: true,
+      autoMerge: false,
+      autoPlan: false,
+      started: false,
+      placed: BOARD_SEED_STAGE_IDS.ready,
+      prevStage: null,
+      heading: true,
+      integrated: false,
+    },
+  };
+  const own = armedCard({ dependsOn: [], parentCardId: "group" });
+  const sibling = makeBoardCard({
+    id: "sibling",
+    stage: READY,
+    orderKey: "n",
+    parentCardId: "group",
+  });
+  return withGovernor(setup([group, own, sibling]), (h) =>
+    Effect.gen(function* () {
+      yield* h.pumpDomain(armEdit(own, 1));
+      assert.strictEqual(stageOf(yield* h.board, "waiter"), BUILDING);
+      yield* deliverAutoStart(h, "waiter", 2);
+
+      const after = yield* h.board;
+      assert.strictEqual(stageOf(after, "sibling"), READY, "the group's cascade did not run");
+      assert.isFalse(
+        after.cards.find((card) => card.id === BoardCardId.make("group"))?.group?.started,
+      );
+    }),
+  );
+});
+
+it.effect("Auto-build runs the build unattended even when the card asks for a human", () => {
+  const card: BoardCard = { ...armedCard({ dependsOn: [] }), humanInLoop: true };
+  return withGovernor(setup([card]), (h) =>
+    Effect.gen(function* () {
+      yield* h.pumpDomain(armEdit(card, 1));
+      yield* deliverAutoStart(h, "waiter", 2);
+
+      const state = boardCardStepState(yield* h.board, BoardCardId.make("waiter"));
+      assert.strictEqual(state?.stepId, BUILDING);
+      assert.isFalse(state?.humanInLoop);
+    }),
+  );
+});
