@@ -13,6 +13,7 @@ import type { BoardStageColumns } from "@t3tools/client-runtime/state/shell";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardCollapseToggle,
   boardColumnCollapsed,
   boardScopeCollapseKey,
   boardScopeColumnCollapsedByDefault,
@@ -197,36 +198,27 @@ describe("boardColumnCollapsed (T3O-40)", () => {
 
   it("leaves the stored-or-default value alone while the setting is off", () => {
     for (const storedOrDefaultCollapsed of [true, false]) {
-      expect(resolve({ autoCollapseEmpty: false, cardCount: 0, storedOrDefaultCollapsed })).toEqual(
-        { collapsed: storedOrDefaultCollapsed, autoFolded: false },
+      expect(resolve({ autoCollapseEmpty: false, cardCount: 0, storedOrDefaultCollapsed })).toBe(
+        storedOrDefaultCollapsed,
       );
     }
   });
 
   it("folds an empty column even when the store says expanded", () => {
-    expect(resolve({ storedOrDefaultCollapsed: false })).toEqual({
-      collapsed: true,
-      autoFolded: true,
-    });
+    expect(resolve({ storedOrDefaultCollapsed: false })).toBe(true);
   });
 
   it("keeps a manually collapsed column collapsed once it holds cards", () => {
-    expect(resolve({ cardCount: 2, storedOrDefaultCollapsed: true })).toEqual({
-      collapsed: true,
-      autoFolded: false,
-    });
+    expect(resolve({ cardCount: 2, storedOrDefaultCollapsed: true })).toBe(true);
   });
 
   it("opens a column that holds cards and has no stored choice", () => {
-    expect(resolve({ cardCount: 1, storedOrDefaultCollapsed: false })).toEqual({
-      collapsed: false,
-      autoFolded: false,
-    });
+    expect(resolve({ cardCount: 1, storedOrDefaultCollapsed: false })).toBe(false);
   });
 
   it("opens an auto-folded column while it is peeked or dragged over", () => {
-    expect(resolve({ peeked: true })).toEqual({ collapsed: false, autoFolded: true });
-    expect(resolve({ dragOverThisColumn: true })).toEqual({ collapsed: false, autoFolded: true });
+    expect(resolve({ peeked: true })).toBe(false);
+    expect(resolve({ dragOverThisColumn: true })).toBe(false);
   });
 
   it("ignores a peek or drag on a column that holds cards", () => {
@@ -237,7 +229,33 @@ describe("boardColumnCollapsed (T3O-40)", () => {
         dragOverThisColumn: true,
         storedOrDefaultCollapsed: true,
       }),
-    ).toEqual({ collapsed: true, autoFolded: false });
+    ).toBe(true);
+  });
+});
+
+describe("boardCollapseToggle (T3O-40)", () => {
+  const toggle = (overrides: Partial<Parameters<typeof boardCollapseToggle>[0]>) =>
+    boardCollapseToggle({
+      autoCollapseEmpty: true,
+      cardCount: 0,
+      key: "sprint",
+      collapsed: false,
+      peeked: new Set(),
+      ...overrides,
+    });
+
+  it("opens and ends a peek on an auto-folded column instead of storing a choice", () => {
+    const opened = toggle({ collapsed: false });
+    expect(opened.kind).toBe("peek");
+    const peeked = opened.kind === "peek" ? opened.peeked : new Set<string>();
+    expect([...peeked]).toEqual(["sprint"]);
+    const ended = toggle({ collapsed: true, peeked });
+    expect(ended.kind === "peek" ? [...ended.peeked] : null).toEqual([]);
+  });
+
+  it("stores the choice for a column holding cards or with the setting off", () => {
+    expect(toggle({ cardCount: 1 })).toEqual({ kind: "store" });
+    expect(toggle({ autoCollapseEmpty: false })).toEqual({ kind: "store" });
   });
 });
 

@@ -97,12 +97,20 @@ export function boardScopeColumnCollapsedByDefault(input: {
   );
 }
 
+/** Whether the auto-collapse setting folds this column (T3O-40): on, and empty. */
+export function boardColumnAutoFolded(input: {
+  readonly autoCollapseEmpty: boolean;
+  readonly cardCount: number;
+}): boolean {
+  return input.autoCollapseEmpty && input.cardCount === 0;
+}
+
 /**
  * A column's rendered collapse state with the auto-collapse setting applied
  * (T3O-40). While the setting is on, an empty column folds whatever the store
- * or the scope default says (`autoFolded`), and only a peek or a drag hovering
- * it opens it. A column holding cards falls back to the stored-or-default
- * value, so a stage collapsed by hand stays collapsed when cards arrive.
+ * or the scope default says, and only a peek or a drag hovering it opens it.
+ * A column holding cards falls back to the stored-or-default value, so a stage
+ * collapsed by hand stays collapsed when cards arrive.
  */
 export function boardColumnCollapsed(input: {
   readonly autoCollapseEmpty: boolean;
@@ -110,14 +118,29 @@ export function boardColumnCollapsed(input: {
   readonly dragOverThisColumn: boolean;
   readonly peeked: boolean;
   readonly storedOrDefaultCollapsed: boolean;
-}): { readonly collapsed: boolean; readonly autoFolded: boolean } {
-  const autoFolded = input.autoCollapseEmpty && input.cardCount === 0;
-  return {
-    autoFolded,
-    collapsed: autoFolded
-      ? !(input.peeked || input.dragOverThisColumn)
-      : input.storedOrDefaultCollapsed,
-  };
+}): boolean {
+  return boardColumnAutoFolded(input)
+    ? !(input.peeked || input.dragOverThisColumn)
+    : input.storedOrDefaultCollapsed;
+}
+
+/**
+ * Where a column's collapse toggle goes (T3O-40). On an auto-folded column it
+ * only opens or ends a transient peek, so `collapsedByStage` is never written
+ * for it; on any other column it is the stored manual choice.
+ */
+export function boardCollapseToggle(input: {
+  readonly autoCollapseEmpty: boolean;
+  readonly cardCount: number;
+  readonly key: string;
+  readonly collapsed: boolean;
+  readonly peeked: ReadonlySet<string>;
+}): { readonly kind: "peek"; readonly peeked: ReadonlySet<string> } | { readonly kind: "store" } {
+  if (!boardColumnAutoFolded(input)) return { kind: "store" };
+  const peeked = new Set(input.peeked);
+  if (input.collapsed) peeked.delete(input.key);
+  else peeked.add(input.key);
+  return { kind: "peek", peeked };
 }
 
 /**
