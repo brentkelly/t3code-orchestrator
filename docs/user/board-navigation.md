@@ -48,7 +48,8 @@ cards folds to a narrow strip, on the board and inside sub-boards alike. A stage
 as a card lands in it, and drag a card over a folded stage to open it and drop the card where you
 want it. The setting belongs to the board, so everyone using it sees the same thing.
 
-Select a folded empty stage to open it until it gets cards. Folding happens on top of the stages you
+Select a folded empty stage to look inside it. It stays open while it is empty, and folds again the
+next time it empties after holding cards. Folding happens on top of the stages you
 collapse or expand yourself, so it never changes them: a stage you collapsed stays collapsed when
 cards arrive.
 
