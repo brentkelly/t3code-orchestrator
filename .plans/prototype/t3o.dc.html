@@ -1961,102 +1961,6 @@ a:hover{text-decoration:underline}
               </div>
             </div>
             </sc-if>
-            <div style="{{ groupDetailsStyle }}">
-            <div onMouseEnter="{{ depHoverOn }}" onMouseLeave="{{ depHoverOff }}" style="{{ sideSectionStyle }}">
-              <div style="display:flex;align-items:center;gap:5px;margin-bottom:7px">
-                <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Dependencies</div>
-                <button type="button" onClick="{{ toggleDepEdit }}" title="{{ depEditTitle }}" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);cursor:pointer;transition:opacity 120ms ease;opacity:{{ depPencilOpacity }}" style-hover="background:var(--accent);color:var(--fg)">
-                  <sc-if value="{{ depEditing }}" hint-placeholder-val="{{ false }}">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
-                  </sc-if>
-                  <sc-if value="{{ depNotEditing }}" hint-placeholder-val="{{ true }}">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
-                  </sc-if>
-                </button>
-              </div>
-              <sc-if value="{{ depEditing }}" hint-placeholder-val="{{ false }}">
-                <div style="position:relative">
-                  <div onClick="{{ focusDepInput }}" style="{{ depFieldStyle }}">
-                    <sc-for list="{{ depChips }}" as="t" hint-placeholder-count="0">
-                      <span style="display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 4px 0 7px;border:1px solid var(--border);border-radius:6px;background:var(--muted);max-width:230px">
-                        <span style="font:500 10.5px var(--font-sans);color:var(--muted-fg)">{{ t.key }}</span>
-                        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 12px var(--font-sans);color:var(--fg)">{{ t.title }}</span>
-                        <button type="button" onClick="{{ t.remove }}" title="Remove" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;flex:none;border:none;border-radius:4px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
-                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
-                        </button>
-                      </span>
-                    </sc-for>
-                    <input type="text" value="{{ depQuery }}" onInput="{{ onDepQuery }}" onKeyDown="{{ onDepKey }}" onFocus="{{ onDepFocus }}" onBlur="{{ onDepBlur }}" ref="{{ depInputRef }}" placeholder="{{ depPlaceholder }}" style="flex:1;min-width:120px;height:24px;border:none;outline:none;background:transparent;color:var(--fg);font:400 13px var(--font-sans)">
-                  </div>
-                  <sc-if value="{{ depOpen }}" hint-placeholder-val="{{ false }}">
-                    <div style="position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:5;max-height:194px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;background:var(--popover);box-shadow:var(--shadow-pop);padding:4px;display:flex;flex-direction:column;gap:1px">
-                      <sc-for list="{{ depMatches }}" as="o" hint-placeholder-count="4">
-                        <button type="button" onMouseDown="{{ o.pick }}" onMouseEnter="{{ o.hover }}" style="{{ o.style }}">
-                          <span style="font:500 10.5px var(--font-sans);color:var(--muted-fg)">{{ o.key }}</span>
-                          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--fg);text-align:left">{{ o.title }}</span>
-                          <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">{{ o.statusName }}</span>
-                        </button>
-                      </sc-for>
-                      <sc-if value="{{ depNoMatch }}" hint-placeholder-val="{{ false }}">
-                        <div style="padding:9px 9px;font:400 12.5px var(--font-sans);color:var(--muted-fg)">No matching tasks.</div>
-                      </sc-if>
-                    </div>
-                  </sc-if>
-                </div>
-              </sc-if>
-              <sc-if value="{{ depsListVisible }}" hint-placeholder-val="{{ false }}">
-                <div style="display:flex;flex-direction:column;gap:6px">
-                  <sc-for list="{{ activeCard.deps }}" as="d" hint-placeholder-count="2">
-                    <button type="button" onClick="{{ d.open }}" style="display:flex;align-items:center;gap:9px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--muted);cursor:pointer;text-align:left" style-hover="background:var(--accent)">
-                      <span style="width:6px;height:6px;border-radius:99px;background:{{ d.dot }};flex:none"></span>
-                      <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ d.key }}</span>
-                      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--fg)">{{ d.title }}</span>
-                      <span style="font:400 11px var(--font-sans);color:{{ d.color }}">{{ d.statusName }}</span>
-                    </button>
-                  </sc-for>
-                </div>
-              </sc-if>
-              <sc-if value="{{ depsEmptyVisible }}" hint-placeholder-val="{{ true }}">
-                <div onClick="{{ toggleDepEdit }}" style="font:400 13px var(--font-sans);color:var(--muted-fg);cursor:pointer">No dependencies.</div>
-              </sc-if>
-            </div>
-            <div style="{{ sideSectionStyle }}">
-              <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg);margin-bottom:7px">Activity</div>
-              <div style="display:flex;flex-direction:column;gap:8px">
-                <sc-for list="{{ activeCard.activity }}" as="a" hint-placeholder-count="3">
-                  <div style="display:flex;gap:9px;align-items:flex-start">
-                    <sc-if value="{{ a.live }}" hint-placeholder-val="{{ false }}">
-                      <span style="width:11px;height:11px;margin-top:3px;flex:none;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--info) 25%,transparent);border-top-color:var(--info-fg);animation:t3spin .8s linear infinite"></span>
-                    </sc-if>
-                    <sc-if value="{{ a.dot }}" hint-placeholder-val="{{ true }}">
-                      <span style="width:6px;height:6px;border-radius:99px;background:var(--input);margin-top:6px;flex:none"></span>
-                    </sc-if>
-                    <sc-if value="{{ a.plain }}" hint-placeholder-val="{{ true }}">
-                      <span style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg)"><span style="color:var(--fg);font-weight:500">{{ a.who }}</span> {{ a.what }} · {{ a.when }}</span>
-                    </sc-if>
-                    <sc-if value="{{ a.isLink }}" hint-placeholder-val="{{ false }}">
-                      <span style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg)"><span style="color:var(--fg);font-weight:500">{{ a.who }}</span> <a href="#" onClick="{{ a.open }}" title="Open thread" style="font-weight:500">{{ a.what }}</a> · {{ a.when }}</span>
-                    </sc-if>
-                    <sc-if value="{{ a.grouped }}" hint-placeholder-val="{{ false }}">
-                      <span style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg)"><span style="color:var(--fg);font-weight:500">{{ a.who }}</span> {{ a.what }} · {{ a.when }} · <a href="#" onClick="{{ a.toggleGroup }}" style="font-weight:500;white-space:nowrap">{{ a.groupLabel }}</a></span>
-                    </sc-if>
-                  </div>
-                </sc-for>
-                <sc-if value="{{ activeCard.activityMoreVisible }}" hint-placeholder-val="{{ false }}">
-                  <div onClick="{{ activeCard.toggleActivity }}" style="display:flex;gap:9px;align-items:center;cursor:pointer;font:500 12.5px/1.5 var(--font-sans);color:var(--muted-fg)" style-hover="color:var(--fg)">
-                    <span style="width:6px;height:6px;border-radius:99px;border:1px solid var(--input);flex:none"></span>
-                    {{ activeCard.activityMoreLabel }}
-                  </div>
-                </sc-if>
-                <sc-if value="{{ activeCard.activityLessVisible }}" hint-placeholder-val="{{ false }}">
-                  <div onClick="{{ activeCard.toggleActivity }}" style="display:flex;gap:9px;align-items:center;cursor:pointer;font:500 12.5px/1.5 var(--font-sans);color:var(--muted-fg)" style-hover="color:var(--fg)">
-                    <span style="width:6px;height:6px;border-radius:99px;border:1px solid var(--input);flex:none"></span>
-                    Show less
-                  </div>
-                </sc-if>
-              </div>
-            </div>
-            </div>
             </div>
             <div style="{{ cardRightColStyle }}">
             <div style="{{ groupActionsStyle }}">
@@ -2092,12 +1996,6 @@ a:hover{text-decoration:underline}
                   </sc-if>
                 </sc-if>
               </div>
-            </sc-if>
-            <sc-if value="{{ activeCard.canAutoPlan }}" hint-placeholder-val="{{ false }}">
-              <button type="button" onClick="{{ activeCard.autoPlan }}" title="Ends planning. The agent makes every remaining decision, approves the plan and starts the build. Decisions are logged on the Summary pane." style="display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:34px;padding:0 12px;flex:none;border-radius:8px;border:1px solid var(--input);background:var(--popover);color:var(--fg);font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 19 9-7-9-7v14z"></path><path d="m2 19 9-7-9-7v14z"></path></svg>
-                Auto-plan → Build
-              </button>
             </sc-if>
             <sc-if value="{{ activeCard.isGroup }}" hint-placeholder-val="{{ false }}">
               <button type="button" onClick="{{ activeCard.openGroupBoard }}" style="display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:34px;padding:0 12px;flex:none;border-radius:8px;border:1px solid var(--primary);background:var(--primary);color:var(--primary-fg);font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="filter:brightness(1.08)">
@@ -2150,15 +2048,6 @@ a:hover{text-decoration:underline}
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path></svg>
                 Another review round
               </button>
-            </sc-if>
-            <sc-if value="{{ activeCard.autoGate }}" hint-placeholder-val="{{ false }}">
-              <div onClick="{{ activeCard.toggleAuto }}" style="{{ activeCard.autoRowStyle }}">
-                <span style="{{ activeCard.autoSwitchStyle }}"><span style="{{ activeCard.autoKnobStyle }}"></span></span>
-                <span style="min-width:0">
-                  <span style="display:block;font:500 12.5px var(--font-sans);color:var(--fg)">{{ activeCard.autoLabel }}</span>
-                  <span style="display:block;margin-top:2px;font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ activeCard.autoNote }}</span>
-                </span>
-              </div>
             </sc-if>
             <sc-if value="{{ activeCard.hasPr }}" hint-placeholder-val="{{ false }}">
               <button type="button" onClick="{{ openPr }}" style="display:inline-flex;align-items:center;justify-content:center;gap:7px;height:32px;padding:0 11px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 13px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">
@@ -2234,6 +2123,109 @@ a:hover{text-decoration:underline}
               </sc-if>
             </div>
             </div>
+            <div style="{{ groupDetailsStyle }}">
+            <div onMouseEnter="{{ depHoverOn }}" onMouseLeave="{{ depHoverOff }}" style="{{ sideSectionStyle }}">
+              <div style="display:flex;align-items:center;gap:5px;margin-bottom:7px">
+                <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Dependencies</div>
+                <button type="button" onClick="{{ toggleDepEdit }}" title="{{ depEditTitle }}" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);cursor:pointer;transition:opacity 120ms ease;opacity:{{ depPencilOpacity }}" style-hover="background:var(--accent);color:var(--fg)">
+                  <sc-if value="{{ depEditing }}" hint-placeholder-val="{{ false }}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
+                  </sc-if>
+                  <sc-if value="{{ depNotEditing }}" hint-placeholder-val="{{ true }}">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>
+                  </sc-if>
+                </button>
+              </div>
+              <sc-if value="{{ depEditing }}" hint-placeholder-val="{{ false }}">
+                <div style="position:relative">
+                  <div onClick="{{ focusDepInput }}" style="{{ depFieldStyle }}">
+                    <sc-for list="{{ depChips }}" as="t" hint-placeholder-count="0">
+                      <span style="display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 4px 0 7px;border:1px solid var(--border);border-radius:6px;background:var(--muted);max-width:230px">
+                        <span style="font:500 10.5px var(--font-sans);color:var(--muted-fg)">{{ t.key }}</span>
+                        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 12px var(--font-sans);color:var(--fg)">{{ t.title }}</span>
+                        <button type="button" onClick="{{ t.remove }}" title="Remove" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;flex:none;border:none;border-radius:4px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
+                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+                        </button>
+                      </span>
+                    </sc-for>
+                    <input type="text" value="{{ depQuery }}" onInput="{{ onDepQuery }}" onKeyDown="{{ onDepKey }}" onFocus="{{ onDepFocus }}" onBlur="{{ onDepBlur }}" ref="{{ depInputRef }}" placeholder="{{ depPlaceholder }}" style="flex:1;min-width:120px;height:24px;border:none;outline:none;background:transparent;color:var(--fg);font:400 13px var(--font-sans)">
+                  </div>
+                  <sc-if value="{{ depOpen }}" hint-placeholder-val="{{ false }}">
+                    <div style="position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:5;max-height:194px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;background:var(--popover);box-shadow:var(--shadow-pop);padding:4px;display:flex;flex-direction:column;gap:1px">
+                      <sc-for list="{{ depMatches }}" as="o" hint-placeholder-count="4">
+                        <button type="button" onMouseDown="{{ o.pick }}" onMouseEnter="{{ o.hover }}" style="{{ o.style }}">
+                          <span style="font:500 10.5px var(--font-sans);color:var(--muted-fg)">{{ o.key }}</span>
+                          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--fg);text-align:left">{{ o.title }}</span>
+                          <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">{{ o.statusName }}</span>
+                        </button>
+                      </sc-for>
+                      <sc-if value="{{ depNoMatch }}" hint-placeholder-val="{{ false }}">
+                        <div style="padding:9px 9px;font:400 12.5px var(--font-sans);color:var(--muted-fg)">No matching tasks.</div>
+                      </sc-if>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-if>
+              <sc-if value="{{ depsListVisible }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:6px">
+                  <sc-for list="{{ activeCard.deps }}" as="d" hint-placeholder-count="2">
+                    <button type="button" onClick="{{ d.open }}" style="display:flex;align-items:center;gap:9px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--muted);cursor:pointer;text-align:left" style-hover="background:var(--accent)">
+                      <span style="width:6px;height:6px;border-radius:99px;background:{{ d.dot }};flex:none"></span>
+                      <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ d.key }}</span>
+                      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--fg)">{{ d.title }}</span>
+                      <span style="font:400 11px var(--font-sans);color:{{ d.color }}">{{ d.statusName }}</span>
+                    </button>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <sc-if value="{{ depsEmptyVisible }}" hint-placeholder-val="{{ true }}">
+                <div onClick="{{ toggleDepEdit }}" style="font:400 13px var(--font-sans);color:var(--muted-fg);cursor:pointer">No dependencies.</div>
+              </sc-if>
+            </div>
+            <div style="{{ sideSectionStyle }}">
+              <button type="button" onClick="{{ toggleActivityOpen }}" style="display:flex;align-items:center;gap:6px;width:100%;padding:0;border:none;background:transparent;cursor:pointer;text-align:left">
+                <span style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Activity</span>
+                <span style="flex:1"></span>
+                <span style="font:500 11px var(--font-sans);color:var(--fg)">{{ activitySummary }}</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="{{ activityChevronStyle }}"><path d="m6 9 6 6 6-6"></path></svg>
+              </button>
+              <sc-if value="{{ activityOpen }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex;flex-direction:column;gap:8px;margin-top:9px">
+                <sc-for list="{{ activeCard.activity }}" as="a" hint-placeholder-count="3">
+                  <div style="display:flex;gap:9px;align-items:flex-start">
+                    <sc-if value="{{ a.live }}" hint-placeholder-val="{{ false }}">
+                      <span style="width:11px;height:11px;margin-top:3px;flex:none;border-radius:99px;border:1.8px solid color-mix(in srgb,var(--info) 25%,transparent);border-top-color:var(--info-fg);animation:t3spin .8s linear infinite"></span>
+                    </sc-if>
+                    <sc-if value="{{ a.dot }}" hint-placeholder-val="{{ true }}">
+                      <span style="width:6px;height:6px;border-radius:99px;background:var(--input);margin-top:6px;flex:none"></span>
+                    </sc-if>
+                    <sc-if value="{{ a.plain }}" hint-placeholder-val="{{ true }}">
+                      <span style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg)"><span style="color:var(--fg);font-weight:500">{{ a.who }}</span> {{ a.what }} · {{ a.when }}</span>
+                    </sc-if>
+                    <sc-if value="{{ a.isLink }}" hint-placeholder-val="{{ false }}">
+                      <span style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg)"><span style="color:var(--fg);font-weight:500">{{ a.who }}</span> <a href="#" onClick="{{ a.open }}" title="Open thread" style="font-weight:500">{{ a.what }}</a> · {{ a.when }}</span>
+                    </sc-if>
+                    <sc-if value="{{ a.grouped }}" hint-placeholder-val="{{ false }}">
+                      <span style="font:400 12.5px/1.5 var(--font-sans);color:var(--muted-fg)"><span style="color:var(--fg);font-weight:500">{{ a.who }}</span> {{ a.what }} · {{ a.when }} · <a href="#" onClick="{{ a.toggleGroup }}" style="font-weight:500;white-space:nowrap">{{ a.groupLabel }}</a></span>
+                    </sc-if>
+                  </div>
+                </sc-for>
+                <sc-if value="{{ activeCard.activityMoreVisible }}" hint-placeholder-val="{{ false }}">
+                  <div onClick="{{ activeCard.toggleActivity }}" style="display:flex;gap:9px;align-items:center;cursor:pointer;font:500 12.5px/1.5 var(--font-sans);color:var(--muted-fg)" style-hover="color:var(--fg)">
+                    <span style="width:6px;height:6px;border-radius:99px;border:1px solid var(--input);flex:none"></span>
+                    {{ activeCard.activityMoreLabel }}
+                  </div>
+                </sc-if>
+                <sc-if value="{{ activeCard.activityLessVisible }}" hint-placeholder-val="{{ false }}">
+                  <div onClick="{{ activeCard.toggleActivity }}" style="display:flex;gap:9px;align-items:center;cursor:pointer;font:500 12.5px/1.5 var(--font-sans);color:var(--muted-fg)" style-hover="color:var(--fg)">
+                    <span style="width:6px;height:6px;border-radius:99px;border:1px solid var(--input);flex:none"></span>
+                    Show less
+                  </div>
+                </sc-if>
+              </div>
+              </sc-if>
+            </div>
+            </div>
             <sc-if value="{{ groupSettings }}" hint-placeholder-val="{{ false }}">
             <div style="{{ sideStageStyle }}">
               <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Group settings</div>
@@ -2260,33 +2252,41 @@ a:hover{text-decoration:underline}
               </sc-for>
             </div>
             </sc-if>
-            <sc-if value="{{ activeCard.isLeaf }}" hint-placeholder-val="{{ true }}">
+            <sc-if value="{{ automation }}" hint-placeholder-val="{{ false }}">
             <div style="{{ sideStageStyle }}">
-            <div style="display:flex;align-items:baseline;gap:6px">
-              <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Workflow</div>
-              <sc-if value="{{ activeCard.workflowLocked }}" hint-placeholder-val="{{ false }}">
-                <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">locked from review on</span>
+              <button type="button" onClick="{{ automation.toggleOpen }}" style="display:flex;align-items:center;gap:6px;width:100%;padding:0;border:none;background:transparent;cursor:pointer;text-align:left">
+                <span style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Automation</span>
+                <span style="flex:1"></span>
+                <span style="font:500 11px var(--font-sans);color:var(--fg)">{{ automation.summary }}</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="{{ automation.chevronStyle }}"><path d="m6 9 6 6 6-6"></path></svg>
+              </button>
+              <sc-if value="{{ automation.open }}" hint-placeholder-val="{{ false }}">
+              <sc-for list="{{ automation.rows }}" as="t" hint-placeholder-count="3">
+                <div onClick="{{ t.toggle }}" title="{{ t.tip }}" style="{{ t.rowStyle }}">
+                  <span style="{{ t.switchStyle }}"><span style="{{ t.knobStyle }}"></span></span>
+                  <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                    <span style="display:flex;align-items:baseline;gap:7px">
+                      <span style="font:500 12px var(--font-sans);color:var(--fg)">{{ t.label }}</span>
+                      <sc-if value="{{ t.source }}" hint-placeholder-val="{{ false }}">
+                        <span style="font:500 10.5px var(--font-mono);color:var(--muted-fg)">{{ t.source }}</span>
+                      </sc-if>
+                    </span>
+                    <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ t.note }}</span>
+                  </span>
+                </div>
+              </sc-for>
               </sc-if>
             </div>
-            <sc-if value="{{ activeCard.workflowEditable }}" hint-placeholder-val="{{ true }}">
-              <div style="display:flex;flex-direction:column;gap:1px">
-                <sc-for list="{{ activeCard.workflowOptions }}" as="w" hint-placeholder-count="3">
-                  <button type="button" onClick="{{ w.select }}" style="{{ w.style }}">
-                    <span style="flex:1;text-align:left">{{ w.name }}</span>
-                    <sc-if value="{{ w.current }}" hint-placeholder-val="{{ false }}">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>
-                    </sc-if>
-                  </button>
-                </sc-for>
-              </div>
             </sc-if>
-            <sc-if value="{{ activeCard.workflowLocked }}" hint-placeholder-val="{{ false }}">
-              <div style="font:500 12.5px var(--font-sans);color:var(--fg)">{{ activeCard.workflowName }}</div>
-            </sc-if>
-            <div style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg)">{{ activeCard.workflowNote }}</div>
-            </div>
+            <sc-if value="{{ activeCard.isLeaf }}" hint-placeholder-val="{{ true }}">
             <div style="{{ sideStageStyle }}">
-            <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Stage</div>
+            <button type="button" onClick="{{ toggleStageOpen }}" style="display:flex;align-items:center;gap:6px;width:100%;padding:0;border:none;background:transparent;cursor:pointer;text-align:left">
+              <span style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Stage</span>
+              <span style="flex:1"></span>
+              <span style="font:500 11px var(--font-sans);color:var(--fg)">{{ stageSummary }}</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="{{ stageChevronStyle }}"><path d="m6 9 6 6 6-6"></path></svg>
+            </button>
+            <sc-if value="{{ stageOpen }}" hint-placeholder-val="{{ false }}">
             <div style="display:flex;flex-direction:column;gap:1px">
               <sc-for list="{{ activeCard.stages }}" as="s" hint-placeholder-count="8">
                 <button type="button" onClick="{{ s.select }}" style="{{ s.style }}">
@@ -2301,6 +2301,7 @@ a:hover{text-decoration:underline}
                 </button>
               </sc-for>
             </div>
+            </sc-if>
             </div>
             </sc-if>
             <div style="font:400 11.5px/1.7 var(--font-sans);color:var(--muted-fg);{{ sideInfoStyle }}">
@@ -3443,6 +3444,7 @@ class Component extends DCLogic {
       rvStop: {},
       autoStart: {},
       autoMerge: cards.reduce((m, c) => (c.autoMerge ? ((m[c.id] = true), m) : m), {}),
+      autoPlanCard: {},
       rvPlan: null,
       mode: props.defaultMode === "threads" ? "threads" : "board",
       scope: props.defaultScope || "advisor",
@@ -4059,7 +4061,12 @@ class Component extends DCLogic {
   autoMergeOn(c) {
     if (!c) return false;
     if (this.props.boardAutoMerge) return true;
-    if (this.state.autoMerge[c.id]) return true;
+    const o = this.state.autoMerge[c.id];
+    if (o !== undefined) return !!o;
+    return this.groupMergeFor(c);
+  }
+  // What the parent group would do for this child, ignoring any per-card override.
+  groupMergeFor(c) {
     // Children of a group: into an integration branch they merge on their own
     // under auto-build; into trunk only when the group says so.
     const p = c.parentKey ? this.cardByKey(c.parentKey) : null;
@@ -5183,7 +5190,7 @@ class Component extends DCLogic {
   // Children of a started auto-build group start themselves once unblocked;
   // top-level cards only when armed. Auto-plan groups plan children entering
   // Planning and stop them at Ready. Group stages are re-derived after.
-  sweepAutoStart(cards, autoStart) {
+  sweepAutoStart(cards, autoStart, autoPlanCard = this.state.autoPlanCard || {}) {
     const done = {};
     const byKey = {};
     cards.forEach((c) => { done[c.key] = c.status === "done"; byKey[c.key] = c; });
@@ -5191,9 +5198,10 @@ class Component extends DCLogic {
     return this.syncGroups(cards.map((c) => {
       if (c.group) return c;
       const g = par(c);
-      if (g && g.autoPlan && c.status === "planning" && !c.proposal)
+      const ap = autoPlanCard[c.id] !== undefined ? autoPlanCard[c.id] : !!(g && g.autoPlan);
+      if (ap && c.status === "planning" && !c.proposal)
         return { ...c, status: "ready", tstate: "stopped", qs: null, plan: c.plan || PLAN(c.title, ["Planned by the agent from the brief", "Decisions logged on the Summary pane"], ["apps/web/src/"]), decisions: c.decisions || { auto: true, items: this.genericDecisions(c) } };
-      const runs = (g && g.autoBuild && g.started) || autoStart[c.id];
+      const runs = autoStart[c.id] !== undefined ? autoStart[c.id] : !!(g && g.autoBuild && g.started);
       return runs && c.status === "ready" && c.depKeys.every((k) => done[k])
         ? { ...c, status: "building", tstate: "working" }
         : c;
@@ -5437,6 +5445,7 @@ class Component extends DCLogic {
     return i < 0 ? "backlog" : i > m ? STAGES[m].id : s;
   }
   autoBuildsFor(c) {
+    if (c && this.state.autoStart[c.id] === false) return false;
     const p = c && c.parentKey ? this.cardByKey(c.parentKey) : null;
     return !!(p && p.group && p.group.autoBuild && p.group.started);
   }
@@ -5936,8 +5945,8 @@ class Component extends DCLogic {
           x.id === c.id
             ? {
                 ...x,
-                status: "building",
-                tstate: "working",
+                status: "ready",
+                tstate: "stopped",
                 qs: x.qs ? { ...x.qs, done: true } : x.qs,
                 plan: x.plan || PLAN(x.title, ["Planned by the agent from the brief and the answers so far", "Remaining questions decided and logged on the Summary pane"], ["apps/web/src/"]),
                 decisions: { auto: true, items },
@@ -5949,7 +5958,7 @@ class Component extends DCLogic {
       pane: { ...s.pane, [c.id]: "summary" },
       logOpen: { ...s.logOpen, [c.id]: true },
     }));
-    this.toast(c.key + " auto-planned and building. " + items.length + " decisions logged, " + un + " unclear.");
+    this.toast(c.key + " auto-planned" + (this.state.autoStart[c.id] === true || this.autoBuildsFor(c) ? " and building. " : ", now Ready. ") + items.length + " decisions logged, " + un + " unclear.");
   }
   decisionVm(c) {
     const d = c && c.decisions;
@@ -7151,7 +7160,7 @@ class Component extends DCLogic {
             })
             .join(", "),
         canProgress: !active.group && !active.proposal && !!(stage.action && next) && !(blocked && active.status === "ready"),
-        autoImplicit: blocked && active.status === "ready" && this.autoBuildsFor(active),
+        autoImplicit: blocked && active.status === "ready" && (this.autoBuildsFor(active) || st.autoStart[active.id] === true),
         progressLabel: this.progressAction(active) || "",
         autoGate: !active.group && !!(stage.action && next) && blocked && active.status === "ready" && !this.autoBuildsFor(active),
         autoArmed: !!st.autoStart[active.id],
@@ -8290,12 +8299,10 @@ class Component extends DCLogic {
       groupActionsStyle: hasThreadPane
         ? "display:flex;flex-direction:column;gap:8px;padding:14px;order:-1"
         : "display:flex;flex-direction:column;gap:8px;padding:14px",
-      sideSectionStyle: hasThreadPane ? "padding:14px;border-top:1px solid var(--border)" : "",
+      sideSectionStyle: "padding:14px;border-top:1px solid var(--border)",
       sideStageStyle: "display:flex;flex-direction:column;gap:8px;padding:14px;border-top:1px solid var(--border)",
       sideInfoStyle: "padding:14px;border-top:1px solid var(--border)",
-      groupDetailsStyle: hasThreadPane
-        ? "display:flex;flex-direction:column"
-        : "display:flex;flex-direction:column;gap:18px;min-width:0",
+      groupDetailsStyle: "display:flex;flex-direction:column;min-width:0",
       groupMetaStyle: "display:flex;flex-direction:column",
       briefToggleTitle: briefShown ? "Hide brief" : "Show brief",
       briefBack: setPane(threadLocked ? "plans" : "thread"),
@@ -8619,7 +8626,7 @@ class Component extends DCLogic {
       // Per-card arm. Hidden entirely while the board-wide default is on, so
       // the user never sees two controls that can disagree.
       autoMergeCard: (() => {
-        if (!active || active.status === "done" || this.props.boardAutoMerge) return null;
+        if (!active || !active.group || active.status === "done" || this.props.boardAutoMerge) return null;
         const on = !!st.autoMerge[active.id];
         return {
           on,
@@ -8639,11 +8646,81 @@ class Component extends DCLogic {
         return {
           tip: this.props.boardAutoMerge
             ? "Auto-merge is on for the whole board (Settings → Board → Pipeline → Ready for merge)"
-            : "Auto-merge armed for this card — change it under the ⋯ menu",
+            : active.group
+              ? "Auto-merge armed for this group — change it under the ⋯ menu"
+              : "Auto-merge is on for this card — change it under Automation",
           label: this.props.boardAutoMerge ? "Auto-merge · board" : "Auto-merge",
         };
       })(),
+      automation: (() => {
+        if (!active || active.group || active.status === "done") return null;
+        const p = active.parentKey ? this.cardByKey(active.parentKey) : null;
+        const g = p && p.group ? p.group : null;
+        const s = active.status;
+        const pre = s === "backlog" || s === "sprint";
+        const built = s === "review" || s === "merge";
+        const board = !!this.props.boardAutoMerge;
+        const mk = (label, map, inherited, disabled, onNote, offNote, lockNote, apply, after) => {
+          const o = (st[map] || {})[active.id];
+          const on = o !== undefined ? !!o : inherited;
+          const source = board && map === "autoMerge" ? "board" : !p ? "" : o === undefined ? (inherited ? "from " + p.key : "") : on !== inherited ? "overrides " + p.key : "";
+          return {
+            label, source,
+            note: disabled ? lockNote : on ? onNote : offNote,
+            ...this.switchVm(on),
+            tip: disabled ? lockNote : "",
+            rowStyle: "display:flex;align-items:flex-start;gap:10px;cursor:" + (disabled ? "not-allowed" : "pointer") + ";opacity:" + (disabled ? ".55" : "1"),
+            toggle: () => {
+              if (disabled) return;
+              this.setState((x) => {
+                const next = { ...(x[map] || {}) };
+                if (!on === inherited) delete next[active.id];
+                else next[active.id] = !on;
+                return apply ? { [map]: next, ...apply(x, next) } : { [map]: next };
+              });
+              if (after) after(!on);
+            },
+          };
+        };
+        const rows = [
+            mk("Auto-plan", "autoPlanCard", !!(g && g.autoPlan), !(pre || (s === "planning" && !active.proposal)),
+              "The agent plans this card when it enters Planning and stops it at Ready.",
+              s === "planning"
+                ? "Turn on to have the agent decide the remaining questions and finish the plan."
+                : "Planned with you when it enters Planning.",
+              "Planning is finished.",
+              null,
+              (v) => v && s === "planning" && this.autoPlan(active)),
+            mk("Auto-build", "autoStart", !!(g && g.autoBuild && g.started), s === "building" || built,
+              "Starts building once it is Ready and every dependency is done.",
+              "Waits at Ready until you start it.",
+              built ? "Already built." : "Building now.",
+              (x, next) => ({ cards: this.sweepAutoStart(x.cards, next, x.autoPlanCard || {}) })),
+            board
+              ? { label: "Auto-merge", source: "board", note: "On for the whole board (Settings → Board → Pipeline).", ...this.switchVm(true), tip: "Change it in Settings", rowStyle: "display:flex;align-items:flex-start;gap:10px;cursor:not-allowed;opacity:.55", toggle: () => {} }
+              : mk("Auto-merge", "autoMerge", this.groupMergeFor(active), false,
+                  "Merges itself as soon as the forge accepts. A refusal retries on a backoff.",
+                  "Waits in Ready for merge until you click Merge.", ""),
+          ];
+        const onNames = rows.filter((r) => r.switchStyle.indexOf("var(--primary)") >= 0).map((r) => r.label.replace("Auto-", ""));
+        const open = !!st.automationOpen;
+        return {
+          rows,
+          open,
+          summary: onNames.length ? onNames.map((n) => n[0].toUpperCase() + n.slice(1)).join(" · ") : "Off",
+          chevronStyle: "flex:none;transition:transform .12s;transform:rotate(" + (open ? "180deg" : "0deg") + ")",
+          toggleOpen: () => this.setState((x) => ({ automationOpen: !x.automationOpen })),
+        };
+      })(),
       cardMenuOpen: !!st.cardMenuOpen,
+      stageOpen: !!st.stageOpen,
+      activityOpen: !!st.activityOpen,
+      activitySummary: "",
+      activityChevronStyle: "flex:none;transition:transform .12s;transform:rotate(" + (st.activityOpen ? "180deg" : "0deg") + ")",
+      toggleActivityOpen: () => this.setState((x) => ({ activityOpen: !x.activityOpen })),
+      stageSummary: ((STAGES.find((s) => s.id === (active || {}).status) || {}).name) || "",
+      stageChevronStyle: "flex:none;transition:transform .12s;transform:rotate(" + (st.stageOpen ? "180deg" : "0deg") + ")",
+      toggleStageOpen: () => this.setState((x) => ({ stageOpen: !x.stageOpen })),
       toggleCardMenu: () => this.setState((s) => ({ cardMenuOpen: !s.cardMenuOpen, cardModelsOpen: false })),
       closeCardMenu: () => this.setState({ cardMenuOpen: false }),
       ...this.cardModelVals(active),
