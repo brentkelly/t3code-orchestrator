@@ -27,6 +27,7 @@ import {
   boardCardAutoArchiveDue,
   BOARD_AUTO_PLAN_OFF_INSTRUCTION,
   boardAutoPlanInstruction,
+  BOARD_PLAN_REVIEW_LATE_START_LEAD,
   BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
   BOARD_DECISION_REASON_MAX_LENGTH,
   BOARD_DECISION_TEXT_MAX_LENGTH,
@@ -1947,6 +1948,35 @@ const make = Effect.gen(function* () {
       runtimeMode: state.runtimeMode,
     });
   });
+
+  /** A human turned plan review on after the plan was posted (plan review,
+      T3O-39): no tool result will carry the instructions, so send them as a
+      turn. A paused step is not told, as with a stop. */
+  const handlePlanReviewStartedLate = Effect.fn("board-supervisor-handlePlanReviewStartedLate")(
+    function* (event: Extract<BoardEvent, { type: "board.plan-review-started" }>) {
+      if (event.payload.turnedOnLate !== true) return;
+      const board = yield* readBoard;
+      const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
+      const state = boardCardStepState(board, event.payload.cardId);
+      if (
+        card === undefined ||
+        state === null ||
+        state.stepId !== event.payload.state.stepId ||
+        state.threadId === null ||
+        state.status === "paused" ||
+        isBoardTerminalStepStatus(state.status)
+      ) {
+        return;
+      }
+      const review = yield* runningPlanReviewFor(card, state);
+      if (review === null) return;
+      yield* sendTurn({
+        threadId: state.threadId,
+        text: `${BOARD_PLAN_REVIEW_LATE_START_LEAD}\n\n${review.instructions}`,
+        runtimeMode: state.runtimeMode,
+      });
+    },
+  );
 
   /** Whether the Code review stage's open-as-draft setting is on (T3O-12). */
   const draftPullRequestsOn = Effect.gen(function* () {
@@ -9742,6 +9772,8 @@ const make = Effect.gen(function* () {
         return handleStepCompleted(event);
       case "board.plan-review-stopped":
         return handlePlanReviewStopped(event);
+      case "board.plan-review-started":
+        return handlePlanReviewStartedLate(event);
       case "board.card-step-awaiting-input":
       case "board.card-step-paused":
       case "board.card-step-settled":
@@ -10187,8 +10219,10 @@ const make = Effect.gen(function* () {
           // resume it.
           event.type !== "board.worker-removed" &&
           event.type !== "board.card-worker-removal" &&
-          // T3O-39: a human turned a running plan review off.
-          event.type !== "board.plan-review-stopped"
+          // T3O-39: a human turned a running plan review off, or turned one
+          // on after the plan was posted.
+          event.type !== "board.plan-review-stopped" &&
+          !(event.type === "board.plan-review-started" && event.payload.turnedOnLate === true)
         ) {
           return Effect.void;
         }

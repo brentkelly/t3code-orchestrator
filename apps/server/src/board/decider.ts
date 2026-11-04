@@ -669,6 +669,9 @@ const planReviewStartedEvent = Effect.fn("planReviewStartedEvent")(function* (in
   readonly command: BoardCardCommand;
   readonly state: BoardCardStepState;
   readonly rounds: number;
+  /** Started by the card's toggle, after the plan was posted: the reactor
+      sends the instructions, since no tool result will. */
+  readonly turnedOnLate?: true;
 }) {
   const event: PlannedBoardEvent = {
     ...(yield* makeBoardEventBase({
@@ -685,6 +688,7 @@ const planReviewStartedEvent = Effect.fn("planReviewStartedEvent")(function* (in
         planReviewRounds: input.rounds,
         updatedAt: input.command.createdAt,
       },
+      ...(input.turnedOnLate === undefined ? {} : { turnedOnLate: input.turnedOnLate }),
     },
   };
   return event;
@@ -2774,6 +2778,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         planReviewRunning &&
         command.planReview?.enabled === false &&
         card.planReview?.enabled !== false;
+      // Turned on after the plan was posted: nothing will propose again to
+      // start it, so the update does, and the reactor sends the instructions.
+      const startsPlanReview =
+        planReviewStep !== null &&
+        !planReviewRunning &&
+        command.planReview?.enabled === true &&
+        card.planReview?.enabled !== true &&
+        boardCardPlans(board, card.id).length > 0 &&
+        !boardCardChildren(board, card.id).some((child) => child.archivedAt === null);
       const { planReview: _priorPlanReview, ...cardWithoutPlanReview } = card;
 
       const nextCard: BoardCard = {
@@ -2868,7 +2881,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
                 },
               },
             ]
-          : [];
+          : startsPlanReview && planReviewStep !== null && command.planReview != null
+            ? [
+                yield* planReviewStartedEvent({
+                  command,
+                  state: planReviewStep,
+                  rounds: command.planReview.rounds,
+                  turnedOnLate: true,
+                }),
+              ]
+            : [];
       if (proposedDependsOn === undefined)
         return stopped.length === 0 ? updated : [updated, ...stopped];
       // A group's dependencies hold back every card inside it (T3O-27).

@@ -1170,7 +1170,10 @@ export function withGovernor(
           event.type === "board.card-updated" ||
           // And a pin (T3O-65): a client command whose card the placement
           // pass re-reads from the model.
-          event.type === "board.card-worker-pinned"
+          event.type === "board.card-worker-pinned" ||
+          // And plan review turned on late (T3O-39): a card edit's second
+          // event, read back as the step's started review.
+          event.type === "board.plan-review-started"
             ? Ref.get(model).pipe(
                 Effect.flatMap((m) => projectBoardEvent(m, event)),
                 Effect.flatMap((next) => Ref.set(model, next)),

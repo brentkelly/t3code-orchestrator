@@ -439,3 +439,39 @@ it.effect("a new stage entry starts with no review, so re-entering Planning revi
     assert.strictEqual(selected.payload.state.planReviewRounds, undefined);
   }),
 );
+
+it.effect("turning review on after the plan was posted starts it on the live step", () =>
+  Effect.gen(function* () {
+    const events = yield* decide(update({ enabled: true, rounds: 2 }), readModel({}));
+    assert.deepStrictEqual(types(events), ["board.card-updated", "board.plan-review-started"]);
+    const startedEvent = events[1]!;
+    assert.ok(startedEvent.type === "board.plan-review-started");
+    assert.strictEqual(startedEvent.payload.turnedOnLate, true);
+    assert.strictEqual(startedEvent.payload.state.planReviewStartedAt, LATER);
+    assert.strictEqual(startedEvent.payload.state.planReviewRounds, 2);
+  }),
+);
+
+it.effect("turning review on starts nothing with no plan posted, or on a card already on", () =>
+  Effect.gen(function* () {
+    assert.deepStrictEqual(
+      types(yield* decide(update({ enabled: true, rounds: 2 }), readModel({ plans: [] }))),
+      ["board.card-updated"],
+    );
+    // Only a turn-on starts it: a rounds change on a card already on does not.
+    assert.deepStrictEqual(
+      types(
+        yield* decide(
+          update({ enabled: true, rounds: 2 }),
+          readModel({ card: makeCard({ planReview: ON }) }),
+        ),
+      ),
+      ["board.card-updated"],
+    );
+    // No live planning step: nothing to start.
+    assert.deepStrictEqual(
+      types(yield* decide(update({ enabled: true, rounds: 2 }), readModel({ state: null }))),
+      ["board.card-updated"],
+    );
+  }),
+);

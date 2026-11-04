@@ -6388,6 +6388,9 @@ export type BoardCardStepSteeredPayload = typeof BoardCardStepSteeredPayload.Typ
 export const BoardPlanReviewStartedPayload = Schema.Struct({
   cardId: BoardCardId,
   state: BoardCardStepState,
+  /** A human turned review on after the plan was posted, so the reactor sends
+      the instructions as a turn (no tool result will carry them). */
+  turnedOnLate: Schema.optionalKey(Schema.Literal(true)),
 });
 export type BoardPlanReviewStartedPayload = typeof BoardPlanReviewStartedPayload.Type;
 
