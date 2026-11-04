@@ -39,14 +39,8 @@ const rootId = BoardCardId.make("card-root");
 const childThread = ThreadId.make("thread-child");
 const otherId = BoardCardId.make("card-other");
 
-const autoPlanCalls: Array<string> = [];
-const SupervisorStub = Layer.succeed(SupervisorReactor, {
-  autoPlanCard: (cardId) =>
-    Effect.sync(() => {
-      autoPlanCalls.push(String(cardId));
-      return { outcome: "started" } as const;
-    }),
-} as Pick<SupervisorReactorShape, "autoPlanCard"> as SupervisorReactorShape);
+// board_set_automation dispatches a command; the supervisor is never asked.
+const SupervisorStub = Layer.succeed(SupervisorReactor, {} as SupervisorReactorShape);
 
 const layer = makeBoardStackTestLayer("t3o-board-mcp-decisions-").pipe(
   Layer.provideMerge(ServerSettings.layerTest()),
@@ -289,26 +283,27 @@ it.layer(layer)("decision log and ancestor context (T3O-32)", (it) => {
     }),
   );
 
-  it.effect("board_auto_plan needs approved: true before it asks the supervisor", () =>
+  it.effect("board_set_automation needs approved: true to turn a toggle on, never for off", () =>
     Effect.gen(function* () {
       const { leaf } = yield* seedTree();
-      autoPlanCalls.length = 0;
       const refused = yield* boardHandlers
-        .board_auto_plan({ cardId: leaf.key })
-        .pipe(asChild, Effect.exit);
-      assert.isTrue(Exit.isFailure(refused));
-      assert.deepStrictEqual(autoPlanCalls, []);
+        .board_set_automation({ cardId: otherId, autoMerge: true })
+        .pipe(asChild, Effect.flip);
+      assert.include(refused.message, "approved: true");
       const own = yield* boardHandlers
-        .board_auto_plan({ cardId: leaf.key, approved: true })
+        .board_set_automation({ cardId: leaf.key, autoMerge: true, approved: true })
         .pipe(asChild, Effect.flip);
       assert.include(own.message, "is the card you are working on");
-      assert.deepStrictEqual(autoPlanCalls, []);
-      const started = yield* boardHandlers
-        .board_auto_plan({ cardId: otherId, approved: true })
+      const on = yield* boardHandlers
+        .board_set_automation({ cardId: otherId, autoMerge: true, approved: true })
         .pipe(asChild);
-      assert.strictEqual(started.cardId, otherId);
-      assert.strictEqual(started.outcome, "started");
-      assert.deepStrictEqual(autoPlanCalls, [String(otherId)]);
+      assert.strictEqual(on.cardId, otherId);
+      assert.deepInclude(on.autoMerge, { value: true, source: "own", locked: false });
+      // The reverse state needs no approval, even on the caller's own card.
+      const off = yield* boardHandlers
+        .board_set_automation({ cardId: otherId, autoMerge: null })
+        .pipe(asChild);
+      assert.deepInclude(off.autoMerge, { value: false, source: null });
     }),
   );
 });

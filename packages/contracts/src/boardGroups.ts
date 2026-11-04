@@ -49,7 +49,16 @@ export function boardCardGroupOf(board: BoardState, card: BoardCard): BoardCardG
   return defaultBoardCardGroup(board, card, {
     target: "own",
     autoBuild: true,
-    started: isBoardStageAtOrAfterBuild(board, card.stage),
+    // Begun as migration 054 backfills it: the parent or a live child has
+    // reached the build stage.
+    started:
+      isBoardStageAtOrAfterBuild(board, card.stage) ||
+      board.cards.some(
+        (candidate) =>
+          candidate.parentCardId === card.id &&
+          candidate.archivedAt === null &&
+          isBoardStageAtOrAfterBuild(board, candidate.stage),
+      ),
     prevStage: boardGroupPlacedStage(board, card.stage),
     integrated: card.stage === done,
   });

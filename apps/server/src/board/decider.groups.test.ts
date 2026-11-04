@@ -1320,14 +1320,11 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
       ];
       const edited = yield* decideEvents(update("g", { dependsOn: [dep] }), model(unflagged));
       expect(stagesAfter(edited).get("a")?.card.blocked).toBe(true);
-      // A card with nothing of its own to wait on can be armed behind its group.
       const waiting = [
         card("dep", "review"),
         card("g", "ready", { group: group("ready"), dependsOn: [dep] }),
         child("a", "ready", "g"),
       ];
-      const armed = yield* decideEvents(update("a", { autoStart: true }), model(waiting));
-      expect(stagesAfter(armed).get("a")?.card.autoStart).toBe(true);
       // Nor can a card be created straight into Building behind a waiting group.
       const created = yield* decideFail(
         {

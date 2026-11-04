@@ -130,7 +130,7 @@ const stageOf = (board: BoardState, id: string): string | null =>
   String(board.cards.find((card) => card.id === BoardCardId.make(id))?.stage ?? "") || null;
 
 const armOf = (board: BoardState, id: string): boolean | null =>
-  board.cards.find((card) => card.id === BoardCardId.make(id))?.autoStart ?? null;
+  board.cards.find((card) => card.id === BoardCardId.make(id))?.autoBuildSetting ?? null;
 
 const moveTypes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.move");
@@ -144,10 +144,8 @@ it.effect("starts an armed card when its last dependency reaches Done", () =>
       yield* deliver(h, cardMoved(blocker("dep", DONE), BUILDING, DONE, 1));
 
       assert.strictEqual(stageOf(yield* board, "waiter"), BUILDING);
-      // The arm is SPENT by the move that fired it (D4), in the same event —
-      // so there is no cleared-but-unstarted window and no second command
-      // that can be lost.
-      assert.strictEqual(armOf(yield* board, "waiter"), false);
+      // Auto-build is a lasting setting (T3O-38): the move does not spend it.
+      assert.strictEqual(armOf(yield* board, "waiter"), true);
       // An ORDINARY forward move, the one a human's Begin build makes (D3):
       // no `override`, so the decider's every gate still applies and nothing
       // downstream can tell an auto-started card from a dragged one.

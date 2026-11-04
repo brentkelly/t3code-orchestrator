@@ -1679,7 +1679,7 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         ),
         yield* Effect.flip(
           boardHandlers
-            .board_auto_plan({ cardId: leaf.cardId, approved: true })
+            .board_set_automation({ cardId: leaf.cardId, autoPlan: true, approved: true })
             .pipe(withScope(own.ownThread)),
         ),
       ];
