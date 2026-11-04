@@ -94,11 +94,16 @@ import { boardShellAutomationNode, resolveBoardShellAutomation } from "./boardCa
 import { BoardColumn, BOARD_CARD_GAP } from "./BoardColumn";
 import { indexBoardLabels } from "./labelColour";
 import {
+  boardCollapseToggle,
+  boardColumnAutoFolded,
+  boardColumnCollapsed,
+  boardDragOpenedRail,
   boardScopeCollapseKey,
   boardScopeColumnCollapsedByDefault,
   boardScopeQueryKey,
   boardScopeStages,
   filterBoardColumnsByScope,
+  livePeekedColumns,
   isBoardCardInScope,
   resolveSubBoardEntry,
   ROOT_BOARD_SCOPE,
@@ -317,11 +322,6 @@ function EnvironmentBoard({
   const collapseKeyOf = useCallback(
     (stageId: string) => boardScopeCollapseKey(scope, stageId),
     [scope],
-  );
-  const handleSetCollapsed = useCallback(
-    (stageId: BoardStageId, collapsed: boolean) =>
-      setColumnCollapsed(boardScopeCollapseKey(scope, stageId), collapsed),
-    [scope, setColumnCollapsed],
   );
 
   // Board settings (t3o-07): the per-project key prefix used when creating a
@@ -790,6 +790,37 @@ function EnvironmentBoard({
   // — a drop between two visible cards anchors into the real column, so
   // hidden cards keep their order.
   const scopedColumns = useMemo(() => filterBoardColumnsByScope(columns, scope), [columns, scope]);
+
+  // Auto-collapse empty stages (T3O-40). A peek opens an auto-folded column
+  // for this mounted board only; it never touches `collapsedByStage`.
+  const autoCollapseEmpty = boardSettings.display.autoCollapseEmptyStages;
+  const [peekedColumns, setPeekedColumns] = useState<ReadonlySet<string>>(() => new Set());
+  // A peek ends once its column holds cards (or the setting or scope changes),
+  // so the column folds again the next time it empties. Adjusted during
+  // render, not in an effect, so the stale peek never paints.
+  const livePeeks = livePeekedColumns({
+    autoCollapseEmpty,
+    peeked: peekedColumns,
+    emptyColumnKeys: renderedStages
+      .filter((stage) => (scopedColumns[stage.stageId] ?? EMPTY_CARDS).length === 0)
+      .map((stage) => collapseKeyOf(stage.stageId)),
+  });
+  if (livePeeks !== peekedColumns) setPeekedColumns(livePeeks);
+  const handleSetCollapsed = useCallback(
+    (stageId: BoardStageId, collapsed: boolean) => {
+      const key = boardScopeCollapseKey(scope, stageId);
+      const toggle = boardCollapseToggle({
+        autoCollapseEmpty,
+        cardCount: (scopedColumns[stageId] ?? EMPTY_CARDS).length,
+        key,
+        collapsed,
+        peeked: peekedColumns,
+      });
+      if (toggle.kind === "peek") setPeekedColumns(toggle.peeked);
+      else setColumnCollapsed(key, collapsed);
+    },
+    [autoCollapseEmpty, peekedColumns, scope, scopedColumns, setColumnCollapsed],
+  );
   const showStalledOnly = search.stalled === true;
   const stalledCount = useMemo(
     () =>
@@ -836,6 +867,7 @@ function EnvironmentBoard({
   // placeholder gap; the drop reuses the command layer below.
   const [drag, setDrag] = useState<BoardDrag | null>(null);
   const [dragOver, setDragOver] = useState<BoardDragOver | null>(null);
+  const [dragOpenedRail, setDragOpenedRail] = useState<BoardStageId | null>(null);
   const [dragTip, setDragTip] = useState<string | null>(null);
   const dragTipRef = useRef<HTMLDivElement | null>(null);
   const ghostRef = useRef<HTMLElement | null>(null);
@@ -1096,6 +1128,7 @@ function EnvironmentBoard({
       dragRef.current = next;
       setDrag(next);
       setDragOver(source === null ? null : { stage: source.stage, index: startIndex });
+      setDragOpenedRail(null);
     },
     [clearGhost, columns],
   );
@@ -1105,6 +1138,7 @@ function EnvironmentBoard({
     dragRef.current = null;
     setDrag(null);
     setDragOver(null);
+    setDragOpenedRail(null);
     setDragTip(null);
   }, [clearGhost]);
 
@@ -1140,18 +1174,28 @@ function EnvironmentBoard({
     [],
   );
   const handleRefusedDragLeave = useCallback(() => setDragTip(null), []);
-  const handleColumnDragOver = useCallback((stage: BoardStageId, event: DragEvent<HTMLElement>) => {
-    if (dragRef.current === null) return;
-    setDragTip(null);
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    const index = boardDropIndexIn(event.currentTarget, event.clientY);
-    setDragOver((current) =>
-      current !== null && current.stage === stage && current.index === index
-        ? current
-        : { stage, index },
-    );
-  }, []);
+  const handleColumnDragOver = useCallback(
+    (stage: BoardStageId, event: DragEvent<HTMLElement>) => {
+      if (dragRef.current === null) return;
+      setDragTip(null);
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const index = boardDropIndexIn(event.currentTarget, event.clientY);
+      const hoveredAutoFolded = boardColumnAutoFolded({
+        autoCollapseEmpty,
+        cardCount: (scopedColumns[stage] ?? EMPTY_CARDS).length,
+      });
+      setDragOpenedRail((current) =>
+        boardDragOpenedRail({ current, hovered: stage, hoveredAutoFolded }),
+      );
+      setDragOver((current) =>
+        current !== null && current.stage === stage && current.index === index
+          ? current
+          : { stage, index },
+      );
+    },
+    [autoCollapseEmpty, scopedColumns],
+  );
 
   const handleColumnDrop = useCallback(
     (stage: BoardStageId, event: DragEvent<HTMLElement>) => {
@@ -1625,6 +1669,28 @@ function EnvironmentBoard({
               const deferredCards = deferredColumn
                 ? (scopedColumns[stage.stageId] ?? EMPTY_CARDS)
                 : EMPTY_CARDS;
+              const cardCount = (scopedColumns[stage.stageId] ?? EMPTY_CARDS).length;
+              const dropRefusal = drag === null ? null : dropRefusalFor(stage.stageId);
+              const collapsed = boardColumnCollapsed({
+                autoCollapseEmpty,
+                cardCount,
+                dragOverThisColumn:
+                  drag !== null &&
+                  dropRefusal === null &&
+                  (dragOver?.stage === stage.stageId || dragOpenedRail === stage.stageId),
+                peeked: peekedColumns.has(collapseKeyOf(stage.stageId)),
+                storedOrDefaultCollapsed: isBoardColumnCollapsed(
+                  collapsedByStage,
+                  collapseKeyOf(stage.stageId),
+                  boardScopeColumnCollapsedByDefault({
+                    scope,
+                    stageState,
+                    stageId: stage.stageId,
+                    renderedIndex: index,
+                    cardCount,
+                  }),
+                ),
+              });
               return (
                 <BoardColumn
                   accentNameFor={accentNameFor}
@@ -1635,18 +1701,8 @@ function EnvironmentBoard({
                   addProjects={canCreateIn(stage.stageId) ? addProjects : []}
                   cards={visibleColumns[stage.stageId] ?? EMPTY_CARDS}
                   labelsById={labelsById}
-                  collapsed={isBoardColumnCollapsed(
-                    collapsedByStage,
-                    collapseKeyOf(stage.stageId),
-                    boardScopeColumnCollapsedByDefault({
-                      scope,
-                      stageState,
-                      stageId: stage.stageId,
-                      renderedIndex: index,
-                      cardCount: (scopedColumns[stage.stageId] ?? EMPTY_CARDS).length,
-                    }),
-                  )}
-                  dropRefusal={drag === null ? null : dropRefusalFor(stage.stageId)}
+                  collapsed={collapsed}
+                  dropRefusal={dropRefusal}
                   groupFor={groupFor}
                   hint={deferredColumn ? "Not this round. Doesn't count toward done." : undefined}
                   headerAction={

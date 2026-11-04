@@ -18,6 +18,7 @@ import {
   boardProjectAcronym,
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
+  DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
   DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_SUBMIT_PROMPT,
@@ -78,6 +79,17 @@ describe("board settings defaults", () => {
     // The old `archiveAfterDays` must not switch auto-archive on (T3O-77).
     expect(settings.lifecycle.autoArchiveDone).toBe(false);
     expect(settings.lifecycle.autoArchiveAfterDays).toBe(7);
+  });
+
+  it("ships auto-collapse empty stages off and round-trips it (T3O-40)", () => {
+    expect(DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES).toBe(false);
+    expect(DEFAULT_BOARD_SETTINGS.display.autoCollapseEmptyStages).toBe(false);
+    // A file written before `display` existed, or with an empty block, decodes off.
+    expect(decodeSettings({ lifecycle: {} }).display.autoCollapseEmptyStages).toBe(false);
+    expect(decodeSettings({ display: {} }).display.autoCollapseEmptyStages).toBe(false);
+    const on = decodeSettings({ display: { autoCollapseEmptyStages: true } });
+    expect(on.display.autoCollapseEmptyStages).toBe(true);
+    expect(decodeSettings(encodeSettings(on)).display).toEqual({ autoCollapseEmptyStages: true });
   });
 
   it("ships auto-archive off with a seven-day window (T3O-77)", () => {

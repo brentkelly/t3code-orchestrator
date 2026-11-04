@@ -9221,6 +9221,17 @@ export const BoardLifecycleSettings = Schema.Struct({
   ),
 });
 export type BoardLifecycleSettings = typeof BoardLifecycleSettings.Type;
+
+/** Board display preferences (T3O-40). Shared by every client of this board. */
+export const DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES = false;
+
+export const BoardDisplaySettings = Schema.Struct({
+  /** Fold every stage with no cards in scope to a rail; it reopens on arrival. */
+  autoCollapseEmptyStages: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES)),
+  ),
+});
+export type BoardDisplaySettings = typeof BoardDisplaySettings.Type;
 export const DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT = 3;
 export const DEFAULT_BOARD_STEP_TIMEOUT_MS = 30 * 60 * 1000;
 /** Consecutive-stall ceiling per step (t3o-17, D1). Raised from 3 to 5: safe
@@ -10689,6 +10700,11 @@ export const BoardSettings = Schema.Struct({
       }),
     ),
   ),
+  display: BoardDisplaySettings.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({ autoCollapseEmptyStages: DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES }),
+    ),
+  ),
 });
 export type BoardSettings = typeof BoardSettings.Type;
 
@@ -10735,6 +10751,11 @@ export const BoardLifecycleSettingsPatch = Schema.Struct({
 });
 export type BoardLifecycleSettingsPatch = typeof BoardLifecycleSettingsPatch.Type;
 
+export const BoardDisplaySettingsPatch = Schema.Struct({
+  autoCollapseEmptyStages: Schema.optionalKey(Schema.Boolean),
+});
+export type BoardDisplaySettingsPatch = typeof BoardDisplaySettingsPatch.Type;
+
 export const BoardSettingsPatch = Schema.Struct({
   projects: Schema.optionalKey(BoardProjectSettingsMap),
   /** Nullable, and a null is meaningful: it CLEARS the workspace default rather
@@ -10744,6 +10765,7 @@ export const BoardSettingsPatch = Schema.Struct({
   pipeline: Schema.optionalKey(BoardPipeline),
   concurrency: Schema.optionalKey(BoardConcurrencySettingsPatch),
   lifecycle: Schema.optionalKey(BoardLifecycleSettingsPatch),
+  display: Schema.optionalKey(BoardDisplaySettingsPatch),
 });
 export type BoardSettingsPatch = typeof BoardSettingsPatch.Type;
 

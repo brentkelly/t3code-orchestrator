@@ -97,6 +97,85 @@ export function boardScopeColumnCollapsedByDefault(input: {
   );
 }
 
+/** Whether the auto-collapse setting folds this column (T3O-40): on, and empty. */
+export function boardColumnAutoFolded(input: {
+  readonly autoCollapseEmpty: boolean;
+  readonly cardCount: number;
+}): boolean {
+  return input.autoCollapseEmpty && input.cardCount === 0;
+}
+
+/**
+ * A column's rendered collapse state with the auto-collapse setting applied
+ * (T3O-40). While the setting is on, an empty column folds whatever the store
+ * or the scope default says, and only a peek or a drag hovering it opens it.
+ * A column holding cards falls back to the stored-or-default value, so a stage
+ * collapsed by hand stays collapsed when cards arrive.
+ */
+export function boardColumnCollapsed(input: {
+  readonly autoCollapseEmpty: boolean;
+  readonly cardCount: number;
+  readonly dragOverThisColumn: boolean;
+  readonly peeked: boolean;
+  readonly storedOrDefaultCollapsed: boolean;
+}): boolean {
+  return boardColumnAutoFolded(input)
+    ? !(input.peeked || input.dragOverThisColumn)
+    : input.storedOrDefaultCollapsed;
+}
+
+/**
+ * The auto-folded rail a live drag holds open (T3O-40): the latest one it
+ * hovered. Hovering an ordinary column keeps it, so leaving the rail doesn't
+ * snap it shut under the pointer; reaching another auto-folded rail replaces
+ * it, so a long drag across empty stages never widens the board by more than
+ * one opened rail.
+ */
+export function boardDragOpenedRail<S extends string>(input: {
+  readonly current: S | null;
+  readonly hovered: S;
+  readonly hoveredAutoFolded: boolean;
+}): S | null {
+  return input.hoveredAutoFolded ? input.hovered : input.current;
+}
+
+/**
+ * Where a column's collapse toggle goes (T3O-40). On an auto-folded column it
+ * only opens or ends a transient peek, so `collapsedByStage` is never written
+ * for it; on any other column it is the stored manual choice.
+ */
+export function boardCollapseToggle(input: {
+  readonly autoCollapseEmpty: boolean;
+  readonly cardCount: number;
+  readonly key: string;
+  readonly collapsed: boolean;
+  readonly peeked: ReadonlySet<string>;
+}): { readonly kind: "peek"; readonly peeked: ReadonlySet<string> } | { readonly kind: "store" } {
+  if (!boardColumnAutoFolded(input)) return { kind: "store" };
+  const peeked = new Set(input.peeked);
+  if (input.collapsed) peeked.delete(input.key);
+  else peeked.add(input.key);
+  return { kind: "peek", peeked };
+}
+
+/**
+ * The peeks that survive this render (T3O-40): only those on a column of the
+ * current scope that is still empty, and none while the setting is off. A peek
+ * ends when cards arrive, so the column folds again the next time it empties.
+ * Returns `peeked` itself when nothing was dropped, so callers can compare by
+ * reference before setting state.
+ */
+export function livePeekedColumns(input: {
+  readonly autoCollapseEmpty: boolean;
+  readonly peeked: ReadonlySet<string>;
+  readonly emptyColumnKeys: ReadonlyArray<string>;
+}): ReadonlySet<string> {
+  if (input.peeked.size === 0) return input.peeked;
+  const empty = new Set(input.autoCollapseEmpty ? input.emptyColumnKeys : []);
+  const live = [...input.peeked].filter((key) => empty.has(key));
+  return live.length === input.peeked.size ? input.peeked : new Set(live);
+}
+
 /**
  * The collapse-store key for one column in one scope (D1): the bare stage id
  * on the root board — every persisted pre-t3o-25 entry keeps meaning exactly
