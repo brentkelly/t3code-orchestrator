@@ -7,12 +7,12 @@
  * child's brief at materialisation). A parent whose whole job is to supervise
  * four cards was therefore showing prose the human read at approval and
  * nothing at all about what the four cards were doing. This shows the group:
- * one row per child card (plus any plan with no card), in dependency order, each carrying its child's live stage,
- * what is holding it up, and its PR.
+ * one row per child card (plus any plan with no card), in dependency order,
+ * each carrying its child's live stage, what is holding it up, and its PR.
  *
  * No "Back to thread" button, unlike the markdown pane: this panel is a split
- * parent's default pane (t3o-28, D4), and the header's Thread pill is already
- * the way to its planning thread.
+ * parent's default pane (t3o-28, D4), and the header's Planning pill is
+ * already the way to its planning thread.
  *
  * Pure presentation over `deriveBoardPlanRows` — see `boardPlanRows.ts`.
  */

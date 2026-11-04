@@ -2201,7 +2201,10 @@ function BoardBaseBranchRow({ props }: { readonly props: BoardCardDetailViewProp
   );
 }
 
-export type BoardCardPane = "thread" | "review" | "summary" | "plan" | "brief";
+/** `planning` is the Thread pane pinned to a group's planning thread (T3O-34):
+    a pane of its own, so its pill lights by the user's choice rather than by
+    which thread happens to be the default. */
+export type BoardCardPane = "thread" | "planning" | "review" | "summary" | "plan" | "brief";
 
 /** Whether the card has reached the review-role stage — from there on the loop
     is what the card is about, so the modal opens on the Review pane. */
@@ -2299,19 +2302,15 @@ function PaneTabs({
   hasPlan,
   planCount,
   onSelect,
-  planningShown = false,
-  onSelectPlanning = null,
+  hasPlanning = false,
   plansLabel = null,
 }: {
   readonly pane: BoardCardPane;
   readonly hasReview: boolean;
   readonly hasSummary: boolean;
   readonly hasPlan: boolean;
-  /** Whether the Thread pane is showing the planning thread, which lights
-      Planning instead of Thread. */
-  readonly planningShown?: boolean | undefined;
-  /** Opens the planning thread; null hides the Planning pill. */
-  readonly onSelectPlanning?: (() => void) | null | undefined;
+  /** Whether the Planning pill shows: a group with a live planning thread. */
+  readonly hasPlanning?: boolean | undefined;
   /** The plans pill's label when it lists a group's cards. */
   readonly plansLabel?: string | null | undefined;
   /** Non-null once the card has materialised children (t3o-29): the plan pill
@@ -2327,23 +2326,21 @@ function PaneTabs({
         ? "bg-card font-medium text-foreground shadow-[0_0_0_1px_var(--border)]"
         : "text-muted-foreground hover:text-foreground",
     );
-  const planningActive = onSelectPlanning !== null && pane === "thread" && planningShown;
-  const tab = (value: BoardCardPane) =>
-    pill(pane === value && !(value === "thread" && planningActive));
+  const tab = (value: BoardCardPane) => pill(pane === value);
   return (
     <div className="flex shrink-0 items-center gap-0.5 rounded-[9px] bg-accent p-0.5">
       <button className={tab("thread")} onClick={() => onSelect("thread")} type="button">
         <MessageSquareIcon className="size-3" />
         Thread
       </button>
-      {onSelectPlanning === null ? null : (
+      {hasPlanning ? (
         <BoardHint label="The thread that planned this group">
-          <button className={pill(planningActive)} onClick={onSelectPlanning} type="button">
+          <button className={tab("planning")} onClick={() => onSelect("planning")} type="button">
             <MessageSquareTextIcon className="size-3" />
             Planning
           </button>
         </BoardHint>
-      )}
+      ) : null}
       {hasReview ? (
         <BoardHint label="Adversarial review loop">
           <button className={tab("review")} onClick={() => onSelect("review")} type="button">
@@ -2560,7 +2557,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const selectedThread =
     props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
     initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
-  // A group's Planning pill (T3O-34) pins the Thread pane to its planning
+  // A group's Planning pane (T3O-34) is the Thread pane pinned to its planning
   // thread; the Thread pill still lists every thread, planning included.
   const planStageId = boardStageWithRole(stageStateOf(props.stages), "plan")?.stageId ?? null;
   const planningLink =
@@ -2569,13 +2566,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       : props.threadLinks.findLast(
           (candidate) => candidate.role === planStageId && !candidate.tombstoned,
         );
-  const openPlanningThread =
-    planningLink === undefined
-      ? null
-      : () => {
-          setSelectedThreadId(planningLink.threadId);
-          setPane("thread");
-        };
   const groupDefaultPane: BoardCardPane = (planRows?.rows.length ?? 0) > 0 ? "plan" : "brief";
   const pane =
     paneChoice ??
@@ -2621,9 +2611,19 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const activePane: BoardCardPane =
     (pane === "plan" && !hasPlan) ||
     (pane === "review" && !hasReview) ||
-    (pane === "summary" && !hasSummary)
+    (pane === "summary" && !hasSummary) ||
+    (pane === "planning" && planningLink === undefined)
       ? "thread"
       : pane;
+  const shownThread =
+    activePane === "planning" && planningLink !== undefined
+      ? planningLink.threadId
+      : selectedThread;
+  // Picking a thread from the Planning pane leaves the pin for the Thread pane.
+  const selectThread = (threadId: ThreadId | null) => {
+    setSelectedThreadId(threadId);
+    if (activePane === "planning") setPane("thread");
+  };
   // Derived only while the Summary pane is showing: the panel re-renders on
   // every thread-link or detail push, and the walk over step completions is
   // wasted on any other pane.
@@ -2801,10 +2801,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           hasReview={hasReview}
           hasSummary={hasSummary}
           onSelect={setPane}
-          onSelectPlanning={openPlanningThread}
+          hasPlanning={planningLink !== undefined}
           pane={activePane}
           planCount={planRows === null ? null : planRows.rows.length}
-          planningShown={planningLink !== undefined && selectedThread === planningLink.threadId}
           plansLabel={group === null || planRows === null ? null : "Cards"}
         />
         <Menu>
@@ -3066,10 +3065,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onCreateBlankThread={props.onCreateBlankThread}
                 onLinkThread={props.onLinkThread}
                 onRestartStage={props.onRestartStage}
-                onSelectThread={setSelectedThreadId}
+                onSelectThread={selectThread}
                 onToggleMaximised={props.onToggleMaximised}
                 onUnlinkThread={props.onUnlinkThread}
-                selectedThreadId={selectedThread}
+                selectedThreadId={shownThread}
                 stageRestart={props.stageRestart}
                 threadLinks={props.threadLinks}
                 threadTodos={props.threadTodos}
@@ -3096,7 +3095,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                           (candidate) => candidate.threadId === planningThread,
                         );
                         if (link === undefined || link.tombstoned) return;
-                        setSelectedThreadId(link.threadId);
+                        selectThread(link.threadId);
                         useComposerDraftStore
                           .getState()
                           .setPrompt(
@@ -3186,7 +3185,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 group.settings
               )}
             </div>
-            <InfoSection onOpenThread={setSelectedThreadId} props={props} />
+            <InfoSection onOpenThread={selectThread} props={props} />
           </div>
         </div>
       ) : (
@@ -3293,7 +3292,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   group.settings
                 )}
               </div>
-              <InfoSection onOpenThread={setSelectedThreadId} props={props} />
+              <InfoSection onOpenThread={selectThread} props={props} />
             </div>
           </div>
         </div>

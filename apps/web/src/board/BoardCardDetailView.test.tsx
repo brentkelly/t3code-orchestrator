@@ -1212,7 +1212,7 @@ describe("BoardCardDetailPanel", () => {
       dependsOn: index === 0 ? [] : [BoardCardId.make("child-0")],
     }));
     const render = (options: {
-      readonly paneChoice?: "thread" | null;
+      readonly paneChoice?: "thread" | "planning" | null;
       readonly grouped?: boolean;
       readonly links?: ReadonlyArray<readonly [ThreadId, string]>;
     }) => {
@@ -1252,19 +1252,27 @@ describe("BoardCardDetailPanel", () => {
       expect(html).toMatch(/<button(?![^>]*disabled)[^>]*>(?:(?!<\/button>).)*Thread<\/button>/);
     });
 
-    it("lights Planning, not Thread, while the planning thread is showing", () => {
-      expect(selectedTab(render({ paneChoice: "thread" }))).toBe("Planning");
-      // A newer non-planning thread is the default selection, so Thread lights.
+    it("lights the pill the user picked, even when the planning thread is the only one", () => {
+      // The planning thread is the Thread pane's default here, so the pill
+      // must follow the pane chosen, not the thread on show.
+      expect(selectedTab(render({ paneChoice: "thread" }))).toBe("Thread");
+      expect(selectedTab(render({ paneChoice: "planning" }))).toBe("Planning");
       expect(
         selectedTab(
           render({
-            paneChoice: "thread",
+            paneChoice: "planning",
             links: [
               [planningThread, "planning"],
               [otherThread, "linked"],
             ],
           }),
         ),
+      ).toBe("Planning");
+    });
+
+    it("falls back to Thread when Planning is picked with no planning thread", () => {
+      expect(
+        selectedTab(render({ paneChoice: "planning", links: [[otherThread, "linked"]] })),
       ).toBe("Thread");
     });
 
