@@ -54,6 +54,8 @@ a:hover{text-decoration:underline}
 @keyframes t3slide{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
 @keyframes t3spin{to{transform:rotate(360deg)}}
 @keyframes t3pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes t3shine{from{background-position:-4.5rem 0,0 0}to{background-position:calc(100% + 4.5rem) 0,0 0}}
+@media (prefers-reduced-motion: reduce),(forced-colors: active){[data-shine="true"]{animation:none!important;background:none!important;-webkit-text-fill-color:currentColor!important}}
 [data-ph]:empty:before{content:attr(data-ph);color:var(--muted-fg);pointer-events:none}
 </style>
 </helmet>
@@ -476,6 +478,44 @@ a:hover{text-decoration:underline}
                       <span style="{{ l.swatch }}"></span>{{ l.name }}
                     </span>
                   </sc-for>
+                  <div style="flex:none">
+                    <button type="button" onClick="{{ b.togglePipes }}" title="Which stages each project uses" style="{{ b.pipesBtnStyle }}">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path><path d="M15 3v18"></path></svg>
+                      Pipelines
+                    </button>
+                    <sc-if value="{{ b.pipesOpen }}" hint-placeholder-val="{{ false }}">
+                      <div onClick="{{ b.togglePipes }}" style="position:fixed;inset:0;z-index:25"></div>
+                      <div style="position:absolute;top:44px;left:18px;z-index:30;width:min(640px,calc(100% - 36px));padding:13px 14px 12px;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:var(--shadow-pop);display:flex;flex-direction:column;gap:10px">
+                        <div style="display:flex;flex-direction:column;gap:3px">
+                          <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Stages by project</span>
+                          <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">The board shows every stage a project in view uses, in pipeline order. Each project's stages come from the t3o.json in its repo.</span>
+                        </div>
+                        <div style="display:grid;grid-template-columns:132px minmax(0,1fr);gap:6px 10px;align-items:center">
+                          <span></span>
+                          <div style="display:flex;gap:3px">
+                            <sc-for list="{{ b.pipeHeads }}" as="ph" hint-placeholder-count="9">
+                              <span style="flex:1;min-width:0;font:500 9.5px var(--font-sans);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center" title="{{ ph.name }}">{{ ph.name }}</span>
+                            </sc-for>
+                          </div>
+                          <sc-for list="{{ b.pipes }}" as="pp" hint-placeholder-count="3">
+                            <span title="{{ pp.file }}" style="display:inline-flex;align-items:center;gap:6px;min-width:0;font:500 11.5px var(--font-sans);color:var(--fg)"><span style="{{ pp.dotStyle }}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ pp.name }}</span></span>
+                            <div style="display:flex;gap:3px">
+                              <sc-for list="{{ pp.cells }}" as="pc" hint-placeholder-count="9">
+                                <span title="{{ pc.tip }}" style="{{ pc.style }}"></span>
+                              </sc-for>
+                            </div>
+                          </sc-for>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:12px;padding-top:9px;border-top:1px solid var(--border);font:400 11px var(--font-sans);color:var(--muted-fg)">
+                          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:14px;height:10px;border-radius:3px;background:color-mix(in srgb,var(--fg) 13%,transparent)"></span>Global stage</span>
+                          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:14px;height:10px;border-radius:3px;background:color-mix(in srgb,var(--fg) 34%,transparent)"></span>Added by the project, or CI</span>
+                          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:14px;height:10px;border-radius:3px;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 12%,transparent)"></span>Not used</span>
+                          <span style="flex:1"></span>
+                          <span>Settings → Board</span>
+                        </div>
+                      </div>
+                    </sc-if>
+                  </div>
                 </div>
               </sc-if>
               <sc-if value="{{ b.hasGraph }}" hint-placeholder-val="{{ false }}">
@@ -576,6 +616,16 @@ a:hover{text-decoration:underline}
                         </button>
                       </sc-if>
                       <span style="font:600 14px var(--font-sans);letter-spacing:.01em;color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ col.name }}</span>
+                      <sc-if value="{{ col.partial }}" hint-placeholder-val="{{ false }}">
+                        <span title="{{ col.ownersTip }}" style="display:inline-flex;align-items:center;gap:3px;margin-left:4px;flex:none">
+                          <sc-for list="{{ col.owners }}" as="ow" hint-placeholder-count="0">
+                            <span style="{{ ow.style }}"></span>
+                          </sc-for>
+                        </span>
+                      </sc-if>
+                      <sc-if value="{{ col.retired }}" hint-placeholder-val="{{ false }}">
+                        <span title="No project in view uses this stage any more" style="flex:none;margin-left:4px;padding:0 5px;border:1px solid var(--border);border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;color:var(--muted-fg)">Removed</span>
+                      </sc-if>
                       </div>
                       <div style="flex:1"></div>
                       <span style="font:500 11px var(--font-sans);color:var(--muted-fg)">{{ col.count }}</span>
@@ -684,6 +734,42 @@ a:hover{text-decoration:underline}
                                 <span>{{ c.review.counts }}</span>
                               </div>
                             </div>
+                          </sc-if>
+                          <sc-if value="{{ c.ciFace }}" hint-placeholder-val="{{ false }}">
+                            <div title="{{ c.ciFace.tip }}" style="display:flex;flex-direction:column;gap:6px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border)">
+                              <div style="display:flex;align-items:center;gap:6px">
+                                <span style="font:500 10.5px var(--font-sans);color:var(--fg)">{{ c.ciFace.head }}</span>
+                                <span style="flex:1"></span>
+                                <span style="{{ c.ciFace.chipStyle }}">{{ c.ciFace.chip }}</span>
+                              </div>
+                              <div style="display:flex;gap:3px">
+                                <sc-for list="{{ c.ciFace.pips }}" as="cp" hint-placeholder-count="0">
+                                  <span title="{{ cp.tip }}" style="{{ cp.style }}"></span>
+                                </sc-for>
+                              </div>
+                              <div style="display:flex;align-items:center;gap:7px;min-width:0">
+                                <span style="font:500 10.5px var(--font-mono);color:var(--fg);flex:none">{{ c.ciFace.count }}</span>
+                                <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.ciFace.cur }}</span>
+                              </div>
+                            </div>
+                          </sc-if>
+                          <sc-if value="{{ c.ciBack }}" hint-placeholder-val="{{ false }}">
+                            <div title="{{ c.ciBack.tip }}" style="display:flex;align-items:flex-start;gap:7px;margin-top:9px;padding:7px 8px;border-radius:7px;background:color-mix(in srgb,var(--destructive) 7%,transparent)">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--destructive-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg>
+                              <div style="min-width:0;display:flex;flex-direction:column;gap:1px">
+                                <span style="font:500 10.5px var(--font-sans);color:var(--fg)">Sent back by CI</span>
+                                <span style="font:400 10.5px/1.4 var(--font-sans);color:var(--muted-fg)">{{ c.ciBack.line }}</span>
+                              </div>
+                            </div>
+                          </sc-if>
+                          <sc-if value="{{ c.ciSkip }}" hint-placeholder-val="{{ false }}">
+                            <div title="{{ c.ciSkip.tip }}" style="display:flex;align-items:center;gap:5px;margin-top:8px;font:500 10.5px var(--font-sans);color:var(--muted-fg)">
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="m6 17 5-5-5-5"></path><path d="m13 17 5-5-5-5"></path></svg>
+                              {{ c.ciSkip.label }}
+                            </div>
+                          </sc-if>
+                          <sc-if value="{{ c.stageGone }}" hint-placeholder-val="{{ false }}">
+                            <div title="{{ c.stageGone.tip }}" style="margin-top:8px;font:400 10.5px/1.4 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ c.stageGone.label }}</div>
                           </sc-if>
                           <sc-if value="{{ c.qbar }}" hint-placeholder-val="{{ false }}">
                             <div title="{{ c.qbar.tip }}" style="display:flex;flex-direction:column;gap:6px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border)">
@@ -1104,6 +1190,15 @@ a:hover{text-decoration:underline}
                 Review
               </button>
             </sc-if>
+            <sc-if value="{{ hasCiTab }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ selectCi }}" title="Continuous integration" style="{{ ciTabStyle }}">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M3 7h4"></path><path d="M3 12h4"></path><path d="M3 17h10"></path></svg>
+                CI
+                <sc-if value="{{ ciTabLive }}" hint-placeholder-val="{{ false }}">
+                  <span title="CI is running" style="width:6px;height:6px;flex:none;border-radius:99px;background:var(--info)"></span>
+                </sc-if>
+              </button>
+            </sc-if>
             <sc-if value="{{ hasPlansTab }}" hint-placeholder-val="{{ false }}">
               <button type="button" onClick="{{ selectPlans }}" title="Plans for this feature" style="{{ plansTabStyle }}">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"></rect><rect width="7" height="7" x="14" y="14" rx="1"></rect><path d="M10 6.5h4a2 2 0 0 1 2 2V14"></path></svg>
@@ -1218,6 +1313,17 @@ a:hover{text-decoration:underline}
             </button>
           </div>
         </sc-if>
+        <sc-if value="{{ ciBanner }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;align-items:flex-start;gap:10px;margin:10px 10px 0;padding:10px 11px;flex:none;border:1px solid color-mix(in srgb,var(--destructive) 35%,transparent);border-radius:10px;background:color-mix(in srgb,var(--destructive) 6%,var(--card))">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--destructive-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg>
+            <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+              <span style="font:500 12.5px var(--font-sans);color:var(--fg)">{{ ciBanner.title }}</span>
+              <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ciBanner.reason }}</span>
+              <span style="margin-top:1px;font:400 11px/1.45 var(--font-sans);color:color-mix(in srgb,var(--muted-fg) 85%,transparent);text-wrap:pretty">{{ ciBanner.meta }}</span>
+            </div>
+            <button type="button" onClick="{{ ciBanner.open }}" style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;flex:none;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">View CI run</button>
+          </div>
+        </sc-if>
         <div style="{{ cardBodyStyle }}">
           <sc-if value="{{ reviewPaneOpen }}" hint-placeholder-val="{{ false }}">
           <section style="display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid var(--border);background:color-mix(in srgb,var(--muted) 55%,var(--card))">
@@ -1298,17 +1404,25 @@ a:hover{text-decoration:underline}
                     <div style="display:flex;flex-direction:column">
                       <sc-for list="{{ r.steps }}" as="s" hint-placeholder-count="4">
                         <div style="{{ s.style }}">
-                          <sc-if value="{{ s.live }}" hint-placeholder-val="{{ false }}">
-                            <span title="Running now" style="{{ s.spinStyle }}"></span>
-                          </sc-if>
                           <sc-if value="{{ s.plain }}" hint-placeholder-val="{{ true }}">
+                          <span style="position:relative;display:inline-flex;flex:none">
                             <span style="{{ s.dotStyle }}">{{ s.index }}</span>
+                            <sc-if value="{{ s.markOk }}" hint-placeholder-val="{{ false }}">
+                              <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--success);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                            </sc-if>
+                            <sc-if value="{{ s.markFail }}" hint-placeholder-val="{{ false }}">
+                              <span style="{{ s.markFailStyle }}"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+                            </sc-if>
+                            <sc-if value="{{ s.markSkip }}" hint-placeholder-val="{{ false }}">
+                              <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--muted-fg);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M6 12h12"></path></svg></span>
+                            </sc-if>
+                          </span>
                           </sc-if>
                           <sc-if value="{{ s.awaits }}" hint-placeholder-val="{{ false }}">
                             <span title="Waiting on you" style="{{ s.dotStyle }}">!</span>
                           </sc-if>
                           <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
-                            <div style="font:500 12.5px var(--font-sans);color:var(--fg)">{{ s.name }}</div>
+                            <div data-shine="{{ s.live }}" style="{{ s.nameStyle }}">{{ s.name }}</div>
                             <div style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ s.note }}</div>
                           </div>
                           <sc-if value="{{ s.hasThread }}" hint-placeholder-val="{{ false }}">
@@ -1349,6 +1463,158 @@ a:hover{text-decoration:underline}
                 </sc-if>
                 <button type="button" onClick="{{ review.cta }}" style="{{ review.ctaStyle }}">{{ review.ctaLabel }}</button>
               </div>
+              </sc-if>
+            </div>
+          </section>
+          </sc-if>
+
+          <sc-if value="{{ ciPaneOpen }}" hint-placeholder-val="{{ false }}">
+          <section style="display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid var(--border);background:color-mix(in srgb,var(--muted) 55%,var(--card))">
+            <div style="display:flex;align-items:center;gap:9px;flex:none;height:44px;padding:0 12px 0 14px;border-bottom:1px solid var(--border)">
+              <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Continuous integration</span>
+              <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ ci.sub }}</span>
+              <span style="flex:1"></span>
+              <span style="{{ ci.statusStyle }}">{{ ci.status }}</span>
+            </div>
+            <div style="flex:1;min-height:0;overflow-y:auto;padding:14px 16px 20px;display:flex;flex-direction:column;gap:12px">
+              <sc-if value="{{ ci.outcomeBox }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:none;display:flex;flex-direction:column;gap:5px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card)">
+                  <span style="font:600 12.5px var(--font-sans);color:var(--fg)">{{ ci.outcomeBox.title }}</span>
+                  <span style="font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ci.outcomeBox.note }}</span>
+                  <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ ci.outcomeBox.meta }}</span>
+                </div>
+              </sc-if>
+              <sc-if value="{{ ci.fixBox }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:none;display:flex;align-items:center;gap:12px;padding:11px 12px 11px 14px;border:1px solid color-mix(in srgb,var(--info) 35%,transparent);border-radius:12px;background:color-mix(in srgb,var(--info) 6%,var(--card))">
+                  <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                    <span style="font:600 12.5px var(--font-sans);color:var(--fg)">{{ ci.fixBox.title }}</span>
+                    <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ci.fixBox.note }}</span>
+                  </div>
+                  <button type="button" onClick="{{ ci.fixBox.openThread }}" style="display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;flex:none;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                    View thread
+                  </button>
+                </div>
+              </sc-if>
+
+              <div style="flex:none;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden">
+                <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border)">
+                  <span style="font:600 12.5px var(--font-sans);color:var(--fg)">{{ ci.cur.title }}</span>
+                  <span style="{{ ci.cur.outcomeStyle }}">{{ ci.cur.outcome }}</span>
+                  <span style="flex:1"></span>
+                  <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ ci.cur.when }}</span>
+                </div>
+                <sc-for list="{{ ci.cur.steps }}" as="s" hint-placeholder-count="3">
+                  <div style="{{ s.rowStyle }}">
+                    <span style="position:relative;display:inline-flex;flex:none">
+                            <span style="{{ s.dotStyle }}">{{ s.index }}</span>
+                            <sc-if value="{{ s.markOk }}" hint-placeholder-val="{{ false }}">
+                              <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--success);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                            </sc-if>
+                            <sc-if value="{{ s.markFail }}" hint-placeholder-val="{{ false }}">
+                              <span style="{{ s.markFailStyle }}"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+                            </sc-if>
+                            <sc-if value="{{ s.markSkip }}" hint-placeholder-val="{{ false }}">
+                              <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--muted-fg);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M6 12h12"></path></svg></span>
+                            </sc-if>
+                          </span>
+                    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                      <span data-shine="{{ s.shine }}" style="{{ s.nameStyle }}">{{ s.name }}</span>
+                      <span style="font:400 11px var(--font-mono);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.run }}</span>
+                    </div>
+                    <sc-if value="{{ s.hasTail }}" hint-placeholder-val="{{ false }}">
+                      <button type="button" onClick="{{ s.toggleTail }}" style="height:22px;padding:0 7px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--popover);color:var(--muted-fg);font:500 11px var(--font-sans);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">{{ s.tailLabel }}</button>
+                    </sc-if>
+                    <span style="{{ s.timeStyle }}">{{ s.time }}</span>
+                    <span data-shine="{{ s.shine }}" style="{{ s.labelStyle }}">{{ s.label }}</span>
+                  </div>
+                  <sc-if value="{{ s.tailOpen }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;flex-direction:column;border-top:1px solid var(--border);background:var(--muted)">
+                      <div style="display:flex;align-items:center;gap:8px;padding:6px 12px 6px 42px">
+                        <span style="font:500 10.5px var(--font-sans);letter-spacing:.04em;text-transform:uppercase;color:var(--muted-fg)">{{ s.tailMeta }}</span>
+                      </div>
+                      <pre style="margin:0;max-height:280px;overflow:auto;padding:4px 12px 12px 42px;font:400 11px/1.6 var(--font-mono);color:var(--fg);white-space:pre">{{ s.tail }}</pre>
+                    </div>
+                  </sc-if>
+                </sc-for>
+                <div style="padding:8px 12px;border-top:1px solid var(--border);font:400 11px var(--font-sans);color:var(--muted-fg)">{{ ci.source }}</div>
+              </div>
+
+              <sc-if value="{{ ci.hasEarlier }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:6px">
+                  <span style="padding:2px 2px 0;font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Earlier passes</span>
+                  <sc-for list="{{ ci.earlier }}" as="p" hint-placeholder-count="1">
+                    <div style="flex:none;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden">
+                      <div onClick="{{ p.toggle }}" style="display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer" style-hover="background:color-mix(in srgb,var(--fg) 3%,transparent)">
+                        <span style="font:600 12.5px var(--font-sans);color:var(--fg);flex:none">{{ p.title }}</span>
+                        <span style="{{ p.outcomeStyle }}">{{ p.outcome }}</span>
+                        <span style="font:400 11px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.summary }}</span>
+                        <span style="flex:1"></span>
+                        <span style="font:400 11px var(--font-sans);color:var(--muted-fg);flex:none">{{ p.when }}</span>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;transform:{{ p.caret }};transition:transform .12s ease"><path d="m6 9 6 6 6-6"></path></svg>
+                      </div>
+                      <sc-if value="{{ p.hasNote }}" hint-placeholder-val="{{ false }}">
+                        <div style="padding:0 12px 10px;font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ p.note }}</div>
+                      </sc-if>
+                      <sc-if value="{{ p.open }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex;flex-direction:column;border-top:1px solid var(--border)">
+                          <sc-for list="{{ p.steps }}" as="s" hint-placeholder-count="2">
+                            <div style="{{ s.rowStyle }}">
+                              <span style="position:relative;display:inline-flex;flex:none">
+                            <span style="{{ s.dotStyle }}">{{ s.index }}</span>
+                            <sc-if value="{{ s.markOk }}" hint-placeholder-val="{{ false }}">
+                              <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--success);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                            </sc-if>
+                            <sc-if value="{{ s.markFail }}" hint-placeholder-val="{{ false }}">
+                              <span style="{{ s.markFailStyle }}"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+                            </sc-if>
+                            <sc-if value="{{ s.markSkip }}" hint-placeholder-val="{{ false }}">
+                              <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--muted-fg);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M6 12h12"></path></svg></span>
+                            </sc-if>
+                          </span>
+                              <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                                <span style="font:500 12.5px var(--font-sans);color:var(--fg)">{{ s.name }}</span>
+                                <span style="font:400 11px var(--font-mono);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.run }}</span>
+                              </div>
+                              <sc-if value="{{ s.hasTail }}" hint-placeholder-val="{{ false }}">
+                                <button type="button" onClick="{{ s.toggleTail }}" style="height:22px;padding:0 7px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--popover);color:var(--muted-fg);font:500 11px var(--font-sans);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">{{ s.tailLabel }}</button>
+                              </sc-if>
+                              <span style="{{ s.timeStyle }}">{{ s.time }}</span>
+                              <span data-shine="{{ s.shine }}" style="{{ s.labelStyle }}">{{ s.label }}</span>
+                            </div>
+                            <sc-if value="{{ s.tailOpen }}" hint-placeholder-val="{{ false }}">
+                              <div style="display:flex;flex-direction:column;border-top:1px solid var(--border);background:var(--muted)">
+                                <div style="padding:6px 12px 6px 42px;font:500 10.5px var(--font-sans);letter-spacing:.04em;text-transform:uppercase;color:var(--muted-fg)">{{ s.tailMeta }}</div>
+                                <pre style="margin:0;max-height:240px;overflow:auto;padding:4px 12px 12px 42px;font:400 11px/1.6 var(--font-mono);color:var(--fg);white-space:pre">{{ s.tail }}</pre>
+                              </div>
+                            </sc-if>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ ci.canSkip }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:none;display:flex;align-items:center;gap:12px;margin-top:4px;padding:12px 14px;border:1px dashed var(--input);border-radius:12px;background:color-mix(in srgb,var(--fg) 3%,transparent)">
+                  <div style="min-width:0;font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ci.skipNote }}</div>
+                  <span style="flex:1"></span>
+                  <button type="button" onClick="{{ ci.askSkip }}" style="display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;flex:none;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs);white-space:nowrap" style-hover="background:var(--accent)">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5"></path><path d="m13 17 5-5-5-5"></path></svg>
+                    Skip CI…
+                  </button>
+                </div>
+              </sc-if>
+              <sc-if value="{{ ci.confirming }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:none;display:flex;flex-direction:column;gap:10px;margin-top:4px;padding:13px 14px;border:1px solid color-mix(in srgb,var(--destructive) 40%,transparent);border-radius:12px;background:color-mix(in srgb,var(--destructive) 5%,var(--card))">
+                  <span style="font:600 12.5px var(--font-sans);color:var(--fg)">{{ ci.confirmTitle }}</span>
+                  <span style="font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ci.confirmNote }}</span>
+                  <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px">
+                    <button type="button" onClick="{{ ci.cancelSkip }}" style="height:30px;padding:0 12px;border:1px solid var(--input);border-radius:8px;background:var(--popover);color:var(--fg);font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="background:var(--accent)">Keep running</button>
+                    <button type="button" onClick="{{ ci.doSkip }}" style="height:30px;padding:0 12px;border:1px solid transparent;border-radius:8px;background:var(--destructive);color:#fff;font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="filter:brightness(0.95)">Skip CI and move to Ready for merge</button>
+                  </div>
+                </div>
               </sc-if>
             </div>
           </section>
@@ -2757,9 +3023,121 @@ const STAGES = [
   { id: "ready", name: "Ready", dot: "#a1a1aa", action: "Begin build" },
   { id: "building", name: "Building", dot: "#a1a1aa", action: "Submit for review" },
   { id: "review", name: "Code review", dot: "#a1a1aa", action: "Approve review" },
+  { id: "qa", name: "Visual QA", dot: "#a1a1aa", action: "Approve QA", custom: true },
+  { id: "ci", name: "CI", dot: "#a1a1aa", action: null },
   { id: "merge", name: "Ready for merge", dot: "#a1a1aa", action: "Merge" },
+  { id: "soak", name: "Staging soak", dot: "#a1a1aa", action: "Mark soaked", custom: true },
   { id: "done", name: "Done", dot: "#a1a1aa", action: null },
 ];
+// Each project's t3o.json, as the board resolved it. Custom stages live in the
+// master STAGES order with `custom: true`; a project only gets the ones it adds.
+// CI exists for a project only when its file lists ci.steps.
+const ROLE_STAGES = ["backlog", "planning", "building", "review", "merge", "done"];
+const PIPELINES = {
+  advisor: { file: "core.agent.advisor/t3o.json", remove: [], add: [], fixCap: 2,
+    ci: [
+      { name: "Typecheck", run: "bun run typecheck" },
+      { name: "Lint", run: "bun run lint" },
+      { name: "Test", run: "bun run test --reporter=dot" },
+    ] },
+  web: { file: "mesh.web/t3o.json", remove: ["sprint", "ready"], add: ["qa"], ci: null },
+  relay: { file: "mesh.relay/t3o.json", remove: ["sprint"], add: ["soak"], fixCap: 2,
+    ci: [
+      { name: "Check", run: "cargo xtask check" },
+      { name: "Test", run: "cargo nextest run --workspace" },
+    ] },
+};
+const pipeOf = (pid) => PIPELINES[pid] || { remove: [], add: [], ci: null };
+const inPipeline = (pid, sid) => {
+  const p = pipeOf(pid);
+  const s = STAGES.find((x) => x.id === sid);
+  if (!s) return sid === "deferred";
+  if (s.custom) return p.add.indexOf(sid) >= 0;
+  if (sid === "ci") return !!(p.ci && p.ci.length);
+  return p.remove.indexOf(sid) < 0;
+};
+const pipelineOf = (pid) => STAGES.filter((s) => inPipeline(pid, s.id));
+// CI passes per card. Step results line up with the project's ci steps by index.
+// s: pending | running | passed | failed | timedout | cancelled. d = seconds.
+// outcome: running | fixing | fixed | returned | passed | skipped.
+const TAIL_TS = [
+  "   Compiling relay-fanout v0.9.2 (/work/infra/relay/fanout)",
+  "    Checking relay-session v0.9.2 (/work/infra/relay/session)",
+  "warning: unused import: `std::sync::atomic::AtomicUsize`",
+  "  --> infra/relay/src/fanout.rs:7:5",
+  "   |",
+  "7  | use std::sync::atomic::AtomicUsize;",
+  "   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+  "error[E0308]: mismatched types",
+  "   --> infra/relay/src/fanout.rs:142:32",
+  "    |",
+  "142 |         queue.push_back(frame, Instant::now());",
+  "    |               --------- ^^^^^^^^^^^^^^ expected `usize`, found `Instant`",
+  "    |               |",
+  "    |               arguments to this method are incorrect",
+  "    |",
+  "note: method defined here",
+  "   --> infra/relay/src/queue.rs:58:12",
+  "    |",
+  "58  |     pub fn push_back(&mut self, frame: Frame, weight: usize) {",
+  "    |            ^^^^^^^^^",
+  "",
+  "error: could not compile `relay-fanout` (lib) due to 1 previous error; 1 warning emitted",
+  "xtask: step `clippy --all-targets -D warnings` failed (exit 101)",
+];
+const TAIL_TEST = [
+  "    PASS [   0.031s] relay-session session::resume::accepts_fresh_token",
+  "    PASS [   0.044s] relay-session session::resume::rejects_reused_token",
+  "    FAIL [   2.003s] relay-fanout fanout::backpressure::slow_consumer_drops_oldest",
+  "--- STDOUT:              relay-fanout fanout::backpressure::slow_consumer_drops_oldest ---",
+  "running 1 test",
+  "thread 'fanout::backpressure::slow_consumer_drops_oldest' panicked at infra/relay/src/fanout.rs:311:9:",
+  "assertion `left == right` failed: dropped frames",
+  "  left: 0",
+  " right: 12",
+  "    FAIL [   2.001s] relay-fanout fanout::backpressure::metric_counts_drops",
+  "    FAIL [   2.004s] relay-fanout fanout::backpressure::fast_consumers_unaffected",
+  "------------",
+  "     Summary [  14.882s] 212 tests run: 209 passed, 3 failed, 4 skipped",
+  "error: test run failed",
+];
+const TAIL_TIMEOUT = [
+  " ✓ board/columns.test.ts (18 tests) 412ms",
+  " ✓ board/drag.test.ts (24 tests) 1.2s",
+  " ❯ state/watcher.test.ts (6 tests | 1 running)",
+  "   ✓ emits on create",
+  "   ✓ emits on rename",
+  "   ✓ debounces bursts",
+  "   ✓ survives a dropped handle",
+  "   ✓ replays after reconnect",
+  "   · waits for the fsevents flush",
+  "",
+  "t3o: step `Test` exceeded its 15 min timeout. Process tree killed (SIGTERM, then SIGKILL after 10s).",
+];
+const CI_RUNS = {
+  "T3-185": [
+    { steps: [{ s: "passed", d: 48 }, { s: "passed", d: 21 }, { s: "running", ago: 72 }], outcome: "running", when: "3m ago" },
+  ],
+  "T3-187": [
+    { steps: [{ s: "passed", d: 51 }, { s: "passed", d: 19 }, { s: "timedout", d: 900, tail: TAIL_TIMEOUT }], outcome: "fixed", when: "34m ago",
+      note: "The watcher test waited on an fsevents flush that never comes in the CI sandbox. The fix agent switched it to the polling backend under CI and committed 2f9c1e0." },
+    { steps: [{ s: "passed", d: 46 }, { s: "running", ago: 14 }, { s: "pending" }], outcome: "running", when: "1m ago" },
+  ],
+  "RL-16": [
+    { steps: [{ s: "failed", d: 124, tail: TAIL_TS }, { s: "pending" }], outcome: "fixing", when: "6m ago", attempt: 1 },
+  ],
+  "RL-15": [
+    { steps: [{ s: "passed", d: 131 }, { s: "failed", d: 15, tail: TAIL_TEST }], outcome: "fixed", when: "58m ago",
+      note: "Fix agent moved the drop counter ahead of the queue trim and committed 8a41d2c." },
+    { steps: [{ s: "passed", d: 128 }, { s: "failed", d: 15, tail: TAIL_TEST }], outcome: "fixed", when: "41m ago",
+      note: "Fix agent rewrote the slow-consumer fixture. The same 3 tests still fail." },
+    { steps: [{ s: "passed", d: 129 }, { s: "failed", d: 15, tail: TAIL_TEST }], outcome: "returned", when: "18m ago",
+      note: "Both fix attempts used. 3 tests in fanout::backpressure still fail, which points at the bounded-queue design rather than a slip in the code." },
+  ],
+  "T3-173": [
+    { steps: [{ s: "passed", d: 44 }, { s: "passed", d: 20 }, { s: "cancelled", d: 95 }], outcome: "skipped", when: "25m ago", by: "brent" },
+  ],
+};
 const PRIMARY_ACTIONS = { backlog: true, sprint: true, ready: true, merge: true };
 // Sub-boards only: "not this round". Deferred children don't count toward a group being done.
 const DEFERRED = { id: "deferred", name: "Deferred", dot: "#a1a1aa", action: null };
@@ -2904,6 +3282,12 @@ const SEED = [
   { key: "MW-33", p: "web", type: "bug", status: "building", t: "stopped", limitHit: true, workflow: "fast-review", title: "Nav overlaps hero on iPad portrait", brief: "The sticky nav collides with the hero headline between 768 and 834px.", plan: PLAN("Nav overlap", ["Move the breakpoint to a container query", "Reserve nav height as a layout offset"], ["apps/marketing/src/components/Nav.tsx"]) },
   { key: "T3-190", p: "advisor", type: "Feature", status: "ready", title: "Board filters in the workspace shell", brief: "Filter the board by assignee, type and worktree. Needs the grouped worktree picker to land first.", deps: ["T3-193"], plan: PLAN("Board filters", ["Filter bar in the board header", "Persist the filter per project", "Reuse the grouped worktree picker"], ["apps/web/src/components/BoardFilters.tsx"]) },
   { key: "RL-18", p: "relay", type: "chore", status: "ready", workflow: "no-review", title: "Rotate relay signing keys without downtime", brief: "Support two active keys during a rollover window.", plan: PLAN("Key rotation", ["Accept N active keys in the verifier", "Publish both in the JWKS", "Retire the old key after the TTL"], ["infra/relay/src/keys.ts"]) },
+  { key: "T3-185", p: "advisor", type: "Feature", status: "ci", title: "Remember column widths per project", brief: "Column widths reset on every reload. Store them per project next to the collapse state.", plan: PLAN("Column widths", ["Persist widths beside collapse state", "Clamp to the column min and max"], ["apps/web/src/board/BoardView.tsx"]), pr: { n: 312, title: "feat(board): persist column widths", add: 88, del: 14, files: ["apps/web/src/board/BoardView.tsx"], state: "Approved" } },
+  { key: "T3-187", p: "advisor", type: "bug", status: "ci", title: "File watcher misses renames inside new folders", brief: "Renaming a file inside a folder created after launch never reaches the timeline.", plan: PLAN("Watcher renames", ["Watch new folders as they appear", "Regression test over a create-then-rename"], ["apps/server/src/fs/watcher.ts"]), pr: { n: 314, title: "fix(fs): watch folders created after launch", add: 61, del: 9, files: ["apps/server/src/fs/watcher.ts", "apps/server/test/watcher.test.ts"], state: "Approved" } },
+  { key: "RL-16", p: "relay", type: "Feature", status: "ci", title: "Weighted fair queueing for fan-out", brief: "Large frames starve small ones on a shared subscriber queue. Weight the queue by frame size.", plan: PLAN("Weighted queue", ["Weight by encoded size", "Keep drop-oldest as the overflow policy"], ["infra/relay/src/queue.rs", "infra/relay/src/fanout.rs"]), pr: { n: 91, title: "feat(relay): weighted fan-out queue", add: 176, del: 40, files: ["infra/relay/src/queue.rs", "infra/relay/src/fanout.rs"], state: "Approved" } },
+  { key: "RL-15", p: "relay", type: "Feature", status: "review", t: "working", title: "Drop metric for slow subscribers", brief: "Count frames dropped per subscriber so slow consumers show up on the dashboard.", plan: PLAN("Drop metric", ["Counter per subscriber", "Export through the existing metrics endpoint"], ["infra/relay/src/fanout.rs", "infra/relay/src/metrics.rs"]), pr: { n: 90, title: "feat(relay): per-subscriber drop metric", add: 143, del: 22, files: ["infra/relay/src/fanout.rs", "infra/relay/src/metrics.rs"], state: "In review" } },
+  { key: "RL-12", p: "relay", type: "chore", status: "soak", title: "Move session store to the new Redis cluster", brief: "Dual-write for a day, then cut reads over." },
+  { key: "MW-36", p: "web", type: "Feature", status: "qa", title: "Dark-mode hero artwork", brief: "The hero image is hard-coded light. Swap in the dark variant under prefers-color-scheme.", pr: { n: 57, title: "feat(marketing): dark hero", add: 34, del: 6, files: ["apps/marketing/src/components/Hero.tsx"], state: "Approved" } },
   { key: "RL-14", p: "relay", type: "Feature", status: "review", t: "waiting", title: "Backpressure on session fan-out", brief: "Slow consumers currently stall the whole fan-out loop.", deps: ["RL-18"], plan: PLAN("Fan-out backpressure", ["Bounded queue per subscriber", "Drop-oldest with a metric"], ["infra/relay/src/fanout.ts"]), pr: { n: 88, title: "feat(relay): bounded fan-out queues", add: 214, del: 63, files: ["infra/relay/src/fanout.ts", "infra/relay/test/fanout.test.ts"], state: "In review" } },
 ];
 
@@ -3376,6 +3760,7 @@ class Component extends DCLogic {
       conflict: c.conflict || null,
       hold: c.hold || null,
       autoMerge: !!c.autoMerge,
+      ciRuns: CI_RUNS[c.key] || null,
       title: c.title,
       brief: "<p style=\"margin:0 0 8px\">" + c.brief + "</p>",
       depKeys: c.deps || [],
@@ -3788,6 +4173,7 @@ class Component extends DCLogic {
     if (this.onCardKey) document.removeEventListener("keydown", this.onCardKey);
     if (this.onListKey) document.removeEventListener("keydown", this.onListKey);
     if (this._retryTimer) clearInterval(this._retryTimer);
+    if (this._ciTimer) clearInterval(this._ciTimer);
   }
   // The countdown only ticks per-second for the one card open in the modal —
   // the board itself never runs a sub-minute clock.
@@ -4088,6 +4474,202 @@ class Component extends DCLogic {
   conflictFor(c) {
     if (!c || c.status !== "merge" || !c.conflict) return null;
     return c.conflict;
+  }
+  // CI passes for a card, resolved against its project's ci steps.
+  ciFor(c) {
+    if (!c || !c.ciRuns || !c.ciRuns.length) return null;
+    const pp = pipeOf(c.project);
+    const steps = pp.ci || [];
+    const runs = c.ciRuns;
+    const cur = runs[runs.length - 1];
+    const isFail = (s) => s.s === "failed" || s.s === "timedout";
+    const fixesDone = runs.filter((r) => r.outcome === "fixed").length;
+    return {
+      steps, runs, cur, pass: runs.length, cap: pp.fixCap || 2, file: pp.file,
+      fixesDone,
+      attempt: cur.outcome === "fixing" ? fixesDone + 1 : fixesDone,
+      runIx: cur.steps.findIndex((s) => s.s === "running"),
+      failIx: cur.steps.findIndex(isFail),
+      passed: cur.steps.filter((s) => s.s === "passed").length,
+      total: steps.length,
+      live: c.status === "ci" && (cur.outcome === "running" || cur.outcome === "fixing"),
+      running: cur.outcome === "running",
+      fixing: cur.outcome === "fixing",
+      returned: cur.outcome === "returned",
+      skipped: cur.outcome === "skipped",
+      isFail,
+    };
+  }
+  // The thread's live-tool shine: a 4.5rem band swept across the text in 30 steps.
+  shineStyle(base, band) {
+    return ";color:transparent;background-image:linear-gradient(to right,transparent," + band + ",transparent),linear-gradient(" + base + "," + base +
+      ");background-size:4.5rem 100%,100% 100%;background-repeat:no-repeat;-webkit-background-clip:text;background-clip:text;animation:t3shine 2.2s steps(30) infinite";
+  }
+  fmtSecs(s) {
+    s = Math.max(0, Math.round(s));
+    if (s < 60) return s + "s";
+    return Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
+  }
+  // Live elapsed for the running step, ticking once a second only while the
+  // card is open. Faces on the board show whole minutes and never tick.
+  ciElapsed(c, step) {
+    this._ciStart = this._ciStart || {};
+    if (!this._ciStart[c.id]) this._ciStart[c.id] = Date.now() - (step.ago || 0) * 1000;
+    if (!this._ciTimer) {
+      this._ciTimer = setInterval(() => {
+        const a = this.state.cards.find((x) => x.id === this.state.activeId);
+        const ci = a && this.ciFor(a);
+        if (ci && ci.running && ci.runIx >= 0) this.forceUpdate();
+        else { clearInterval(this._ciTimer); this._ciTimer = null; }
+      }, 1000);
+    }
+    const s = Math.round((Date.now() - this._ciStart[c.id]) / 1000);
+    return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  }
+  ciPaneVm(c, ci, setPane) {
+    const st = this.state;
+    const open = st.ciOpen || {};
+    const flip = (k, cur) => () => this.setState((s) => ({ ciOpen: { ...(s.ciOpen || {}), [k]: !cur } }));
+    const META = {
+      passed: ["Passed", "var(--success-fg)", "✓", "background:color-mix(in srgb,var(--success) 15%,transparent);color:var(--success-fg)"],
+      running: ["Running", "var(--info-fg)", "•", "background:color-mix(in srgb,var(--info) 15%,transparent);color:var(--info-fg)"],
+      failed: ["Failed", "var(--destructive-fg)", "✕", "background:color-mix(in srgb,var(--destructive) 12%,transparent);color:var(--destructive-fg)"],
+      timedout: ["Timed out", "var(--destructive-fg)", "✕", "background:color-mix(in srgb,var(--destructive) 12%,transparent);color:var(--destructive-fg)"],
+      cancelled: ["Cancelled", "var(--muted-fg)", "–", "background:var(--accent);color:var(--muted-fg)"],
+      pending: ["Pending", "var(--muted-fg)", "", "box-shadow:inset 0 0 0 1px var(--input);color:var(--muted-fg)"],
+    };
+    const OUT = {
+      running: ["Running", "info"], fixing: ["Fixing", "info"], fixed: ["Fixed in place", "plain"],
+      returned: ["Sent back to review", "plain"], skipped: ["Skipped", "plain"], passed: ["Passed", "success"],
+    };
+    const chip = (tone) =>
+      "display:inline-flex;align-items:center;height:18px;padding:0 7px;flex:none;border-radius:5px;font:500 10.5px var(--font-sans);white-space:nowrap;" +
+      (tone === "info" ? "background:color-mix(in srgb,var(--info) 13%,transparent);color:var(--info-fg)"
+        : tone === "success" ? "background:color-mix(in srgb,var(--success) 15%,transparent);color:var(--success-fg)"
+        : "background:var(--accent);color:var(--fg)");
+    const shineOf = (base, band) => this.shineStyle(base, band);
+    const passVm = (r, pi, isCur) => {
+      const pk = c.id + ":p" + pi;
+      const isOpen = isCur || !!open[pk];
+      const fi = r.steps.findIndex(ci.isFail);
+      const out = OUT[r.outcome] || OUT.running;
+      return {
+        title: "Pass " + (pi + 1),
+        when: r.when,
+        outcome: out[0],
+        outcomeStyle: chip(out[1]),
+        summary: fi >= 0 ? ci.steps[fi].name + (r.steps[fi].s === "timedout" ? " timed out" : " failed") : r.outcome === "skipped" ? "Skipped by " + (r.by || "brent") : "",
+        note: isCur ? "" : r.note || "",
+        hasNote: !isCur && !!r.note && isOpen,
+        open: isOpen,
+        collapsible: !isCur,
+        toggle: isCur ? () => {} : flip(pk, isOpen),
+        caret: isOpen ? "rotate(180deg)" : "none",
+        steps: !isOpen ? [] : ci.steps.map((x, i) => {
+          const s = r.steps[i] || { s: "pending" };
+          const fail = ci.isFail(s);
+          const fixing = fail && r.outcome === "fixing";
+          const m = META[s.s] || META.pending;
+          const tk = c.id + ":" + pi + ":" + i;
+          const tailOpen = fail && !!s.tail && (open[tk] != null ? !!open[tk] : isCur);
+          const lines = (s.tail || []).length;
+          const live = s.s === "running" && isCur && ci.running;
+          return {
+            n: i + 1,
+            name: x.name,
+            run: x.run,
+            index: i + 1,
+            markOk: s.s === "passed",
+            markFail: fail,
+            markSkip: s.s === "cancelled",
+            markFailStyle:
+              "position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;box-shadow:0 0 0 1.5px var(--card);background:" +
+              (fixing ? "var(--info)" : "var(--destructive)"),
+            dotStyle:
+              "width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;font:600 10px var(--font-sans);" +
+              (s.s === "running"
+                ? "background:var(--info);color:#fff"
+                : s.s === "passed" || fail || s.s === "cancelled"
+                  ? "background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)"
+                  : "box-shadow:inset 0 0 0 1px var(--border);color:color-mix(in srgb,var(--muted-fg) 70%,transparent)"),
+            label: fixing ? "Failed · fixing" : m[0],
+            shine: live,
+            nameStyle: "font:500 12.5px var(--font-sans);color:var(--fg);justify-self:start;width:fit-content" + (live ? shineOf("var(--muted-fg)", "var(--fg)") : ""),
+            labelStyle: "flex:none;width:92px;text-align:right;font:500 11.5px var(--font-sans);color:" + (fixing ? "var(--info-fg)" : m[1]) +
+              (live ? shineOf("var(--info-fg)", "color-mix(in srgb,var(--info-fg) 30%,var(--card))") : ""),
+            time:
+              s.s === "running"
+                ? isCur && ci.running ? this.ciElapsed(c, s) : ""
+                : s.d != null ? this.fmtSecs(s.d) : "",
+            timeStyle:
+              "flex:none;width:64px;text-align:right;font:500 11.5px var(--font-mono);font-variant-numeric:tabular-nums;color:" +
+              (s.s === "running" ? "var(--fg)" : "var(--muted-fg)"),
+            hasTail: fail && !!s.tail,
+            tailOpen,
+            toggleTail: flip(tk, tailOpen),
+            tailLabel: tailOpen ? "Hide output" : "Show output",
+            tail: (s.tail || []).join("\n"),
+            tailMeta: "Output tail · last 200 lines" + (lines < 200 ? " (" + lines + " captured)" : ""),
+            rowStyle:
+              "display:flex;align-items:center;gap:10px;padding:9px 12px;" +
+              (i ? "border-top:1px solid var(--border);" : "") +
+              (s.s === "running" || fixing ? "background:color-mix(in srgb,var(--info) 5%,transparent)" : ""),
+          };
+        }),
+      };
+    };
+    const cur = passVm(ci.cur, ci.runs.length - 1, true);
+    const failName = ci.failIx >= 0 ? ci.steps[ci.failIx].name : "";
+    const confirming = st.ciSkipConfirm === c.id;
+    const headTone = ci.fixing || ci.running ? "info" : "plain";
+    return {
+      sub: "Pass " + ci.pass + " · fix attempts " + ci.attempt + " of " + ci.cap,
+      status: ci.fixing ? "Fixing " + failName : ci.running ? "Step " + (ci.runIx + 1) + " of " + ci.total : ci.returned ? "Sent back to review" : ci.skipped ? "Skipped" : "Passed",
+      statusStyle: chip(headTone),
+      source: ci.total + " steps from " + (ci.file || "t3o.json") + " · run in order, stop at the first failure",
+      cur,
+      earlier: ci.runs.slice(0, -1).map((r, i) => passVm(r, i, false)).reverse(),
+      hasEarlier: ci.runs.length > 1,
+      fixBox: ci.fixing && c.status === "ci"
+        ? {
+            title: "Fix agent is working on " + failName,
+            note: "Attempt " + ci.attempt + " of " + ci.cap + ". When it commits, every step re-runs from the top." +
+              (ci.attempt >= ci.cap ? " This is the last attempt; if the step still fails, the card goes back to Code review." : ""),
+            openThread: setPane("thread"),
+          }
+        : null,
+      outcomeBox: ci.returned
+        ? { title: "Sent back to Code review", note: ci.cur.note || "", meta: ci.cur.when + " · the failing output went with the card" }
+        : ci.skipped
+          ? { title: "Skipped by " + (ci.cur.by || "brent"), note: "Moved to Ready for merge without a passing run. Steps still running were cancelled.", meta: ci.cur.when }
+          : null,
+      canSkip: c.status === "ci" && !confirming,
+      confirming: c.status === "ci" && confirming,
+      skipNote: "Moves the card to Ready for merge without a passing CI run. The skip is recorded on the card under your name.",
+      confirmTitle: "Skip CI for " + c.key + "?",
+      confirmNote: (ci.fixing ? "The fix agent stops and " : ci.running ? "The running step is cancelled and " : "") +
+        "the card moves to Ready for merge. Anyone opening it will see that you skipped CI.",
+      askSkip: () => this.setState({ ciSkipConfirm: c.id }),
+      cancelSkip: () => this.setState({ ciSkipConfirm: null }),
+      doSkip: () => this.skipCi(c),
+    };
+  }
+  skipCi(card) {
+    if (!card || card.status !== "ci") return;
+    this.setState((s) => ({
+      ciSkipConfirm: null,
+      cards: s.cards.map((c) => {
+        if (c.id !== card.id) return c;
+        const runs = c.ciRuns.slice();
+        const last = runs[runs.length - 1];
+        runs[runs.length - 1] = {
+          ...last, outcome: "skipped", when: "just now", by: "brent",
+          steps: last.steps.map((x) => (x.s === "running" || x.s === "pending" ? { s: "cancelled", d: x.ago } : x)),
+        };
+        return { ...c, ciRuns: runs, status: "merge" };
+      }),
+    }));
+    this.toast("CI skipped. " + card.key + " moved to Ready for merge; the skip is recorded under your name.");
   }
 
   reviewState(c) {
@@ -4666,9 +5248,10 @@ class Component extends DCLogic {
   }
   // The next stage under this card's workflow — stages the workflow skips are stepped over.
   nextStage(card) {
-    let i = this.stageIndex(card.status) + 1;
-    while (STAGES[i] && this.skipsStage(card, STAGES[i].id)) i++;
-    return STAGES[i] || null;
+    const pl = pipelineOf(card.project);
+    let i = pl.findIndex((s) => s.id === card.status) + 1;
+    while (pl[i] && this.skipsStage(card, pl[i].id)) i++;
+    return pl[i] || null;
   }
   // Once a card is at review or past it, switching workflow would rewrite history.
   workflowLocked(card) {
@@ -5214,7 +5797,16 @@ class Component extends DCLogic {
   setStatus(id, status) {
     this.setState((s) => ({
       cards: this.sweepAutoStart(
-        s.cards.map((c) => (c.id === id ? { ...c, status } : c)),
+        s.cards.map((c) => {
+          if (c.id !== id) return c;
+          // Entering CI starts a fresh pass from the first step.
+          if (status === "ci" && c.status !== "ci") {
+            const n = (pipeOf(c.project).ci || []).length;
+            const steps = Array.apply(null, { length: n }).map((x, i) => (i === 0 ? { s: "running", ago: 0 } : { s: "pending" }));
+            return { ...c, status, ciRuns: [{ steps, outcome: "running", when: "just now" }], ciPrev: c.ciRuns || null };
+          }
+          return { ...c, status };
+        }),
         s.autoStart
       ),
     }));
@@ -5545,6 +6137,11 @@ class Component extends DCLogic {
   // Why a drag can't land here, or null. Groups only reach their later columns by derivation.
   dropRefusal(card, to) {
     if (!card || to === card.status) return null;
+    if (to !== "deferred" && !inPipeline(card.project, to))
+      return projectOf(card.project).name + " doesn't use " + this.stage(to).name + ". Its pipeline comes from " + (pipeOf(card.project).file || "the global settings") + ".";
+    if (card.status === "ci" && to === "merge")
+      return "Use Skip CI in the card to move it past CI. Skips are recorded.";
+    if (to === "ci") return "Cards enter CI on their own when Code review approves them.";
     if (to === "deferred" && this.isStarted(card))
       return "Work has started on " + card.key + ". Let it finish, or archive it.";
     if (!card.group) return null;
@@ -6701,10 +7298,63 @@ class Component extends DCLogic {
           }
         : null;
       const armed = blocked && (this.autoBuildsFor(c) || !!this.state.autoStart[c.id]);
+      const ciS = isGrp ? null : this.ciFor(c);
+      const ciFace = ciS && ciS.live
+        ? (() => {
+            const runStep = ciS.runIx >= 0 ? ciS.steps[ciS.runIx] : null;
+            const failStep = ciS.failIx >= 0 ? ciS.steps[ciS.failIx] : null;
+            const failWord = ciS.failIx >= 0 && ciS.cur.steps[ciS.failIx].s === "timedout" ? " timed out" : " failed";
+            const mins = runStep ? Math.floor((ciS.cur.steps[ciS.runIx].ago || 0) / 60) : 0;
+            return {
+              head: "CI" + (ciS.pass > 1 ? " · pass " + ciS.pass : ""),
+              chip: ciS.fixing ? "Fixing" : "Running",
+              chipStyle:
+                "display:inline-flex;align-items:center;height:16px;padding:0 6px;flex:none;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;background:color-mix(in srgb,var(--info) 13%,transparent);color:var(--info-fg)",
+              count: ciS.passed + "/" + ciS.total,
+              cur: ciS.fixing
+                ? (failStep ? failStep.name : "Step") + failWord + " · fix " + ciS.attempt + " of " + ciS.cap
+                : runStep ? runStep.name + " · " + (mins < 1 ? "under 1m" : mins + "m") : "Starting",
+              tip: ciS.fixing
+                ? "A fix agent is working on the failed step. Every step re-runs from the top after the fix."
+                : "Step " + (ciS.runIx + 1) + " of " + ciS.total + " running",
+              pips: ciS.steps.map((x, i) => {
+                const r = ciS.cur.steps[i] || { s: "pending" };
+                const bg =
+                  r.s === "passed" ? "var(--success)"
+                  : r.s === "running" ? "var(--info)"
+                  : ciS.isFail(r) ? "color-mix(in srgb,var(--info) 45%,transparent)"
+                  : "transparent";
+                return {
+                  tip: x.name + " · " + (ciS.isFail(r) ? "being fixed" : r.s),
+                  style: "flex:1;height:5px;border-radius:2px;background:" + bg + (bg === "transparent" ? ";box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 14%,transparent)" : ""),
+                };
+              }),
+            };
+          })()
+        : null;
+      const ciBack = ciS && ciS.returned && c.status === "review"
+        ? (() => {
+            const st = ciS.failIx >= 0 ? ciS.steps[ciS.failIx] : { name: "A step" };
+            return {
+              line: st.name + " still failing after " + ciS.fixesDone + " fix attempts",
+              tip: "CI sent this card back to Code review " + ciS.cur.when + ". The failing output is attached to the review.",
+            };
+          })()
+        : null;
+      const ciSkip = ciS && ciS.skipped && c.status !== "ci"
+        ? { label: "CI skipped by " + (ciS.cur.by || "someone"), tip: "Moved past CI without a passing run · " + ciS.cur.when }
+        : null;
+      const stageGone = !c.parentKey && !inPipeline(c.project, c.status);
       return {
         group: isGrp ? this.groupCardVm(c) : null,
         splitNote: c.proposal && c.status === "planning" ? "Split proposed · " + c.proposal.children.length + " cards" : "",
         review,
+        ciFace,
+        ciBack,
+        ciSkip,
+        stageGone: stageGone
+          ? { label: this.stage(c.status).name + " is no longer in " + projName(c.project) + "'s pipeline", tip: "Removed in " + (pipeOf(c.project).file || "t3o.json") + ". Move the card on; the column goes once it's empty." }
+          : null,
         armed,
         blockedOnly: blocked && !armed,
         conflict: cf
@@ -6865,12 +7515,15 @@ class Component extends DCLogic {
       const bkey = opts.key || (isAll ? "all" : projs[0].id);
       const pool =
         opts.cards || st.cards.filter((c) => !c.parentKey && !c.archived);
+      const scoped = pool.filter((c) => ids.indexOf(c.project) !== -1);
       const mine = pool.filter(
         (c) =>
           ids.indexOf(c.project) !== -1 &&
           (!q || (c.title + " " + c.key).toLowerCase().includes(q)),
       );
-      const stages = opts.stages || STAGES;
+      const stages = opts.stages || STAGES.filter(
+        (s) => ids.some((pid) => inPipeline(pid, s.id)) || scoped.some((c) => c.status === s.id),
+      );
       const fill = opts.single != null ? opts.single : single;
       const parent = opts.parent || null;
       const gk = parent ? parent.key : "";
@@ -6963,6 +7616,29 @@ class Component extends DCLogic {
           swatch:
             "width:9px;height:3px;border-radius:2px;background:" + x.dot,
         })),
+        pipesOpen: !!st.pipesOpen,
+        togglePipes: () => this.setState((s) => ({ pipesOpen: !s.pipesOpen })),
+        pipesBtnStyle:
+          "display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;flex:none;white-space:nowrap;border-radius:7px;cursor:pointer;font:500 11.5px var(--font-sans);border:1px solid " +
+          (st.pipesOpen ? "var(--input)" : "var(--border)") + ";background:" + (st.pipesOpen ? "var(--accent)" : "var(--popover)") + ";color:" + (st.pipesOpen ? "var(--fg)" : "var(--muted-fg)"),
+        pipes: projs.map((x) => ({
+          name: x.name,
+          dotStyle: "width:7px;height:7px;border-radius:99px;flex:none;background:" + x.dot,
+          file: pipeOf(x.id).file || "no t3o.json",
+          cells: stages.map((s) => {
+            const on = inPipeline(x.id, s.id);
+            const own = !!s.custom || s.id === "ci";
+            return {
+              tip: s.name + (on ? (own && s.custom ? " · added in t3o.json" : "") : " · not in this pipeline"),
+              style:
+                "flex:1;min-width:0;height:18px;border-radius:5px;" +
+                (on
+                  ? "background:" + (own ? "color-mix(in srgb,var(--fg) 34%,transparent)" : "color-mix(in srgb,var(--fg) 13%,transparent)")
+                  : "box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 12%,transparent);background:transparent"),
+            };
+          }),
+        })),
+        pipeHeads: stages.map((s) => ({ name: s.name })),
         dotStyle:
           "width:7px;height:7px;border-radius:99px;flex:none;background:" +
           (isAll ? "#a1a1aa" : projs[0].dot),
@@ -7005,6 +7681,21 @@ class Component extends DCLogic {
           const isCollapsed = autoEmpty ? !(st.emptyPeek || {})[colKey] : stored != null ? !!stored : autoFold;
           const canAdd = !opts.drill && ["backlog", "sprint", "planning"].includes(stage.id);
           const refused = !!(st.dragTip && st.dragTip.col === colKey);
+          const owners = opts.drill ? projs : projs.filter((x) => inPipeline(x.id, stage.id));
+          const retired = !opts.drill && owners.length === 0;
+          const partial = isAll && !opts.drill && owners.length > 0 && owners.length < projs.length;
+          const others = projs.filter((x) => owners.indexOf(x) < 0);
+          const nameList = (arr) => arr.map((x) => x.name).join(", ");
+          const goneFor = projs.filter((x) => !inPipeline(x.id, stage.id) && scoped.some((c) => c.project === x.id && c.status === stage.id));
+          let pipeHint = "";
+          if (retired)
+            pipeHint = "Removed from " + nameList(goneFor) + "'s pipeline. Stays until " + (all.length === 1 ? "its last card moves" : "its cards move") + " on.";
+          else if (partial)
+            pipeHint = owners.length <= others.length ? "Only " + nameList(owners) : "Not in " + nameList(others);
+          else if (!isAll && !opts.drill && stage.custom)
+            pipeHint = "Added in this project's t3o.json";
+          else if (!isAll && !opts.drill && stage.id === "ci")
+            pipeHint = (pipeOf(projs[0].id).ci || []).map((x) => x.name).join(" → ");
           return {
             items,
             canAdd,
@@ -7032,13 +7723,18 @@ class Component extends DCLogic {
                 : this.setColCollapsed(colKey, !isCollapsed),
             canPhase: stage.id === "deferred" && all.length > 0 && !!parent,
             phase: () => parent && this.openPhase(parent),
-            hint: stage.id === "deferred" ? "Not this round. Doesn't count toward done." : "",
+            hint: stage.id === "deferred" ? "Not this round. Doesn't count toward done." : pipeHint,
+            partial,
+            retired,
+            owners: partial ? owners.map((x) => ({ name: x.name, style: "width:6px;height:6px;border-radius:99px;flex:none;background:" + x.dot })) : [],
+            ownersTip: partial ? "Used by " + nameList(owners) : "",
             collapsedStyle:
               "flex:none;width:44px;align-self:stretch;min-height:104px;display:flex;flex-direction:column;align-items:center;gap:10px;border:none;border-radius:12px;background:var(--column-bg);padding:10px 0;cursor:pointer;transition:background-color 120ms ease",
             style:
               "flex:none;width:268px;border:none;border-radius:12px;background:" +
-              (isOver ? "var(--column-bg-over)" : "var(--column-bg)") +
+              (isOver ? "var(--column-bg-over)" : retired ? "transparent" : "var(--column-bg)") +
               ";padding:10px;min-height:104px;transition:background-color 120ms ease" +
+              (retired ? ";outline:1.5px dashed color-mix(in srgb,var(--fg) 16%,transparent);outline-offset:-1.5px" : "") +
               (refused ? ";outline:1.5px dashed color-mix(in srgb,var(--fg) 22%,transparent);outline-offset:-1.5px;cursor:not-allowed" : ""),
             add: () =>
               this.setState(this.createDraftState(stage.id, isAll ? "advisor" : p.id)),
@@ -7417,6 +8113,29 @@ class Component extends DCLogic {
               isLink: true,
               open: openIt,
             });
+          const ciA = this.ciFor(active);
+          if (ciA) {
+            const openCi = (e) => {
+              if (e && e.preventDefault) e.preventDefault();
+              this.setState((s) => ({ pane: { ...s.pane, [active.id]: "ci" } }));
+            };
+            rows.push({ who: "Claude Opus 4.8", what: "approved the review", when: ciA.runs[0].when });
+            ciA.runs.forEach((r, i) => {
+              const fi = r.steps.findIndex(ciA.isFail);
+              const nm = fi >= 0 ? ciA.steps[fi].name : "";
+              const word = fi >= 0 && r.steps[fi].s === "timedout" ? " timed out" : " failed";
+              const pass = "CI pass " + (i + 1) + ": ";
+              if (r.outcome === "fixed")
+                rows.push({ who: "CI", what: pass + nm + word + ". The fix agent fixed it in place and re-ran every step", when: r.when, isLink: true, open: openCi });
+              else if (r.outcome === "fixing")
+                rows.push({ who: "CI", what: pass + nm + word + ". Fix agent working, attempt " + ciA.attempt + " of " + ciA.cap, when: r.when, isLink: true, open: openCi });
+              else if (r.outcome === "returned")
+                rows.push({ who: "CI", what: "sent the card back to code review: " + nm + " still failing after " + ciA.fixesDone + " fix attempts", when: r.when, isLink: true, open: openCi });
+              else if (r.outcome === "skipped")
+                rows.push({ who: r.by || "brent", what: "skipped CI on pass " + (i + 1) + " and moved the card to ready for merge", when: r.when, isLink: true, open: openCi });
+              else rows.push({ who: "CI", what: "started pass " + (i + 1), when: r.when });
+            });
+          } else
           rows.push({
             who: "brent",
             what: "moved to " + stage.name.toLowerCase(),
@@ -7508,7 +8227,10 @@ class Component extends DCLogic {
           (activeThread && activeThread.state === "waiting"
             ? "border:1px solid color-mix(in srgb,var(--attention) 55%,transparent);background:color-mix(in srgb,var(--attention) 12%,var(--popover));color:var(--attention-fg)"
             : "border:1px solid var(--input);background:var(--popover);color:var(--fg)"),
-        stages: (active.parentKey ? SUB_STAGES : STAGES).map((s) => {
+        stages: (active.parentKey
+          ? [DEFERRED].concat(pipelineOf(active.project))
+          : pipelineOf(active.project).concat(inPipeline(active.project, active.status) ? [] : [this.stage(active.status)])
+        ).map((s) => {
           const i = s.id === active.status ? idx : -2;
           const skipped = this.skipsStage(active, s.id);
           return {
@@ -7608,9 +8330,12 @@ class Component extends DCLogic {
     const threadLocked = isParent && this.stageIndex(active.status) < 5 && !st.reopened[active.id];
     const reviewData = active ? this.reviewState(active) : null;
     const isReview = !!reviewData;
+    const ciData = active ? this.ciFor(active) : null;
+    const hasCi = !!ciData && hasThreadPane && !isParent;
     let pane =
       (active && st.pane[active.id]) ||
-      (isReview ? "review" : threadLocked ? "plans" : active && this.stageIndex(active.status) >= 6 && hasThreadPane ? "summary" : "thread");
+      (isReview ? "review" : hasCi && active.status === "ci" ? "ci" : threadLocked ? "plans" : active && this.stageIndex(active.status) >= 6 && hasThreadPane ? "summary" : "thread");
+    if (pane === "ci" && !hasCi) pane = "thread";
     if (pane === "plans" && !isParent) pane = isReview ? "review" : "thread";
     if (pane === "review" && !isReview) pane = "thread";
     if (pane === "thread" && threadLocked && !isReview) pane = "plans";
@@ -8000,13 +8725,17 @@ class Component extends DCLogic {
                   index: si + 1,
                   live: state === "active",
                   awaits: state === "await",
-                  plain: !live,
+                  plain: state !== "await",
+                  markOk: state === "done",
+                  markFail: false,
+                  markSkip: false,
+                  nameStyle: "font:500 12.5px var(--font-sans);color:var(--fg);width:fit-content" + (state === "active" ? this.shineStyle("var(--fg)", "color-mix(in srgb,var(--fg) 25%,var(--card))") : ""),
                   dotStyle:
                     "width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;font:600 10px var(--font-sans);" +
                     (state === "done"
                       ? "background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)"
                       : state === "active"
-                        ? "background:var(--fg);color:var(--bg)"
+                        ? "background:var(--info);color:#fff"
                         : state === "await"
                           ? "background:var(--attention);color:#fff"
                           : "box-shadow:inset 0 0 0 1px var(--border);color:color-mix(in srgb,var(--muted-fg) 70%,transparent)"),
@@ -8243,6 +8972,22 @@ class Component extends DCLogic {
         : "Thread",
       selectThread: threadLocked ? () => {} : setPane("thread"),
       hasReviewTab: isReview,
+      hasCiTab: hasCi,
+      ciTabStyle: paneBtn(pane === "ci", false),
+      selectCi: setPane("ci"),
+      ciTabLive: hasCi && ciData.live,
+      ciPaneOpen: hasCi && pane === "ci",
+      ci: hasCi ? this.ciPaneVm(active, ciData, setPane) : null,
+      ciBanner: (() => {
+        if (!ciData || !ciData.returned || !active || active.status !== "review") return null;
+        const fs = ciData.steps[ciData.failIx] || { name: "A step" };
+        return {
+          title: "Sent back from CI · " + fs.name + " still failing",
+          reason: ciData.cur.note || "",
+          meta: ciData.fixesDone + " of " + ciData.cap + " fix attempts used · " + ciData.cur.when + " · the failing output is attached to this review round",
+          open: setPane("ci"),
+        };
+      })(),
       reviewTabStyle: paneBtn(pane === "review", false),
       selectReview: setPane("review"),
       reviewPaneOpen: hasThreadPane && pane === "review" && isReview,
