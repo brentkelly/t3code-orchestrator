@@ -42,6 +42,7 @@ import {
   turnInterruptRequested,
   userInputRequested,
   withGovernor,
+  type Harness,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
 
@@ -520,15 +521,15 @@ it.effect("an auto-plan run parked on a human ends the run record, so planning i
 /** Park the live planning step as `status`, the way a question, a Stop or an
     escalation leaves it. */
 const parkStep = (
-  model: Ref.Ref<{ readonly board: import("@t3tools/contracts").BoardState }>,
+  model: Harness["model"],
   cardId: BoardCardId,
   status: "awaiting-input" | "paused" | "stalled",
 ) =>
   Ref.update(model, (current) => ({
     ...current,
     board: {
-      ...current.board,
-      stepStates: (current.board.stepStates ?? []).map((state) =>
+      ...current.board!,
+      stepStates: (current.board!.stepStates ?? []).map((state) =>
         state.cardId === cardId
           ? {
               ...state,
