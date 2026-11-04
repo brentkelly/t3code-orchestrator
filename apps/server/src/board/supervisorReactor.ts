@@ -834,6 +834,8 @@ const make = Effect.gen(function* () {
   /** Thread → the interview run auto-plan interrupted to steer (T3O-32). Only
       that run's question, Stop and end are ignored; the next turn end clears it. */
   const steeredThreads = new Map<string, string>();
+  /** Thread → an auto-plan instruction held until its usage limit lifts. */
+  const deferredSteers = new Map<string, string>();
   /** The live thread is still running the run auto-plan interrupted. */
   const stillOnSteeredRun = (threadId: ThreadId) =>
     Effect.gen(function* () {
@@ -879,6 +881,7 @@ const make = Effect.gen(function* () {
     const records = released.length === 0 ? new Map() : yield* threads.threadRecords(released);
     for (const threadId of released) {
       steeredThreads.delete(String(threadId));
+      deferredSteers.delete(String(threadId));
       const thread = records.get(threadId);
       // No record is no answer: the thread's worker couldn't be asked
       // (T3O-66), so an abandoned thread there is kept for the next pass.
@@ -6756,6 +6759,98 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * Put a live planning thread on an unattended footing and tell it so
+   * (T3O-38). Retuned first, so a question the in-flight turn was about to ask
+   * does not park the step behind the steer. A pending structured question is
+   * answered with the instruction; otherwise the in-flight turn is interrupted
+   * and the instruction sent. A parked step is then resumed. A step stalled on
+   * a usage limit keeps the instruction until the limit lifts. Null when the
+   * steer landed (or is held for the limit), else why it did not — with the
+   * step's previous stance restored.
+   */
+  const steerPlanningThread = Effect.fn("board-supervisor-steerPlanningThread")(function* (
+    cardId: BoardCardId,
+    state: BoardCardStepState,
+    text: string,
+  ) {
+    const threadId = state.threadId;
+    if (threadId === null) return "the planning step has no thread";
+    const wasHumanInLoop = state.humanInLoop;
+    if (wasHumanInLoop) {
+      yield* dispatch({
+        type: "board.card.retune-step",
+        commandId: yield* commandId("auto-plan-retune"),
+        cardId,
+        stepId: state.stepId,
+        humanInLoop: false,
+        createdAt: yield* nowIso,
+      });
+    }
+    if (state.status === "stalled" && state.stalledReason === "usage-limit") {
+      deferredSteers.set(String(threadId), text);
+      yield* autoPlanNote(
+        cardId,
+        "Auto-plan is on. The planning thread is waiting for a usage limit to lift; it gets the instruction then.",
+      );
+      return null;
+    }
+    const answered = yield* threads
+      .answerPendingInput({
+        commandId: yield* commandId("auto-plan-answer"),
+        threadId,
+        text,
+      })
+      .pipe(
+        Effect.tapError((error) =>
+          Effect.logWarning("board supervisor: answerPendingInput failed", error),
+        ),
+        Effect.orElseSucceed(() => false),
+      );
+    let failure: string | null = null;
+    if (!answered) {
+      const shell = yield* liveThread(threadId);
+      if (shell?.activeTurnRef != null) {
+        steeredThreads.set(String(threadId), shell.activeTurnRef);
+        const interrupted = yield* optional(
+          "thread.interrupt",
+          threads.interrupt({ commandId: yield* commandId("auto-plan-interrupt"), threadId }),
+        );
+        if (!interrupted) steeredThreads.delete(String(threadId));
+      }
+      failure = yield* threads
+        .send({
+          commandId: yield* commandId("auto-plan-steer"),
+          threadId,
+          text,
+          attachments: [],
+          runtimeMode: state.runtimeMode,
+          interactionMode: "default",
+        })
+        .pipe(
+          Effect.as(null),
+          Effect.catch((error) => Effect.succeed(error.detail)),
+        );
+    }
+    if (failure !== null) {
+      steeredThreads.delete(String(threadId));
+      if (wasHumanInLoop) {
+        yield* dispatchOptional({
+          type: "board.card.retune-step",
+          commandId: yield* commandId("auto-plan-restore"),
+          cardId,
+          stepId: state.stepId,
+          humanInLoop: true,
+          createdAt: yield* nowIso,
+        });
+      }
+      return failure;
+    }
+    // Idempotent: the board's own send may already have resumed it.
+    yield* resumeParkedStep(threadId);
+    return null;
+  });
+
+  /**
    * Auto-plan → Build (T3O-32, decision 7). Request-scoped and total, like
    * the other buttons: every refusal is a sentence the card shows.
    */
@@ -6776,52 +6871,22 @@ const make = Effect.gen(function* () {
     );
     const board = yield* readBoard;
     const state = boardCardStepState(board, card.id);
-    // Only a RUNNING planning thread is steered: it is mid-interview and reads
-    // the turn next. A step parked on a question, a Stop or an escalation has
-    // nobody reading, so it is replaced by a fresh unattended run, as is a
-    // steer that did not land.
+    // The card's current planning thread is steered whatever its non-terminal
+    // status — running, parked on a question, paused or stalled. It is never
+    // replaced: a fresh run starts only when there is no live planning thread.
     if (
       state !== null &&
       state.threadId !== null &&
       state.stepId === card.stage &&
-      state.status === "running"
+      !isBoardTerminalStepStatus(state.status)
     ) {
-      const threadId = state.threadId;
-      // Supervised as unattended BEFORE the steer lands, and the in-flight
-      // interview turn interrupted, so a question it was about to ask does not
-      // park the step behind the queued steer.
-      if (state.humanInLoop) {
-        yield* dispatch({
-          type: "board.card.retune-step",
-          commandId: yield* commandId("auto-plan-retune"),
-          cardId: card.id,
-          stepId: state.stepId,
-          humanInLoop: false,
-          createdAt: yield* nowIso,
-        });
-      }
-      const shell = yield* liveThread(threadId);
-      if (shell?.activeTurnRef != null) {
-        steeredThreads.set(String(threadId), shell.activeTurnRef);
-        const interrupted = yield* optional(
-          "thread.interrupt",
-          threads.interrupt({ commandId: yield* commandId("auto-plan-interrupt"), threadId }),
-        );
-        if (!interrupted) steeredThreads.delete(String(threadId));
-      }
-      const steered = yield* optional(
-        "thread.send",
-        threads.send({
-          commandId: yield* commandId("auto-plan-steer"),
-          threadId: state.threadId,
-          text: BOARD_AUTO_PLAN_INSTRUCTION,
-          attachments: [],
-          runtimeMode: state.runtimeMode,
-          interactionMode: "default",
-        }),
+      const steered = yield* steerPlanningThread(card.id, state, BOARD_AUTO_PLAN_INSTRUCTION);
+      if (steered === null) return { outcome: "steered" } as const;
+      yield* endAutoPlan(
+        card.id,
+        `Auto-plan could not reach the planning thread, so nothing will be approved automatically: ${steered}`,
       );
-      if (steered) return { outcome: "steered" } as const;
-      steeredThreads.delete(String(threadId));
+      return { outcome: "refused", detail: steered } as const;
     }
     const started = yield* dispatchRefusal({
       type: "board.card.start-stage-thread",
@@ -6833,6 +6898,28 @@ const make = Effect.gen(function* () {
     // Nothing will run, so the request must not outlive the click.
     yield* endAutoPlan(card.id, `Auto-plan could not start a planning run: ${started}`);
     return { outcome: "refused", detail: started } as const;
+  });
+
+  /** The auto-plan instruction a usage-limited planning thread was waiting for. */
+  const deliverDeferredSteer = Effect.fn("board-supervisor-deliverDeferredSteer")(function* (
+    threadId: ThreadId,
+  ) {
+    const text = deferredSteers.get(String(threadId));
+    if (text === undefined) return;
+    deferredSteers.delete(String(threadId));
+    const found = stepThreadCard(yield* readBoard, threadId);
+    if (found === null || isBoardTerminalStepStatus(found.state.status)) return;
+    yield* optional(
+      "thread.send",
+      threads.send({
+        commandId: yield* commandId("auto-plan-steer-deferred"),
+        threadId,
+        text,
+        attachments: [],
+        runtimeMode: found.state.runtimeMode,
+        interactionMode: "default",
+      }),
+    );
   });
 
   const handleStepCompleted = Effect.fn("board-supervisor-handleStepCompleted")(function* (
@@ -9366,7 +9453,9 @@ const make = Effect.gen(function* () {
         // v2's usage-limit recovery resumed a thread the board armed it for
         // (`parkForUsageLimit`): wake the step it parked, and nothing else.
         // Not a human turn, so it buys no free ending.
-        return resumeParkedStep(signal.threadId, { usageLimitOnly: true }).pipe(Effect.asVoid);
+        return resumeParkedStep(signal.threadId, { usageLimitOnly: true }).pipe(
+          Effect.andThen(deliverDeferredSteer(signal.threadId)),
+        );
       case "interrupt-requested":
         // A human pressing Stop on a board-run step (T3O-23). The board's own
         // interrupts land here too and are filtered inside, off the sets that

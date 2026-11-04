@@ -212,6 +212,12 @@ export const BoardGatewayTargetInput = Schema.Struct({
 });
 export type BoardGatewayTargetInput = typeof BoardGatewayTargetInput.Type;
 
+export const BoardGatewayAnswerInput = Schema.Struct({
+  ...BoardGatewayTargetInput.fields,
+  text: Schema.String,
+});
+export type BoardGatewayAnswerInput = typeof BoardGatewayAnswerInput.Type;
+
 export const BoardGatewaySettleInput = Schema.Struct({
   ...BoardGatewayTargetInput.fields,
   auto: Schema.Boolean,
@@ -312,6 +318,7 @@ export const BoardGatewayCall = Schema.Union([
   Schema.TaggedStruct("settle", { input: BoardGatewaySettleInput }),
   Schema.TaggedStruct("delete", { input: BoardGatewayTargetInput }),
   Schema.TaggedStruct("armLimitRecovery", { input: BoardGatewayTargetInput }),
+  Schema.TaggedStruct("answerPendingInput", { input: BoardGatewayAnswerInput }),
   Schema.TaggedStruct("threadState", { threadId: ThreadId }),
   Schema.TaggedStruct("threadRecords", { threadIds: Schema.Array(ThreadId) }),
   Schema.TaggedStruct("threadsInWorktree", { worktreePath: Schema.String }),
@@ -335,6 +342,7 @@ export const BOARD_GATEWAY_CALL_RESULTS = {
   settle: Schema.Null,
   delete: Schema.Null,
   armLimitRecovery: Schema.Boolean,
+  answerPendingInput: Schema.Boolean,
   threadState: Schema.NullOr(BoardGatewayThreadState),
   threadRecords: Schema.Array(BoardGatewayThreadRecord),
   threadsInWorktree: Schema.Array(BoardGatewayWorktreeThread),

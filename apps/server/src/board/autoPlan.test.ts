@@ -424,7 +424,7 @@ const parkStep = (
               ...state,
               status,
               slotHeld: false,
-              ...(status === "stalled" ? { stalledReason: "silent" as const, retryAt: null } : {}),
+              ...(status === "stalled" ? { stalledReason: "gave-up" as const, retryAt: null } : {}),
             }
           : state,
       ),
@@ -477,6 +477,40 @@ for (const status of ["awaiting-input", "paused", "stalled"] as const) {
     );
   });
 }
+
+it.effect("a pending question is answered with the instruction instead of a new turn", () => {
+  const card = planningCard("question");
+  return withGovernor(
+    { board: { cards: [card], nextCardNumberByProject: {} }, settings },
+    ({ pumpDomain, board, commands, reactor, model, shells }) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("question");
+        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        const threadId = boardCardStepState(yield* board, id)!.threadId!;
+        yield* parkStep(model, id, "awaiting-input");
+        yield* Ref.update(shells, (map) =>
+          new Map(map).set(
+            String(threadId),
+            aliveThread(String(threadId), { awaitingUserInput: true }),
+          ),
+        );
+
+        assert.deepStrictEqual(yield* reactor.autoPlanCard(id), { outcome: "steered" });
+        const calls = yield* commands;
+        const answered = calls.find((command) => command.type === "thread.answer-pending-input");
+        assert.ok(answered?.type === "thread.answer-pending-input");
+        assert.strictEqual(answered.text, BOARD_AUTO_PLAN_INSTRUCTION);
+        assert.isFalse(
+          calls.some(
+            (command) =>
+              command.type === "thread.send" && command.text === BOARD_AUTO_PLAN_INSTRUCTION,
+          ),
+          "the answer is the instruction; no second turn is queued behind it",
+        );
+        assert.strictEqual(boardCardStepState(yield* board, id)?.status, "running");
+      }),
+  );
+});
 
 it.effect("a steering turn that does not land ends the request and starts no new thread", () => {
   const card = planningCard("deaf");

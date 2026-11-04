@@ -335,6 +335,7 @@ const makeLiveGatewayRpc = (
     settle: (input) => call({ _tag: "settle", input }).pipe(Effect.asVoid),
     delete: (input) => call({ _tag: "delete", input }).pipe(Effect.asVoid),
     armLimitRecovery: (input) => call({ _tag: "armLimitRecovery", input }),
+    answerPendingInput: (input) => call({ _tag: "answerPendingInput", input }),
     threadState: (threadId) => call({ _tag: "threadState", threadId }),
     threadRecords: (threadIds) => call({ _tag: "threadRecords", threadIds }),
     threadsInWorktree: (worktreePath) => call({ _tag: "threadsInWorktree", worktreePath }),
