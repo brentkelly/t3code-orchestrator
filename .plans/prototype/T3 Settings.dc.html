@@ -307,6 +307,25 @@ textarea{font-family:var(--font-sans)}
           </div>
         </section>
 
+        <section id="board" style="display:flex;flex-direction:column;gap:14px;order:-1">
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <h2 style="margin:0;font:600 15px var(--font-sans);letter-spacing:-0.01em">Board</h2>
+          </div>
+          <div style="display:flex;flex-direction:column;padding:4px 16px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);box-shadow:var(--shadow-xs)">
+            <sc-for list="{{ boardRows }}" as="r" hint-placeholder-count="1">
+              <div style="{{ r.rowStyle }}">
+                <div style="display:flex;flex-direction:column;gap:1px;min-width:0">
+                  <span style="font:400 13.5px var(--font-sans)">{{ r.label }}</span>
+                  <span style="font:400 12px var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ r.hint }}</span>
+                </div>
+                <button type="button" onClick="{{ r.flip }}" role="switch" style="{{ r.trackStyle }}">
+                  <span style="{{ r.knobStyle }}"></span>
+                </button>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+
       </div>
     </div>
   </main>
@@ -379,13 +398,23 @@ class Component extends DCLogic {
     ]
   };
 
-  componentDidMount() { document.documentElement.dataset.t3Theme = this.state.theme; }
+  componentDidMount() {
+    document.documentElement.dataset.t3Theme = this.state.theme;
+    let v = false;
+    try { v = localStorage.getItem("t3-board-auto-collapse-empty") === "1"; } catch (e) {}
+    this.setState({ autoCollapseEmpty: v });
+  }
   toggleTheme = () => this.setState(s => {
     const theme = s.theme === "light" ? "dark" : "light";
     document.documentElement.dataset.t3Theme = theme;
     return { theme };
   });
 
+  flipAutoCollapse = () => this.setState(s => {
+    const v = !s.autoCollapseEmpty;
+    try { localStorage.setItem("t3-board-auto-collapse-empty", v ? "1" : "0"); } catch (e) {}
+    return { autoCollapseEmpty: v };
+  });
   closeReset = () => this.setState({ confirmReset: null });
   confirmResetNow = () => {
     const c = this.state.confirmReset;
@@ -569,6 +598,8 @@ class Component extends DCLogic {
       eyeStyle: `display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;flex:none;border:1px solid transparent;border-radius:var(--control-radius);background:transparent;color:var(--muted-fg);cursor:pointer`
     }));
     return {
+      boardRows: [this.toggleRow("Auto-collapse empty stages", this.state.autoCollapseEmpty, this.flipAutoCollapse,
+        "Stages with no cards fold to a narrow strip and open again when a card lands in them.")],
       noop: () => {}, toggleTheme: this.toggleTheme, stages,
       projectRows,
       resetOpen: !!this.state.confirmReset,
