@@ -216,6 +216,10 @@ export function BoardCardReviewBlock({
   );
 }
 
+/** The small bordered chip that opens a card's plans or a group's sub-board. */
+export const BOARD_CHIP_CLASS =
+  "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 text-[10.5px] font-medium whitespace-nowrap text-muted-foreground";
+
 /**
  * The split parent's plan bar (t3o-25, prototype `hasPlans`): one segment per
  * child plan card at `flex:1`, coloured by where that plan stands — done,
@@ -245,8 +249,6 @@ export function BoardCardPlansRow({
       : BOARD_THREAD_TODO_STATUS_DONE.repeat(Math.min(done, total)) +
         BOARD_THREAD_TODO_STATUS_PENDING.repeat(Math.max(0, total - done));
   const label = `${done}/${total} plans`;
-  const chipClass =
-    "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 text-[10.5px] font-medium text-muted-foreground";
   const chipBody = (
     <>
       {label}
@@ -272,14 +274,14 @@ export function BoardCardPlansRow({
           ))}
         </span>
         {onOpen === undefined ? (
-          <span className={chipClass}>{chipBody}</span>
+          <span className={BOARD_CHIP_CLASS}>{chipBody}</span>
         ) : (
           // A real button so it is focusable on its own; clicks and keys stop
           // here so the card underneath does not also open its detail sheet.
           <BoardHint label="Open this card's sub-board">
             <button
               className={cn(
-                chipClass,
+                BOARD_CHIP_CLASS,
                 "cursor-pointer transition-colors hover:bg-accent hover:text-foreground",
               )}
               onClick={(event) => {

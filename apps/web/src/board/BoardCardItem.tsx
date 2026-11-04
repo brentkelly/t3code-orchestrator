@@ -61,6 +61,7 @@ import { boardCardNotice, type BoardCardNotice } from "./boardCardNotice";
 import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
 import { BoardLabelChips } from "./BoardLabelChips";
 import {
+  BOARD_CHIP_CLASS,
   BoardCardMetaRow,
   BoardCardPlansRow,
   BoardCardReviewBlock,
@@ -133,18 +134,23 @@ function BoardGroupBlock({
           )}
         </span>
         {onOpenSubBoard === undefined ? null : (
-          <button
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-md px-1.5 py-0.5 whitespace-nowrap text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenSubBoard();
-            }}
-            onKeyDown={(event) => event.stopPropagation()}
-            type="button"
-          >
-            Board
-            <ChevronRightIcon className="size-3" />
-          </button>
+          <BoardHint label="Open this group's board">
+            <button
+              className={cn(
+                BOARD_CHIP_CLASS,
+                "cursor-pointer transition-colors hover:bg-accent hover:text-foreground",
+              )}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenSubBoard();
+              }}
+              onKeyDown={(event) => event.stopPropagation()}
+              type="button"
+            >
+              Board
+              <ChevronRightIcon className="size-3" />
+            </button>
+          </BoardHint>
         )}
       </div>
       {group.meta.length === 0 ? null : (
