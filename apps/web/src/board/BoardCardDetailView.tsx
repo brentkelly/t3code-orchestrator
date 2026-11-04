@@ -186,6 +186,7 @@ import { BoardDecisionLog } from "./BoardDecisionLog";
 import { boardDecisionFollowUp, boardDecisionLogView } from "./boardDecisionLog";
 import { BOARD_DEFERRED_STAGE } from "./boardScope";
 import { BoardSplitGate } from "./BoardSplitGate";
+import { boardGroupUsesCardActions } from "./boardGroups";
 import { BOARD_SPLIT_CHANGE_REQUEST_PREFILL, type BoardSplitGateSettings } from "./boardSplitGate";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { threadWorkerOpensOn, type BoardThreadWorker } from "./workers/threadWorker";
@@ -1472,7 +1473,14 @@ function BoardStepRecoveryButton({
 /** A group's action area (T3O-29): Open board and why the group sits where
     it does — no advance button, its stage is derived. Its planning thread is
     the header's Planning pill (T3O-34). */
-function GroupActionsSection({ group }: { readonly group: BoardCardDetailGroup }) {
+function GroupActionsSection({
+  group,
+  props,
+}: {
+  readonly group: BoardCardDetailGroup;
+  readonly props: BoardCardDetailViewProps;
+}) {
+  const displayed = boardCardDisplayPullRequest(props.detail.card);
   return (
     <div className="flex flex-col gap-3 border-t border-border p-3.5">
       <div className="flex flex-col gap-1.5">
@@ -1480,9 +1488,47 @@ function GroupActionsSection({ group }: { readonly group: BoardCardDetailGroup }
           <LayersIcon />
           Open board
         </Button>
+        {displayed === null ? null : (
+          <ViewPullRequestButton onOpen={props.onOpenPullRequest} pullRequest={displayed} />
+        )}
         <p className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">{group.note}</p>
       </div>
     </div>
+  );
+}
+
+/** The outline secondary look shared by the action-area buttons; hover is added
+    per button because :hover still matches a disabled one. */
+const OUTLINE_ACTION_CLASS =
+  "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs";
+
+/** The outline View PR button, shared by the leaf and group action areas. */
+function ViewPullRequestButton({
+  pullRequest,
+  onOpen,
+}: {
+  readonly pullRequest: NonNullable<ReturnType<typeof boardCardDisplayPullRequest>>;
+  readonly onOpen: (url: string) => void;
+}) {
+  return (
+    <BoardHint label={`Open pull request #${pullRequest.number}`}>
+      <button
+        className={cn(OUTLINE_ACTION_CLASS, "hover:bg-accent")}
+        onClick={() => onOpen(pullRequest.url)}
+        type="button"
+      >
+        <PullRequestGlyph.pullRequest className="size-3.5" />
+        <span>View PR</span>
+        <span className="text-muted-foreground">{`#${pullRequest.number}`}</span>
+        {/* Neutral (T3O-12): a draft is waiting for the review loop, not on
+            anyone. The board marks it ready at Ready for merge. */}
+        {boardCardPullRequestIsOpenDraft(pullRequest) ? (
+          <span className="rounded border border-input px-1 text-[10.5px] text-muted-foreground">
+            Draft
+          </span>
+        ) : null}
+      </button>
+    </BoardHint>
   );
 }
 
@@ -1491,8 +1537,12 @@ function ActionsSection({
   unmet,
   onReviewSplit,
   onAutoPlan,
+  group = null,
 }: {
   readonly props: BoardCardDetailViewProps;
+  /** An own-branch group from Code review on (T3O-37): its own PR's Merge and
+      review controls, plus Open board. Its stage is derived, so no hand move. */
+  readonly group?: BoardCardDetailGroup | null;
   readonly unmet: ReadonlyArray<BoardDetailDependency>;
   /** Opens the split gate's pane (T3O-31). */
   readonly onReviewSplit: () => void;
@@ -1522,7 +1572,10 @@ function ActionsSection({
     blocked: card.blocked,
   };
   const primaryAction = boardStagePrimaryAction(props.stages, card.stage, actionContext);
-  const forward = primaryAction !== null && !archived ? primaryAction : null;
+  const forward =
+    primaryAction !== null && !archived && (group === null || primaryAction.kind === "merge")
+      ? primaryAction
+      : null;
   // The pre-build dependency gate (T3O-24, D7). `card.blocked` is derived from
   // the build role ONWARD, so a card waiting at Ready carries `false` and the
   // forward button below would be live at the exact gate the decider refuses.
@@ -1637,6 +1690,7 @@ function ActionsSection({
     stalled: props.stepFailure !== null,
     archived,
     blocked,
+    handMoves: group === null,
   });
   // A merge from this card is mid-flight: the button holds its spot but shows a
   // spinner and refuses further clicks until the round trip settles.
@@ -1686,6 +1740,7 @@ function ActionsSection({
   // action), so keep the section alive whenever a PR is linked — otherwise the
   // link vanishes exactly when a merged card lands in Done.
   if (
+    group === null &&
     forward === null &&
     !props.canApproveSplit &&
     !blocked &&
@@ -1877,7 +1932,7 @@ function ActionsSection({
       {onAutoPlan === null ? null : (
         <BoardHint label="Ends planning. The agent makes every remaining decision, approves the plan and starts the build. Decisions are logged on the Summary pane.">
           <button
-            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent"
+            className={cn(OUTLINE_ACTION_CLASS, "hover:bg-accent")}
             onClick={onAutoPlan}
             type="button"
           >
@@ -1903,7 +1958,7 @@ function ActionsSection({
         <BoardHint label={reviewRound.hint}>
           <button
             className={cn(
-              "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs",
+              OUTLINE_ACTION_CLASS,
               // :hover still matches a disabled button, so the accent has to be
               // gated rather than relying on `disabled` to suppress it.
               reviewRound.disabled ? "cursor-not-allowed opacity-50" : "hover:bg-accent",
@@ -1923,26 +1978,26 @@ function ActionsSection({
           this link — which needs the URL — lives here on the detail, which
           already subscribes to the whole card. */}
       {displayed !== null ? (
-        <BoardHint label={`Open pull request #${displayed.number}`}>
-          <button
-            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent"
-            onClick={() => props.onOpenPullRequest(displayed.url)}
-            type="button"
-          >
-            <PullRequestGlyph.pullRequest className="size-3.5" />
-            <span>View PR</span>
-            <span className="text-muted-foreground">{`#${displayed.number}`}</span>
-            {/* Neutral (T3O-12): a draft is waiting for the review loop, not on
-                anyone. The board marks it ready at Ready for merge. */}
-            {boardCardPullRequestIsOpenDraft(displayed) ? (
-              <span className="rounded border border-input px-1 text-[10.5px] text-muted-foreground">
-                Draft
-              </span>
-            ) : null}
-          </button>
-        </BoardHint>
+        <ViewPullRequestButton onOpen={props.onOpenPullRequest} pullRequest={displayed} />
       ) : null}
       {linkPullRequest === null ? null : <BoardLinkPullRequest onLink={linkPullRequest} />}
+      {group === null ? null : (
+        <>
+          <button
+            className={cn(
+              OUTLINE_ACTION_CLASS,
+              group.onOpenBoard === undefined ? "cursor-not-allowed opacity-50" : "hover:bg-accent",
+            )}
+            disabled={group.onOpenBoard === undefined}
+            onClick={group.onOpenBoard}
+            type="button"
+          >
+            <LayersIcon className="size-3.5" />
+            Open board
+          </button>
+          <p className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">{group.note}</p>
+        </>
+      )}
       {blocked ? (
         <div className="flex gap-[7px] rounded-lg border border-warning/35 bg-warning/8 px-2.5 py-2.5 text-[11.5px]/[1.45] text-warning-foreground">
           <LockIcon className="mt-px size-3.5 shrink-0" />
@@ -2550,6 +2605,13 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
     [isSplitParent, props.detail.plans, props.detail.children, props.childShells, props.stages],
   );
   const group = props.group ?? null;
+  const groupUsesCardActions =
+    group !== null &&
+    boardGroupUsesCardActions({
+      ownBranch: group.ownBranch,
+      stages: stageStateOf(props.stages),
+      stage: card.stage,
+    });
   // Which tab the thread pane is on. Absent means "whichever thread the card's
   // stage makes current", so the pane follows the card until the user picks a
   // thread, and a since-unlinked selection falls back to that same default.
@@ -2569,7 +2631,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const groupDefaultPane: BoardCardPane = (planRows?.rows.length ?? 0) > 0 ? "plan" : "brief";
   const pane =
     paneChoice ??
-    (group !== null && (!group.ownBranch || !isStageAtOrAfterReview(props.stages, card.stage))
+    (group !== null && !groupUsesCardActions
       ? groupDefaultPane
       : initialBoardCardPane(props.stages, card.stage, liveChildCount));
   // The plan is a first-class entity, so its pill only exists once one is
@@ -3114,15 +3176,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
           {/* The rail: everything about the card that is not the conversation. */}
           <div className="flex min-h-0 flex-col overflow-y-auto [&>*:first-child]:border-t-0">
-            {group === null ? (
+            {group === null || groupUsesCardActions ? (
               <ActionsSection
+                group={group}
                 onAutoPlan={autoPlanAction}
                 onReviewSplit={() => setPane("thread")}
                 props={props}
                 unmet={unmet}
               />
             ) : (
-              <GroupActionsSection group={group} />
+              <GroupActionsSection group={group} props={props} />
             )}
             <QueueSection props={props} />
             {props.stepFailure !== null ? (
@@ -3258,15 +3321,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
 
             {/* ── Right: what you can do with it ──────────────────────── */}
             <div className="flex w-[244px] shrink-0 flex-col border-l border-border [&>*:first-child]:border-t-0">
-              {group === null ? (
+              {group === null || groupUsesCardActions ? (
                 <ActionsSection
+                  group={group}
                   onAutoPlan={null}
                   onReviewSplit={() => setPane("thread")}
                   props={props}
                   unmet={unmet}
                 />
               ) : (
-                <GroupActionsSection group={group} />
+                <GroupActionsSection group={group} props={props} />
               )}
               <div className="flex flex-col gap-2 border-t border-border p-3.5">
                 <LabelSection

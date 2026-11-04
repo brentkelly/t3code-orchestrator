@@ -23,6 +23,7 @@ import {
   boardGroupSettingsVm,
   boardGroupStartPlan,
   boardGroupTargetLabel,
+  boardGroupUsesCardActions,
   isBoardTypedKeyConfirmed,
 } from "./boardGroups";
 
@@ -249,11 +250,22 @@ describe("targets and settings", () => {
     expect(boardGroupSettingsVm(idle, STAGES, outer)!.targetLockReason).toBeNull();
   });
 
-  it("enables auto-merge to trunk only when the children merge into trunk", () => {
-    expect(boardGroupSettingsVm(shells, STAGES, middle)!.autoMerge.disabled).toBe(true);
+  it("offers auto-merge to trunk only when the children merge into trunk", () => {
+    expect(boardGroupSettingsVm(shells, STAGES, outer)!.autoMerge).toBeNull();
+    expect(boardGroupSettingsVm(shells, STAGES, middle)!.autoMerge).toBeNull();
     const top = shell("t-1", "planning", { group: group({ autoMerge: true }) });
     const vm = boardGroupSettingsVm([top], STAGES, top)!;
-    expect(vm.autoMerge).toMatchObject({ disabled: false, on: true });
+    expect(vm.autoMerge).toMatchObject({ on: true });
+  });
+
+  it("draws the card action area for an own-branch group from Code review on", () => {
+    const uses = (ownBranch: boolean, stage: string) =>
+      boardGroupUsesCardActions({ ownBranch, stages: STAGES, stage: BoardStageId.make(stage) });
+    expect(uses(true, "review")).toBe(true);
+    expect(uses(true, "merge")).toBe(true);
+    expect(uses(true, "done")).toBe(true);
+    expect(uses(true, "building")).toBe(false);
+    expect(uses(false, "merge")).toBe(false);
   });
 
   it("changes the auto-build note between armed, on and off", () => {
