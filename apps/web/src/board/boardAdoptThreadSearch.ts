@@ -35,10 +35,11 @@ const olderSettledBefore = Atom.family((environmentId: EnvironmentId) =>
 );
 
 const search = createThreadSearchResultsAtomFamily({
+  // A thread belongs to one card (D9), so the server leaves every card thread out of the rows.
   getSearchAtom: (environmentId, input) =>
     input.olderSettledBefore === undefined
       ? orchestrationEnvironment.threadSearch({ environmentId, input })
-      : olderSettledThreads.searchAtom(environmentId, input),
+      : olderSettledThreads.searchAtom(environmentId, { ...input, excludeBoardCardThreads: true }),
   olderSettledBefore,
   labelPrefix: "t3o:board:adopt-search",
 });
@@ -73,7 +74,8 @@ export function useBoardAdoptThreadSearch(
 /**
  * The threads the picker offers: the card's project, not archived, from the shell and the search,
  * and not linked to any card — a thread belongs to one card (D9), so offering one that is would
- * only produce a refused command. `linkedElsewhere` is every card-thread id the client knows of.
+ * only produce a refused command. `linkedElsewhere` is every card-thread id the client knows of;
+ * the search rows already leave card threads out on the server.
  */
 export function boardAdoptableThreads(input: {
   readonly projectId: ProjectId;

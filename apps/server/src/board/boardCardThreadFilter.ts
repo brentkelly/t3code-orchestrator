@@ -37,6 +37,10 @@ export const boardCardThreadColumn = (sql: SqlClient.SqlClient, exclude: boolean
     ? sql`, (t.thread_id IN (${cardThreadIds(sql)})) AS card_thread`
     : sql`, 0 AS card_thread`;
 
+/** `AND threads.thread_id NOT IN (card threads)` when `exclude` is set, else nothing. */
+export const boardCardThreadExclusion = (sql: SqlClient.SqlClient, exclude: boolean) =>
+  exclude ? sql`AND threads.thread_id NOT IN (${cardThreadIds(sql)})` : sql``;
+
 /**
  * Card threads a shell cut at `before` may carry: every one except older settled threads that are
  * neither pinned, snoozed, nor above a subagent, which the shell leaves out. Extra ids are

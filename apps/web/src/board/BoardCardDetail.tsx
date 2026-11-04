@@ -569,7 +569,8 @@ export function BoardCardDetail({
     card?.projectId ?? null,
     adoptQuery,
   );
-  const olderSettled = useAtomValue(olderSettledThreads.olderSettledAtom(environmentId));
+  // The filtered read names every card thread the shell holds, whatever the Settled toggle says.
+  const olderSettled = useAtomValue(olderSettledThreads.olderSettledAtom(environmentId, true));
   const adoptableThreads = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
     const onCards = new Set((board?.cardThreads ?? []).map((entry) => entry.threadId));

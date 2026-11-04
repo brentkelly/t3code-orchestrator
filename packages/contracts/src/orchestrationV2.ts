@@ -3485,6 +3485,8 @@ export const OrchestrationV2SearchThreadsInput = Schema.Struct({
   environmentLabel: Schema.optionalKey(Schema.String),
   /** Skips message search, for pickers that match titles only. */
   titlesOnly: Schema.optionalKey(Schema.Boolean),
+  // T3o: leave board card threads out of the older settled rows; older servers ignore it (T3O-41).
+  excludeBoardCardThreads: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2SearchThreadsInput = typeof OrchestrationV2SearchThreadsInput.Type;
 
