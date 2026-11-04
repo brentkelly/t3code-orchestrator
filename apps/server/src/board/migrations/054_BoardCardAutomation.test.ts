@@ -76,7 +76,12 @@ it.effect("backfills own toggles, group begun and integration-branch auto-merge"
     yield* insertCard({ id: "plain", stage: "backlog" });
     // An own-branch group with auto-build on, a child building: begun, and its
     // children keep auto-merging into the integration branch.
-    yield* insertCard({ id: "own-group", stage: "building", groupTarget: "own", groupAutoBuild: 1 });
+    yield* insertCard({
+      id: "own-group",
+      stage: "building",
+      groupTarget: "own",
+      groupAutoBuild: 1,
+    });
     yield* insertCard({ id: "own-child", stage: "building", parent: "own-group" });
     // An inherit group nested under it lands on that branch too.
     yield* insertCard({

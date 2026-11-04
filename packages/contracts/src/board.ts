@@ -8365,7 +8365,6 @@ export const BoardRequestReviewRoundResult = Schema.Union([
 ]);
 export type BoardRequestReviewRoundResult = typeof BoardRequestReviewRoundResult.Type;
 
-
 /** What "Remove worktree" did (T3O-52, D5). */
 export const BoardRemoveCardWorktreeResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("removed") }),

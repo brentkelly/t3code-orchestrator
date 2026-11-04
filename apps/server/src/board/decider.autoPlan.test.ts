@@ -425,16 +425,18 @@ it.layer(NodeServices.layer)("automation toggles (T3O-38)", (it) => {
   it.effect("refuses turning a locked toggle on, and always accepts off", () =>
     Effect.gen(function* () {
       const building = readModel([makeCard({ id: "card-auto", stage: "building" })]);
-      expect(
-        (yield* decideFail(setAutomation({ autoBuild: true }), building)).message,
-      ).toContain("Building now.");
-      expect(
-        (yield* decideFail(setAutomation({ autoPlan: true }), building)).message,
-      ).toContain("Planning is finished.");
+      expect((yield* decideFail(setAutomation({ autoBuild: true }), building)).message).toContain(
+        "Building now.",
+      );
+      expect((yield* decideFail(setAutomation({ autoPlan: true }), building)).message).toContain(
+        "Planning is finished.",
+      );
       const onWhileLocked = readModel([
         makeCard({ id: "card-auto", stage: "review", autoBuildSetting: true }),
       ]);
-      const off = updatedCard(yield* decideEvents(setAutomation({ autoBuild: false }), onWhileLocked));
+      const off = updatedCard(
+        yield* decideEvents(setAutomation({ autoBuild: false }), onWhileLocked),
+      );
       expect(off.payload.card.autoBuildSetting).toBe(false);
       // Auto-merge never locks on the board itself.
       const merge = updatedCard(yield* decideEvents(setAutomation({ autoMerge: true }), building));
@@ -458,7 +460,9 @@ it.layer(NodeServices.layer)("automation toggles (T3O-38)", (it) => {
           headSha: "abc",
         },
       });
-      const off = updatedCard(yield* decideEvents(setAutomation({ autoMerge: null }), readModel([held])));
+      const off = updatedCard(
+        yield* decideEvents(setAutomation({ autoMerge: null }), readModel([held])),
+      );
       expect(off.payload.card.autoMergeHold).toBe(null);
     }),
   );
@@ -482,7 +486,10 @@ it.layer(NodeServices.layer)("automation toggles (T3O-38)", (it) => {
       });
       // A forward move turns nothing off; an inheriting card that is off stays inheriting.
       const forward = movedCard(
-        yield* decideEvents(moveTo("building"), readModel([makeCard({ id: "card-auto", stage: "ready" })])),
+        yield* decideEvents(
+          moveTo("building"),
+          readModel([makeCard({ id: "card-auto", stage: "ready" })]),
+        ),
       );
       expect(forward.payload.automationChanged).toBeUndefined();
       expect(forward.payload.card.autoBuildSetting).toBe(null);
@@ -491,7 +498,11 @@ it.layer(NodeServices.layer)("automation toggles (T3O-38)", (it) => {
 
   it.effect("a child moved into build begins its group, unless its own Auto-build moved it", () =>
     Effect.gen(function* () {
-      const group = makeCard({ id: "card-group", stage: "ready", group: groupOf({ autoBuild: true }) });
+      const group = makeCard({
+        id: "card-group",
+        stage: "ready",
+        group: groupOf({ autoBuild: true }),
+      });
       const child = makeCard({
         id: "card-child",
         stage: "ready",
@@ -524,7 +535,9 @@ it.layer(NodeServices.layer)("automation toggles (T3O-38)", (it) => {
       const inherit = makeCard({ id: "card-auto", stage: "ready", group: groupOf() });
       expect((yield* settings({ target: "own" }, inherit))?.autoMerge).toBe(true);
       // The same command naming auto-merge keeps the user's choice.
-      expect((yield* settings({ target: "own", autoMerge: false }, inherit))?.autoMerge).toBe(false);
+      expect((yield* settings({ target: "own", autoMerge: false }, inherit))?.autoMerge).toBe(
+        false,
+      );
       const own = makeCard({
         id: "card-auto",
         stage: "ready",

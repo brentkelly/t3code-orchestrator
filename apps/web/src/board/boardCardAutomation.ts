@@ -154,11 +154,7 @@ function lockState(toggle: BoardResolvedAutomationToggle) {
 }
 
 function canInherit(toggle: BoardResolvedAutomationToggle): boolean {
-  return (
-    toggle.own !== null &&
-    toggle.inheritedFrom !== null &&
-    toggle.source !== "board"
-  );
+  return toggle.own !== null && toggle.inheritedFrom !== null && toggle.source !== "board";
 }
 
 function row(

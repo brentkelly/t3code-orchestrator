@@ -45,7 +45,6 @@ import {
   BOARD_AUTOMATION_TOGGLE_LABELS,
   type BoardAutomationChanged,
   resolveBoardCardAutomationIn,
-  boardStageBeforeBuild,
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterSubBoardFloor,
   boardOrderKeyBetween,
@@ -1320,8 +1319,10 @@ function backwardMoveDisarms(
   const build = boardStageWithRole(board, "build");
   const planIndex = plan === null ? -1 : boardStageIndex(board, plan.stageId);
   const buildIndex = build === null ? -1 : boardStageIndex(board, build.stageId);
-  const disarmBuild = buildIndex >= 0 && from >= buildIndex && to < buildIndex && resolved.autoBuild.value;
-  const disarmPlan = planIndex >= 0 && from >= planIndex && to <= planIndex && resolved.autoPlan.value;
+  const disarmBuild =
+    buildIndex >= 0 && from >= buildIndex && to < buildIndex && resolved.autoBuild.value;
+  const disarmPlan =
+    planIndex >= 0 && from >= planIndex && to <= planIndex && resolved.autoPlan.value;
   if (!disarmBuild && !disarmPlan) return { settings: {}, changed: null };
   return {
     settings: {
@@ -2555,8 +2556,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       }
       const nextSettings = {
         autoPlanSetting: command.autoPlan === undefined ? card.autoPlanSetting : command.autoPlan,
-        autoBuildSetting: command.autoBuild === undefined ? card.autoBuildSetting : command.autoBuild,
-        autoMergeSetting: command.autoMerge === undefined ? card.autoMergeSetting : command.autoMerge,
+        autoBuildSetting:
+          command.autoBuild === undefined ? card.autoBuildSetting : command.autoBuild,
+        autoMergeSetting:
+          command.autoMerge === undefined ? card.autoMergeSetting : command.autoMerge,
       };
       const changed: BoardAutomationChanged = {
         ...(nextSettings.autoPlanSetting === card.autoPlanSetting ? {} : { autoPlan: true }),

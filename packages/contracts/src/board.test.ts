@@ -2621,9 +2621,9 @@ describe("automation (T3O-38)", () => {
 
     it("is due on an ARCHIVED dependency, and never on an id with no card", () => {
       expect(boardCardAutoBuildDue(on(armed({ dependsOn: [archived.id] }), archived))).toBe(true);
-      expect(
-        boardCardAutoBuildDue(on(armed({ dependsOn: [BoardCardId.make("card-gone")] }))),
-      ).toBe(false);
+      expect(boardCardAutoBuildDue(on(armed({ dependsOn: [BoardCardId.make("card-gone")] })))).toBe(
+        false,
+      );
     });
 
     it("needs the card's OWN Auto-build: an inherited one is the group cascade's", () => {
@@ -2646,7 +2646,11 @@ describe("automation (T3O-38)", () => {
       expect(boardCardAutoBuildDue(on(armed({ stage: BOARD_SEED_STAGE_IDS.planning })))).toBe(
         false,
       );
-      const group = { ...groupCard("g", {}), autoBuildSetting: true, stage: BOARD_SEED_STAGE_IDS.ready };
+      const group = {
+        ...groupCard("g", {}),
+        autoBuildSetting: true,
+        stage: BOARD_SEED_STAGE_IDS.ready,
+      };
       expect(boardCardAutoBuildDue(on(group))).toBe(false);
     });
   });
@@ -2738,13 +2742,6 @@ describe("automation (T3O-38)", () => {
 
 describe("auto-merge (T3O-38)", () => {
   const NOW = "2026-01-01T00:00:00.000Z";
-  const at = (stage: BoardCard["stage"], overrides: Partial<BoardCard> = {}): BoardCard => ({
-    ...typicalCard(1),
-    id: BoardCardId.make("card-merging"),
-    stage,
-    ...overrides,
-  });
-  const board = (card: BoardCard) => ({ ...EMPTY_BOARD_STATE, cards: [card] });
 
   describe("boardCardAutoMergeGaveUp", () => {
     const hold = (retryAt: string | null): BoardCardAutoMergeHold => ({

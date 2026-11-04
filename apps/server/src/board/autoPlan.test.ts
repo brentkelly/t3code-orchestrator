@@ -205,11 +205,11 @@ it.effect("steers a live planning thread and approves the plan it then proposes"
   );
 });
 
-it.effect("turning Auto-plan off mid-run hands planning back to the user on the same thread", () => {
-  const card = planningCard("back", { autoPlanSetting: true });
-  return withGovernor(
-    { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-    (h) =>
+it.effect(
+  "turning Auto-plan off mid-run hands planning back to the user on the same thread",
+  () => {
+    const card = planningCard("back", { autoPlanSetting: true });
+    return withGovernor({ board: { cards: [card], nextCardNumberByProject: {} }, settings }, (h) =>
       Effect.gen(function* () {
         const id = BoardCardId.make("back");
         yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
@@ -228,24 +228,23 @@ it.effect("turning Auto-plan off mid-run hands planning back to the user on the 
           ),
         );
       }),
-  );
-});
+    );
+  },
+);
 
 it.effect("a human pressing Stop on an unattended planning run turns Auto-plan off", () => {
   const card = planningCard("stopped", { autoPlanSetting: true });
-  return withGovernor(
-    { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-    (h) =>
-      Effect.gen(function* () {
-        const id = BoardCardId.make("stopped");
-        yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
-        const threadId = boardCardStepState(yield* h.board, id)!.threadId!;
-        yield* h.pumpRuntime(turnInterruptRequested(threadId));
-        const after = yield* h.board;
-        assert.strictEqual(boardCardStepState(after, id)?.status, "paused");
-        assert.isFalse(cardOf(after.cards, "stopped")?.autoPlanSetting);
-        assert.isString(cardOf(after.cards, "stopped")?.autoPlan?.endedAt);
-      }),
+  return withGovernor({ board: { cards: [card], nextCardNumberByProject: {} }, settings }, (h) =>
+    Effect.gen(function* () {
+      const id = BoardCardId.make("stopped");
+      yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
+      const threadId = boardCardStepState(yield* h.board, id)!.threadId!;
+      yield* h.pumpRuntime(turnInterruptRequested(threadId));
+      const after = yield* h.board;
+      assert.strictEqual(boardCardStepState(after, id)?.status, "paused");
+      assert.isFalse(cardOf(after.cards, "stopped")?.autoPlanSetting);
+      assert.isString(cardOf(after.cards, "stopped")?.autoPlan?.endedAt);
+    }),
   );
 });
 
@@ -270,9 +269,7 @@ it.effect(
 
           yield* setAutomation(h, id, { autoPlan: true }, 1);
           assert.ok(
-            (yield* h.commands).some(
-              (command) => command.type === "board.card.start-stage-thread",
-            ),
+            (yield* h.commands).some((command) => command.type === "board.card.start-stage-thread"),
           );
 
           // The harness does not loop the reactor's own events back into it,
@@ -488,35 +485,38 @@ const stepEvent = (
   sequence: number,
 ) => ({ type, sequence, payload: { cardId: state.cardId, state } }) as never;
 
-it.effect("an auto-plan run parked on a human ends the run record, so planning is gated again", () => {
-  const card = planningCard("parked", autoPlanBuild);
-  return withGovernor(
-    {
-      board: { cards: [card], plans: [plan("parked", "one", 0)], nextCardNumberByProject: {} },
-      settings,
-    },
-    (h) =>
-      Effect.gen(function* () {
-        const { pumpDomain, board } = h;
-        const id = BoardCardId.make("parked");
-        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
-        yield* pumpDomain(stepCompleted(id, "blocked", 2, PLANNING));
-        const parked = boardCardStepState(yield* board, id);
-        assert.strictEqual(parked?.status, "awaiting-input");
-        yield* pumpDomain(stepEvent("board.card-step-awaiting-input", parked!, 3));
+it.effect(
+  "an auto-plan run parked on a human ends the run record, so planning is gated again",
+  () => {
+    const card = planningCard("parked", autoPlanBuild);
+    return withGovernor(
+      {
+        board: { cards: [card], plans: [plan("parked", "one", 0)], nextCardNumberByProject: {} },
+        settings,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          const { pumpDomain, board } = h;
+          const id = BoardCardId.make("parked");
+          yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+          yield* pumpDomain(stepCompleted(id, "blocked", 2, PLANNING));
+          const parked = boardCardStepState(yield* board, id);
+          assert.strictEqual(parked?.status, "awaiting-input");
+          yield* pumpDomain(stepEvent("board.card-step-awaiting-input", parked!, 3));
 
-        const after = yield* board;
-        assert.isString(cardOf(after.cards, "parked")?.autoPlan?.endedAt);
-        // A machine stop leaves the toggle on; re-asserting it steers the same thread.
-        assert.isTrue(cardOf(after.cards, "parked")?.autoPlanSetting);
-        yield* setAutomation(h, id, { autoPlan: true }, 4);
-        const again = yield* board;
-        assert.strictEqual(cardOf(again.cards, "parked")?.autoPlan?.endedAt, null);
-        assert.strictEqual(boardCardStepState(again, id)?.threadId, parked?.threadId);
-        assert.strictEqual(boardCardStepState(again, id)?.status, "running");
-      }),
-  );
-});
+          const after = yield* board;
+          assert.isString(cardOf(after.cards, "parked")?.autoPlan?.endedAt);
+          // A machine stop leaves the toggle on; re-asserting it steers the same thread.
+          assert.isTrue(cardOf(after.cards, "parked")?.autoPlanSetting);
+          yield* setAutomation(h, id, { autoPlan: true }, 4);
+          const again = yield* board;
+          assert.strictEqual(cardOf(again.cards, "parked")?.autoPlan?.endedAt, null);
+          assert.strictEqual(boardCardStepState(again, id)?.threadId, parked?.threadId);
+          assert.strictEqual(boardCardStepState(again, id)?.status, "running");
+        }),
+    );
+  },
+);
 
 /** Park the live planning step as `status`, the way a question, a Stop or an
     escalation leaves it. */
@@ -542,85 +542,82 @@ const parkStep = (
     },
   }));
 
-for (const status of ["awaiting-input", "paused", "stalled"] as const) {
-  it.effect(`a planning step that is ${status} is steered in place, never replaced`, () => {
+it.effect.each(["awaiting-input", "paused", "stalled"] as const)(
+  "a planning step that is %s is steered in place, never replaced",
+  (status) => {
     const card = planningCard(`parked-${status}`);
-    return withGovernor(
-      { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-      (h) =>
-        Effect.gen(function* () {
-          const { pumpDomain, board, commands, model } = h;
-          const id = BoardCardId.make(`parked-${status}`);
-          yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
-          const interview = boardCardStepState(yield* board, id);
-          assert.ok(interview?.threadId != null);
-          const threadId = interview.threadId;
-          yield* parkStep(model, id, status);
-          assert.strictEqual(boardCardStepState(yield* board, id)?.status, status);
+    return withGovernor({ board: { cards: [card], nextCardNumberByProject: {} }, settings }, (h) =>
+      Effect.gen(function* () {
+        const { pumpDomain, board, commands, model } = h;
+        const id = BoardCardId.make(`parked-${status}`);
+        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        const interview = boardCardStepState(yield* board, id);
+        assert.ok(interview?.threadId != null);
+        const threadId = interview.threadId;
+        yield* parkStep(model, id, status);
+        assert.strictEqual(boardCardStepState(yield* board, id)?.status, status);
 
-          yield* setAutomation(h, id, { autoPlan: true }, 2);
+        yield* setAutomation(h, id, { autoPlan: true }, 2);
 
-          const calls = yield* commands;
-          assert.isFalse(
-            calls.some((command) => command.type === "board.card.start-stage-thread"),
-            "no replacement planning run is started",
-          );
-          assert.isTrue(
-            calls.some(
-              (command) =>
-                (command.type === "thread.send" || command.type === "thread.answer-pending-input") &&
-                command.threadId === threadId &&
-                command.text.includes(BOARD_AUTO_PLAN_INSTRUCTION),
-            ),
-            "the instruction goes to the current planning thread",
-          );
-          const after = yield* board;
-          const link = cardOf(after.cards, `parked-${status}`)?.threadLinks.find(
-            (candidate) => candidate.threadId === threadId,
-          );
-          assert.ok(link !== undefined);
-          assert.strictEqual(link.tombstonedAt, null);
-          const state = boardCardStepState(after, id);
-          assert.strictEqual(state?.threadId, threadId);
-          assert.strictEqual(state?.status, "running");
-          assert.isFalse(state?.humanInLoop);
-        }),
+        const calls = yield* commands;
+        assert.isFalse(
+          calls.some((command) => command.type === "board.card.start-stage-thread"),
+          "no replacement planning run is started",
+        );
+        assert.isTrue(
+          calls.some(
+            (command) =>
+              (command.type === "thread.send" || command.type === "thread.answer-pending-input") &&
+              command.threadId === threadId &&
+              command.text.includes(BOARD_AUTO_PLAN_INSTRUCTION),
+          ),
+          "the instruction goes to the current planning thread",
+        );
+        const after = yield* board;
+        const link = cardOf(after.cards, `parked-${status}`)?.threadLinks.find(
+          (candidate) => candidate.threadId === threadId,
+        );
+        assert.ok(link !== undefined);
+        assert.strictEqual(link.tombstonedAt, null);
+        const state = boardCardStepState(after, id);
+        assert.strictEqual(state?.threadId, threadId);
+        assert.strictEqual(state?.status, "running");
+        assert.isFalse(state?.humanInLoop);
+      }),
     );
-  });
-}
+  },
+);
 
 it.effect("a pending question is answered with the instruction instead of a new turn", () => {
   const card = planningCard("question");
-  return withGovernor(
-    { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-    (h) =>
-      Effect.gen(function* () {
-        const { pumpDomain, board, commands, model, shells } = h;
-        const id = BoardCardId.make("question");
-        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
-        const threadId = boardCardStepState(yield* board, id)!.threadId!;
-        yield* parkStep(model, id, "awaiting-input");
-        yield* Ref.update(shells, (map) =>
-          new Map(map).set(
-            String(threadId),
-            aliveThread(String(threadId), { awaitingUserInput: true }),
-          ),
-        );
+  return withGovernor({ board: { cards: [card], nextCardNumberByProject: {} }, settings }, (h) =>
+    Effect.gen(function* () {
+      const { pumpDomain, board, commands, model, shells } = h;
+      const id = BoardCardId.make("question");
+      yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+      const threadId = boardCardStepState(yield* board, id)!.threadId!;
+      yield* parkStep(model, id, "awaiting-input");
+      yield* Ref.update(shells, (map) =>
+        new Map(map).set(
+          String(threadId),
+          aliveThread(String(threadId), { awaitingUserInput: true }),
+        ),
+      );
 
-        yield* setAutomation(h, id, { autoPlan: true }, 2);
-        const calls = yield* commands;
-        const answered = calls.find((command) => command.type === "thread.answer-pending-input");
-        assert.ok(answered?.type === "thread.answer-pending-input");
-        assert.strictEqual(answered.text, boardAutoPlanInstruction(false));
-        assert.isFalse(
-          calls.some(
-            (command) =>
-              command.type === "thread.send" && command.text.includes(BOARD_AUTO_PLAN_INSTRUCTION),
-          ),
-          "the answer is the instruction; no second turn is queued behind it",
-        );
-        assert.strictEqual(boardCardStepState(yield* board, id)?.status, "running");
-      }),
+      yield* setAutomation(h, id, { autoPlan: true }, 2);
+      const calls = yield* commands;
+      const answered = calls.find((command) => command.type === "thread.answer-pending-input");
+      assert.ok(answered?.type === "thread.answer-pending-input");
+      assert.strictEqual(answered.text, boardAutoPlanInstruction(false));
+      assert.isFalse(
+        calls.some(
+          (command) =>
+            command.type === "thread.send" && command.text.includes(BOARD_AUTO_PLAN_INSTRUCTION),
+        ),
+        "the answer is the instruction; no second turn is queued behind it",
+      );
+      assert.strictEqual(boardCardStepState(yield* board, id)?.status, "running");
+    }),
   );
 });
 
@@ -709,51 +706,49 @@ it.effect(
   "steering interrupts the in-flight interview turn, so its question does not end the request",
   () => {
     const card = planningCard("midturn");
-    return withGovernor(
-      { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-      (h) =>
-        Effect.gen(function* () {
-          const { pumpDomain, pumpRuntime, board, commands, shells } = h;
-          const id = BoardCardId.make("midturn");
-          yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
-          const interview = boardCardStepState(yield* board, id);
-          assert.ok(interview?.threadId != null);
-          const threadId = interview.threadId;
-          yield* Ref.update(shells, (map) =>
-            new Map(map).set(
-              String(threadId),
-              aliveThread(String(threadId), { activeTurnRef: "turn-interview" }),
-            ),
-          );
+    return withGovernor({ board: { cards: [card], nextCardNumberByProject: {} }, settings }, (h) =>
+      Effect.gen(function* () {
+        const { pumpDomain, pumpRuntime, board, commands, shells } = h;
+        const id = BoardCardId.make("midturn");
+        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        const interview = boardCardStepState(yield* board, id);
+        assert.ok(interview?.threadId != null);
+        const threadId = interview.threadId;
+        yield* Ref.update(shells, (map) =>
+          new Map(map).set(
+            String(threadId),
+            aliveThread(String(threadId), { activeTurnRef: "turn-interview" }),
+          ),
+        );
 
-          yield* setAutomation(h, id, { autoPlan: true }, 2);
-          const calls = yield* commands;
-          const interrupted = calls.findIndex(
-            (command) => command.type === "thread.interrupt" && command.threadId === threadId,
-          );
-          const steered = calls.findIndex(
-            (command) =>
-              command.type === "thread.send" && command.text.includes(BOARD_AUTO_PLAN_INSTRUCTION),
-          );
-          assert.isAtLeast(interrupted, 0);
-          assert.isAbove(steered, interrupted);
+        yield* setAutomation(h, id, { autoPlan: true }, 2);
+        const calls = yield* commands;
+        const interrupted = calls.findIndex(
+          (command) => command.type === "thread.interrupt" && command.threadId === threadId,
+        );
+        const steered = calls.findIndex(
+          (command) =>
+            command.type === "thread.send" && command.text.includes(BOARD_AUTO_PLAN_INSTRUCTION),
+        );
+        assert.isAtLeast(interrupted, 0);
+        assert.isAbove(steered, interrupted);
 
-          // The interrupted turn's own question, its interrupt and its end.
-          yield* pumpRuntime(userInputRequested(threadId));
-          yield* pumpRuntime(turnInterruptRequested(threadId));
-          yield* Ref.update(shells, (map) =>
-            new Map(map).set(
-              String(threadId),
-              aliveThread(String(threadId), { activeTurnRef: "turn-interview" }),
-            ),
-          );
-          yield* pumpRuntime(turnCompleted(threadId, "turn-interview"));
+        // The interrupted turn's own question, its interrupt and its end.
+        yield* pumpRuntime(userInputRequested(threadId));
+        yield* pumpRuntime(turnInterruptRequested(threadId));
+        yield* Ref.update(shells, (map) =>
+          new Map(map).set(
+            String(threadId),
+            aliveThread(String(threadId), { activeTurnRef: "turn-interview" }),
+          ),
+        );
+        yield* pumpRuntime(turnCompleted(threadId, "turn-interview"));
 
-          const after = yield* board;
-          assert.strictEqual(boardCardStepState(after, id)?.status, "running");
-          assert.isFalse(boardCardStepState(after, id)?.humanInLoop);
-          assert.strictEqual(cardOf(after.cards, "midturn")?.autoPlan?.endedAt, null);
-        }),
+        const after = yield* board;
+        assert.strictEqual(boardCardStepState(after, id)?.status, "running");
+        assert.isFalse(boardCardStepState(after, id)?.humanInLoop);
+        assert.strictEqual(cardOf(after.cards, "midturn")?.autoPlan?.endedAt, null);
+      }),
     );
   },
 );
@@ -762,30 +757,28 @@ it.effect(
   "a steer behind an interview run that had already ended still parks on the steer turn's own question",
   () => {
     const card = planningCard("staleturn");
-    return withGovernor(
-      { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-      (h) =>
-        Effect.gen(function* () {
-          const { pumpDomain, pumpRuntime, board, shells } = h;
-          const id = BoardCardId.make("staleturn");
-          yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
-          const interview = boardCardStepState(yield* board, id);
-          assert.ok(interview?.threadId != null);
-          const threadId = interview.threadId;
-          const showRun = (activeTurnRef: string | null) =>
-            Ref.update(shells, (map) =>
-              new Map(map).set(String(threadId), aliveThread(String(threadId), { activeTurnRef })),
-            );
-          // The interview run has ended, and its end has been read, but the
-          // projection still names it when auto-plan looks.
-          yield* showRun("turn-interview");
-          yield* setAutomation(h, id, { autoPlan: true }, 2);
+    return withGovernor({ board: { cards: [card], nextCardNumberByProject: {} }, settings }, (h) =>
+      Effect.gen(function* () {
+        const { pumpDomain, pumpRuntime, board, shells } = h;
+        const id = BoardCardId.make("staleturn");
+        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        const interview = boardCardStepState(yield* board, id);
+        assert.ok(interview?.threadId != null);
+        const threadId = interview.threadId;
+        const showRun = (activeTurnRef: string | null) =>
+          Ref.update(shells, (map) =>
+            new Map(map).set(String(threadId), aliveThread(String(threadId), { activeTurnRef })),
+          );
+        // The interview run has ended, and its end has been read, but the
+        // projection still names it when auto-plan looks.
+        yield* showRun("turn-interview");
+        yield* setAutomation(h, id, { autoPlan: true }, 2);
 
-          // The steer turn runs and asks a question: that is a real park.
-          yield* showRun("turn-steer");
-          yield* pumpRuntime(userInputRequested(threadId));
-          assert.strictEqual(boardCardStepState(yield* board, id)?.status, "awaiting-input");
-        }),
+        // The steer turn runs and asks a question: that is a real park.
+        yield* showRun("turn-steer");
+        yield* pumpRuntime(userInputRequested(threadId));
+        assert.strictEqual(boardCardStepState(yield* board, id)?.status, "awaiting-input");
+      }),
     );
   },
 );
@@ -794,36 +787,34 @@ it.effect(
   "the steer turn's own end is read, even when the interrupted run's end never arrives",
   () => {
     const card = planningCard("steerend");
-    return withGovernor(
-      { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-      (h) =>
-        Effect.gen(function* () {
-          const { pumpDomain, pumpRuntime, board, shells } = h;
-          const id = BoardCardId.make("steerend");
-          yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
-          const interview = boardCardStepState(yield* board, id);
-          assert.ok(interview?.threadId != null);
-          const threadId = interview.threadId;
-          yield* Ref.update(shells, (map) =>
-            new Map(map).set(
-              String(threadId),
-              aliveThread(String(threadId), { activeTurnRef: "turn-interview" }),
-            ),
-          );
-          yield* setAutomation(h, id, { autoPlan: true }, 2);
+    return withGovernor({ board: { cards: [card], nextCardNumberByProject: {} }, settings }, (h) =>
+      Effect.gen(function* () {
+        const { pumpDomain, pumpRuntime, board, shells } = h;
+        const id = BoardCardId.make("steerend");
+        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        const interview = boardCardStepState(yield* board, id);
+        assert.ok(interview?.threadId != null);
+        const threadId = interview.threadId;
+        yield* Ref.update(shells, (map) =>
+          new Map(map).set(
+            String(threadId),
+            aliveThread(String(threadId), { activeTurnRef: "turn-interview" }),
+          ),
+        );
+        yield* setAutomation(h, id, { autoPlan: true }, 2);
 
-          // The steer turn ends without completing the step: death detection runs.
-          yield* Ref.update(shells, (map) =>
-            new Map(map).set(
-              String(threadId),
-              aliveThread(String(threadId), { activeTurnRef: null }),
-            ),
-          );
-          yield* pumpRuntime(turnCompleted(threadId, "turn-steer"));
-          const after = boardCardStepState(yield* board, id);
-          assert.strictEqual(after?.status, "stalled");
-          assert.strictEqual(after?.stallCount, 1);
-        }),
+        // The steer turn ends without completing the step: death detection runs.
+        yield* Ref.update(shells, (map) =>
+          new Map(map).set(
+            String(threadId),
+            aliveThread(String(threadId), { activeTurnRef: null }),
+          ),
+        );
+        yield* pumpRuntime(turnCompleted(threadId, "turn-steer"));
+        const after = boardCardStepState(yield* board, id);
+        assert.strictEqual(after?.status, "stalled");
+        assert.strictEqual(after?.stallCount, 1);
+      }),
     );
   },
 );

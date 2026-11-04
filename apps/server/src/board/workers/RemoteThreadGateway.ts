@@ -281,11 +281,11 @@ export const makeRemoteThreadGateway = (
     // A worker older than this call cannot decode it; "not answered" makes the
     // caller interrupt and send a turn instead, which every worker takes.
     answerPendingInput: (input) =>
-      command("answerPendingInput", (rpc, answer: Parameters<
-        ThreadGatewayShape["answerPendingInput"]
-      >[0]) => rpc.gateway.answerPendingInput(answer))(input).pipe(
-        Effect.orElseSucceed(() => false),
-      ),
+      command(
+        "answerPendingInput",
+        (rpc, answer: Parameters<ThreadGatewayShape["answerPendingInput"]>[0]) =>
+          rpc.gateway.answerPendingInput(answer),
+      )(input).pipe(Effect.orElseSucceed(() => false)),
     threadState: (threadId) =>
       Effect.gen(function* () {
         const rpc = yield* link.pipe(Effect.option);

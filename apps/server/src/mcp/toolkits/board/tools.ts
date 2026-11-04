@@ -758,7 +758,7 @@ const BoardAutomationToggleState = Schema.Struct({
   lockReason: Schema.NullOr(Schema.String),
 });
 
-export const BoardSetAutomationTool = Tool.make("board_set_automation", {
+const BoardSetAutomationTool = Tool.make("board_set_automation", {
   description:
     "Turn a card's Automation toggles on or off. autoPlan: its planning agent stops asking questions and decides everything itself; without autoBuild the plan then waits for the user's approval. autoBuild: an approved plan starts building by itself once its dependencies are done, and with autoPlan the plan is approved automatically, so the card runs unattended to Ready for merge. autoMerge: the card merges itself once it reaches Ready for merge. Each takes true, false, or null to inherit from the card's group again; only the fields you pass change. Turning a toggle on stands in for a human approving and starting work, so do it only when the user explicitly asks for that card: confirm with them, then pass approved: true. The server refuses without it, and refuses an unattended run. Never turn on your own card's toggles. Turning a toggle on after its stage has passed is refused with the reason; off and null are always accepted. The change takes effect in the background, so the result is the card's resolved toggles, not what the board then did. For a group's own settings use board_set_group_settings.",
   parameters: Schema.Struct({

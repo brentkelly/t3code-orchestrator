@@ -57,7 +57,6 @@ import {
   boardStageEntryRecoveryCount,
   boardStepErrorSummary,
   boardStageIndex,
-  isBoardStageAtOrAfterBuild,
   boardCardHasLiveBranch,
   boardStageWithRole,
   parseReviewStepId,
@@ -1153,7 +1152,10 @@ const make = Effect.gen(function* () {
       if (automationIn(board, card).autoBuild.value) return false;
       return card.humanInLoop ?? buildHumanInLoopDefault(board, exec, card);
     }
-    if (role === "plan" && (isBoardCardAutoPlanPending(card) || automationIn(board, card).autoPlan.value)) {
+    if (
+      role === "plan" &&
+      (isBoardCardAutoPlanPending(card) || automationIn(board, card).autoPlan.value)
+    ) {
       return false;
     }
     return exec.humanInLoop;
@@ -6818,7 +6820,10 @@ const make = Effect.gen(function* () {
       cards: board.cards,
     });
     if (unmet.length > 0) {
-      yield* autoPlanNote(card.id, `${lead}; it waits in Ready and builds itself once its dependencies are done.`);
+      yield* autoPlanNote(
+        card.id,
+        `${lead}; it waits in Ready and builds itself once its dependencies are done.`,
+      );
       return;
     }
     const refusal = yield* dispatchRefusal({
@@ -6829,7 +6834,8 @@ const make = Effect.gen(function* () {
       ...(resolved.autoBuild.source === "own" ? { cause: "auto-build" as const } : {}),
       createdAt: yield* nowIso,
     });
-    if (refusal !== null) yield* autoPlanNote(card.id, `${lead}; the build did not start: ${refusal}`);
+    if (refusal !== null)
+      yield* autoPlanNote(card.id, `${lead}; the build did not start: ${refusal}`);
   });
 
   /**
@@ -7040,7 +7046,10 @@ const make = Effect.gen(function* () {
         });
       }
     }
-    yield* endAutoPlan(card.id, "Auto-plan is off: planning continues with you, and the plan waits for your approval.");
+    yield* endAutoPlan(
+      card.id,
+      "Auto-plan is off: planning continues with you, and the plan waits for your approval.",
+    );
   });
 
   /**
@@ -7086,8 +7095,7 @@ const make = Effect.gen(function* () {
           ) {
             yield* approveAutoPlannedCard(card, state);
             const after = yield* readCard(card.id);
-            const approved =
-              after !== null && (after.stage !== card.stage || after.group !== null);
+            const approved = after !== null && (after.stage !== card.stage || after.group !== null);
             return approved ? ("approved" as const) : null;
           }
         }
@@ -7117,40 +7125,42 @@ const make = Effect.gen(function* () {
    * that inherits is re-evaluated, best-effort and one by one, and the group's
    * rail gets one summary line. Children with their own value are untouched.
    */
-  const reevaluateGroupChildren = Effect.fn("board-supervisor-reevaluateGroupChildren")(
-    function* (groupId: BoardCardId, options: { readonly quiet?: boolean } = {}) {
-      const board = yield* readBoard;
-      const group = board.cards.find((candidate) => candidate.id === groupId);
-      if (group === undefined || group.archivedAt !== null) return;
-      if (boardCardGroupOf(board, group) === null) return;
-      const counts = new Map<string, number>();
-      for (const child of boardCardActiveChildren(board, groupId)) {
-        const outcome = yield* reevaluateCardAutomation(child.id, { group: true }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("board supervisor: group automation for a child failed", {
-              cardId: child.id,
-              cause: Cause.pretty(cause),
-            }).pipe(Effect.as(null)),
-          ),
-        );
-        if (outcome !== null) counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
-      }
-      yield* cascadeUnblockedChildren(groupId);
-      if (options.quiet === true || counts.size === 0) return;
-      const words: Record<string, string> = {
-        steered: "told to finish planning unattended",
-        started: "started planning unattended",
-        stopped: "back to planning with you",
-        approved: "had their plan approved",
-        built: "started building",
-        merged: "merging",
-      };
-      const parts = [...counts.entries()].map(
-        ([outcome, count]) => `${count} ${count === 1 ? "card" : "cards"} ${words[outcome] ?? outcome}`,
+  const reevaluateGroupChildren = Effect.fn("board-supervisor-reevaluateGroupChildren")(function* (
+    groupId: BoardCardId,
+    options: { readonly quiet?: boolean } = {},
+  ) {
+    const board = yield* readBoard;
+    const group = board.cards.find((candidate) => candidate.id === groupId);
+    if (group === undefined || group.archivedAt !== null) return;
+    if (boardCardGroupOf(board, group) === null) return;
+    const counts = new Map<string, number>();
+    for (const child of boardCardActiveChildren(board, groupId)) {
+      const outcome = yield* reevaluateCardAutomation(child.id, { group: true }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: group automation for a child failed", {
+            cardId: child.id,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as(null)),
+        ),
       );
-      yield* autoPlanNote(groupId, `Automation changed: ${parts.join("; ")}.`);
-    },
-  );
+      if (outcome !== null) counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
+    }
+    yield* cascadeUnblockedChildren(groupId);
+    if (options.quiet === true || counts.size === 0) return;
+    const words: Record<string, string> = {
+      steered: "told to finish planning unattended",
+      started: "started planning unattended",
+      stopped: "back to planning with you",
+      approved: "had their plan approved",
+      built: "started building",
+      merged: "merging",
+    };
+    const parts = [...counts.entries()].map(
+      ([outcome, count]) =>
+        `${count} ${count === 1 ? "card" : "cards"} ${words[outcome] ?? outcome}`,
+    );
+    yield* autoPlanNote(groupId, `Automation changed: ${parts.join("; ")}.`);
+  });
 
   /**
    * A human answered the planning agent's question themselves (T3O-38): they

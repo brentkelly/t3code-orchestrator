@@ -1409,14 +1409,13 @@ export const cardAutoMergeUpdated = (
   card: BoardCard,
   autoMerge: boolean,
   sequence: number,
-): HarnessEvent =>
-  cardAutomationUpdated(card, { autoMerge: autoMerge ? true : null }, sequence);
+): HarnessEvent => cardAutomationUpdated(card, { autoMerge: autoMerge ? true : null }, sequence);
 
 /** A `board.card.set-automation` as the decider records it: the card with its
     new own toggles, and the marker naming which moved. The harness does not
     loop the reactor's events back, so a test writes the card into the model
     itself (see `setAutomation`) and pumps this. */
-export const cardAutomationUpdated = (
+const cardAutomationUpdated = (
   card: BoardCard,
   settings: {
     readonly autoPlan?: boolean | null;
