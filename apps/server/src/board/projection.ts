@@ -623,6 +623,7 @@ const BoardCardDependencyRefDbRow = Schema.Struct({
 const BoardCardChildRefDbRow = Schema.Struct({
   ...BoardCardDependencyRefDbRow.fields,
   sourcePlanId: Schema.NullOr(BoardPlanId),
+  dependsOn: Schema.fromJsonString(Schema.Array(BoardCardId)),
 });
 
 function boardCardToRow(card: BoardCard): BoardCardDbRow {
@@ -1322,7 +1323,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         title,
         stage,
         archived_at AS "archivedAt",
-        source_plan_id AS "sourcePlanId"
+        source_plan_id AS "sourcePlanId",
+        depends_on AS "dependsOn"
       FROM board_cards
       WHERE parent_card_id = ${cardId}
       ORDER BY card_number

@@ -305,3 +305,47 @@ it.layer(makeTestLayer("t3o-board-archive-6-"))("card detail group dependency re
     }),
   );
 });
+
+it.layer(makeTestLayer("t3o-board-archive-7-"))("card detail child refs", (it) => {
+  it.effect("carries each child's own dependsOn, hand-made children included (T3O-34)", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      yield* engine.dispatch(createProject);
+      const group = BoardCardId.make("card-group");
+      const first = BoardCardId.make("card-first");
+      const second = BoardCardId.make("card-second");
+      const create = (
+        cardId: BoardCardId,
+        fields: {
+          readonly parentCardId?: BoardCardId;
+          readonly dependsOn?: ReadonlyArray<BoardCardId>;
+          readonly heading?: boolean;
+        } = {},
+      ) =>
+        engine.dispatch({
+          type: "board.card.create",
+          commandId: CommandId.make(`cmd-create-${cardId}`),
+          cardId,
+          projectId,
+          title: `Card ${cardId}`,
+          ...fields,
+          createdAt,
+        });
+      yield* create(group, { heading: true });
+      yield* create(first, { parentCardId: group });
+      yield* create(second, { parentCardId: group, dependsOn: [first] });
+
+      const board = yield* BoardQueries;
+      assert.isNotNull(board);
+      if (board === null) return;
+      const detail = yield* board.boardCardDetail(group);
+      assert.deepStrictEqual(
+        detail?.children.map((child) => ({ cardId: child.cardId, dependsOn: child.dependsOn })),
+        [
+          { cardId: first, dependsOn: [] },
+          { cardId: second, dependsOn: [first] },
+        ],
+      );
+    }),
+  );
+});

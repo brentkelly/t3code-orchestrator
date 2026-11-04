@@ -8504,6 +8504,10 @@ export type BoardCardDependencyRef = typeof BoardCardDependencyRef.Type;
 export const BoardCardChildRef = Schema.Struct({
   ...BoardCardDependencyRef.fields,
   sourcePlanId: Schema.NullOr(BoardPlanId),
+  /** The child's own `dependsOn` (T3O-34): the Cards pane draws sibling edges
+      from it, so a hand-made group child has edges too. Detail-only, never on
+      the shell (D7). Decodes to `[]` on older payloads. */
+  dependsOn: Schema.Array(BoardCardId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type BoardCardChildRef = typeof BoardCardChildRef.Type;
 
