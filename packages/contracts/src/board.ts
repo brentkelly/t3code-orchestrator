@@ -10088,7 +10088,8 @@ export function resolveBoardPlanReviewSettings(
   return {
     enabledByDefault: settings?.enabledByDefault ?? false,
     defaultRounds: settings?.defaultRounds ?? DEFAULT_BOARD_PLAN_REVIEW_ROUNDS,
-    prompt: prompt === null || prompt.trim().length === 0 ? DEFAULT_BOARD_PLAN_REVIEW_PROMPT : prompt,
+    prompt:
+      prompt === null || prompt.trim().length === 0 ? DEFAULT_BOARD_PLAN_REVIEW_PROMPT : prompt,
   };
 }
 
@@ -10096,7 +10097,10 @@ export function resolveBoardPlanReviewSettings(
     default when it has none. Shared by the server and the web client. */
 export function resolveBoardCardPlanReview(
   card: { readonly planReview?: BoardCardPlanReview | null | undefined },
-  planStageExecution: { readonly planReview?: BoardPlanReviewSettings | undefined } | null | undefined,
+  planStageExecution:
+    | { readonly planReview?: BoardPlanReviewSettings | undefined }
+    | null
+    | undefined,
 ): BoardCardPlanReview {
   if (card.planReview != null) return card.planReview;
   const settings = resolveBoardPlanReviewSettings(planStageExecution);

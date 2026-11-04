@@ -373,16 +373,18 @@ it.effect("rounds are locked while a review runs, and turning it off stops the r
 
 it.effect("turning review off with none running, or when already off, stops nothing", () =>
   Effect.gen(function* () {
-    assert.deepStrictEqual(types(yield* decide(update({ enabled: false, rounds: 2 }), readModel({}))), [
-      "board.card-updated",
-    ]);
+    assert.deepStrictEqual(
+      types(yield* decide(update({ enabled: false, rounds: 2 }), readModel({}))),
+      ["board.card-updated"],
+    );
     const alreadyOff = readModel({
       card: makeCard({ planReview: { enabled: false, rounds: 3 } }),
       state: stepState(started),
     });
-    assert.deepStrictEqual(types(yield* decide(update({ enabled: false, rounds: 3 }), alreadyOff)), [
-      "board.card-updated",
-    ]);
+    assert.deepStrictEqual(
+      types(yield* decide(update({ enabled: false, rounds: 3 }), alreadyOff)),
+      ["board.card-updated"],
+    );
     // A review left on a settled step is not running.
     const settled = readModel({ state: stepState({ ...started, status: "succeeded" }) });
     assert.deepStrictEqual(types(yield* decide(update({ enabled: true, rounds: 9 }), settled)), [

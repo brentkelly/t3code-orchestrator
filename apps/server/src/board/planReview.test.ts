@@ -16,7 +16,11 @@ import {
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 
-import { planReviewInstructions, resolveCardPlanReview, runningPlanReviewStep } from "./planReview.ts";
+import {
+  planReviewInstructions,
+  resolveCardPlanReview,
+  runningPlanReviewStep,
+} from "./planReview.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const cardId = BoardCardId.make("card-1");
@@ -126,9 +130,7 @@ describe("plan review on the server", () => {
     const off = card({ planReview: { enabled: false, rounds: 2 } });
     assert.isNull(runningPlanReviewStep({ board: boardOf(off, state()), card: off, settings }));
     const { planReviewStartedAt: _a, planReviewRounds: _b, ...notStarted } = state();
-    assert.isNull(
-      runningPlanReviewStep({ board: boardOf(on, notStarted), card: on, settings }),
-    );
+    assert.isNull(runningPlanReviewStep({ board: boardOf(on, notStarted), card: on, settings }));
     const settled = state({ status: "succeeded" });
     assert.isNull(runningPlanReviewStep({ board: boardOf(on, settled), card: on, settings }));
     const building = state({ stepId: "building" });

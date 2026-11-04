@@ -253,7 +253,11 @@ const planReviewForCommand = (board: BoardState, card: BoardCard, settings: Boar
     commands are serialised, so nothing else starts one in between. */
 const planReviewStartedBy = (
   deps: BoardToolDeps,
-  input: { readonly card: BoardCard; readonly settings: BoardSettings; readonly before: BoardState },
+  input: {
+    readonly card: BoardCard;
+    readonly settings: BoardSettings;
+    readonly before: BoardState;
+  },
 ) =>
   Effect.gen(function* () {
     if (boardCardStepState(input.before, input.card.id)?.planReviewStartedAt !== undefined) {

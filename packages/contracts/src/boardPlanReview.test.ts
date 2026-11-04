@@ -112,9 +112,9 @@ describe("plan review resolution", () => {
   it("uses the card's own setting before the Settings default", () => {
     const stage = { planReview: { enabledByDefault: true, defaultRounds: 7, prompt: null } };
     expect(resolveBoardCardPlanReview({}, stage)).toEqual({ enabled: true, rounds: 7 });
-    expect(resolveBoardCardPlanReview({ planReview: { enabled: false, rounds: 1 } }, stage)).toEqual(
-      { enabled: false, rounds: 1 },
-    );
+    expect(
+      resolveBoardCardPlanReview({ planReview: { enabled: false, rounds: 1 } }, stage),
+    ).toEqual({ enabled: false, rounds: 1 });
   });
 
   it("reads the agent's report, tolerating anything malformed", () => {
@@ -124,7 +124,9 @@ describe("plan review resolution", () => {
     expect(readBoardPlanReviewReport(null)).toEqual({ roundsRun: null, converged: null });
     expect(readBoardPlanReviewReport("not json")).toEqual({ roundsRun: null, converged: null });
     expect(
-      readBoardPlanReviewReport(JSON.stringify({ planReview: { roundsRun: -1, converged: "yes" } })),
+      readBoardPlanReviewReport(
+        JSON.stringify({ planReview: { roundsRun: -1, converged: "yes" } }),
+      ),
     ).toEqual({ roundsRun: null, converged: null });
   });
 });

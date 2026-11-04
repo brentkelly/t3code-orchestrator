@@ -64,10 +64,10 @@ export function boardCardPlanReviewView(input: {
   if (planIndex === -1 || cardIndex === -1 || cardIndex > planIndex) return null;
   const resolved = resolveBoardCardPlanReview(input.card, input.planStageExecution);
   const inProgress =
-    resolved.enabled &&
-    cardIndex === planIndex &&
-    input.planReviewStarted !== undefined;
-  const rounds = inProgress ? (input.planReviewStarted?.rounds ?? resolved.rounds) : resolved.rounds;
+    resolved.enabled && cardIndex === planIndex && input.planReviewStarted !== undefined;
+  const rounds = inProgress
+    ? (input.planReviewStarted?.rounds ?? resolved.rounds)
+    : resolved.rounds;
   return {
     enabled: resolved.enabled,
     rounds,

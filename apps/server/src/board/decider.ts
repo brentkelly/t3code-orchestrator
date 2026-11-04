@@ -2816,7 +2816,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               },
             ]
           : [];
-      if (proposedDependsOn === undefined) return stopped.length === 0 ? updated : [updated, ...stopped];
+      if (proposedDependsOn === undefined)
+        return stopped.length === 0 ? updated : [updated, ...stopped];
       // A group's dependencies hold back every card inside it (T3O-27).
       const cards = board.cards.map((candidate) =>
         candidate.id === card.id ? nextCard : candidate,

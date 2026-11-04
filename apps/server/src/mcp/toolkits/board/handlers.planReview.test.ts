@@ -139,18 +139,14 @@ it.layer(layer)("plan review through the board tools", (it) => {
     Effect.gen(function* () {
       const { cardId, threadId } = yield* seedPlanningCard("propose");
       yield* turnOn(cardId, threadId, 3);
-      const first = yield* boardHandlers
-        .board_propose_plans({ plans: onePlan })
-        .pipe(as(threadId));
+      const first = yield* boardHandlers.board_propose_plans({ plans: onePlan }).pipe(as(threadId));
       assert.strictEqual(first.planReview?.rounds, 3);
       assert.include(first.planReview?.instructions ?? "", "up to 3 rounds");
       assert.notInclude(first.planReview?.instructions ?? "", "{rounds}");
       // Human-in-the-loop planning: the review ends in a sign-off.
       assert.include(first.planReview?.instructions ?? "", "sign-off");
 
-      const again = yield* boardHandlers
-        .board_propose_plans({ plans: onePlan })
-        .pipe(as(threadId));
+      const again = yield* boardHandlers.board_propose_plans({ plans: onePlan }).pipe(as(threadId));
       assert.strictEqual(again.planReview, undefined);
 
       // While it runs, re-orienting returns the same instructions.
@@ -171,37 +167,39 @@ it.layer(layer)("plan review through the board tools", (it) => {
     }),
   );
 
-  it.effect("turned on after the plan was posted, completion is held back once, not as an error", () =>
-    Effect.gen(function* () {
-      const { cardId, threadId } = yield* seedPlanningCard("late");
-      yield* boardHandlers.board_propose_plans({ plans: onePlan }).pipe(as(threadId));
-      yield* turnOn(cardId, threadId, 2);
+  it.effect(
+    "turned on after the plan was posted, completion is held back once, not as an error",
+    () =>
+      Effect.gen(function* () {
+        const { cardId, threadId } = yield* seedPlanningCard("late");
+        yield* boardHandlers.board_propose_plans({ plans: onePlan }).pipe(as(threadId));
+        yield* turnOn(cardId, threadId, 2);
 
-      const held = yield* boardHandlers
-        .board_complete_step({ outcome: "succeeded", summary: "Planned." })
-        .pipe(as(threadId));
-      assert.strictEqual(held.completed, false);
-      assert.strictEqual(held.planReview?.rounds, 2);
-      assert.include(held.message ?? "", "Not recorded yet");
-      const between = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
-      assert.strictEqual(between.steps.length, 0);
+        const held = yield* boardHandlers
+          .board_complete_step({ outcome: "succeeded", summary: "Planned." })
+          .pipe(as(threadId));
+        assert.strictEqual(held.completed, false);
+        assert.strictEqual(held.planReview?.rounds, 2);
+        assert.include(held.message ?? "", "Not recorded yet");
+        const between = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
+        assert.strictEqual(between.steps.length, 0);
 
-      const done = yield* boardHandlers
-        .board_complete_step({
-          outcome: "succeeded",
-          summary: "Planned and reviewed.",
-          payload: { planReview: { roundsRun: 1, converged: true } },
-        })
-        .pipe(as(threadId));
-      assert.strictEqual(done.completed, undefined);
-      assert.strictEqual(done.outcome, "succeeded");
-      const after = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
-      assert.strictEqual(after.steps.length, 1);
-      assert.isTrue(after.activity.some((entry) => entry.kind === "plan-review-started"));
-      const finished = after.activity.find((entry) => entry.kind === "plan-review-finished");
-      assert.strictEqual(finished?.payload.planReviewRoundsRun, 1);
-      assert.strictEqual(finished?.payload.planReviewRounds, 2);
-    }),
+        const done = yield* boardHandlers
+          .board_complete_step({
+            outcome: "succeeded",
+            summary: "Planned and reviewed.",
+            payload: { planReview: { roundsRun: 1, converged: true } },
+          })
+          .pipe(as(threadId));
+        assert.strictEqual(done.completed, undefined);
+        assert.strictEqual(done.outcome, "succeeded");
+        const after = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
+        assert.strictEqual(after.steps.length, 1);
+        assert.isTrue(after.activity.some((entry) => entry.kind === "plan-review-started"));
+        const finished = after.activity.find((entry) => entry.kind === "plan-review-finished");
+        assert.strictEqual(finished?.payload.planReviewRoundsRun, 1);
+        assert.strictEqual(finished?.payload.planReviewRounds, 2);
+      }),
   );
 
   it.effect("turning the review off lifts it from the context", () =>

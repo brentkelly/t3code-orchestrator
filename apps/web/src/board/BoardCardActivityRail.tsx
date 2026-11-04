@@ -500,8 +500,7 @@ function activitySentence(
       return <>turned the plan review off</>;
     case "plan-review-finished": {
       const run = payload.planReviewRoundsRun ?? null;
-      const of =
-        payload.planReviewRounds === undefined ? "" : ` of ${payload.planReviewRounds}`;
+      const of = payload.planReviewRounds === undefined ? "" : ` of ${payload.planReviewRounds}`;
       return run === null ? (
         <>finished the plan review; rounds not reported</>
       ) : (

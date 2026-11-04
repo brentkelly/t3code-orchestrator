@@ -1,8 +1,4 @@
-import {
-  BOARD_SEED_STAGES,
-  BoardStageId,
-  type BoardPlanReviewSettings,
-} from "@t3tools/contracts";
+import { BOARD_SEED_STAGES, BoardStageId, type BoardPlanReviewSettings } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { boardCardPlanReviewView, nextBoardCardPlanReview } from "./boardCardPlanReview";

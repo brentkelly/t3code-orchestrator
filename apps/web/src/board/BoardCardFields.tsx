@@ -104,9 +104,7 @@ export function BoardDependencySection({
             <span className="text-[11px] font-medium text-foreground">
               {dependencies.length === 0 ? "None" : String(dependencies.length)}
             </span>
-            <ChevronDownIcon
-              className={cn("size-3 text-muted-foreground", open && "rotate-180")}
-            />
+            <ChevronDownIcon className={cn("size-3 text-muted-foreground", open && "rotate-180")} />
           </button>
         ) : null}
       </div>
