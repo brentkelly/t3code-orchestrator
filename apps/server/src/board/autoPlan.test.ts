@@ -258,7 +258,7 @@ it.effect("only a human's answer turns Auto-plan off; the board's own answer doe
       const threadId = boardCardStepState(yield* h.board, id)!.threadId!;
       // Carried on the signal, so it holds across a restart that lost every
       // in-memory note of the board's answer.
-      yield* h.pumpRuntime({ ...userInputResolved(threadId), byBoard: true });
+      yield* h.pumpRuntime({ type: "input-resolved", threadId, answered: true, byBoard: true });
       assert.isTrue(cardOf((yield* h.board).cards, "answered")?.autoPlanSetting);
       yield* h.pumpRuntime(userInputResolved(threadId));
       assert.isFalse(cardOf((yield* h.board).cards, "answered")?.autoPlanSetting);
