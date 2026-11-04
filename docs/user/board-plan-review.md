@@ -31,6 +31,7 @@ re-posted and the step completed, however you word it.
 
 The section header shows **In progress** and the rounds are locked. To stop a review, switch it off:
 the agent is told to summarise what it has found, re-post the plan if it changed, and finish.
+Changing the Settings default does not stop a review that has already started.
 
 On an auto-planned card the review still runs, but the agent decides everything itself and finishes
 without waiting for your sign-off.

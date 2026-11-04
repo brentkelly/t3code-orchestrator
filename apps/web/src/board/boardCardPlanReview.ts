@@ -63,21 +63,25 @@ export function boardCardPlanReviewView(input: {
   const cardIndex = ordered.findIndex((stage) => stage.stageId === input.card.stage);
   if (planIndex === -1 || cardIndex === -1 || cardIndex > planIndex) return null;
   const resolved = resolveBoardCardPlanReview(input.card, input.planStageExecution);
+  // Mirrors the server: a started review runs until the card's own toggle stops it.
   const inProgress =
-    resolved.enabled && cardIndex === planIndex && input.planReviewStarted !== undefined;
+    input.card.planReview?.enabled !== false &&
+    cardIndex === planIndex &&
+    input.planReviewStarted !== undefined;
+  const enabled = resolved.enabled || inProgress;
   const rounds = inProgress
     ? (input.planReviewStarted?.rounds ?? resolved.rounds)
     : resolved.rounds;
   return {
-    enabled: resolved.enabled,
+    enabled,
     rounds,
     inProgress,
-    summary: !resolved.enabled
+    summary: !enabled
       ? "Off"
       : inProgress
         ? `In progress · ${roundsWord(rounds)}`
         : roundsWord(rounds),
-    note: resolved.enabled
+    note: enabled
       ? `When the plan is posted, the planning agent runs up to ${roundsWord(rounds)} of review with two reviewers each, then the final plan comes to you for sign-off.`
       : "The plan comes straight to you for sign-off.",
     canDecrease: !inProgress && rounds > BOARD_PLAN_REVIEW_ROUNDS_MIN,

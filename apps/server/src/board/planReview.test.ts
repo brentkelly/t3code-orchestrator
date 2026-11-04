@@ -137,6 +137,17 @@ describe("plan review on the server", () => {
     assert.isNull(runningPlanReviewStep({ board: boardOf(on, building), card: on, settings }));
   });
 
+  it("a started review outlives the Settings default turning off; only the card's toggle stops it", () => {
+    const inherited = card();
+    assert.isFalse(
+      resolveCardPlanReview({ board: boardOf(inherited, state()), card: inherited, settings })
+        .enabled,
+    );
+    assert.isNotNull(
+      runningPlanReviewStep({ board: boardOf(inherited, state()), card: inherited, settings }),
+    );
+  });
+
   it("words the instructions for a pending auto-plan as unattended", () => {
     const on = card({ planReview: { enabled: true, rounds: 2 } });
     const attended = planReviewInstructions({

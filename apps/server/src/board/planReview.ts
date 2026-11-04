@@ -36,7 +36,9 @@ export function resolveCardPlanReview(input: {
   return resolveBoardCardPlanReview(input.card, planStageExecution(input.board, input.settings));
 }
 
-/** The card's live plan step while a plan review is running on it, or null. */
+/** The card's live plan step while a plan review is running on it, or null.
+    A started review outlives a Settings default change; only the card's own
+    toggle stops it, because only that emits the stop turn. */
 export function runningPlanReviewStep(input: {
   readonly board: BoardState;
   readonly card: BoardCard;
@@ -47,7 +49,7 @@ export function runningPlanReviewStep(input: {
   if (state === null || planStage === null) return null;
   if (state.stepId !== planStage.stageId || isBoardTerminalStepStatus(state.status)) return null;
   if (state.planReviewStartedAt === undefined || state.planReviewRounds === undefined) return null;
-  return resolveCardPlanReview(input).enabled ? state : null;
+  return input.card.planReview?.enabled === false ? null : state;
 }
 
 /** The instructions for a started review, worded for the step's stance now:

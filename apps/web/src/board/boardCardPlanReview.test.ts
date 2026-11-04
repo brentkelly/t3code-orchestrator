@@ -77,6 +77,22 @@ describe("boardCardPlanReviewView", () => {
     });
   });
 
+  it("keeps an inherited review in progress after the Settings default turns off", () => {
+    const view = boardCardPlanReviewView({
+      card: { stage: planning },
+      isGroup: false,
+      stages: BOARD_SEED_STAGES,
+      planStageExecution: settings({ enabledByDefault: false }),
+      planReviewStarted: { rounds: 3 },
+    });
+    expect(view).toMatchObject({
+      enabled: true,
+      inProgress: true,
+      rounds: 3,
+      summary: "In progress · 3 rounds",
+    });
+  });
+
   it("does not report a review in progress once it is turned off", () => {
     const view = boardCardPlanReviewView({
       card: { stage: planning, planReview: { enabled: false, rounds: 2 } },
