@@ -18,6 +18,7 @@ import {
   boardScopeColumnCollapsedByDefault,
   boardScopeStages,
   filterBoardColumnsByScope,
+  livePeekedColumns,
   isBoardCardInScope,
   resolveSubBoardEntry,
   ROOT_BOARD_SCOPE,
@@ -237,5 +238,31 @@ describe("boardColumnCollapsed (T3O-40)", () => {
         storedOrDefaultCollapsed: true,
       }),
     ).toEqual({ collapsed: true, autoFolded: false });
+  });
+});
+
+describe("livePeekedColumns (T3O-40)", () => {
+  it("keeps the same set while every peek is still on an empty column", () => {
+    const peeked = new Set(["sprint"]);
+    expect(
+      livePeekedColumns({ autoCollapseEmpty: true, peeked, emptyColumnKeys: ["sprint", "done"] }),
+    ).toBe(peeked);
+  });
+
+  it("ends a peek once its column holds cards", () => {
+    const peeked = new Set(["sprint", "done"]);
+    expect([
+      ...livePeekedColumns({ autoCollapseEmpty: true, peeked, emptyColumnKeys: ["done"] }),
+    ]).toEqual(["done"]);
+  });
+
+  it("drops peeks outside the current scope and every peek while the setting is off", () => {
+    const peeked = new Set(["sprint", "sub/card-parent/sprint"]);
+    expect([
+      ...livePeekedColumns({ autoCollapseEmpty: true, peeked, emptyColumnKeys: ["sprint"] }),
+    ]).toEqual(["sprint"]);
+    expect(
+      livePeekedColumns({ autoCollapseEmpty: false, peeked, emptyColumnKeys: ["sprint"] }).size,
+    ).toBe(0);
   });
 });

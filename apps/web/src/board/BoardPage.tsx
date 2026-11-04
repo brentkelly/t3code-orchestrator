@@ -99,6 +99,7 @@ import {
   boardScopeQueryKey,
   boardScopeStages,
   filterBoardColumnsByScope,
+  livePeekedColumns,
   isBoardCardInScope,
   resolveSubBoardEntry,
   ROOT_BOARD_SCOPE,
@@ -778,16 +779,14 @@ function EnvironmentBoard({
   // A peek ends once its column holds cards (or the setting or scope changes),
   // so the column folds again the next time it empties. Adjusted during
   // render, not in an effect, so the stale peek never paints.
-  const livePeeks = autoCollapseEmpty
-    ? [...peekedColumns].filter((key) =>
-        renderedStages.some(
-          (stage) =>
-            collapseKeyOf(stage.stageId) === key &&
-            (scopedColumns[stage.stageId] ?? EMPTY_CARDS).length === 0,
-        ),
-      )
-    : [];
-  if (livePeeks.length !== peekedColumns.size) setPeekedColumns(new Set(livePeeks));
+  const livePeeks = livePeekedColumns({
+    autoCollapseEmpty,
+    peeked: peekedColumns,
+    emptyColumnKeys: renderedStages
+      .filter((stage) => (scopedColumns[stage.stageId] ?? EMPTY_CARDS).length === 0)
+      .map((stage) => collapseKeyOf(stage.stageId)),
+  });
+  if (livePeeks !== peekedColumns) setPeekedColumns(livePeeks);
   const handleSetCollapsed = useCallback(
     (stageId: BoardStageId, collapsed: boolean) => {
       const key = boardScopeCollapseKey(scope, stageId);

@@ -121,6 +121,24 @@ export function boardColumnCollapsed(input: {
 }
 
 /**
+ * The peeks that survive this render (T3O-40): only those on a column of the
+ * current scope that is still empty, and none while the setting is off. A peek
+ * ends when cards arrive, so the column folds again the next time it empties.
+ * Returns `peeked` itself when nothing was dropped, so callers can compare by
+ * reference before setting state.
+ */
+export function livePeekedColumns(input: {
+  readonly autoCollapseEmpty: boolean;
+  readonly peeked: ReadonlySet<string>;
+  readonly emptyColumnKeys: ReadonlyArray<string>;
+}): ReadonlySet<string> {
+  if (input.peeked.size === 0) return input.peeked;
+  const empty = new Set(input.autoCollapseEmpty ? input.emptyColumnKeys : []);
+  const live = [...input.peeked].filter((key) => empty.has(key));
+  return live.length === input.peeked.size ? input.peeked : new Set(live);
+}
+
+/**
  * The collapse-store key for one column in one scope (D1): the bare stage id
  * on the root board — every persisted pre-t3o-25 entry keeps meaning exactly
  * what it meant — and a `sub/<parent>/<stage>` composite inside a sub-board,

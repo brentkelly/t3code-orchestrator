@@ -41,6 +41,17 @@ the menu.
 Collapsing the menu also hides the app-update indicator that shares it. If an update finishes
 downloading while the menu is collapsed, T3 Code still tells you.
 
+## Folding empty stages
+
+Turn on **Auto-collapse empty stages** in **Settings → Board → Display** and every stage with no
+cards folds to a narrow strip, on the board and inside sub-boards alike. A stage opens again as soon
+as a card lands in it, and drag a card over a folded stage to open it and drop the card where you
+want it. The setting belongs to the board, so everyone using it sees the same thing.
+
+Select a folded empty stage to open it until it gets cards. Folding happens on top of the stages you
+collapse or expand yourself, so it never changes them: a stage you collapsed stays collapsed when
+cards arrive.
+
 ## Stepping between cards
 
 Reading through the board no longer means closing a card to open the next one. With a card open,
