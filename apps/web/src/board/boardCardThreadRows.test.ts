@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCardChatPresence,
+  boardCardMissingThreadReason,
   cardThreadIdsMissingFromShell,
   type BoardCardThreadRows,
 } from "./boardCardThreadRows";
@@ -51,5 +52,23 @@ describe("boardCardChatPresence", () => {
     const failed = rows({ failed: new Set([threadId]) });
     expect(boardCardChatPresence({ threadId, inShell: false, rows: failed })).toBe("failed");
     expect(boardCardChatPresence({ threadId, inShell: false, rows: rows({}) })).toBe("gone");
+  });
+});
+
+describe("boardCardMissingThreadReason", () => {
+  const threadId = ThreadId.make("thread");
+  const reason = (archivedThreadIds: ReadonlyArray<ThreadId> | null, archivedLoading = false) =>
+    boardCardMissingThreadReason({ threadId, archivedThreadIds, archivedLoading });
+
+  it("names an archived thread instead of calling it gone", () => {
+    expect(reason([threadId])).toBe("archived");
+    expect(reason([threadId], true)).toBe("archived");
+  });
+
+  it("calls a thread gone only once the archived read lacks it", () => {
+    expect(reason(null, true)).toBe("checking");
+    expect(reason([], true)).toBe("checking");
+    expect(reason(null)).toBe("unknown");
+    expect(reason([ThreadId.make("other")])).toBe("gone");
   });
 });

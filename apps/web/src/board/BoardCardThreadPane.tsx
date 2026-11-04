@@ -41,9 +41,14 @@ import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
 import { Button } from "../components/ui/button";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
 import { useThreadShell } from "../state/entities";
 import { threadFamilies } from "../state/threads";
-import { boardCardChatPresence, useBoardCardThreadRows } from "./boardCardThreadRows";
+import {
+  boardCardChatPresence,
+  boardCardMissingThreadReason,
+  useBoardCardThreadRows,
+} from "./boardCardThreadRows";
 import {
   BoardCardThreadAddMenu,
   type BoardAdoptSearch,
@@ -74,14 +79,13 @@ function BoardCardChat({
   const rows = useBoardCardThreadRows(environmentId, inShell ? NO_THREAD_IDS : [threadId]);
   const presence = boardCardChatPresence({ threadId, inShell, rows });
 
+  if (presence === "gone") {
+    return <BoardCardMissingChat environmentId={environmentId} threadId={threadId} />;
+  }
   if (presence !== "open") {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-[12.5px] text-muted-foreground">
-        {presence === "loading"
-          ? "Loading thread…"
-          : presence === "failed"
-            ? "Couldn't load this thread."
-            : "This thread is no longer on the server."}
+        {presence === "loading" ? "Loading thread…" : "Couldn't load this thread."}
         {presence === "failed" ? (
           <Button
             onClick={() => threadFamilies.refresh(appAtomRegistry, environmentId, threadId)}
@@ -101,6 +105,48 @@ function BoardCardChat({
       routeKind="server"
       threadId={threadId}
     />
+  );
+}
+
+/** A linked thread the active family read did not return: archived, or truly gone. Mounted only
+    then, so the archived snapshot is read only when it can explain the absence. */
+function BoardCardMissingChat({
+  environmentId,
+  threadId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const archived = useArchivedThreadSnapshots([environmentId]);
+  const archivedThreads = archived.snapshots.find((entry) => entry.environmentId === environmentId)
+    ?.snapshot.threads;
+  const reason = boardCardMissingThreadReason({
+    threadId,
+    archivedThreadIds: archivedThreads?.map((thread) => thread.id) ?? null,
+    // An initial read is not yet waiting, so no snapshot and no error still means loading.
+    archivedLoading:
+      archived.isLoading || (archivedThreads === undefined && archived.error === null),
+  });
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-[12.5px] text-muted-foreground">
+      {reason === "checking"
+        ? "Loading thread…"
+        : reason === "archived"
+          ? "This thread is archived. Unarchive it to open it here."
+          : reason === "unknown"
+            ? "Couldn't load this thread."
+            : "This thread is no longer on the server."}
+      {reason === "unknown" ? (
+        <Button onClick={archived.refresh} size="xs" variant="outline">
+          Retry
+        </Button>
+      ) : null}
+      {reason === "archived" ? (
+        <Button render={<Link to="/settings/archived" />} size="xs" variant="outline">
+          Archived threads
+        </Button>
+      ) : null}
+    </div>
   );
 }
 

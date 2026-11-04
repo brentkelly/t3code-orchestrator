@@ -55,6 +55,20 @@ export function boardCardChatPresence(input: {
   return "gone";
 }
 
+/**
+ * Why a linked thread the family read did not return cannot open: the family read covers active
+ * threads only, so an archived one is absent from it but still on the server.
+ */
+export function boardCardMissingThreadReason(input: {
+  readonly threadId: ThreadId;
+  readonly archivedThreadIds: ReadonlyArray<ThreadId> | null;
+  readonly archivedLoading: boolean;
+}): "checking" | "archived" | "unknown" | "gone" {
+  if (input.archivedThreadIds?.includes(input.threadId) === true) return "archived";
+  if (input.archivedLoading) return "checking";
+  return input.archivedThreadIds === null ? "unknown" : "gone";
+}
+
 const rowsAtom = Atom.family((key: string) => {
   const [environmentId, threadIds] = JSON.parse(key) as [EnvironmentId, ReadonlyArray<ThreadId>];
   return Atom.make((get): BoardCardThreadRows => {
