@@ -98,6 +98,29 @@ export function boardScopeColumnCollapsedByDefault(input: {
 }
 
 /**
+ * A column's rendered collapse state with the auto-collapse setting applied
+ * (T3O-40). While the setting is on, an empty column folds whatever the store
+ * or the scope default says (`autoFolded`), and only a peek or a drag hovering
+ * it opens it. A column holding cards falls back to the stored-or-default
+ * value, so a stage collapsed by hand stays collapsed when cards arrive.
+ */
+export function boardColumnCollapsed(input: {
+  readonly autoCollapseEmpty: boolean;
+  readonly cardCount: number;
+  readonly dragOverThisColumn: boolean;
+  readonly peeked: boolean;
+  readonly storedOrDefaultCollapsed: boolean;
+}): { readonly collapsed: boolean; readonly autoFolded: boolean } {
+  const autoFolded = input.autoCollapseEmpty && input.cardCount === 0;
+  return {
+    autoFolded,
+    collapsed: autoFolded
+      ? !(input.peeked || input.dragOverThisColumn)
+      : input.storedOrDefaultCollapsed,
+  };
+}
+
+/**
  * The collapse-store key for one column in one scope (D1): the bare stage id
  * on the root board — every persisted pre-t3o-25 entry keeps meaning exactly
  * what it meant — and a `sub/<parent>/<stage>` composite inside a sub-board,
