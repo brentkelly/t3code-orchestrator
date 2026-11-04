@@ -66,6 +66,8 @@ import {
   BoardLabelUpdatedPayload,
   BoardPlansApprovedPayload,
   BoardPlansProposedPayload,
+  BoardPlanReviewStartedPayload,
+  BoardPlanReviewStoppedPayload,
   BoardCardBaseRefRecordedPayload,
   BoardCardPlacedPayload,
   BoardCardWorkerMoveRecordedPayload,
@@ -137,6 +139,12 @@ const decodeBoardCardStepCompletedPayload = Schema.decodeUnknownEffect(
   BoardCardStepCompletedPayload,
 );
 const decodeBoardPlansProposedPayload = Schema.decodeUnknownEffect(BoardPlansProposedPayload);
+const decodeBoardPlanReviewStartedPayload = Schema.decodeUnknownEffect(
+  BoardPlanReviewStartedPayload,
+);
+const decodeBoardPlanReviewStoppedPayload = Schema.decodeUnknownEffect(
+  BoardPlanReviewStoppedPayload,
+);
 const decodeBoardPlanWrittenPayload = Schema.decodeUnknownEffect(BoardPlanWrittenPayload);
 const decodeBoardPlansApprovedPayload = Schema.decodeUnknownEffect(BoardPlansApprovedPayload);
 const decodeBoardCardIntegrationBranchRecordedPayload = Schema.decodeUnknownEffect(
@@ -943,6 +951,20 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
+    // T3o: plan review (T3O-39). Starting writes the step state; stopping is
+    // a signal for the reactor and the rail, and changes no state.
+    case "board.plan-review-started":
+      return decodeBoardPlanReviewStartedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
+    case "board.plan-review-stopped":
+      return decodeBoardPlanReviewStoppedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.as(model),
+      );
+
     // T3o (T3O-62): the worker registry. Touches no card.
     case "board.worker-registered":
       return decodeBoardWorkerRegisteredPayload(event.payload).pipe(
@@ -1352,6 +1374,9 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     // A background-wait check-in (T3O-20) leaves the step running on the same
     // thread; the card's "Waiting" label is thread-derived, not step-derived.
     case "board.card-step-checked-in":
+    // Plan review (T3O-39) is card detail: the sidebar and the rail show it.
+    case "board.plan-review-started":
+    case "board.plan-review-stopped":
     // Branch cleanup is card DETAIL too: it lands on the activity rail, which
     // rides `board.subscribeCard`, and changes nothing a column card renders.
     case "board.card-note-recorded":

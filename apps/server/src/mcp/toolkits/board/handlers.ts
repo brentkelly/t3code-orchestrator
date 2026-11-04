@@ -51,6 +51,7 @@ import {
   type BoardPlansProposeCommand,
   type BoardPlanWriteCommand,
   BOARD_SEED_STAGE_IDS,
+  type BoardSettings,
   type BoardState,
   unmetBoardCardDependencies,
   boardCardGroupOf,
@@ -87,6 +88,11 @@ import { boardCardAttachmentManifest } from "../../../board/attachments.ts";
 import { boardAgentActor, stampBoardActivityActor } from "../../../board/activityActors.ts";
 import { boardBriefVersion } from "../../../board/briefEdits.ts";
 import { isKeptStepThread, keptPlanningStepId } from "../../../board/planningThreadKeep.ts";
+import {
+  planReviewInstructions,
+  resolveCardPlanReview,
+  runningPlanReviewStep,
+} from "../../../board/planReview.ts";
 import { SupervisorReactor } from "../../../board/supervisorReactor.ts";
 import {
   boardGroupIntoNewPlan,
@@ -228,6 +234,33 @@ const resolveCardKeyPrefix = (
   });
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+/** The board's settings, for resolving a card's plan review (T3O-39). */
+const readBoardSettings = Effect.gen(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService;
+  return (yield* settings.getSettings.pipe(Effect.mapError(internalError))).board;
+});
+
+/** The card's plan review for a command: present only when it is on, since
+    the decider reads an absent one as off (T3O-39). */
+const planReviewForCommand = (board: BoardState, card: BoardCard, settings: BoardSettings) => {
+  const planReview = resolveCardPlanReview({ board, card, settings });
+  return planReview.enabled ? { planReview } : {};
+};
+
+/** The instructions of a plan review this command started, or null: the
+    decider stamps the review with the command's own instant (T3O-39). */
+const planReviewStartedBy = (
+  deps: BoardToolDeps,
+  input: { readonly card: BoardCard; readonly settings: BoardSettings; readonly at: string },
+) =>
+  Effect.gen(function* () {
+    const after = yield* readBoardState(deps);
+    const state = boardCardStepState(after, input.card.id);
+    if (state === null || state.planReviewStartedAt !== input.at) return null;
+    const card = after.cards.find((candidate) => candidate.id === input.card.id) ?? input.card;
+    return planReviewInstructions({ board: after, card, settings: input.settings, state });
+  });
 
 /** Mint a command id (server-dispatched board command, like ws.ts). Yields
     Crypto from context, so callers need only list it as a tool dependency. */
@@ -917,6 +950,14 @@ export const boardHandlers = {
         .boardCardThreads(card.id)
         .pipe(Effect.mapError(internalError));
       const dependencies = describeDependencies(board, card);
+      // A running plan review's instructions (T3O-39), so a re-orienting agent
+      // picks the review up where it was.
+      const settings = yield* readBoardSettings;
+      const reviewStep = runningPlanReviewStep({ board, card, settings });
+      const planReview =
+        reviewStep === null
+          ? null
+          : planReviewInstructions({ board, card, settings, state: reviewStep });
       // T3o (T3O-63): a relayed call hands out paths on the worker, so the
       // card's files go there first — staging at spawn misses later ones.
       const relayed = yield* Effect.serviceOption(BoardRelayInvocation);
@@ -972,6 +1013,7 @@ export const boardHandlers = {
         ancestors: yield* describeAncestors(deps, board, card),
         sourcePlan: yield* describeSourcePlan(deps, board, card, detail?.brief ?? null),
         decisions: sortBoardCardDecisions(detail?.decisions ?? []).slice(0, CONTEXT_DECISIONS_MAX),
+        ...(planReview === null ? {} : { planReview }),
       };
     }),
 
@@ -992,6 +1034,7 @@ export const boardHandlers = {
       // server-side also makes the "pre-complete a future step" case the
       // decider guards against unreachable rather than merely rejected.
       const stepId = yield* resolveCompletionStepId(board, card, deps.scope, input.stepId);
+      const settings = yield* readBoardSettings;
       // Idempotency is decided in the decider (re-emit the first outcome); the
       // pre-read here is only to tell the agent its retry was a no-op.
       const existing = boardCardStepCompletions(board, card.id).find(
@@ -1110,9 +1153,29 @@ export const boardHandlers = {
         summary: input.summary,
         payload,
         threadId: deps.scope.thread.threadId,
+        ...planReviewForCommand(board, card, settings),
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps, command);
+      // Plan review held the completion back (T3O-39): nothing was recorded.
+      // A plain reply, not an error, so the agent runs the review rather than
+      // reaching for a blocked or failed outcome.
+      const planReview = yield* planReviewStartedBy(deps, {
+        card,
+        settings,
+        at: command.createdAt,
+      });
+      if (planReview !== null) {
+        return {
+          stepId,
+          outcome: input.outcome,
+          alreadyCompleted: false,
+          completed: false,
+          planReview,
+          message:
+            "Not recorded yet: plan review is on for this card. Run it as the instructions in planReview say, then call board_complete_step again.",
+        };
+      }
       const replaced = supersedes || repairs;
       return {
         stepId,
@@ -1460,6 +1523,7 @@ export const boardHandlers = {
         input.addLabels,
         input.removeLabels,
         input.externalRef,
+        input.planReview,
       ].some((value) => value !== undefined);
       if (updatesFields || input.pullRequest === undefined) {
         const command: BoardCardUpdateCommand = {
@@ -1478,6 +1542,7 @@ export const boardHandlers = {
           addLabels,
           removeLabels,
           externalRef: input.externalRef,
+          planReview: input.planReview,
           createdAt: yield* nowIso,
         };
         yield* dispatch(deps, command);
@@ -1888,6 +1953,7 @@ export const boardHandlers = {
       const deps = yield* boardToolDeps;
       const board = yield* readBoardState(deps);
       const card = yield* requireCallerCard(board, deps.scope);
+      const settings = yield* readBoardSettings;
       const command: BoardPlansProposeCommand = {
         type: "board.plans.propose",
         commandId: yield* mintCommandId,
@@ -1902,10 +1968,19 @@ export const boardHandlers = {
         ...(input.recommendedMergeTarget === undefined
           ? {}
           : { recommendedMergeTarget: input.recommendedMergeTarget }),
+        ...planReviewForCommand(board, card, settings),
         createdAt: yield* nowIso,
       };
       yield* dispatch(deps, command);
-      return { planIds: input.plans.map((plan) => boardPlanId(card.id, plan.key)) };
+      const planReview = yield* planReviewStartedBy(deps, {
+        card,
+        settings,
+        at: command.createdAt,
+      });
+      return {
+        planIds: input.plans.map((plan) => boardPlanId(card.id, plan.key)),
+        ...(planReview === null ? {} : { planReview }),
+      };
     }),
 
   board_get_plan: (input) =>

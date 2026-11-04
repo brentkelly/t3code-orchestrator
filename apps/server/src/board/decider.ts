@@ -100,6 +100,7 @@ import {
   isBoardParkedStepStatus,
   isBoardTerminalStepStatus,
   isEmptyBoardCardReviewOverrides,
+  readBoardPlanReviewReport,
   pickNextBoardLabelColour,
   BOARD_CARD_ATTACHMENTS_MAX,
   sortBoardCardAttachments,
@@ -675,6 +676,44 @@ const validateBaseBranch = Effect.fn("validateBaseBranch")(function* (input: {
  * silently dropped — nothing in the UI does it, so it is a caller bug worth
  * surfacing.
  */
+/**
+ * The card's live plan-role step, or null (plan review, T3O-39). Plan review
+ * only ever acts on this: a running step of the stage with the plan role.
+ */
+function livePlanReviewStep(board: BoardState, cardId: BoardCardId): BoardCardStepState | null {
+  const state = boardCardStepState(board, cardId);
+  const planStage = boardStageWithRole(board, "plan");
+  if (state === null || planStage === null) return null;
+  if (state.stepId !== planStage.stageId || isBoardTerminalStepStatus(state.status)) return null;
+  return state;
+}
+
+/** Start the plan review on the live plan step (plan review, T3O-39). */
+const planReviewStartedEvent = Effect.fn("planReviewStartedEvent")(function* (input: {
+  readonly command: BoardCardCommand;
+  readonly state: BoardCardStepState;
+  readonly rounds: number;
+}) {
+  const event: PlannedBoardEvent = {
+    ...(yield* makeBoardEventBase({
+      cardId: input.command.cardId,
+      occurredAt: input.command.createdAt,
+      commandId: input.command.commandId,
+    })),
+    type: "board.plan-review-started",
+    payload: {
+      cardId: input.command.cardId,
+      state: {
+        ...input.state,
+        planReviewStartedAt: input.command.createdAt,
+        planReviewRounds: input.rounds,
+        updatedAt: input.command.createdAt,
+      },
+    },
+  };
+  return event;
+});
+
 const validateReviewOverrides = Effect.fn("validateReviewOverrides")(function* (input: {
   readonly board: BoardState;
   readonly command: BoardCardCommand;
@@ -2520,6 +2559,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.humanInLoop === undefined &&
         command.reviewOverrides === undefined &&
         command.modelOverrides === undefined &&
+        command.planReview === undefined &&
         command.baseBranch === undefined &&
         command.scheduledStartAt === undefined &&
         command.autoStart === undefined &&
@@ -2586,6 +2626,30 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
       const dependsOn = proposedDependsOn ?? card.dependsOn;
 
+      // Plan review (T3O-39). Rounds lock once a review has started on the
+      // live plan step; turning it off is always accepted and stops the review.
+      const planReviewStep = livePlanReviewStep(board, card.id);
+      const planReviewRunning =
+        planReviewStep !== null && planReviewStep.planReviewStartedAt !== null;
+      if (
+        planReviewRunning &&
+        command.planReview != null &&
+        command.planReview.enabled &&
+        command.planReview.rounds !== planReviewStep.planReviewRounds
+      ) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' is in a plan review of ${planReviewStep.planReviewRounds} round(s); its rounds cannot change until it leaves Planning. Turn the review off to stop it.`,
+        );
+      }
+      const planReview =
+        command.planReview === undefined ? card.planReview : (command.planReview ?? undefined);
+      const stopsPlanReview =
+        planReviewRunning &&
+        command.planReview?.enabled === false &&
+        card.planReview?.enabled !== false;
+      const { planReview: _priorPlanReview, ...cardWithoutPlanReview } = card;
+
       // The auto-start arm (T3O-24, D1/D2). Refused where it could never act,
       // rather than stored as a flag no path reads: the toggle is only offered
       // on a live top-level card waiting in the stage before build with at
@@ -2643,7 +2707,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
                 );
 
       const nextCard: BoardCard = {
-        ...card,
+        ...cardWithoutPlanReview,
+        ...(planReview === undefined ? {} : { planReview }),
         title: command.title ?? card.title,
         labels: nextLabels,
         dependsOn,
@@ -2733,13 +2798,32 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...(edits.edit === undefined ? {} : { edit: edits.edit }),
         },
       };
-      if (proposedDependsOn === undefined) return updated;
+      const stopped: ReadonlyArray<PlannedBoardEvent> =
+        stopsPlanReview && planReviewStep !== null
+          ? [
+              {
+                ...(yield* makeBoardEventBase({
+                  cardId: command.cardId,
+                  occurredAt: command.createdAt,
+                  commandId: command.commandId,
+                })),
+                type: "board.plan-review-stopped",
+                payload: {
+                  cardId: command.cardId,
+                  stepId: planReviewStep.stepId,
+                  threadId: planReviewStep.threadId,
+                },
+              },
+            ]
+          : [];
+      if (proposedDependsOn === undefined) return stopped.length === 0 ? updated : [updated, ...stopped];
       // A group's dependencies hold back every card inside it (T3O-27).
       const cards = board.cards.map((candidate) =>
         candidate.id === card.id ? nextCard : candidate,
       );
       return [
         updated,
+        ...stopped,
         ...(yield* boardReflagBlockedEvents({
           board,
           command,
@@ -3677,6 +3761,36 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               threadId: command.threadId,
               completedAt: command.createdAt,
             };
+      // Plan review (T3O-39): the first succeeded completion of the live plan
+      // step, with review on and not yet started, starts the review instead of
+      // completing. The tool tells the agent to run it and call again.
+      // Idempotent re-emits, kept threads and other outcomes are never gated.
+      const recordsNew = existing === undefined || replaces;
+      const reviewStep =
+        command.outcome === "succeeded" && liveMatch && recordsNew
+          ? livePlanReviewStep(board, command.cardId)
+          : null;
+      if (
+        reviewStep !== null &&
+        command.planReview?.enabled === true &&
+        reviewStep.planReviewStartedAt === null &&
+        boardCardPlans(board, command.cardId).length > 0
+      ) {
+        return yield* planReviewStartedEvent({
+          command,
+          state: reviewStep,
+          rounds: command.planReview.rounds,
+        });
+      }
+      const planReviewFinished =
+        reviewStep !== null &&
+        reviewStep.planReviewStartedAt !== null &&
+        reviewStep.planReviewRounds !== null
+          ? {
+              rounds: reviewStep.planReviewRounds,
+              ...readBoardPlanReviewReport(command.payload),
+            }
+          : undefined;
       const reviewSummary = reviewSummaryAfter({ board, card, completion });
       return {
         ...(yield* makeBoardEventBase({
@@ -3693,6 +3807,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           // for an idempotent retry, wrong for a repair, because the record the
           // stage executor reads just changed (T3O-14).
           ...(repairsDefect ? { repaired: true } : {}),
+          ...(planReviewFinished === undefined ? {} : { planReviewFinished }),
         },
       };
     }
@@ -3893,7 +4008,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
                 mergeTarget: command.recommendedMergeTarget ?? fallback.mergeTarget,
               };
             })();
-      return {
+      const proposed: PlannedBoardEvent = {
         ...(yield* makeBoardEventBase({
           cardId: command.cardId,
           occurredAt: command.createdAt,
@@ -3907,6 +4022,22 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...(splitRecommendation === undefined ? {} : { splitRecommendation }),
         },
       };
+      // Plan review (T3O-39): the first proposal on the live plan step, with
+      // review on, starts the review in the same decision. The tool result
+      // hands the agent its instructions.
+      const reviewStep =
+        command.planReview?.enabled === true && plans.length > 0
+          ? livePlanReviewStep(board, command.cardId)
+          : null;
+      if (reviewStep === null || reviewStep.planReviewStartedAt !== null) return proposed;
+      return [
+        proposed,
+        yield* planReviewStartedEvent({
+          command,
+          state: reviewStep,
+          rounds: command.planReview?.rounds ?? reviewStep.planReviewRounds ?? 1,
+        }),
+      ];
     }
 
     case "board.plan.write": {
@@ -4960,6 +5091,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         // No human has typed into a fresh step, so no free turn-ending is owed
         // (T3O-17, D3).
         humanTurnAt: null,
+        // Plan review is per stage entry (T3O-39): a re-entered Planning reviews again.
+        planReviewStartedAt: null,
+        planReviewRounds: null,
         prompt: command.prompt,
         providerInstanceId: command.providerInstanceId,
         model: command.model,

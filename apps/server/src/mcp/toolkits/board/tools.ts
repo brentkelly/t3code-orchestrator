@@ -24,6 +24,7 @@ import {
   BOARD_DECISIONS_PER_CALL_MAX,
   BoardCardThreadShell,
   BoardCardExternalRef,
+  BoardCardPlanReview,
   BoardCardAttachmentId,
   BoardCardId,
   BoardCardGroupTarget,
@@ -154,6 +155,13 @@ const BoardCardContextAncestor = Schema.Struct({
   decisions: Schema.Array(BoardCardDecision),
 });
 
+/** A plan review's instructions, as the planning agent receives them (plan
+    review, T3O-39). */
+const BoardPlanReviewToolResult = Schema.Struct({
+  rounds: PositiveInt,
+  instructions: Schema.String,
+});
+
 const BoardCardContext = Schema.Struct({
   card: BoardCard,
   brief: Schema.NullOr(Schema.String),
@@ -216,6 +224,9 @@ const BoardCardContext = Schema.Struct({
   /** This card's own decision log so far (T3O-32), unclear and important
       first, capped at 40 entries like each ancestor's. */
   decisions: Schema.Array(BoardCardDecision).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** The plan review running on this card's planning step (plan review,
+      T3O-39), with its instructions; absent when none is running. */
+  planReview: Schema.optionalKey(BoardPlanReviewToolResult),
 });
 
 /** A card's pull request as an agent checks it (T3O-18). `linked` is true
@@ -323,7 +334,7 @@ export const BoardGetCardContextTool = Tool.make("board_get_card_context", {
 
 export const BoardCompleteStepTool = Tool.make("board_complete_step", {
   description:
-    "Report that your work on this stage is finished. THIS IS THE COMPLETION CONTRACT: the board considers the work done ONLY when you call this. If you finish your work but never call it, the board cannot tell you apart from an agent that crashed, and your work will be treated as failed and retried. Call it exactly once, at the very end, with outcome 'succeeded' when the work is done, 'blocked' when you need something you cannot get yourself, or 'failed' when you could not complete it; include a summary (max 2 KiB) and optional structured payload (max 16 KiB serialised). OMIT stepId: the board resolves the work you were assigned from your own thread. Pass one only if your prompt explicitly gave you a stepId — stages that run several steps, such as the code review loop, always do — and then pass exactly that string; any other value is rejected. A review-loop step (review@N, triage@N, adjudicate@N, sync@N) or the Build stage's step may only succeed with the exact payload its prompt asked for: a succeeded call with a missing or malformed one is REFUSED rather than recorded, so complete with outcome 'failed' instead when you cannot produce it. Never put the payload inside the summary — it is a separate argument, and a summary carrying serialised call markup is rejected. Retry-safe: a repeat call with the same stepId re-returns a recorded 'succeeded' outcome unchanged, UNLESS that record's payload is unreadable, in which case your call repairs it; after a 'failed' or 'blocked' report, a later call on the live step records your new outcome (that is how a recovered retry reports success). Your card is resolved from your thread.",
+    "Report that your work on this stage is finished. Planning with plan review on: the first succeeded call after your plan is posted is not recorded; it replies completed: false with the review's instructions instead, so run the review and call again. THIS IS THE COMPLETION CONTRACT: the board considers the work done ONLY when you call this. If you finish your work but never call it, the board cannot tell you apart from an agent that crashed, and your work will be treated as failed and retried. Call it exactly once, at the very end, with outcome 'succeeded' when the work is done, 'blocked' when you need something you cannot get yourself, or 'failed' when you could not complete it; include a summary (max 2 KiB) and optional structured payload (max 16 KiB serialised). OMIT stepId: the board resolves the work you were assigned from your own thread. Pass one only if your prompt explicitly gave you a stepId — stages that run several steps, such as the code review loop, always do — and then pass exactly that string; any other value is rejected. A review-loop step (review@N, triage@N, adjudicate@N, sync@N) or the Build stage's step may only succeed with the exact payload its prompt asked for: a succeeded call with a missing or malformed one is REFUSED rather than recorded, so complete with outcome 'failed' instead when you cannot produce it. Never put the payload inside the summary — it is a separate argument, and a summary carrying serialised call markup is rejected. Retry-safe: a repeat call with the same stepId re-returns a recorded 'succeeded' outcome unchanged, UNLESS that record's payload is unreadable, in which case your call repairs it; after a 'failed' or 'blocked' report, a later call on the live step records your new outcome (that is how a recovered retry reports success). Your card is resolved from your thread.",
   parameters: Schema.Struct({
     /** Omitted means "the live step of my thread" (t3o-19, D3). Only a stage
         that runs several steps states one, and only then is it passed back. */
@@ -339,6 +350,11 @@ export const BoardCompleteStepTool = Tool.make("board_complete_step", {
     /** True when this stepId was already completed and the first outcome was
         returned unchanged (an idempotent retry). */
     alreadyCompleted: Schema.Boolean,
+    /** False when plan review held the completion back (plan review, T3O-39):
+        nothing was recorded, run the review in `planReview` and call again. */
+    completed: Schema.optionalKey(Schema.Boolean),
+    planReview: Schema.optionalKey(BoardPlanReviewToolResult),
+    message: Schema.optionalKey(Schema.String),
   }),
   failure: BoardToolFailure,
   dependencies,
@@ -450,7 +466,7 @@ export const BoardMoveCardTool = Tool.make("board_move_card", {
 
 export const BoardUpdateCardTool = Tool.make("board_update_card", {
   description:
-    "Update a card's title, brief, labels, dependencies, external reference, or linked pull request. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (the whole label set, named against the catalogue; unknown names are rejected, so create a new label with board_manage_labels first); dependsOn (the whole dependency set); externalRef (null clears); pullRequest links a pull request to the card so it tracks its status, merge and settling just as if the card's own branch had opened it — a url, or repository and number, on the card's project repository, checked with the forge first. Use it to link a pull request to ANY card, not only your own, instead of setting externalRef. Linking the pull request the card already has changes nothing; pullRequest null removes an explicit link only, and a pull request found on the card's own branch reappears on the next refresh. ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing); addLabels and removeLabels add or remove single labels by name, leaving the rest alone (adding one the card has, or removing one it does not, does nothing; a name that is no label at all is rejected; a deleted label can be removed but not added; a name in both is rejected). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, not dependsOn together with addDependsOn/removeDependsOn, and not labels together with addLabels/removeLabels. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. Dependencies may cross groups; a dependency on a group is met when the whole group is done. A card cannot depend on a group it is inside, and a group cannot depend on a card inside it.",
+    "Update a card's title, brief, labels, dependencies, external reference, or linked pull request. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (the whole label set, named against the catalogue; unknown names are rejected, so create a new label with board_manage_labels first); dependsOn (the whole dependency set); externalRef (null clears); pullRequest links a pull request to the card so it tracks its status, merge and settling just as if the card's own branch had opened it — a url, or repository and number, on the card's project repository, checked with the forge first. Use it to link a pull request to ANY card, not only your own, instead of setting externalRef. Linking the pull request the card already has changes nothing; pullRequest null removes an explicit link only, and a pull request found on the card's own branch reappears on the next refresh. ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing); addLabels and removeLabels add or remove single labels by name, leaving the rest alone (adding one the card has, or removing one it does not, does nothing; a name that is no label at all is rejected; a deleted label can be removed but not added; a name in both is rejected). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, not dependsOn together with addDependsOn/removeDependsOn, and not labels together with addLabels/removeLabels. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. Dependencies may cross groups; a dependency on a group is met when the whole group is done. A card cannot depend on a group it is inside, and a group cannot depend on a card inside it. planReview turns the card's adversarial plan review on or off and sets its rounds (1-20); null follows the Settings default. Rounds cannot change once a review has started, and turning it off stops a running review.",
   parameters: Schema.Struct({
     /** Card key or id. */
     cardId: TrimmedNonEmptyString,
@@ -471,6 +487,8 @@ export const BoardUpdateCardTool = Tool.make("board_update_card", {
     removeLabels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
     externalRef: Schema.optional(Schema.NullOr(BoardCardExternalRef)),
     pullRequest: Schema.optional(Schema.NullOr(BoardCardPullRequestTarget)),
+    /** Plan review (T3O-39): { enabled, rounds 1-20 }, or null for the Settings default. */
+    planReview: Schema.optional(Schema.NullOr(BoardCardPlanReview)),
   }),
   success: Schema.Struct({ cardId: BoardCardId }),
   failure: BoardToolFailure,
@@ -693,7 +711,7 @@ export const BoardProposePlansTool = Tool.make("board_propose_plans", {
   // the description now leads with the split's consequence, and the split
   // itself has to argue for the human click it triggers.
   description:
-    "Record your card's plan (the planning output). Pass ONE plan in almost every case: the array is how a card is SPLIT, and two or more plans each become a child card with its own branch, build and review, behind a human approval gate that blocks the card until a human approves it. Split only for a large feature worth building and reviewing in separate pieces, or where building parts concurrently buys a real speed-up — and then splitRationale is required and is shown to the human at the gate. Each plan has a key (a short unique slug), a title, a summary, a dependsOn list referencing other plans' keys (only meaningful in a split), and a markdown body. In a split, mark each plan planned: true when its body is a full implementation plan, so its child lands in Ready to be built, or planned: false when its body is a brief that still needs its own planning, so its child lands in Backlog. A split also recommends the group's settings, which the human sees pre-set at the gate and can change: recommendedAutoBuild (children start themselves once the group is started) and recommendedMergeTarget ('own' cuts the group its own integration branch with one final review; 'inherit' merges each child wherever this card itself merges). Every child fully planned: recommend autoBuild true and 'own'. An epic breakdown whose children still need planning: recommend autoBuild false and 'inherit', with those children planned: false. If your card already sits inside a group that has its own branch (its base branch is an integration branch such as board/<KEY>), prefer 'inherit'. Omitted recommendations fall back to these rules. Approval creates the children and starts nothing. Validated on ingest — unique keys, known dependency references, and no cycles — and rejected naming the offending edge. Proposing again replaces the card's whole plan set. Your card is resolved from your thread.",
+    "Record your card's plan (the planning output). Pass ONE plan in almost every case: the array is how a card is SPLIT, and two or more plans each become a child card with its own branch, build and review, behind a human approval gate that blocks the card until a human approves it. Split only for a large feature worth building and reviewing in separate pieces, or where building parts concurrently buys a real speed-up — and then splitRationale is required and is shown to the human at the gate. Each plan has a key (a short unique slug), a title, a summary, a dependsOn list referencing other plans' keys (only meaningful in a split), and a markdown body. In a split, mark each plan planned: true when its body is a full implementation plan, so its child lands in Ready to be built, or planned: false when its body is a brief that still needs its own planning, so its child lands in Backlog. A split also recommends the group's settings, which the human sees pre-set at the gate and can change: recommendedAutoBuild (children start themselves once the group is started) and recommendedMergeTarget ('own' cuts the group its own integration branch with one final review; 'inherit' merges each child wherever this card itself merges). Every child fully planned: recommend autoBuild true and 'own'. An epic breakdown whose children still need planning: recommend autoBuild false and 'inherit', with those children planned: false. If your card already sits inside a group that has its own branch (its base branch is an integration branch such as board/<KEY>), prefer 'inherit'. Omitted recommendations fall back to these rules. Approval creates the children and starts nothing. Validated on ingest — unique keys, known dependency references, and no cycles — and rejected naming the offending edge. Proposing again replaces the card's whole plan set. When plan review is on for the card, the first proposal returns planReview with the review's instructions: follow them before completing. Your card is resolved from your thread.",
   parameters: Schema.Struct({
     plans: Schema.Array(BoardProposedPlanInput),
     /** Required once `plans` holds two or more (enforced by the decider, which
@@ -703,7 +721,11 @@ export const BoardProposePlansTool = Tool.make("board_propose_plans", {
     recommendedAutoBuild: Schema.optional(Schema.Boolean),
     recommendedMergeTarget: Schema.optional(BoardCardGroupTarget),
   }),
-  success: Schema.Struct({ planIds: Schema.Array(BoardPlan.fields.planId) }),
+  success: Schema.Struct({
+    planIds: Schema.Array(BoardPlan.fields.planId),
+    /** Plan review started by this proposal (plan review, T3O-39). */
+    planReview: Schema.optionalKey(BoardPlanReviewToolResult),
+  }),
   failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Propose board plans");
