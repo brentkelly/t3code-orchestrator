@@ -1731,12 +1731,13 @@ describe("merging a card's pull request", () => {
             // again, so the card stays put — and the thread must be released.
             yield* h.pumpDomain(mergeStepCompleted(card.id, 1));
 
-            const unlinked = (yield* h.commands).filter(
+            // Retired, not unlinked (T3O-41): it stays on the card as history.
+            const retired = (yield* h.commands).filter(
               (command) =>
-                command.type === "board.card.unlink-thread" &&
+                command.type === "board.card.retire-thread" &&
                 String(command.threadId) === "thread-1",
             );
-            assert.equal(unlinked.length, 1, "the conflict fix's thread must be unlinked");
+            assert.equal(retired.length, 1, "the conflict fix's thread must be retired");
           }),
       );
     }),

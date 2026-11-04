@@ -40,6 +40,7 @@ import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -1503,6 +1504,18 @@ it.effect("reads the card-thread filter on a file database", () =>
         excludeBoardCardThreads: true,
       });
       assert.deepEqual(page.threadIds, []);
+      // The getOlderSettledThreads handler wraps the whole read in readOnly (T3O-41).
+      const handled = yield* loadOlderSettledThreadsPage({
+        sql,
+        listThreads: store.listOlderSettledThreads({
+          before: { settledAt: "2026-01-01T00:00:00.000Z" },
+          limit: 0,
+          excludeBoardCardThreads: true,
+        }),
+        readThreads: (threadIds) => store.readShellSnapshot({ location: "active", threadIds }),
+        latestSequence: Effect.succeed(0),
+      });
+      assert.deepEqual(handled.boardCardThreadIds, [threadId]);
     }).pipe(Effect.provide(layerFile));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

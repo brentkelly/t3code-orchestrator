@@ -15,6 +15,7 @@ import {
   type BoardStageId,
   type BoardState,
   type BoardEvent,
+  isLiveBoardCardThreadLink,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -106,7 +107,7 @@ const completePlanning = (h: Harness, threadId: ThreadId, sequence: number) =>
 const liveLinks = (board: BoardState) =>
   board.cards
     .find((candidate) => candidate.id === cardId)!
-    .threadLinks.filter((link) => link.tombstonedAt === null);
+    .threadLinks.filter(isLiveBoardCardThreadLink);
 
 /** Bring the card into Planning and return its spawned interview thread. */
 const startPlanning = (h: Harness) =>

@@ -20,7 +20,9 @@ import {
   ThreadId,
   BOARD_SEED_STAGE_IDS,
   defaultBoardCardGroup,
+  BoardClientCommand,
   EMPTY_BOARD_STATE,
+  resolveBoardCardForThread,
   type BoardCard,
   type BoardCardStepState,
   type BoardLabel,
@@ -30,6 +32,8 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 
 import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
@@ -1330,6 +1334,172 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
+  // ── Retired links (T3O-41) ───────────────────────────────────────────
+
+  const retiredLink = {
+    threadId: ThreadId.make("thread-1"),
+    role: "merge",
+    linkedAt: NOW,
+    tombstonedAt: null,
+    retiredAt: "2026-01-02T00:00:00.000Z",
+  };
+
+  it.effect("retiring a live thread keeps its link, retired", () =>
+    Effect.gen(function* () {
+      const card = makeCard({
+        id: "card-a",
+        threadLinks: [{ ...retiredLink, retiredAt: undefined }].map(
+          ({ retiredAt: _, ...link }) => link,
+        ),
+      });
+      const later = "2026-01-02T00:00:00.000Z";
+      const event = yield* decide(
+        {
+          type: "board.card.retire-thread",
+          commandId: CommandId.make("cmd-retire"),
+          cardId: BoardCardId.make("card-a"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: later,
+        },
+        makeReadModel({
+          threads: [makeThread({ id: "thread-1" })],
+          board: { cards: [card], nextCardNumberByProject: {} },
+        }),
+      );
+      assert.strictEqual(event.type, "board.card-thread-unlinked");
+      if (event.type !== "board.card-thread-unlinked") return;
+      assert.strictEqual(event.payload.tombstonedAt, null);
+      assert.strictEqual(event.payload.retiredAt, later);
+      assert.deepStrictEqual(event.payload.card.threadLinks, [retiredLink]);
+      // A retired agent can no longer act for the card.
+      const board = { ...EMPTY_BOARD_STATE, cards: [event.payload.card] };
+      assert.isNull(resolveBoardCardForThread(board, ThreadId.make("thread-1")));
+    }),
+  );
+
+  it.effect("retiring a deleted thread tombstones it instead", () =>
+    Effect.gen(function* () {
+      const card = makeCard({
+        id: "card-a",
+        threadLinks: [
+          { threadId: ThreadId.make("thread-1"), role: "merge", linkedAt: NOW, tombstonedAt: null },
+        ],
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.retire-thread",
+          commandId: CommandId.make("cmd-retire"),
+          cardId: BoardCardId.make("card-a"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+        },
+        makeReadModel({
+          threads: [makeThread({ id: "thread-1", deletedAt: NOW })],
+          board: { cards: [card], nextCardNumberByProject: {} },
+        }),
+      );
+      if (event.type !== "board.card-thread-unlinked") return assert.fail(event.type);
+      assert.isFalse("retiredAt" in event.payload);
+      assert.deepStrictEqual(event.payload.card.threadLinks, [
+        { threadId: ThreadId.make("thread-1"), role: "merge", linkedAt: NOW, tombstonedAt: NOW },
+      ]);
+    }),
+  );
+
+  it.effect("a human unlink removes a retired link outright", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        {
+          type: "board.card.unlink-thread",
+          commandId: CommandId.make("cmd-unlink"),
+          cardId: BoardCardId.make("card-a"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+        },
+        makeReadModel({
+          threads: [makeThread({ id: "thread-1" })],
+          board: {
+            cards: [makeCard({ id: "card-a", threadLinks: [retiredLink] })],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      if (event.type !== "board.card-thread-unlinked") return assert.fail(event.type);
+      assert.deepStrictEqual(event.payload.card.threadLinks, []);
+    }),
+  );
+
+  it.effect("relinking a retired thread on its card un-retires it in place", () =>
+    Effect.gen(function* () {
+      const later = "2026-01-03T00:00:00.000Z";
+      const event = yield* decide(
+        {
+          type: "board.card.link-thread",
+          commandId: CommandId.make("cmd-link"),
+          cardId: BoardCardId.make("card-a"),
+          threadId: ThreadId.make("thread-1"),
+          role: "linked",
+          createdAt: later,
+        },
+        makeReadModel({
+          threads: [makeThread({ id: "thread-1" })],
+          board: {
+            cards: [makeCard({ id: "card-a", threadLinks: [retiredLink] })],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      if (event.type !== "board.card-thread-linked") return assert.fail(event.type);
+      assert.deepStrictEqual(event.payload.card.threadLinks, [
+        {
+          threadId: ThreadId.make("thread-1"),
+          role: "linked",
+          linkedAt: later,
+          tombstonedAt: null,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("a retired thread still belongs to its card: adopting it elsewhere is refused", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        {
+          type: "board.card.link-thread",
+          commandId: CommandId.make("cmd-link"),
+          cardId: BoardCardId.make("card-b"),
+          threadId: ThreadId.make("thread-1"),
+          role: "linked",
+          createdAt: NOW,
+        },
+        makeReadModel({
+          threads: [makeThread({ id: "thread-1" })],
+          board: {
+            cards: [
+              makeCard({ id: "card-a", threadLinks: [retiredLink] }),
+              makeCard({ id: "card-b" }),
+            ],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      assert.include(String(failure), "already linked to card 'card-a'");
+    }),
+  );
+
+  it.effect("keeps retire-thread out of the commands a client may send", () =>
+    Effect.sync(() => {
+      const decoded = Schema.decodeUnknownExit(BoardClientCommand)({
+        type: "board.card.retire-thread",
+        commandId: "cmd-retire",
+        cardId: "card-a",
+        threadId: "thread-1",
+        createdAt: NOW,
+      });
+      assert.isTrue(Exit.isFailure(decoded));
+    }),
+  );
+
   // ── Delete ───────────────────────────────────────────────────────────
 
   it.effect("deletes a card, freezing what the follow-through needs into the payload", () =>
@@ -1997,6 +2167,13 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         "board.card.unlink-thread": {
           type: "board.card.unlink-thread",
           commandId: CommandId.make("cmd-unlink"),
+          cardId: BoardCardId.make("card-linked"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+        },
+        "board.card.retire-thread": {
+          type: "board.card.retire-thread",
+          commandId: CommandId.make("cmd-retire"),
           cardId: BoardCardId.make("card-linked"),
           threadId: ThreadId.make("thread-1"),
           createdAt: NOW,

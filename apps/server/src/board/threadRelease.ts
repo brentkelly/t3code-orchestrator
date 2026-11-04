@@ -144,6 +144,11 @@ export function boardReleasedThreadIds(
         : state;
     for (const link of card.threadLinks) {
       if (link.tombstonedAt !== null) continue;
+      // The board retired it (T3O-41): finished, whatever its role says.
+      if (link.retiredAt !== undefined) {
+        add(link.threadId);
+        continue;
+      }
       if (current !== null && (current.threadId === link.threadId || current.stepId === link.role))
         continue;
       // A planning interview the card left unfinished (T3O-19) is still a

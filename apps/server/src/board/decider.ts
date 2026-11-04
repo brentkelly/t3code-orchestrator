@@ -1075,9 +1075,13 @@ export function boardCommandNeedsThread(
   command: BoardCommand,
 ): command is Extract<
   BoardCommand,
-  { type: "board.card.link-thread" | "board.card.unlink-thread" }
+  { type: "board.card.link-thread" | "board.card.unlink-thread" | "board.card.retire-thread" }
 > {
-  return command.type === "board.card.link-thread" || command.type === "board.card.unlink-thread";
+  return (
+    command.type === "board.card.link-thread" ||
+    command.type === "board.card.unlink-thread" ||
+    command.type === "board.card.retire-thread"
+  );
 }
 
 /**
@@ -2918,33 +2922,42 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Thread '${command.threadId}' does not exist or is deleted and cannot be linked.`,
         );
       }
-      // One thread, one card (D9): a live link anywhere — archived cards
-      // included — owns the thread. Tombstoned links don't own anything (their
-      // thread is deleted, which the existence check above already rejects).
+      // One thread, one card (D9): a live or retired link anywhere — archived
+      // cards included — owns the thread. Tombstoned links don't own anything
+      // (their thread is deleted, which the existence check above rejects).
       const owner = board.cards.find((candidate) =>
         candidate.threadLinks.some(
           (link) => link.threadId === command.threadId && link.tombstonedAt === null,
         ),
       );
-      if (owner !== undefined) {
+      // Relinking a thread this card retired brings it back in place (T3O-41).
+      const retired =
+        owner?.id === card.id
+          ? card.threadLinks.find(
+              (link) => link.threadId === command.threadId && link.retiredAt !== undefined,
+            )
+          : undefined;
+      if (owner !== undefined && retired === undefined) {
         return yield* invariant(
           command,
           `Thread '${command.threadId}' is already linked to card '${owner.id}'.`,
         );
       }
 
+      const linked = {
+        threadId: command.threadId,
+        role: command.role,
+        linkedAt: command.createdAt,
+        tombstonedAt: null,
+        ...(command.workerId === undefined ? {} : { workerId: command.workerId }),
+      };
       const nextCard: BoardCard = {
         ...card,
-        threadLinks: sortBoardCardThreadLinks([
-          ...card.threadLinks,
-          {
-            threadId: command.threadId,
-            role: command.role,
-            linkedAt: command.createdAt,
-            tombstonedAt: null,
-            ...(command.workerId === undefined ? {} : { workerId: command.workerId }),
-          },
-        ]),
+        threadLinks: sortBoardCardThreadLinks(
+          retired === undefined
+            ? [...card.threadLinks, linked]
+            : card.threadLinks.map((link) => (link === retired ? linked : link)),
+        ),
         updatedAt: command.createdAt,
       };
       return {
@@ -3006,6 +3019,53 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           cardId: command.cardId,
           threadId: command.threadId,
           tombstonedAt,
+          card: nextCard,
+        },
+      };
+    }
+
+    case "board.card.retire-thread": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      const link = card.threadLinks.find((candidate) => candidate.threadId === command.threadId);
+      if (link === undefined) {
+        return yield* invariant(
+          command,
+          `Thread '${command.threadId}' is not linked to card '${command.cardId}'.`,
+        );
+      }
+      if (link.tombstonedAt !== null || link.retiredAt !== undefined) {
+        return yield* invariant(
+          command,
+          `Thread link '${command.threadId}' on card '${command.cardId}' is no longer live.`,
+        );
+      }
+      // A deleted thread tombstones exactly as an unlink would (D9).
+      const thread = context?.thread;
+      const threadDeleted = thread === undefined || thread === null || thread.deleted;
+      const tombstonedAt = threadDeleted ? command.createdAt : null;
+      const nextCard: BoardCard = {
+        ...card,
+        threadLinks: card.threadLinks.map((candidate) =>
+          candidate.threadId !== command.threadId
+            ? candidate
+            : threadDeleted
+              ? { ...candidate, tombstonedAt }
+              : { ...candidate, retiredAt: command.createdAt },
+        ),
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-thread-unlinked",
+        payload: {
+          cardId: command.cardId,
+          threadId: command.threadId,
+          tombstonedAt,
+          ...(threadDeleted ? {} : { retiredAt: command.createdAt }),
           card: nextCard,
         },
       };

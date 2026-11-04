@@ -131,6 +131,21 @@ const released = (state: BoardState, abandoned?: ReadonlySet<string>): ReadonlyA
   boardReleasedThreadIds(state, abandoned).map(String);
 
 describe("boardReleasedThreadIds", () => {
+  it("releases a retired thread even while its step is the card's current one (T3O-41)", () => {
+    const state = board({
+      card: card({
+        stage: String(BOARD_SEED_STAGE_IDS.merge),
+        links: [{ ...link("thread-fix", String(BOARD_SEED_STAGE_IDS.merge)), retiredAt: NOW }],
+      }),
+      step: stepState({
+        stepId: String(BOARD_SEED_STAGE_IDS.merge),
+        threadId: "thread-fix",
+        status: "running",
+      }),
+    });
+    assert.deepStrictEqual(released(state), ["thread-fix"]);
+  });
+
   it("keeps the running step's own thread and releases every earlier one", () => {
     const state = board({
       card: card({
