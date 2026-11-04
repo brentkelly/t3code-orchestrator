@@ -1,11 +1,11 @@
 /**
  * T3o auto-merge copy (T3O-38). One place that turns "this card's merge was
  * refused" into the words every surface shows — the column card's pill and
- * tooltip, the card modal's banner, the Merge button's countdown and the kebab
- * switch — so no two of them can tell the user different stories.
+ * tooltip, the card modal's banner, the Merge button's countdown and the header
+ * chip — so no two of them can tell the user different stories.
  *
  * Pure: the facts are `BoardCardShell.autoMergeHeldSince` /
- * `autoMergeGaveUp` / `autoMergeArmed` on the board, and
+ * `autoMergeGaveUp` and the resolved Auto-merge on the board, and
  * `BoardCard.autoMergeHold` in the modal, both derived on the server. Nothing
  * here reads state or a clock — `nowMs` arrives as an argument, the same split
  * `boardCardScheduleLabel` keeps.
@@ -18,8 +18,6 @@
  * t3o-30: amber while the board will end the wait itself, red once it stays
  * put until a human acts.
  */
-
-import { boardCardCanArmAutoMerge, type BoardCard, type BoardState } from "@t3tools/contracts";
 
 /** `12m`, `1h 5m`, `2d 3h`. Coarse on purpose: this is an elapsed figure a
     human glances at, and a ticking seconds reading on thirty board cards is a
@@ -137,61 +135,6 @@ export function boardAutoMergeCountdown(retryAtIso: string | null, nowMs: number
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-export interface BoardAutoMergeArm {
-  readonly armed: boolean;
-  readonly copy: BoardAutoMergeToggleCopy;
-}
-
-/**
- * The kebab's auto-merge switch, or null when this card gets none (T3O-38,
- * D3; moved into the kebab by T3O-42).
- *
- * Three facts decide it, and the order matters: the container has to have
- * given the view a way to set it, the board-wide setting has to be off — two
- * controls that can disagree about one card is worse than one — and the card
- * itself has to be one the decider would accept an arming for, which is the
- * same predicate it enforces on the way in, so the control and the refusal
- * can never disagree.
- */
-export function boardAutoMergeArm(input: {
-  readonly card: Pick<BoardCard, "stage" | "parentCardId" | "archivedAt" | "autoMerge">;
-  readonly stages: BoardState["stages"];
-  /** Whether the container handed the view an `onSetAutoMerge`. */
-  readonly canSet: boolean;
-  /** Settings → Board → Pipeline → Ready for merge merges every card. */
-  readonly fromBoardSetting: boolean;
-}): BoardAutoMergeArm | null {
-  if (!input.canSet || input.fromBoardSetting) return null;
-  const canArm = boardCardCanArmAutoMerge({
-    board: { cards: [], stages: input.stages, nextCardNumberByProject: {} },
-    card: input.card,
-  });
-  if (!canArm) return null;
-  return { armed: input.card.autoMerge, copy: boardAutoMergeToggleCopy(input.card.autoMerge) };
-}
-
-export interface BoardAutoMergeToggleCopy {
-  readonly label: string;
-  readonly hint: string;
-}
-
-/**
- * The kebab switch's two states. Off states the consequence of leaving it off,
- * because the whole point of the feature is that the alternative is coming
- * back to click Merge; on states what will happen.
- */
-export function boardAutoMergeToggleCopy(armed: boolean): BoardAutoMergeToggleCopy {
-  return armed
-    ? {
-        label: "Auto-merge when ready",
-        hint: "Merges itself as soon as the forge accepts it, retrying a check that is still running.",
-      }
-    : {
-        label: "Auto-merge when ready",
-        hint: "Otherwise this card waits at Ready for merge until you come back and click Merge.",
-      };
-}
-
 /** The modal header's read-only chip, or null when the card is not armed.
     Names the SOURCE, because a user who cannot find the switch needs to know
     it is a board-wide setting rather than something wrong with their card. */
@@ -206,5 +149,9 @@ export function boardAutoMergeHeaderChip(input: {
         tooltip:
           "Every card arriving at Ready for merge is merged automatically. Settings → Board → Pipeline → Ready for merge.",
       }
-    : { label: "Auto-merge", tooltip: "This card merges itself as soon as the forge accepts it." };
+    : {
+        label: "Auto-merge",
+        tooltip:
+          "This card merges itself as soon as the forge accepts it. Change it under Automation.",
+      };
 }

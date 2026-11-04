@@ -90,6 +90,7 @@ import { useBoardAttentionSettle } from "./boardAttentionSettle";
 import { boardCardNoPullRequest } from "./boardCardNotice";
 import { boardQueueInfo, type BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardCardTodoContext } from "./BoardCardItem";
+import { boardShellAutomationNode, resolveBoardShellAutomation } from "./boardCardAutomation";
 import { BoardColumn, BOARD_CARD_GAP } from "./BoardColumn";
 import { indexBoardLabels } from "./labelColour";
 import {
@@ -551,6 +552,21 @@ function EnvironmentBoard({
   const autoMergeArmedFor = useCallback(
     (card: BoardCardShell) => autoMergeArmedByCard.get(String(card.cardId)) === true,
     [autoMergeArmedByCard],
+  );
+  // The card face's Auto-build chip (T3O-38): a card waiting in the stage
+  // before build that will start itself.
+  const beforeBuildStageId = boardStageBeforeBuild(stageState)?.stageId ?? null;
+  const autoBuildArmedFor = useCallback(
+    (card: BoardCardShell) =>
+      card.stage === beforeBuildStageId &&
+      card.group === undefined &&
+      resolveBoardShellAutomation({
+        shells: allCards,
+        stages: stageState,
+        card: boardShellAutomationNode(card),
+        boardWideAutoMerge: false,
+      }).autoBuild.value,
+    [allCards, beforeBuildStageId, stageState],
   );
   const childAttentionFor = useCallback(
     (card: BoardCardShell) => childAttentionByParent.get(card.cardId),
@@ -1504,6 +1520,7 @@ function EnvironmentBoard({
                 shells={groupShells}
                 stages={stageState}
                 attentionFor={attentionFor}
+                boardWideAutoMerge={boardWideAutoMerge}
               />
             </>
           ) : (
@@ -1661,6 +1678,7 @@ function EnvironmentBoard({
                   noPullRequestFor={noPullRequestFor}
                   worktreeKeptFor={worktreeKeptFor}
                   autoMergeArmedFor={autoMergeArmedFor}
+                  autoBuildArmedFor={autoBuildArmedFor}
                   onCardDragEnd={handleCardDragEnd}
                   onCardReorder={handleCardReorder}
                   onCardDragStart={handleCardDragStart}

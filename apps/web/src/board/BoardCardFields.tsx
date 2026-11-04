@@ -8,7 +8,8 @@
  * Pure presentation — entries in, a pick or a removal out.
  */
 import type { BoardCardId, BoardStageDefinition, BoardStageId } from "@t3tools/contracts";
-import { XIcon } from "lucide-react";
+import { ChevronDownIcon, XIcon } from "lucide-react";
+import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
@@ -32,6 +33,50 @@ export function BoardSectionHeading({
     >
       {children}
     </h3>
+  );
+}
+
+/** A sidebar section that opens on its header (T3O-38): collapsed by default,
+    the header carrying a one-line summary of what is inside. */
+export function BoardCollapsibleSection({
+  title,
+  summary,
+  defaultOpen = false,
+  className,
+  children,
+}: {
+  readonly title: string;
+  readonly summary?: React.ReactNode;
+  readonly defaultOpen?: boolean;
+  readonly className?: string;
+  readonly children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={cn("flex flex-col gap-2", className)}>
+      <button
+        aria-expanded={open}
+        className="flex w-full min-w-0 items-center gap-1.5 text-left"
+        onClick={() => setOpen((value) => !value)}
+        type="button"
+      >
+        <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+          {title}
+        </span>
+        <span className="flex-1" />
+        {summary === undefined ? null : (
+          <span className="truncate text-[11px] font-medium text-foreground">{summary}</span>
+        )}
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-3 shrink-0 text-muted-foreground transition-transform duration-[120ms]",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+      {open ? children : null}
+    </div>
   );
 }
 

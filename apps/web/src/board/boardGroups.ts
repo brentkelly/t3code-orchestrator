@@ -6,6 +6,7 @@
  * before a command is sent, so a refused column says why instead of bouncing.
  */
 import {
+  BOARD_AUTOMATION_BOARD_WIDE_MERGE_REASON,
   boardStageBeforeBuild,
   boardStageIndex,
   effectiveBoardStageRole,
@@ -369,7 +370,7 @@ export function boardDropRefusal(input: {
   if (buildIndex >= 0 && toIndex > buildIndex) {
     return group.target === "own"
       ? `Reached automatically. The integration review of ${target} opens when every active child is done.`
-      : `This group merges straight into ${target}, so it has no review of its own. Give it an integration branch in Group settings.`;
+      : `This group merges straight into ${target}, so it has no review of its own. Give it an integration branch under Automation.`;
   }
   if (build !== null && toStage === build.stageId) {
     if (live || group.autoBuild) return null;
@@ -433,21 +434,28 @@ export interface BoardGroupSettingsVm {
   readonly target: BoardCardGroup["target"];
   /** Where the children merge, resolved. */
   readonly resolvedTarget: string;
+  /** Where the group itself lands: its parent's target, or trunk. */
+  readonly landsOn: string;
   /** Where the group's own integration review merges (own groups only). */
   readonly ownReviewNote: string | null;
   /** Why the target cannot change, or null. */
   readonly targetLockReason: string | null;
-  readonly autoBuild: { readonly on: boolean; readonly note: string };
-  /** Null when the children merge into an integration branch: the switch only
-      governs merges into trunk, so it is not drawn at all. */
-  readonly autoMerge: { readonly on: boolean; readonly note: string } | null;
   readonly autoPlan: { readonly on: boolean; readonly note: string };
+  readonly autoBuild: { readonly on: boolean; readonly note: string };
+  /** The children's merge, into `resolvedTarget`. Locked on while the
+      board-wide setting merges every card. */
+  readonly autoMerge: {
+    readonly on: boolean;
+    readonly note: string;
+    readonly lockReason: string | null;
+  };
 }
 
 export function boardGroupSettingsVm(
   shells: Shells,
   stages: BoardState,
   card: BoardCardShell,
+  options: { readonly boardWideAutoMerge?: boolean | undefined } = {},
 ): BoardGroupSettingsVm | null {
   const group = boardShellGroup(shells, card);
   if (group === null) return null;
@@ -462,10 +470,11 @@ export function boardGroupSettingsVm(
   const allMerged = active.length > 0 && active.every((child) => child.stage === doneStageId);
   const resolved = boardGroupTargetLabel(shells, card);
   const landsOn = boardCardLandsOnLabel(shells, card);
-  const atTrunk = resolved === BOARD_TRUNK_LABEL;
+  const boardWide = options.boardWideAutoMerge === true;
   return {
     target: group.target,
     resolvedTarget: resolved,
+    landsOn,
     ownReviewNote:
       group.target === "own"
         ? `Children merge into ${resolved}. Once they are all done, its review merges it into ${landsOn}.`
@@ -476,6 +485,14 @@ export function boardGroupSettingsVm(
         : group.target === "inherit" && allMerged
           ? "Locked: every card here has already merged, so an own branch would have nothing to integrate."
           : null,
+    autoPlan: {
+      on: group.autoPlan,
+      note: group.autoPlan
+        ? group.autoBuild
+          ? "Children entering Planning are planned by the agent, and their plans are approved and built."
+          : "Children entering Planning are planned by the agent; their plans wait for your approval."
+        : "Children entering Planning are planned with you.",
+    },
     autoBuild: {
       on: group.autoBuild,
       note: group.autoBuild
@@ -484,20 +501,19 @@ export function boardGroupSettingsVm(
           : "Armed. The cascade starts when you drag the group to Building."
         : "Children wait for you to start them. Turning this off never interrupts a running child.",
     },
-    autoMerge: atTrunk
+    autoMerge: boardWide
       ? {
+          on: true,
+          note: BOARD_AUTOMATION_BOARD_WIDE_MERGE_REASON,
+          lockReason: BOARD_AUTOMATION_BOARD_WIDE_MERGE_REASON,
+        }
+      : {
           on: group.autoMerge,
           note: group.autoMerge
-            ? `Children merge into ${BOARD_TRUNK_LABEL} as soon as the forge accepts.`
-            : "Children stop at Ready for merge for you, unless a card has its own auto-merge on.",
-        }
-      : null,
-    autoPlan: {
-      on: group.autoPlan,
-      note: group.autoPlan
-        ? "Children entering Planning are planned by the agent and stop at Ready."
-        : "Children entering Planning are planned with you.",
-    },
+            ? `Children merge into ${resolved} as soon as the forge accepts.`
+            : "Children stop at Ready for merge for you, unless a card has its own Auto-merge on.",
+          lockReason: null,
+        },
   };
 }
 

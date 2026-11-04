@@ -52,7 +52,7 @@ import {
   type BoardCardReviewOverrides,
   type BoardCardStageModelOverride,
   boardShellAncestorIds,
-  boardShellAutoMergeArmed,
+  boardShellAutoMergeArmedByCard,
   boardShellDescendantIds,
 } from "@t3tools/contracts";
 import {
@@ -106,7 +106,8 @@ import {
 } from "./BoardCardDetailView";
 import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
 import { BoardArchiveGroupDialog } from "./BoardGroupDialogs";
-import { BoardGroupSettings } from "./BoardGroupSettings";
+import { BoardCardAutomation } from "./BoardCardAutomation";
+import { boardCardPlanningFinishedFromDetail } from "./boardCardAutomation";
 import {
   boardGroupNote,
   boardShellGroup,
@@ -126,7 +127,6 @@ import {
   describeBoardRefreshOutcome,
   describeBoardRemoveWorktreeOutcome,
   describeBoardReviewRoundOutcome,
-  describeBoardAutoPlanOutcome,
   describeBoardSubmitOutcome,
 } from "./boardCommandFeedback";
 import { useOpenLink } from "../browser/useOpenLink";
@@ -249,8 +249,6 @@ export function BoardCardDetail({
   const requestReviewRound = useAtomCommand(boardEnvironment.requestReviewRound, {
     reportFailure: false,
   });
-  // Auto-plan → Build (T3O-32). Same reason again: a refusal is an answer.
-  const autoPlanCard = useAtomCommand(boardEnvironment.autoPlanCard, { reportFailure: false });
   const createCard = useAtomCommand(boardEnvironment.createCard);
   // "Remove worktree" (T3O-52). Same reason again: a refusal is an answer.
   const removeCardWorktree = useAtomCommand(boardEnvironment.removeCardWorktree, {
@@ -938,19 +936,6 @@ export function BoardCardDetail({
     });
   };
 
-  /** Auto-plan → Build (T3O-32): one RPC that steers the planning thread or
-      starts an unattended one; the plan it proposes is approved on arrival. */
-  const onAutoPlan = () => {
-    setFeedback(null);
-    void autoPlanCard({ environmentId, input: { cardId: card.id } }).then((result) => {
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) setFeedback(describeBoardCommandFailure(result));
-        return;
-      }
-      setFeedback(describeBoardAutoPlanOutcome(result.value));
-    });
-  };
-
   /** A follow-up card in the first stage, for a decision worth revisiting. */
   const onCreateFollowUp = (draft: { readonly title: string; readonly brief: string }) => {
     const firstStage = stageState.stages?.[0];
@@ -1100,17 +1085,38 @@ export function BoardCardDetail({
           chip: `Group · ${childShells.length} ${childShells.length === 1 ? "card" : "cards"}`,
           note: boardGroupNote(groupStats, cardShell),
           onOpenBoard: onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card.id),
-          settings: (
-            <BoardGroupSettings
-              card={cardShell}
-              environmentId={environmentId}
-              shells={groupShells}
-              stages={stageState}
-            />
-          ),
           onArchive: () => setArchiveGroupOpen(true),
           ownBranch: boardShellGroup(groupShells, cardShell)?.target === "own",
         };
+  // The Automation section (T3O-38). A done or archived card has nothing left
+  // to automate, so it gets none.
+  const automationGroup = groupView === null || cardShell === undefined ? null : cardShell;
+  const automation =
+    card.archivedAt !== null ||
+    boardStageWithRole(stageState, "done")?.stageId === card.stage ? null : (
+      <BoardCardAutomation
+        boardWideAutoMerge={boardWideAutoMerge}
+        card={card}
+        environmentId={environmentId}
+        group={automationGroup}
+        inPlanning={boardStageWithRole(stageState, "plan")?.stageId === card.stage}
+        planningFinished={boardCardPlanningFinishedFromDetail({
+          stages: stageState,
+          stage: card.stage,
+          stepCompletions: detail?.stepCompletions ?? [],
+          stepLive:
+            cardShell?.stepRunning === true ||
+            cardShell?.queued === true ||
+            (cardShell?.stepAwaiting ?? null) !== null,
+        })}
+        shells={groupShells}
+        stages={stageState}
+      />
+    );
+  const autoMergeArmed =
+    boardShellAutoMergeArmedByCard({ shells: groupShells, boardWide: boardWideAutoMerge }).get(
+      String(card.id),
+    ) === true;
   // A group's child can be parked in Deferred (T3O-29).
   const parentIsGroup =
     card.parentCardId !== null && groupShells.some((shell) => shell.cardId === card.parentCardId);
@@ -1388,7 +1394,6 @@ export function BoardCardDetail({
         });
       }}
       onRequestReviewRound={onRequestReviewRound}
-      onAutoPlan={onAutoPlan}
       onCreateFollowUp={onCreateFollowUp}
       stepLive={stepLive}
       onOpenPullRequest={(url) => {
@@ -1466,22 +1471,9 @@ export function BoardCardDetail({
       onSetScheduledStartAt={(scheduledStartAt) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, scheduledStartAt } }))
       }
-      onSetAutoStart={(autoStart) =>
-        runCommand(updateCard({ environmentId, input: { cardId: card.id, autoStart } }))
-      }
-      onSetAutoMerge={(autoMerge) =>
-        runCommand(updateCard({ environmentId, input: { cardId: card.id, autoMerge } }))
-      }
-      // Nearest wins (T3O-28): the board-wide setting is ignored inside a group.
-      autoMergeFromBoardSetting={card.parentCardId === null && boardWideAutoMerge}
-      autoMergeFromGroup={
-        card.parentCardId !== null &&
-        boardShellAutoMergeArmed({
-          shells: board?.cards ?? [],
-          shell: { parentCardId: card.parentCardId },
-          boardWide: false,
-        })
-      }
+      automation={automation}
+      autoMergeArmed={autoMergeArmed}
+      autoMergeFromBoardSetting={boardWideAutoMerge}
       resolveModelDisplayName={resolveModelDisplayName}
       // Queued counts as running for this note's purpose: a queued step has
       // already been selected onto the run row, so its model and authority are

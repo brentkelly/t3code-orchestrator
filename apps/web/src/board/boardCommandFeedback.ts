@@ -5,7 +5,6 @@
  * cap), and that is what the user needs to see, not a generic failure.
  */
 import type {
-  BoardAutoPlanCardResult,
   BoardCheckCardWorktreeResult,
   BoardMergeCardPullRequestResult,
   BoardRefreshCardPullRequestResult,
@@ -175,22 +174,6 @@ export function describeBoardReviewRoundOutcome(
       return "This card no longer exists.";
     case "failed":
       return "The review round could not be started. See the server log for details.";
-  }
-}
-
-/** The sentence Auto-plan → Build leaves on the card (T3O-32), or null when it
-    started — the Summary pane opening is the acknowledgement. */
-export function describeBoardAutoPlanOutcome(result: BoardAutoPlanCardResult): string | null {
-  switch (result.outcome) {
-    case "steered":
-    case "started":
-      return null;
-    case "refused":
-      return result.detail;
-    case "unknown-card":
-      return "This card no longer exists.";
-    case "failed":
-      return "Auto-planning could not be started. See the server log for details.";
   }
 }
 
