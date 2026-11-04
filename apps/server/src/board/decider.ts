@@ -1373,13 +1373,15 @@ const groupConversionEvents = Effect.fn("groupConversionEvents")(function* (inpu
   const { board, command, card } = input;
   // The leaf's resolved Auto-plan / Auto-build seed the group its children
   // inherit, and leave the card; its own Auto-merge stays, as the group's own
-  // merge (T3O-38).
+  // merge (T3O-38). Children landing on an ancestor's integration branch
+  // merge with their auto-build, as migration 054 backfilled.
   const resolved = resolveBoardCardAutomationIn({ board, card, boardWideAutoMerge: false });
   const nextCard: BoardCard = {
     ...card,
     group: defaultBoardCardGroup(board, card, {
       autoPlan: resolved.autoPlan.value,
       autoBuild: resolved.autoBuild.value,
+      autoMerge: resolved.autoBuild.value && boardCardMergesIntoIntegrationBranch(board, card),
     }),
     autoPlanSetting: null,
     autoBuildSetting: null,

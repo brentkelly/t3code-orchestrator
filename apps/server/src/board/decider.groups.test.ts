@@ -508,6 +508,35 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
     }),
   );
 
+  it.effect("a leaf that becomes a group under an own group auto-merges with its auto-build", () =>
+    Effect.gen(function* () {
+      const groupOf = (events: ReadonlyArray<PlannedBoardEvent>, id: string) => {
+        const conversion = events.find(
+          (event) => event.type === "board.card-updated" && String(event.payload.cardId) === id,
+        );
+        assert.ok(conversion?.type === "board.card-updated");
+        return conversion.payload.card.group;
+      };
+      const nested = yield* decideEvents(
+        moveCards(["b"], "a"),
+        model([
+          card("g", "sprint", {
+            group: group("sprint", { target: "own", autoBuild: true, started: true }),
+          }),
+          child("a", "sprint", "g"),
+          card("b", "backlog"),
+        ]),
+      );
+      expect(groupOf(nested, "a")).toMatchObject({ autoBuild: true, autoMerge: true });
+
+      const onTrunk = yield* decideEvents(
+        moveCards(["b"], "a"),
+        model([card("a", "sprint", { autoBuildSetting: true }), card("b", "backlog")]),
+      );
+      expect(groupOf(onTrunk, "a")).toMatchObject({ autoBuild: true, autoMerge: false });
+    }),
+  );
+
   // ── Dependencies ─────────────────────────────────────────────────────
 
   const update = (id: string, addDependsOn: ReadonlyArray<string>): BoardCommand => ({
