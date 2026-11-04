@@ -15,6 +15,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   boardCollapseToggle,
   boardColumnCollapsed,
+  boardDragOpenedRail,
   boardScopeCollapseKey,
   boardScopeColumnCollapsedByDefault,
   boardScopeStages,
@@ -256,6 +257,21 @@ describe("boardCollapseToggle (T3O-40)", () => {
   it("stores the choice for a column holding cards or with the setting off", () => {
     expect(toggle({ cardCount: 1 })).toEqual({ kind: "store" });
     expect(toggle({ autoCollapseEmpty: false })).toEqual({ kind: "store" });
+  });
+});
+
+describe("boardDragOpenedRail (T3O-40)", () => {
+  it("holds only the latest auto-folded rail a drag hovered open", () => {
+    let open: string | null = null;
+    const hover = (hovered: string, hoveredAutoFolded: boolean) => {
+      open = boardDragOpenedRail({ current: open, hovered, hoveredAutoFolded });
+    };
+    hover("sprint", true);
+    expect(open).toBe("sprint");
+    hover("planning", false);
+    expect(open).toBe("sprint");
+    hover("ready", true);
+    expect(open).toBe("ready");
   });
 });
 

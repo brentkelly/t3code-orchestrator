@@ -125,6 +125,21 @@ export function boardColumnCollapsed(input: {
 }
 
 /**
+ * The auto-folded rail a live drag holds open (T3O-40): the latest one it
+ * hovered. Hovering an ordinary column keeps it, so leaving the rail doesn't
+ * snap it shut under the pointer; reaching another auto-folded rail replaces
+ * it, so a long drag across empty stages never widens the board by more than
+ * one opened rail.
+ */
+export function boardDragOpenedRail<S extends string>(input: {
+  readonly current: S | null;
+  readonly hovered: S;
+  readonly hoveredAutoFolded: boolean;
+}): S | null {
+  return input.hoveredAutoFolded ? input.hovered : input.current;
+}
+
+/**
  * Where a column's collapse toggle goes (T3O-40). On an auto-folded column it
  * only opens or ends a transient peek, so `collapsedByStage` is never written
  * for it; on any other column it is the stored manual choice.

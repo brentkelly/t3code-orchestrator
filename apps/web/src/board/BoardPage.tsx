@@ -94,7 +94,9 @@ import { BoardColumn, BOARD_CARD_GAP } from "./BoardColumn";
 import { indexBoardLabels } from "./labelColour";
 import {
   boardCollapseToggle,
+  boardColumnAutoFolded,
   boardColumnCollapsed,
+  boardDragOpenedRail,
   boardScopeCollapseKey,
   boardScopeColumnCollapsedByDefault,
   boardScopeQueryKey,
@@ -849,10 +851,7 @@ function EnvironmentBoard({
   // placeholder gap; the drop reuses the command layer below.
   const [drag, setDrag] = useState<BoardDrag | null>(null);
   const [dragOver, setDragOver] = useState<BoardDragOver | null>(null);
-  // Every column a live drag has hovered (T3O-40): an auto-folded rail it
-  // opened stays open until the drag ends, so leaving it doesn't snap it shut
-  // and shift the columns to its right under the pointer.
-  const [dragVisited, setDragVisited] = useState<ReadonlySet<BoardStageId>>(() => new Set());
+  const [dragOpenedRail, setDragOpenedRail] = useState<BoardStageId | null>(null);
   const [dragTip, setDragTip] = useState<string | null>(null);
   const dragTipRef = useRef<HTMLDivElement | null>(null);
   const ghostRef = useRef<HTMLElement | null>(null);
@@ -1113,7 +1112,7 @@ function EnvironmentBoard({
       dragRef.current = next;
       setDrag(next);
       setDragOver(source === null ? null : { stage: source.stage, index: startIndex });
-      setDragVisited(new Set());
+      setDragOpenedRail(null);
     },
     [clearGhost, columns],
   );
@@ -1123,7 +1122,7 @@ function EnvironmentBoard({
     dragRef.current = null;
     setDrag(null);
     setDragOver(null);
-    setDragVisited(new Set());
+    setDragOpenedRail(null);
     setDragTip(null);
   }, [clearGhost]);
 
@@ -1159,19 +1158,28 @@ function EnvironmentBoard({
     [],
   );
   const handleRefusedDragLeave = useCallback(() => setDragTip(null), []);
-  const handleColumnDragOver = useCallback((stage: BoardStageId, event: DragEvent<HTMLElement>) => {
-    if (dragRef.current === null) return;
-    setDragTip(null);
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    const index = boardDropIndexIn(event.currentTarget, event.clientY);
-    setDragVisited((current) => (current.has(stage) ? current : new Set(current).add(stage)));
-    setDragOver((current) =>
-      current !== null && current.stage === stage && current.index === index
-        ? current
-        : { stage, index },
-    );
-  }, []);
+  const handleColumnDragOver = useCallback(
+    (stage: BoardStageId, event: DragEvent<HTMLElement>) => {
+      if (dragRef.current === null) return;
+      setDragTip(null);
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const index = boardDropIndexIn(event.currentTarget, event.clientY);
+      const hoveredAutoFolded = boardColumnAutoFolded({
+        autoCollapseEmpty,
+        cardCount: (scopedColumns[stage] ?? EMPTY_CARDS).length,
+      });
+      setDragOpenedRail((current) =>
+        boardDragOpenedRail({ current, hovered: stage, hoveredAutoFolded }),
+      );
+      setDragOver((current) =>
+        current !== null && current.stage === stage && current.index === index
+          ? current
+          : { stage, index },
+      );
+    },
+    [autoCollapseEmpty, scopedColumns],
+  );
 
   const handleColumnDrop = useCallback(
     (stage: BoardStageId, event: DragEvent<HTMLElement>) => {
@@ -1652,7 +1660,7 @@ function EnvironmentBoard({
                 dragOverThisColumn:
                   drag !== null &&
                   dropRefusal === null &&
-                  (dragOver?.stage === stage.stageId || dragVisited.has(stage.stageId)),
+                  (dragOver?.stage === stage.stageId || dragOpenedRail === stage.stageId),
                 peeked: peekedColumns.has(collapseKeyOf(stage.stageId)),
                 storedOrDefaultCollapsed: isBoardColumnCollapsed(
                   collapsedByStage,
