@@ -465,8 +465,8 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // T3O-22 the next nudge went instantly, so no row had a time to record.
   retryAt: BoardCardStepState.fields.retryAt,
   // NULL before migration 054 and on every step with no plan review started.
-  planReviewStartedAt: BoardCardStepState.fields.planReviewStartedAt,
-  planReviewRounds: BoardCardStepState.fields.planReviewRounds,
+  planReviewStartedAt: Schema.NullOr(IsoDateTime),
+  planReviewRounds: Schema.NullOr(Schema.Int),
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -2204,9 +2204,18 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       run config, and the detail already runs a bundle of per-card queries. */
   const findBoardCardStepErrorRow = SqlSchema.findOneOption({
     Request: BoardCardId,
-    Result: Schema.Struct({ lastError: BoardCardStepState.fields.lastError }),
+    Result: Schema.Struct({
+      lastError: BoardCardStepState.fields.lastError,
+      status: BoardCardStepState.fields.status,
+      planReviewStartedAt: Schema.NullOr(IsoDateTime),
+      planReviewRounds: Schema.NullOr(Schema.Int),
+    }),
     execute: (cardId) => sql`
-      SELECT last_error AS "lastError"
+      SELECT
+        last_error AS "lastError",
+        status,
+        plan_review_started_at AS "planReviewStartedAt",
+        plan_review_rounds AS "planReviewRounds"
       FROM board_card_step_state
       WHERE card_id = ${cardId}
     `,
@@ -2747,8 +2756,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         humanTurnAt: state.humanTurnAt,
         stalledReason: state.stalledReason,
         retryAt: state.retryAt,
-        planReviewStartedAt: state.planReviewStartedAt,
-        planReviewRounds: state.planReviewRounds,
+        planReviewStartedAt: state.planReviewStartedAt ?? null,
+        planReviewRounds: state.planReviewRounds ?? null,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -3242,7 +3251,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           kind: "plan-review-started",
           payload: {
             stepId: event.payload.state.stepId,
-            ...(event.payload.state.planReviewRounds === null
+            ...(event.payload.state.planReviewRounds === undefined
               ? {}
               : { planReviewRounds: event.payload.state.planReviewRounds }),
           },
@@ -3621,8 +3630,10 @@ export function loadBoardState(
             // could only have stalled through recovery giving up.
             stalledReason: row.stalledReason ?? "gave-up",
             retryAt: row.retryAt,
-            planReviewStartedAt: row.planReviewStartedAt,
-            planReviewRounds: row.planReviewRounds,
+            ...(row.planReviewStartedAt === null
+              ? {}
+              : { planReviewStartedAt: row.planReviewStartedAt }),
+            ...(row.planReviewRounds === null ? {} : { planReviewRounds: row.planReviewRounds }),
             humanInLoop: row.humanInLoop !== 0,
             maxAttempts: row.maxAttempts,
             timeoutMs: row.timeoutMs,
@@ -4104,6 +4115,20 @@ export function makeBoardCardDetailLoader(
             // Why the live step stopped (t3o-30, D2), or null when it is
             // healthy or absent — the failure banner's text.
             stepError: Option.getOrNull(stepErrorRow)?.lastError ?? null,
+            ...(() => {
+              const step = Option.getOrNull(stepErrorRow);
+              return step === null ||
+                step.planReviewStartedAt === null ||
+                step.planReviewRounds === null ||
+                isBoardTerminalStepStatus(step.status)
+                ? {}
+                : {
+                    planReviewStarted: {
+                      startedAt: step.planReviewStartedAt,
+                      rounds: step.planReviewRounds,
+                    },
+                  };
+            })(),
             decisions: decisionRows,
             // Filled below for a sub-board child; a top-level card has no
             // parent to inherit from and keeps the null.

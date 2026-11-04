@@ -312,6 +312,35 @@ export function fillPlanReviewRounds(prompt: string, rounds: number): string {
   return prompt.replaceAll("{rounds}", String(rounds));
 }
 
+/** The fixed lead of the plan-review instructions (plan review, T3O-39). */
+export function planReviewInstructionsLead(rounds: number): string {
+  const roundWord = rounds === 1 ? "round" : "rounds";
+  return `Plan review is on for this card: up to ${rounds} ${roundWord} of adversarial review, run inside this thread.`;
+}
+
+/** The fixed closing of the plan-review instructions: the board mechanics,
+    after the user's prompt and taking precedence over it. */
+export function planReviewInstructionsClosing(input: {
+  readonly rounds: number;
+  /** A human is in the loop and no auto-plan is pending. */
+  readonly humanInLoop: boolean;
+}): string {
+  const finish = input.humanInLoop
+    ? `With a human in the loop: if you need a human decision, ${BOARD_ENVELOPE_QUESTION_MECHANISM}. Then summarise the final plan in the thread, wait for the human's sign-off, and only then call board_complete_step.`
+    : "This run is unattended: ask nothing. Decide every question yourself, flag a call you are unsure of as unclear with board_record_decisions, summarise the final plan in the thread, then call board_complete_step without waiting.";
+  return [
+    "Board rules for the plan review. These come after the text above and take precedence over it:",
+    `- ${input.rounds} is a maximum. Stop as soon as a round produces no new substantive finding, and record that call (rounds run, converged or not) with board_record_decisions.`,
+    "- Run the reviewers in the foreground and do not end your turn while waiting for them.",
+    "- If your runtime cannot spawn subagents, run each reviewer pass yourself in turn, and say so in the thread.",
+    "- Post each reviewer's findings in the thread, and record any new decisions with board_record_decisions.",
+    "- If the plan changed, re-propose the final plan with board_propose_plans (that does not start another review). If board_propose_plans refuses because the plans are frozen, stop reviewing and summarise.",
+    "- When you call board_complete_step, add `planReview: { roundsRun, converged }` to the payload.",
+    `- ${finish}`,
+    "- If an auto-plan instruction arrives during the review, it overrides this text: stop asking and finish.",
+  ].join("\n");
+}
+
 /**
  * The plan-review instructions (plan review, T3O-39): a fixed lead, the user's
  * editable prompt with `{rounds}` filled in, and a fixed closing that comes
@@ -325,24 +354,11 @@ export function composePlanReviewInstructions(input: {
       sign-off. Otherwise the review finishes without asking anything. */
   readonly humanInLoop: boolean;
 }): string {
-  const rounds = input.rounds;
-  const roundWord = rounds === 1 ? "round" : "rounds";
-  const lead = `Plan review is on for this card: up to ${rounds} ${roundWord} of adversarial review, run inside this thread.`;
-  const finish = input.humanInLoop
-    ? `With a human in the loop: if you need a human decision, ${BOARD_ENVELOPE_QUESTION_MECHANISM}. Then summarise the final plan in the thread, wait for the human's sign-off, and only then call board_complete_step.`
-    : "This run is unattended: ask nothing. Decide every question yourself, flag a call you are unsure of as unclear with board_record_decisions, summarise the final plan in the thread, then call board_complete_step without waiting.";
-  const closing = [
-    "Board rules for the plan review. These come after the text above and take precedence over it:",
-    `- ${rounds} is a maximum. Stop as soon as a round produces no new substantive finding, and record that call (rounds run, converged or not) with board_record_decisions.`,
-    "- Run the reviewers in the foreground and do not end your turn while waiting for them.",
-    "- If your runtime cannot spawn subagents, run each reviewer pass yourself in turn, and say so in the thread.",
-    "- Post each reviewer's findings in the thread, and record any new decisions with board_record_decisions.",
-    "- If the plan changed, re-propose the final plan with board_propose_plans (that does not start another review). If board_propose_plans refuses because the plans are frozen, stop reviewing and summarise.",
-    "- When you call board_complete_step, add `planReview: { roundsRun, converged }` to the payload.",
-    `- ${finish}`,
-    "- If an auto-plan instruction arrives during the review, it overrides this text: stop asking and finish.",
-  ].join("\n");
-  return [lead, fillPlanReviewRounds(input.prompt, rounds), closing].join("\n\n");
+  return [
+    planReviewInstructionsLead(input.rounds),
+    fillPlanReviewRounds(input.prompt, input.rounds),
+    planReviewInstructionsClosing(input),
+  ].join("\n\n");
 }
 
 /** The turn sent into a planning thread when a human turns its running plan

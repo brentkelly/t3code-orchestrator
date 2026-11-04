@@ -1872,7 +1872,7 @@ const make = Effect.gen(function* () {
     // A started plan review rides every respawn and nudge (T3O-39), so a
     // recovered planning thread resumes it rather than completing without it.
     const planReview =
-      role === "plan" && state.planReviewStartedAt !== null
+      role === "plan" && state.planReviewStartedAt !== undefined
         ? yield* runningPlanReviewFor(card, state)
         : null;
     return composeStepPrompt({

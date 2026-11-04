@@ -2105,16 +2105,13 @@ export const BoardCardStepState = Schema.Struct({
       required-but-nullable field rejects. The same trap `stageLabel` and
       `stageEntryRecoveries` document above. */
   humanTurnAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  /** When this stage entry's plan review started (plan review, T3O-39), or
-      null. Reset on every stage entry, so a card re-entering Planning reviews
-      again. Decoding defaults: older step payloads have no key. */
-  planReviewStartedAt: Schema.NullOr(IsoDateTime).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
+  /** When this stage entry's plan review started (plan review, T3O-39);
+      absent when none has. Never written as null, so a replayed payload and a
+      rehydrated row (NULL column → no key) agree. A stage entry builds a fresh
+      row without it, so a card re-entering Planning reviews again. */
+  planReviewStartedAt: Schema.optionalKey(IsoDateTime),
   /** The round count that review runs to, locked when it started. */
-  planReviewRounds: Schema.NullOr(BoardPlanReviewRounds).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
+  planReviewRounds: Schema.optionalKey(BoardPlanReviewRounds),
   // ── Frozen execution config (D12) ────────────────────────────────────
   // Resolved from the stage's settings ONCE at stage entry and stamped here,
   // so editing settings mid-flight cannot corrupt a running card. The reactor
@@ -8730,6 +8727,11 @@ export const BoardCardDetail = Schema.Struct({
   /** The card's decision log (T3O-32), oldest first. Decodes to `[]` on
       legacy detail payloads. */
   decisions: Schema.Array(BoardCardDecision).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** The plan review started on the card's live step (plan review, T3O-39);
+      absent when none has, or the step has settled. */
+  planReviewStarted: Schema.optionalKey(
+    Schema.Struct({ startedAt: IsoDateTime, rounds: BoardPlanReviewRounds }),
+  ),
 });
 export type BoardCardDetail = typeof BoardCardDetail.Type;
 

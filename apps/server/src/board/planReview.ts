@@ -22,7 +22,9 @@ import {
 
 function planStageExecution(board: BoardState, settings: BoardSettings) {
   const planStage = boardStageWithRole(board, "plan");
-  return planStage === null ? null : resolveBoardStageExecution(settings, planStage.stageId);
+  if (planStage === null) return null;
+  const execution = resolveBoardStageExecution(settings, planStage.stageId);
+  return execution.kind === "simple" ? execution : null;
 }
 
 /** The card's effective plan review: its own setting or the Settings default. */
@@ -44,7 +46,7 @@ export function runningPlanReviewStep(input: {
   const planStage = boardStageWithRole(input.board, "plan");
   if (state === null || planStage === null) return null;
   if (state.stepId !== planStage.stageId || isBoardTerminalStepStatus(state.status)) return null;
-  if (state.planReviewStartedAt === null || state.planReviewRounds === null) return null;
+  if (state.planReviewStartedAt === undefined || state.planReviewRounds === undefined) return null;
   return resolveCardPlanReview(input).enabled ? state : null;
 }
 
@@ -57,7 +59,7 @@ export function planReviewInstructions(input: {
   readonly state: BoardCardStepState;
 }): { readonly rounds: number; readonly instructions: string } | null {
   const rounds = input.state.planReviewRounds;
-  if (input.state.planReviewStartedAt === null || rounds === null) return null;
+  if (input.state.planReviewStartedAt === undefined || rounds === undefined) return null;
   const { prompt } = resolveBoardPlanReviewSettings(
     planStageExecution(input.board, input.settings),
   );

@@ -2630,7 +2630,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // live plan step; turning it off is always accepted and stops the review.
       const planReviewStep = livePlanReviewStep(board, card.id);
       const planReviewRunning =
-        planReviewStep !== null && planReviewStep.planReviewStartedAt !== null;
+        planReviewStep !== null && planReviewStep.planReviewStartedAt !== undefined;
       if (
         planReviewRunning &&
         command.planReview != null &&
@@ -3773,7 +3773,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (
         reviewStep !== null &&
         command.planReview?.enabled === true &&
-        reviewStep.planReviewStartedAt === null &&
+        reviewStep.planReviewStartedAt === undefined &&
         boardCardPlans(board, command.cardId).length > 0
       ) {
         return yield* planReviewStartedEvent({
@@ -3784,8 +3784,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       }
       const planReviewFinished =
         reviewStep !== null &&
-        reviewStep.planReviewStartedAt !== null &&
-        reviewStep.planReviewRounds !== null
+        reviewStep.planReviewStartedAt !== undefined &&
+        reviewStep.planReviewRounds !== undefined
           ? {
               rounds: reviewStep.planReviewRounds,
               ...readBoardPlanReviewReport(command.payload),
@@ -4029,7 +4029,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.planReview?.enabled === true && plans.length > 0
           ? livePlanReviewStep(board, command.cardId)
           : null;
-      if (reviewStep === null || reviewStep.planReviewStartedAt !== null) return proposed;
+      if (reviewStep === null || reviewStep.planReviewStartedAt !== undefined) return proposed;
       return [
         proposed,
         yield* planReviewStartedEvent({
@@ -5091,9 +5091,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         // No human has typed into a fresh step, so no free turn-ending is owed
         // (T3O-17, D3).
         humanTurnAt: null,
-        // Plan review is per stage entry (T3O-39): a re-entered Planning reviews again.
-        planReviewStartedAt: null,
-        planReviewRounds: null,
         prompt: command.prompt,
         providerInstanceId: command.providerInstanceId,
         model: command.model,
