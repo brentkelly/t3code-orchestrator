@@ -313,11 +313,6 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.requestReviewRound(input.cardId),
       ),
 
-    /** Auto-plan → Build (T3O-32, decision 7): the human act that authorises
-        Planning → Ready → Building for this card (D18). */
-    [BOARD_WS_METHODS.autoPlanCard]: (input: BoardCardPullRequestActionInput) =>
-      authorized(BOARD_WS_METHODS.autoPlanCard, deps.boardSupervisor.autoPlanCard(input.cardId)),
-
     /**
      * "Remove worktree" on a finished card that kept one (T3O-52, D5). The
      * human confirmed at a dialog naming what is lost; the branch survives.

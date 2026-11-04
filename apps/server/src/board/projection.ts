@@ -112,6 +112,12 @@ export const BOARD_CARD_ACTIVITY_TAIL_LIMIT = 50;
 // `blocked` travels as 0/1 (SQLite has no boolean); the JSON-shaped columns
 // encode/decode through fromJsonString so the row schema's Type side stays
 // the domain shape.
+/** An own Automation toggle as a nullable SQLite integer (T3O-38). */
+const settingToInt = (value: boolean | null): number | null =>
+  value === null ? null : value ? 1 : 0;
+const settingFromInt = (value: number | null): boolean | null =>
+  value === null ? null : value !== 0;
+
 const BoardCardDbRow = Schema.Struct({
   cardId: BoardCard.fields.id,
   key: BoardCard.fields.key,
@@ -164,16 +170,12 @@ const BoardCardDbRow = Schema.Struct({
       (the supervisor clears it in the pass that acts on it) — indistinguishable
       on purpose, which is what makes replay equal rehydration (T3O-19, D1). */
   scheduledStartAt: BoardCard.fields.scheduledStartAt,
-  /** 0 for every row written before migration 039, for every card that has
-      never been armed, and for every card whose arm has been spent (the decider
-      clears it inside the move that leaves the pre-build stage) — indistinguish-
-      able on purpose, which is what makes replay equal rehydration (T3O-24). */
-  autoStart: Schema.Int,
-  /** 0 for every row written before migration 043 and for every card that has
-      never been armed to merge itself — indistinguishable on purpose, which is
-      what makes replay equal rehydration (T3O-38). Unlike `auto_start` this
-      arm is never spent, so it also survives the card reaching Done. */
-  autoMerge: Schema.Int,
+  /** The card's own Automation toggles (T3O-38): NULL inherits, 0/1 is an
+      own value. Migration 054 backfilled them from the retired `auto_start` /
+      `auto_merge` columns, which are no longer written. */
+  autoPlanSetting: Schema.NullOr(Schema.Int),
+  autoBuildSetting: Schema.NullOr(Schema.Int),
+  autoMergeSetting: Schema.NullOr(Schema.Int),
   /** NULL for every row written before migration 043, for every card whose
       armed merge has never been refused, and for every card whose hold has
       been cleared — indistinguishable on purpose (T3O-38, D4/D10). */
@@ -564,17 +566,20 @@ const BoardCardShellDbRow = Schema.Struct({
       the aggregate like `parentCardId`, so this snapshot and the JS delta path
       both carry it — or a scheduled card's pill would vanish on reconnect. */
   scheduledStartAt: BoardCard.fields.scheduledStartAt,
-  /** The card's auto-start arm (T3O-24), 0 when it is not armed. On the
-      aggregate like `parentCardId`, so this snapshot and the JS delta path both
-      carry it — or an armed card's chip would vanish on reconnect. */
-  autoStart: Schema.Int,
-  /** The card's auto-merge hold, flattened to the three facts the shell
-      carries (T3O-38, D14): when the hold started, whether its ladder is
-      spent, and whether the card's own arming is set. Derived in SQL here and
-      in JS on the delta path; `cardMetaShellFields.test.ts` pins the pair. */
+  /** The card's own Automation toggles and unattended-run flag (T3O-38). On
+      the aggregate like `parentCardId`, so this snapshot and the JS delta path
+      both carry them — or a card's Automation summary would change on
+      reconnect. */
+  autoPlanSetting: Schema.NullOr(Schema.Int),
+  autoBuildSetting: Schema.NullOr(Schema.Int),
+  autoMergeSetting: Schema.NullOr(Schema.Int),
+  autoPlanPending: Schema.Int,
+  /** The card's auto-merge hold, flattened to the facts the shell carries
+      (T3O-38, D14): when the hold started and whether its ladder is spent.
+      Derived in SQL here and in JS on the delta path;
+      `cardMetaShellFields.test.ts` pins the pair. */
   autoMergeHeldSince: Schema.NullOr(IsoDateTime),
   autoMergeGaveUp: Schema.Int,
-  autoMergeArmed: Schema.Int,
   /** Whether the CURRENT pull request is an open draft (T3O-12) — the SQL
       twin of `boardCardPullRequestIsOpenDraft`. */
   prDraft: Schema.Int,
@@ -660,8 +665,9 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     autoPlan: card.autoPlan ?? null,
     baseBranch: card.baseBranch,
     scheduledStartAt: card.scheduledStartAt,
-    autoStart: card.autoStart ? 1 : 0,
-    autoMerge: card.autoMerge ? 1 : 0,
+    autoPlanSetting: settingToInt(card.autoPlanSetting),
+    autoBuildSetting: settingToInt(card.autoBuildSetting),
+    autoMergeSetting: settingToInt(card.autoMergeSetting),
     autoMergeHold: card.autoMergeHold,
     pinnedWorkerId: card.pinnedWorkerId,
     placedWorkerId: card.placedWorkerId,
@@ -755,8 +761,9 @@ function rowToBoardCard(
     ...(row.autoPlan === null ? {} : { autoPlan: row.autoPlan }),
     baseBranch: row.baseBranch,
     scheduledStartAt: row.scheduledStartAt,
-    autoStart: row.autoStart !== 0,
-    autoMerge: row.autoMerge !== 0,
+    autoPlanSetting: settingFromInt(row.autoPlanSetting),
+    autoBuildSetting: settingFromInt(row.autoBuildSetting),
+    autoMergeSetting: settingFromInt(row.autoMergeSetting),
     autoMergeHold: row.autoMergeHold,
     pinnedWorkerId: row.pinnedWorkerId,
     placedWorkerId: row.placedWorkerId,
@@ -825,8 +832,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_plan,
         base_branch,
         scheduled_start_at,
-        auto_start,
-        auto_merge,
+        auto_plan_setting,
+        auto_build_setting,
+        auto_merge_setting,
         auto_merge_hold,
         pinned_worker_id,
         placed_worker_id,
@@ -871,8 +879,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.autoPlan},
         ${row.baseBranch},
         ${row.scheduledStartAt},
-        ${row.autoStart},
-        ${row.autoMerge},
+        ${row.autoPlanSetting},
+        ${row.autoBuildSetting},
+        ${row.autoMergeSetting},
         ${row.autoMergeHold},
         ${row.pinnedWorkerId},
         ${row.placedWorkerId},
@@ -917,8 +926,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_plan = excluded.auto_plan,
         base_branch = excluded.base_branch,
         scheduled_start_at = excluded.scheduled_start_at,
-        auto_start = excluded.auto_start,
-        auto_merge = excluded.auto_merge,
+        auto_plan_setting = excluded.auto_plan_setting,
+        auto_build_setting = excluded.auto_build_setting,
+        auto_merge_setting = excluded.auto_merge_setting,
         auto_merge_hold = excluded.auto_merge_hold,
         pinned_worker_id = excluded.pinned_worker_id,
         placed_worker_id = excluded.placed_worker_id,
@@ -973,8 +983,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_plan AS "autoPlan",
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
-        auto_start AS "autoStart",
-        auto_merge AS "autoMerge",
+        auto_plan_setting AS "autoPlanSetting",
+        auto_build_setting AS "autoBuildSetting",
+        auto_merge_setting AS "autoMergeSetting",
         auto_merge_hold AS "autoMergeHold",
         pinned_worker_id AS "pinnedWorkerId",
         placed_worker_id AS "placedWorkerId",
@@ -1081,10 +1092,18 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ) AS "prNumber",
         parent_card_id AS "parentCardId",
         scheduled_start_at AS "scheduledStartAt",
-        auto_start AS "autoStart",
-        -- The SECOND producer of the auto-merge shell trio (T3O-38, D14). The
+        auto_plan_setting AS "autoPlanSetting",
+        auto_build_setting AS "autoBuildSetting",
+        auto_merge_setting AS "autoMergeSetting",
+        -- The unattended-run flag (T3O-38): the JS twin is
+        -- isBoardCardAutoPlanPending.
+        CASE
+          WHEN auto_plan IS NOT NULL AND json_extract(auto_plan, '$.endedAt') IS NULL THEN 1
+          ELSE 0
+        END AS "autoPlanPending",
+        -- The SECOND producer of the auto-merge shell facts (T3O-38, D14). The
         -- delta path derives the same three in JS off the card aggregate's
-        -- autoMergeHold / autoMerge / parentCardId; these derive them in SQL
+        -- autoMergeHold; these derive them in SQL
         -- off the same columns, and the two must agree or a held card's pill
         -- would appear
         -- after an edit and vanish on reconnect (cardMetaShellFields.test.ts
@@ -1097,10 +1116,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
             AND json_extract(auto_merge_hold, '$.retryAt') IS NULL THEN 1
           ELSE 0
         END AS "autoMergeGaveUp",
-        -- The card's own override only (T3O-28); the client resolves the
-        -- group and board-wide arms over the shells it holds.
-        CASE WHEN auto_merge <> 0 THEN 1 ELSE 0 END
-          AS "autoMergeArmed",
         -- The SECOND producer of prDraft (T3O-12); the delta path reads it
         -- through boardCardPullRequestIsOpenDraft. Current link only: a retired
         -- round's pull request is never a draft worth tagging.
@@ -1178,10 +1193,18 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ) AS "prNumber",
         parent_card_id AS "parentCardId",
         scheduled_start_at AS "scheduledStartAt",
-        auto_start AS "autoStart",
-        -- The SECOND producer of the auto-merge shell trio (T3O-38, D14). The
+        auto_plan_setting AS "autoPlanSetting",
+        auto_build_setting AS "autoBuildSetting",
+        auto_merge_setting AS "autoMergeSetting",
+        -- The unattended-run flag (T3O-38): the JS twin is
+        -- isBoardCardAutoPlanPending.
+        CASE
+          WHEN auto_plan IS NOT NULL AND json_extract(auto_plan, '$.endedAt') IS NULL THEN 1
+          ELSE 0
+        END AS "autoPlanPending",
+        -- The SECOND producer of the auto-merge shell facts (T3O-38, D14). The
         -- delta path derives the same three in JS off the card aggregate's
-        -- autoMergeHold / autoMerge / parentCardId; these derive them in SQL
+        -- autoMergeHold; these derive them in SQL
         -- off the same columns, and the two must agree or a held card's pill
         -- would appear
         -- after an edit and vanish on reconnect (cardMetaShellFields.test.ts
@@ -1194,10 +1217,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
             AND json_extract(auto_merge_hold, '$.retryAt') IS NULL THEN 1
           ELSE 0
         END AS "autoMergeGaveUp",
-        -- The card's own override only (T3O-28); the client resolves the
-        -- group and board-wide arms over the shells it holds.
-        CASE WHEN auto_merge <> 0 THEN 1 ELSE 0 END
-          AS "autoMergeArmed",
         -- The SECOND producer of prDraft (T3O-12); the delta path reads it
         -- through boardCardPullRequestIsOpenDraft. Current link only: a retired
         -- round's pull request is never a draft worth tagging.
@@ -1360,8 +1379,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_plan AS "autoPlan",
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
-        auto_start AS "autoStart",
-        auto_merge AS "autoMerge",
+        auto_plan_setting AS "autoPlanSetting",
+        auto_build_setting AS "autoBuildSetting",
+        auto_merge_setting AS "autoMergeSetting",
         auto_merge_hold AS "autoMergeHold",
         pinned_worker_id AS "pinnedWorkerId",
         placed_worker_id AS "placedWorkerId",
@@ -3747,10 +3767,12 @@ function boardShellCards(
           // counted against its parent.
           parentCardId: row.parentCardId,
           scheduledStartAt: row.scheduledStartAt,
-          autoStart: row.autoStart !== 0,
+          autoPlanSetting: settingFromInt(row.autoPlanSetting),
+          autoBuildSetting: settingFromInt(row.autoBuildSetting),
+          autoMergeSetting: settingFromInt(row.autoMergeSetting),
+          autoPlanPending: row.autoPlanPending !== 0,
           autoMergeHeldSince: row.autoMergeHeldSince,
           autoMergeGaveUp: row.autoMergeGaveUp !== 0,
-          autoMergeArmed: row.autoMergeArmed !== 0,
           prDraft: row.prDraft !== 0,
           worktreeReady: row.worktreeReady !== 0,
           worktreeKeptReason: row.worktreeKeptReason,
@@ -3838,10 +3860,12 @@ function boardArchivedShellCards(
             prNumber: row.prNumber,
             parentCardId: row.parentCardId,
             scheduledStartAt: row.scheduledStartAt,
-            autoStart: row.autoStart !== 0,
+            autoPlanSetting: settingFromInt(row.autoPlanSetting),
+            autoBuildSetting: settingFromInt(row.autoBuildSetting),
+            autoMergeSetting: settingFromInt(row.autoMergeSetting),
+            autoPlanPending: row.autoPlanPending !== 0,
             autoMergeHeldSince: row.autoMergeHeldSince,
             autoMergeGaveUp: row.autoMergeGaveUp !== 0,
-            autoMergeArmed: row.autoMergeArmed !== 0,
             prDraft: row.prDraft !== 0,
             worktreeReady: row.worktreeReady !== 0,
             worktreeKeptReason: row.worktreeKeptReason,

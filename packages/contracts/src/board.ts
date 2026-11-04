@@ -2857,6 +2857,13 @@ export function boardStageBeforeBuild(board: BoardState): BoardStageDefinition |
 export const BOARD_AUTOMATION_TOGGLES = ["autoPlan", "autoBuild", "autoMerge"] as const;
 export type BoardAutomationToggle = (typeof BOARD_AUTOMATION_TOGGLES)[number];
 
+/** Each toggle's name as the card and the tools show it. */
+export const BOARD_AUTOMATION_TOGGLE_LABELS: Readonly<Record<BoardAutomationToggle, string>> = {
+  autoPlan: "Auto-plan",
+  autoBuild: "Auto-build",
+  autoMerge: "Auto-merge",
+};
+
 /** One toggle, resolved. */
 export interface BoardResolvedAutomationToggle {
   /** What the board acts on. */
@@ -4275,6 +4282,9 @@ export const BoardCardMoveCommand = Schema.Struct({
   /** Permits non-adjacent stage moves. A drag is an override — a rigid
       board still has to let you drag a card backwards. */
   override: Schema.optional(Schema.Boolean),
+  /** `auto-build`: the card's own Auto-build started it (T3O-38). Such a
+      move does not begin its parent group, so it never starts its siblings. */
+  cause: Schema.optional(Schema.Literal("auto-build")),
   createdAt: IsoDateTime,
 });
 export type BoardCardMoveCommand = typeof BoardCardMoveCommand.Type;
@@ -5662,6 +5672,11 @@ export const BoardCardMovedPayload = Schema.Struct({
   fromStage: BoardStageId,
   toStage: BoardStageId,
   card: BoardCard,
+  /** The Automation toggles this move turned off (T3O-38): dragging a card
+      back out of Building disarms Auto-build, back into Planning disarms
+      Auto-plan, so a card pulled back never relaunches under the person
+      parking it. Absent when it turned off nothing. */
+  automationChanged: Schema.optional(BoardAutomationChanged),
 });
 export type BoardCardMovedPayload = typeof BoardCardMovedPayload.Type;
 
@@ -8133,7 +8148,6 @@ export const BOARD_WS_METHODS = {
   /** Auto-plan → Build (T3O-32, decision 7): end planning, have the agent
       decide what is left, approve the plan and start building. An RPC
       because it may steer a live planning thread. */
-  autoPlanCard: "board.autoPlanCard",
   /** "Remove worktree" on a finished card that kept one (T3O-52, D5): remove
       it past the safety rule, after a confirm dialog. The branch is kept. An
       RPC because the git removal must land before the record does. */
@@ -8351,17 +8365,6 @@ export const BoardRequestReviewRoundResult = Schema.Union([
 ]);
 export type BoardRequestReviewRoundResult = typeof BoardRequestReviewRoundResult.Type;
 
-/** What Auto-plan → Build did (T3O-32). `steered` told the live planning
-    thread to decide, record and propose; `started` began an unattended
-    planning step. `refused` carries the reason as a sentence. */
-export const BoardAutoPlanCardResult = Schema.Union([
-  Schema.Struct({ outcome: Schema.Literal("steered") }),
-  Schema.Struct({ outcome: Schema.Literal("started") }),
-  Schema.Struct({ outcome: Schema.Literal("refused"), detail: TrimmedNonEmptyString }),
-  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
-  Schema.Struct({ outcome: Schema.Literal("failed") }),
-]);
-export type BoardAutoPlanCardResult = typeof BoardAutoPlanCardResult.Type;
 
 /** What "Remove worktree" did (T3O-52, D5). */
 export const BoardRemoveCardWorktreeResult = Schema.Union([
@@ -8795,11 +8798,6 @@ export const BOARD_RPCS = [
     success: BoardRequestReviewRoundResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
-  Rpc.make(BOARD_WS_METHODS.autoPlanCard, {
-    payload: BoardCardPullRequestActionInput,
-    success: BoardAutoPlanCardResult,
-    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
-  }),
   Rpc.make(BOARD_WS_METHODS.removeCardWorktree, {
     payload: BoardCardPullRequestActionInput,
     success: BoardRemoveCardWorktreeResult,
@@ -8869,7 +8867,6 @@ export const BOARD_RPC_SCOPES = {
   // and moves the card: the same mutation tier as merging.
   [BOARD_WS_METHODS.submitCardForMerge]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.requestReviewRound]: AuthOrchestrationOperateScope,
-  [BOARD_WS_METHODS.autoPlanCard]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.removeCardWorktree]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.checkCardWorktree]: AuthOrchestrationOperateScope,
   // T3O-65: the move reads the source worker's git and then changes where the
@@ -10537,6 +10534,18 @@ export function effectiveBoardRuntimeMode(
   mode: BoardStageMode,
 ): RuntimeMode {
   return runtimeMode ?? (mode === "build" ? "auto" : "approval-required");
+}
+
+/** Whether board-wide auto-merge is on (T3O-38): the merge-role stage's own
+    setting, which turns every card's Auto-merge on. */
+export function boardWideAutoMergeOn(
+  board: Pick<BoardState, "stages">,
+  settings: BoardSettings,
+): boolean {
+  const mergeStage = boardStageWithRole(board as BoardState, "merge");
+  if (mergeStage === null) return false;
+  const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
+  return isBoardMergeStageExecution(exec) && exec.autoMerge;
 }
 
 export function resolveBoardStageExecution(
