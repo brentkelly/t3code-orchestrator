@@ -423,6 +423,45 @@ it.effect("a group with auto-plan plans a child unattended and its plan waits fo
   );
 });
 
+it.effect(
+  "a child outdented from an auto-plan group mid-run goes back to planning with you",
+  () => {
+    const group = planningCard("group", { group: autoPlanGroup });
+    const child = planningCard("child", { parentCardId: BoardCardId.make("group") });
+    return withGovernor(
+      { board: { cards: [group, child], nextCardNumberByProject: {} }, settings },
+      ({ pumpDomain, board, model }) =>
+        Effect.gen(function* () {
+          const id = BoardCardId.make("child");
+          yield* pumpDomain(cardMoved(child, "sprint", "planning", 1));
+          assert.strictEqual(cardOf((yield* board).cards, "child")?.autoPlan?.endedAt, null);
+
+          let outdented: BoardCard | undefined;
+          yield* Ref.update(model, (current) => ({
+            ...current,
+            board: {
+              ...current.board!,
+              cards: current.board!.cards.map((card) => {
+                if (card.id !== id) return card;
+                outdented = { ...card, parentCardId: null };
+                return outdented;
+              }),
+            },
+          }));
+          yield* pumpDomain({
+            type: "board.card-updated",
+            sequence: 2,
+            payload: { cardId: id, card: outdented, regrouped: true },
+          } as unknown as HarnessEvent);
+
+          const after = yield* board;
+          assert.isString(cardOf(after.cards, "child")?.autoPlan?.endedAt);
+          assert.isTrue(boardCardStepState(after, id)?.humanInLoop);
+        }),
+    );
+  },
+);
+
 it.effect("a child created straight into an auto-plan group's Planning is auto-planned", () => {
   const group = planningCard("group", { group: autoPlanGroup });
   const child = planningCard("child", { parentCardId: BoardCardId.make("group") });

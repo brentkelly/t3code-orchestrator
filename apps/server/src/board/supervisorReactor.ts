@@ -3222,10 +3222,14 @@ const make = Effect.gen(function* () {
         yield* schedule();
       }
     }
-    // Only a card that just landed in a group may start; any other edit must
-    // not restart a child a human parked on the floor.
-    if (marks.regrouped && card.parentCardId !== null) {
-      yield* cascadeUnblockedChildren(card.parentCardId);
+    if (marks.regrouped) {
+      // A new parent changes what the card inherits (T3O-38), so its toggles
+      // take effect as if its group's had changed — leaving a group mid
+      // auto-plan stops the run.
+      yield* reevaluateCardAutomation(card.id, { group: true });
+      // Only a card that just landed in a group may start; any other edit must
+      // not restart a child a human parked on the floor.
+      if (card.parentCardId !== null) yield* cascadeUnblockedChildren(card.parentCardId);
     }
   });
 
