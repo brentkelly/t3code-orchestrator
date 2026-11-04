@@ -79,6 +79,7 @@ import {
   moveBoardCard,
   moveBoardCards,
   setBoardCardGroupSettings,
+  setBoardCardAutomation,
   cancelBoardCardWork,
   refreshBoardCardPullRequest,
   linkBoardCardPullRequest,
@@ -90,7 +91,6 @@ import {
   reorderBoardStage,
   startBoardStageThread,
   requestBoardReviewRound,
-  autoPlanBoardCard,
   removeBoardCardWorktree,
   checkBoardCardWorktree,
   submitBoardCardForMerge,
@@ -115,6 +115,7 @@ import {
   type MoveBoardCardInput,
   type MoveBoardCardsInput,
   type SetBoardCardGroupSettingsInput,
+  type SetBoardCardAutomationInput,
   type CancelBoardCardWorkInput,
   type RenameBoardStageInput,
   type ReorderBoardCardInput,
@@ -145,6 +146,7 @@ export * from "./boardSubscription.ts";
 export type {
   MoveBoardCardsInput,
   SetBoardCardGroupSettingsInput,
+  SetBoardCardAutomationInput,
   CancelBoardCardWorkInput,
   ApproveBoardPlansInput,
   ArchiveBoardCardInput,
@@ -749,12 +751,6 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:request-review-round",
       execute: (input: { readonly cardId: BoardCardId }) => requestBoardReviewRound(input),
     }),
-    /** Auto-plan → Build (T3O-32). Resolves to steered, started, or the
-        reason it was refused. */
-    autoPlanCard: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:board:auto-plan-card",
-      execute: (input: { readonly cardId: BoardCardId }) => autoPlanBoardCard(input),
-    }),
     /** Remove a finished card's kept worktree past the safety rule (T3O-52). */
     removeCardWorktree: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:remove-card-worktree",
@@ -813,6 +809,11 @@ export function createBoardEnvironmentAtoms<R, ER>(
     setGroupSettings: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:set-group-settings",
       execute: (input: SetBoardCardGroupSettingsInput) => setBoardCardGroupSettings(input),
+    }),
+    /** A card's own Automation toggles (T3O-38). */
+    setCardAutomation: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-card-automation",
+      execute: (input: SetBoardCardAutomationInput) => setBoardCardAutomation(input),
     }),
     /** Destructive: the caller confirmed it by the card's typed key. */
     cancelCardWork: createEnvironmentCommand(runtime, {
