@@ -9738,7 +9738,9 @@ const make = Effect.gen(function* () {
           // T3O-66: a worker removed stalls what ran there; a re-add can
           // resume it.
           event.type !== "board.worker-removed" &&
-          event.type !== "board.card-worker-removal"
+          event.type !== "board.card-worker-removal" &&
+          // T3O-39: a human turned a running plan review off.
+          event.type !== "board.plan-review-stopped"
         ) {
           return Effect.void;
         }
