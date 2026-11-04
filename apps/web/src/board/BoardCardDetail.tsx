@@ -108,7 +108,6 @@ import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog
 import { BoardArchiveGroupDialog } from "./BoardGroupDialogs";
 import { BoardGroupSettings } from "./BoardGroupSettings";
 import {
-  boardDeferredChildren,
   boardGroupNote,
   boardShellGroup,
   boardShellIntegrationAncestor,
@@ -1094,10 +1093,6 @@ export function BoardCardDetail({
     cardShell === undefined || !isBoardGroupShell(groupShells, cardShell)
       ? null
       : { shells: groupShells, stages: stageState, attentionFor: () => null };
-  const deferredKeys =
-    groupStats === null
-      ? []
-      : boardDeferredChildren(groupShells, String(card.id)).map((child) => child.key);
   const groupView =
     groupStats === null || cardShell === undefined
       ? null
@@ -1114,10 +1109,6 @@ export function BoardCardDetail({
             />
           ),
           onArchive: () => setArchiveGroupOpen(true),
-          reopenPrompt:
-            deferredKeys.length === 0
-              ? null
-              : `Let's plan the deferred cards (${deferredKeys.join(", ")}) as the next phase of ${card.key}.`,
           ownBranch: boardShellGroup(groupShells, cardShell)?.target === "own",
         };
   // A group's child can be parked in Deferred (T3O-29).
