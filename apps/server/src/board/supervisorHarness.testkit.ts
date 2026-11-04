@@ -178,6 +178,9 @@ export const makeBoardCard = (input: {
   readonly scheduledStartAt?: string | null;
   /** The card's auto-start arm (T3O-24). Absent is unarmed. */
   readonly autoStart?: boolean;
+  readonly autoPlanSetting?: boolean | null;
+  readonly autoBuildSetting?: boolean | null;
+  readonly autoMergeSetting?: boolean | null;
   /** The per-card auto-merge arm (T3O-38, D3). */
   readonly autoMerge?: boolean;
   /** A recorded auto-merge hold (T3O-38, D4) — the state a refused armed
@@ -220,8 +223,11 @@ export const makeBoardCard = (input: {
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: (input.scheduledStartAt ?? null) as BoardCard["scheduledStartAt"],
-  autoStart: input.autoStart ?? false,
-  autoMerge: input.autoMerge ?? false,
+  // `autoStart` / `autoMerge` are the pre-T3O-38 spellings of an own
+  // Auto-build / Auto-merge on.
+  autoPlanSetting: input.autoPlanSetting ?? null,
+  autoBuildSetting: input.autoBuildSetting ?? (input.autoStart === true ? true : null),
+  autoMergeSetting: input.autoMergeSetting ?? (input.autoMerge === true ? true : null),
   autoMergeHold: input.autoMergeHold ?? null,
   pinnedWorkerId: input.pinnedWorkerId ?? null,
   placedWorkerId: input.placedWorkerId ?? null,
@@ -1396,18 +1402,46 @@ export const cardTitleUpdated = (card: BoardCard, sequence: number): HarnessEven
     payload: { cardId: card.id, card: { ...card, title: `${card.title} (edited)` } },
   }) as unknown as HarnessEvent;
 
-/** An edit that TOUCHED the auto-merge arm (T3O-38, D3). The marker key is
-    what the reactor keys the fire-on-toggle on, so a helper that only set the
+/** An edit that TOUCHED the auto-merge toggle (T3O-38). The marker is what
+    the reactor keys the fire-on-toggle on, so a helper that only set the
     card's field would prove nothing. */
 export const cardAutoMergeUpdated = (
   card: BoardCard,
   autoMerge: boolean,
   sequence: number,
 ): HarnessEvent =>
+  cardAutomationUpdated(card, { autoMerge: autoMerge ? true : null }, sequence);
+
+/** A `board.card.set-automation` as the decider records it: the card with its
+    new own toggles, and the marker naming which moved. The harness does not
+    loop the reactor's events back, so a test writes the card into the model
+    itself (see `setAutomation`) and pumps this. */
+export const cardAutomationUpdated = (
+  card: BoardCard,
+  settings: {
+    readonly autoPlan?: boolean | null;
+    readonly autoBuild?: boolean | null;
+    readonly autoMerge?: boolean | null;
+  },
+  sequence: number,
+): HarnessEvent =>
   ({
     type: "board.card-updated",
     sequence,
-    payload: { cardId: card.id, card: { ...card, autoMerge }, autoMerge },
+    payload: {
+      cardId: card.id,
+      card: {
+        ...card,
+        ...(settings.autoPlan === undefined ? {} : { autoPlanSetting: settings.autoPlan }),
+        ...(settings.autoBuild === undefined ? {} : { autoBuildSetting: settings.autoBuild }),
+        ...(settings.autoMerge === undefined ? {} : { autoMergeSetting: settings.autoMerge }),
+      },
+      automationChanged: {
+        ...(settings.autoPlan === undefined ? {} : { autoPlan: true }),
+        ...(settings.autoBuild === undefined ? {} : { autoBuild: true }),
+        ...(settings.autoMerge === undefined ? {} : { autoMerge: true }),
+      },
+    },
   }) as unknown as HarnessEvent;
 
 export const cardArchived = (card: BoardCard, sequence: number): HarnessEvent =>
@@ -1481,3 +1515,43 @@ export const stepStatus = (board: BoardState, cardId: BoardCardId) =>
 /** The stage a card currently sits in, per the live read model. */
 export const cardStage = (board: BoardState, cardId: BoardCardId): BoardStageId | null =>
   board.cards.find((candidate) => candidate.id === cardId)?.stage ?? null;
+
+/**
+ * Flip a card's own Automation toggles the way `board.card.set-automation`
+ * does (T3O-38): the card is written into the model, then the decider's event
+ * is delivered to the reactor.
+ */
+export const setAutomation = (
+  h: Pick<Harness, "model" | "pumpDomain">,
+  cardId: BoardCardId,
+  settings: {
+    readonly autoPlan?: boolean | null;
+    readonly autoBuild?: boolean | null;
+    readonly autoMerge?: boolean | null;
+  },
+  sequence: number,
+) =>
+  Effect.gen(function* () {
+    let updated: BoardCard | undefined;
+    yield* Ref.update(h.model, (current) => {
+      const board = current.board!;
+      return {
+        ...current,
+        board: {
+          ...board,
+          cards: board.cards.map((card) => {
+            if (card.id !== cardId) return card;
+            updated = {
+              ...card,
+              ...(settings.autoPlan === undefined ? {} : { autoPlanSetting: settings.autoPlan }),
+              ...(settings.autoBuild === undefined ? {} : { autoBuildSetting: settings.autoBuild }),
+              ...(settings.autoMerge === undefined ? {} : { autoMergeSetting: settings.autoMerge }),
+            };
+            return updated;
+          }),
+        },
+      };
+    });
+    if (updated === undefined) return;
+    yield* h.pumpDomain(cardAutomationUpdated(updated, settings, sequence));
+  });

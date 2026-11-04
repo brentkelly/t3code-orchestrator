@@ -1,14 +1,17 @@
 /**
- * Auto-planning through the live reactor (T3O-32, decisions 4 and 7).
+ * Auto-planning through the live reactor (T3O-32, T3O-38).
  *
- * Auto-plan → Build ends planning, has the agent decide what is left, and
- * approves whatever plan arrives — decisions flagged unclear included, since
- * the decision log lives outside the read model and never gates a move. A
- * group with auto-plan on plans its children unattended and stops them at
- * Ready.
+ * Auto-plan has the agent decide what is left. Alone, its plan waits at the
+ * human gate; with Auto-build too it is approved — decisions flagged unclear
+ * included, since the decision log lives outside the read model and never
+ * gates a move — and built. A group's toggles reach its children unless they
+ * set their own. The card's current planning thread is steered, never
+ * replaced.
  */
 import {
   BOARD_AUTO_PLAN_INSTRUCTION,
+  BOARD_AUTO_PLAN_OFF_INSTRUCTION,
+  boardAutoPlanInstruction,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
   boardCardStepState,
@@ -32,6 +35,7 @@ import {
   codexStep,
   makeBoardCard,
   NOW,
+  setAutomation,
   settingsWith,
   stepCompleted,
   turnCompleted,
@@ -62,11 +66,8 @@ const plan = (cardId: string, key: string, ordinal: number): BoardPlan => ({
   updatedAt: NOW,
 });
 
-const pendingAutoPlan = (mode: "build" | "ready") => ({
-  mode,
-  requestedAt: NOW,
-  endedAt: null,
-});
+/** Both toggles on: the plan is approved and built when it arrives. */
+const autoPlanBuild = { autoPlanSetting: true, autoBuildSetting: true } as const;
 
 const planningCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   ...makeBoardCard({ id, stage: "planning", orderKey: "m" }),
@@ -87,9 +88,9 @@ const priorPlanning = (cardId: string): BoardStepCompletion => ({
 });
 
 it.effect(
-  "Auto-plan → Build approves the plan, unclear decisions and all, and moves the card to Building",
+  "Auto-plan + Auto-build approves the plan, unclear decisions and all, and moves the card to Building",
   () => {
-    const card = planningCard("auto", { autoPlan: pendingAutoPlan("build") });
+    const card = planningCard("auto", autoPlanBuild);
     return withGovernor(
       {
         board: { cards: [card], plans: [plan("auto", "one", 0)], nextCardNumberByProject: {} },
@@ -103,18 +104,66 @@ it.effect(
           assert.isFalse(boardCardStepState(yield* board, id)?.humanInLoop);
           const spawn = (yield* commands).find((command) => command.type === "thread.spawn");
           assert.ok(spawn?.type === "thread.spawn");
-          assert.include(spawn.text, BOARD_AUTO_PLAN_INSTRUCTION);
+          assert.include(spawn.text, boardAutoPlanInstruction(true));
 
           yield* pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
 
           const after = yield* board;
           assert.strictEqual(cardStage(after, id), BOARD_SEED_STAGE_IDS.building);
-          // The request is spent by the move out of planning.
+          // The run record is spent by the move out of planning.
           assert.isString(cardOf(after.cards, "auto")?.autoPlan?.endedAt);
         }),
     );
   },
 );
+
+it.effect("Auto-plan alone plans unattended and leaves the plan at the approval gate", () => {
+  const card = planningCard("gated", { autoPlanSetting: true });
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("gated", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("gated");
+        yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        assert.isFalse(boardCardStepState(yield* h.board, id)?.humanInLoop);
+        const spawn = (yield* h.commands).find((command) => command.type === "thread.spawn");
+        assert.ok(spawn?.type === "thread.spawn");
+        assert.include(spawn.text, boardAutoPlanInstruction(false));
+
+        yield* h.pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
+        const after = yield* h.board;
+        // Not approved, and not D8-advanced either: the plan waits for a human.
+        assert.strictEqual(cardStage(after, id), BOARD_SEED_STAGE_IDS.planning);
+        assert.strictEqual(cardOf(after.cards, "gated")?.autoPlan?.endedAt, null);
+
+        // Turning Auto-build on now counts as the approval.
+        yield* setAutomation(h, id, { autoBuild: true }, 3);
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.building);
+      }),
+  );
+});
+
+it.effect("a planning run that was not unattended is never auto-approved", () => {
+  const card = planningCard("attended");
+  return withGovernor(
+    {
+      board: { cards: [card], plans: [plan("attended", "one", 0)], nextCardNumberByProject: {} },
+      settings,
+    },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("attended");
+        yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        yield* h.pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
+        // Planning is finished, so turning both on afterwards approves nothing.
+        yield* setAutomation(h, id, { autoPlan: true, autoBuild: true }, 3);
+        assert.strictEqual(cardStage(yield* h.board, id), BOARD_SEED_STAGE_IDS.planning);
+      }),
+  );
+});
 
 it.effect("steers a live planning thread and approves the plan it then proposes", () => {
   const card = planningCard("steer");
@@ -123,16 +172,16 @@ it.effect("steers a live planning thread and approves the plan it then proposes"
       board: { cards: [card], plans: [plan("steer", "one", 0)], nextCardNumberByProject: {} },
       settings,
     },
-    ({ pumpDomain, board, commands, reactor }) =>
+    (h) =>
       Effect.gen(function* () {
+        const { pumpDomain, board, commands } = h;
         const id = BoardCardId.make("steer");
         yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
         const interview = boardCardStepState(yield* board, id);
         assert.isTrue(interview?.humanInLoop);
         assert.ok(interview?.threadId != null);
 
-        const result = yield* reactor.autoPlanCard(id);
-        assert.deepStrictEqual(result, { outcome: "steered" });
+        yield* setAutomation(h, id, { autoPlan: true, autoBuild: true }, 2);
 
         const sent = (yield* commands).filter((command) => command.type === "thread.send");
         assert.ok(
@@ -140,17 +189,61 @@ it.effect("steers a live planning thread and approves the plan it then proposes"
             (command) =>
               command.type === "thread.send" &&
               command.threadId === interview.threadId &&
-              command.text === BOARD_AUTO_PLAN_INSTRUCTION,
+              command.text === boardAutoPlanInstruction(true),
           ),
         );
         const steered = yield* board;
         // Supervised as unattended from here on, on the same thread.
         assert.isFalse(boardCardStepState(steered, id)?.humanInLoop);
         assert.strictEqual(boardCardStepState(steered, id)?.threadId, interview.threadId);
-        assert.strictEqual(cardOf(steered.cards, "steer")?.autoPlan?.mode, "build");
+        assert.strictEqual(cardOf(steered.cards, "steer")?.autoPlan?.endedAt, null);
 
-        yield* pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
+        yield* pumpDomain(stepCompleted(id, "succeeded", 3, PLANNING));
         assert.strictEqual(cardStage(yield* board, id), BOARD_SEED_STAGE_IDS.building);
+      }),
+  );
+});
+
+it.effect("turning Auto-plan off mid-run hands planning back to the user on the same thread", () => {
+  const card = planningCard("back", { autoPlanSetting: true });
+  return withGovernor(
+    { board: { cards: [card], nextCardNumberByProject: {} }, settings },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("back");
+        yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        const run = boardCardStepState(yield* h.board, id);
+        assert.isFalse(run?.humanInLoop);
+
+        yield* setAutomation(h, id, { autoPlan: false }, 2);
+        const after = yield* h.board;
+        assert.isTrue(boardCardStepState(after, id)?.humanInLoop);
+        assert.strictEqual(boardCardStepState(after, id)?.threadId, run?.threadId);
+        assert.isString(cardOf(after.cards, "back")?.autoPlan?.endedAt);
+        assert.ok(
+          (yield* h.commands).some(
+            (command) =>
+              command.type === "thread.send" && command.text === BOARD_AUTO_PLAN_OFF_INSTRUCTION,
+          ),
+        );
+      }),
+  );
+});
+
+it.effect("a human pressing Stop on an unattended planning run turns Auto-plan off", () => {
+  const card = planningCard("stopped", { autoPlanSetting: true });
+  return withGovernor(
+    { board: { cards: [card], nextCardNumberByProject: {} }, settings },
+    (h) =>
+      Effect.gen(function* () {
+        const id = BoardCardId.make("stopped");
+        yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
+        const threadId = boardCardStepState(yield* h.board, id)!.threadId!;
+        yield* h.pumpRuntime(turnInterruptRequested(threadId));
+        const after = yield* h.board;
+        assert.strictEqual(boardCardStepState(after, id)?.status, "paused");
+        assert.isFalse(cardOf(after.cards, "stopped")?.autoPlanSetting);
+        assert.isString(cardOf(after.cards, "stopped")?.autoPlan?.endedAt);
       }),
   );
 });
@@ -168,13 +261,18 @@ it.effect(
         },
         settings,
       },
-      ({ pumpDomain, board, reactor }) =>
+      (h) =>
         Effect.gen(function* () {
+          const { pumpDomain, board } = h;
           const id = BoardCardId.make("fresh");
           assert.strictEqual(boardCardStepState(yield* board, id), null);
 
-          const result = yield* reactor.autoPlanCard(id);
-          assert.deepStrictEqual(result, { outcome: "started" });
+          yield* setAutomation(h, id, { autoPlan: true }, 1);
+          assert.ok(
+            (yield* h.commands).some(
+              (command) => command.type === "board.card.start-stage-thread",
+            ),
+          );
 
           // The harness does not loop the reactor's own events back into it,
           // so the start request it dispatched is delivered here.
@@ -192,7 +290,7 @@ it.effect(
   },
 );
 
-it.effect("refuses a card whose split is waiting for approval", () => {
+it.effect("leaves a card whose split is waiting for approval alone", () => {
   const card = planningCard("pending", {
     splitRationale: "Two parts that review separately and ship one at a time.",
   });
@@ -205,25 +303,34 @@ it.effect("refuses a card whose split is waiting for approval", () => {
       },
       settings,
     },
-    ({ reactor }) =>
+    (h) =>
       Effect.gen(function* () {
-        const result = yield* reactor.autoPlanCard(BoardCardId.make("pending"));
-        assert.strictEqual(result.outcome, "refused");
+        yield* setAutomation(h, BoardCardId.make("pending"), { autoPlan: true }, 1);
+        const after = yield* h.board;
+        // Nothing is marked or steered: the split is the human's to approve.
+        assert.strictEqual(cardOf(after.cards, "pending")?.autoPlan, undefined);
+        assert.isFalse((yield* h.commands).some((command) => command.type === "thread.send"));
       }),
   );
 });
 
+/** A split card whose unattended run was stamped before it proposed — the
+    fixture holds the plans from the start, and a pending split is never
+    stamped afresh. */
 const splitCard = (id: string, autoBuild: boolean) =>
   planningCard(id, {
-    autoPlan: pendingAutoPlan("build"),
+    autoPlan: { requestedAt: NOW, endedAt: null },
+    autoPlanSetting: true,
+    autoBuildSetting: autoBuild ? true : null,
     splitRationale: "Two parts that review separately and ship one at a time.",
-    splitRecommendation: { autoBuild, mergeTarget: "own" },
+    // The agent recommends Auto-build off: the card's own toggle overrides it.
+    splitRecommendation: { autoBuild: false, mergeTarget: "own" },
   });
 
 const splitPlans = (id: string) => [plan(id, "a", 0), plan(id, "b", 1)];
 
 it.effect(
-  "an auto-plan split is approved with the recommended settings, logged as important, and started",
+  "an auto-plan + auto-build split is approved with the card's toggles, logged as important, and started",
   () => {
     const card = splitCard("split", true);
     return withGovernor(
@@ -258,7 +365,7 @@ it.effect(
   },
 );
 
-it.effect("an auto-plan split with auto-build off starts nothing and stays in Planning", () => {
+it.effect("an auto-plan-only split waits at the gate, unapproved", () => {
   const card = splitCard("epic", false);
   return withGovernor(
     {
@@ -273,9 +380,8 @@ it.effect("an auto-plan split with auto-build off starts nothing and stays in Pl
 
         const after = yield* board;
         const parent = cardOf(after.cards, "epic");
-        assert.strictEqual(after.cards.filter((c) => c.parentCardId === id).length, 2);
-        assert.strictEqual(parent?.group?.autoBuild, false);
-        assert.isFalse(parent?.group?.started);
+        assert.strictEqual(after.cards.filter((c) => c.parentCardId === id).length, 0);
+        assert.strictEqual(parent?.group, null);
         assert.strictEqual(parent?.stage, BOARD_SEED_STAGE_IDS.planning);
       }),
   );
@@ -293,7 +399,7 @@ const autoPlanGroup: BoardCardGroup = {
   integrated: false,
 };
 
-it.effect("a group with auto-plan plans a child unattended and stops it at Ready", () => {
+it.effect("a group with auto-plan plans a child unattended and its plan waits for approval", () => {
   const group = planningCard("group", { group: autoPlanGroup });
   const child = planningCard("child", { parentCardId: BoardCardId.make("group") });
   return withGovernor(
@@ -310,11 +416,11 @@ it.effect("a group with auto-plan plans a child unattended and stops it at Ready
         const id = BoardCardId.make("child");
         yield* pumpDomain(cardMoved(child, "sprint", "planning", 1));
         const marked = yield* board;
-        assert.strictEqual(cardOf(marked.cards, "child")?.autoPlan?.mode, "ready");
+        assert.strictEqual(cardOf(marked.cards, "child")?.autoPlan?.endedAt, null);
         assert.isFalse(boardCardStepState(marked, id)?.humanInLoop);
 
         yield* pumpDomain(stepCompleted(id, "succeeded", 2, PLANNING));
-        assert.strictEqual(cardStage(yield* board, id), BOARD_SEED_STAGE_IDS.ready);
+        assert.strictEqual(cardStage(yield* board, id), BOARD_SEED_STAGE_IDS.planning);
       }),
   );
 });
@@ -333,7 +439,7 @@ it.effect("a child created straight into an auto-plan group's Planning is auto-p
           payload: { cardId: child.id },
         } as unknown as HarnessEvent);
         const after = yield* board;
-        assert.strictEqual(cardOf(after.cards, "child")?.autoPlan?.mode, "ready");
+        assert.strictEqual(cardOf(after.cards, "child")?.autoPlan?.endedAt, null);
         assert.isFalse(boardCardStepState(after, BoardCardId.make("child"))?.humanInLoop);
       }),
   );
@@ -355,7 +461,7 @@ it.effect("a child of a group without auto-plan keeps the planning interview", (
 });
 
 it.effect("an auto-plan run that proposed nothing approves nothing and says so", () => {
-  const card = planningCard("empty", { autoPlan: pendingAutoPlan("build") });
+  const card = planningCard("empty", autoPlanBuild);
   return withGovernor(
     { board: { cards: [card], nextCardNumberByProject: {} }, settings },
     ({ pumpDomain, board, commands }) =>
@@ -381,15 +487,16 @@ const stepEvent = (
   sequence: number,
 ) => ({ type, sequence, payload: { cardId: state.cardId, state } }) as never;
 
-it.effect("an auto-plan run parked on a human ends the request, so planning is gated again", () => {
-  const card = planningCard("parked", { autoPlan: pendingAutoPlan("build") });
+it.effect("an auto-plan run parked on a human ends the run record, so planning is gated again", () => {
+  const card = planningCard("parked", autoPlanBuild);
   return withGovernor(
     {
       board: { cards: [card], plans: [plan("parked", "one", 0)], nextCardNumberByProject: {} },
       settings,
     },
-    ({ pumpDomain, board, reactor }) =>
+    (h) =>
       Effect.gen(function* () {
+        const { pumpDomain, board } = h;
         const id = BoardCardId.make("parked");
         yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
         yield* pumpDomain(stepCompleted(id, "blocked", 2, PLANNING));
@@ -399,10 +506,13 @@ it.effect("an auto-plan run parked on a human ends the request, so planning is g
 
         const after = yield* board;
         assert.isString(cardOf(after.cards, "parked")?.autoPlan?.endedAt);
-        // The way back in: Auto-plan is accepted again, on the same thread.
-        const again = yield* reactor.autoPlanCard(id);
-        assert.strictEqual(again.outcome, "steered");
-        assert.strictEqual(boardCardStepState(yield* board, id)?.threadId, parked?.threadId);
+        // A machine stop leaves the toggle on; re-asserting it steers the same thread.
+        assert.isTrue(cardOf(after.cards, "parked")?.autoPlanSetting);
+        yield* setAutomation(h, id, { autoPlan: true }, 4);
+        const again = yield* board;
+        assert.strictEqual(cardOf(again.cards, "parked")?.autoPlan?.endedAt, null);
+        assert.strictEqual(boardCardStepState(again, id)?.threadId, parked?.threadId);
+        assert.strictEqual(boardCardStepState(again, id)?.status, "running");
       }),
   );
 });
@@ -436,8 +546,9 @@ for (const status of ["awaiting-input", "paused", "stalled"] as const) {
     const card = planningCard(`parked-${status}`);
     return withGovernor(
       { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-      ({ pumpDomain, board, commands, reactor, model }) =>
+      (h) =>
         Effect.gen(function* () {
+          const { pumpDomain, board, commands, model } = h;
           const id = BoardCardId.make(`parked-${status}`);
           yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
           const interview = boardCardStepState(yield* board, id);
@@ -446,8 +557,7 @@ for (const status of ["awaiting-input", "paused", "stalled"] as const) {
           yield* parkStep(model, id, status);
           assert.strictEqual(boardCardStepState(yield* board, id)?.status, status);
 
-          const result = yield* reactor.autoPlanCard(id);
-          assert.deepStrictEqual(result, { outcome: "steered" });
+          yield* setAutomation(h, id, { autoPlan: true }, 2);
 
           const calls = yield* commands;
           assert.isFalse(
@@ -482,8 +592,9 @@ it.effect("a pending question is answered with the instruction instead of a new 
   const card = planningCard("question");
   return withGovernor(
     { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-    ({ pumpDomain, board, commands, reactor, model, shells }) =>
+    (h) =>
       Effect.gen(function* () {
+        const { pumpDomain, board, commands, model, shells } = h;
         const id = BoardCardId.make("question");
         yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
         const threadId = boardCardStepState(yield* board, id)!.threadId!;
@@ -495,15 +606,15 @@ it.effect("a pending question is answered with the instruction instead of a new 
           ),
         );
 
-        assert.deepStrictEqual(yield* reactor.autoPlanCard(id), { outcome: "steered" });
+        yield* setAutomation(h, id, { autoPlan: true }, 2);
         const calls = yield* commands;
         const answered = calls.find((command) => command.type === "thread.answer-pending-input");
         assert.ok(answered?.type === "thread.answer-pending-input");
-        assert.strictEqual(answered.text, BOARD_AUTO_PLAN_INSTRUCTION);
+        assert.strictEqual(answered.text, boardAutoPlanInstruction(false));
         assert.isFalse(
           calls.some(
             (command) =>
-              command.type === "thread.send" && command.text === BOARD_AUTO_PLAN_INSTRUCTION,
+              command.type === "thread.send" && command.text.includes(BOARD_AUTO_PLAN_INSTRUCTION),
           ),
           "the answer is the instruction; no second turn is queued behind it",
         );
@@ -532,15 +643,15 @@ it.effect("a steering turn that does not land ends the request and starts no new
             : local.send(input),
       }),
     },
-    ({ pumpDomain, board, commands, reactor }) =>
+    (h) =>
       Effect.gen(function* () {
+        const { pumpDomain, board, commands } = h;
         const id = BoardCardId.make("deaf");
         yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
         const interview = boardCardStepState(yield* board, id);
         assert.strictEqual(interview?.status, "running");
 
-        const result = yield* reactor.autoPlanCard(id);
-        assert.strictEqual(result.outcome, "refused");
+        yield* setAutomation(h, id, { autoPlan: true }, 2);
         const calls = yield* commands;
         assert.isFalse(calls.some((command) => command.type === "board.card.start-stage-thread"));
         assert.strictEqual(
@@ -550,6 +661,8 @@ it.effect("a steering turn that does not land ends the request and starts no new
         );
         const after = yield* board;
         assert.isString(cardOf(after.cards, "deaf")?.autoPlan?.endedAt);
+        // A machine failure: the toggle stays on.
+        assert.isTrue(cardOf(after.cards, "deaf")?.autoPlanSetting);
         // The interview's stance is restored: nobody is driving it unattended.
         assert.isTrue(boardCardStepState(after, id)?.humanInLoop);
         assert.ok(
@@ -597,8 +710,9 @@ it.effect(
     const card = planningCard("midturn");
     return withGovernor(
       { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-      ({ pumpDomain, pumpRuntime, board, commands, reactor, shells }) =>
+      (h) =>
         Effect.gen(function* () {
+          const { pumpDomain, pumpRuntime, board, commands, shells } = h;
           const id = BoardCardId.make("midturn");
           yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
           const interview = boardCardStepState(yield* board, id);
@@ -611,15 +725,14 @@ it.effect(
             ),
           );
 
-          const result = yield* reactor.autoPlanCard(id);
-          assert.deepStrictEqual(result, { outcome: "steered" });
+          yield* setAutomation(h, id, { autoPlan: true }, 2);
           const calls = yield* commands;
           const interrupted = calls.findIndex(
             (command) => command.type === "thread.interrupt" && command.threadId === threadId,
           );
           const steered = calls.findIndex(
             (command) =>
-              command.type === "thread.send" && command.text === BOARD_AUTO_PLAN_INSTRUCTION,
+              command.type === "thread.send" && command.text.includes(BOARD_AUTO_PLAN_INSTRUCTION),
           );
           assert.isAtLeast(interrupted, 0);
           assert.isAbove(steered, interrupted);
@@ -650,8 +763,9 @@ it.effect(
     const card = planningCard("staleturn");
     return withGovernor(
       { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-      ({ pumpDomain, pumpRuntime, board, reactor, shells }) =>
+      (h) =>
         Effect.gen(function* () {
+          const { pumpDomain, pumpRuntime, board, shells } = h;
           const id = BoardCardId.make("staleturn");
           yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
           const interview = boardCardStepState(yield* board, id);
@@ -664,7 +778,7 @@ it.effect(
           // The interview run has ended, and its end has been read, but the
           // projection still names it when auto-plan looks.
           yield* showRun("turn-interview");
-          assert.deepStrictEqual(yield* reactor.autoPlanCard(id), { outcome: "steered" });
+          yield* setAutomation(h, id, { autoPlan: true }, 2);
 
           // The steer turn runs and asks a question: that is a real park.
           yield* showRun("turn-steer");
@@ -681,8 +795,9 @@ it.effect(
     const card = planningCard("steerend");
     return withGovernor(
       { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-      ({ pumpDomain, pumpRuntime, board, reactor, shells }) =>
+      (h) =>
         Effect.gen(function* () {
+          const { pumpDomain, pumpRuntime, board, shells } = h;
           const id = BoardCardId.make("steerend");
           yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
           const interview = boardCardStepState(yield* board, id);
@@ -694,7 +809,7 @@ it.effect(
               aliveThread(String(threadId), { activeTurnRef: "turn-interview" }),
             ),
           );
-          assert.deepStrictEqual(yield* reactor.autoPlanCard(id), { outcome: "steered" });
+          yield* setAutomation(h, id, { autoPlan: true }, 2);
 
           // The steer turn ends without completing the step: death detection runs.
           yield* Ref.update(shells, (map) =>
