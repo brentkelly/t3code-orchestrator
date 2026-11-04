@@ -627,7 +627,7 @@ export function BoardListView(props: BoardListViewProps) {
               </MenuPopup>
             </Menu>
             <span className="flex-1 md:hidden" />
-            <span className="hidden min-w-0 flex-1 basis-0 items-center justify-end gap-1 overflow-hidden text-[11.5px] whitespace-nowrap text-muted-foreground md:flex">
+            <span className="hidden min-w-0 flex-1 basis-0 items-center justify-end-safe gap-1 overflow-hidden text-[11.5px] whitespace-nowrap text-muted-foreground md:flex">
               <ListKbd>⇧Click</ListKbd> for a range. <ListKbd>Tab</ListKbd> indents,
               <ListKbd>⇧Tab</ListKbd> outdents; drag to move.
             </span>
