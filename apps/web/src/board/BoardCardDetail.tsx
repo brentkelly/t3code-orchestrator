@@ -80,6 +80,7 @@ import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import { boardConflictFix } from "./boardConflictFix";
 import { boardScheduleKind } from "./boardSchedule";
 import { boardQueueInfo } from "./boardQueueInfo";
+import { boardCardPlanReviewView, boardPlanStageExecution } from "./boardCardPlanReview";
 import { projectIconColorOf } from "./projectAccent";
 import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
@@ -1207,6 +1208,16 @@ export function BoardCardDetail({
       humanInLoop={humanInLoop}
       onSetHumanInLoop={(value) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, humanInLoop: value } }))
+      }
+      planReview={boardCardPlanReviewView({
+        card,
+        isGroup: card.group !== null,
+        stages,
+        planStageExecution: boardPlanStageExecution(boardSettings, stages),
+        planReviewStarted: detail.planReviewStarted,
+      })}
+      onSetPlanReview={(planReview) =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, planReview } }))
       }
       stages={stages}
       canApproveSplit={canApproveSplit}

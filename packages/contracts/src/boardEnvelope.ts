@@ -111,6 +111,9 @@ export interface ComposeStepPromptStep {
   readonly humanInLoop: boolean;
   /** An auto-planned planning run (T3O-32). */
   readonly autoPlan?: boolean;
+  /** The plan review this step is running (plan review, T3O-39): set once a
+      review has started, so a respawned or nudged thread resumes it. */
+  readonly planReview?: { readonly instructions: string };
 }
 
 export interface ComposeStepPromptInput {
@@ -297,8 +300,71 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
       ? `\n\n${BOARD_DRAFT_PULL_REQUEST_BUILD}`
       : "";
   const bodyBlock = body.trim().length > 0 ? `${body}${draftLine}\n\n` : "";
-  return `${preamble}\n\n${bodyBlock}${postamble}`;
+  const reviewBlock =
+    input.role === "plan" && input.step.planReview !== undefined
+      ? `${input.step.planReview.instructions}\n\n`
+      : "";
+  return `${preamble}\n\n${bodyBlock}${reviewBlock}${postamble}`;
 }
+
+/** Substitute every `{rounds}` in a plan-review prompt. */
+export function fillPlanReviewRounds(prompt: string, rounds: number): string {
+  return prompt.replaceAll("{rounds}", String(rounds));
+}
+
+/** The fixed lead of the plan-review instructions (plan review, T3O-39). */
+export function planReviewInstructionsLead(rounds: number): string {
+  const roundWord = rounds === 1 ? "round" : "rounds";
+  return `Plan review is on for this card: up to ${rounds} ${roundWord} of adversarial review, run inside this thread.`;
+}
+
+/** The fixed closing of the plan-review instructions: the board mechanics,
+    after the user's prompt and taking precedence over it. */
+export function planReviewInstructionsClosing(input: {
+  readonly rounds: number;
+  /** A human is in the loop and no auto-plan is pending. */
+  readonly humanInLoop: boolean;
+}): string {
+  const finish = input.humanInLoop
+    ? `With a human in the loop: if you need a human decision, ${BOARD_ENVELOPE_QUESTION_MECHANISM}. Then summarise the final plan in the thread, wait for the human's sign-off, and only then call board_complete_step.`
+    : "This run is unattended: ask nothing. Decide every question yourself, flag a call you are unsure of as unclear with board_record_decisions, summarise the final plan in the thread, then call board_complete_step without waiting.";
+  return [
+    "Board rules for the plan review. These come after the text above and take precedence over it:",
+    `- ${input.rounds} is a maximum. Stop as soon as a round produces no new substantive finding, and record that call (rounds run, converged or not) with board_record_decisions.`,
+    "- Run the reviewers in the foreground and do not end your turn while waiting for them.",
+    "- If your runtime cannot spawn subagents, run each reviewer pass yourself in turn, and say so in the thread.",
+    "- Post each reviewer's findings in the thread, and record any new decisions with board_record_decisions.",
+    "- If the plan changed, re-propose the final plan with board_propose_plans (that does not start another review). If board_propose_plans refuses because the plans are frozen, stop reviewing and summarise.",
+    "- When you call board_complete_step, add `planReview: { roundsRun, converged }` to the payload.",
+    `- ${finish}`,
+    "- If an auto-plan instruction arrives during the review, it overrides this text: stop asking and finish.",
+  ].join("\n");
+}
+
+/**
+ * The plan-review instructions (plan review, T3O-39): a fixed lead, the user's
+ * editable prompt with `{rounds}` filled in, and a fixed closing that comes
+ * after it and wins over it. The closing carries the board mechanics, so no
+ * rewrite of the prompt can remove them.
+ */
+export function composePlanReviewInstructions(input: {
+  readonly prompt: string;
+  readonly rounds: number;
+  /** A human is in the loop and no auto-plan is pending: ask, then wait for
+      sign-off. Otherwise the review finishes without asking anything. */
+  readonly humanInLoop: boolean;
+}): string {
+  return [
+    planReviewInstructionsLead(input.rounds),
+    fillPlanReviewRounds(input.prompt, input.rounds),
+    planReviewInstructionsClosing(input),
+  ].join("\n\n");
+}
+
+/** The turn sent into a planning thread when a human turns its running plan
+    review off (plan review, T3O-39). */
+export const BOARD_PLAN_REVIEW_STOP_INSTRUCTION =
+  "Stop the plan review now: summarise what the reviews found so far, re-propose the plan with board_propose_plans if it changed, and finish as normal.";
 
 /** A review phase's system preamble (D6/D7): the round header, plus — for any
     phase past the very first review — the pointer to the prior phases'

@@ -48,6 +48,7 @@ import {
   XIcon,
   ArrowRightLeftIcon,
   ServerIcon,
+  ScanSearchIcon,
   ServerOffIcon,
   FastForwardIcon,
 } from "lucide-react";
@@ -186,7 +187,16 @@ function ActivityIcon({
       ) : (
         <ServerIcon className={className} />
       );
+    // T3O-39: plan review rows claim nothing about the work — neutral.
+    case "plan-review-started":
+    case "plan-review-stopped":
+    case "plan-review-finished":
+      return <ScanSearchIcon className={className} />;
   }
+}
+
+function roundsPhrase(rounds: number): string {
+  return rounds === 1 ? "1 round" : `${rounds} rounds`;
 }
 
 /** The terminal outcome of a completed step, shown as a glyph rather than a
@@ -479,6 +489,27 @@ function activitySentence(
         default:
           return <>{worker} was removed from the board</>;
       }
+    }
+    case "plan-review-started":
+      return payload.planReviewRounds === undefined ? (
+        <>started the plan review</>
+      ) : (
+        <>started the plan review ({roundsPhrase(payload.planReviewRounds)})</>
+      );
+    case "plan-review-stopped":
+      return <>turned the plan review off</>;
+    case "plan-review-finished": {
+      const run = payload.planReviewRoundsRun ?? null;
+      const of = payload.planReviewRounds === undefined ? "" : ` of ${payload.planReviewRounds}`;
+      return run === null ? (
+        <>finished the plan review; rounds not reported</>
+      ) : (
+        <>
+          finished the plan review after {run}
+          {of} {run === 1 && of === "" ? "round" : "rounds"}
+          {payload.planReviewConverged === true ? ", converged" : ""}
+        </>
+      );
     }
   }
 }

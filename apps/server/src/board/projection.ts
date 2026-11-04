@@ -58,6 +58,7 @@ import {
   BoardCardModelOverrides,
   BoardSplitRecommendation,
   BoardCardAutoPlan,
+  BoardCardPlanReview,
   BoardCardDecision,
   BoardCardReviewOverrides,
   BoardCardReviewSummary,
@@ -155,6 +156,9 @@ const BoardCardDbRow = Schema.Struct({
       no split proposed since T3O-31 (D8: replay equals rehydration). */
   splitRecommendation: Schema.NullOr(Schema.fromJsonString(BoardSplitRecommendation)),
   autoPlan: Schema.NullOr(Schema.fromJsonString(BoardCardAutoPlan)),
+  /** NULL for every row written before migration 054 and for every card that
+      follows the Settings default (plan review, T3O-39). */
+  planReview: Schema.NullOr(Schema.fromJsonString(BoardCardPlanReview)),
   /** NULL for every row written before migration 036, and for every card that
       follows its project's default branch — indistinguishable on purpose, which
       is what makes replay equal rehydration (T3O-5, D1). */
@@ -460,6 +464,9 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULLABLE in the DB, and a null already MEANS "nothing scheduled": before
   // T3O-22 the next nudge went instantly, so no row had a time to record.
   retryAt: BoardCardStepState.fields.retryAt,
+  // NULL before migration 054 and on every step with no plan review started.
+  planReviewStartedAt: Schema.NullOr(IsoDateTime),
+  planReviewRounds: Schema.NullOr(Schema.Int),
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -658,6 +665,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     splitRationale: card.splitRationale,
     splitRecommendation: card.splitRecommendation ?? null,
     autoPlan: card.autoPlan ?? null,
+    planReview: card.planReview ?? null,
     baseBranch: card.baseBranch,
     scheduledStartAt: card.scheduledStartAt,
     autoStart: card.autoStart ? 1 : 0,
@@ -753,6 +761,7 @@ function rowToBoardCard(
     splitRationale: row.splitRationale,
     ...(row.splitRecommendation === null ? {} : { splitRecommendation: row.splitRecommendation }),
     ...(row.autoPlan === null ? {} : { autoPlan: row.autoPlan }),
+    ...(row.planReview === null ? {} : { planReview: row.planReview }),
     baseBranch: row.baseBranch,
     scheduledStartAt: row.scheduledStartAt,
     autoStart: row.autoStart !== 0,
@@ -823,6 +832,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         split_rationale,
         split_recommendation,
         auto_plan,
+        plan_review,
         base_branch,
         scheduled_start_at,
         auto_start,
@@ -869,6 +879,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.splitRationale},
         ${row.splitRecommendation},
         ${row.autoPlan},
+        ${row.planReview},
         ${row.baseBranch},
         ${row.scheduledStartAt},
         ${row.autoStart},
@@ -915,6 +926,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         split_rationale = excluded.split_rationale,
         split_recommendation = excluded.split_recommendation,
         auto_plan = excluded.auto_plan,
+        plan_review = excluded.plan_review,
         base_branch = excluded.base_branch,
         scheduled_start_at = excluded.scheduled_start_at,
         auto_start = excluded.auto_start,
@@ -971,6 +983,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         split_rationale AS "splitRationale",
         split_recommendation AS "splitRecommendation",
         auto_plan AS "autoPlan",
+        plan_review AS "planReview",
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
@@ -1358,6 +1371,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         split_rationale AS "splitRationale",
         split_recommendation AS "splitRecommendation",
         auto_plan AS "autoPlan",
+        plan_review AS "planReview",
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
         auto_start AS "autoStart",
@@ -2043,6 +2057,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         stage_entry_recoveries, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
         last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
+        plan_review_started_at, plan_review_rounds,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
         queued_by, started_at, updated_at
       )
@@ -2052,6 +2067,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
         ${row.baseTipAtRoundStart},
         ${row.lastError}, ${row.awaitingReason}, ${row.humanTurnAt}, ${row.stalledReason}, ${row.retryAt},
+        ${row.planReviewStartedAt}, ${row.planReviewRounds},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
         ${row.queuedBy}, ${row.startedAt}, ${row.updatedAt}
@@ -2077,6 +2093,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         human_turn_at = excluded.human_turn_at,
         stalled_reason = excluded.stalled_reason,
         retry_at = excluded.retry_at,
+        plan_review_started_at = excluded.plan_review_started_at,
+        plan_review_rounds = excluded.plan_review_rounds,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -2115,6 +2133,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         human_turn_at AS "humanTurnAt",
         stalled_reason AS "stalledReason",
         retry_at AS "retryAt",
+        plan_review_started_at AS "planReviewStartedAt",
+        plan_review_rounds AS "planReviewRounds",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -2184,9 +2204,18 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       run config, and the detail already runs a bundle of per-card queries. */
   const findBoardCardStepErrorRow = SqlSchema.findOneOption({
     Request: BoardCardId,
-    Result: Schema.Struct({ lastError: BoardCardStepState.fields.lastError }),
+    Result: Schema.Struct({
+      lastError: BoardCardStepState.fields.lastError,
+      status: BoardCardStepState.fields.status,
+      planReviewStartedAt: Schema.NullOr(IsoDateTime),
+      planReviewRounds: Schema.NullOr(Schema.Int),
+    }),
     execute: (cardId) => sql`
-      SELECT last_error AS "lastError"
+      SELECT
+        last_error AS "lastError",
+        status,
+        plan_review_started_at AS "planReviewStartedAt",
+        plan_review_rounds AS "planReviewRounds"
       FROM board_card_step_state
       WHERE card_id = ${cardId}
     `,
@@ -2554,11 +2583,15 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
     readonly kind: BoardCardActivityEntry["kind"];
     readonly payload: BoardCardActivityPayload;
     readonly threadId: ThreadId | null;
+    /** A second row from the same event needs its own id (plan review, T3O-39). */
+    readonly activityIdSuffix?: string;
   }) => {
     const actor = boardActivityActorFor(input.event.commandId);
     return queries
       .insertBoardCardActivityRow({
-        activityId: BoardActivityId.make(String(input.event.eventId)),
+        activityId: BoardActivityId.make(
+          `${String(input.event.eventId)}${input.activityIdSuffix ?? ""}`,
+        ),
         cardId: input.cardId,
         kind: input.kind,
         payload: input.payload,
@@ -2723,6 +2756,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         humanTurnAt: state.humanTurnAt,
         stalledReason: state.stalledReason,
         retryAt: state.retryAt,
+        planReviewStartedAt: state.planReviewStartedAt ?? null,
+        planReviewRounds: state.planReviewRounds ?? null,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -3190,6 +3225,49 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           },
           threadId: event.payload.completion.threadId,
         });
+        if (event.payload.planReviewFinished !== undefined) {
+          yield* recordActivity({
+            event,
+            cardId: event.payload.cardId,
+            kind: "plan-review-finished",
+            payload: {
+              stepId: event.payload.completion.stepId,
+              planReviewRounds: event.payload.planReviewFinished.rounds,
+              planReviewRoundsRun: event.payload.planReviewFinished.roundsRun,
+              planReviewConverged: event.payload.planReviewFinished.converged,
+            },
+            threadId: event.payload.completion.threadId,
+            activityIdSuffix: ":plan-review-finished",
+          });
+        }
+        return;
+
+      // Plan review (T3O-39): on the rail, so the card shows a review happened.
+      case "board.plan-review-started":
+        yield* upsertStepState(event.payload.state);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "plan-review-started",
+          payload: {
+            stepId: event.payload.state.stepId,
+            ...(event.payload.state.planReviewRounds === undefined
+              ? {}
+              : { planReviewRounds: event.payload.state.planReviewRounds }),
+          },
+          threadId: event.payload.state.threadId,
+        });
+        return;
+
+      case "board.plan-review-stopped":
+        yield* upsertStepState(event.payload.state);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "plan-review-stopped",
+          payload: { stepId: event.payload.stepId },
+          threadId: event.payload.threadId,
+        });
         return;
 
       // The override is recorded on the step row and nothing else (t3o-33):
@@ -3553,6 +3631,10 @@ export function loadBoardState(
             // could only have stalled through recovery giving up.
             stalledReason: row.stalledReason ?? "gave-up",
             retryAt: row.retryAt,
+            ...(row.planReviewStartedAt === null
+              ? {}
+              : { planReviewStartedAt: row.planReviewStartedAt }),
+            ...(row.planReviewRounds === null ? {} : { planReviewRounds: row.planReviewRounds }),
             humanInLoop: row.humanInLoop !== 0,
             maxAttempts: row.maxAttempts,
             timeoutMs: row.timeoutMs,
@@ -4034,6 +4116,20 @@ export function makeBoardCardDetailLoader(
             // Why the live step stopped (t3o-30, D2), or null when it is
             // healthy or absent — the failure banner's text.
             stepError: Option.getOrNull(stepErrorRow)?.lastError ?? null,
+            ...(() => {
+              const step = Option.getOrNull(stepErrorRow);
+              return step === null ||
+                step.planReviewStartedAt === null ||
+                step.planReviewRounds === null ||
+                isBoardTerminalStepStatus(step.status)
+                ? {}
+                : {
+                    planReviewStarted: {
+                      startedAt: step.planReviewStartedAt,
+                      rounds: step.planReviewRounds,
+                    },
+                  };
+            })(),
             decisions: decisionRows,
             // Filled below for a sub-board child; a top-level card has no
             // parent to inherit from and keeps the null.
