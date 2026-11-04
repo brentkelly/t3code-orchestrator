@@ -149,7 +149,7 @@ describe("the source tag", () => {
 });
 
 describe("a leaf's rows", () => {
-  it("shows a locked row's reason in place of its note, and offers no way back to the group", () => {
+  it("shows a locked row's reason in place of its note, and still lets an on row turn off", () => {
     const g = shell("g-1", "building", { group: group({ autoBuild: true, started: true }) });
     const building = child("c-1", "building", { autoBuildSetting: true });
     const rows = boardCardAutomationRows({
@@ -159,9 +159,12 @@ describe("a leaf's rows", () => {
     const build = rows.find((r) => r.id === "autoBuild")!;
     expect(build.locked).toBe(true);
     expect(build.note).toBe("Building now.");
-    expect(build.canInherit).toBe(false);
+    // Locks refuse only turning on: an on row can go off or back to the group.
+    expect(build.switchDisabled).toBe(false);
+    expect(build.canInherit).toBe(true);
     const plan = rows.find((r) => r.id === "autoPlan")!;
     expect(plan.locked).toBe(true);
+    expect(plan.switchDisabled).toBe(true);
     expect(plan.note).toBe("Planning is finished.");
   });
 
@@ -190,7 +193,13 @@ describe("a leaf's rows", () => {
       resolved: resolve([card], card, true),
       inPlanning: false,
     })[2]!;
-    expect(merge).toMatchObject({ on: true, locked: true, tag: "board", canInherit: false });
+    expect(merge).toMatchObject({
+      on: true,
+      locked: true,
+      switchDisabled: true,
+      tag: "board",
+      canInherit: false,
+    });
     expect(merge.note).toContain("Settings");
   });
 });

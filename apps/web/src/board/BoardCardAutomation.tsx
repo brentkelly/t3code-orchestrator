@@ -95,7 +95,7 @@ function AutomationRowView({
           <Switch
             aria-label={row.label}
             checked={row.on}
-            disabled={row.locked}
+            disabled={row.switchDisabled}
             onCheckedChange={onChange}
             size="sm"
           />

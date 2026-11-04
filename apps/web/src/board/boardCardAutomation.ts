@@ -133,8 +133,12 @@ export interface BoardAutomationRow {
   /** The one-line note, or the lock reason when the row is locked. */
   readonly note: string;
   readonly tag: string | null;
-  /** Turning it on would be refused: the switch is disabled. */
+  /** Turning it on would be refused. */
   readonly locked: boolean;
+  /** The switch cannot be used: locked while off (only turning on is
+      refused, so a locked row that is on can still be turned off), or held
+      on by the board-wide setting. */
+  readonly switchDisabled: boolean;
   readonly lockReason: string | null;
   /** The card has its own value under a parent group, so it can go back to
       the group's. */
@@ -142,14 +146,17 @@ export interface BoardAutomationRow {
 }
 
 function lockState(toggle: BoardResolvedAutomationToggle) {
-  return { locked: toggle.locked, lockReason: toggle.lockReason };
+  return {
+    locked: toggle.locked,
+    lockReason: toggle.lockReason,
+    switchDisabled: toggle.locked && (!toggle.value || toggle.source === "board"),
+  };
 }
 
 function canInherit(toggle: BoardResolvedAutomationToggle): boolean {
   return (
     toggle.own !== null &&
     toggle.inheritedFrom !== null &&
-    !toggle.locked &&
     toggle.source !== "board"
   );
 }
@@ -223,6 +230,8 @@ export function boardGroupAutomationRows(input: {
     note: lockReason ?? setting.note,
     tag: lockReason === null ? null : "board",
     locked: lockReason !== null,
+    // Group rows lock only for the board-wide merge, which holds them on.
+    switchDisabled: lockReason !== null,
     lockReason,
     canInherit: false,
   });
