@@ -41,6 +41,7 @@ import {
   boardStageWithRole,
   effectiveBoardStageRole,
   isBoardDeferredStage,
+  isBoardStageAtOrAfterBuild,
   liveBoardCardDependents,
   parseReviewStepId,
   sortBoardCardThreadLinks,
@@ -1550,17 +1551,34 @@ function BoardStepRecoveryButton({
 
 /** Stage action, blocked reason and archive — the things you *do* to a card,
     kept together at the top of the rail. */
-/** A group's action area (T3O-29): Open board and why the group sits where
-    it does — no advance button, its stage is derived. Its planning thread is
-    the header's Planning pill (T3O-34). */
+/** A group's action area (T3O-29): Open board, a secondary forward move while
+    the group is still placed by hand (before Building — the decider derives its
+    stage from there on), and why the group sits where it does. Its planning
+    thread is the header's Planning pill (T3O-34). */
 function GroupActionsSection({
   group,
   props,
+  unmet,
 }: {
   readonly group: BoardCardDetailGroup;
   readonly props: BoardCardDetailViewProps;
+  readonly unmet: ReadonlyArray<BoardDetailDependency>;
 }) {
-  const displayed = boardCardDisplayPullRequest(props.detail.card);
+  const { card } = props.detail;
+  const displayed = boardCardDisplayPullRequest(card);
+  const primaryAction =
+    card.archivedAt !== null || isBoardStageAtOrAfterBuild(stageStateOf(props.stages), card.stage)
+      ? null
+      : boardStagePrimaryAction(props.stages, card.stage);
+  const forward = primaryAction?.kind === "move" ? primaryAction : null;
+  const blocked =
+    forward !== null &&
+    boardCardMoveBlocked({
+      stages: props.stages,
+      stage: card.stage,
+      toStage: forward.toStage,
+      unmetCount: unmet.length,
+    });
   return (
     <div className="flex flex-col gap-3 border-t border-border p-3.5">
       <div className="flex flex-col gap-1.5">
@@ -1568,6 +1586,18 @@ function GroupActionsSection({
           <LayersIcon />
           Open board
         </Button>
+        {forward === null ? null : (
+          <BoardHint label={blocked ? "Blocked by unmet dependencies" : undefined}>
+            <Button
+              disabled={blocked}
+              onClick={() => props.onMoveStage(forward.toStage)}
+              variant="outline"
+            >
+              <ArrowRightIcon />
+              {forward.label}
+            </Button>
+          </BoardHint>
+        )}
         {displayed === null ? null : (
           <ViewPullRequestButton onOpen={props.onOpenPullRequest} pullRequest={displayed} />
         )}
@@ -3132,7 +3162,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 unmet={unmet}
               />
             ) : (
-              <GroupActionsSection group={group} props={props} />
+              <GroupActionsSection group={group} props={props} unmet={unmet} />
             )}
             <PlanReviewSection props={props} />
             <QueueSection props={props} />
@@ -3228,7 +3258,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   unmet={unmet}
                 />
               ) : (
-                <GroupActionsSection group={group} props={props} />
+                <GroupActionsSection group={group} props={props} unmet={unmet} />
               )}
               <PlanReviewSection props={props} />
               <RailSections group={group} onOpenThread={selectThread} props={props} />

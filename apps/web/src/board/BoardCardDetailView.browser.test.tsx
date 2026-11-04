@@ -182,3 +182,28 @@ describe("an own-branch group's action area (T3O-37)", () => {
     await expect.element(screen.getByRole("button", { name: /^Merge/ })).not.toBeInTheDocument();
   });
 });
+
+describe("a group's forward move before Building", () => {
+  it("offers Move to Ready beside Open board at Planning", async () => {
+    const onMoveStage = vi.fn();
+    await using screen = await render(
+      <BoardCardDetailPanel
+        {...baseProps}
+        childShells={splitShells(1)}
+        detail={detail({ stage: BOARD_SEED_STAGE_IDS.planning })}
+        group={{ ...group, onOpenBoard: noop }}
+        onMoveStage={onMoveStage}
+        projectName="P"
+      />,
+    );
+    await expect.element(screen.getByRole("button", { name: "Open board" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Move to Ready" }));
+    expect(onMoveStage).toHaveBeenCalledWith(BOARD_SEED_STAGE_IDS.ready);
+  });
+
+  it("offers no hand move once the group is building", async () => {
+    await using screen = await render(<GroupDialog />);
+    await expect.element(screen.getByRole("button", { name: "Open board" })).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: /^Move to/ })).not.toBeInTheDocument();
+  });
+});
