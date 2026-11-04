@@ -249,15 +249,19 @@ const planReviewForCommand = (board: BoardState, card: BoardCard, settings: Boar
 };
 
 /** The instructions of a plan review this command started, or null: the
-    decider stamps the review with the command's own instant (T3O-39). */
+    review was not started before the call and is after it (T3O-39). Board
+    commands are serialised, so nothing else starts one in between. */
 const planReviewStartedBy = (
   deps: BoardToolDeps,
-  input: { readonly card: BoardCard; readonly settings: BoardSettings; readonly at: string },
+  input: { readonly card: BoardCard; readonly settings: BoardSettings; readonly before: BoardState },
 ) =>
   Effect.gen(function* () {
+    if (boardCardStepState(input.before, input.card.id)?.planReviewStartedAt !== undefined) {
+      return null;
+    }
     const after = yield* readBoardState(deps);
     const state = boardCardStepState(after, input.card.id);
-    if (state === null || state.planReviewStartedAt !== input.at) return null;
+    if (state === null || state.planReviewStartedAt === undefined) return null;
     const card = after.cards.find((candidate) => candidate.id === input.card.id) ?? input.card;
     return planReviewInstructions({ board: after, card, settings: input.settings, state });
   });
@@ -1163,7 +1167,7 @@ export const boardHandlers = {
       const planReview = yield* planReviewStartedBy(deps, {
         card,
         settings,
-        at: command.createdAt,
+        before: board,
       });
       if (planReview !== null) {
         return {
@@ -1975,7 +1979,7 @@ export const boardHandlers = {
       const planReview = yield* planReviewStartedBy(deps, {
         card,
         settings,
-        at: command.createdAt,
+        before: board,
       });
       return {
         planIds: input.plans.map((plan) => boardPlanId(card.id, plan.key)),
