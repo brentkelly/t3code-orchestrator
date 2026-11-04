@@ -59,6 +59,19 @@ describe("resolveBoardStepRecovery", () => {
     expect(recovery?.next?.toStage).toBe(BOARD_SEED_STAGE_IDS.review);
   });
 
+  it("offers no hand move on a group card, whose stage its children drive (T3O-37)", () => {
+    const recovery = resolveBoardStepRecovery({
+      stages,
+      stage: BOARD_SEED_STAGE_IDS.review,
+      stalled: true,
+      archived: false,
+      blocked: false,
+      handMoves: false,
+    });
+    expect(recovery?.restartLabel).toBe("Restart code review");
+    expect(recovery?.next).toBeNull();
+  });
+
   it("keeps the next stage visible but disabled while dependencies block the card", () => {
     expect(
       resolveBoardStepRecovery({

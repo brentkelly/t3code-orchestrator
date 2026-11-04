@@ -1497,6 +1497,11 @@ function GroupActionsSection({
   );
 }
 
+/** The outline secondary look shared by the action-area buttons; hover is added
+    per button because :hover still matches a disabled one. */
+const OUTLINE_ACTION_CLASS =
+  "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs";
+
 /** The outline View PR button, shared by the leaf and group action areas. */
 function ViewPullRequestButton({
   pullRequest,
@@ -1508,7 +1513,7 @@ function ViewPullRequestButton({
   return (
     <BoardHint label={`Open pull request #${pullRequest.number}`}>
       <button
-        className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent"
+        className={cn(OUTLINE_ACTION_CLASS, "hover:bg-accent")}
         onClick={() => onOpen(pullRequest.url)}
         type="button"
       >
@@ -1685,6 +1690,7 @@ function ActionsSection({
     stalled: props.stepFailure !== null,
     archived,
     blocked,
+    handMoves: group === null,
   });
   // A merge from this card is mid-flight: the button holds its spot but shows a
   // spinner and refuses further clicks until the round trip settles.
@@ -1926,7 +1932,7 @@ function ActionsSection({
       {onAutoPlan === null ? null : (
         <BoardHint label="Ends planning. The agent makes every remaining decision, approves the plan and starts the build. Decisions are logged on the Summary pane.">
           <button
-            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent"
+            className={cn(OUTLINE_ACTION_CLASS, "hover:bg-accent")}
             onClick={onAutoPlan}
             type="button"
           >
@@ -1952,7 +1958,7 @@ function ActionsSection({
         <BoardHint label={reviewRound.hint}>
           <button
             className={cn(
-              "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs",
+              OUTLINE_ACTION_CLASS,
               // :hover still matches a disabled button, so the accent has to be
               // gated rather than relying on `disabled` to suppress it.
               reviewRound.disabled ? "cursor-not-allowed opacity-50" : "hover:bg-accent",
@@ -1979,7 +1985,7 @@ function ActionsSection({
         <>
           <button
             className={cn(
-              "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs",
+              OUTLINE_ACTION_CLASS,
               group.onOpenBoard === undefined ? "cursor-not-allowed opacity-50" : "hover:bg-accent",
             )}
             disabled={group.onOpenBoard === undefined}
