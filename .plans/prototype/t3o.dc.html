@@ -487,13 +487,13 @@ a:hover{text-decoration:underline}
                 <div style="position:relative;flex:none">
                   <button type="button" onClick="{{ b.toggleSettings }}" style="{{ b.settingsBtnStyle }}">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10"></path><path d="M18 6h2"></path><path d="M4 12h4"></path><path d="M12 12h8"></path><path d="M4 18h10"></path><path d="M18 18h2"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="16" cy="18" r="2"></circle></svg>
-                    Group settings
+                    Automation
                   </button>
                   <sc-if value="{{ b.settingsOpen }}" hint-placeholder-val="{{ false }}">
                     <div onClick="{{ b.toggleSettings }}" style="position:fixed;inset:0;z-index:25"></div>
                     <div style="position:absolute;top:32px;right:0;z-index:30;width:344px;padding:13px 14px 14px;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:var(--shadow-pop);display:flex;flex-direction:column;gap:12px">
                       <div style="display:flex;align-items:center;gap:8px">
-                        <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Group settings</span>
+                        <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Automation</span>
                         <span style="{{ b.laneKeyStyle }}">{{ b.laneKey }}</span>
                       </div>
                       <div style="display:flex;flex-direction:column;gap:6px">
@@ -1129,24 +1129,6 @@ a:hover{text-decoration:underline}
             <sc-if value="{{ cardMenuOpen }}" hint-placeholder-val="{{ false }}">
               <div onClick="{{ closeCardMenu }}" style="position:fixed;inset:0;z-index:55"></div>
               <div style="position:absolute;top:32px;right:0;z-index:60;min-width:168px;width:268px;padding:5px;border:1px solid var(--border);border-radius:11px;background:var(--popover);box-shadow:0 18px 34px -20px rgb(0 0 0 / 55%);display:flex;flex-direction:column;gap:1px">
-                <sc-if value="{{ autoMergeCard }}" hint-placeholder-val="{{ false }}">
-                  <button type="button" onClick="{{ autoMergeCard.toggle }}" style="display:flex;align-items:flex-start;gap:9px;width:100%;padding:7px 9px;border:none;border-radius:8px;background:transparent;text-align:left;cursor:pointer" style-hover="background:var(--accent)">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:3px"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M6 21V9a9 9 0 0 0 9 9"></path></svg>
-                    <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
-                      <span style="font:500 12.5px var(--font-sans);color:var(--fg)">Auto-merge when ready</span>
-                      <sc-if value="{{ autoMergeCard.on }}" hint-placeholder-val="{{ false }}">
-                        <span style="font:400 11.5px/1.4 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Merges itself as soon as the forge accepts. A refusal retries on a backoff.</span>
-                      </sc-if>
-                      <sc-if value="{{ autoMergeCard.off }}" hint-placeholder-val="{{ true }}">
-                        <span style="font:400 11.5px/1.4 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">This card waits in Ready for merge until you click Merge.</span>
-                      </sc-if>
-                    </span>
-                    <span style="{{ autoMergeCard.switchStyle }}">
-                      <span style="{{ autoMergeCard.knobStyle }}"></span>
-                    </span>
-                  </button>
-                  <div style="height:1px;margin:3px 7px;background:var(--border)"></div>
-                </sc-if>
                 <button type="button" onClick="{{ openCardModels }}" style="display:inline-flex;align-items:center;gap:9px;height:30px;padding:0 9px;border:none;border-radius:8px;background:transparent;color:var(--fg);font:500 12.5px var(--font-sans);text-align:left;cursor:pointer" style-hover="background:var(--accent)">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10"></path><path d="M18 6h2"></path><path d="M4 12h4"></path><path d="M12 12h8"></path><path d="M4 18h10"></path><path d="M18 18h2"></path><circle cx="16" cy="6" r="2"></circle><circle cx="10" cy="12" r="2"></circle><circle cx="16" cy="18" r="2"></circle></svg>
                   <span style="flex:1">Models</span>
@@ -2226,32 +2208,6 @@ a:hover{text-decoration:underline}
               </sc-if>
             </div>
             </div>
-            <sc-if value="{{ groupSettings }}" hint-placeholder-val="{{ false }}">
-            <div style="{{ sideStageStyle }}">
-              <div style="font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Group settings</div>
-              <div style="display:flex;flex-direction:column;gap:6px">
-                <div style="display:flex;align-items:baseline;gap:8px">
-                  <span style="font:500 12px var(--font-sans);color:var(--fg)">Merge target</span>
-                  <span style="flex:1"></span>
-                  <span style="font:500 11px var(--font-mono);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ groupSettings.resolved }}</span>
-                </div>
-                <div title="{{ groupSettings.lockTip }}" style="display:flex;gap:2px;padding:2px;border-radius:8px;background:var(--accent)">
-                  <button type="button" onClick="{{ groupSettings.pickInherit }}" style="{{ groupSettings.inheritStyle }}">Inherit</button>
-                  <button type="button" onClick="{{ groupSettings.pickOwn }}" style="{{ groupSettings.ownStyle }}">Own branch</button>
-                </div>
-                <div style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ groupSettings.targetNote }}</div>
-              </div>
-              <sc-for list="{{ groupSettings.toggles }}" as="t" hint-placeholder-count="3">
-                <div onClick="{{ t.toggle }}" title="{{ t.tip }}" style="{{ t.rowStyle }}">
-                  <span style="{{ t.switchStyle }}"><span style="{{ t.knobStyle }}"></span></span>
-                  <span style="min-width:0;display:flex;flex-direction:column;gap:2px">
-                    <span style="font:500 12px var(--font-sans);color:var(--fg)">{{ t.label }}</span>
-                    <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ t.note }}</span>
-                  </span>
-                </div>
-              </sc-for>
-            </div>
-            </sc-if>
             <sc-if value="{{ automation }}" hint-placeholder-val="{{ false }}">
             <div style="{{ sideStageStyle }}">
               <button type="button" onClick="{{ automation.toggleOpen }}" style="display:flex;align-items:center;gap:6px;width:100%;padding:0;border:none;background:transparent;cursor:pointer;text-align:left">
@@ -2261,6 +2217,20 @@ a:hover{text-decoration:underline}
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="{{ automation.chevronStyle }}"><path d="m6 9 6 6 6-6"></path></svg>
               </button>
               <sc-if value="{{ automation.open }}" hint-placeholder-val="{{ false }}">
+              <sc-if value="{{ automation.isGroup }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:6px">
+                  <div style="display:flex;align-items:baseline;gap:8px">
+                    <span style="font:500 12px var(--font-sans);color:var(--fg)">Merge target</span>
+                    <span style="flex:1"></span>
+                    <span style="font:500 11px var(--font-mono);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ automation.resolved }}</span>
+                  </div>
+                  <div title="{{ automation.lockTip }}" style="display:flex;gap:2px;padding:2px;border-radius:8px;background:var(--accent)">
+                    <button type="button" onClick="{{ automation.pickInherit }}" style="{{ automation.inheritStyle }}">Inherit</button>
+                    <button type="button" onClick="{{ automation.pickOwn }}" style="{{ automation.ownStyle }}">Own branch</button>
+                  </div>
+                  <div style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ automation.targetNote }}</div>
+                </div>
+              </sc-if>
               <sc-for list="{{ automation.rows }}" as="t" hint-placeholder-count="3">
                 <div onClick="{{ t.toggle }}" title="{{ t.tip }}" style="{{ t.rowStyle }}">
                   <span style="{{ t.switchStyle }}"><span style="{{ t.knobStyle }}"></span></span>
@@ -3394,7 +3364,7 @@ class Component extends DCLogic {
       if (!parent) return;
       const set = PLAN_SETS[pk];
       parent.base = set.base;
-      parent.group = { ...GROUP_DEFAULT, target: "own", branch: set.base, autoBuild: true, started: true, placed: "planning", prevStatus: "planning" };
+      parent.group = { ...GROUP_DEFAULT, target: "own", branch: set.base, autoBuild: true, autoMerge: true, started: true, placed: "planning", prevStatus: "planning" };
       parent.planKeys = set.plans.map((p) => pk + "." + p.n);
       set.plans.forEach((p) => {
         planCards.push({
@@ -4071,7 +4041,7 @@ class Component extends DCLogic {
     // under auto-build; into trunk only when the group says so.
     const p = c.parentKey ? this.cardByKey(c.parentKey) : null;
     if (p && p.group)
-      return this.targetOf(p) === this.trunkOf(c) ? !!p.group.autoMerge : !!p.group.autoBuild;
+      return !!p.group.autoMerge;
     return false;
   }
   // A forge refusal (nearly always unfinished CI) parks the card on a backoff.
@@ -5876,28 +5846,9 @@ class Component extends DCLogic {
       this.setState((s) => ({
         cards: this.sweepAutoStart(s.cards.map((c) => (c.id === g.id ? { ...c, group: { ...c.group, ...patch } } : c)), s.autoStart),
       }));
+    const board = !!this.props.boardAutoMerge;
+    const selfOn = board || !!this.state.autoMerge[g.id];
     const rows = [
-      {
-        label: "Auto-build",
-        on: gr.autoBuild,
-        note: gr.autoBuild
-          ? gr.started
-            ? "Ready children whose dependencies are met build, review and merge on their own."
-            : "Armed. The cascade starts when you drag the group to Building."
-          : "Children wait for you to start them. Turning this off never interrupts a running child.",
-        toggle: () => set({ autoBuild: !gr.autoBuild }),
-      },
-      {
-        label: "Auto-merge to " + trunk,
-        on: atTrunk && gr.autoMerge,
-        disabled: !atTrunk,
-        note: !atTrunk
-          ? "Only applies when children merge into " + trunk + ". These merge into " + resolved + "."
-          : gr.autoMerge
-            ? "Children merge into " + trunk + " as soon as the forge accepts."
-            : "Children stop at Ready for merge for you, unless a card has its own auto-merge on.",
-        toggle: () => atTrunk && set({ autoMerge: !gr.autoMerge }),
-      },
       {
         label: "Auto-plan",
         on: gr.autoPlan,
@@ -5906,7 +5857,38 @@ class Component extends DCLogic {
           : "Children entering Planning are planned with you.",
         toggle: () => set({ autoPlan: !gr.autoPlan }),
       },
-    ];
+      {
+        label: "Auto-build",
+        on: gr.autoBuild,
+        note: gr.autoBuild
+          ? gr.started
+            ? "Ready children whose dependencies are met start building on their own."
+            : "Armed. The cascade starts when you drag the group to Building."
+          : "Children wait for you to start them. Turning this off never interrupts a running child.",
+        toggle: () => set({ autoBuild: !gr.autoBuild }),
+      },
+      {
+        label: "Auto-merge children into " + resolved,
+        on: board || gr.autoMerge,
+        disabled: board,
+        note: board
+          ? "On for the whole board (Settings → Board → Pipeline)."
+          : gr.autoMerge
+            ? "Children merge into " + resolved + " as soon as the forge accepts."
+            : "Children stop at Ready for merge for you, unless a card has its own auto-merge on.",
+        toggle: () => !board && set({ autoMerge: !gr.autoMerge }),
+      },
+    ].concat(own ? [{
+        label: "Auto-merge " + branch + " into " + up,
+        on: selfOn,
+        disabled: board,
+        note: board
+          ? "On for the whole board (Settings → Board → Pipeline)."
+          : selfOn
+            ? "Once the group's own review passes, " + branch + " merges into " + up + " on its own."
+            : "The group waits in Ready for merge until you click Merge.",
+        toggle: () => !board && this.setState((s) => ({ autoMerge: { ...s.autoMerge, [g.id]: !s.autoMerge[g.id] } })),
+      }] : []);
     return {
       resolved: "→ " + resolved,
       inheritStyle: this.segStyle(!own, locked),
@@ -8646,14 +8628,28 @@ class Component extends DCLogic {
         return {
           tip: this.props.boardAutoMerge
             ? "Auto-merge is on for the whole board (Settings → Board → Pipeline → Ready for merge)"
-            : active.group
-              ? "Auto-merge armed for this group — change it under the ⋯ menu"
-              : "Auto-merge is on for this card — change it under Automation",
+            : "Auto-merge is on — change it under Automation",
           label: this.props.boardAutoMerge ? "Auto-merge · board" : "Auto-merge",
         };
       })(),
       automation: (() => {
-        if (!active || active.group || active.status === "done") return null;
+        if (!active || active.status === "done") return null;
+        if (active.group) {
+          const gs = this.groupSettingsVm(active);
+          if (!gs) return null;
+          const open = !!st.automationOpen;
+          const onNames = gs.toggles.filter((t) => t.on).map((t) => t.label.replace("Auto-", "").split(" ")[0]);
+          const uniq = onNames.filter((n, i) => onNames.indexOf(n) === i);
+          return {
+            ...gs,
+            isGroup: true,
+            rows: gs.toggles,
+            open,
+            summary: uniq.length ? uniq.map((n) => n[0].toUpperCase() + n.slice(1)).join(" · ") : "Off",
+            chevronStyle: "flex:none;transition:transform .12s;transform:rotate(" + (open ? "180deg" : "0deg") + ")",
+            toggleOpen: () => this.setState((x) => ({ automationOpen: !x.automationOpen })),
+          };
+        }
         const p = active.parentKey ? this.cardByKey(active.parentKey) : null;
         const g = p && p.group ? p.group : null;
         const s = active.status;
