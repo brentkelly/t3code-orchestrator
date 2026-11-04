@@ -1329,6 +1329,27 @@ describe("initialBoardCardThreadId", () => {
     );
   });
 
+  it("passes over a retired thread, but opens one when every thread is retired (T3O-41)", () => {
+    const retired = (threadId: string, role: string, linkedAt: string) => ({
+      ...link(threadId, role, linkedAt),
+      retiredAt: "2026-01-02T00:00:00.000Z",
+    });
+    const conflicts = [
+      link("thread-plan", BOARD_SEED_STAGE_IDS.planning, "2026-01-01T00:00:00.000Z"),
+      retired("thread-fix", BOARD_SEED_STAGE_IDS.planning, "2026-01-01T03:00:00.000Z"),
+    ];
+    expect(
+      initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.planning, conflicts),
+    ).toBe("thread-plan");
+    const allRetired = [
+      retired("thread-old", "merge", "2026-01-01T00:00:00.000Z"),
+      retired("thread-new", "merge", "2026-01-01T03:00:00.000Z"),
+    ];
+    expect(initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.done, allRetired)).toBe(
+      "thread-new",
+    );
+  });
+
   it("skips a tombstoned thread, and opens a newly adopted one", () => {
     const tombstoned = [
       link("thread-plan", BOARD_SEED_STAGE_IDS.planning, "2026-01-01T00:00:00.000Z", NOW),

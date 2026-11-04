@@ -31,6 +31,12 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover"
 import { boardStageLabelMidSentence } from "./boardCardThreadMenu";
 import { BoardPickerSearchBody, type BoardPickerOption } from "./BoardSearchAddPicker";
 
+/** The adopt list's server search (T3O-41): told the query as it is typed. */
+export interface BoardAdoptSearch {
+  readonly onQueryChange: (query: string) => void;
+  readonly pending: boolean;
+}
+
 /**
  * The restart affordance's state, or `null` when the current stage does not
  * auto-execute (the item is absent, not disabled — D4). `label` names the stage
@@ -92,10 +98,12 @@ export function BoardCardThreadAddMenuBody({
   onCreateBlankThread,
   onAdoptThread,
   onEnterAdoptMode,
+  adoptSearch,
 }: {
   readonly mode: "menu" | "adopt";
   readonly stageRestart: BoardThreadStageRestart | null;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
+  readonly adoptSearch?: BoardAdoptSearch | undefined;
   readonly onRestartStage: () => void;
   readonly onCreateBlankThread: () => void;
   readonly onAdoptThread: (threadId: string) => void;
@@ -105,7 +113,9 @@ export function BoardCardThreadAddMenuBody({
     return (
       <BoardPickerSearchBody
         onPick={onAdoptThread}
+        onQueryChange={adoptSearch?.onQueryChange}
         options={adoptableThreads}
+        pending={adoptSearch?.pending}
         placeholder="Search threads…"
       />
     );
@@ -142,8 +152,10 @@ export function BoardCardThreadAddMenu({
   onRestartStage,
   onCreateBlankThread,
   onAdoptThread,
+  adoptSearch,
 }: {
   readonly label: string;
+  readonly adoptSearch?: BoardAdoptSearch | undefined;
   /** Present only when the current stage auto-executes; `null` hides the
       restart item entirely. */
   readonly stageRestart: BoardThreadStageRestart | null;
@@ -182,6 +194,7 @@ export function BoardCardThreadAddMenu({
       </PopoverTrigger>
       <PopoverPopup className="w-64 p-1.5">
         <BoardCardThreadAddMenuBody
+          adoptSearch={adoptSearch}
           adoptableThreads={adoptableThreads}
           key={openCount}
           mode={mode}

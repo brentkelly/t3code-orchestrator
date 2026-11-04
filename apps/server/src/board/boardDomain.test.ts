@@ -188,6 +188,56 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
       assert.strictEqual(cardOneUnlinked?.activeThreadId, null);
       assert.strictEqual(cardOneUnlinked?.threadState, "none");
 
+      // A retired link (T3O-41) stays on the card, round-trips through the
+      // table, and is not the card's active thread.
+      const retiredThreadId = ThreadId.make("thread-retired");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-create-retired"),
+        threadId: retiredThreadId,
+        projectId: projectA,
+        title: "Conflicts thread",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.link-thread",
+        commandId: CommandId.make("cmd-card-link-retired"),
+        cardId: cardTwo,
+        threadId: retiredThreadId,
+        role: "merge",
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.retire-thread",
+        commandId: CommandId.make("cmd-card-retire"),
+        cardId: cardTwo,
+        threadId: retiredThreadId,
+        createdAt: t0,
+      });
+      const afterRetire = yield* snapshotQuery.getCommandReadModel();
+      assert.deepStrictEqual(
+        afterRetire.board?.cards.find((card) => card.id === cardTwo)?.threadLinks,
+        [
+          {
+            threadId: retiredThreadId,
+            role: "merge",
+            linkedAt: t0,
+            tombstonedAt: null,
+            retiredAt: t0,
+          },
+        ],
+      );
+      const shellRetired = yield* snapshotQuery.getBoardSnapshot();
+      assert.strictEqual(
+        shellRetired.cards?.find((card) => card.cardId === cardTwo)?.activeThreadId,
+        null,
+      );
+
       // Archive round-trip: the card leaves and re-enters the shell
       // snapshot; the read model keeps it (archivedAt set) throughout.
       const shellBefore = yield* snapshotQuery.getBoardSnapshot();
@@ -240,6 +290,8 @@ it.layer(makeBoardDomainTestLayer("t3o-board-domain-test-"))("board domain lifec
         "board.card-moved",
         "board.card-moved",
         "board.card-moved",
+        "board.card-thread-linked",
+        "board.card-thread-unlinked",
         "board.card-thread-linked",
         "board.card-thread-unlinked",
         "board.card-archived",

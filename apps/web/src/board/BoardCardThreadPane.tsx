@@ -39,8 +39,16 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import ChatView from "../components/ChatView";
 import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
+import { Button } from "../components/ui/button";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useThreadShell } from "../state/entities";
-import { BoardCardThreadAddMenu, type BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
+import { threadFamilies } from "../state/threads";
+import { boardCardChatPresence, useBoardCardThreadRows } from "./boardCardThreadRows";
+import {
+  BoardCardThreadAddMenu,
+  type BoardAdoptSearch,
+  type BoardThreadStageRestart,
+} from "./BoardCardThreadAddMenu";
 import { BoardCardThreadTodosStrip } from "./BoardCardThreadTodosStrip";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
@@ -48,6 +56,8 @@ import { BoardHint } from "./BoardHint";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 import { BoardThreadWorkerGate } from "./workers/BoardThreadWorkerGate";
 import { threadWorkerOpensOn } from "./workers/threadWorker";
+
+const NO_THREAD_IDS: ReadonlyArray<ThreadId> = [];
 
 /** The live chat for one linked thread. Split out so the thread-detail
     subscription hooks are keyed by the mounted thread and unmount with it. */
@@ -59,12 +69,28 @@ function BoardCardChat({
   readonly threadId: ThreadId;
 }) {
   const threadRef = scopeThreadRef(environmentId, threadId);
-  const shell = useThreadShell(threadRef);
+  const inShell = useThreadShell(threadRef) !== null;
+  // The shell keeps only the newest settled threads; older ones are read on demand (T3O-41).
+  const rows = useBoardCardThreadRows(environmentId, inShell ? NO_THREAD_IDS : [threadId]);
+  const presence = boardCardChatPresence({ threadId, inShell, rows });
 
-  if (shell === null) {
+  if (presence !== "open") {
     return (
-      <div className="flex flex-1 items-center justify-center p-6 text-[12.5px] text-muted-foreground">
-        This thread is no longer on the server.
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-[12.5px] text-muted-foreground">
+        {presence === "loading"
+          ? "Loading thread…"
+          : presence === "failed"
+            ? "Couldn't load this thread."
+            : "This thread is no longer on the server."}
+        {presence === "failed" ? (
+          <Button
+            onClick={() => threadFamilies.refresh(appAtomRegistry, environmentId, threadId)}
+            size="xs"
+            variant="outline"
+          >
+            Retry
+          </Button>
+        ) : null}
       </div>
     );
   }
@@ -84,6 +110,7 @@ export function BoardCardThreadPane({
   selectedThreadId,
   onSelectThread,
   adoptableThreads,
+  adoptSearch,
   stageRestart,
   onLinkThread,
   onRestartStage,
@@ -102,6 +129,7 @@ export function BoardCardThreadPane({
   readonly selectedThreadId: ThreadId | null;
   readonly onSelectThread: (threadId: ThreadId) => void;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
+  readonly adoptSearch?: BoardAdoptSearch | undefined;
   /** Present only when the card's current stage auto-executes; `null` hides the
       restart item. A non-null `disabledReason` disables it (a run is in flight). */
   readonly stageRestart: BoardThreadStageRestart | null;
@@ -164,6 +192,7 @@ export function BoardCardThreadPane({
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-2.5 pr-3">
         <BoardCardThreadAddMenu
+          adoptSearch={adoptSearch}
           adoptableThreads={adoptableThreads}
           label=""
           onAdoptThread={(id) => onLinkThread(id as ThreadId, "linked")}
@@ -374,6 +403,7 @@ export function BoardCardThreadPane({
             </div>
             <div className="pt-0.5">
               <BoardCardThreadAddMenu
+                adoptSearch={adoptSearch}
                 adoptableThreads={adoptableThreads}
                 label="Add a thread"
                 onAdoptThread={(id) => onLinkThread(id as ThreadId, "linked")}

@@ -35,9 +35,25 @@ export function cardThreadIdsMissingFromShell(
 export interface BoardCardThreadRows {
   readonly threads: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>;
   readonly loading: ReadonlySet<ThreadId>;
+  readonly failed: ReadonlySet<ThreadId>;
 }
 
-const NO_ROWS: BoardCardThreadRows = { threads: new Map(), loading: new Set() };
+const NO_ROWS: BoardCardThreadRows = { threads: new Map(), loading: new Set(), failed: new Set() };
+
+/**
+ * What the card's thread pane can show for one thread. Only a read that succeeded without the row
+ * proves the thread is gone; a failed read is not proof (T3O-41).
+ */
+export function boardCardChatPresence(input: {
+  readonly threadId: ThreadId;
+  readonly inShell: boolean;
+  readonly rows: BoardCardThreadRows;
+}): "open" | "loading" | "failed" | "gone" {
+  if (input.inShell || input.rows.threads.has(input.threadId)) return "open";
+  if (input.rows.loading.has(input.threadId)) return "loading";
+  if (input.rows.failed.has(input.threadId)) return "failed";
+  return "gone";
+}
 
 const rowsAtom = Atom.family((key: string) => {
   const [environmentId, threadIds] = JSON.parse(key) as [EnvironmentId, ReadonlyArray<ThreadId>];
@@ -45,15 +61,18 @@ const rowsAtom = Atom.family((key: string) => {
     if (threadIds.length === 0) return NO_ROWS;
     const threads = new Map<ThreadId, OrchestrationV2ThreadShell>();
     const loading = new Set<ThreadId>();
+    const failed = new Set<ThreadId>();
     for (const threadId of threadIds) {
       const read = get(threadFamilies.familyAtom(environmentId, threadId));
-      if (threadFamilyRead(read) === "pending") loading.add(threadId);
+      const status = threadFamilyRead(read);
+      if (status === "pending") loading.add(threadId);
+      if (status === "failed") failed.add(threadId);
       const row = selectEnvironmentQueryData(read)?.threads.find(
         (thread) => thread.id === threadId,
       );
       if (row !== undefined) threads.set(threadId, row);
     }
-    return { threads, loading };
+    return { threads, loading, failed };
   }).pipe(Atom.withLabel(`t3o:board:card-thread-rows:${key}`));
 });
 

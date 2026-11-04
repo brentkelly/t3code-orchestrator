@@ -89,7 +89,7 @@ import {
   isBoardParkedStepStatus,
   isBoardTerminalStepStatus,
   effectiveBoardRuntimeMode,
-  resolveBoardCardForThread,
+  isLiveBoardCardThreadLink,
   resolveBoardStageExecution,
   resolveBoardDefaultModelSelection,
   resolveBoardStageModelSelection,
@@ -1160,7 +1160,7 @@ const make = Effect.gen(function* () {
       stage's step (D7): auto-kickoff is suppressed so a manually adopted thread
       is never trampled. The step's role is the stage id. */
   const hasLiveStageThread = (card: BoardCard, stageId: string): boolean =>
-    card.threadLinks.some((link) => link.role === stageId && link.tombstonedAt === null);
+    card.threadLinks.some((link) => link.role === stageId && isLiveBoardCardThreadLink(link));
 
   // Send a follow-up turn (recovery nudge or escalation question) to an
   // existing step thread.
@@ -2841,8 +2841,8 @@ const make = Effect.gen(function* () {
           existing.threadId !== null
         ) {
           yield* interruptOrphan(existing.threadId);
-          // Unlinked below while alive, so no card derives it any more (t3o-13)
-          // — name it, or the release sweep can never settle it.
+          // Named so its interrupt is not read as a human Stop; the release
+          // sweep settles it from the retired link below.
           abandonedThreads.add(String(existing.threadId));
         }
       }
@@ -2853,12 +2853,13 @@ const make = Effect.gen(function* () {
       // ADOPTED is untouched — adoption links with role `linked`, never the
       // stage — so the restart never takes a conversation off the card that the
       // board did not put there.
+      // Retired, not unlinked (T3O-41): they stay on the card as history.
       for (const link of card.threadLinks) {
-        if (link.tombstonedAt !== null) continue;
+        if (!isLiveBoardCardThreadLink(link)) continue;
         if (link.role !== card.stage && link.threadId !== existing?.threadId) continue;
         yield* dispatch({
-          type: "board.card.unlink-thread",
-          commandId: yield* commandId("unlink-superseded"),
+          type: "board.card.retire-thread",
+          commandId: yield* commandId("retire-superseded"),
           cardId: card.id,
           threadId: link.threadId,
           createdAt: yield* nowIso,
@@ -6645,8 +6646,11 @@ const make = Effect.gen(function* () {
     if (steeredRun === undefined || completedTurnId !== steeredRun) {
       yield* handleTurnCompleted(board, threadId, completedTurnId);
     }
+    // Retired links count: their thread still has to be settled (T3O-41).
     const owned =
-      resolveBoardCardForThread(board, threadId) !== null || abandonedThreads.has(String(threadId));
+      board.cards.some((card) =>
+        card.threadLinks.some((link) => link.threadId === threadId && link.tombstonedAt === null),
+      ) || abandonedThreads.has(String(threadId));
     if (!owned) return;
     yield* releaseFinishedThreads;
   });
@@ -7373,16 +7377,14 @@ const make = Effect.gen(function* () {
           // either way: the merge either lands (and the card graduates) or it
           // does not (and the human clicks Merge again).
           if (state.threadId !== null) {
+            // Retired (T3O-41): the fix stays on the card as a past thread.
             yield* dispatch({
-              type: "board.card.unlink-thread",
-              commandId: yield* commandId("unlink-conflict-fix"),
+              type: "board.card.retire-thread",
+              commandId: yield* commandId("retire-conflict-fix"),
               cardId: card.id,
               threadId: state.threadId,
               createdAt: yield* nowIso,
             });
-            // Unlinking a LIVE thread removes the link outright, so nothing can
-            // derive this release from the card afterwards (t3o-13): name it.
-            abandonedThreads.add(String(state.threadId));
           }
           yield* schedule();
           // The human clicked Merge, watched it say "resolving conflicts", and
@@ -8628,7 +8630,7 @@ const make = Effect.gen(function* () {
       }
       const cleared = new Set<string>();
       for (const link of card.threadLinks) {
-        if (link.tombstonedAt !== null) continue;
+        if (!isLiveBoardCardThreadLink(link)) continue;
         if (link.role !== card.stage && link.threadId !== existing?.threadId) continue;
         yield* dispatch({
           type: "board.card.unlink-thread",
@@ -8664,7 +8666,7 @@ const make = Effect.gen(function* () {
       const kickoffCard: BoardCard = {
         ...card,
         threadLinks: card.threadLinks.map((link) =>
-          link.tombstonedAt === null && cleared.has(String(link.threadId))
+          isLiveBoardCardThreadLink(link) && cleared.has(String(link.threadId))
             ? { ...link, tombstonedAt: card.updatedAt }
             : link,
         ),
@@ -8758,9 +8760,10 @@ const make = Effect.gen(function* () {
         // this same thread instead of starting the interview from scratch.
         // The release sweep leaves it in the inbox until the interview finishes.
       } else if (existing.threadId !== null) {
+        // Retired (T3O-41): the abandoned step's thread stays on the card.
         yield* dispatch({
-          type: "board.card.unlink-thread",
-          commandId: yield* commandId("unlink-moved"),
+          type: "board.card.retire-thread",
+          commandId: yield* commandId("retire-moved"),
           cardId: card.id,
           threadId: existing.threadId,
           createdAt: yield* nowIso,
@@ -8773,20 +8776,18 @@ const make = Effect.gen(function* () {
         // thread, breaking the one-writer invariant. Best-effort, like every
         // other orphan interrupt (the dispatch helper swallows a reject).
         yield* interruptOrphan(existing.threadId);
-        // Unlinking a LIVE thread removes the link outright, so the release
-        // sweep can no longer derive this thread from the card (t3o-13). The
-        // card is finished with it — the interrupt above says so — so name it.
+        // Named so the interrupt above is not read as a human Stop.
         abandonedThreads.add(String(existing.threadId));
-        // Reflect the unlink onto the card handed to the kickoff: `beginStageRun`
+        // Reflect the retire onto the card handed to the kickoff: `beginStageRun`
         // reads the links to decide whether a live stage thread already exists,
-        // and the leftover link we just tombstoned (its role is the old step id
+        // and the leftover link we just retired (its role is the old step id
         // — the destination stage itself on a re-entry) would otherwise trip
         // that guard against the very thread we are abandoning.
         kickoffCard = {
           ...card,
           threadLinks: card.threadLinks.map((link) =>
-            link.threadId === existing.threadId && link.tombstonedAt === null
-              ? { ...link, tombstonedAt: event.payload.card.updatedAt }
+            link.threadId === existing.threadId && isLiveBoardCardThreadLink(link)
+              ? { ...link, retiredAt: event.payload.card.updatedAt }
               : link,
           ),
         };

@@ -218,6 +218,8 @@ const BoardCardThreadLinkDbRow = Schema.Struct({
   tombstonedAt: BoardCardThreadLink.fields.tombstonedAt,
   /** Null for `local` (T3O-63). */
   workerId: Schema.NullOr(EnvironmentId),
+  /** Null while live (T3O-41). */
+  retiredAt: Schema.NullOr(IsoDateTime),
 });
 type BoardCardThreadLinkDbRow = typeof BoardCardThreadLinkDbRow.Type;
 
@@ -349,6 +351,10 @@ function toBoardCardActivityEntry(row: BoardCardActivityDbRow): BoardCardActivit
 /** A link row's worker, absent for `local` (T3O-63). */
 const linkWorker = (row: { readonly workerId: EnvironmentId | null }) =>
   row.workerId === null ? {} : { workerId: row.workerId };
+
+// T3O-41: key-optional like `workerId`, so rehydration equals replay.
+const linkRetired = (row: { readonly retiredAt: string | null }) =>
+  row.retiredAt === null ? {} : { retiredAt: row.retiredAt };
 
 /** Map a joined row to the wire shell (t3o-18, D3): the todo fields are
     key-optional, so a thread with no list serialises as a bare link entry. */
@@ -1032,7 +1038,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         role,
         linked_at AS "linkedAt",
         tombstoned_at AS "tombstonedAt",
-        worker_id AS "workerId"
+        worker_id AS "workerId",
+        retired_at AS "retiredAt"
       FROM board_card_thread_links
       ORDER BY linked_at ASC, thread_id ASC
     `,
@@ -1052,9 +1059,11 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         role,
         linked_at AS "linkedAt",
         tombstoned_at AS "tombstonedAt",
-        worker_id AS "workerId"
+        worker_id AS "workerId",
+        retired_at AS "retiredAt"
       FROM board_card_thread_links
       WHERE tombstoned_at IS NULL
+        AND retired_at IS NULL
         AND card_id IN (SELECT card_id FROM board_cards WHERE archived_at IS NULL)
     `,
   });
@@ -1429,7 +1438,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         role,
         linked_at AS "linkedAt",
         tombstoned_at AS "tombstonedAt",
-        worker_id AS "workerId"
+        worker_id AS "workerId",
+        retired_at AS "retiredAt"
       FROM board_card_thread_links
       WHERE card_id = ${cardId}
     `,
@@ -1580,7 +1590,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         role,
         linked_at,
         tombstoned_at,
-        worker_id
+        worker_id,
+        retired_at
       )
       VALUES (
         ${row.threadId},
@@ -1588,7 +1599,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.role},
         ${row.linkedAt},
         ${row.tombstonedAt},
-        ${row.workerId}
+        ${row.workerId},
+        ${row.retiredAt}
       )
       ON CONFLICT (thread_id)
       DO UPDATE SET
@@ -1596,7 +1608,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         role = excluded.role,
         linked_at = excluded.linked_at,
         tombstoned_at = excluded.tombstoned_at,
-        worker_id = excluded.worker_id
+        worker_id = excluded.worker_id,
+        retired_at = excluded.retired_at
     `,
   });
 
@@ -1928,7 +1941,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       FROM board_card_thread_links links
       INNER JOIN board_cards cards ON cards.card_id = links.card_id
       LEFT JOIN board_thread_todos todos ON todos.thread_id = links.thread_id
-      WHERE links.tombstoned_at IS NULL AND cards.archived_at IS NULL
+      WHERE links.tombstoned_at IS NULL
+        AND links.retired_at IS NULL
+        AND cards.archived_at IS NULL
       ORDER BY links.card_id ASC, links.linked_at ASC, links.thread_id ASC
     `,
   });
@@ -1952,6 +1967,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       LEFT JOIN board_thread_todos todos ON todos.thread_id = links.thread_id
       WHERE links.card_id = ${cardId}
         AND links.tombstoned_at IS NULL
+        AND links.retired_at IS NULL
         AND cards.archived_at IS NULL
       ORDER BY links.linked_at ASC, links.thread_id ASC
     `,
@@ -1966,7 +1982,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     execute: (threadId) => sql`
       SELECT card_id AS "cardId"
       FROM board_card_thread_links
-      WHERE thread_id = ${threadId} AND tombstoned_at IS NULL
+      WHERE thread_id = ${threadId} AND tombstoned_at IS NULL AND retired_at IS NULL
     `,
   });
 
@@ -2538,6 +2554,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           linkedAt: link.linkedAt,
           tombstonedAt: link.tombstonedAt,
           workerId: link.workerId ?? null,
+          retiredAt: link.retiredAt ?? null,
         });
       }
     }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadLinks:query")));
@@ -3599,6 +3616,7 @@ export function loadBoardState(
             linkedAt: row.linkedAt,
             tombstonedAt: row.tombstonedAt,
             ...linkWorker(row),
+            ...linkRetired(row),
           });
           linksByCard.set(row.cardId, links);
         }
@@ -3752,6 +3770,7 @@ function boardShellCards(
           linkedAt: row.linkedAt,
           tombstonedAt: row.tombstonedAt,
           ...linkWorker(row),
+          ...linkRetired(row),
         });
         linksByCard.set(row.cardId, links);
       }
@@ -4094,6 +4113,7 @@ export function makeBoardCardDetailLoader(
               linkedAt: row.linkedAt,
               tombstonedAt: row.tombstonedAt,
               ...linkWorker(row),
+              ...linkRetired(row),
             })),
           );
           const labels = [...labelRows]
@@ -4316,7 +4336,8 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
     execute: ({ liveThreadIdsJson, listedAt }) => sql`
       DELETE FROM boards.board_thread_todos
       WHERE thread_id NOT IN (
-              SELECT thread_id FROM boards.board_card_thread_links WHERE tombstoned_at IS NULL
+              SELECT thread_id FROM boards.board_card_thread_links
+              WHERE tombstoned_at IS NULL AND retired_at IS NULL
             )
          OR card_id NOT IN (SELECT card_id FROM boards.board_cards WHERE archived_at IS NULL)
          OR (

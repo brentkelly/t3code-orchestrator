@@ -490,8 +490,19 @@ export const BoardCardThreadLink = Schema.Struct({
       before workers existed, and every link on a local-only board, is
       unchanged. */
   workerId: Schema.optionalKey(EnvironmentId),
+  /** The board finished with this still-alive thread (T3O-41): it stays on
+      the card as history but no longer runs anything. Absent while live. */
+  retiredAt: Schema.optionalKey(IsoDateTime),
 });
 export type BoardCardThreadLink = typeof BoardCardThreadLink.Type;
+
+/** A link whose thread exists and is still the card's working thread:
+    neither tombstoned (deleted) nor retired. */
+export function isLiveBoardCardThreadLink(
+  link: Pick<BoardCardThreadLink, "tombstonedAt" | "retiredAt">,
+): boolean {
+  return link.tombstonedAt === null && link.retiredAt === undefined;
+}
 
 /** The worker a thread link's thread lives on. */
 export function boardThreadLinkWorkerId(
@@ -2817,7 +2828,9 @@ export function boardBuildHumanInLoopDefault(
 export function resolveBoardCardForThread(board: BoardState, threadId: ThreadId): BoardCard | null {
   return (
     board.cards.find((card) =>
-      card.threadLinks.some((link) => link.threadId === threadId && link.tombstonedAt === null),
+      card.threadLinks.some(
+        (link) => link.threadId === threadId && isLiveBoardCardThreadLink(link),
+      ),
     ) ?? null
   );
 }
@@ -4636,6 +4649,20 @@ export const BoardCardUnlinkThreadCommand = Schema.Struct({
 export type BoardCardUnlinkThreadCommand = typeof BoardCardUnlinkThreadCommand.Type;
 
 /**
+ * The board is finished with a still-alive thread (T3O-41): keep it on the
+ * card as history, retired, rather than removing the link. Server-only — a
+ * human's unlink removes the link outright. A deleted thread tombstones.
+ */
+export const BoardCardRetireThreadCommand = Schema.Struct({
+  type: Schema.Literal("board.card.retire-thread"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  threadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+export type BoardCardRetireThreadCommand = typeof BoardCardRetireThreadCommand.Type;
+
+/**
  * Record a brief attachment on the card (t3o-32, K2). Server-internal: the
  * `board.attachCardFile` RPC copies the pending upload into the card's folder
  * FIRST and only then dispatches this, so the record can never point at a
@@ -5913,6 +5940,8 @@ export const BoardCardThreadUnlinkedPayload = Schema.Struct({
   /** Null: the thread was live and the link was removed. Set: the thread was
       deleted, so the link stays on the card as a tombstone (D9). */
   tombstonedAt: Schema.NullOr(IsoDateTime),
+  /** Set: the board retired the live thread and the link stays (T3O-41). */
+  retiredAt: Schema.optionalKey(IsoDateTime),
   card: BoardCard,
 });
 export type BoardCardThreadUnlinkedPayload = typeof BoardCardThreadUnlinkedPayload.Type;
@@ -7050,7 +7079,7 @@ export function deriveBoardCardThreadState(
 export function activeBoardCardThreadId(
   links: ReadonlyArray<BoardCardThreadLink>,
 ): ThreadId | null {
-  const live = sortBoardCardThreadLinks(links.filter((link) => link.tombstonedAt === null));
+  const live = sortBoardCardThreadLinks(links.filter(isLiveBoardCardThreadLink));
   return live.at(-1)?.threadId ?? null;
 }
 
@@ -7797,6 +7826,7 @@ export const BOARD_INTERNAL_COMMANDS = [
   // T3O-18: a pull request linked to the card by hand or by an agent.
   BoardCardSetLinkedPullRequestCommand,
   BoardCardRecordNoteCommand,
+  BoardCardRetireThreadCommand,
   // T3O-38: the auto-merge hold and its retry ladder.
   BoardCardRecordAutoMergeHoldCommand,
   // T3O-32: the decision log and auto-planning.

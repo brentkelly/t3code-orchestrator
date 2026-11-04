@@ -73,6 +73,7 @@ import {
   type RuntimeMode,
   type BoardCardStepStalledReason,
   type BoardSplitRecommendation,
+  isLiveBoardCardThreadLink,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
@@ -161,7 +162,7 @@ import {
   boardAutoMergeHeaderChip,
   type BoardAutoMergeBanner,
 } from "./boardAutoMergeHold";
-import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
+import type { BoardAdoptSearch, BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
 import { deriveBoardPlanRows } from "./boardPlanRows";
@@ -460,6 +461,8 @@ export interface BoardCardDetailViewProps {
       the modal's per-tab counts and its sticky todos strip. */
   readonly threadTodos?: ReadonlyMap<ThreadId, BoardCardThreadShell> | undefined;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
+  /** Server search behind the adopt list (T3O-41). */
+  readonly adoptSearch?: BoardAdoptSearch | undefined;
   /** The review loop's configured round cap, for the Review pane's R1..Rn bar
       (t3o-16). Absent falls back to the compiled default. */
   readonly reviewMaxRounds?: number | undefined;
@@ -1216,7 +1219,9 @@ function ThreadsSection(props: BoardCardDetailViewProps) {
         <BoardSearchAddPicker
           label="Adopt"
           onPick={(id) => props.onLinkThread(id as ThreadId, "linked")}
+          onQueryChange={props.adoptSearch?.onQueryChange}
           options={props.adoptableThreads}
+          pending={props.adoptSearch?.pending}
           placeholder="Search threads…"
         />
       </div>
@@ -2161,7 +2166,7 @@ function BoardCardProjectRow({ props }: { readonly props: BoardCardDetailViewPro
   // current stage's, and a thread is pinned to the project it was created in, so
   // these keep pointing at the old repository.
   const retainedThreads = card.threadLinks.filter(
-    (link) => link.tombstonedAt === null && link.role !== card.stage,
+    (link) => isLiveBoardCardThreadLink(link) && link.role !== card.stage,
   ).length;
 
   if (onSet === undefined) {
@@ -2346,17 +2351,21 @@ export function initialBoardCardThreadId(
   stage: BoardStageId,
   links: ReadonlyArray<BoardCardThreadLink>,
 ): ThreadId | null {
-  const active = activeBoardCardThreadId(links);
+  // A card whose threads are all retired (T3O-41) still opens its newest one.
+  const active =
+    activeBoardCardThreadId(links) ??
+    sortBoardCardThreadLinks(links.filter((link) => link.tombstonedAt === null)).at(-1)?.threadId ??
+    null;
   const state = stageStateOf(stages);
   const stageIndex = boardStageIndex(state, stage);
   if (stageIndex < 0 || isStageAtOrAfterReview(stages, stage)) return active;
-  const current = sortBoardCardThreadLinks(
-    links.filter((link) => link.tombstonedAt === null),
-  ).filter((link) => {
-    if (parseReviewStepId(link.role) !== null) return false;
-    const linkStageIndex = boardStageIndex(state, link.role as BoardStageId);
-    return linkStageIndex <= stageIndex;
-  });
+  const current = sortBoardCardThreadLinks(links.filter(isLiveBoardCardThreadLink)).filter(
+    (link) => {
+      if (parseReviewStepId(link.role) !== null) return false;
+      const linkStageIndex = boardStageIndex(state, link.role as BoardStageId);
+      return linkStageIndex <= stageIndex;
+    },
+  );
   return current.at(-1)?.threadId ?? active;
 }
 
@@ -3069,6 +3078,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           ) : (
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardThreadPane
+                adoptSearch={props.adoptSearch}
                 adoptableThreads={props.adoptableThreads}
                 cardKey={card.key}
                 maximised={props.maximised}

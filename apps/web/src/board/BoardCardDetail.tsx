@@ -86,7 +86,8 @@ import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { usePaginatedBranches } from "../state/queries";
 import { environmentShell } from "../state/shell";
-import { threadEnvironment } from "../state/threads";
+import { olderSettledThreads, threadEnvironment } from "../state/threads";
+import { boardAdoptableThreads, useBoardAdoptThreadSearch } from "./boardAdoptThreadSearch";
 import { boardQueueReason, boardThreadMoveDividers } from "./workers/cardWorker";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
@@ -561,20 +562,30 @@ export function BoardCardDetail({
     [board, cardId],
   );
 
+  // The shell holds only the newest settled threads; the rest come from search (T3O-41).
+  const [adoptQuery, setAdoptQuery] = useState("");
+  const adoptSearchRead = useBoardAdoptThreadSearch(
+    environmentId,
+    card?.projectId ?? null,
+    adoptQuery,
+  );
+  const olderSettled = useAtomValue(olderSettledThreads.olderSettledAtom(environmentId));
   const adoptableThreads = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
-    const linkedLive = new Set(
-      card.threadLinks.filter((link) => link.tombstonedAt === null).map((link) => link.threadId),
-    );
-    return (snapshot?.threads ?? [])
-      .filter(
-        (thread) =>
-          thread.projectId === card.projectId &&
-          thread.archivedAt === null &&
-          !linkedLive.has(thread.id),
-      )
-      .map((thread) => ({ id: thread.id, key: "", title: thread.title }));
-  }, [card, snapshot]);
+    const onCards = new Set((board?.cardThreads ?? []).map((entry) => entry.threadId));
+    const knownCardThreads = olderSettled?.boardCardThreadIds ?? null;
+    return boardAdoptableThreads({
+      projectId: card.projectId,
+      cardThreadIds: card.threadLinks.map((link) => link.threadId),
+      linkedElsewhere: (threadId) =>
+        onCards.has(threadId) || (knownCardThreads?.has(threadId) ?? false),
+      threads: [...(snapshot?.threads ?? []), ...adoptSearchRead.rows],
+    });
+  }, [card, snapshot, board, olderSettled, adoptSearchRead.rows]);
+  const adoptSearch = useMemo(
+    () => ({ onQueryChange: setAdoptQuery, pending: adoptSearchRead.pending }),
+    [adoptSearchRead.pending],
+  );
 
   // ── Everything below this line runs before the loading early return ──
   // The card's own shell, and the queue state derived from it. These sit ABOVE
@@ -1144,6 +1155,7 @@ export function BoardCardDetail({
       stalledReason={cardShell?.stalledReason}
       workerShell={cardShell}
       nav={nav}
+      adoptSearch={adoptSearch}
       adoptableThreads={adoptableThreads}
       stageRestart={stageRestart}
       stepFailure={stepFailure}
