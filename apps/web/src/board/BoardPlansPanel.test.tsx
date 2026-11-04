@@ -82,6 +82,7 @@ function shell(cardId: string, stage: BoardStageId, overrides?: Partial<BoardCar
 /** #1 done with a PR, #2 building, #3 waiting on #2, #4 archived. */
 function render(options?: {
   readonly branch?: string | null;
+  readonly ownBranch?: boolean;
   readonly onOpenChild?: ((childCardId: string) => void) | undefined;
   readonly onOpenSubBoard?: (() => void) | undefined;
 }) {
@@ -105,6 +106,7 @@ function render(options?: {
       integrationBranch={options?.branch === undefined ? "t3o/TT-9-services" : options.branch}
       onOpenChild={options?.onOpenChild}
       onOpenSubBoard={options?.onOpenSubBoard}
+      ownBranch={options?.ownBranch}
       planRows={planRows}
     />,
   );
@@ -161,6 +163,13 @@ describe("BoardPlansPanel", () => {
     // D5: no action. The reactor owns this transition.
     expect(html).not.toContain("Start final review");
     expect(html).not.toContain("Waiting on plans");
+  });
+
+  it("shows no final review for a group that inherits its parent's branch", () => {
+    // T3O-34: an inheriting group has no integration branch to review.
+    const html = render({ ownBranch: false, branch: null });
+    expect(html).not.toContain("Final review");
+    expect(html).not.toContain("integration branch pending");
   });
 
   it("says the branch is pending rather than inventing one", () => {

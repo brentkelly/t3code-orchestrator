@@ -3040,6 +3040,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               <BoardPlansPanel
                 integrationBranch={card.worktree?.branch ?? null}
                 onOpenChild={props.onOpenChildInSubBoard}
+                ownBranch={group === null || group.ownBranch}
                 onOpenSubBoard={props.onOpenOwnSubBoard}
                 planRows={planRows}
               />

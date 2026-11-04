@@ -49,6 +49,7 @@ const TONE_DOT: Record<BoardPlanRowTone, string> = {
 export function BoardPlansPanel({
   planRows,
   integrationBranch,
+  ownBranch = true,
   onOpenChild,
   onOpenSubBoard,
 }: {
@@ -56,6 +57,9 @@ export function BoardPlansPanel({
   /** The parent's integration branch, for the footer; null before the reactor
       has cut it. */
   readonly integrationBranch: string | null;
+  /** Whether the card integrates on a branch of its own. An inheriting group
+      (T3O-34) has no integration branch, so it has no final review to state. */
+  readonly ownBranch?: boolean | undefined;
   /** Open one child inside this parent's sub-board. Absent leaves the rows
       informational. */
   readonly onOpenChild?: ((childCardId: string) => void) | undefined;
@@ -109,7 +113,7 @@ export function BoardPlansPanel({
             <PlanRow key={row.rowId} onOpenChild={onOpenChild} row={row} />
           ))}
         </div>
-        <BoardPlanFinalReviewCard branch={final.branch} note={final.note} />
+        {ownBranch ? <BoardPlanFinalReviewCard branch={final.branch} note={final.note} /> : null}
       </div>
     </section>
   );
