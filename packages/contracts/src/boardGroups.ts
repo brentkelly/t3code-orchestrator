@@ -33,8 +33,8 @@ import {
 /**
  * A card's group settings, or null for a leaf. A card that has live children
  * but no settings is a split parent written before groups existed: it reads as
- * what migration 051 backfills — its own integration branch, auto-build on —
- * so a legacy log and a migrated table agree.
+ * what migrations 051 and 055 backfill — its own integration branch,
+ * auto-build and auto-merge on — so a legacy log and a migrated table agree.
  */
 export function boardCardGroupOf(board: BoardState, card: BoardCard): BoardCardGroup | null {
   if (card.group !== null) return card.group;
@@ -49,7 +49,16 @@ export function boardCardGroupOf(board: BoardState, card: BoardCard): BoardCardG
   return defaultBoardCardGroup(board, card, {
     target: "own",
     autoBuild: true,
-    started: isBoardStageAtOrAfterBuild(board, card.stage),
+    // Begun as migration 055 backfills it: the parent or a live child has
+    // reached the build stage.
+    started:
+      isBoardStageAtOrAfterBuild(board, card.stage) ||
+      board.cards.some(
+        (candidate) =>
+          candidate.parentCardId === card.id &&
+          candidate.archivedAt === null &&
+          isBoardStageAtOrAfterBuild(board, candidate.stage),
+      ),
     prevStage: boardGroupPlacedStage(board, card.stage),
     integrated: card.stage === done,
   });
@@ -182,7 +191,9 @@ function boardGroupPlacedStage(board: BoardState, stageId: BoardStageId): BoardS
   return boardStageBeforeBuild(board)?.stageId ?? boardStagesInOrder(board)[0]!.stageId;
 }
 
-/** The settings a card takes when it first becomes a group. */
+/** The settings a card takes when it first becomes a group. An own-branch
+    group auto-merges its children into that branch unless told otherwise
+    (T3O-38). */
 export function defaultBoardCardGroup(
   board: BoardState,
   card: Pick<BoardCard, "stage">,
@@ -191,7 +202,7 @@ export function defaultBoardCardGroup(
   return {
     target: "inherit",
     autoBuild: false,
-    autoMerge: false,
+    autoMerge: overrides?.target === "own",
     autoPlan: false,
     started: false,
     placed: boardGroupPlacedStage(board, card.stage),

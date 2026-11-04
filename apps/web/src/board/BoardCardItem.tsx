@@ -55,7 +55,7 @@ import {
 } from "./boardCardProgressBlock";
 import { boardConflictFix } from "./boardConflictFix";
 import { boardAutoMergePill } from "./boardAutoMergeHold";
-import { boardCardAutoStartChip } from "./boardCardAutoStartChip";
+import { boardCardAutoBuildChip } from "./boardCardAutomation";
 import { boardCardScheduleLabel } from "./boardCardScheduleLabel";
 import { boardCardNotice, type BoardCardNotice } from "./boardCardNotice";
 import { boardCardMeta, boardCardSummary } from "./boardCardSummary";
@@ -371,6 +371,7 @@ export function BoardCardContent({
   noPullRequest,
   atMergeStage,
   autoMergeArmed,
+  autoBuildArmed,
   worktreeKeptReason,
   group = null,
 }: {
@@ -425,10 +426,13 @@ export function BoardCardContent({
       the only place an armed card wears the grey `Auto` glyph. Absent on the
       surfaces that do not resolve it (the drag ghost, the archive sheet). */
   readonly atMergeStage?: boolean | undefined;
-  /** The card's resolved auto-merge arm (`boardShellAutoMergeArmed`, T3O-28):
-      its own override, its nearest group, or the board-wide default. The
-      shell's `autoMergeArmed` is the override alone, used when absent. */
+  /** The card's resolved Auto-merge (`boardShellAutoMergeArmedByCard`,
+      T3O-38): its own setting, its nearest group's, or the board-wide one.
+      Absent reads the card's own setting alone. */
   readonly autoMergeArmed?: boolean | undefined;
+  /** The card waits in the stage before build with Auto-build on (T3O-38),
+      resolved by the board page. Absent on the drag ghost and archive sheet. */
+  readonly autoBuildArmed?: boolean | undefined;
 }) {
   const accent = projectAccent(card.projectId, accentName);
   const summary = boardCardSummary(card);
@@ -551,11 +555,11 @@ export function BoardCardContent({
     parked: card.stepAwaiting !== null || card.stalled,
     nowMs: Date.now(),
   });
-  // The card's auto-start arm (T3O-24, D8). Yields the single right-hand slot
-  // to a schedule pill, which names a concrete moment and is the more specific
+  // The card's Auto-build (T3O-38). Yields the single right-hand slot to a
+  // schedule pill, which names a concrete moment and is the more specific
   // claim; the queue pill below yields to both.
-  const autoStartChip = boardCardAutoStartChip({
-    autoStart: card.autoStart === true,
+  const autoBuildChip = boardCardAutoBuildChip({
+    armed: autoBuildArmed === true,
     done: summary.muted,
     scheduled: scheduleLabel !== null,
   });
@@ -702,23 +706,23 @@ export function BoardCardContent({
             </span>
           </BoardHint>
         )}
-        {autoStartChip === null ? null : (
+        {autoBuildChip === null ? null : (
           // Neutral, never coloured, for the schedule pill's reason above: the
           // card is not running, not done, and nothing is waiting on a human.
           // Amber's claim — "this will never move until someone acts" — is
           // exactly what an armed card disproves.
-          <BoardHint label={autoStartChip.tooltip}>
+          <BoardHint label={autoBuildChip.tooltip}>
             <span
-              aria-label={autoStartChip.tooltip}
+              aria-label={autoBuildChip.tooltip}
               className="inline-flex shrink-0 items-center gap-0.5 rounded bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
             >
               <ClockIcon className="size-2.5" />
-              {autoStartChip.label}
+              {autoBuildChip.label}
             </span>
           </BoardHint>
         )}
         {scheduleLabel === null &&
-        autoStartChip === null &&
+        autoBuildChip === null &&
         queueSlot !== undefined &&
         // A card held by its worker says so in the notice instead (T3O-66).
         notice?.kind !== "worker" ? (
@@ -734,7 +738,7 @@ export function BoardCardContent({
         {/* Keyed on the HOLD, not on which notice won it (T3O-45): a held card
             whose slot went to a pending question is still held, and "merges
             itself as soon as the forge accepts it" is not true of it. */}
-        {(autoMergeArmed ?? card.autoMergeArmed === true) &&
+        {(autoMergeArmed ?? card.autoMergeSetting === true) &&
         autoMergeHold === null &&
         !summary.muted &&
         atMergeStage ? (
@@ -862,6 +866,7 @@ export function DraggableBoardCard({
   noPullRequest,
   atMergeStage,
   autoMergeArmed,
+  autoBuildArmed,
   worktreeKeptReason,
   group = null,
 }: {
@@ -887,6 +892,7 @@ export function DraggableBoardCard({
   readonly noPullRequest?: boolean | undefined;
   readonly atMergeStage?: boolean | undefined;
   readonly autoMergeArmed?: boolean | undefined;
+  readonly autoBuildArmed?: boolean | undefined;
   readonly worktreeKeptReason?: string | null | undefined;
 }) {
   return (
@@ -945,6 +951,7 @@ export function DraggableBoardCard({
         noPullRequest={noPullRequest}
         atMergeStage={atMergeStage}
         autoMergeArmed={autoMergeArmed}
+        autoBuildArmed={autoBuildArmed}
         worktreeKeptReason={worktreeKeptReason}
         group={group}
       />

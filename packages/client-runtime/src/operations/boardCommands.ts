@@ -47,6 +47,7 @@ export type MoveBoardCardInput = CommandInput<"board.card.move">;
 export type ReorderBoardCardInput = CommandInput<"board.card.reorder">;
 export type MoveBoardCardsInput = CommandInput<"board.card.move-cards">;
 export type SetBoardCardGroupSettingsInput = CommandInput<"board.card.set-group-settings">;
+export type SetBoardCardAutomationInput = CommandInput<"board.card.set-automation">;
 export type CancelBoardCardWorkInput = CommandInput<"board.card.cancel-work">;
 export type UpdateBoardCardInput = CommandInput<"board.card.update">;
 export type SetBoardCardProjectInput = CommandInput<"board.card.set-project">;
@@ -132,11 +133,6 @@ export const submitBoardCardForMerge = (input: { readonly cardId: BoardCardId })
     before the card moves, and the server owns that order. */
 export const requestBoardReviewRound = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.requestReviewRound, input);
-
-/** Auto-plan → Build (T3O-32): end planning, let the agent decide the rest,
-    approve the plan and start building. */
-export const autoPlanBoardCard = (input: { readonly cardId: BoardCardId }) =>
-  request(BOARD_WS_METHODS.autoPlanCard, input);
 
 /** "Remove worktree" on a finished card that kept one (T3O-52): removes it
     past the safety rule. The branch is kept. */
@@ -336,6 +332,19 @@ export const setBoardCardGroupSettings: (input: SetBoardCardGroupSettingsInput) 
     return yield* dispatch({
       ...input,
       type: "board.card.set-group-settings",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+/** A card's own Automation toggles (T3O-38): true / false, or null to
+    inherit from the parent group. */
+export const setBoardCardAutomation: (input: SetBoardCardAutomationInput) => CommandEffect =
+  Effect.fn("BoardCommands.setBoardCardAutomation")(function* (input) {
+    const metadata = yield* commandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "board.card.set-automation",
       commandId: metadata.commandId,
       createdAt: metadata.createdAt,
     });

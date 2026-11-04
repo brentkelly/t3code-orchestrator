@@ -57,11 +57,24 @@ export const BOARD_ENVELOPE_MOVE_GUARD =
 export const BOARD_ENVELOPE_DECISION_LOG =
   "Before you call board_propose_plans, record every decision this planning session made with board_record_decisions: what was asked, what was decided, a one-line reason and who decided (agent, or human when the user answered). Flag a call you were not sure about as unclear, and a call that shapes the work as important.";
 
-/** What an auto-planned run is told (T3O-32): no more questions, and the plan
-    it proposes is approved without a human. Rides the postamble of a fresh
-    auto-plan run and is the steering turn sent into a live planning thread. */
+/** What an auto-planned run is told (T3O-32, T3O-38): no more questions.
+    Rides the postamble of a fresh auto-plan run and is the steering turn sent
+    into a live planning thread, followed by what happens to the plan — use
+    `boardAutoPlanInstruction`. */
 export const BOARD_AUTO_PLAN_INSTRUCTION =
-  "Auto-plan: stop interviewing and do not ask any more questions. Decide every remaining question yourself, record each decision with board_record_decisions (flag any you are unsure of as unclear), propose the plan with board_propose_plans, then call board_complete_step. The plan you propose is approved automatically, unclear decisions included, so make each call the way you would defend it in review.";
+  "Auto-plan: stop interviewing and do not ask any more questions. Decide every remaining question yourself, record each decision with board_record_decisions (flag any you are unsure of as unclear), propose the plan with board_propose_plans, then call board_complete_step.";
+
+/** The full auto-plan instruction: with Auto-build on the plan is approved and
+    built without a human; without it the plan waits for the user's approval. */
+export function boardAutoPlanInstruction(autoBuild: boolean): string {
+  return autoBuild
+    ? `${BOARD_AUTO_PLAN_INSTRUCTION} Auto-build is on: the plan you propose is approved and built automatically, unclear decisions included, so make each call the way you would defend it in review.`
+    : `${BOARD_AUTO_PLAN_INSTRUCTION} Your plan will be presented to the user for approval, so make each call the way you would defend it in review.`;
+}
+
+/** Sent into a planning thread when Auto-plan is turned off mid-run (T3O-38). */
+export const BOARD_AUTO_PLAN_OFF_INSTRUCTION =
+  "The user is back: Auto-plan is off. You may ask questions again, and it is fine to end a turn waiting on an answer. Your plan will be presented to the user for approval.";
 
 /** The `plan` role's deliverable contract (role-keyed so a user rewrite of the
     editable Planning prompt cannot break the plan pipeline).
@@ -111,6 +124,8 @@ export interface ComposeStepPromptStep {
   readonly humanInLoop: boolean;
   /** An auto-planned planning run (T3O-32). */
   readonly autoPlan?: boolean;
+  /** With `autoPlan`: Auto-build is on, so the plan is approved and built. */
+  readonly autoBuild?: boolean;
   /** The plan review this step is running (plan review, T3O-39): set once a
       review has started, so a respawned or nudged thread resumes it. */
   readonly planReview?: { readonly instructions: string };
@@ -245,6 +260,8 @@ export function boardStepPostamble(input: {
   readonly step: Pick<ComposeStepPromptStep, "stepId" | "stepLabel">;
   /** An auto-planned planning run (T3O-32). */
   readonly autoPlan?: boolean;
+  /** With `autoPlan`: the plan is approved and built without a human. */
+  readonly autoBuild?: boolean;
 }): string {
   const { step } = input;
   const call = completionCall(step);
@@ -271,7 +288,7 @@ export function boardStepPostamble(input: {
   const deliverable =
     input.role === "plan"
       ? input.autoPlan === true
-        ? [BOARD_ENVELOPE_PLAN_DELIVERABLE, BOARD_AUTO_PLAN_INSTRUCTION]
+        ? [BOARD_ENVELOPE_PLAN_DELIVERABLE, boardAutoPlanInstruction(input.autoBuild === true)]
         : [BOARD_ENVELOPE_PLAN_DELIVERABLE]
       : input.role === "build"
         ? [BOARD_ENVELOPE_BUILD_DELIVERABLE]
@@ -291,6 +308,7 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
     role: input.role,
     step: input.step,
     ...(input.step.autoPlan === true ? { autoPlan: true } : {}),
+    ...(input.step.autoBuild === true ? { autoBuild: true } : {}),
   });
   // The build draft line (T3O-12) rides on the body, so an empty-body
   // re-entry (D7) stays the clean conversational thread it is.

@@ -1318,14 +1318,17 @@ export type BoardCardGroupTarget = typeof BoardCardGroupTarget.Type;
  */
 export const BoardCardGroup = Schema.Struct({
   target: BoardCardGroupTarget,
-  /** Ready children with their dependencies met start themselves once the
-      group is `started`. */
+  /** What inheriting children take as their Automation toggles (T3O-38;
+      see `resolveBoardCardAutomation`). Auto-build: ready children with their
+      dependencies met start themselves once the group is `started`. */
   autoBuild: Schema.Boolean,
-  /** Children merging to trunk merge themselves. */
+  /** Children merge themselves, into the integration branch or trunk. */
   autoMerge: Schema.Boolean,
-  /** Children entering planning are planned by the agent. */
+  /** Children are planned by the agent, unattended. */
   autoPlan: Schema.Boolean,
-  /** The human started the group (moved it to the build stage). */
+  /** The group has begun: a human (or the group cascade) moved it, or one of
+      its children, into the build stage. A child's own Auto-build start does
+      not count. */
   started: Schema.Boolean,
   placed: BoardStageId,
   /** The leaf stage the card had before it became a group, restored (capped
@@ -1352,18 +1355,14 @@ export const BoardSplitRecommendation = Schema.Struct({
 export type BoardSplitRecommendation = typeof BoardSplitRecommendation.Type;
 
 /**
- * A card being, or having been, auto-planned (T3O-32, decisions 4 and 7).
- * `build` is the human's Auto-plan → Build click: its plan is approved and the
- * card goes on to Building. `ready` is a group's auto-plan setting: the plan is
- * approved and the card stops at Ready. Set when the run is asked for and kept
- * after, so "auto-planned" stays readable on the card; `endedAt` marks the
- * request spent — the plan was approved, or the card left planning first.
+ * One unattended planning run (T3O-32, T3O-38). The card's Auto-plan toggle is
+ * the intent; this record says "the current planning run is unattended". Set
+ * when such a run starts (or a live one is steered) and kept after, so
+ * "auto-planned" stays readable; `endedAt` marks it spent — the plan was
+ * approved, the card left planning, or the run stopped being driven. Older
+ * rows carry a `mode`, which decoding ignores.
  */
-export const BoardCardAutoPlanMode = Schema.Literals(["build", "ready"]);
-export type BoardCardAutoPlanMode = typeof BoardCardAutoPlanMode.Type;
-
 export const BoardCardAutoPlan = Schema.Struct({
-  mode: BoardCardAutoPlanMode,
   requestedAt: IsoDateTime,
   endedAt: Schema.NullOr(IsoDateTime),
 });
@@ -1631,42 +1630,22 @@ export const BoardCard = Schema.Struct({
   scheduledStartAt: Schema.NullOr(IsoDateTime).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  /** Whether this card starts itself the moment its last dependency lands
-      (T3O-24, D1). False on every card that has never been armed, and on every
-      card whose arm has already been SPENT — the decider clears it inside the
-      move that carries the card out of the pre-build stage, by any route (D4),
-      so firing and clearing are one atomic event.
-
-      Armable only where it can act: a live, top-level card sitting in the stage
-      immediately before the build role with at least one unmet dependency
-      (`boardCardCanArmAutoStart`, D2). A sub-board child is refused outright —
-      children already cascade off their siblings (`cascadeUnblockedChildren`,
-      t3o-28 D3) and a second mechanism doing the same thing would be two
-      answers to one question.
-
-      Decoding default `false`, matching migration 039's
-      `auto_start INTEGER NOT NULL DEFAULT 0`, so a from-empty replay of a log
-      written before this spec equals a table rehydration. */
-  autoStart: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  /** Whether this card merges its own pull request as soon as the forge
-      accepts it (T3O-38, D3), instead of parking in the merge stage until
-      somebody clicks Merge.
-
-      One of THREE arming conditions, not the only one — read it through
-      `boardCardAutoMergeArmed`, never directly, or a sub-board child and a
-      board whose merge stage arms everything will both read as unarmed.
-
-      Offerable on any live, top-level card that has not reached the done-role
-      stage; deliberately NOT pinned to one stage the way `autoStart` is,
-      because the useful moment to arm it is before going to bed, whatever
-      column the card is in. Unlike `autoStart` it is never SPENT: a card
-      dragged back out of Done and merged again is still armed, which is the
-      honest reading of a flag that says "always merge this one".
-
-      Decoding default `false`, matching migration 043's
-      `auto_merge INTEGER NOT NULL DEFAULT 0`, so a from-empty replay of a log
-      written before this spec equals a table rehydration. */
-  autoMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** The card's own Automation toggles (T3O-38): `true` or `false` set on
+      this card, `null` inherits from the parent group's `group` settings.
+      Read them through `resolveBoardCardAutomation`, never directly — the
+      effective value also depends on the parent group, whether it has begun,
+      and the board-wide auto-merge setting. On a group card `autoMergeSetting`
+      is the group's OWN merge into where it lands; its children inherit from
+      `group` instead. Decode to null, matching migration 055's NULL columns. */
+  autoPlanSetting: Schema.NullOr(Schema.Boolean).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  autoBuildSetting: Schema.NullOr(Schema.Boolean).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  autoMergeSetting: Schema.NullOr(Schema.Boolean).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   /** The forge's last refusal of an armed merge, and where the retry ladder
       stands (T3O-38, D4); null when nothing is held — which is every card that
       has never been refused, and every card whose hold has been cleared by one
@@ -2964,199 +2943,317 @@ export function boardStageBeforeBuild(board: BoardState): BoardStageDefinition |
   return buildIndex > 0 ? ordered[buildIndex - 1]! : null;
 }
 
-/**
- * Everything auto-start's two predicates agree on (T3O-24, D2): a LIVE,
- * TOP-LEVEL card, waiting in the stage immediately before the build role.
- *
- * Top-level because a sub-board child already starts itself off its siblings
- * (`cascadeUnblockedChildren`, t3o-28 D3) and must not gain a second, rival
- * mechanism. Pre-build because that is the one gate this feature crosses: a
- * card already at or past build has nothing left to arm, and a card in an
- * ideation stage would either sit armed doing nothing visible for days or skip
- * the plan gate on its way through.
- */
-function isBoardCardAtAutoStartGate(input: {
-  readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "archivedAt"> & {
-    readonly group?: BoardCard["group"] | undefined;
-  };
-}): boolean {
-  // Any leaf may be armed (T3O-27); a group starts through its children.
-  if (input.card.archivedAt !== null || (input.card.group ?? null) !== null) return false;
-  const before = boardStageBeforeBuild(input.board);
-  return before !== null && input.card.stage === before.stageId;
+// ── Automation (T3O-38) ────────────────────────────────────────────────
+
+export const BOARD_AUTOMATION_TOGGLES = ["autoPlan", "autoBuild", "autoMerge"] as const;
+export type BoardAutomationToggle = (typeof BOARD_AUTOMATION_TOGGLES)[number];
+
+/** Each toggle's name as the card and the tools show it. */
+export const BOARD_AUTOMATION_TOGGLE_LABELS: Readonly<Record<BoardAutomationToggle, string>> = {
+  autoPlan: "Auto-plan",
+  autoBuild: "Auto-build",
+  autoMerge: "Auto-merge",
+};
+
+/** One toggle, resolved. */
+export interface BoardResolvedAutomationToggle {
+  /** What the board acts on. */
+  readonly value: boolean;
+  /** The card's own setting; null inherits. */
+  readonly own: boolean | null;
+  /** Where `value` came from: the card itself, its parent group, the
+      board-wide setting, or nowhere (off by default). */
+  readonly source: "own" | "inherited" | "board" | null;
+  /** The parent group the card inherits from (or overrides), when it has one. */
+  readonly inheritedFrom: { readonly id: string; readonly key: string } | null;
+  /** Auto-build only: the parent group has it on but has not begun, so the
+      inherited value stays off until a human starts the group. */
+  readonly waitingForGroupStart: boolean;
+  /** Turning the toggle ON is refused, including an inherit that would pick
+      up the group's on; turning it off is always accepted. */
+  readonly locked: boolean;
+  readonly lockReason: string | null;
+}
+
+export type BoardResolvedAutomation = {
+  readonly [K in BoardAutomationToggle]: BoardResolvedAutomationToggle;
+};
+
+/** The fields automation resolution reads — a card or a client shell. */
+export type BoardAutomationNode = {
+  readonly id: string;
+  readonly key?: string | undefined;
+  readonly parentCardId?: string | null | undefined;
+  readonly stage: string;
+  readonly autoPlanSetting?: boolean | null | undefined;
+  readonly autoBuildSetting?: boolean | null | undefined;
+  readonly autoMergeSetting?: boolean | null | undefined;
+  readonly group?: BoardCardGroup | null | undefined;
+};
+
+export const BOARD_AUTOMATION_BOARD_WIDE_MERGE_REASON =
+  "On for the whole board — change it in Settings → Board → Pipeline.";
+
+function ownAutomationSetting(
+  node: BoardAutomationNode,
+  toggle: BoardAutomationToggle,
+): boolean | null {
+  const value =
+    toggle === "autoPlan"
+      ? node.autoPlanSetting
+      : toggle === "autoBuild"
+        ? node.autoBuildSetting
+        : node.autoMergeSetting;
+  return value ?? null;
+}
+
+function automationStageFacts(
+  stages: ReadonlyArray<Pick<BoardStageDefinition, "stageId" | "role" | "orderKey">>,
+  stageId: string,
+) {
+  const ordered = [...stages].sort(compareBoardStages as never);
+  const index = ordered.findIndex((stage) => String(stage.stageId) === stageId);
+  const roleIndex = (role: BoardStageRole) =>
+    ordered.findIndex((stage) => effectiveBoardStageRole(stage) === role);
+  return { index, plan: roleIndex("plan"), build: roleIndex("build") };
 }
 
 /**
- * Whether the auto-start toggle may be OFFERED on this card, and whether the
- * decider may accept `autoStart: true` for it (T3O-24, D2).
+ * Resolve a card's three Automation toggles (T3O-38) — the ONE reading of the
+ * raw settings, shared by the decider, the reactor, the web and the MCP tools.
  *
- * ONE predicate, shared by the decider's update arm, the reactor and the web
- * detail, for the same reason `unmetBoardCardDependencies` is shared: a flag
- * and the message refusing it must never disagree about the same card.
- *
- * Requires at least one UNMET dependency. Arming a card with nothing left to
- * wait for is a control with no reverse state to reach — it would fire on the
- * next tick and be spent before the user let go of it — and the card's own
- * forward button is live at that point anyway.
+ * - Own setting wins; null inherits from the parent group's `group` settings
+ *   (the nearest group only). A parent with no group settings (a legacy split
+ *   parent) passes nothing down, except auto-merge, which it always armed.
+ * - Inherited Auto-build is on only once the group has `started`, so a
+ *   group's children never build before a human starts it.
+ * - Board-wide auto-merge turns every card's Auto-merge on, locked.
+ * - Locks refuse only turning ON: Auto-plan once planning is finished,
+ *   Auto-build once the card is building or past it.
  */
-export function boardCardCanArmAutoStart(input: {
-  readonly board: BoardState;
-  readonly card: Pick<BoardCard, "id" | "parentCardId" | "stage" | "archivedAt" | "dependsOn"> & {
-    readonly group?: BoardCard["group"] | undefined;
+export function resolveBoardCardAutomation(input: {
+  readonly stages: ReadonlyArray<Pick<BoardStageDefinition, "stageId" | "role" | "orderKey">>;
+  readonly lookup: (id: string) => BoardAutomationNode | undefined;
+  readonly card: BoardAutomationNode;
+  readonly boardWideAutoMerge: boolean;
+  /** The card's planning run for this stay in Planning has finished. */
+  readonly planningFinished?: boolean | undefined;
+}): BoardResolvedAutomation {
+  const { card } = input;
+  const parentId = card.parentCardId ?? null;
+  const parent = parentId === null ? undefined : input.lookup(String(parentId));
+  const inheritedFrom =
+    parent === undefined ? null : { id: String(parent.id), key: parent.key ?? String(parent.id) };
+  const group = parent?.group ?? null;
+  const facts = automationStageFacts(input.stages, String(card.stage));
+
+  const resolve = (
+    toggle: BoardAutomationToggle,
+    inherited: boolean | null,
+    lock: string | null,
+    waitingForGroupStart = false,
+  ): BoardResolvedAutomationToggle => {
+    const own = ownAutomationSetting(card, toggle);
+    const value = own ?? inherited ?? false;
+    const source = own !== null ? "own" : inherited !== null ? "inherited" : null;
+    return {
+      value,
+      own,
+      source,
+      inheritedFrom,
+      waitingForGroupStart: own === null && waitingForGroupStart,
+      locked: lock !== null,
+      lockReason: lock,
+    };
   };
-}): boolean {
-  if (!isBoardCardAtAutoStartGate(input)) return false;
-  return (
-    unmetBoardCardDependencies({
-      board: input.board,
-      dependsOn: boardCardInheritedDependsOn(input.board, input.card),
-      cards: input.board.cards,
-    }).length > 0
+
+  const pastPlanning = facts.plan >= 0 && facts.index > facts.plan;
+  const planLock =
+    pastPlanning || (facts.index === facts.plan && input.planningFinished === true)
+      ? "Planning is finished."
+      : null;
+  const buildLock =
+    facts.build >= 0 && facts.index >= 0 && facts.index >= facts.build
+      ? facts.index === facts.build
+        ? "Building now."
+        : "Already built."
+      : null;
+
+  const autoPlan = resolve("autoPlan", group === null ? null : group.autoPlan, planLock);
+  const autoBuild = resolve(
+    "autoBuild",
+    group === null ? null : group.autoBuild && group.started,
+    buildLock,
+    group !== null && group.autoBuild && !group.started,
   );
+  const autoMerge: BoardResolvedAutomationToggle = input.boardWideAutoMerge
+    ? {
+        value: true,
+        own: ownAutomationSetting(card, "autoMerge"),
+        source: "board",
+        inheritedFrom,
+        waitingForGroupStart: false,
+        locked: true,
+        lockReason: BOARD_AUTOMATION_BOARD_WIDE_MERGE_REASON,
+      }
+    : resolve(
+        "autoMerge",
+        parent === undefined ? null : group === null ? true : group.autoMerge,
+        null,
+      );
+  return { autoPlan, autoBuild, autoMerge };
+}
+
+/** Whether the card's planning run for its current stay in Planning finished:
+    its plan-role step succeeded. Locks Auto-plan on. */
+export function boardCardPlanningFinished(
+  board: BoardState,
+  card: Pick<BoardCard, "id" | "stage">,
+): boolean {
+  const stage = boardStageById(board, card.stage);
+  if (stage === null || effectiveBoardStageRole(stage) !== "plan") return false;
+  const state = boardCardStepState(board, card.id);
+  return state !== null && state.stepId === card.stage && state.status === "succeeded";
+}
+
+/** `resolveBoardCardAutomation` over the full board state. */
+export function resolveBoardCardAutomationIn(input: {
+  readonly board: BoardState;
+  readonly card: BoardCard;
+  readonly boardWideAutoMerge: boolean;
+}): BoardResolvedAutomation {
+  const cards = input.board.cards;
+  return resolveBoardCardAutomation({
+    stages: boardStages(input.board),
+    lookup: (id) => cards.find((candidate) => String(candidate.id) === id),
+    card: input.card,
+    boardWideAutoMerge: input.boardWideAutoMerge,
+    planningFinished: boardCardPlanningFinished(input.board, input.card),
+  });
+}
+
+/** A partial write of a card's own Automation settings; null means inherit. */
+export type BoardAutomationSettingsChange = {
+  readonly [K in BoardAutomationToggle]?: boolean | null | undefined;
+};
+
+/**
+ * The toggles whose resolved value a settings change turns from off to on, so
+ * an inherit (null) that picks up a group's "on" counts exactly like a true.
+ */
+export function boardAutomationTogglesTurnedOn(input: {
+  readonly board: BoardState;
+  readonly card: BoardCard;
+  readonly change: BoardAutomationSettingsChange;
+  readonly boardWideAutoMerge: boolean;
+}): ReadonlyArray<{ toggle: BoardAutomationToggle; before: BoardResolvedAutomationToggle }> {
+  const { board, card, change, boardWideAutoMerge } = input;
+  const before = resolveBoardCardAutomationIn({ board, card, boardWideAutoMerge });
+  const after = resolveBoardCardAutomationIn({
+    board,
+    card: {
+      ...card,
+      autoPlanSetting: change.autoPlan === undefined ? card.autoPlanSetting : change.autoPlan,
+      autoBuildSetting: change.autoBuild === undefined ? card.autoBuildSetting : change.autoBuild,
+      autoMergeSetting: change.autoMerge === undefined ? card.autoMergeSetting : change.autoMerge,
+    },
+    boardWideAutoMerge,
+  });
+  return BOARD_AUTOMATION_TOGGLES.filter(
+    (toggle) => !before[toggle].value && after[toggle].value,
+  ).map((toggle) => ({ toggle, before: before[toggle] }));
 }
 
 /**
- * Whether an armed card should be started NOW (T3O-24, D3): the same gate as
- * `boardCardCanArmAutoStart`, with the dependency test inverted — nothing left
- * unmet — and the arm actually set.
- *
- * The reactor's targeted paths and its sweep both go through this, so a
- * dependency landing and a server that was down while it landed reach the same
- * conclusion about the same card. An ARCHIVED dependency counts as met
- * (t3o-13, D1), so archiving the blocker fires the card exactly as finishing it
- * would.
+ * Whether a card's OWN Auto-build should start it now (T3O-38): a live leaf
+ * with its own Auto-build on, waiting in the stage before build with every
+ * dependency met. An inherited Auto-build is the group cascade's to act on
+ * (`cascadeUnblockedChildren`), so one card never has two movers.
  */
-export function boardCardAutoStartDue(input: {
+export function boardCardAutoBuildDue(input: {
   readonly board: BoardState;
   readonly card: Pick<
     BoardCard,
-    "id" | "parentCardId" | "stage" | "archivedAt" | "dependsOn" | "autoStart"
+    "id" | "parentCardId" | "stage" | "archivedAt" | "dependsOn" | "autoBuildSetting"
   > & {
     readonly group?: BoardCard["group"] | undefined;
   };
 }): boolean {
-  if (!input.card.autoStart) return false;
-  if (!isBoardCardAtAutoStartGate(input)) return false;
+  const card = input.card;
+  if (card.autoBuildSetting !== true) return false;
+  if (card.archivedAt !== null || (card.group ?? null) !== null) return false;
+  const before = boardStageBeforeBuild(input.board);
+  if (before === null || card.stage !== before.stageId) return false;
   return (
     unmetBoardCardDependencies({
       board: input.board,
-      dependsOn: boardCardInheritedDependsOn(input.board, input.card),
+      dependsOn: boardCardInheritedDependsOn(input.board, card),
       cards: input.board.cards,
     }).length === 0
   );
 }
 
+function resolveBoardAutoMergeValue(
+  byId: (id: string) => BoardAutomationNode | undefined,
+  card: Pick<BoardAutomationNode, "parentCardId" | "autoMergeSetting">,
+  boardWide: boolean,
+): boolean {
+  if (boardWide) return true;
+  const own = card.autoMergeSetting ?? null;
+  if (own !== null) return own;
+  const parentId = card.parentCardId ?? null;
+  if (parentId === null) return false;
+  const parent = byId(String(parentId));
+  if (parent === undefined || parent.group == null) return true;
+  return parent.group.autoMerge;
+}
+
 /**
- * Whether this card's merge runs itself (T3O-38, D1) — ONE predicate for every
- * arming condition, shared by the reactor that merges, the decider that clears
- * a hold, and every surface that draws a chip.
- *
- * Nearest wins (T3O-28):
- *
- * 1. The card's own `autoMerge` override.
- * 2. Inside a group, the nearest group — its parent — decides: merging into an
- *    integration branch, under that group's auto-build; merging to trunk,
- *    under its "Auto-merge to trunk". The board-wide setting is ignored there.
- * 3. A top-level card follows the board-wide merge-stage setting.
- *
- * A parent this board slice cannot see, or one with no group settings (a
- * split parent written before groups), keeps the legacy unconditional arm.
+ * Whether this card's merge runs itself (T3O-38) — the Auto-merge toggle's
+ * effective value, shared by the reactor that merges, the decider that clears
+ * a hold, and every surface that draws a chip. See `resolveBoardCardAutomation`.
  */
 export function boardCardAutoMergeArmed(input: {
-  readonly board: { readonly cards: ReadonlyArray<BoardAutoMergeNode> };
-  readonly card: Pick<BoardCard, "parentCardId" | "archivedAt" | "autoMerge">;
-  /** The merge-role stage's resolved execution config, when the caller has the
-      settings in hand. Omitted by a caller that does not — which reads as the
-      board-wide default being off, the conservative direction. */
+  readonly board: { readonly cards: ReadonlyArray<BoardCard> };
+  readonly card: Pick<BoardCard, "parentCardId" | "archivedAt" | "autoMergeSetting">;
+  /** The board-wide auto-merge setting. Omitted reads as off, the
+      conservative direction. */
   readonly boardWide?: boolean | undefined;
 }): boolean {
   if (input.card.archivedAt !== null) return false;
   const cards = input.board.cards;
-  return resolveBoardAutoMerge(
+  return resolveBoardAutoMergeValue(
     (id) => cards.find((node) => String(node.id) === id),
     input.card,
     input.boardWide === true,
   );
 }
 
-/** The tree fields auto-merge resolution reads — a card or a client shell. */
-type BoardAutoMergeNode = {
-  readonly id: string;
-  readonly parentCardId?: string | null | undefined;
-  readonly autoMerge?: boolean | undefined;
-  readonly group?: BoardCardGroup | null | undefined;
-};
-
-function resolveBoardAutoMerge(
-  byId: (id: string) => BoardAutoMergeNode | undefined,
-  card: Pick<BoardAutoMergeNode, "parentCardId" | "autoMerge">,
-  boardWide: boolean,
-): boolean {
-  if (card.autoMerge === true) return true;
-  const parentId = card.parentCardId ?? null;
-  if (parentId === null) return boardWide;
-  const parent = byId(String(parentId));
-  if (parent === undefined || parent.group == null) return true;
-  // Where the card lands: the nearest ancestor with its own branch, through
-  // any inherit groups, or trunk.
-  let intoIntegration = false;
-  const seen = new Set<string>();
-  let ancestor: BoardAutoMergeNode | undefined = parent;
-  while (ancestor !== undefined && !seen.has(String(ancestor.id))) {
-    seen.add(String(ancestor.id));
-    if (ancestor.group == null || ancestor.group.target === "own") {
-      intoIntegration = true;
-      break;
-    }
-    const next: string | null = ancestor.parentCardId ?? null;
-    ancestor = next === null ? undefined : byId(String(next));
-  }
-  return intoIntegration ? parent.group.autoBuild : parent.group.autoMerge;
-}
-
 type BoardAutoMergeShell = {
   readonly cardId: string;
   readonly parentCardId?: string | null | undefined;
   readonly group?: BoardCardGroup | null | undefined;
-  readonly autoMergeArmed?: boolean | undefined;
+  readonly autoMergeSetting?: boolean | undefined;
 };
 
 function boardAutoMergeShellIndex(shells: ReadonlyArray<BoardAutoMergeShell>) {
-  const nodes = new Map<string, BoardAutoMergeNode>();
+  const nodes = new Map<string, BoardAutomationNode>();
   for (const shell of shells) {
     nodes.set(String(shell.cardId), {
       id: shell.cardId,
+      stage: "",
       parentCardId: shell.parentCardId,
-      autoMerge: shell.autoMergeArmed,
+      autoMergeSetting: shell.autoMergeSetting,
       group: shell.group,
     });
   }
   return nodes;
 }
 
-/** One shell's resolved arm (T3O-28); see `boardShellAutoMergeArmedByCard`. */
-export function boardShellAutoMergeArmed(input: {
-  readonly shells: ReadonlyArray<BoardAutoMergeShell>;
-  readonly shell: {
-    readonly parentCardId?: string | null | undefined;
-    readonly autoMergeArmed?: boolean | undefined;
-  };
-  readonly boardWide: boolean;
-}): boolean {
-  const nodes = boardAutoMergeShellIndex(input.shells);
-  return resolveBoardAutoMerge(
-    (id) => nodes.get(id),
-    { parentCardId: input.shell.parentCardId, autoMerge: input.shell.autoMergeArmed },
-    input.boardWide,
-  );
-}
-
 /**
- * `boardCardAutoMergeArmed` over the client's shells (T3O-28), for every shell
- * at once: the shell's own `autoMergeArmed` is the per-card override, and its
- * tree position and group settings ride the shells, so a board resolves every
- * card's arm without the aggregate. Keyed by `cardId`.
+ * `boardCardAutoMergeArmed` over the client's shells, for every shell at once:
+ * the tree, own settings and group settings ride the shells, so a board
+ * resolves every card's arm without the aggregate. Keyed by `cardId`.
  */
 export function boardShellAutoMergeArmedByCard(input: {
   readonly shells: ReadonlyArray<BoardAutoMergeShell>;
@@ -3166,7 +3263,7 @@ export function boardShellAutoMergeArmedByCard(input: {
   const byId = (id: string) => nodes.get(id);
   const armed = new Map<string, boolean>();
   for (const [id, node] of nodes) {
-    armed.set(id, resolveBoardAutoMerge(byId, node, input.boardWide));
+    armed.set(id, resolveBoardAutoMergeValue(byId, node, input.boardWide));
   }
   return armed;
 }
@@ -3198,31 +3295,6 @@ export function boardCardIntegrationAncestor<
     parentId = parent.parentCardId;
   }
   return null;
-}
-
-/**
- * Whether the per-card auto-merge toggle may be OFFERED, and whether the
- * decider may accept `autoMerge: true` (T3O-38, D3).
- *
- * Deliberately wider than `boardCardCanArmAutoStart`: any live, top-level card
- * that has not reached the done-role stage. The useful moment to arm this is
- * "before I go to bed", and a control that is only offered in one column is
- * one the user has to come back to press — which is the complaint.
- *
- * Refused past the done-role stage, where there is nothing left to merge, and
- * refused for a sub-board child, which is armed unconditionally and would be
- * offered a switch that cannot turn anything off.
- */
-export function boardCardCanArmAutoMerge(input: {
-  readonly board: BoardState;
-  readonly card: Pick<BoardCard, "stage" | "archivedAt"> & {
-    readonly group?: BoardCard["group"] | undefined;
-  };
-}): boolean {
-  // Any live leaf may carry its own override (T3O-27); a group merges nothing.
-  if (input.card.archivedAt !== null || (input.card.group ?? null) !== null) return false;
-  const done = boardStageWithRole(input.board, "done");
-  return done === null || input.card.stage !== done.stageId;
 }
 
 /** A sub-board plan card may occupy the materialisation floor or anything
@@ -4334,6 +4406,9 @@ export const BoardCardMoveCommand = Schema.Struct({
   /** Permits non-adjacent stage moves. A drag is an override — a rigid
       board still has to let you drag a card backwards. */
   override: Schema.optional(Schema.Boolean),
+  /** `auto-build`: the card's own Auto-build started it (T3O-38). Such a
+      move does not begin its parent group, so it never starts its siblings. */
+  cause: Schema.optional(Schema.Literal("auto-build")),
   createdAt: IsoDateTime,
 });
 export type BoardCardMoveCommand = typeof BoardCardMoveCommand.Type;
@@ -4369,6 +4444,36 @@ export const BoardCardSetGroupSettingsCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type BoardCardSetGroupSettingsCommand = typeof BoardCardSetGroupSettingsCommand.Type;
+
+/**
+ * Set a card's own Automation toggles (T3O-38). Each field: absent leaves it
+ * unchanged, `true` / `false` sets it on the card, `null` inherits from the
+ * parent group again. Turning a toggle ON while it is locked, an inherit that
+ * picks up the group's on included, is refused with the lock's reason; turning
+ * it off is always accepted.
+ */
+export const BoardCardSetAutomationCommand = Schema.Struct({
+  type: Schema.Literal("board.card.set-automation"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  autoPlan: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  autoBuild: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  autoMerge: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  createdAt: IsoDateTime,
+});
+export type BoardCardSetAutomationCommand = typeof BoardCardSetAutomationCommand.Type;
+
+/** Which own toggles an event changed (T3O-38), so the supervisor can tell a
+    toggle flip from any other edit of the same card. */
+export const BoardAutomationChanged = Schema.Struct({
+  autoPlan: Schema.optional(Schema.Literal(true)),
+  autoBuild: Schema.optional(Schema.Literal(true)),
+  autoMerge: Schema.optional(Schema.Literal(true)),
+  /** A group's own `group` settings changed, so its inheriting children are
+      re-evaluated. */
+  group: Schema.optional(Schema.Literal(true)),
+});
+export type BoardAutomationChanged = typeof BoardAutomationChanged.Type;
 
 /**
  * Re-derive the stages of a card's ancestor groups (T3O-27). The decider
@@ -4450,19 +4555,6 @@ export const BoardCardUpdateCommand = Schema.Struct({
       an instant sets it, which PAUSES a step that is running right now. A past
       instant is accepted and means "now". */
   scheduledStartAt: Schema.optional(Schema.NullOr(IsoDateTime)),
-  /** Arm or disarm the card's auto-start (T3O-24, D1). Absent leaves it
-      unchanged. `true` is REFUSED unless `boardCardCanArmAutoStart` holds —
-      arming a sub-board child, a card past the pre-build stage, or one with
-      nothing left to wait for would store a flag no path can ever act on.
-      `false` is always accepted: a reverse state must never be refused. */
-  autoStart: Schema.optional(Schema.Boolean),
-  /** Arm or disarm the card's auto-merge (T3O-38, D3). Absent leaves it
-      unchanged. `true` is REFUSED unless `boardCardCanArmAutoMerge` holds — a
-      sub-board child is armed unconditionally and a card already in Done has
-      nothing to merge. `false` is always accepted, and CLEARS any hold: a
-      reverse state must never be refused, and a hold about a merge that is no
-      longer going to happen is a stale label. */
-  autoMerge: Schema.optional(Schema.Boolean),
   /** Append this text to the end of the brief, after a blank line (T3O-53).
       Applied by the decider against the brief as it stands when the command
       is decided, so an edit landing in between is kept rather than
@@ -4944,6 +5036,11 @@ export const BoardPlansApproveCommand = Schema.Struct({
       defaults to the card's split recommendation when absent. */
   autoBuild: Schema.optionalKey(Schema.Boolean),
   mergeTarget: Schema.optionalKey(BoardCardGroupTarget),
+  /** The new group's Auto-plan and Auto-merge (T3O-38), so a split seeds the
+      group from the card's resolved toggles atomically. Absent: Auto-plan
+      off, Auto-merge on for an own-branch group and off otherwise. */
+  autoPlan: Schema.optionalKey(Schema.Boolean),
+  autoMerge: Schema.optionalKey(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardPlansApproveCommand = typeof BoardPlansApproveCommand.Type;
@@ -5256,29 +5353,30 @@ export const BoardCardRecordDecisionsCommand = Schema.Struct({
 export type BoardCardRecordDecisionsCommand = typeof BoardCardRecordDecisionsCommand.Type;
 
 /**
- * Mark a leaf in planning for auto-planning (T3O-32). Server-internal: the
- * supervisor's `autoPlanCard` (the Auto-plan → Build click, mode `build`) and
- * a group's auto-plan setting (mode `ready`) are the only ways in.
+ * Record that a leaf's current planning run is unattended (T3O-32, T3O-38).
+ * Server-internal: the supervisor stamps it when it starts or steers a
+ * planning run with the card's Auto-plan on.
  */
 export const BoardCardMarkAutoPlanCommand = Schema.Struct({
   type: Schema.Literal("board.card.mark-auto-plan"),
   commandId: CommandId,
   cardId: BoardCardId,
-  mode: BoardCardAutoPlanMode,
   createdAt: IsoDateTime,
 });
 export type BoardCardMarkAutoPlanCommand = typeof BoardCardMarkAutoPlanCommand.Type;
 
 /**
- * End a pending auto-plan request without approving anything (T3O-32): the
- * run stopped being driven by the board — it failed, was paused, or is waiting
- * on a human — so the card goes back to ordinary, human-gated planning.
- * Server-internal, like marking.
+ * End a pending unattended planning run without approving anything (T3O-32):
+ * the run stopped being driven by the board, so the card goes back to
+ * ordinary, human-gated planning. `turnOff` also sets the card's own Auto-plan
+ * off (T3O-38) — only for a stop the human caused (Stop, or answering the
+ * run's question), never for a machine failure. Server-internal, like marking.
  */
 export const BoardCardEndAutoPlanCommand = Schema.Struct({
   type: Schema.Literal("board.card.end-auto-plan"),
   commandId: CommandId,
   cardId: BoardCardId,
+  turnOff: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
 });
 export type BoardCardEndAutoPlanCommand = typeof BoardCardEndAutoPlanCommand.Type;
@@ -5710,6 +5808,11 @@ export const BoardCardMovedPayload = Schema.Struct({
   fromStage: BoardStageId,
   toStage: BoardStageId,
   card: BoardCard,
+  /** The Automation toggles this move turned off (T3O-38): dragging a card
+      back out of Building disarms Auto-build, back into Planning disarms
+      Auto-plan, so a card pulled back never relaunches under the person
+      parking it. Absent when it turned off nothing. */
+  automationChanged: Schema.optional(BoardAutomationChanged),
 });
 export type BoardCardMovedPayload = typeof BoardCardMovedPayload.Type;
 
@@ -5770,23 +5873,12 @@ export const BoardCardUpdatedPayload = Schema.Struct({
       (D6), so without it a title edit on a card parked for any other reason
       would resume it too. */
   scheduledStartAt: Schema.optional(Schema.NullOr(IsoDateTime)),
-  /** Whether this edit armed or disarmed auto-start (T3O-24, D6), mirroring
-      `scheduledStartAt` above: absent means the edit did not touch it.
-
-      The card rides this payload whole, so the VALUE is already there — this
-      key exists to say the edit TOUCHED it, which is what lets the supervisor
-      check an armed card for a dependency that landed between render and click
-      without re-scanning the board on every unrelated title edit. */
-  autoStart: Schema.optional(Schema.Boolean),
-  /** Whether this edit armed or disarmed auto-merge (T3O-38, D3), on exactly
-      the same terms: absent means the edit did not touch it.
-
-      Load-bearing for the same reason. Arming a card that is ALREADY parked at
-      the merge stage fires the merge immediately — it is morally the Merge
-      click, and a control that visibly does nothing to the card in front of
-      you is the complaint this feature exists to answer — so the supervisor
-      must be able to tell that edit from a title change on the same card. */
-  autoMerge: Schema.optional(Schema.Boolean),
+  /** Which Automation toggles this event changed (T3O-38); absent when none.
+      The card rides this payload whole, so the VALUES are already there —
+      this key exists to say the edit TOUCHED them: arming Auto-merge on a
+      card already waiting at the merge stage merges it now, and a title edit
+      on the same card must not. */
+  automationChanged: Schema.optional(BoardAutomationChanged),
   /** Present when this edit touched the card's model overrides (T3O-65). A
       step stalled because its worker lacks its provider restarts only on this
       edit — Change model — and never on a title or label change. */
@@ -6748,15 +6840,16 @@ export const BoardCardShell = Schema.Struct({
       preserve rule on the client. Absent really does mean unscheduled, and
       clearing a schedule really does clear the pill. */
   scheduledStartAt: Schema.optionalKey(IsoDateTime),
-  /** Whether the card starts itself when its last dependency lands (T3O-24,
-      D8), absent when it does not — which is nearly every card, and why this is
-      KEY-optional rather than a plain boolean: the shell is under a fixed
-      per-card byte budget asserted in `board.test.ts`, so an unarmed card must
-      cost exactly what it costs today.
-
-      On the card aggregate like `scheduledStartAt`, so it rides every
-      card-carrying delta for free and absent really does mean unarmed. */
-  autoStart: Schema.optionalKey(Schema.Boolean),
+  /** The card's own Automation toggles (T3O-38), each absent while it
+      inherits — nearly every card, and why they are KEY-optional: the shell is
+      under a fixed per-card byte budget asserted in `board.test.ts`. `false`
+      is carried, because an explicit off overrides the group. Resolve them
+      with `resolveBoardCardAutomation`. */
+  autoPlanSetting: Schema.optionalKey(Schema.Boolean),
+  autoBuildSetting: Schema.optionalKey(Schema.Boolean),
+  autoMergeSetting: Schema.optionalKey(Schema.Boolean),
+  /** The current planning run is unattended (T3O-38), absent otherwise. */
+  autoPlanPending: Schema.optionalKey(Schema.Boolean),
   /** When this card's auto-merge was first refused (T3O-38, D14), absent when
       nothing is held — which is every card on a healthy board, and why these
       three are KEY-optional: the shell is under a fixed per-card byte budget
@@ -6771,17 +6864,11 @@ export const BoardCardShell = Schema.Struct({
       `Merge needs you` with an alert glyph — and never its colour: both board
       states are amber (D12). */
   autoMergeGaveUp: Schema.optionalKey(Schema.Boolean),
-  /** The card's own per-card auto-merge override, absent otherwise. The full
-      arm — the nearest group's settings, the board-wide setting — resolves
-      client-side through `boardShellAutoMergeArmed`, over shells that already
-      carry the tree and the group settings (T3O-28). Draws the small grey
-      `Auto` glyph, in the merge-role stage only. */
-  autoMergeArmed: Schema.optionalKey(Schema.Boolean),
   /** Whether the card still holds a worktree on disk (T3O-52, D5), absent when
       it does not. Half of the amber "Worktree kept" flag: the other half — is
       the card archived, or in the done-role stage with `reclaimWorktreeOnDone`
       on — needs settings the SQL snapshot producer cannot see, so the client
-      derives the flag (`boardCardWorktreeKept`), exactly like `autoMergeArmed`. */
+      derives the flag (`boardCardWorktreeKept`). */
   worktreeReady: Schema.optionalKey(Schema.Boolean),
   /** Why the last reclaim kept the worktree (`reclaimBlockedReason`), absent
       when none has. */
@@ -7153,17 +7240,19 @@ export function makeBoardCardShell(input: {
       the key is omitted for an unscheduled card to keep its shell
       byte-identical to a pre-schedule payload. */
   readonly scheduledStartAt?: IsoDateTime | null | undefined;
-  /** Whether the card is armed to auto-start (T3O-24). Rides the card
-      aggregate like `scheduledStartAt`; the key is omitted for an unarmed card
-      to keep its shell byte-identical to a pre-auto-start payload. */
-  readonly autoStart?: boolean | null | undefined;
-  /** The auto-merge hold's three shell facts (T3O-38, D14). On the card
-      aggregate like `autoStart`, so BOTH producers — the SQL snapshot query
+  /** The card's own Automation toggles and its unattended-run flag
+      (T3O-38). On the card aggregate, so both producers carry them; the keys
+      are omitted while a toggle inherits. */
+  readonly autoPlanSetting?: boolean | null | undefined;
+  readonly autoBuildSetting?: boolean | null | undefined;
+  readonly autoMergeSetting?: boolean | null | undefined;
+  readonly autoPlanPending?: boolean | null | undefined;
+  /** The auto-merge hold's shell facts (T3O-38, D14). On the card
+      aggregate, so BOTH producers — the SQL snapshot query
       and the JS delta derivation — must carry them or a held card's pill
       would vanish on reconnect. `cardMetaShellFields.test.ts` pins the pair. */
   readonly autoMergeHeldSince?: IsoDateTime | null | undefined;
   readonly autoMergeGaveUp?: boolean | null | undefined;
-  readonly autoMergeArmed?: boolean | null | undefined;
   /** Whether the current pull request is an open draft (T3O-12). On the card
       aggregate, so both producers carry it. */
   readonly prDraft?: boolean | null | undefined;
@@ -7248,15 +7337,17 @@ export function makeBoardCardShell(input: {
     // omitted when there is none, which keeps an unscheduled card's shell
     // exactly the size it was before this field existed.
     ...(input.scheduledStartAt == null ? {} : { scheduledStartAt: input.scheduledStartAt }),
-    // The arm (T3O-24, D8): omitted when unarmed — `false` and absent mean the
-    // same thing, and only one of them is free.
-    ...(input.autoStart === true ? { autoStart: true } : {}),
+    // The Automation toggles (T3O-38): omitted while inheriting; an explicit
+    // `false` is carried because it overrides the group.
+    ...(input.autoPlanSetting == null ? {} : { autoPlanSetting: input.autoPlanSetting }),
+    ...(input.autoBuildSetting == null ? {} : { autoBuildSetting: input.autoBuildSetting }),
+    ...(input.autoMergeSetting == null ? {} : { autoMergeSetting: input.autoMergeSetting }),
+    ...(input.autoPlanPending === true ? { autoPlanPending: true } : {}),
     // The auto-merge hold (T3O-38, D14): three byte-cheap facts, each omitted
     // when it has nothing to say, so a board that has never held a merge is
     // byte-identical to a pre-T3O-38 payload.
     ...(input.autoMergeHeldSince == null ? {} : { autoMergeHeldSince: input.autoMergeHeldSince }),
     ...(input.autoMergeGaveUp === true ? { autoMergeGaveUp: true } : {}),
-    ...(input.autoMergeArmed === true ? { autoMergeArmed: true } : {}),
     ...(input.prDraft === true ? { prDraft: true } : {}),
     // The worktree pair (T3O-52, D5): omitted when there is nothing on disk,
     // so a card without a worktree costs what it did before.
@@ -7348,13 +7439,12 @@ export function boardCardShellFromCard(
     parentCardId: card.parentCardId,
     group: card.group,
     scheduledStartAt: card.scheduledStartAt,
-    autoStart: card.autoStart,
+    autoPlanSetting: card.autoPlanSetting,
+    autoBuildSetting: card.autoBuildSetting,
+    autoMergeSetting: card.autoMergeSetting,
+    autoPlanPending: isBoardCardAutoPlanPending(card),
     autoMergeHeldSince: card.autoMergeHold?.heldSince ?? null,
     autoMergeGaveUp: boardCardAutoMergeGaveUp(card.autoMergeHold),
-    // The card's OWN override only (T3O-28): the client resolves the rest
-    // with `boardShellAutoMergeArmed`, because a group's settings and the
-    // board-wide setting both live outside this card's delta.
-    autoMergeArmed: card.autoMerge,
     prDraft: boardCardPullRequestIsOpenDraft(card.pullRequest),
     worktreeReady: card.worktree?.status === "ready",
     worktreeKeptReason: card.worktree?.reclaimBlockedReason ?? null,
@@ -7652,6 +7742,7 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardCardMoveCommand,
   BoardCardMoveCardsCommand,
   BoardCardSetGroupSettingsCommand,
+  BoardCardSetAutomationCommand,
   BoardCardReorderCommand,
   BoardCardUpdateCommand,
   // T3O-33: move a card to another project, before it has ever been built.
@@ -8228,7 +8319,6 @@ export const BOARD_WS_METHODS = {
   /** Auto-plan → Build (T3O-32, decision 7): end planning, have the agent
       decide what is left, approve the plan and start building. An RPC
       because it may steer a live planning thread. */
-  autoPlanCard: "board.autoPlanCard",
   /** "Remove worktree" on a finished card that kept one (T3O-52, D5): remove
       it past the safety rule, after a confirm dialog. The branch is kept. An
       RPC because the git removal must land before the record does. */
@@ -8445,18 +8535,6 @@ export const BoardRequestReviewRoundResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("failed") }),
 ]);
 export type BoardRequestReviewRoundResult = typeof BoardRequestReviewRoundResult.Type;
-
-/** What Auto-plan → Build did (T3O-32). `steered` told the live planning
-    thread to decide, record and propose; `started` began an unattended
-    planning step. `refused` carries the reason as a sentence. */
-export const BoardAutoPlanCardResult = Schema.Union([
-  Schema.Struct({ outcome: Schema.Literal("steered") }),
-  Schema.Struct({ outcome: Schema.Literal("started") }),
-  Schema.Struct({ outcome: Schema.Literal("refused"), detail: TrimmedNonEmptyString }),
-  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
-  Schema.Struct({ outcome: Schema.Literal("failed") }),
-]);
-export type BoardAutoPlanCardResult = typeof BoardAutoPlanCardResult.Type;
 
 /** What "Remove worktree" did (T3O-52, D5). */
 export const BoardRemoveCardWorktreeResult = Schema.Union([
@@ -8895,11 +8973,6 @@ export const BOARD_RPCS = [
     success: BoardRequestReviewRoundResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
-  Rpc.make(BOARD_WS_METHODS.autoPlanCard, {
-    payload: BoardCardPullRequestActionInput,
-    success: BoardAutoPlanCardResult,
-    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
-  }),
   Rpc.make(BOARD_WS_METHODS.removeCardWorktree, {
     payload: BoardCardPullRequestActionInput,
     success: BoardRemoveCardWorktreeResult,
@@ -8969,7 +9042,6 @@ export const BOARD_RPC_SCOPES = {
   // and moves the card: the same mutation tier as merging.
   [BOARD_WS_METHODS.submitCardForMerge]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.requestReviewRound]: AuthOrchestrationOperateScope,
-  [BOARD_WS_METHODS.autoPlanCard]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.removeCardWorktree]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.checkCardWorktree]: AuthOrchestrationOperateScope,
   // T3O-65: the move reads the source worker's git and then changes where the
@@ -10708,6 +10780,18 @@ export function effectiveBoardRuntimeMode(
   mode: BoardStageMode,
 ): RuntimeMode {
   return runtimeMode ?? (mode === "build" ? "auto" : "approval-required");
+}
+
+/** Whether board-wide auto-merge is on (T3O-38): the merge-role stage's own
+    setting, which turns every card's Auto-merge on. */
+export function boardWideAutoMergeOn(
+  board: Pick<BoardState, "stages">,
+  settings: BoardSettings,
+): boolean {
+  const mergeStage = boardStageWithRole(board as BoardState, "merge");
+  if (mergeStage === null) return false;
+  const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
+  return isBoardMergeStageExecution(exec) && exec.autoMerge;
 }
 
 export function resolveBoardStageExecution(

@@ -654,7 +654,7 @@ const BoardCancelCardWorkTool = Tool.make("board_cancel_card_work", {
 
 export const BoardSetGroupSettingsTool = Tool.make("board_set_group_settings", {
   description:
-    "Change a group's settings. target 'own' gives the group its own integration branch, which its children merge into and which is reviewed and merged to its own target once they are all done; 'inherit' passes the children through to wherever the group itself lands. target is locked while any card inside has started building. autoBuild: ready children with their dependencies met start themselves once the group has been started; turning it off never stops a running child. autoMerge: children merging to trunk merge themselves. autoPlan: children entering planning are planned by the agent. Only the fields you pass change. These settings decide how cards build and merge, so describe the change to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
+    "Change a group's settings, which every child that does not set its own value inherits. target 'own' gives the group its own integration branch, which its children merge into and which is reviewed and merged to its own target once they are all done; 'inherit' passes the children through to wherever the group itself lands. Switching to 'own' turns autoMerge on and switching to 'inherit' turns it off, unless you pass autoMerge too. target is locked while any card inside has started building. autoBuild: ready children with their dependencies met start themselves once the group has been started; turning it off never stops a running child. autoMerge: children merge themselves, into the group's branch or wherever they land. autoPlan: children are planned by the agent without questions; their plans wait for approval unless autoBuild is on too. Only the fields you pass change, and they apply at once to inheriting children already under way. These settings decide how cards build and merge, so describe the change to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
   parameters: Schema.Struct({
     /** Card key or id of the group. */
     cardId: TrimmedNonEmptyString,
@@ -711,7 +711,7 @@ export const BoardProposePlansTool = Tool.make("board_propose_plans", {
   // the description now leads with the split's consequence, and the split
   // itself has to argue for the human click it triggers.
   description:
-    "Record your card's plan (the planning output). Pass ONE plan in almost every case: the array is how a card is SPLIT, and two or more plans each become a child card with its own branch, build and review, behind a human approval gate that blocks the card until a human approves it. Split only for a large feature worth building and reviewing in separate pieces, or where building parts concurrently buys a real speed-up — and then splitRationale is required and is shown to the human at the gate. Each plan has a key (a short unique slug), a title, a summary, a dependsOn list referencing other plans' keys (only meaningful in a split), and a markdown body. In a split, mark each plan planned: true when its body is a full implementation plan, so its child lands in Ready to be built, or planned: false when its body is a brief that still needs its own planning, so its child lands in Backlog. A split also recommends the group's settings, which the human sees pre-set at the gate and can change: recommendedAutoBuild (children start themselves once the group is started) and recommendedMergeTarget ('own' cuts the group its own integration branch with one final review; 'inherit' merges each child wherever this card itself merges). Every child fully planned: recommend autoBuild true and 'own'. An epic breakdown whose children still need planning: recommend autoBuild false and 'inherit', with those children planned: false. If your card already sits inside a group that has its own branch (its base branch is an integration branch such as board/<KEY>), prefer 'inherit'. Omitted recommendations fall back to these rules. Approval creates the children and starts nothing. Validated on ingest — unique keys, known dependency references, and no cycles — and rejected naming the offending edge. Proposing again replaces the card's whole plan set. When plan review is on for the card, the first proposal returns planReview with the review's instructions: follow them before completing. Your card is resolved from your thread.",
+    "Record your card's plan (the planning output). Pass ONE plan in almost every case: the array is how a card is SPLIT, and two or more plans each become a child card with its own branch, build and review, behind a human approval gate that blocks the card until a human approves it. Split only for a large feature worth building and reviewing in separate pieces, or where building parts concurrently buys a real speed-up — and then splitRationale is required and is shown to the human at the gate. Each plan has a key (a short unique slug), a title, a summary, a dependsOn list referencing other plans' keys (only meaningful in a split), and a markdown body. In a split, mark each plan planned: true when its body is a full implementation plan, so its child lands in Ready to be built, or planned: false when its body is a brief that still needs its own planning, so its child lands in Backlog. A split also recommends the group's settings, which the human sees pre-set at the gate and can change: recommendedAutoBuild (children start themselves once the group is started) and recommendedMergeTarget ('own' cuts the group its own integration branch with one final review; 'inherit' merges each child wherever this card itself merges). Every child fully planned: recommend autoBuild true and 'own'. An epic breakdown whose children still need planning: recommend autoBuild false and 'inherit', with those children planned: false. If your card already sits inside a group that has its own branch (its base branch is an integration branch such as board/<KEY>), prefer 'inherit'. Omitted recommendations fall back to these rules. Approval creates the children; it starts nothing unless the card's Auto-build is on, which also approves the split without the gate. Validated on ingest — unique keys, known dependency references, and no cycles — and rejected naming the offending edge. Proposing again replaces the card's whole plan set. When plan review is on for the card, the first proposal returns planReview with the review's instructions: follow them before completing. Your card is resolved from your thread.",
   parameters: Schema.Struct({
     plans: Schema.Array(BoardProposedPlanInput),
     /** Required once `plans` holds two or more (enforced by the decider, which
@@ -770,24 +770,37 @@ const BoardRecordDecisionsTool = Tool.make("board_record_decisions", {
   dependencies,
 }).annotate(Tool.Title, "Record planning decisions");
 
-const BoardAutoPlanTool = Tool.make("board_auto_plan", {
+const BoardAutomationToggleState = Schema.Struct({
+  /** What the board acts on. */
+  value: Schema.Boolean,
+  /** `own`: set on this card. `inherited`: from its group. `board`: board-wide
+      auto-merge. null: off by default. */
+  source: Schema.NullOr(Schema.Literals(["own", "inherited", "board"])),
+  locked: Schema.Boolean,
+  lockReason: Schema.NullOr(Schema.String),
+});
+
+const BoardSetAutomationTool = Tool.make("board_set_automation", {
   description:
-    "Auto-plan a card that is in planning: its planning agent stops asking questions, decides everything left itself, records each decision, and proposes the plan, which is then approved without review and built (a split is approved with the agent's recommended settings, and its group starts when auto-build is on). It takes the place of a human approving the plan and starting the build, so only call it when the user explicitly asks for that card to be auto-planned: confirm with them, then pass approved: true. The server refuses without it, and refuses a group or a card whose split is waiting for approval.",
+    "Turn a card's Automation toggles on or off. autoPlan: its planning agent stops asking questions and decides everything itself; without autoBuild the plan then waits for the user's approval. autoBuild: an approved plan starts building by itself once its dependencies are done, and with autoPlan the plan is approved automatically, so the card runs unattended to Ready for merge. autoMerge: the card merges itself once it reaches Ready for merge. Each takes true, false, or null to inherit from the card's group again; only the fields you pass change. Turning a toggle on stands in for a human approving and starting work, so do it only when the user explicitly asks for that card: confirm with them, then pass approved: true. A null that picks up a group's on counts as turning it on. The server refuses without approved, and refuses an unattended run. Never turn on your own card's toggles. Turning a toggle on after its stage has passed is refused with the reason; turning one off is always accepted. The change takes effect in the background, so the result is the card's resolved toggles, not what the board then did. For a group's own settings use board_set_group_settings.",
   parameters: Schema.Struct({
     /** Card key or id. */
     cardId: TrimmedNonEmptyString,
+    autoPlan: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    autoBuild: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    autoMerge: Schema.optional(Schema.NullOr(Schema.Boolean)),
     approved: Schema.optional(Schema.Boolean),
   }),
   success: Schema.Struct({
     cardId: BoardCardId,
     key: TrimmedNonEmptyString,
-    /** `steered`: the live planning thread was told to finish. `started`: an
-        unattended planning run began. */
-    outcome: Schema.Literals(["steered", "started"]),
+    autoPlan: BoardAutomationToggleState,
+    autoBuild: BoardAutomationToggleState,
+    autoMerge: BoardAutomationToggleState,
   }),
   failure: BoardToolFailure,
   dependencies,
-}).annotate(Tool.Title, "Auto-plan a board card");
+}).annotate(Tool.Title, "Set a board card's automation");
 
 export const BoardToolkit = Toolkit.make(
   BoardGetCardContextTool,
@@ -813,5 +826,5 @@ export const BoardToolkit = Toolkit.make(
   BoardGetPlanTool,
   BoardWritePlanTool,
   BoardRecordDecisionsTool,
-  BoardAutoPlanTool,
+  BoardSetAutomationTool,
 );

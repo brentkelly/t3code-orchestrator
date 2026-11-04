@@ -6,8 +6,9 @@
  * prototype's two forms (`.plans/prototype/T3 Code Kanban v4.dc.html`):
  *
  * - **Backlog and Sprint** — a 760px sheet. The work has not started, so the
- *   card is what you read: brief, dependencies and threads on the left, the
- *   stage action, labels, the stage ladder and provenance in a 244px rail.
+ *   card is what you read: brief and threads on the left, the stage action,
+ *   labels, dependencies, activity, automation, the stage ladder and
+ *   provenance in a 244px rail.
  * - **Planning onward** — a 1220px working surface. The card's thread runs in
  *   the modal (`BoardCardThreadPane`), with everything else stacked into a
  *   336px rail beside it and the brief one tab away. This is the prototype's
@@ -72,7 +73,6 @@ import {
   type RuntimeMode,
   type BoardCardStepStalledReason,
   type BoardSplitRecommendation,
-  isBoardCardAutoPlanPending,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
@@ -104,7 +104,6 @@ import {
   Trash2Icon,
   TriangleAlertIcon,
   XIcon,
-  FastForwardIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { Fragment, Suspense, lazy, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -113,14 +112,7 @@ import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./Boa
 import { useBoardUiStore } from "./boardUiStore";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogPopup } from "../components/ui/dialog";
-import {
-  Menu,
-  MenuCheckboxItem,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuTrigger,
-} from "../components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import {
   boardCardModelOverrideSummary,
@@ -153,6 +145,7 @@ import { BoardLabelChips } from "./BoardLabelChips";
 import { BoardLabelField } from "./BoardLabelField";
 import { BoardLinkPullRequest } from "./BoardLinkPullRequest";
 import {
+  BoardCollapsibleSection,
   BoardDependencySection,
   BoardSectionHeading as SectionHeading,
   type BoardDependencyEntry,
@@ -163,11 +156,9 @@ import { BoardCardWorktreeKept } from "./BoardCardWorktreeKept";
 import { BoardCardStepPaused } from "./BoardCardStepPaused";
 import { type BoardConflictFixInfo } from "./boardConflictFix";
 import {
-  boardAutoMergeArm,
   boardAutoMergeBanner,
   boardAutoMergeCountdown,
   boardAutoMergeHeaderChip,
-  type BoardAutoMergeArm,
   type BoardAutoMergeBanner,
 } from "./boardAutoMergeHold";
 import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
@@ -185,7 +176,7 @@ import {
 } from "./boardStageActions";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
-import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
+import { boardCardMoveBlocked } from "./boardCardMoveGate";
 import { BoardHint } from "./BoardHint";
 import { BoardDecisionLog } from "./BoardDecisionLog";
 import { boardDecisionFollowUp, boardDecisionLogView } from "./boardDecisionLog";
@@ -314,30 +305,70 @@ export function boardCardIsDone(
     create dialog, so it lives in `BoardCardFields`. */
 export type BoardDetailDependency = BoardDependencyEntry;
 
-/** The rail in the working-surface layout's right rail. Absent when the card
-    has no activity — not an empty skeleton (no-speculative-inventory). */
-function ActivitySection({
-  detail,
-  stages,
-  agents,
-  projectNames,
+/** The rail's shared tail, in both layouts (T3O-38): labels, dependencies and
+    activity, then Automation and the Stage ladder, collapsed by default with
+    their summaries on the header, then provenance. Dependencies and Activity
+    sit here even on a Backlog card, so the brief has the main column. */
+function RailSections({
+  props,
+  group,
+  onOpenThread,
 }: {
-  readonly detail: BoardCardDetail;
-  readonly stages: ReadonlyArray<BoardStageDefinition>;
-  readonly agents: BoardActivityAgentLookup | undefined;
-  readonly projectNames: ReadonlyMap<string, string>;
+  readonly props: BoardCardDetailViewProps;
+  readonly group: BoardCardDetailGroup | null;
+  readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
-  if (detail.activity.length === 0) return null;
+  const { card } = props.detail;
+  const activity = props.detail.activity;
   return (
-    <div className="flex flex-col gap-2 border-t border-border p-3.5">
-      <SectionHeading>Activity</SectionHeading>
-      <BoardCardActivityRail
-        agents={agents}
-        entries={detail.activity}
-        projectNames={projectNames}
-        stages={stages}
-      />
-    </div>
+    <>
+      <div className="flex flex-col gap-2 border-t border-border p-3.5">
+        <LabelSection
+          catalogue={props.catalogue}
+          onCreateLabel={props.onCreateLabel}
+          onDeleteLabel={props.onDeleteLabel}
+          onRecolourLabel={props.onRecolourLabel}
+          onSetLabels={props.onSetLabels}
+          onUndeleteLabel={props.onUndeleteLabel}
+          selected={card.labels}
+        />
+      </div>
+      <div className="border-t border-border p-3.5">
+        <DependenciesSection {...props} />
+      </div>
+      {activity.length === 0 ? null : (
+        <BoardCollapsibleSection
+          className="border-t border-border p-3.5"
+          summary={String(activity.length)}
+          title="Activity"
+        >
+          <BoardCardActivityRail
+            agents={props.agents}
+            entries={activity}
+            projectNames={props.project.names}
+            stages={props.stages}
+          />
+        </BoardCollapsibleSection>
+      )}
+      {props.automation == null ? null : (
+        <div className="border-t border-border p-3.5">{props.automation}</div>
+      )}
+      {group === null ? (
+        <BoardCollapsibleSection
+          className="border-t border-border p-3.5"
+          summary={boardStageLabel(props.stages, card.stage)}
+          title="Stage"
+        >
+          <StageLadder
+            deferred={props.stageLadderDeferred}
+            onMoveStage={props.onMoveStage}
+            stage={card.stage}
+            stages={props.stages}
+          />
+        </BoardCollapsibleSection>
+      ) : null}
+      <InfoSection onOpenThread={onOpenThread} props={props} />
+    </>
   );
 }
 
@@ -372,8 +403,6 @@ export interface BoardCardDetailGroup {
   /** Why the group is in its stage, under Open board. */
   readonly note: string;
   readonly onOpenBoard: (() => void) | undefined;
-  /** The Group settings controls, which replace the Stage ladder. */
-  readonly settings: ReactNode;
   /** Opens the group archive confirmation. */
   readonly onArchive: () => void;
   /** Whether the group has its own integration branch, and so its own
@@ -524,8 +553,6 @@ export interface BoardCardDetailViewProps {
       round" at Code review and Ready for merge, "Request review" on a card
       that has never had one. Absent hides the button entirely. */
   readonly onRequestReviewRound?: (() => void) | undefined;
-  /** Auto-plan → Build (T3O-32). Absent hides the button. */
-  readonly onAutoPlan?: (() => void) | undefined;
   /** Create a follow-up card from the decision log (T3O-32). */
   readonly onCreateFollowUp?:
     | ((draft: { readonly title: string; readonly brief: string }) => void)
@@ -609,21 +636,15 @@ export interface BoardCardDetailViewProps {
   /** Set or clear the card's scheduled start; null clears the hold, which
       starts or resumes the card immediately. */
   readonly onSetScheduledStartAt: (next: string | null) => void;
-  /** Arm or disarm the card's auto-start (T3O-24). Absent hides the control
-      entirely — the eager view is mounted by tests that pass no handler. */
-  readonly onSetAutoStart?: ((next: boolean) => void) | undefined;
-  /** Arm or disarm the card's auto-merge (T3O-38, D3). Absent hides the
-      control entirely — the eager view is mounted by tests that pass no
-      handler. */
-  readonly onSetAutoMerge?: ((next: boolean) => void) | undefined;
-  /** Whether the merge-role stage's board-wide auto-merge setting is on
-      (T3O-38, D2/D3). It HIDES the per-card switch — two controls that can
-      disagree about one card is worse than one — and it is what makes the
-      header chip read `Auto-merge · board`, so a user who cannot find the
-      switch learns where the decision was actually made. */
+  /** The Automation section (T3O-38), built by the container, which holds
+      the shells and the board settings it resolves against. Null hides it —
+      a done or archived card has nothing left to automate. */
+  readonly automation?: ReactNode;
+  /** The card's resolved Auto-merge, for the header chip (T3O-38). */
+  readonly autoMergeArmed?: boolean | undefined;
+  /** Whether that Auto-merge comes from the board-wide setting, which makes
+      the chip read `Auto-merge · board` so a user learns where it was set. */
   readonly autoMergeFromBoardSetting?: boolean | undefined;
-  /** Whether the card's nearest group arms its merge (T3O-28). */
-  readonly autoMergeFromGroup?: boolean | undefined;
   /** Resolve an override's model slug to its display name for the header pill
       and tooltip (t3o-29, D7). Passed from the container, which holds the
       provider list; absent, the pill falls back to the raw slug. */
@@ -640,7 +661,7 @@ export interface BoardCardDetailViewProps {
       (t3o-29, D1). Empty on every card without a split. */
   readonly childShells?: ReadonlyArray<BoardCardShell> | undefined;
   /** The group popup (T3O-29), or null for a leaf: Open board instead of the
-      stage's actions, Group settings instead of the Stage ladder, and the
+      stage's actions, Automation instead of the Stage ladder, and the
       archive confirmation instead of a one-click archive. */
   readonly group?: BoardCardDetailGroup | null | undefined;
   /** A group's child also lists Deferred on its Stage ladder (T3O-29). */
@@ -1595,7 +1616,6 @@ function ActionsSection({
   props,
   unmet,
   onReviewSplit,
-  onAutoPlan,
   group = null,
 }: {
   readonly props: BoardCardDetailViewProps;
@@ -1605,8 +1625,6 @@ function ActionsSection({
   readonly unmet: ReadonlyArray<BoardDetailDependency>;
   /** Opens the split gate's pane (T3O-31). */
   readonly onReviewSplit: () => void;
-  /** Auto-plan → Build (T3O-32), or null where it is not offered. */
-  readonly onAutoPlan: (() => void) | null;
 }) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
@@ -1641,26 +1659,13 @@ function ActionsSection({
   // Read from the dependencies this view already resolved, and folded into one
   // `blocked` for everything in this section — the button, its hint and the
   // callout — so the three cannot disagree about the same card.
-  const gate = boardCardAutoStartGate({
+  const moveBlocked = boardCardMoveBlocked({
     stages: props.stages,
     stage: card.stage,
     toStage: forward !== null && forward.kind === "move" ? forward.toStage : null,
-    parentCardId: card.parentCardId,
-    archived,
     unmetCount: unmet.length,
   });
-  const blocked = card.blocked || gate.moveBlocked;
-  // The arm (D9). Offered only where it can act, and only when the container
-  // gave this view a way to set it — the same predicate the decider enforces on
-  // the way in, so the control and the refusal can never disagree.
-  const autoStart =
-    gate.canArm && props.onSetAutoStart !== undefined
-      ? {
-          armed: card.autoStart,
-          copy: boardCardAutoStartCopy(card.autoStart),
-          onToggle: props.onSetAutoStart,
-        }
-      : null;
+  const blocked = card.blocked || moveBlocked;
   // The countdown rides the Merge button only while a rung is actually
   // pending: an exhausted hold has nothing to count down to, and the button
   // goes back to saying Merge.
@@ -1803,7 +1808,6 @@ function ActionsSection({
     forward === null &&
     !props.canApproveSplit &&
     !blocked &&
-    autoStart === null &&
     humanInLoop === null &&
     displayed === null &&
     reviewRound === null &&
@@ -1812,8 +1816,7 @@ function ActionsSection({
     // T3o (T3O-48): a card with nothing but the missing-PR notice still needs
     // the section, or the one thing it has to say has nowhere to render.
     missingPullRequest === null &&
-    linkPullRequest === null &&
-    onAutoPlan === null
+    linkPullRequest === null
   ) {
     return null;
   }
@@ -1988,18 +1991,6 @@ function ActionsSection({
           ) : null}
         </div>
       ) : null}
-      {onAutoPlan === null ? null : (
-        <BoardHint label="Ends planning. The agent makes every remaining decision, approves the plan and starts the build. Decisions are logged on the Summary pane.">
-          <button
-            className={cn(OUTLINE_ACTION_CLASS, "hover:bg-accent")}
-            onClick={onAutoPlan}
-            type="button"
-          >
-            <FastForwardIcon className="size-3.5" />
-            Auto-plan → Build
-          </button>
-        </BoardHint>
-      )}
       {/* Between the forward button and View PR, giving the approved mockup's
           order: Merge → Another review round → View PR, all three full width.
           Styled off its shipped sibling below rather than the prototype's
@@ -2064,38 +2055,6 @@ function ActionsSection({
             {unmet.length === 0
               ? "Blocked by unmet dependencies"
               : `Blocked by ${unmet.map((dependency) => dependency.key).join(", ")}`}
-          </span>
-        </div>
-      ) : null}
-      {autoStart !== null ? (
-        // The arm (T3O-24, D9), directly under the callout it answers, with the
-        // switch leading the row as the mockups have it.
-        //
-        // Tinted with `--primary`, never `--info`. `docs/t3o/status-colours.md`
-        // gives blue to RUNNING, and this card is not running; a CHECKED
-        // CONTROL is UI state, the exemption that doc already grants the blue
-        // open chip on a selected pull request. The status SURFACE for this
-        // feature — the card face's chip — stays neutral (D8).
-        //
-        // A DIV, not a label: `Switch` renders a `role="switch"` button, and a
-        // label wrapping a button toggles nothing — the row would look like one
-        // tap target and behave like two. The switch is the control, as it is
-        // in every settings row.
-        <div
-          className={cn(
-            "flex items-center gap-2.5 rounded-lg border px-2.5 py-2 text-[12.5px]",
-            autoStart.armed ? "border-primary/55 bg-primary/8" : "border-input bg-popover",
-          )}
-        >
-          <Switch
-            aria-label={autoStart.copy.label}
-            checked={autoStart.armed}
-            className="shrink-0"
-            onCheckedChange={(next) => autoStart.onToggle(next)}
-          />
-          <span className="flex min-w-0 flex-col">
-            <span className="font-medium text-foreground">{autoStart.copy.label}</span>
-            <span className="text-[11px] text-muted-foreground">{autoStart.copy.hint}</span>
           </span>
         </div>
       ) : null}
@@ -2486,44 +2445,6 @@ function PaneTabs({
   );
 }
 
-/**
- * The kebab's auto-merge arm (T3O-38, D3; T3O-42), exported so it can be
- * rendered on its own: the kebab popup is a portal, and a portal renders
- * nothing on the server, so a static-markup test can never reach it through
- * the trigger (same reason `BoardCardThreadAddMenuBody` is exported).
- *
- * A card mid-build already has a rail full of things to click and this is a
- * set-once decision, so it lives here rather than competing with the stage's
- * own actions. A CheckboxItem, not a MenuItem: Base UI leaves the menu open
- * on a checkbox click, so the user sees the switch move and can read what
- * they just chose before dismissing it.
- */
-export function BoardCardAutoMergeMenuItem(props: {
-  readonly arm: BoardAutoMergeArm | null;
-  readonly onToggle: ((next: boolean) => void) | undefined;
-}) {
-  const { arm, onToggle } = props;
-  if (arm === null || onToggle === undefined) return null;
-  return (
-    <>
-      <MenuCheckboxItem
-        checked={arm.armed}
-        onCheckedChange={(next) => onToggle(next)}
-        variant="switch"
-      >
-        <span className="flex items-start gap-2 py-0.5">
-          <PullRequestGlyph.merged className="mt-px size-4 shrink-0 text-muted-foreground" />
-          <span className="flex min-w-0 flex-col gap-0.5">
-            <span>{arm.copy.label}</span>
-            <span className="text-[11px] text-muted-foreground leading-snug">{arm.copy.hint}</span>
-          </span>
-        </span>
-      </MenuCheckboxItem>
-      <MenuSeparator />
-    </>
-  );
-}
-
 export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
@@ -2533,23 +2454,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // pill reads the three shell facts instead, and `boardAutoMergeHold` is the
   // one place either set of words is written, so they cannot disagree.
   const autoMergeChip = boardAutoMergeHeaderChip({
-    armed:
-      card.autoMerge ||
-      props.autoMergeFromGroup === true ||
-      props.autoMergeFromBoardSetting === true,
-    fromBoardSetting: !card.autoMerge && props.autoMergeFromBoardSetting === true,
-  });
-  const hold = card.autoMergeHold;
-  // The per-card auto-merge switch (T3O-38, D3), which lives in the KEBAB
-  // (T3O-42): it is armed once and rarely, and the card's action rail already
-  // carries everything a user reaches for on the way through a stage.
-  const autoMergeArm = boardAutoMergeArm({
-    card,
-    stages: props.stages,
-    canSet: props.onSetAutoMerge !== undefined,
+    armed: props.autoMergeArmed === true,
     fromBoardSetting: props.autoMergeFromBoardSetting === true,
   });
-  const onSetAutoMerge = props.onSetAutoMerge;
+  const hold = card.autoMergeHold;
   // Minute-grained, off the render's clock, exactly as the board pill is: the
   // one per-second element is the Merge button's countdown, which is its own
   // isolated component.
@@ -2795,23 +2703,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         completion.stepId === buildStage.stageId &&
         completion.outcome === "succeeded",
     );
-  // Auto-plan → Build (T3O-32): a leaf in planning with no split waiting and
-  // no auto-plan already under way. The click opens the Summary pane with the
-  // log expanded, so the decisions are what the human sees once it builds.
-  const onAutoPlan = props.onAutoPlan;
-  const autoPlanAction =
-    onAutoPlan === undefined ||
-    card.archivedAt !== null ||
-    card.group !== null ||
-    props.canApproveSplit ||
-    isBoardCardAutoPlanPending(card) ||
-    boardStageWithRole(stagesState, "plan")?.stageId !== card.stage
-      ? null
-      : () => {
-          onAutoPlan();
-          setLogOpen(true);
-          setPane("summary");
-        };
 
   return (
     <>
@@ -2875,11 +2766,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             stageLabel={boardStageLabel(props.stages, card.stage)}
           />
         )}
-        {/* The auto-merge arm, read-only (T3O-38, D13). NAMES THE SOURCE:
-            with the board-wide setting on the per-card switch is hidden, so a
-            user who goes looking for it needs to be told where the decision
-            actually lives. Neutral, like the queue chip below — an armed card
-            is not running, not done, and asking nothing of anyone. */}
+        {/* The resolved Auto-merge, read-only (T3O-38, D13). NAMES THE SOURCE
+            when it is the board-wide setting, which no card switch can turn
+            off. Neutral, like the queue chip below — an armed card is not
+            running, not done, and asking nothing of anyone. */}
         {archived || done || autoMergeChip === null ? null : (
           <BoardHint label={autoMergeChip.tooltip}>
             <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
@@ -2938,8 +2828,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           {/* `min-w-*`, never a fixed width: the Models row below sizes itself
               to a mono override summary that can run long, and a hard box
               would crowd it. */}
-          <MenuPopup align="end" className={autoMergeArm === null ? "min-w-42" : "min-w-68"}>
-            <BoardCardAutoMergeMenuItem arm={autoMergeArm} onToggle={onSetAutoMerge} />
+          <MenuPopup align="end" className="min-w-42">
             {/* Opening the overrides CLOSES this menu (t3o-29, D7): the popover
                 contains a model picker that is itself a popover, and selecting
                 from it is an outside-pointerdown on any menu still holding it
@@ -3238,7 +3127,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             {group === null || groupUsesCardActions ? (
               <ActionsSection
                 group={group}
-                onAutoPlan={autoPlanAction}
                 onReviewSplit={() => setPane("thread")}
                 props={props}
                 unmet={unmet}
@@ -3275,40 +3163,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 {props.feedback}
               </p>
             ) : null}
-            <div className="border-t border-border p-3.5">
-              <DependenciesSection {...props} />
-            </div>
-            <ActivitySection
-              agents={props.agents}
-              detail={props.detail}
-              projectNames={props.project.names}
-              stages={props.stages}
-            />
-            <div className="flex flex-col gap-2 border-t border-border p-3.5">
-              <LabelSection
-                catalogue={props.catalogue}
-                onCreateLabel={props.onCreateLabel}
-                onDeleteLabel={props.onDeleteLabel}
-                onRecolourLabel={props.onRecolourLabel}
-                onSetLabels={props.onSetLabels}
-                onUndeleteLabel={props.onUndeleteLabel}
-                selected={card.labels}
-              />
-            </div>
-            <div className="flex flex-col gap-2 border-t border-border p-3.5">
-              <SectionHeading>{group === null ? "Stage" : "Group settings"}</SectionHeading>
-              {group === null ? (
-                <StageLadder
-                  deferred={props.stageLadderDeferred}
-                  onMoveStage={props.onMoveStage}
-                  stage={card.stage}
-                  stages={props.stages}
-                />
-              ) : (
-                group.settings
-              )}
-            </div>
-            <InfoSection onOpenThread={selectThread} props={props} />
+            <RailSections group={group} onOpenThread={selectThread} props={props} />
           </div>
         </div>
       ) : (
@@ -3353,28 +3208,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 />
               </div>
 
-              <div className="min-w-0">
-                <DependenciesSection {...props} />
-              </div>
-
               {/* The mockup's pre-Planning card has no Threads section —
                   adoption belongs to the thread pane. A card that already
                   carries links still shows them, so state is never hidden. */}
               {props.threadLinks.length === 0 ? null : (
                 <div className="min-w-0">
                   <ThreadsSection {...props} />
-                </div>
-              )}
-
-              {props.detail.activity.length === 0 ? null : (
-                <div className="min-w-0">
-                  <SectionHeading className="mb-[7px]">Activity</SectionHeading>
-                  <BoardCardActivityRail
-                    agents={props.agents}
-                    entries={props.detail.activity}
-                    projectNames={props.project.names}
-                    stages={props.stages}
-                  />
                 </div>
               )}
             </div>
@@ -3384,7 +3223,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               {group === null || groupUsesCardActions ? (
                 <ActionsSection
                   group={group}
-                  onAutoPlan={null}
                   onReviewSplit={() => setPane("thread")}
                   props={props}
                   unmet={unmet}
@@ -3393,31 +3231,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 <GroupActionsSection group={group} props={props} />
               )}
               <PlanReviewSection props={props} />
-              <div className="flex flex-col gap-2 border-t border-border p-3.5">
-                <LabelSection
-                  catalogue={props.catalogue}
-                  onCreateLabel={props.onCreateLabel}
-                  onDeleteLabel={props.onDeleteLabel}
-                  onRecolourLabel={props.onRecolourLabel}
-                  onSetLabels={props.onSetLabels}
-                  onUndeleteLabel={props.onUndeleteLabel}
-                  selected={card.labels}
-                />
-              </div>
-              <div className="flex flex-col gap-2 border-t border-border p-3.5">
-                <SectionHeading>{group === null ? "Stage" : "Group settings"}</SectionHeading>
-                {group === null ? (
-                  <StageLadder
-                    deferred={props.stageLadderDeferred}
-                    onMoveStage={props.onMoveStage}
-                    stage={card.stage}
-                    stages={props.stages}
-                  />
-                ) : (
-                  group.settings
-                )}
-              </div>
-              <InfoSection onOpenThread={selectThread} props={props} />
+              <RailSections group={group} onOpenThread={selectThread} props={props} />
             </div>
           </div>
         </div>

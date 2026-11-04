@@ -48,17 +48,28 @@ Select **New phase** in the Deferred column to move deferred cards into a new gr
 in its parent's Backlog. Every deferred card starts ticked, and the title is filled in for you as
 `‹Group›: Phase 2` (or the next number, if the group is already a phase).
 
-## Group settings
+## Automation
 
-Open **Group settings** from the group board's header, or from the group's popup:
+A group's settings live in its **Automation** section, in the group's sidebar or from the group
+board's header:
 
 - **Merge target** — **Inherit** sends children wherever the group itself merges. **Own branch**
   gives the group an integration branch that its children merge into, reviewed and merged on as a
-  whole once they are all done. It can't change once a child has started.
-- **Auto-build** — ready children start themselves once the group has started.
-- **Auto-merge to trunk** — children merge as soon as the forge accepts. It applies only when they
-  merge into trunk, and is off by default.
-- **Auto-plan** — children entering Planning are planned by the agent and stop at Ready.
+  whole once they are all done. It can't change once a child has started. Choosing Own branch turns
+  **Auto-merge children** on, and Inherit turns it off; you can change it afterwards.
+- **Auto-plan** — children are planned by the agent without questions. Their plans wait for your
+  approval unless Auto-build is on too.
+- **Auto-build** — once the group has started, ready children start themselves, and with Auto-plan
+  on their plans are approved for them.
+- **Auto-merge children** — children merge as soon as the forge accepts, into the group's branch or
+  wherever they land.
+- For an Own-branch group, **Auto-merge ‹branch›** merges the group's own branch onward once its
+  final review passes.
+
+Children take these settings unless they set their own (see
+[Automation](board-auto-plan.md#inherited-from-the-group)). A change applies straight away to the
+children that inherit it; when that would change work already under way, the board asks you to
+confirm first.
 
 ## Regrouping in the List view
 

@@ -412,7 +412,7 @@ a human act unless listed below.
 | Backlog → Sprint              | Add to sprint                                          |
 | Sprint → Planning             | Begin planning _(starts the planning thread on entry)_ |
 | Planning → Ready              | Approve plan                                           |
-| **Ready → Building**          | **Begin build — never automatic**                      |
+| **Ready → Building**          | **Begin build — automatic only under Auto-build**      |
 | Code review → Ready for merge | Approve review                                         |
 | Ready for merge → Done        | Merge                                                  |
 
@@ -424,15 +424,25 @@ a human act unless listed below.
 - Once a human has started a group with auto-build on, each ready child whose dependencies are met
   starts itself (D12). Turning auto-build off stops new starts and never interrupts a running child.
 - Done → archived after the configured window, when auto-archive is enabled (D15).
-- **Auto-plan → Build** (T3O-32): the click is the human act that authorises Planning → Ready →
-  Building for that one card. The agent decides what is left of planning and logs each decision;
-  when its plan arrives the board approves it, unclear decisions included, and makes both moves
-  (every gate still applies). A split is approved with the agent's recommended settings and, with
-  auto-build on, its group is started.
-- **Group auto-plan** (T3O-32): a child entering Planning inside a group with auto-plan on is
-  planned unattended and its plan approved — a board-driven Planning → Ready. It stops at Ready;
-  whether it then builds is up to the group's auto-build. These runs are the only planning runs that
-  are not human-in-the-loop.
+- **Automation toggles** (T3O-38): each card has Auto-plan, Auto-build and Auto-merge, each on,
+  off or inherited from its parent group. Turning one on is the human act that authorises the
+  transition it names, for that card — set ahead of time rather than clicked at the moment.
+  - Auto-plan: the planning run is unattended; the agent decides what is left and logs each
+    decision. Alone, its plan still waits at the approval gate (Planning → Ready stays human).
+  - Auto-plan + Auto-build: the plan is approved when it arrives, unclear decisions included, and
+    the card goes on through Ready to Building once its dependencies are met (every gate still
+    applies). A split is approved with the card's toggles, and its group starts.
+  - Auto-build alone: an approved card at Ready starts itself once its dependencies are met.
+  - A card's **own** Auto-build is its authorisation by itself; an **inherited** one acts only once
+    a human has started the group (D12, t3o-28 D1 — begun is `group.started`, set by a human or
+    cascade move into build, never by a child's own Auto-build). Approving a split still starts
+    nothing on its own.
+  - Board-wide auto-merge turns every card's Auto-merge on, group children included.
+  - Dragging a card back out of Building turns its Auto-build off, back into Planning its Auto-plan
+    off (D7), so a card pulled back never relaunches under the person parking it. A human Stop or
+    answer on an unattended planning run turns Auto-plan off; a machine failure does not.
+  - Auto-planning steers the card's current planning thread whatever its status; it never replaces
+    it.
 - A card whose worker is removed while it has no worktree falls back to the default worker, with an
   activity entry (D22).
 

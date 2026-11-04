@@ -1,40 +1,33 @@
 # Merging a card without waiting for you
 
 A card that has passed review parks at **Ready for merge** with a blue **Merge** button, and stays
-there until someone presses it. That is fine when you are at your desk, and it is the reason an
-[armed card](board-auto-start.md) can still be sitting in Ready in the morning: the card it was
+there until someone presses it. That is fine when you are at your desk, and it is the reason a card
+with [Auto-build](board-auto-start.md) can still be sitting in Ready in the morning: the card it was
 waiting for never reached Done, because nobody clicked Merge.
 
-**Auto-merge when ready** removes the click. An armed card merges its own pull request the moment
-the forge accepts it, and the cards depending on it start themselves off the back of that.
+**Auto-merge** removes the click. An armed card merges its own pull request the moment the forge
+accepts it, and the cards depending on it start themselves off the back of that.
 
 ## Arming a card
 
-Open the card, open the **⋮** menu beside its tabs, and turn on **Auto-merge when ready**. It is
-offered on any card that has not reached Done — before you go to bed is the useful moment to set it,
-whatever column the card is in, so the switch is not hidden away in one stage.
+Open the card and turn on **Auto-merge** in its **Automation** section. You can set it in any column
+— before you go to bed is the useful moment, whatever stage the card is in.
 
 Turning it on for a card that is _already_ waiting at Ready for merge merges it straight away. That
 is the same thing the Merge button does; the switch just also covers next time.
 
 ## Cards inside a group
 
-Inside a group, the nearest group decides, and the board-wide setting below does not apply:
-
-- A card merging into its group's own integration branch merges itself while that group's
-  **auto-build** is on. Approving a fully planned split turns auto-build on, so each child merges
-  itself down as it finishes, which is what lets the next sibling start.
-- A card merging to trunk (its group has no branch of its own) merges itself only when that group's
-  **Auto-merge to trunk** is on. It is off by default.
-
-A card's own **Auto-merge when ready** switch still arms it, wherever it sits.
+A card inside a group takes its group's **Auto-merge children** setting, whether it merges into the
+group's own branch or to trunk. An Own-branch group has it on by default, so each child merges
+itself down as it finishes, which is what lets the next sibling start. A card's own switch, on or
+off, overrides the group.
 
 ## Arming the whole board
 
-**Settings → Board → Pipeline → Ready for merge → Auto-merge when ready** arms every top-level card
-that arrives at that stage from then on. With it on, the per-card switch disappears — one control, so
-nothing can disagree about a card — and each card's header says **Auto-merge · board** so you can
-tell where the decision came from.
+**Settings → Board → Pipeline → Ready for merge → Auto-merge when ready** arms every card, group
+children included, that arrives at that stage from then on. With it on, each card's Auto-merge switch
+shows on, locked and tagged **board**, so you can tell where the decision came from.
 
 Switching it on does **not** merge the cards already sitting in Ready for merge. Those may be parked
 precisely because you did not want them merged, and a merge cannot be undone. They keep their Merge

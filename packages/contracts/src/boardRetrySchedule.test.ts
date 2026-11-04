@@ -33,9 +33,7 @@ describe("boardRetryDelayMs", () => {
 
 describe("applyBoardRetryJitter", () => {
   it("spreads a delay across ±60 seconds", () => {
-    expect(applyBoardRetryJitter(30 * MINUTE, 0)).toBe(
-      30 * MINUTE - BOARD_RETRY_JITTER_MS,
-    );
+    expect(applyBoardRetryJitter(30 * MINUTE, 0)).toBe(30 * MINUTE - BOARD_RETRY_JITTER_MS);
     expect(applyBoardRetryJitter(30 * MINUTE, 0.5)).toBe(30 * MINUTE);
     expect(applyBoardRetryJitter(30 * MINUTE, 0.999_999)).toBeCloseTo(
       30 * MINUTE + BOARD_RETRY_JITTER_MS,

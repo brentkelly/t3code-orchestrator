@@ -4,6 +4,7 @@
  * turn, and moving the card back started a brand-new interview from scratch.
  */
 import {
+  BOARD_AUTO_PLAN_INSTRUCTION,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
   boardCardStepCompletions,
@@ -208,6 +209,57 @@ describe("leaving Planning before the plan is written", () => {
         }),
     ),
   );
+
+  it.effect("re-entered with Auto-plan on, the kept thread is steered, never replaced", () => {
+    const group: BoardCard = {
+      ...makeBoardCard({ id: "card-group", stage: "planning", orderKey: "a" }),
+      group: {
+        target: "inherit",
+        autoBuild: false,
+        autoMerge: false,
+        autoPlan: true,
+        started: false,
+        placed: PLANNING,
+        prevStage: null,
+        heading: true,
+        integrated: false,
+      },
+    };
+    const child = { ...sprintCard(), parentCardId: BoardCardId.make("card-group") };
+    return withGovernor(
+      { board: { cards: [group, child], nextCardNumberByProject: {} }, settings },
+      (h) =>
+        Effect.gen(function* () {
+          const threadId = yield* startPlanning(h);
+          yield* move(h, READY, 2);
+          yield* setShell(h, threadId, idleThreadShell(String(threadId)));
+          const before = yield* h.commands;
+
+          yield* move(h, PLANNING, 3);
+
+          const after = (yield* h.commands).slice(before.length);
+          assert.strictEqual(spawnedThreads(after), 0, "no fresh planning thread");
+          assert.isDefined(
+            after.find(
+              (command) =>
+                (command.type === "thread.send" ||
+                  command.type === "thread.answer-pending-input") &&
+                command.threadId === threadId &&
+                command.text.includes(BOARD_AUTO_PLAN_INSTRUCTION),
+            ),
+            "the kept thread is told to finish unattended",
+          );
+          const state = boardCardStepState(yield* h.board, cardId);
+          assert.strictEqual(state?.threadId, threadId);
+          assert.strictEqual(state?.status, "running");
+          assert.isFalse(state?.humanInLoop);
+          assert.deepStrictEqual(
+            liveLinks(yield* h.board).map((link) => link.threadId),
+            [threadId],
+          );
+        }),
+    );
+  });
 
   it.effect("re-entered while the turn still runs, the step runs on and parks when it ends", () =>
     withGovernor({ board: { cards: [sprintCard()], nextCardNumberByProject: {} }, settings }, (h) =>

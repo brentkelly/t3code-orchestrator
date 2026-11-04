@@ -2,7 +2,7 @@
  * Sub-board group header (t3o-25, D2; T3O-29): inside its own board the group
  * is a HEADER, not a card. It says the group's key and title, `n/m done · N
  * deferred`, where its cards merge, its auto-build state, and carries the
- * dependency chart toggle and the Group settings popover.
+ * dependency chart toggle and the Automation popover.
  *
  * Counts and target come from the live shells; the pull request and the plans
  * ride the per-card detail, so the header opens the same `board.subscribeCard`
@@ -24,7 +24,7 @@ import { cn } from "../lib/utils";
 import { boardEnvironment } from "../state/board";
 import { projectAccent } from "./projectAccent";
 import { BoardHint } from "./BoardHint";
-import { BoardGroupSettingsPopover } from "./BoardGroupSettings";
+import { BoardGroupAutomationPopover } from "./BoardCardAutomation";
 import {
   boardGroupAutoBuildLabel,
   boardGroupStats,
@@ -43,6 +43,7 @@ export function BoardSubBoardHeader({
   shells,
   stages,
   attentionFor,
+  boardWideAutoMerge,
 }: {
   readonly environmentId: EnvironmentId;
   readonly parentCardId: BoardCardId;
@@ -62,6 +63,8 @@ export function BoardSubBoardHeader({
   readonly shells: ReadonlyArray<BoardCardShell>;
   readonly stages: BoardState;
   readonly attentionFor: (card: BoardCardShell) => BoardCardAttention | null;
+  /** Settings → Board → Pipeline merges every card (T3O-38). */
+  readonly boardWideAutoMerge: boolean;
 }) {
   const detail = useAtomValue(
     boardEnvironment.cardDetailValueAtom({ environmentId, cardId: parentCardId }),
@@ -140,9 +143,10 @@ export function BoardSubBoardHeader({
         </button>
       ) : null}
       {group === null ? null : (
-        <BoardGroupSettingsPopover
-          card={parentShell}
+        <BoardGroupAutomationPopover
+          boardWideAutoMerge={boardWideAutoMerge}
           environmentId={environmentId}
+          group={parentShell}
           shells={shells}
           stages={stages}
         />

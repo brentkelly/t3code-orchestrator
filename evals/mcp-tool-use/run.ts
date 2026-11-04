@@ -13,6 +13,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   BOARD_AUTO_PLAN_INSTRUCTION,
+  boardAutoPlanInstruction,
   BOARD_ENVELOPE_PLAN_DELIVERABLE,
   BOARD_ENVELOPE_REGROUP_GUARD,
   OrchestratorMcpTaskRole,
@@ -206,6 +207,8 @@ export type McpToolUseCase = typeof McpToolUseCase.Type;
  */
 const CASE_TEXT: Record<string, string> = {
   BOARD_AUTO_PLAN_INSTRUCTION,
+  BOARD_AUTO_PLAN_GATED_INSTRUCTION: boardAutoPlanInstruction(false),
+  BOARD_AUTO_PLAN_APPROVED_INSTRUCTION: boardAutoPlanInstruction(true),
   BOARD_ENVELOPE_PLAN_DELIVERABLE,
   BOARD_ENVELOPE_REGROUP_GUARD,
 };

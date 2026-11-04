@@ -19,8 +19,6 @@ import {
   type BoardCardThreadLink,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Menu } from "../components/ui/menu";
-import { boardAutoMergeToggleCopy } from "./boardAutoMergeHold";
 import { boardConflictFix } from "./boardConflictFix";
 import {
   NOW,
@@ -42,13 +40,8 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
-const {
-  BoardCardAutoMergeMenuItem,
-  BoardCardDetailPanel,
-  boardCardIsDone,
-  initialBoardCardPane,
-  initialBoardCardThreadId,
-} = await import("./BoardCardDetailView");
+const { BoardCardDetailPanel, boardCardIsDone, initialBoardCardPane, initialBoardCardThreadId } =
+  await import("./BoardCardDetailView");
 
 /** The pane switch's selected tab — the one tab styled active (`bg-card`) —
     read back out of the static markup by its label. */
@@ -334,7 +327,7 @@ describe("BoardCardDetailPanel", () => {
         {...baseProps}
         detail={detail({
           stage: BOARD_SEED_STAGE_IDS.merge,
-          autoMerge: true,
+          autoMergeSetting: true,
           autoMergeHold: {
             reason: "Required status check 'test' has not passed.",
             classification: "soft",
@@ -361,7 +354,7 @@ describe("BoardCardDetailPanel", () => {
         {...baseProps}
         detail={detail({
           stage: BOARD_SEED_STAGE_IDS.merge,
-          autoMerge: true,
+          autoMergeSetting: true,
           autoMergeHold: {
             reason: "ci/test failed.",
             classification: "checks-failed",
@@ -394,49 +387,15 @@ describe("BoardCardDetailPanel", () => {
     expect(html).not.toContain("Auto-merge stopped");
   });
 
-  it("moves the per-card auto-merge switch out of the action rail and into the kebab (T3O-42)", () => {
-    const html = renderToStaticMarkup(
-      <BoardCardDetailPanel
-        {...baseProps}
-        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
-        onSetAutoMerge={() => {}}
-        projectName="P"
-      />,
-    );
-    // Gone from the stage's own actions, where it competed with the buttons a
-    // user reaches for on every pass through a card...
-    expect(html).not.toContain("Auto-merge when ready");
-    expect(html).toContain("More actions");
-    // ...and present in the kebab. The popup is a portal and renders nothing
-    // on the server, so the row is rendered directly, the way
-    // `BoardCardThreadAddMenuBody` is. Which cards get one at all is pinned
-    // against `boardAutoMergeArm` in boardAutoMergeHold.test.ts.
-    const copy = boardAutoMergeToggleCopy(false);
-    const item = renderToStaticMarkup(
-      // A Base UI menu part needs its root's context; nothing else about the
-      // root renders.
-      <Menu>
-        <BoardCardAutoMergeMenuItem arm={{ armed: false, copy }} onToggle={() => {}} />
-      </Menu>,
-    );
-    expect(item).toContain(copy.label);
-    expect(item).toContain(copy.hint);
-    // Nothing to render when the card gets no arm, so the kebab keeps its
-    // narrow shape.
-    expect(
-      renderToStaticMarkup(<BoardCardAutoMergeMenuItem arm={null} onToggle={() => {}} />),
-    ).toBe("");
-  });
-
   it("names the source in the header when the board-wide setting owns it (T3O-38, D3)", () => {
     // Two controls that can disagree about one card is worse than one, so the
     // per-card switch goes and the header says where the decision lives.
     const boardWide = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
+        autoMergeArmed
         autoMergeFromBoardSetting
         detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
-        onSetAutoMerge={() => {}}
         projectName="P"
       />,
     );
@@ -854,7 +813,7 @@ describe("BoardCardDetailPanel", () => {
     expect(html).toContain(">1 plan</button>");
   });
 
-  it("renders the whole stage ladder with the card's stage marked current", () => {
+  it("collapses the stage ladder, naming the card's stage on its header (T3O-38)", () => {
     const html = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
@@ -862,9 +821,8 @@ describe("BoardCardDetailPanel", () => {
         projectName="P"
       />,
     );
-    for (const stage of BOARD_SEED_STAGES) expect(html).toContain(stage.label);
-    // Exactly one rung is the current one.
-    expect(html.match(/aria-current="true"/g)).toHaveLength(1);
+    expect(html).toContain("Code review");
+    expect(html).not.toContain('aria-current="true"');
   });
 
   it("names the unmet dependencies on a blocked card and disables the forward gate", () => {
@@ -968,7 +926,6 @@ describe("BoardCardDetailPanel", () => {
       chip: "Group · 3 cards",
       note: "Its cards are being built.",
       onOpenBoard: undefined,
-      settings: null,
       onArchive: noop,
       ownBranch: false,
     };
@@ -1077,7 +1034,6 @@ describe("BoardCardDetailPanel", () => {
       chip: "Group · 2 cards",
       note: "Every card is done; its integration review is open.",
       onOpenBoard: undefined,
-      settings: null,
       onArchive: noop,
       ownBranch: true,
     };
@@ -1101,7 +1057,6 @@ describe("BoardCardDetailPanel", () => {
       chip: "Group · 2 cards",
       note: "Its cards are being planned.",
       onOpenBoard: undefined,
-      settings: null,
       onArchive: noop,
       ownBranch: false,
     };

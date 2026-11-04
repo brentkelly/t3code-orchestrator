@@ -22,6 +22,7 @@ import {
 } from "./board.ts";
 import {
   BOARD_AUTO_PLAN_INSTRUCTION,
+  boardAutoPlanInstruction,
   BOARD_ENVELOPE_DECISION_LOG,
   BOARD_ENVELOPE_BUILD_DELIVERABLE,
   BOARD_ENVELOPE_MOVE_GUARD,
@@ -160,9 +161,30 @@ describe("decision log and auto-plan (T3O-32)", () => {
       role: "plan",
     });
     expect(auto).toContain(BOARD_AUTO_PLAN_INSTRUCTION);
+    // Without Auto-build the plan waits for the user (T3O-38).
+    expect(auto).toContain(boardAutoPlanInstruction(false));
+    expect(auto).not.toContain("approved and built automatically");
     expect(promptFor({ role: "plan", humanInLoop: false })).not.toContain(
       BOARD_AUTO_PLAN_INSTRUCTION,
     );
+  });
+
+  it("tells an auto-planned run with Auto-build on that its plan is approved and built", () => {
+    const auto = composeStepPrompt({
+      card: { key: "T3-1", title: "Ship it", stage: "planning" },
+      stageLabel: "Planning",
+      step: {
+        stepId: "planning",
+        stepLabel: null,
+        prompt: "Plan.",
+        humanInLoop: false,
+        autoPlan: true,
+        autoBuild: true,
+      },
+      role: "plan",
+    });
+    expect(auto).toContain(boardAutoPlanInstruction(true));
+    expect(auto).toContain("approved and built automatically");
   });
 });
 

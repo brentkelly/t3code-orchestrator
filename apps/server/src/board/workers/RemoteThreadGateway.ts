@@ -57,6 +57,7 @@ export type RemoteThreadGatewayShape = Pick<
   | "settle"
   | "delete"
   | "armLimitRecovery"
+  | "answerPendingInput"
   | "threadState"
   | "threadRecords"
   | "listLiveThreadIds"
@@ -277,6 +278,14 @@ export const makeRemoteThreadGateway = (
     armLimitRecovery: command("armLimitRecovery", (rpc, input) =>
       rpc.gateway.armLimitRecovery(input),
     ),
+    // A worker older than this call cannot decode it; "not answered" makes the
+    // caller interrupt and send a turn instead, which every worker takes.
+    answerPendingInput: (input) =>
+      command(
+        "answerPendingInput",
+        (rpc, answer: Parameters<ThreadGatewayShape["answerPendingInput"]>[0]) =>
+          rpc.gateway.answerPendingInput(answer),
+      )(input).pipe(Effect.orElseSucceed(() => false)),
     threadState: (threadId) =>
       Effect.gen(function* () {
         const rpc = yield* link.pipe(Effect.option);

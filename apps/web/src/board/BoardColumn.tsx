@@ -86,6 +86,8 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   /** Each card's resolved auto-merge arm (T3O-28), read with `atMergeStage`
       to draw the `Auto` glyph. */
   readonly autoMergeArmedFor?: ((card: BoardCardShell) => boolean) | undefined;
+  /** Whether each card waits for its Auto-build (T3O-38), for the card's chip. */
+  readonly autoBuildArmedFor?: ((card: BoardCardShell) => boolean) | undefined;
   /** The column's display label from the read-model stage list (D13). */
   readonly label: string;
   readonly cards: ReadonlyArray<BoardCardShell>;
@@ -205,6 +207,7 @@ function ExpandedColumn(props: BoardColumnProps) {
     stage,
     atMergeStage,
     autoMergeArmedFor,
+    autoBuildArmedFor,
     label,
     cards,
     labelsById,
@@ -343,6 +346,7 @@ function ExpandedColumn(props: BoardColumnProps) {
                   attention={attentionFor(card)}
                   atMergeStage={atMergeStage === true}
                   autoMergeArmed={autoMergeArmedFor?.(card)}
+                  autoBuildArmed={autoBuildArmedFor?.(card)}
                   childAttention={childAttentionFor(card)}
                   childRunning={childRunningFor(card)}
                   noPullRequest={noPullRequestFor(card)}

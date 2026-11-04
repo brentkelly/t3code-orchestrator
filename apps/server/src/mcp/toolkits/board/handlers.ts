@@ -36,6 +36,10 @@ import {
   type BoardCardMoveCommand,
   type BoardCardMoveCardsCommand,
   type BoardCardSetGroupSettingsCommand,
+  type BoardCardSetAutomationCommand,
+  boardWideAutoMergeOn,
+  boardAutomationTogglesTurnedOn,
+  resolveBoardCardAutomationIn,
   type BoardCardCancelWorkCommand,
   type BoardCardUnarchiveCommand,
   type BoardCardUpdateCommand,
@@ -2066,44 +2070,73 @@ export const boardHandlers = {
       return { recorded: input.decisions.length };
     }),
 
-  board_auto_plan: (input) =>
+  board_set_automation: (input) =>
     Effect.gen(function* () {
       const deps = yield* boardToolDeps;
-      if (input.approved !== true) {
+      const board = yield* readBoardState(deps);
+      const card = yield* findCardByKeyOrId(board, input.cardId);
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const boardWideAutoMerge = boardWideAutoMergeOn(
+        board,
+        (yield* settings.getSettings.pipe(Effect.mapError(internalError))).board,
+      );
+      // Judged on resolved values, so an inherit (null) that picks up a
+      // group's "on" needs the same approval as a true.
+      const turningOn =
+        boardAutomationTogglesTurnedOn({ board, card, change: input, boardWideAutoMerge }).length >
+        0;
+      if (turningOn && input.approved !== true) {
         return yield* new BoardToolError({
           code: "invalid-input",
           message:
-            "Auto-planning approves the plan without review and starts the build, so it needs a human. Ask the user to confirm they want this card auto-planned, and once they have, call again with approved: true.",
+            "Turning an Automation toggle on stands in for a human approving and starting work, so it needs a human. Ask the user to confirm they want it for this card, and once they have, call again with approved: true.",
         });
       }
-      yield* refuseUnattendedApproval(
-        deps,
-        "This run is unattended, so nobody can confirm auto-planning. Leave the card as it is and mention the suggestion in your summary for a human to apply.",
-      );
-      const board = yield* readBoardState(deps);
-      const card = yield* findCardByKeyOrId(board, input.cardId);
-      // Auto-planning steers the card's planning thread by interrupting it.
-      yield* refuseOwnCard(board, deps.scope, card, "Auto-planning it interrupts this very turn");
-      yield* refuseOtherWorkersCard(board, deps.scope, card);
-      const supervisor = yield* SupervisorReactor;
-      const result = yield* supervisor.autoPlanCard(card.id);
-      switch (result.outcome) {
-        case "steered":
-        case "started":
-          return { cardId: card.id, key: card.key, outcome: result.outcome };
-        case "refused":
-          return yield* new BoardToolError({ code: "rejected", message: result.detail });
-        case "unknown-card":
-          return yield* new BoardToolError({
-            code: "card-not-found",
-            message: `Card '${input.cardId}' is archived or gone.`,
-          });
-        case "failed":
-          return yield* new BoardToolError({
-            code: "internal",
-            message: "Auto-planning could not start. Retry the call.",
-          });
+      if (turningOn) {
+        yield* refuseUnattendedApproval(
+          deps,
+          "This run is unattended, so nobody can confirm turning automation on. Leave the card as it is and mention the suggestion in your summary for a human to apply.",
+        );
+        // Auto-plan steers the card's planning thread by interrupting it, and
+        // an agent never authorises its own card's work.
+        yield* refuseOwnCard(
+          board,
+          deps.scope,
+          card,
+          "Turning its automation on would authorise your own work and can interrupt this very turn",
+        );
       }
+      yield* refuseOtherWorkersCard(board, deps.scope, card);
+      const command: BoardCardSetAutomationCommand = {
+        type: "board.card.set-automation",
+        commandId: yield* mintCommandId,
+        cardId: card.id,
+        ...(input.autoPlan === undefined ? {} : { autoPlan: input.autoPlan }),
+        ...(input.autoBuild === undefined ? {} : { autoBuild: input.autoBuild }),
+        ...(input.autoMerge === undefined ? {} : { autoMerge: input.autoMerge }),
+        createdAt: yield* nowIso,
+      };
+      yield* dispatch(deps, command);
+      const after = yield* readBoardState(deps);
+      const updated = after.cards.find((candidate) => candidate.id === card.id) ?? card;
+      const resolved = resolveBoardCardAutomationIn({
+        board: after,
+        card: updated,
+        boardWideAutoMerge,
+      });
+      const view = (toggle: (typeof resolved)["autoPlan"]) => ({
+        value: toggle.value,
+        source: toggle.source,
+        locked: toggle.locked,
+        lockReason: toggle.lockReason,
+      });
+      return {
+        cardId: card.id,
+        key: card.key,
+        autoPlan: view(resolved.autoPlan),
+        autoBuild: view(resolved.autoBuild),
+        autoMerge: view(resolved.autoMerge),
+      };
     }),
 } satisfies Parameters<typeof BoardToolkit.toLayer>[0];
 
@@ -2186,7 +2219,7 @@ export const BoardToolkitHandlersLive = McpToolAccess.toLayer(BoardToolkit, {
   board_record_decisions: McpToolAccess.writesWithCapability(
     relayable("board_record_decisions", boardHandlers.board_record_decisions),
   ),
-  board_auto_plan: McpToolAccess.writesWithCapability(
-    relayable("board_auto_plan", boardHandlers.board_auto_plan),
+  board_set_automation: McpToolAccess.writesWithCapability(
+    relayable("board_set_automation", boardHandlers.board_set_automation),
   ),
 });

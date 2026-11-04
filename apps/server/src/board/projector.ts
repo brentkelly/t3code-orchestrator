@@ -289,8 +289,9 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // the D18 build gate on a card they can already see waiting, and there is
     // no create-command field to set it with. Nor born auto-merging (T3O-38,
     // D3), for the same reason — and with nothing merged, nothing held.
-    autoStart: false,
-    autoMerge: false,
+    autoPlanSetting: null,
+    autoBuildSetting: null,
+    autoMergeSetting: null,
     autoMergeHold: null,
     // A created card never has a worktree: it is provisioned lazily on its
     // first `build`-mode stage entry (D5/D6), never at birth.

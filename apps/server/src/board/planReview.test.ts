@@ -48,8 +48,9 @@ const card = (overrides: Partial<BoardCard> = {}): BoardCard => ({
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: null,
-  autoStart: false,
-  autoMerge: false,
+  autoPlanSetting: null,
+  autoBuildSetting: null,
+  autoMergeSetting: null,
   autoMergeHold: null,
   pinnedWorkerId: null,
   placedWorkerId: null,
@@ -159,7 +160,7 @@ describe("plan review on the server", () => {
     assert.include(attended?.instructions ?? "", "sign-off");
     const autoPlanned = card({
       planReview: { enabled: true, rounds: 2 },
-      autoPlan: { mode: "build", requestedAt: NOW, endedAt: null },
+      autoPlan: { requestedAt: NOW, endedAt: null },
     });
     const unattended = planReviewInstructions({
       board: boardOf(autoPlanned, state()),

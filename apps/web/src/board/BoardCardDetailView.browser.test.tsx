@@ -48,7 +48,6 @@ const group = {
   chip: "Group · 1 card",
   note: "Its cards are being built.",
   onOpenBoard: undefined,
-  settings: null,
   onArchive: noop,
   ownBranch: false,
 };

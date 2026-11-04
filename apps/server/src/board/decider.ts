@@ -40,9 +40,11 @@ import {
   isBoardCardBaseBranchShape,
   isEmptyBoardCardModelOverrides,
   boardCardAutoMergeHoldsEqual,
-  boardCardCanArmAutoMerge,
-  boardCardCanArmAutoStart,
-  boardStageBeforeBuild,
+  boardAutomationTogglesTurnedOn,
+  boardCardAutoMergeArmed,
+  BOARD_AUTOMATION_TOGGLE_LABELS,
+  type BoardAutomationChanged,
+  resolveBoardCardAutomationIn,
   boardSubBoardFloorStage,
   isBoardStageAtOrAfterSubBoardFloor,
   boardOrderKeyBetween,
@@ -1338,6 +1340,47 @@ function holdsOnlyIntegrationSlice(board: BoardState, card: BoardCard): boolean 
   return card.worktree?.status === "branch-only" && !isBoardStageAtOrAfterBuild(board, card.stage);
 }
 
+/**
+ * The own Automation toggles a backward move turns off (T3O-38, T3O-24 D4,
+ * D7): from Building or later back to before it disarms Auto-build; back into
+ * Planning or earlier disarms Auto-plan. Only a toggle that is effectively on
+ * is written off, so an inheriting card that was off stays inheriting.
+ */
+function backwardMoveDisarms(
+  board: BoardState,
+  card: BoardCard,
+  toStage: BoardStageId,
+): {
+  readonly settings: Partial<Pick<BoardCard, "autoPlanSetting" | "autoBuildSetting">>;
+  readonly changed: BoardAutomationChanged | null;
+} {
+  const from = boardStageIndex(board, card.stage);
+  const to = boardStageIndex(board, toStage);
+  if (from < 0 || to < 0 || to >= from || (card.group ?? null) !== null) {
+    return { settings: {}, changed: null };
+  }
+  const resolved = resolveBoardCardAutomationIn({ board, card, boardWideAutoMerge: false });
+  const plan = boardStageWithRole(board, "plan");
+  const build = boardStageWithRole(board, "build");
+  const planIndex = plan === null ? -1 : boardStageIndex(board, plan.stageId);
+  const buildIndex = build === null ? -1 : boardStageIndex(board, build.stageId);
+  const disarmBuild =
+    buildIndex >= 0 && from >= buildIndex && to < buildIndex && resolved.autoBuild.value;
+  const disarmPlan =
+    planIndex >= 0 && from >= planIndex && to <= planIndex && resolved.autoPlan.value;
+  if (!disarmBuild && !disarmPlan) return { settings: {}, changed: null };
+  return {
+    settings: {
+      ...(disarmBuild ? { autoBuildSetting: false } : {}),
+      ...(disarmPlan ? { autoPlanSetting: false } : {}),
+    },
+    changed: {
+      ...(disarmBuild ? { autoBuild: true as const } : {}),
+      ...(disarmPlan ? { autoPlan: true as const } : {}),
+    },
+  };
+}
+
 /** A group's settings after a human move of the group itself. */
 function movedGroupSettings(input: {
   readonly board: BoardState;
@@ -1357,12 +1400,9 @@ function movedGroupSettings(input: {
   if (build !== null && toStage === build.stageId) return { ...group, started: true };
   if (done !== null && toStage === done.stageId) return { ...group, integrated: true };
   if (!isBoardStageAtOrAfterBuild(board, toStage)) {
-    // Placing the heading. A group whose children are already underway stays
-    // started, so the split runs to completion wherever it is parked.
-    const underway = boardCardActiveChildren(board, card.id).some((child) =>
-      isBoardStageAtOrAfterBuild(board, child.stage),
-    );
-    return { ...group, placed: toStage, started: group.started && underway };
+    // Placing the heading. Begun stays begun (T3O-38): only the group's
+    // Auto-build switch stops its children starting.
+    return { ...group, placed: toStage };
   }
   return group;
 }
@@ -1376,10 +1416,20 @@ const groupConversionEvents = Effect.fn("groupConversionEvents")(function* (inpu
   readonly card: BoardCard;
 }): Effect.fn.Return<ReadonlyArray<PlannedBoardEvent>, PlatformError.PlatformError, Crypto.Crypto> {
   const { board, command, card } = input;
+  // The leaf's resolved Auto-plan / Auto-build seed the group its children
+  // inherit, and leave the card; its own Auto-merge stays, as the group's own
+  // merge (T3O-38). Children landing on an ancestor's integration branch
+  // merge with their auto-build, as migration 055 backfilled.
+  const resolved = resolveBoardCardAutomationIn({ board, card, boardWideAutoMerge: false });
   const nextCard: BoardCard = {
     ...card,
-    group: defaultBoardCardGroup(board, card),
-    autoStart: false,
+    group: defaultBoardCardGroup(board, card, {
+      autoPlan: resolved.autoPlan.value,
+      autoBuild: resolved.autoBuild.value,
+      autoMerge: resolved.autoBuild.value && boardCardMergesIntoIntegrationBranch(board, card),
+    }),
+    autoPlanSetting: null,
+    autoBuildSetting: null,
     updatedAt: command.createdAt,
   };
   return [
@@ -1512,6 +1562,16 @@ const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
   const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
   const build = boardStageWithRole(board, "build");
   const lane = build === null ? null : boardNextStageId(board, build.stageId);
+  // A child moved into build by a human or the group cascade begins its parent
+  // group (T3O-38); a child's own Auto-build start does not, so it never
+  // starts its siblings.
+  const begins =
+    command.type === "board.card.move" &&
+    command.cause !== "auto-build" &&
+    build !== null &&
+    command.toStage === build.stageId
+      ? (board.cards.find((candidate) => candidate.id === command.cardId)?.parentCardId ?? null)
+      : null;
   const events: Array<PlannedBoardEvent> = [];
   const ordered = [...candidates.entries()].toSorted((left, right) => right[1] - left[1]);
   for (const [cardId] of ordered) {
@@ -1530,10 +1590,11 @@ const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
         group.integrated &&
         derived !== doneStageId &&
         (laneIndex < 0 || boardStageIndex(board, derived) < laneIndex);
+      const reopenedGroup = reopened ? { ...group, integrated: false } : group;
       next = {
         ...card,
         stage: derived,
-        group: reopened ? { ...group, integrated: false } : group,
+        group: begins === card.id ? { ...reopenedGroup, started: true } : reopenedGroup,
       };
     }
     const stageChanged = next.stage !== card.stage;
@@ -2155,6 +2216,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               doneStageId,
             })
           : card.orderKey);
+      const disarmed = backwardMoveDisarms(board, card, command.toStage);
       const nextCard: BoardCard = {
         ...card,
         stage: command.toStage,
@@ -2162,22 +2224,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         // Leaving planning spends an auto-plan request (T3O-32): the card can
         // be in planning only once per request, so any move ends it.
         ...endBoardCardAutoPlan(card, command.createdAt),
-        // ANY move spends the auto-start arm (T3O-24, D4). Clearing it here —
-        // inside the move rather than in a second command afterwards — is what
-        // makes fire-and-clear one atomic event, with none of the
-        // cleared-but-unstarted window T3O-19's clear-then-act ordering has to
-        // reason about.
-        //
-        // Every route, not just the one that fires: pressing Begin build by
-        // hand spends it, and so does a backward drag. Which is also why a card
-        // ARRIVING back at the pre-build stage arrives disarmed — a build that
-        // went wrong and got pulled back must never relaunch itself under the
-        // person parking it.
-        //
-        // A card reordered WITHIN the stage keeps its arm: that is
-        // `board.card.reorder`, a different command, and it moves the card
-        // nowhere.
-        autoStart: false,
+        ...disarmed.settings,
         group:
           group === null
             ? null
@@ -2203,6 +2250,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           fromStage: card.stage,
           toStage: command.toStage,
           card: nextCard,
+          ...(disarmed.changed === null ? {} : { automationChanged: disarmed.changed }),
         },
       };
       // A move across the done-role boundary changes what this card means as a
@@ -2500,12 +2548,22 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           );
         }
       }
+      // Own branch turns children's auto-merge on and Inherit turns it off
+      // (T3O-38) — only on a real target change, and only when this command
+      // does not set auto-merge itself, so a full-settings save keeps a choice.
+      const transitionMerge =
+        command.autoMerge === undefined &&
+        command.target !== undefined &&
+        command.target !== group.target
+          ? { autoMerge: command.target === "own" }
+          : {};
       const nextGroup: BoardCardGroup = {
         ...group,
         ...(command.target === undefined ? {} : { target: command.target }),
         ...(command.autoBuild === undefined ? {} : { autoBuild: command.autoBuild }),
         ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
         ...(command.autoPlan === undefined ? {} : { autoPlan: command.autoPlan }),
+        ...transitionMerge,
       };
       if (boardCardGroupsEqual(nextGroup, card.group)) {
         return yield* invariant(command, `Group settings for '${card.key}' are unchanged.`);
@@ -2518,7 +2576,63 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           commandId: command.commandId,
         })),
         type: "board.card-updated",
-        payload: { cardId: card.id, card: nextCard },
+        payload: { cardId: card.id, card: nextCard, automationChanged: { group: true } },
+      };
+    }
+
+    case "board.card.set-automation": {
+      const card = yield* requireActiveBoardCard({ board, command });
+      // Compare resolved values, so an inherit that picks up the group's "on"
+      // is locked exactly like a true. The board-wide setting lives outside
+      // the board state; its lock is the reactor's and the UI's to show.
+      const turnedOn = boardAutomationTogglesTurnedOn({
+        board,
+        card,
+        change: command,
+        boardWideAutoMerge: false,
+      });
+      for (const { toggle, before } of turnedOn) {
+        if (before.locked) {
+          return yield* invariant(
+            command,
+            `Can't turn ${BOARD_AUTOMATION_TOGGLE_LABELS[toggle]} on for '${card.key}': ${before.lockReason ?? "it is locked."}`,
+          );
+        }
+      }
+      const nextSettings = {
+        autoPlanSetting: command.autoPlan === undefined ? card.autoPlanSetting : command.autoPlan,
+        autoBuildSetting:
+          command.autoBuild === undefined ? card.autoBuildSetting : command.autoBuild,
+        autoMergeSetting:
+          command.autoMerge === undefined ? card.autoMergeSetting : command.autoMerge,
+      };
+      const changed: BoardAutomationChanged = {
+        ...(nextSettings.autoPlanSetting === card.autoPlanSetting ? {} : { autoPlan: true }),
+        ...(nextSettings.autoBuildSetting === card.autoBuildSetting ? {} : { autoBuild: true }),
+        ...(nextSettings.autoMergeSetting === card.autoMergeSetting ? {} : { autoMerge: true }),
+      };
+      if (Object.keys(changed).length === 0) {
+        return yield* invariant(command, `Automation for '${card.key}' is unchanged.`);
+      }
+      const mergeTurnedOff =
+        changed.autoMerge === true &&
+        !boardCardAutoMergeArmed({ board, card: { ...card, ...nextSettings } });
+      const nextCard: BoardCard = {
+        ...card,
+        ...nextSettings,
+        // A hold about a merge that is no longer going to happen is a stale
+        // label (T3O-38 auto-merge, D10).
+        autoMergeHold: mergeTurnedOff ? null : card.autoMergeHold,
+        updatedAt: command.createdAt,
+      };
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: card.id,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-updated",
+        payload: { cardId: card.id, card: nextCard, automationChanged: changed },
       };
     }
 
@@ -2568,8 +2682,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.planReview === undefined &&
         command.baseBranch === undefined &&
         command.scheduledStartAt === undefined &&
-        command.autoStart === undefined &&
-        command.autoMerge === undefined &&
         command.briefAppend === undefined &&
         command.briefSection === undefined &&
         command.addDependsOn === undefined &&
@@ -2664,62 +2776,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         card.planReview?.enabled !== false;
       const { planReview: _priorPlanReview, ...cardWithoutPlanReview } = card;
 
-      // The auto-start arm (T3O-24, D1/D2). Refused where it could never act,
-      // rather than stored as a flag no path reads: the toggle is only offered
-      // on a live top-level card waiting in the stage before build with at
-      // least one unmet dependency, and `boardCardCanArmAutoStart` is the same
-      // predicate the web detail gates the control on, so the control and this
-      // refusal can never disagree.
-      //
-      // Validated against the dependencies THIS command leaves behind, not the
-      // card's current ones: one edit may both drop the last blocking edge and
-      // arm the card, and accepting that would arm a card with nothing left to
-      // wait for.
-      const autoStart =
-        command.autoStart === undefined
-          ? card.autoStart
-          : command.autoStart === false
-            ? // Disarming is always accepted. A reverse state that can be
-              // refused is not a reverse state.
-              false
-            : boardCardCanArmAutoStart({
-                  board,
-                  card: { ...card, dependsOn, group: boardCardGroupOf(board, card) },
-                })
-              ? true
-              : yield* invariant(
-                  command,
-                  boardCardGroupOf(board, card) !== null
-                    ? `Card '${card.key}' is a group; its children start themselves, so it cannot arm an auto-start of its own.`
-                    : boardStageBeforeBuild(board)?.stageId !== card.stage
-                      ? `Card '${card.key}' is not waiting in '${boardStageBeforeBuild(board)?.label ?? "the stage before the build stage"}', so there is nothing for an auto-start to do.`
-                      : `Card '${card.key}' has no unmet dependencies to wait for, so it cannot be armed to start when they finish.`,
-                );
-
-      // The auto-merge arm (T3O-38, D3). Refused only where it could never
-      // act — a sub-board child (armed unconditionally, so a switch there
-      // would be a control that turns nothing off) and a card already in Done
-      // — through the same predicate the kebab menu gates on, so the control
-      // and this refusal can never disagree.
-      const autoMerge =
-        command.autoMerge === undefined
-          ? card.autoMerge
-          : command.autoMerge === false
-            ? // Disarming is always accepted. A reverse state that can be
-              // refused is not a reverse state.
-              false
-            : boardCardCanArmAutoMerge({
-                  board,
-                  card: { ...card, group: boardCardGroupOf(board, card) },
-                })
-              ? true
-              : yield* invariant(
-                  command,
-                  boardCardGroupOf(board, card) !== null
-                    ? `Card '${card.key}' is a group; its children merge, so it cannot arm an auto-merge of its own.`
-                    : `Card '${card.key}' has already reached '${boardStageWithRole(board, "done")?.label ?? "Done"}', so there is nothing left for an auto-merge to do.`,
-                );
-
       const nextCard: BoardCard = {
         ...cardWithoutPlanReview,
         ...(planReview === undefined ? {} : { planReview }),
@@ -2752,14 +2808,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         // running step — the decider only records the intent.
         scheduledStartAt:
           command.scheduledStartAt === undefined ? card.scheduledStartAt : command.scheduledStartAt,
-        autoStart,
-        autoMerge,
-        // Disarming clears the hold (T3O-38, D10): a hold explains a merge
-        // that is no longer going to happen by itself, and a card parked with
-        // an amber pill nobody can act on is the stale label this codebase
-        // refuses to ship. Re-arming therefore restarts the ladder at rung 0,
-        // which is how an exhausted ladder is restarted by hand.
-        autoMergeHold: command.autoMerge === false ? null : card.autoMergeHold,
         updatedAt: command.createdAt,
       };
       const updated: PlannedBoardEvent = {
@@ -2780,16 +2828,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...(command.scheduledStartAt === undefined
             ? {}
             : { scheduledStartAt: command.scheduledStartAt }),
-          // Says the edit TOUCHED the arm, not what it is (T3O-24, D6). The
-          // supervisor checks an armed card for a dependency that landed
-          // between render and click only on an edit that named the field, so
-          // an unrelated edit never costs a board scan.
-          ...(command.autoStart === undefined ? {} : { autoStart: command.autoStart }),
-          // Says the edit TOUCHED the arm, not what it is (T3O-38, D3). The
-          // supervisor merges a card parked at the merge stage the instant its
-          // arm goes on, and only on an edit that named the field — an
-          // unrelated title edit must never fire a merge.
-          ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
           // Says the edit TOUCHED the model overrides (T3O-65): the supervisor
           // restarts a provider-stalled step on Change model, and only then.
           ...(command.modelOverrides === undefined ? {} : { modelOverridesEdited: true as const }),
@@ -3294,9 +3332,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           { heading: true, prevStage: capped },
         ),
         ...retireBoardCardPullRequest(card),
-        autoMerge: false,
+        autoPlanSetting: null,
+        autoBuildSetting: null,
+        autoMergeSetting: null,
         autoMergeHold: null,
-        autoStart: false,
         scheduledStartAt: null,
         blocked: deriveBoardCardBlocked({
           board,
@@ -4221,6 +4260,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const settings = {
         autoBuild: command.autoBuild ?? recommendation.autoBuild,
         target: command.mergeTarget ?? recommendedTarget,
+        ...(command.autoPlan === undefined ? {} : { autoPlan: command.autoPlan }),
+        ...(command.autoMerge === undefined ? {} : { autoMerge: command.autoMerge }),
       };
       // The graph is agent-authored and therefore re-validated at the gate
       // (D12) — propose checked it on ingest, but the gate is where a human
@@ -4309,6 +4350,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // Approval makes the card a group (T3O-27) with the settings the human
       // confirmed at the split gate (T3O-31). It starts nothing: the group
       // stays where it is until the human starts it.
+      // The card's own Auto-plan / Auto-build now live in its group settings,
+      // which its children inherit; its own Auto-merge stays, as the group's
+      // own merge (T3O-38).
       const parentAfterApproval: BoardCard = {
         ...card,
         ...endBoardCardAutoPlan(card, command.createdAt),
@@ -4316,6 +4360,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ...settings,
           started: card.stage === buildStage.stageId,
         }),
+        autoPlanSetting: null,
+        autoBuildSetting: null,
         updatedAt: command.createdAt,
       };
       events.push({
@@ -4872,7 +4918,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       }
       const nextCard: BoardCard = {
         ...card,
-        autoPlan: { mode: command.mode, requestedAt: command.createdAt, endedAt: null },
+        autoPlan: { requestedAt: command.createdAt, endedAt: null },
         updatedAt: command.createdAt,
       };
       return {
@@ -4903,6 +4949,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           card: {
             ...card,
             ...endBoardCardAutoPlan(card, command.createdAt),
+            // A human stopped the run (T3O-38): Auto-plan goes off with it, so
+            // the card is planned with them from here. No automation marker —
+            // the supervisor caused this and owns its consequences.
+            ...(command.turnOff === true ? { autoPlanSetting: false } : {}),
             updatedAt: command.createdAt,
           },
         },

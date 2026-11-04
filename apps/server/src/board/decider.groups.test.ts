@@ -56,8 +56,9 @@ function card(
     splitRationale: null,
     baseBranch: null,
     scheduledStartAt: null,
-    autoStart: false,
-    autoMerge: false,
+    autoPlanSetting: null,
+    autoBuildSetting: null,
+    autoMergeSetting: null,
     autoMergeHold: null,
     pinnedWorkerId: null,
     placedWorkerId: null,
@@ -504,6 +505,35 @@ it.layer(NodeServices.layer)("grouping (T3O-27)", (it) => {
       assert.ok(conversion?.type === "board.card-updated");
       expect(conversion.payload.becameGroup).toBe(true);
       expect(conversion.payload.card.group?.prevStage).toBe("planning");
+    }),
+  );
+
+  it.effect("a leaf that becomes a group under an own group auto-merges with its auto-build", () =>
+    Effect.gen(function* () {
+      const groupOf = (events: ReadonlyArray<PlannedBoardEvent>, id: string) => {
+        const conversion = events.find(
+          (event) => event.type === "board.card-updated" && String(event.payload.cardId) === id,
+        );
+        assert.ok(conversion?.type === "board.card-updated");
+        return conversion.payload.card.group;
+      };
+      const nested = yield* decideEvents(
+        moveCards(["b"], "a"),
+        model([
+          card("g", "sprint", {
+            group: group("sprint", { target: "own", autoBuild: true, started: true }),
+          }),
+          child("a", "sprint", "g"),
+          card("b", "backlog"),
+        ]),
+      );
+      expect(groupOf(nested, "a")).toMatchObject({ autoBuild: true, autoMerge: true });
+
+      const onTrunk = yield* decideEvents(
+        moveCards(["b"], "a"),
+        model([card("a", "sprint", { autoBuildSetting: true }), card("b", "backlog")]),
+      );
+      expect(groupOf(onTrunk, "a")).toMatchObject({ autoBuild: true, autoMerge: false });
     }),
   );
 
@@ -1319,14 +1349,11 @@ it.layer(NodeServices.layer)("destructive group flows (T3O-28)", (it) => {
       ];
       const edited = yield* decideEvents(update("g", { dependsOn: [dep] }), model(unflagged));
       expect(stagesAfter(edited).get("a")?.card.blocked).toBe(true);
-      // A card with nothing of its own to wait on can be armed behind its group.
       const waiting = [
         card("dep", "review"),
         card("g", "ready", { group: group("ready"), dependsOn: [dep] }),
         child("a", "ready", "g"),
       ];
-      const armed = yield* decideEvents(update("a", { autoStart: true }), model(waiting));
-      expect(stagesAfter(armed).get("a")?.card.autoStart).toBe(true);
       // Nor can a card be created straight into Building behind a waiting group.
       const created = yield* decideFail(
         {
