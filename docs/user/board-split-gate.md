@@ -34,5 +34,6 @@ branch usually inherits.
 stays in Planning until you start it. **Ask for changes** puts a reply in the planning thread's
 composer, so you can tell the agent what to change and it can propose again.
 
-A card planned with **Auto-plan → Build** skips this gate: its split is approved with the agent's
-recommended settings. See [Auto-plan and the decision log](board-auto-plan.md).
+A card with **Auto-plan** and **Auto-build** both on skips this gate: its split is approved with the
+card's own automation settings rather than the agent's recommendation, and the new group starts. With
+Auto-plan alone the split waits here for you. See [Automation](board-auto-plan.md).
