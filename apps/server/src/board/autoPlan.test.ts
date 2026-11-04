@@ -399,36 +399,86 @@ it.effect("an auto-plan run parked on a human ends the request, so planning is g
 
         const after = yield* board;
         assert.isString(cardOf(after.cards, "parked")?.autoPlan?.endedAt);
-        // The way back in: Auto-plan is accepted again.
+        // The way back in: Auto-plan is accepted again, on the same thread.
         const again = yield* reactor.autoPlanCard(id);
-        assert.strictEqual(again.outcome, "started");
+        assert.strictEqual(again.outcome, "steered");
+        assert.strictEqual(boardCardStepState(yield* board, id)?.threadId, parked?.threadId);
       }),
   );
 });
 
-it.effect("a planning step waiting on a question is replaced by a fresh run, not steered", () => {
-  const card = planningCard("asking");
-  return withGovernor(
-    { board: { cards: [card], nextCardNumberByProject: {} }, settings },
-    ({ pumpDomain, board, commands, reactor }) =>
-      Effect.gen(function* () {
-        const id = BoardCardId.make("asking");
-        yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
-        yield* pumpDomain(stepCompleted(id, "blocked", 2, PLANNING));
-        assert.strictEqual(boardCardStepState(yield* board, id)?.status, "awaiting-input");
+/** Park the live planning step as `status`, the way a question, a Stop or an
+    escalation leaves it. */
+const parkStep = (
+  model: Ref.Ref<{ readonly board: import("@t3tools/contracts").BoardState }>,
+  cardId: BoardCardId,
+  status: "awaiting-input" | "paused" | "stalled",
+) =>
+  Ref.update(model, (current) => ({
+    ...current,
+    board: {
+      ...current.board,
+      stepStates: (current.board.stepStates ?? []).map((state) =>
+        state.cardId === cardId
+          ? {
+              ...state,
+              status,
+              slotHeld: false,
+              ...(status === "stalled" ? { stalledReason: "silent" as const, retryAt: null } : {}),
+            }
+          : state,
+      ),
+    },
+  }));
 
-        const result = yield* reactor.autoPlanCard(id);
-        assert.deepStrictEqual(result, { outcome: "started" });
-        const steered = (yield* commands).some(
-          (command) =>
-            command.type === "thread.send" && command.text === BOARD_AUTO_PLAN_INSTRUCTION,
-        );
-        assert.isFalse(steered);
-      }),
-  );
-});
+for (const status of ["awaiting-input", "paused", "stalled"] as const) {
+  it.effect(`a planning step that is ${status} is steered in place, never replaced`, () => {
+    const card = planningCard(`parked-${status}`);
+    return withGovernor(
+      { board: { cards: [card], nextCardNumberByProject: {} }, settings },
+      ({ pumpDomain, board, commands, reactor, model }) =>
+        Effect.gen(function* () {
+          const id = BoardCardId.make(`parked-${status}`);
+          yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
+          const interview = boardCardStepState(yield* board, id);
+          assert.ok(interview?.threadId != null);
+          const threadId = interview.threadId;
+          yield* parkStep(model, id, status);
+          assert.strictEqual(boardCardStepState(yield* board, id)?.status, status);
 
-it.effect("a steering turn that does not land falls back to a fresh unattended run", () => {
+          const result = yield* reactor.autoPlanCard(id);
+          assert.deepStrictEqual(result, { outcome: "steered" });
+
+          const calls = yield* commands;
+          assert.isFalse(
+            calls.some((command) => command.type === "board.card.start-stage-thread"),
+            "no replacement planning run is started",
+          );
+          assert.isTrue(
+            calls.some(
+              (command) =>
+                (command.type === "thread.send" || command.type === "thread.answer-pending-input") &&
+                command.threadId === threadId &&
+                command.text.includes(BOARD_AUTO_PLAN_INSTRUCTION),
+            ),
+            "the instruction goes to the current planning thread",
+          );
+          const after = yield* board;
+          const link = cardOf(after.cards, `parked-${status}`)?.threadLinks.find(
+            (candidate) => candidate.threadId === threadId,
+          );
+          assert.ok(link !== undefined);
+          assert.strictEqual(link.tombstonedAt, null);
+          const state = boardCardStepState(after, id);
+          assert.strictEqual(state?.threadId, threadId);
+          assert.strictEqual(state?.status, "running");
+          assert.isFalse(state?.humanInLoop);
+        }),
+    );
+  });
+}
+
+it.effect("a steering turn that does not land ends the request and starts no new thread", () => {
   const card = planningCard("deaf");
   return withGovernor(
     {
@@ -437,7 +487,7 @@ it.effect("a steering turn that does not land falls back to a fresh unattended r
       gateway: (local) => ({
         ...local,
         send: (input) =>
-          input.text === BOARD_AUTO_PLAN_INSTRUCTION
+          input.text.includes(BOARD_AUTO_PLAN_INSTRUCTION)
             ? Effect.fail(
                 new ThreadCommandRefusedError({
                   command: "send",
@@ -448,14 +498,32 @@ it.effect("a steering turn that does not land falls back to a fresh unattended r
             : local.send(input),
       }),
     },
-    ({ pumpDomain, board, reactor }) =>
+    ({ pumpDomain, board, commands, reactor }) =>
       Effect.gen(function* () {
         const id = BoardCardId.make("deaf");
         yield* pumpDomain(cardMoved(card, "sprint", "planning", 1));
-        assert.strictEqual(boardCardStepState(yield* board, id)?.status, "running");
+        const interview = boardCardStepState(yield* board, id);
+        assert.strictEqual(interview?.status, "running");
 
         const result = yield* reactor.autoPlanCard(id);
-        assert.deepStrictEqual(result, { outcome: "started" });
+        assert.strictEqual(result.outcome, "refused");
+        const calls = yield* commands;
+        assert.isFalse(calls.some((command) => command.type === "board.card.start-stage-thread"));
+        assert.strictEqual(
+          calls.filter((command) => command.type === "thread.spawn").length,
+          1,
+          "only the original interview thread was ever spawned",
+        );
+        const after = yield* board;
+        assert.isString(cardOf(after.cards, "deaf")?.autoPlan?.endedAt);
+        // The interview's stance is restored: nobody is driving it unattended.
+        assert.isTrue(boardCardStepState(after, id)?.humanInLoop);
+        assert.ok(
+          calls.some(
+            (command) =>
+              command.type === "board.card.record-note" && command.kind === "card-auto-planned",
+          ),
+        );
       }),
   );
 });
