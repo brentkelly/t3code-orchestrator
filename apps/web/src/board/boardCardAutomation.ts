@@ -154,6 +154,8 @@ function lockState(toggle: BoardResolvedAutomationToggle) {
 }
 
 function canInherit(toggle: BoardResolvedAutomationToggle): boolean {
+  // A locked off row could only inherit an on, which the server refuses.
+  if (toggle.locked && !toggle.value) return false;
   return toggle.own !== null && toggle.inheritedFrom !== null && toggle.source !== "board";
 }
 

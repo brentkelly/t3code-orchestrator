@@ -2878,7 +2878,8 @@ export interface BoardResolvedAutomationToggle {
   /** Auto-build only: the parent group has it on but has not begun, so the
       inherited value stays off until a human starts the group. */
   readonly waitingForGroupStart: boolean;
-  /** Turning the toggle ON is refused; off and inherit are always accepted. */
+  /** Turning the toggle ON is refused, including an inherit that would pick
+      up the group's on; turning it off is always accepted. */
   readonly locked: boolean;
   readonly lockReason: string | null;
 }
@@ -4356,8 +4357,9 @@ export type BoardCardSetGroupSettingsCommand = typeof BoardCardSetGroupSettingsC
 /**
  * Set a card's own Automation toggles (T3O-38). Each field: absent leaves it
  * unchanged, `true` / `false` sets it on the card, `null` inherits from the
- * parent group again. Turning a toggle ON while it is locked is refused with
- * the lock's reason; off and inherit are always accepted.
+ * parent group again. Turning a toggle ON while it is locked, an inherit that
+ * picks up the group's on included, is refused with the lock's reason; turning
+ * it off is always accepted.
  */
 export const BoardCardSetAutomationCommand = Schema.Struct({
   type: Schema.Literal("board.card.set-automation"),

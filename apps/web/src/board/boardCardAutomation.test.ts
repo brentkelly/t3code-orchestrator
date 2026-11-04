@@ -178,6 +178,17 @@ describe("a leaf's rows", () => {
     expect(plan).toMatchObject({ on: false, tag: "overrides G-1", canInherit: true });
   });
 
+  it("does not offer the group's on back to a locked row that is off", () => {
+    const g = shell("g-1", "building", { group: group({ autoBuild: true, started: true }) });
+    const reviewing = child("c-1", "review", { autoBuildSetting: false });
+    const build = boardCardAutomationRows({
+      resolved: resolve([g, reviewing], reviewing),
+      inPlanning: false,
+    }).find((r) => r.id === "autoBuild")!;
+    expect(build).toMatchObject({ on: false, locked: true, switchDisabled: true });
+    expect(build.canInherit).toBe(false);
+  });
+
   it("says an unattended plan waits for approval unless Auto-build is on too", () => {
     const solo = shell("c-1", "backlog", { autoPlanSetting: true });
     const waits = boardCardAutomationRows({ resolved: resolve([solo], solo), inPlanning: false });
