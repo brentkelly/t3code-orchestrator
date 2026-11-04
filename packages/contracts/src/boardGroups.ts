@@ -33,7 +33,7 @@ import {
 /**
  * A card's group settings, or null for a leaf. A card that has live children
  * but no settings is a split parent written before groups existed: it reads as
- * what migrations 051 and 054 backfill — its own integration branch,
+ * what migrations 051 and 055 backfill — its own integration branch,
  * auto-build and auto-merge on — so a legacy log and a migrated table agree.
  */
 export function boardCardGroupOf(board: BoardState, card: BoardCard): BoardCardGroup | null {
@@ -49,7 +49,7 @@ export function boardCardGroupOf(board: BoardState, card: BoardCard): BoardCardG
   return defaultBoardCardGroup(board, card, {
     target: "own",
     autoBuild: true,
-    // Begun as migration 054 backfills it: the parent or a live child has
+    // Begun as migration 055 backfills it: the parent or a live child has
     // reached the build stage.
     started:
       isBoardStageAtOrAfterBuild(board, card.stage) ||

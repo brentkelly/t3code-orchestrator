@@ -27,6 +27,7 @@ import {
   boardCardAutoArchiveDue,
   BOARD_AUTO_PLAN_OFF_INSTRUCTION,
   boardAutoPlanInstruction,
+  BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
   BOARD_DECISION_REASON_MAX_LENGTH,
   BOARD_DECISION_TEXT_MAX_LENGTH,
   isBoardCardAutoPlanPending,
@@ -209,6 +210,7 @@ import {
 } from "./boardMergeState.ts";
 import { stageExecutorForRole } from "./stageExecutor.ts";
 import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorkspace.ts";
+import { planReviewInstructions, runningPlanReviewStep } from "./planReview.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
@@ -1884,6 +1886,12 @@ const make = Effect.gen(function* () {
     state: BoardCardStepState,
   ) {
     const role = boardSeedStageRole(card.stage);
+    // A started plan review rides every respawn and nudge (T3O-39), so a
+    // recovered planning thread resumes it rather than completing without it.
+    const planReview =
+      role === "plan" && state.planReviewStartedAt !== undefined
+        ? yield* runningPlanReviewFor(card, state)
+        : null;
     return composeStepPrompt({
       ...(role === "build" ? { draftPullRequests: yield* draftPullRequestsOn } : {}),
       card: { ...card, baseBranch: yield* resolvePromptBaseBranch(card) },
@@ -1899,8 +1907,44 @@ const make = Effect.gen(function* () {
               ...(automationIn(yield* readBoard, card).autoBuild.value ? { autoBuild: true } : {}),
             }
           : {}),
+        ...(planReview === null ? {} : { planReview }),
       },
       role,
+    });
+  });
+
+  /** The instructions of the plan review running on this step, or null when
+      none is (plan review, T3O-39). */
+  const runningPlanReviewFor = Effect.fn("board-supervisor-runningPlanReviewFor")(function* (
+    card: BoardCard,
+    state: BoardCardStepState,
+  ) {
+    const board = yield* readBoard;
+    const settings = yield* boardSettings;
+    if (runningPlanReviewStep({ board, card, settings }) === null) return null;
+    return planReviewInstructions({ board, card, settings, state });
+  });
+
+  /** A human turned a running plan review off (plan review, T3O-39): tell the
+      planning thread to wrap up. A paused step is not told, for the reason
+      the human-in-the-loop retune gives: the turn would un-pause it. */
+  const handlePlanReviewStopped = Effect.fn("board-supervisor-handlePlanReviewStopped")(function* (
+    event: Extract<BoardEvent, { type: "board.plan-review-stopped" }>,
+  ) {
+    const state = boardCardStepState(yield* readBoard, event.payload.cardId);
+    if (
+      state === null ||
+      state.stepId !== event.payload.stepId ||
+      state.threadId === null ||
+      state.status === "paused" ||
+      isBoardTerminalStepStatus(state.status)
+    ) {
+      return;
+    }
+    yield* sendTurn({
+      threadId: state.threadId,
+      text: BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
+      runtimeMode: state.runtimeMode,
     });
   });
 
@@ -9696,6 +9740,8 @@ const make = Effect.gen(function* () {
           : handleCardUpdated(event);
       case "board.card-step-completed":
         return handleStepCompleted(event);
+      case "board.plan-review-stopped":
+        return handlePlanReviewStopped(event);
       case "board.card-step-awaiting-input":
       case "board.card-step-paused":
       case "board.card-step-settled":
@@ -10140,7 +10186,9 @@ const make = Effect.gen(function* () {
           // T3O-66: a worker removed stalls what ran there; a re-add can
           // resume it.
           event.type !== "board.worker-removed" &&
-          event.type !== "board.card-worker-removal"
+          event.type !== "board.card-worker-removal" &&
+          // T3O-39: a human turned a running plan review off.
+          event.type !== "board.plan-review-stopped"
         ) {
           return Effect.void;
         }

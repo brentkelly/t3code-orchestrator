@@ -1,5 +1,5 @@
 /**
- * Board migration 054 (T3O-38): own Automation toggles on `board_cards`,
+ * Board migration 055 (T3O-38): own Automation toggles on `board_cards`,
  * backfilled so every card keeps the behaviour it had.
  */
 import { assert, it } from "@effect/vitest";
@@ -11,7 +11,7 @@ import { runMigrations } from "../../persistence/Migrations.ts";
 import { attachBoardDatabase } from "../boardDatabase.ts";
 import { BOARD_MIGRATIONS } from "./index.ts";
 
-const MIGRATION_ID = 54;
+const MIGRATION_ID = 55;
 const NOW = "2026-01-01T00:00:00.000Z";
 
 const runBoardLineageThrough = (lastId: number) =>
@@ -108,7 +108,7 @@ it.effect("backfills own toggles, group begun and integration-branch auto-merge"
     });
 
     const migration = BOARD_MIGRATIONS.find(([id]) => id === MIGRATION_ID);
-    assert.ok(migration, "migration 054 is registered in the lineage");
+    assert.ok(migration, "migration 055 is registered in the lineage");
     yield* migration[2];
 
     const rows = yield* sql<{

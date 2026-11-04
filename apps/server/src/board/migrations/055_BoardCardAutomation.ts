@@ -15,7 +15,7 @@
 //     its auto-build; they now read its auto-merge, so it takes that value.
 //
 // The old `auto_start` / `auto_merge` columns are left in place, unused. Like
-// 051, a from-empty replay of pre-054 events does not reproduce the backfill;
+// 051, a from-empty replay of pre-055 events does not reproduce the backfill;
 // production hydrates from these tables. Guarded, so re-running is a no-op.
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";

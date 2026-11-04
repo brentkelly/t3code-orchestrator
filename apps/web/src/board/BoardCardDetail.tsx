@@ -74,11 +74,13 @@ import { randomUUID } from "../lib/utils";
 import { getCustomModelOptionsByInstance, resolveAppModelSelectionState } from "../modelSelection";
 import { getTriggerDisplayModelName } from "../components/chat/providerIconUtils";
 import { boardEnvironment } from "../state/board";
+import { cardThreadIdsMissingFromShell, useBoardCardThreadRows } from "./boardCardThreadRows";
 import { boardThreadWorker, threadWorkerRanOn } from "./workers/threadWorker";
 import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import { boardConflictFix } from "./boardConflictFix";
 import { boardScheduleKind } from "./boardSchedule";
 import { boardQueueInfo } from "./boardQueueInfo";
+import { boardCardPlanReviewView, boardPlanStageExecution } from "./boardCardPlanReview";
 import { projectIconColorOf } from "./projectAccent";
 import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
@@ -461,6 +463,12 @@ export function BoardCardDetail({
   const [openedAt] = useState(() => Date.now());
   // The group archive confirmation (T3O-29): a group always warns.
   const [archiveGroupOpen, setArchiveGroupOpen] = useState(false);
+  // Older settled threads are not in the shell; read them so they are named, not "deleted".
+  const missingThreadIds = useMemo(
+    () => cardThreadIdsMissingFromShell(card?.threadLinks ?? [], snapshot?.threads ?? []),
+    [card, snapshot],
+  );
+  const offShellThreads = useBoardCardThreadRows(environmentId, missingThreadIds);
   const threadLinks = useMemo<ReadonlyArray<BoardDetailThreadLink>>(() => {
     if (card === null) return [];
     const threads = snapshot?.threads ?? [];
@@ -476,7 +484,9 @@ export function BoardCardDetail({
       nowMs: openedAt,
     });
     return card.threadLinks.map((link) => {
-      const thread = threads.find((candidate) => candidate.id === link.threadId);
+      const thread =
+        threads.find((candidate) => candidate.id === link.threadId) ??
+        offShellThreads.threads.get(link.threadId);
       const { threadState, awaitingInput } = deriveBoardCardThreadState(
         thread === undefined ? undefined : boardThreadStateSource(thread),
       );
@@ -490,7 +500,13 @@ export function BoardCardDetail({
         role: link.role,
         tombstoned: link.tombstonedAt !== null,
         // A thread on another worker is not in this server's snapshot.
-        title: thread?.title ?? (link.workerId === undefined ? null : `Thread on ${worker.label}`),
+        title:
+          thread?.title ??
+          (link.workerId !== undefined
+            ? `Thread on ${worker.label}`
+            : offShellThreads.loading.has(link.threadId)
+              ? "Loading thread…"
+              : null),
         threadState,
         awaitingInput,
         worker,
@@ -498,7 +514,7 @@ export function BoardCardDetail({
         movedFrom: movedFrom.get(link.threadId) ?? null,
       };
     });
-  }, [card, detail?.activity, snapshot, workers, environmentId, openedAt]);
+  }, [card, detail?.activity, snapshot, offShellThreads, workers, environmentId, openedAt]);
 
   // Agent display names and accents for the Activity rail (t3o-18, D11). Resolved
   // at render time from the provider instance list the app already holds, so a
@@ -1198,6 +1214,16 @@ export function BoardCardDetail({
       humanInLoop={humanInLoop}
       onSetHumanInLoop={(value) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, humanInLoop: value } }))
+      }
+      planReview={boardCardPlanReviewView({
+        card,
+        isGroup: card.group !== null,
+        stages,
+        planStageExecution: boardPlanStageExecution(boardSettings, stages),
+        planReviewStarted: detail.planReviewStarted,
+      })}
+      onSetPlanReview={(planReview) =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, planReview } }))
       }
       stages={stages}
       canApproveSplit={canApproveSplit}

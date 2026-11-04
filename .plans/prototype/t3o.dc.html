@@ -3477,6 +3477,8 @@ class Component extends DCLogic {
       artifact: null,
       collapsed: {},
       colCollapsed: this.loadColCollapsed(),
+      autoCollapseEmpty: (() => { try { return localStorage.getItem("t3-board-auto-collapse-empty") === "1"; } catch (e) { return false; } })(),
+      emptyPeek: {},
       hoverCol: null,
       dragId: null,
       dragH: 0,
@@ -6998,7 +7000,9 @@ class Component extends DCLogic {
           const autoFold =
             !!opts.drill && all.length === 0 &&
             (stage.id === "deferred" || this.stageIndex(stage.id) < this.stageIndex("ready"));
-          const isCollapsed = stored != null ? !!stored : autoFold;
+          // Board setting: empty stages fold; expanding one is a peek that ends once it holds cards.
+          const autoEmpty = !!st.autoCollapseEmpty && all.length === 0 && !isOver;
+          const isCollapsed = autoEmpty ? !(st.emptyPeek || {})[colKey] : stored != null ? !!stored : autoFold;
           const canAdd = !opts.drill && ["backlog", "sprint", "planning"].includes(stage.id);
           const refused = !!(st.dragTip && st.dragTip.col === colKey);
           return {
@@ -7022,7 +7026,10 @@ class Component extends DCLogic {
               if (this.state.hoverCol === colKey)
                 this.setState({ hoverCol: null });
             },
-            toggleCollapsed: () => this.setColCollapsed(colKey, !isCollapsed),
+            toggleCollapsed: () =>
+              autoEmpty
+                ? this.setState((s) => ({ emptyPeek: { ...s.emptyPeek, [colKey]: !(s.emptyPeek || {})[colKey] } }))
+                : this.setColCollapsed(colKey, !isCollapsed),
             canPhase: stage.id === "deferred" && all.length > 0 && !!parent,
             phase: () => parent && this.openPhase(parent),
             hint: stage.id === "deferred" ? "Not this round. Doesn't count toward done." : "",

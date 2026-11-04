@@ -54,6 +54,9 @@ import {
   type BoardCardThreadShell,
   type BoardCardThreadState,
   type BoardLabel,
+  type BoardCardPlanReview,
+  BOARD_PLAN_REVIEW_ROUNDS_MAX,
+  BOARD_PLAN_REVIEW_ROUNDS_MIN,
   type BoardLabelId,
   type BoardStageDefinition,
   type BoardCardModelOverrides,
@@ -117,6 +120,9 @@ import {
   hasBoardCardModelOverride,
   type BoardCardModelRowSpec,
 } from "./boardCardModelRows";
+import { Switch } from "../components/ui/switch";
+import { NumberStepper } from "../components/settings/BoardPipelineSection";
+import { nextBoardCardPlanReview, type BoardCardPlanReviewView } from "./boardCardPlanReview";
 import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -434,6 +440,9 @@ export interface BoardCardDetailViewProps {
     readonly basis: "plan" | "no-plan";
   } | null;
   readonly onSetHumanInLoop: (value: boolean) => void;
+  /** The Plan review section (plan review, T3O-39); null where it is hidden. */
+  readonly planReview?: BoardCardPlanReviewView | null | undefined;
+  readonly onSetPlanReview?: ((next: BoardCardPlanReview) => void) | undefined;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   /** Project title, or null when the project is not on disk (archived card). */
   readonly projectName: string | null;
@@ -1133,9 +1142,60 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   );
 }
 
+/**
+ * Plan review (T3O-39): an adversarial review of the plan once it is posted,
+ * run by the planning agent with subagents. Rounds lock while one runs; the
+ * switch stays live, and turning it off stops the review.
+ */
+function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps }) {
+  const view = props.planReview;
+  const onSet = props.onSetPlanReview;
+  if (view == null || onSet === undefined) return null;
+  return (
+    <div className="flex flex-col gap-2 border-t border-border p-3.5">
+      <div className="flex items-center gap-1.5">
+        <SectionHeading>Plan review</SectionHeading>
+        <span className="flex-1" />
+        <span className="text-[11px] font-medium text-foreground">{view.summary}</span>
+      </div>
+      {/* A div, not a label: the switch is a button, as in the auto-start row. */}
+      <div className="flex items-start gap-2.5 text-[12.5px]">
+        <Switch
+          aria-label="Adversarial plan review"
+          checked={view.enabled}
+          className="mt-0.5 shrink-0"
+          onCheckedChange={(next) => onSet(nextBoardCardPlanReview(view, { enabled: next }))}
+        />
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="font-medium text-foreground">Adversarial plan review</span>
+          <span className="text-[11.5px] leading-[1.45] text-muted-foreground">{view.note}</span>
+        </span>
+      </div>
+      {view.enabled ? (
+        <div className="flex items-center gap-2.5 pl-[38px]">
+          <span className="flex-1 text-[12px] font-medium text-foreground">Rounds</span>
+          {view.inProgress ? (
+            <span className="text-[12px] text-muted-foreground">{view.rounds}, locked</span>
+          ) : (
+            <NumberStepper
+              ariaLabel="plan review rounds"
+              max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
+              min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
+              onChange={(rounds) => onSet(nextBoardCardPlanReview(view, { rounds }))}
+              value={view.rounds}
+            />
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function DependenciesSection(props: BoardCardDetailViewProps) {
   return (
     <BoardDependencySection
+      collapsible
+      key={props.detail.card.id}
       dependencies={props.dependencies}
       onAdd={props.onAddDependency}
       onRemove={props.onRemoveDependency}
@@ -3074,6 +3134,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             ) : (
               <GroupActionsSection group={group} props={props} />
             )}
+            <PlanReviewSection props={props} />
             <QueueSection props={props} />
             {props.stepFailure !== null ? (
               <BoardCardStepFailure
@@ -3169,6 +3230,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               ) : (
                 <GroupActionsSection group={group} props={props} />
               )}
+              <PlanReviewSection props={props} />
               <RailSections group={group} onOpenThread={selectThread} props={props} />
             </div>
           </div>
