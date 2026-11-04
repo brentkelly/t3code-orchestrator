@@ -679,6 +679,7 @@ describe("deriveBoardCardWorkSummary", () => {
             stage: BOARD_SEED_STAGE_IDS.done,
             archivedAt: null,
             sourcePlanId: boardPlanId(cardId, "a"),
+            dependsOn: [],
           },
           {
             cardId: BoardCardId.make("child-b"),
@@ -687,6 +688,7 @@ describe("deriveBoardCardWorkSummary", () => {
             stage: BOARD_SEED_STAGE_IDS.review,
             archivedAt: null,
             sourcePlanId: boardPlanId(cardId, "b"),
+            dependsOn: [],
           },
         ],
         stepCompletions: [

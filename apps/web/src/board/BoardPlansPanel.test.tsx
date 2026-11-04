@@ -46,6 +46,7 @@ function child(
   cardId: string,
   stage: BoardStageId,
   archivedAt: string | null = null,
+  dependsOn: ReadonlyArray<string> = [],
 ): BoardCardChildRef {
   return {
     cardId: BoardCardId.make(cardId),
@@ -54,6 +55,7 @@ function child(
     stage,
     archivedAt,
     sourcePlanId: planIdOf(key),
+    dependsOn: dependsOn.map((id) => BoardCardId.make(id)),
   };
 }
 
@@ -87,8 +89,8 @@ function render(options?: {
     plans: [plan("a", 0), plan("b", 1, ["a"]), plan("c", 2, ["b"]), plan("d", 3)],
     children: [
       child("a", "c1", BOARD_SEED_STAGE_IDS.done),
-      child("b", "c2", BOARD_SEED_STAGE_IDS.building),
-      child("c", "c3", BOARD_SEED_STAGE_IDS.ready),
+      child("b", "c2", BOARD_SEED_STAGE_IDS.building, null, ["c1"]),
+      child("c", "c3", BOARD_SEED_STAGE_IDS.ready, null, ["c2"]),
       child("d", "c4", BOARD_SEED_STAGE_IDS.building, NOW),
     ],
     cards: [
@@ -111,7 +113,7 @@ function render(options?: {
 describe("BoardPlansPanel", () => {
   it("heads the panel and offers the chart and the board", () => {
     const html = render({ onOpenSubBoard: () => {} });
-    expect(html).toContain("Plans");
+    expect(html).toContain(">Cards<");
     expect(html).toContain("in dependency order");
     expect(html).toContain("Dependency chart");
     expect(html).toContain("Board");
@@ -154,7 +156,7 @@ describe("BoardPlansPanel", () => {
     expect(html).toContain("Final review");
     expect(html).toContain("t3o/TT-9-services");
     expect(html).toContain(
-      "1 of 3 plans done. The final review starts on its own when the last one lands.",
+      "1 of 3 cards done. The final review starts on its own when the last one lands.",
     );
     // D5: no action. The reactor owns this transition.
     expect(html).not.toContain("Start final review");
