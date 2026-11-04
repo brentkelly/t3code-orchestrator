@@ -217,7 +217,8 @@ export interface BoardTodoItem {
  * - `interrupt-requested` — someone pressed Stop.
  * - `approval-responded` — a human answered a permission prompt.
  * - `input-requested` / `input-resolved` — a structured question raised, and
- *   closed; `answered` separates an answer from a cancellation.
+ *   closed; `answered` separates an answer from a cancellation, and `byBoard`
+ *   marks the board's own answer (`answerPendingInput`).
  * - `session-started` — a provider session came up.
  * - `todos-changed` — the agent's todo list was replaced.
  * - `thread-deleted` — the thread is gone for good.
@@ -239,7 +240,12 @@ export type ThreadSignal =
   | { readonly type: "interrupt-requested"; readonly threadId: ThreadId }
   | { readonly type: "approval-responded"; readonly threadId: ThreadId }
   | { readonly type: "input-requested"; readonly threadId: ThreadId }
-  | { readonly type: "input-resolved"; readonly threadId: ThreadId; readonly answered: boolean }
+  | {
+      readonly type: "input-resolved";
+      readonly threadId: ThreadId;
+      readonly answered: boolean;
+      readonly byBoard?: boolean;
+    }
   | { readonly type: "session-started"; readonly threadId: ThreadId }
   | {
       readonly type: "todos-changed";

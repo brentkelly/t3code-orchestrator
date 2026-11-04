@@ -152,6 +152,8 @@ export const BoardGatewaySignal = Schema.Union([
     type: Schema.Literal("input-resolved"),
     threadId: ThreadId,
     answered: Schema.Boolean,
+    // Absent from workers older than T3O-38, which never answer for the board.
+    byBoard: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({ type: Schema.Literal("session-started"), threadId: ThreadId }),
   ...BoardGatewayTodoSignal.members,

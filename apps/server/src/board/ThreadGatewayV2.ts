@@ -400,6 +400,7 @@ export const makeSignalReader = () => {
                   threadId: event.threadId,
                   answered:
                     request.status === "resolved" && Object.keys(request.answers ?? {}).length > 0,
+                  byBoard: isBoardMintedCommandId(stored.commandId),
                 },
               ]
             : [];

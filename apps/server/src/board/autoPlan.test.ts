@@ -41,6 +41,7 @@ import {
   turnCompleted,
   turnInterruptRequested,
   userInputRequested,
+  userInputResolved,
   withGovernor,
   type Harness,
   type HarnessEvent,
@@ -244,6 +245,23 @@ it.effect("a human pressing Stop on an unattended planning run turns Auto-plan o
       assert.strictEqual(boardCardStepState(after, id)?.status, "paused");
       assert.isFalse(cardOf(after.cards, "stopped")?.autoPlanSetting);
       assert.isString(cardOf(after.cards, "stopped")?.autoPlan?.endedAt);
+    }),
+  );
+});
+
+it.effect("only a human's answer turns Auto-plan off; the board's own answer does not", () => {
+  const card = planningCard("answered", { autoPlanSetting: true });
+  return withGovernor({ board: { cards: [card], nextCardNumberByProject: {} }, settings }, (h) =>
+    Effect.gen(function* () {
+      const id = BoardCardId.make("answered");
+      yield* h.pumpDomain(cardMoved(card, "sprint", "planning", 1));
+      const threadId = boardCardStepState(yield* h.board, id)!.threadId!;
+      // Carried on the signal, so it holds across a restart that lost every
+      // in-memory note of the board's answer.
+      yield* h.pumpRuntime({ ...userInputResolved(threadId), byBoard: true });
+      assert.isTrue(cardOf((yield* h.board).cards, "answered")?.autoPlanSetting);
+      yield* h.pumpRuntime(userInputResolved(threadId));
+      assert.isFalse(cardOf((yield* h.board).cards, "answered")?.autoPlanSetting);
     }),
   );
 });

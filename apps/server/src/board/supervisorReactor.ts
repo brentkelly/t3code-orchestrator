@@ -423,9 +423,6 @@ export interface SupervisorReactorShape {
   readonly requestReviewRound: (
     cardId: BoardCardId,
   ) => Effect.Effect<BoardRequestReviewRoundResult>;
-  /** Auto-plan → Build (T3O-32, decision 7): steer the live planning thread to
-      decide, record and propose, or start an unattended planning step. The
-      plan that arrives is approved and the card goes on to Building. */
 }
 
 /** A string cut to `max` characters, ending in an ellipsis when cut. */
@@ -837,9 +834,6 @@ const make = Effect.gen(function* () {
   /** Thread → the interview run auto-plan interrupted to steer (T3O-32). Only
       that run's question, Stop and end are ignored; the next turn end clears it. */
   const steeredThreads = new Map<string, string>();
-  /** Threads whose pending question the board itself answered with the
-      auto-plan instruction (T3O-38), so that answer is not read as a human's. */
-  const boardAnsweredThreads = new Set<string>();
   /** Thread → an auto-plan instruction held until its usage limit lifts. */
   const deferredSteers = new Map<string, string>();
   /** The live thread is still running the run auto-plan interrupted. */
@@ -888,7 +882,6 @@ const make = Effect.gen(function* () {
     for (const threadId of released) {
       steeredThreads.delete(String(threadId));
       deferredSteers.delete(String(threadId));
-      boardAnsweredThreads.delete(String(threadId));
       const thread = records.get(threadId);
       // No record is no answer: the thread's worker couldn't be asked
       // (T3O-66), so an abandoned thread there is kept for the next pass.
@@ -6915,7 +6908,6 @@ const make = Effect.gen(function* () {
         ),
         Effect.orElseSucceed(() => false),
       );
-    if (answered) boardAnsweredThreads.add(String(threadId));
     let failure: string | null = null;
     if (!answered) {
       const shell = yield* liveThread(threadId);
@@ -7169,12 +7161,11 @@ const make = Effect.gen(function* () {
   /**
    * A human answered the planning agent's question themselves (T3O-38): they
    * are planning with it, so the card's own Auto-plan goes off. The board's
-   * own answer — the steer — is told apart by `boardAnsweredThreads`.
+   * own answer — the steer — carries `byBoard` and never reaches here.
    */
   const humanAnsweredPlanning = Effect.fn("board-supervisor-humanAnsweredPlanning")(function* (
     threadId: ThreadId,
   ) {
-    if (boardAnsweredThreads.delete(String(threadId))) return;
     const board = yield* readBoard;
     const found = stepThreadCard(board, threadId);
     if (found === null || found.card.archivedAt !== null) return;
@@ -9855,11 +9846,12 @@ const make = Effect.gen(function* () {
         // A structured question being ANSWERED (t3o-34, D5) — the one way a
         // parked step goes back to work that no turn request sees. A
         // cancellation resolves the question too, and must not resume.
-        return signal.answered
-          ? resumeParkedStep(signal.threadId).pipe(
+        if (!signal.answered) return Effect.void;
+        return signal.byBoard === true
+          ? resumeParkedStep(signal.threadId)
+          : resumeParkedStep(signal.threadId).pipe(
               Effect.andThen(humanAnsweredPlanning(signal.threadId)),
-            )
-          : Effect.void;
+            );
       case "todos-changed":
       case "thread-deleted":
         return Effect.void;
