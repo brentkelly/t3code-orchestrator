@@ -250,12 +250,15 @@ describe("targets and settings", () => {
     expect(boardGroupSettingsVm(idle, STAGES, outer)!.targetLockReason).toBeNull();
   });
 
-  it("offers auto-merge to trunk only when the children merge into trunk", () => {
-    expect(boardGroupSettingsVm(shells, STAGES, outer)!.autoMerge).toBeNull();
-    expect(boardGroupSettingsVm(shells, STAGES, middle)!.autoMerge).toBeNull();
-    const top = shell("t-1", "planning", { group: group({ autoMerge: true }) });
-    const vm = boardGroupSettingsVm([top], STAGES, top)!;
-    expect(vm.autoMerge).toMatchObject({ on: true });
+  it("reads the children's auto-merge off the group, locked on under the board-wide setting", () => {
+    const top = shell("t-1", "planning", { group: group({ autoMerge: false }) });
+    expect(boardGroupSettingsVm([top], STAGES, top)!.autoMerge).toMatchObject({
+      on: false,
+      lockReason: null,
+    });
+    const boardWide = boardGroupSettingsVm([top], STAGES, top, { boardWideAutoMerge: true })!;
+    expect(boardWide.autoMerge.on).toBe(true);
+    expect(boardWide.autoMerge.lockReason).toContain("Settings");
   });
 
   it("draws the card action area for an own-branch group from Code review on", () => {
