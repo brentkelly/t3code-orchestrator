@@ -216,6 +216,28 @@ it.layer(layer)("plan review through the board tools", (it) => {
     }),
   );
 
+  it.effect("turning the review back on after a stop starts a fresh one at completion", () =>
+    Effect.gen(function* () {
+      const { cardId, threadId } = yield* seedPlanningCard("restart");
+      yield* turnOn(cardId, threadId, 2);
+      yield* boardHandlers.board_propose_plans({ plans: onePlan }).pipe(as(threadId));
+      yield* boardHandlers
+        .board_update_card({ cardId, planReview: { enabled: false, rounds: 2 } })
+        .pipe(as(threadId));
+      yield* turnOn(cardId, threadId, 4);
+
+      // The stopped review is gone, so nothing claims one is running.
+      const between = yield* boardHandlers.board_get_card_context().pipe(as(threadId));
+      assert.strictEqual(between.planReview, undefined);
+
+      const held = yield* boardHandlers
+        .board_complete_step({ outcome: "succeeded", summary: "Planned." })
+        .pipe(as(threadId));
+      assert.strictEqual(held.completed, false);
+      assert.strictEqual(held.planReview?.rounds, 4);
+    }),
+  );
+
   it.effect("an untouched card follows the planning stage's default and prompt", () =>
     Effect.gen(function* () {
       // The stack supplies its own settings service, so the default is set

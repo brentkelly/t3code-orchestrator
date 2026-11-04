@@ -6,7 +6,7 @@ import {
   BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
   BoardCardId,
   boardCardStepState,
-  type ThreadId,
+  type BoardCardStepState,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -27,16 +27,11 @@ const oneCard = (id: string) => ({
   settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
 });
 
-const reviewStopped = (
-  cardId: string,
-  stepId: string,
-  threadId: ThreadId,
-  sequence: number,
-): HarnessEvent =>
+const reviewStopped = (state: BoardCardStepState, stepId: string, sequence: number): HarnessEvent =>
   ({
     type: "board.plan-review-stopped",
     sequence,
-    payload: { cardId: BoardCardId.make(cardId), stepId, threadId },
+    payload: { cardId: state.cardId, stepId, threadId: state.threadId, state },
   }) as unknown as HarnessEvent;
 
 const sends = (commands: ReadonlyArray<HarnessCommand>) =>
@@ -53,7 +48,7 @@ it.effect("turning a running review off tells the live thread to wrap up", () =>
       assert.strictEqual(state?.status, "running");
       const before = sends(yield* commands).length;
 
-      yield* pumpDomain(reviewStopped("stop-live", state!.stepId, state!.threadId!, 2));
+      yield* pumpDomain(reviewStopped(state!, state!.stepId, 2));
 
       const after = sends(yield* commands);
       assert.strictEqual(after.length, before + 1);
@@ -75,7 +70,8 @@ it.effect("a paused step is not told, so the turn cannot un-pause it", () =>
       );
       const before = sends(yield* commands).length;
 
-      yield* pumpDomain(reviewStopped("stop-paused", state!.stepId, state!.threadId!, 3));
+      const paused = boardCardStepState(yield* board, BoardCardId.make("stop-paused"));
+      yield* pumpDomain(reviewStopped(paused!, paused!.stepId, 3));
 
       assert.strictEqual(sends(yield* commands).length, before);
     }),
@@ -89,7 +85,7 @@ it.effect("a stop for a step that is no longer live sends nothing", () =>
       const state = boardCardStepState(yield* board, BoardCardId.make("stop-stale"));
       const before = sends(yield* commands).length;
 
-      yield* pumpDomain(reviewStopped("stop-stale", "planning", state!.threadId!, 2));
+      yield* pumpDomain(reviewStopped(state!, "planning", 2));
 
       assert.strictEqual(sends(yield* commands).length, before);
     }),

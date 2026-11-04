@@ -3260,6 +3260,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         return;
 
       case "board.plan-review-stopped":
+        yield* upsertStepState(event.payload.state);
         yield* recordActivity({
           event,
           cardId: event.payload.cardId,

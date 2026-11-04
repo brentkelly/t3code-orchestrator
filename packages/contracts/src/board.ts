@@ -6300,11 +6300,13 @@ export const BoardPlanReviewStartedPayload = Schema.Struct({
 export type BoardPlanReviewStartedPayload = typeof BoardPlanReviewStartedPayload.Type;
 
 /** A human turned plan review off while one was running (plan review,
-    T3O-39). The reactor tells the planning thread to wrap up. */
+    T3O-39). The reactor tells the planning thread to wrap up. `state` is the
+    step with the review cleared, so turning it back on starts a fresh one. */
 export const BoardPlanReviewStoppedPayload = Schema.Struct({
   cardId: BoardCardId,
   stepId: TrimmedNonEmptyString,
   threadId: Schema.NullOr(ThreadId),
+  state: BoardCardStepState,
 });
 export type BoardPlanReviewStoppedPayload = typeof BoardPlanReviewStoppedPayload.Type;
 

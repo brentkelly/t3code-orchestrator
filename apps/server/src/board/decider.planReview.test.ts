@@ -367,7 +367,23 @@ it.effect("rounds are locked while a review runs, and turning it off stops the r
     assert.deepStrictEqual(types(stopped), ["board.card-updated", "board.plan-review-stopped"]);
     const stop = stopped[1]!;
     assert.ok(stop.type === "board.plan-review-stopped");
-    assert.deepStrictEqual(stop.payload, { cardId, stepId: "planning", threadId });
+    assert.deepStrictEqual(stop.payload, {
+      cardId,
+      stepId: "planning",
+      threadId,
+      state: stepState({ updatedAt: LATER }),
+    });
+  }),
+);
+
+it.effect("a null reset is refused while a review runs, since it could stop it silently", () =>
+  Effect.gen(function* () {
+    const running = readModel({
+      card: makeCard({ planReview: { enabled: true, rounds: 3 } }),
+      state: stepState(started),
+    });
+    const refusal = yield* decideFail(update(null), running);
+    assert.include(String(refusal), "cannot be reset to the default");
   }),
 );
 

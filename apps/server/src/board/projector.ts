@@ -951,8 +951,8 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
-    // T3o: plan review (T3O-39). Starting writes the step state; stopping is
-    // a signal for the reactor and the rail, and changes no state.
+    // T3o: plan review (T3O-39). Starting writes the step state; stopping
+    // clears it, so turning review back on starts a fresh one.
     case "board.plan-review-started":
       return decodeBoardPlanReviewStartedPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
@@ -962,7 +962,7 @@ export function projectBoardEvent<M extends BoardReadModel>(
     case "board.plan-review-stopped":
       return decodeBoardPlanReviewStoppedPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
-        Effect.as(model),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
     // T3o (T3O-62): the worker registry. Touches no card.

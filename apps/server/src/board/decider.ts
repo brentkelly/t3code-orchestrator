@@ -651,32 +651,6 @@ const validateBaseBranch = Effect.fn("validateBaseBranch")(function* (input: {
 });
 
 /**
- * Validate and normalise a card's incoming review-loop overrides (t3o-22).
- *
- * Three rules, all here rather than in the pane, because the client is not the
- * guard and a stale pane must never be able to strand a live run:
- *
- *  - **A round that has STARTED can never be removed** (D3). The floor is the
- *    highest round the loop has entered — counting the round whose review is in
- *    flight with no completion yet, which is precisely the dangerous case:
- *    dropping the budget below it would leave a running agent whose completion
- *    lands beyond the cap, a walk that never reaches it again, and a wedged
- *    loop holding a concurrency slot.
- *  - **A stop cannot outlive a decision to buy more rounds** (D5). Raising the
- *    budget — or asking outright for the next round (T3O-39) — is the later
- *    expression of intent, so it clears a pending stop; otherwise the executor
- *    would keep terminating at the stopped round and the extra rounds could
- *    never run.
- *  - **Only the NEXT round can be requested** (T3O-39, D5). `runThroughRound`
- *    is clamped to `roundsStarted + 1`, which is what makes deleting the round
- *    ceiling safe: a budget is a number a human typed and can see, while a
- *    request booked fifty rounds ahead is fifty runs nobody asked for.
- *
- * Setting a stop for a round the loop is already past is rejected rather than
- * silently dropped — nothing in the UI does it, so it is a caller bug worth
- * surfacing.
- */
-/**
  * The card's live plan-role step, or null (plan review, T3O-39). Plan review
  * only ever acts on this: a running step of the stage with the plan role.
  */
@@ -714,6 +688,38 @@ const planReviewStartedEvent = Effect.fn("planReviewStartedEvent")(function* (in
   return event;
 });
 
+/** The step with its plan review cleared (plan review, T3O-39). */
+function clearedPlanReviewState(state: BoardCardStepState, at: string): BoardCardStepState {
+  const { planReviewStartedAt: _startedAt, planReviewRounds: _rounds, ...rest } = state;
+  return { ...rest, updatedAt: at };
+}
+
+/**
+ * Validate and normalise a card's incoming review-loop overrides (t3o-22).
+ *
+ * Three rules, all here rather than in the pane, because the client is not the
+ * guard and a stale pane must never be able to strand a live run:
+ *
+ *  - **A round that has STARTED can never be removed** (D3). The floor is the
+ *    highest round the loop has entered — counting the round whose review is in
+ *    flight with no completion yet, which is precisely the dangerous case:
+ *    dropping the budget below it would leave a running agent whose completion
+ *    lands beyond the cap, a walk that never reaches it again, and a wedged
+ *    loop holding a concurrency slot.
+ *  - **A stop cannot outlive a decision to buy more rounds** (D5). Raising the
+ *    budget — or asking outright for the next round (T3O-39) — is the later
+ *    expression of intent, so it clears a pending stop; otherwise the executor
+ *    would keep terminating at the stopped round and the extra rounds could
+ *    never run.
+ *  - **Only the NEXT round can be requested** (T3O-39, D5). `runThroughRound`
+ *    is clamped to `roundsStarted + 1`, which is what makes deleting the round
+ *    ceiling safe: a budget is a number a human typed and can see, while a
+ *    request booked fifty rounds ahead is fifty runs nobody asked for.
+ *
+ * Setting a stop for a round the loop is already past is rejected rather than
+ * silently dropped — nothing in the UI does it, so it is a caller bug worth
+ * surfacing.
+ */
 const validateReviewOverrides = Effect.fn("validateReviewOverrides")(function* (input: {
   readonly board: BoardState;
   readonly command: BoardCardCommand;
@@ -2642,6 +2648,14 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Card '${card.key}' is in a plan review of ${planReviewStep.planReviewRounds} round(s); its rounds cannot change until it leaves Planning. Turn the review off to stop it.`,
         );
       }
+      // A null reset inherits a default the decider cannot see, so it could
+      // stop the review with no stop event; the caller must say on or off.
+      if (planReviewRunning && command.planReview === null) {
+        return yield* invariant(
+          command,
+          `Card '${card.key}' is in a plan review; its setting cannot be reset to the default until it leaves Planning. Turn the review off to stop it.`,
+        );
+      }
       const planReview =
         command.planReview === undefined ? card.planReview : (command.planReview ?? undefined);
       const stopsPlanReview =
@@ -2812,6 +2826,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
                   cardId: command.cardId,
                   stepId: planReviewStep.stepId,
                   threadId: planReviewStep.threadId,
+                  state: clearedPlanReviewState(planReviewStep, command.createdAt),
                 },
               },
             ]
