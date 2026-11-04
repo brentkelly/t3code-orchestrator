@@ -45,6 +45,7 @@ vi.mock(import("../state/use-atom-command"), () => ({
   }) as never,
 }));
 
+import { BoardProjectScopeSelect } from "./BoardProjectScopeSelect";
 import { BoardListView } from "./BoardListView";
 
 const STAGES = { cards: [], stages: BOARD_SEED_STAGES, nextCardNumberByProject: {} };
@@ -90,13 +91,16 @@ function shell(
   };
 }
 
-function renderList(
+async function renderList(
   shells: ReadonlyArray<BoardCardShell>,
   query = "",
   allShells: ReadonlyArray<BoardCardShell> = shells,
   attentionFor: (card: BoardCardShell) => BoardCardAttention | null = () => null,
 ) {
   commands.setup();
+  // Desktop width: below it the header and the selection toolbar wrap to
+  // different heights, so a row moves out from under a double-click.
+  await page.viewport(1280, 800);
   return render(
     <>
       <input aria-label="Elsewhere" />
@@ -111,7 +115,16 @@ function renderList(
         onOpenCard={() => undefined}
         projects={[{ id: ProjectId.make("p1"), title: "Project one" }]}
         query={query}
-        scopeName="All projects"
+        scopeControl={
+          <BoardProjectScopeSelect
+            accentNameFor={() => null}
+            onChange={() => undefined}
+            projects={[{ id: ProjectId.make("p1"), title: "Project one" }]}
+            scopeIsHidden={false}
+            scopeIsStale={false}
+            scopeProjectId={null}
+          />
+        }
         shells={shells}
         stages={STAGES}
       />

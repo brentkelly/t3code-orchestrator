@@ -187,32 +187,11 @@ function EnvironmentList({ environmentId }: { readonly environmentId: Environmen
     },
     [navigate, scopeProjectId],
   );
-  const scopeName =
-    scopeProjectId === null
-      ? "All projects"
-      : (projects.find((project) => project.id === scopeProjectId)?.title ??
-        (scopeIsHidden ? "Hidden project" : "Unknown project"));
-
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <BoardTopBar mode="list">
         <BoardCardFilterField onQueryChange={setQuery} query={query} />
       </BoardTopBar>
-      <div className="flex shrink-0 items-center gap-3 px-3 pt-2 sm:px-5">
-        <BoardProjectScopeSelect
-          accentNameFor={accentNameFor}
-          onChange={(projectId) =>
-            patchSearch((previous) => {
-              const { project: _project, ...rest } = previous;
-              return projectId === null ? rest : { ...rest, project: projectId };
-            })
-          }
-          projects={projects}
-          scopeIsHidden={scopeIsHidden}
-          scopeIsStale={scopeIsStale}
-          scopeProjectId={scopeProjectId}
-        />
-      </div>
       <BoardListView
         accentNameFor={accentNameFor}
         allShells={allShells}
@@ -228,7 +207,21 @@ function EnvironmentList({ environmentId }: { readonly environmentId: Environmen
             : projects.filter((project) => project.id === scopeProjectId)
         }
         query={query}
-        scopeName={scopeName}
+        scopeControl={
+          <BoardProjectScopeSelect
+            accentNameFor={accentNameFor}
+            onChange={(projectId) =>
+              patchSearch((previous) => {
+                const { project: _project, ...rest } = previous;
+                return projectId === null ? rest : { ...rest, project: projectId };
+              })
+            }
+            projects={projects}
+            scopeIsHidden={scopeIsHidden}
+            scopeIsStale={scopeIsStale}
+            scopeProjectId={scopeProjectId}
+          />
+        }
         shells={shells}
         stages={stageState}
       />

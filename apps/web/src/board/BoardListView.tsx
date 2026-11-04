@@ -133,8 +133,8 @@ export interface BoardListViewProps {
   readonly allShells: Shells;
   readonly stages: BoardState;
   readonly inScope: (card: BoardCardShell) => boolean;
-  /** "All projects", or the scoped project's name. */
-  readonly scopeName: string;
+  /** The project scope picker, shown at the head of the header row. */
+  readonly scopeControl: ReactNode;
   /** Where New group creates when nothing is selected. */
   readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
   readonly attentionFor: (card: BoardCardShell) => BoardCardAttention | null;
@@ -577,7 +577,7 @@ export function BoardListView(props: BoardListViewProps) {
           </>
         ) : (
           <>
-            <span className="text-[12.5px] font-medium text-foreground">{props.scopeName}</span>
+            {props.scopeControl}
             <span className="text-[12px] text-muted-foreground">
               {tree.inScope.size} cards · {groupCount} groups
             </span>
@@ -626,10 +626,11 @@ export function BoardListView(props: BoardListViewProps) {
                 </MenuItem>
               </MenuPopup>
             </Menu>
-            <span className="hidden text-[12px] text-muted-foreground md:inline">
-              Click to select, shift-click for a range. Tab indents, ⇧Tab outdents; drag to move.
+            <span className="flex-1 md:hidden" />
+            <span className="hidden min-w-0 flex-1 basis-0 items-center justify-end gap-1 overflow-hidden text-[11.5px] whitespace-nowrap text-muted-foreground md:flex">
+              <ListKbd>⇧Click</ListKbd> for a range. <ListKbd>Tab</ListKbd> indents,
+              <ListKbd>⇧Tab</ListKbd> outdents; drag to move.
             </span>
-            <span className="flex-1" />
             <Button onClick={() => setNewGroup({ ids: [] })} size="xs" variant="outline">
               <PlusIcon />
               New group
@@ -809,6 +810,14 @@ function StepButton({
         </span>
       </Button>
     </BoardHint>
+  );
+}
+
+function ListKbd({ children }: { readonly children: ReactNode }) {
+  return (
+    <kbd className="rounded-[4px] border border-border bg-muted px-[5px] py-px font-mono text-[10.5px] font-medium text-foreground">
+      {children}
+    </kbd>
   );
 }
 
