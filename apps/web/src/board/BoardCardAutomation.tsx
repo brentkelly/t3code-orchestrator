@@ -8,12 +8,13 @@
  * child follows live, so a flip that changes work already in flight asks
  * first. The decider re-checks every lock; the rows here only mirror them.
  */
-import type {
-  BoardAutomationNode,
-  BoardAutomationToggle,
-  BoardCardShell,
-  BoardState,
-  EnvironmentId,
+import {
+  BoardCardId,
+  type BoardAutomationNode,
+  type BoardAutomationToggle,
+  type BoardCardShell,
+  type BoardState,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -71,7 +72,7 @@ function useSetCardAutomation(environmentId: EnvironmentId, card: BoardAutomatio
   return (patch: AutomationPatch) => {
     void setCardAutomation({
       environmentId,
-      input: { cardId: card.id as never, ...patch },
+      input: { cardId: BoardCardId.make(card.id), ...patch },
     }).then(report);
   };
 }
