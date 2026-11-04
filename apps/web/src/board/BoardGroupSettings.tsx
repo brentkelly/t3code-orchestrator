@@ -2,7 +2,7 @@
  * Group settings (T3O-29, the prototype's `groupSettingsVm()`): one set of
  * controls, drawn in the sub-board header's popover and in the group card's
  * popup. Merge target is locked while any descendant has started; auto-merge
- * to trunk only applies when the children actually merge into trunk.
+ * to trunk is drawn only when the children actually merge into trunk.
  *
  * Each control dispatches `board.card.set-group-settings` with the one field
  * it changes; the decider re-checks the lock and the project rule.
@@ -31,25 +31,17 @@ interface BoardGroupSettingsProps {
 function SettingRow({
   label,
   on,
-  disabled,
   note,
   onChange,
 }: {
   readonly label: string;
   readonly on: boolean;
-  readonly disabled?: boolean | undefined;
   readonly note: string;
   readonly onChange: (on: boolean) => void;
 }) {
   return (
     <label className="flex cursor-pointer items-start gap-2.5">
-      <Switch
-        aria-label={label}
-        checked={on}
-        disabled={disabled}
-        onCheckedChange={onChange}
-        size="sm"
-      />
+      <Switch aria-label={label} checked={on} onCheckedChange={onChange} size="sm" />
       <span className="flex min-w-0 flex-col gap-0.5">
         <span className="text-[12px] font-medium text-foreground">{label}</span>
         <span className="text-[11.5px]/[1.45] text-pretty text-muted-foreground">{note}</span>
@@ -119,13 +111,14 @@ export function BoardGroupSettings({
         on={vm.autoBuild.on}
         onChange={(autoBuild) => set({ autoBuild })}
       />
-      <SettingRow
-        disabled={vm.autoMerge.disabled}
-        label="Auto-merge to trunk"
-        note={vm.autoMerge.note}
-        on={vm.autoMerge.on}
-        onChange={(autoMerge) => set({ autoMerge })}
-      />
+      {vm.autoMerge === null ? null : (
+        <SettingRow
+          label="Auto-merge to trunk"
+          note={vm.autoMerge.note}
+          on={vm.autoMerge.on}
+          onChange={(autoMerge) => set({ autoMerge })}
+        />
+      )}
       <SettingRow
         label="Auto-plan"
         note={vm.autoPlan.note}

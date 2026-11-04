@@ -438,11 +438,9 @@ export interface BoardGroupSettingsVm {
   /** Why the target cannot change, or null. */
   readonly targetLockReason: string | null;
   readonly autoBuild: { readonly on: boolean; readonly note: string };
-  readonly autoMerge: {
-    readonly on: boolean;
-    readonly disabled: boolean;
-    readonly note: string;
-  };
+  /** Null when the children merge into an integration branch: the switch only
+      governs merges into trunk, so it is not drawn at all. */
+  readonly autoMerge: { readonly on: boolean; readonly note: string } | null;
   readonly autoPlan: { readonly on: boolean; readonly note: string };
 }
 
@@ -486,15 +484,14 @@ export function boardGroupSettingsVm(
           : "Armed. The cascade starts when you drag the group to Building."
         : "Children wait for you to start them. Turning this off never interrupts a running child.",
     },
-    autoMerge: {
-      on: atTrunk && group.autoMerge,
-      disabled: !atTrunk,
-      note: !atTrunk
-        ? `Only applies when children merge into ${BOARD_TRUNK_LABEL}. These merge into ${resolved}.`
-        : group.autoMerge
-          ? `Children merge into ${BOARD_TRUNK_LABEL} as soon as the forge accepts.`
-          : "Children stop at Ready for merge for you, unless a card has its own auto-merge on.",
-    },
+    autoMerge: atTrunk
+      ? {
+          on: group.autoMerge,
+          note: group.autoMerge
+            ? `Children merge into ${BOARD_TRUNK_LABEL} as soon as the forge accepts.`
+            : "Children stop at Ready for merge for you, unless a card has its own auto-merge on.",
+        }
+      : null,
     autoPlan: {
       on: group.autoPlan,
       note: group.autoPlan
@@ -502,6 +499,21 @@ export function boardGroupSettingsVm(
         : "Children entering Planning are planned with you.",
     },
   };
+}
+
+/** Whether a group's popup draws the leaf action area (Merge, review controls,
+    View PR) rather than Open board alone (T3O-37): from Code review on, an
+    own-branch group is reviewing and merging its own pull request. */
+export function boardGroupUsesCardActions(input: {
+  readonly ownBranch: boolean;
+  readonly stages: BoardState;
+  readonly stage: BoardStageId;
+}): boolean {
+  if (!input.ownBranch) return false;
+  const review = boardStageWithRole(input.stages, "review");
+  if (review === null) return false;
+  const reviewIndex = boardStageIndex(input.stages, review.stageId);
+  return reviewIndex >= 0 && boardStageIndex(input.stages, input.stage) >= reviewIndex;
 }
 
 /** One line on why a group sits in its stage, for the popup's action area. */
