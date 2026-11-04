@@ -6798,11 +6798,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getShellSnapshot: readOnReader(getShellSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
       readShellSnapshot: readOnReader(readShellSnapshot),
-      // T3o: the reader worker lacks the attached boards.sqlite the card-thread filter joins (T3O-78).
-      listOlderSettledThreads: (query) =>
-        query.excludeBoardCardThreads === true
-          ? listOlderSettledThreads(query)
-          : readOnReader(listOlderSettledThreads)(query),
+      listOlderSettledThreads: readOnReader(listOlderSettledThreads),
       getThreadShell: readOnReader(getThreadShell),
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
