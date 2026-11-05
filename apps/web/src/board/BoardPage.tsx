@@ -808,10 +808,11 @@ function EnvironmentBoard({
   // The projects whose pipelines this view draws: the scoped project, a
   // sub-board's parent's and its children's (a child may sit in another
   // project), or every visible project.
+  const parentProjectId = parentShell?.projectId ?? null;
   const pipelineProjects = useMemo(() => {
     const subBoardProjectIds = new Set<string>();
     if (scope.kind === "sub-board") {
-      if (parentShell?.projectId != null) subBoardProjectIds.add(parentShell.projectId);
+      if (parentProjectId !== null) subBoardProjectIds.add(parentProjectId);
       for (const cards of Object.values(scopedColumns)) {
         for (const card of cards) subBoardProjectIds.add(card.projectId);
       }
@@ -823,7 +824,7 @@ function EnvironmentBoard({
           ? projects
           : allProjects.filter((project) => project.id === scopeProjectId);
     return inView.map((project) => ({ id: project.id, title: project.title }));
-  }, [allProjects, parentShell?.projectId, projects, scope.kind, scopeProjectId, scopedColumns]);
+  }, [allProjects, parentProjectId, projects, scope.kind, scopeProjectId, scopedColumns]);
   const pipelineColumns = useMemo(
     () =>
       boardPipelineColumns({

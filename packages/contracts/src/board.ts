@@ -1470,7 +1470,7 @@ export function sortBoardCardDecisions<T extends Pick<BoardCardDecision, "flag">
     board runs in the card's worktree, killed after `timeoutMinutes`. */
 /** A day. Node clamps a timer past 2^31-1 ms (about 24.8 days) to 1 ms, so an
     unbounded value would time a step out at once. */
-export const BOARD_CI_MAX_TIMEOUT_MINUTES = 1_440;
+const BOARD_CI_MAX_TIMEOUT_MINUTES = 1_440;
 
 export const BoardCiStepDefinition = Schema.Struct({
   name: TrimmedNonEmptyString,
