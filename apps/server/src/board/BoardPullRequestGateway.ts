@@ -278,10 +278,7 @@ export class BoardPullRequestGateway extends Context.Service<
 export const layer: Layer.Layer<
   BoardPullRequestGateway,
   never,
-  | BoardGitStatus
-  | GitVcsDriver.GitVcsDriver
-  | PullRequestService.PullRequestService
-  | ThreadGateway
+  BoardGitStatus | GitVcsDriver.GitVcsDriver | PullRequestService.PullRequestService | ThreadGateway
 > = Layer.effect(
   BoardPullRequestGateway,
   Effect.gen(function* () {
