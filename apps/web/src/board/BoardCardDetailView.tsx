@@ -28,6 +28,7 @@
 import {
   DEFAULT_BOARD_REVIEW_ROUNDS,
   activeBoardCardThreadId,
+  BOARD_SEED_STAGE_IDS,
   isBoardCardAwaitingPermission,
   BOARD_AUTO_MERGE_MAX_ATTEMPTS,
   boardCardArchiveNeedsConfirmation,
@@ -106,6 +107,7 @@ import {
   SlidersHorizontalIcon,
   Trash2Icon,
   TriangleAlertIcon,
+  Undo2Icon,
   XIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
@@ -167,6 +169,7 @@ import {
 import type { BoardAdoptSearch, BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
+import { boardCiSentBackBanner, isBoardCiLive } from "./boardCi";
 import { deriveBoardPlanRows } from "./boardPlanRows";
 import { boardCardHasSummaryPane, deriveBoardCardWorkSummary } from "./boardCardWorkSummary";
 import { boardStageLabel } from "./boardStages";
@@ -237,6 +240,9 @@ const BoardPlansPanel = lazy(() =>
  * phase progress and findings from the card's step completions. Lazy like its
  * siblings: a card that never reaches review pays nothing for it.
  */
+const BoardCardCiPane = lazy(() =>
+  import("./BoardCardCiPane").then((module) => ({ default: module.BoardCardCiPane })),
+);
 const BoardCardReviewPane = lazy(() =>
   import("./BoardCardReviewPane").then((module) => ({ default: module.BoardCardReviewPane })),
 );
@@ -316,10 +322,13 @@ function RailSections({
   props,
   group,
   onOpenThread,
+  onOpenCi,
 }: {
   readonly props: BoardCardDetailViewProps;
   readonly group: BoardCardDetailGroup | null;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  /** Open the CI tab, which every CI activity row links to (T3O-44). */
+  readonly onOpenCi?: (() => void) | undefined;
 }) {
   const { card } = props.detail;
   const activity = props.detail.activity;
@@ -348,6 +357,7 @@ function RailSections({
           <BoardCardActivityRail
             agents={props.agents}
             entries={activity}
+            onOpenCi={onOpenCi}
             projectNames={props.project.names}
             stages={props.stages}
           />
@@ -558,6 +568,10 @@ export interface BoardCardDetailViewProps {
       round" at Code review and Ready for merge, "Request review" on a card
       that has never had one. Absent hides the button entirely. */
   readonly onRequestReviewRound?: (() => void) | undefined;
+  /** "Skip CI and move to Ready for merge" (T3O-44). */
+  readonly onSkipCi?: (() => void) | undefined;
+  /** A Skip CI request is in flight. */
+  readonly skipCiPending?: boolean | undefined;
   /** Create a follow-up card from the decision log (T3O-32). */
   readonly onCreateFollowUp?:
     | ((draft: { readonly title: string; readonly brief: string }) => void)
@@ -1082,6 +1096,41 @@ function AutoMergeBanner({ info }: { readonly info: BoardAutoMergeBanner }) {
         </span>
         <span className="text-[11px] leading-[1.45] text-muted-foreground/80">{info.meta}</span>
       </div>
+    </div>
+  );
+}
+
+/** A card CI sent back to review (T3O-44): why, the fixes it used, and the
+    door to the run. Amber, like every hold the board did not resolve. */
+function BoardCiSentBackBanner({
+  banner,
+  onViewRun,
+}: {
+  readonly banner: { readonly title: string; readonly reason: string; readonly meta: string };
+  readonly onViewRun: () => void;
+}) {
+  return (
+    <div className="mx-3.5 mt-2.5 flex items-start gap-2.5 rounded-[10px] border border-amber-500/40 bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] py-2.5 pr-2.5 pl-3 dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]">
+      <Undo2Icon
+        aria-hidden="true"
+        className="mt-px size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+      />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-[12.5px] font-medium text-foreground">{banner.title}</span>
+        {banner.reason === "" ? null : (
+          <span className="text-[11.5px] leading-[1.45] text-pretty text-muted-foreground">
+            {banner.reason}
+          </span>
+        )}
+        <span className="text-[11px] leading-[1.45] text-muted-foreground/80">{banner.meta}</span>
+      </div>
+      <button
+        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+        onClick={onViewRun}
+        type="button"
+      >
+        View CI run
+      </button>
     </div>
   );
 }
@@ -1685,6 +1734,7 @@ function ActionsSection({
     stepHeld: props.stepHeld === true,
     hasBranch: card.worktree !== null,
     blocked: card.blocked,
+    ciEntryLive: card.ci !== null,
   };
   const primaryAction = boardStagePrimaryAction(props.stages, card.stage, actionContext);
   const forward =
@@ -2315,7 +2365,7 @@ function BoardBaseBranchRow({ props }: { readonly props: BoardCardDetailViewProp
 /** `planning` is the Thread pane pinned to a group's planning thread (T3O-34):
     a pane of its own, so its pill lights by the user's choice rather than by
     which thread happens to be the default. */
-export type BoardCardPane = "thread" | "planning" | "review" | "summary" | "plan" | "brief";
+export type BoardCardPane = "thread" | "planning" | "review" | "ci" | "summary" | "plan" | "brief";
 
 /** Whether the card has reached the review-role stage — from there on the loop
     is what the card is about, so the modal opens on the Review pane. */
@@ -2353,6 +2403,8 @@ export function initialBoardCardPane(
   stage: BoardStageId,
   liveChildCount = 0,
 ): BoardCardPane {
+  // A card in CI opens on its run (T3O-44).
+  if (stage === BOARD_SEED_STAGE_IDS.ci) return "ci";
   const def = boardStageById(stageStateOf(stages), stage);
   const role = def === null ? null : effectiveBoardStageRole(def);
   if (role === "merge" || role === "done") return "summary";
@@ -2413,6 +2465,8 @@ export function initialBoardCardThreadId(
 function PaneTabs({
   pane,
   hasReview,
+  hasCi = false,
+  ciLive = false,
   hasSummary,
   hasPlan,
   planCount,
@@ -2422,6 +2476,10 @@ function PaneTabs({
 }: {
   readonly pane: BoardCardPane;
   readonly hasReview: boolean;
+  /** The CI pill (T3O-44): the card is in CI or has run it. */
+  readonly hasCi?: boolean | undefined;
+  /** CI is running or fixing, which lights the pill's blue dot. */
+  readonly ciLive?: boolean | undefined;
   readonly hasSummary: boolean;
   readonly hasPlan: boolean;
   /** Whether the Planning pill shows: a group with a live planning thread. */
@@ -2461,6 +2519,17 @@ function PaneTabs({
           <button className={tab("review")} onClick={() => onSelect("review")} type="button">
             <RefreshCcwIcon className="size-3" />
             Review
+          </button>
+        </BoardHint>
+      ) : null}
+      {hasCi ? (
+        <BoardHint label={ciLive ? "Continuous integration · running" : "Continuous integration"}>
+          <button className={tab("ci")} onClick={() => onSelect("ci")} type="button">
+            <ListChecksIcon className="size-3" />
+            CI
+            {ciLive ? (
+              <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-info" />
+            ) : null}
           </button>
         </BoardHint>
       ) : null}
@@ -2680,9 +2749,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       (link) => link.threadId === activeThreadId && link.threadState === "working",
     );
   const reviewStalled = onReviewStage && boardReviewPaneStopped(props.stepFailure);
+  // CI (T3O-44): the tab exists while the card is in CI or once it has run.
+  const inCi = card.stage === BOARD_SEED_STAGE_IDS.ci;
+  const hasCi = inCi || card.ci !== null || props.detail.ciPasses.length > 0;
+  const ciBanner = boardCiSentBackBanner({ inCi, outcome: card.ciLastOutcome });
   const activePane: BoardCardPane =
     (pane === "plan" && !hasPlan) ||
     (pane === "review" && !hasReview) ||
+    (pane === "ci" && !hasCi) ||
     (pane === "summary" && !hasSummary) ||
     (pane === "planning" && planningLink === undefined)
       ? "thread"
@@ -2788,7 +2862,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
           )}
         >
-          {boardStageLabel(props.stages, card.stage)}
+          {/* "Continuous integration" is too long for this row (T3O-44). */}
+          {card.stage === BOARD_SEED_STAGE_IDS.ci
+            ? "CI"
+            : boardStageLabel(props.stages, card.stage)}
         </span>
         {archived ? (
           <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
@@ -2851,6 +2928,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         ) : null}
         <span className="flex-1" />
         <PaneTabs
+          ciLive={inCi && isBoardCiLive(card.ci)}
+          hasCi={hasCi}
           hasPlan={hasPlan}
           hasReview={hasReview}
           hasSummary={hasSummary}
@@ -2966,6 +3045,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           conflict fix starts — and rendered after it so a card that somehow
           carries both leads with the thing that is actually running. */}
       {autoMergeBanner === null ? null : <AutoMergeBanner info={autoMergeBanner} />}
+      {ciBanner === null ? null : (
+        <BoardCiSentBackBanner banner={ciBanner} onViewRun={() => setPane("ci")} />
+      )}
       {props.conflictFix === null ? null : (
         <ConflictBanner
           info={props.conflictFix}
@@ -3051,6 +3133,24 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 }
               />
             </Suspense>
+          ) : activePane === "ci" ? (
+            <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
+              <BoardCardCiPane
+                activeThreadId={activeThreadId}
+                cardKey={card.key}
+                ci={card.ci}
+                inCi={inCi}
+                lastOutcome={card.ciLastOutcome}
+                onBackToThread={() => setPane("thread")}
+                onOpenThread={(threadId) => {
+                  setSelectedThreadId(threadId);
+                  setPane("thread");
+                }}
+                onSkipCi={props.onSkipCi}
+                passes={props.detail.ciPasses}
+                skipPending={props.skipCiPending}
+              />
+            </Suspense>
           ) : activePane === "review" ? (
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardReviewPane
@@ -3070,7 +3170,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   // exists because a held loop will never make the move on its
                   // own, not because the move is special.
                   const next = boardNextStageId(stageStateOf(props.stages), card.stage, null);
-                  return next === null || card.blocked ? undefined : () => props.onMoveStage(next);
+                  // Cards enter CI on their own (T3O-44), and this list is the
+                  // card's pipeline: a CI in it sits after the review stage.
+                  const ciAhead =
+                    card.stage !== BOARD_SEED_STAGE_IDS.ci &&
+                    props.stages.some((stage) => stage.stageId === BOARD_SEED_STAGE_IDS.ci);
+                  return next === null || ciAhead || card.blocked
+                    ? undefined
+                    : () => props.onMoveStage(next);
                 })()}
                 onBackToThread={() => setPane("thread")}
                 onSetRoundModel={props.onSetReviewRoundModel}
@@ -3207,7 +3314,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 {props.feedback}
               </p>
             ) : null}
-            <RailSections group={group} onOpenThread={selectThread} props={props} />
+            <RailSections
+              group={group}
+              onOpenCi={hasCi ? () => setPane("ci") : undefined}
+              onOpenThread={selectThread}
+              props={props}
+            />
           </div>
         </div>
       ) : (
@@ -3275,7 +3387,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 <GroupActionsSection group={group} props={props} unmet={unmet} />
               )}
               <PlanReviewSection props={props} />
-              <RailSections group={group} onOpenThread={selectThread} props={props} />
+              <RailSections
+                group={group}
+                onOpenCi={hasCi ? () => setPane("ci") : undefined}
+                onOpenThread={selectThread}
+                props={props}
+              />
             </div>
           </div>
         </div>

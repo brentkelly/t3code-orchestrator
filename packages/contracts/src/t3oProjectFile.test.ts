@@ -189,6 +189,8 @@ describe("resolveT3oProjectFile", () => {
       "a",
       "c",
       "b",
+      // The CI seed (T3O-44) sits between review and merge on every board.
+      "ci",
       "merge",
     ]);
   });
@@ -202,6 +204,7 @@ describe("resolveT3oProjectFile", () => {
       overrides: {},
       warnings: [],
       source,
+      ci: null,
     });
     expect(parseT3oProjectFile("{ nope").warning).toContain("not valid JSON");
   });
@@ -225,7 +228,12 @@ describe("boardProjectStagesInOrder", () => {
       "merge",
       "done",
     ]);
-    expect(ids(board, projectB)).toEqual(BOARD_SEED_STAGES.map((stage) => String(stage.stageId)));
+    // CI (T3O-44) is in no pipeline whose project has no CI steps.
+    expect(ids(board, projectB)).toEqual(
+      BOARD_SEED_STAGES.filter((stage) => stage.stageId !== "ci").map((stage) =>
+        String(stage.stageId),
+      ),
+    );
     expect(ids(board, null)).toEqual(ids(board, projectB));
   });
 

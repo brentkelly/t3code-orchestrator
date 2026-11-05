@@ -14,11 +14,13 @@
  * stage (Done) has none either — its only exit is archive.
  */
 import {
+  BOARD_SEED_STAGE_IDS,
   effectiveBoardStageRole,
   boardStageById,
   boardStageIndex,
   boardNextStageId,
   boardStageWithRole,
+  compareBoardStages,
   type BoardStageDefinition,
   type BoardStageId,
   type BoardState,
@@ -81,6 +83,8 @@ export type BoardStagePrimaryAction =
 
 /** What the merge-role stage's button needs to know beyond the stage list. */
 export interface BoardStagePrimaryActionContext {
+  /** The card has a CI entry (T3O-44): only passing or Skip CI moves it on. */
+  readonly ciEntryLive?: boolean;
   /** The card's pull request state, or null when it has none. Only `open` puts
       a Merge button on the card: a merged or closed PR has nothing left to
       merge, and the card falls back to the ordinary forward move so it is
@@ -172,12 +176,36 @@ export function boardStageSecondaryActions(
   ];
 }
 
+/**
+ * The forward move's target, CI aware (T3O-44). The list is the card's own
+ * pipeline, so a CI in it is the project's live CI (or the one the card sits
+ * in): cards enter CI on their own and leave it by passing or by Skip CI, so
+ * nothing crosses it by button. A card left in a paused CI has no entry and
+ * moves on like any held card. `boardNextStageId` reads a bare list as the
+ * global pipeline, which never has CI, so CI is walked here.
+ */
+function boardCiAwareNextStageId(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  stageId: BoardStageId,
+  ciEntryLive: boolean,
+): BoardStageId | null {
+  const ci = BOARD_SEED_STAGE_IDS.ci;
+  const ordered = [...stages].sort(compareBoardStages);
+  const ciIndex = ordered.findIndex((stage) => stage.stageId === ci);
+  if (ciIndex < 0) return boardNextStageId(stateOf(stages), stageId, null);
+  if (stageId === ci) return ciEntryLive ? null : (ordered[ciIndex + 1]?.stageId ?? null);
+  const next = boardNextStageId(stateOf(stages), stageId, null);
+  if (next === null) return null;
+  const fromIndex = ordered.findIndex((stage) => stage.stageId === stageId);
+  const nextIndex = ordered.findIndex((stage) => stage.stageId === next);
+  return fromIndex < ciIndex && nextIndex > ciIndex ? null : next;
+}
+
 export function boardStagePrimaryAction(
   stages: ReadonlyArray<BoardStageDefinition>,
   stageId: BoardStageId,
   context?: BoardStagePrimaryActionContext,
 ): BoardStagePrimaryAction | null {
-  const board = stateOf(stages);
   const current = stages.find((stage) => stage.stageId === stageId) ?? null;
   // Effective, not raw: a `board_stages` row seeded before a role existed
   // carries it as NULL, and the button must not change behaviour based on how
@@ -204,7 +232,7 @@ export function boardStagePrimaryAction(
     };
   }
   // The stage list is already the card's own project's pipeline (T3O-43).
-  const next = boardNextStageId(board, stageId, null);
+  const next = boardCiAwareNextStageId(stages, stageId, context?.ciEntryLive === true);
   if (next === null) return null;
   const nextStage = stages.find((stage) => stage.stageId === next);
   if (nextStage === undefined) return null;

@@ -5,12 +5,14 @@
  * global value it replaces.
  */
 import {
+  BOARD_SEED_STAGE_IDS,
   boardAllStages,
   boardProjectStageConfig,
   boardProjectStagesInOrder,
   boardStageById,
   compareBoardStages,
   resolveBoardStageExecution,
+  type BoardCiStepDefinition,
   type BoardProjectStageConfig,
   type BoardSettings,
   type BoardStageExecutionPatch,
@@ -42,6 +44,11 @@ export interface BoardProjectPipelineSummary {
   readonly warnings: ReadonlyArray<string>;
   readonly sequence: ReadonlyArray<BoardProjectPipelineStep>;
   readonly overrides: ReadonlyArray<BoardProjectPipelineOverride>;
+  /** The project's CI steps (T3O-44), or null when it defines none. */
+  readonly ci: {
+    readonly steps: ReadonlyArray<BoardCiStepDefinition>;
+    readonly active: boolean;
+  } | null;
   readonly path: string | null;
   readonly commitSha: string | null;
 }
@@ -108,6 +115,7 @@ export function boardProjectPipelineSummary(input: {
       warnings: config?.warnings ?? [],
       sequence: [],
       overrides: [],
+      ci: null,
       path: null,
       commitSha: null,
     };
@@ -134,6 +142,10 @@ export function boardProjectPipelineSummary(input: {
     const stage = boardStageById(input.view, stageId as BoardStageId);
     const global = resolveBoardStageExecution(input.settings, stageId as BoardStageId);
     for (const [field, value] of patchLeaves(patch)) {
+      // CI's steps and pause are its own section, not a setting beside a global.
+      if (stageId === BOARD_SEED_STAGE_IDS.ci && (field === "steps" || field === "enabled")) {
+        continue;
+      }
       overrides.push({
         stageLabel: stage?.label ?? stageId,
         field,
@@ -151,6 +163,11 @@ export function boardProjectPipelineSummary(input: {
   if (config.removedStageIds.length > 0) {
     chips.push(`−${plural(config.removedStageIds.length, "stage", "stages")}`);
   }
+  if (config.ci !== null) {
+    chips.push(
+      `CI · ${plural(config.ci.steps.length, "step", "steps")}${config.ci.active ? "" : " · paused"}`,
+    );
+  }
   if (overrides.length > 0) chips.push(plural(overrides.length, "override", "overrides"));
   if (config.warnings.length > 0) {
     chips.push(plural(config.warnings.length, "ignored entry", "ignored entries"));
@@ -161,6 +178,7 @@ export function boardProjectPipelineSummary(input: {
     warnings: config.warnings,
     sequence,
     overrides,
+    ci: config.ci,
     path: config.source.path,
     commitSha: config.source.commitSha,
   };

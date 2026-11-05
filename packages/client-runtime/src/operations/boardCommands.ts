@@ -134,6 +134,11 @@ export const submitBoardCardForMerge = (input: { readonly cardId: BoardCardId })
 export const requestBoardReviewRound = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.requestReviewRound, input);
 
+/** "Skip CI" (T3O-44): stop the card's CI run and move it to the stage after
+    CI. The server records the skip under the caller's name. */
+export const skipBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.skipCi, input);
+
 /** "Remove worktree" on a finished card that kept one (T3O-52): removes it
     past the safety rule. The branch is kept. */
 export const removeBoardCardWorktree = (input: { readonly cardId: BoardCardId }) =>

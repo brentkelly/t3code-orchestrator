@@ -6,6 +6,8 @@ import * as Schema from "effect/Schema";
 
 import type { ProjectId } from "./baseSchemas.ts";
 import {
+  BOARD_CI_MAX_STEPS,
+  BOARD_SEED_STAGE_IDS,
   BOARD_STAGE_EXECUTION_PATCH_KEYS,
   BoardStageExecutionPatch,
   boardOrderKeyBetween,
@@ -213,6 +215,7 @@ export function resolveT3oProjectFile(input: {
       overrides: {},
       warnings,
       source: input.source,
+      ci: null,
     },
     stages: [],
   });
@@ -268,6 +271,12 @@ export function resolveT3oProjectFile(input: {
       if (stage.stageId === beforeBuild?.stageId) {
         warnings.push(
           `stages.remove: "${entry}" (${stage.label}) is where cards wait to build and can't be removed; ignored.`,
+        );
+        continue;
+      }
+      if (stage.stageId === BOARD_SEED_STAGE_IDS.ci) {
+        warnings.push(
+          `stages.remove: "${entry}" (${stage.label}) can't be removed; a project has CI only while stages.settings.ci lists steps, and "enabled": false pauses it. Ignored.`,
         );
         continue;
       }
@@ -417,8 +426,22 @@ export function resolveT3oProjectFile(input: {
     }
   }
 
+  // CI (T3O-44): on while `stages.settings.ci` lists at least one step.
+  let ciPatch = overrides[BOARD_SEED_STAGE_IDS.ci];
+  if (ciPatch?.steps !== undefined && ciPatch.steps.length > BOARD_CI_MAX_STEPS) {
+    warnings.push(
+      `stages.settings.ci.steps: at most ${BOARD_CI_MAX_STEPS} steps; the rest are ignored.`,
+    );
+    ciPatch = { ...ciPatch, steps: ciPatch.steps.slice(0, BOARD_CI_MAX_STEPS) };
+    overrides[BOARD_SEED_STAGE_IDS.ci] = ciPatch;
+  }
+  const ciSteps = ciPatch?.steps ?? [];
+  const ci = ciSteps.length === 0 ? null : { steps: ciSteps, active: ciPatch?.enabled !== false };
+  if (ciPatch !== undefined && ciSteps.length === 0 && ciPatch.enabled === true) {
+    warnings.push(`stages.settings.ci: "enabled" needs at least one step to turn CI on; ignored.`);
+  }
   return {
-    config: { removedStageIds, addedStageIds, overrides, warnings, source: input.source },
+    config: { removedStageIds, addedStageIds, overrides, warnings, source: input.source, ci },
     stages: [...placed.values()].sort(compareBoardStages),
   };
 }

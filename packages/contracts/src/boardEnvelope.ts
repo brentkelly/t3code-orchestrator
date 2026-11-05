@@ -28,6 +28,7 @@
  */
 import type { BoardCardPullRequest, BoardReviewPhaseId, BoardStageRole } from "./board.ts";
 import {
+  BOARD_CI_FIX_PAYLOAD_SHAPE,
   BOARD_BUILD_SUMMARY_PAYLOAD_SHAPE,
   BOARD_REVIEW_PHASE_LABELS,
   DEFAULT_BOARD_SYNC_PHASE_PROMPT,
@@ -476,10 +477,21 @@ export function composeBoardReviewPhasePrompt(input: {
   readonly rounds: number;
   readonly prompt: string;
   readonly draftPullRequests?: boolean;
+  /** The CI failure that sent the card back (T3O-44): a must-fix finding for
+      the review and triage of the round that follows. */
+  readonly ciFinding?: { readonly stepName: string | null; readonly finding: string } | null;
 }): string {
+  const ci =
+    input.ciFinding == null || input.phase === "adjudicate"
+      ? ""
+      : [
+          `CI sent this card back to review${input.ciFinding.stepName === null ? "" : ` after its "${input.ciFinding.stepName}" step failed`}. Treat this as a blocking, must-fix finding this round${input.phase === "review" ? ": report it as a critical finding" : ": fix it"}, whatever else you find:`,
+          input.ciFinding.finding.trim(),
+        ].join("\n\n");
   return [
     boardReviewPhasePreamble(input),
     input.prompt.trim(),
+    ci,
     boardDraftPullRequestLine({
       draftPullRequests: input.draftPullRequests === true,
       phase: input.phase,
@@ -569,4 +581,41 @@ function boardSyncPhaseMechanics(): string {
   const marker = "Fetch the base branch";
   const at = DEFAULT_BOARD_SYNC_PHASE_PROMPT.indexOf(marker);
   return at < 0 ? DEFAULT_BOARD_SYNC_PHASE_PROMPT : DEFAULT_BOARD_SYNC_PHASE_PROMPT.slice(at);
+}
+
+/**
+ * The CI fix agent's step body (T3O-44): the stage's fix prompt, the failure
+ * it is looking at, and the completion contract. The board runs the steps; the
+ * agent only fixes, so it is told what failed rather than asked to find out.
+ */
+export function composeBoardCiFixPrompt(input: {
+  readonly prompt: string;
+  readonly attempt: number;
+  readonly maxAttempts: number;
+  readonly failure: {
+    readonly stepName: string;
+    readonly command: string;
+    readonly status: "failed" | "timed-out";
+    readonly exitCode: number | null;
+    readonly tail: string;
+    readonly logPath: string | null;
+  };
+}): string {
+  const { failure } = input;
+  const ended =
+    failure.status === "timed-out"
+      ? "timed out and was killed"
+      : `exited with code ${failure.exitCode ?? "unknown"}`;
+  return [
+    input.prompt,
+    "",
+    `CI step "${failure.stepName}" failed: \`${failure.command}\` ${ended}. This is fix attempt ${input.attempt} of ${input.maxAttempts}.`,
+    ...(failure.logPath === null ? [] : [`The full log is at \`${failure.logPath}\`.`]),
+    "The last lines of its output:",
+    "```",
+    failure.tail.length > 0 ? failure.tail : "(no output)",
+    "```",
+    "",
+    `Do not run the CI steps yourself to finish: the board re-runs every step from the top after you report a fix. Complete with a payload shaped ${BOARD_CI_FIX_PAYLOAD_SHAPE}: "fixed" once your fix is committed and pushed, or "return-to-review" with a finding that says what failed and why, which the next review round must fix.`,
+  ].join("\n");
 }

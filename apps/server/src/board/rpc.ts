@@ -313,6 +313,14 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.requestReviewRound(input.cardId),
       ),
 
+    /** Skip CI (T3O-44): a human's override, so what it records carries the
+        human, like a drag. */
+    [BOARD_WS_METHODS.skipCi]: (input: BoardCardPullRequestActionInput) =>
+      authorized(
+        BOARD_WS_METHODS.skipCi,
+        deps.boardSupervisor.skipCi(input.cardId, services.stampActor),
+      ),
+
     /**
      * "Remove worktree" on a finished card that kept one (T3O-52, D5). The
      * human confirmed at a dialog naming what is lost; the branch survives.

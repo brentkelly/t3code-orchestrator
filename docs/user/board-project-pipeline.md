@@ -14,6 +14,9 @@ A project's file can:
 - **override any stage setting** the global pipeline has, such as a prompt, model, timeout or the
   review loop's rounds.
 
+A project can also turn on a **Continuous integration** stage that runs its checks after Code
+review; see [Continuous integration](./board-continuous-integration.md).
+
 Stage names cannot be changed per project. Settings layer in order: the built-in defaults, then
 **Settings** → **Board**, then the project's `t3o.json`.
 

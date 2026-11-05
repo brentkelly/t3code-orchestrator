@@ -103,6 +103,7 @@ import {
 } from "./boardCardThreadMenu";
 import type { BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { boardStageLabel } from "./boardStages";
+import { boardToast } from "./boardToast";
 import { indexBoardLabels } from "./labelColour";
 import {
   BoardCardDetailPopup,
@@ -130,6 +131,7 @@ import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import {
   describeBoardCheckWorktreeOutcome,
   describeBoardCommandFailure,
+  describeBoardSkipCiOutcome,
   describeBoardMergeOutcome,
   // T3o: the forced re-check's answer (T3O-48).
   describeBoardRefreshOutcome,
@@ -273,6 +275,9 @@ export function BoardCardDetail({
   const requestReviewRound = useAtomCommand(boardEnvironment.requestReviewRound, {
     reportFailure: false,
   });
+  // "Skip CI" (T3O-44). A refusal is an answer, toasted below.
+  const skipCi = useAtomCommand(boardEnvironment.skipCi, { reportFailure: false });
+  const [skippingCi, setSkippingCi] = useState(false);
   const createCard = useAtomCommand(boardEnvironment.createCard);
   // "Remove worktree" (T3O-52). Same reason again: a refusal is an answer.
   const removeCardWorktree = useAtomCommand(boardEnvironment.removeCardWorktree, {
@@ -999,6 +1004,28 @@ export function BoardCardDetail({
     });
   };
 
+  const onSkipCi = () => {
+    setSkippingCi(true);
+    void skipCi({ environmentId, input: { cardId: card.id } }).then((result) => {
+      setSkippingCi(false);
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          boardToast({
+            title: "CI could not be skipped",
+            description: describeBoardCommandFailure(result),
+            tone: "error",
+          });
+        }
+        return;
+      }
+      boardToast(
+        describeBoardSkipCiOutcome(result.value, card.key, (stageId) =>
+          boardStageLabel(stages, stageId as BoardStageId),
+        ),
+      );
+    });
+  };
+
   /** A follow-up card in the first stage, for a decision worth revisiting. */
   const onCreateFollowUp = (draft: { readonly title: string; readonly brief: string }) => {
     const firstStage = stageState.stages?.[0];
@@ -1471,6 +1498,8 @@ export function BoardCardDetail({
         });
       }}
       onRequestReviewRound={onRequestReviewRound}
+      onSkipCi={onSkipCi}
+      skipCiPending={skippingCi}
       onCreateFollowUp={onCreateFollowUp}
       stepLive={stepLive}
       onOpenPullRequest={(url) => {

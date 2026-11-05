@@ -19,6 +19,7 @@
  */
 import type {
   BoardCardActivityEntry,
+  BoardCiPassOutcome,
   BoardStageDefinition,
   BoardStepOutcome,
   BoardWorkerId,
@@ -51,6 +52,8 @@ import {
   ScanSearchIcon,
   ServerOffIcon,
   FastForwardIcon,
+  ChevronsRightIcon,
+  Undo2Icon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
@@ -187,6 +190,20 @@ function ActivityIcon({
       ) : (
         <ServerIcon className={className} />
       );
+    // T3O-44: a passing pass is done, so green; a send-back is a hold only a
+    // fresh review round clears, so amber; the rest claim nothing.
+    case "card-ci-pass-finished":
+      return payload?.ciOutcome === "passed" ? (
+        <CheckCircle2Icon className={cn(className, "text-success-foreground")} />
+      ) : (
+        <CheckCircle2Icon className={className} />
+      );
+    case "card-ci-sent-back":
+      return <Undo2Icon className={cn(className, "text-warning-foreground")} />;
+    case "card-ci-skipped":
+      return <ChevronsRightIcon className={className} />;
+    case "card-ci-held":
+      return <TriangleAlertIcon className={cn(className, "text-warning-foreground")} />;
     // T3O-39: plan review rows claim nothing about the work — neutral.
     case "plan-review-started":
     case "plan-review-stopped":
@@ -194,6 +211,32 @@ function ActivityIcon({
       return <ScanSearchIcon className={className} />;
   }
 }
+
+function ciPassSentence(outcome: BoardCiPassOutcome | undefined): string {
+  switch (outcome) {
+    case "passed":
+      return "passed CI";
+    case "fixed-in-place":
+      return "fixed a CI failure in place; the steps re-ran from the top";
+    case "sent-back":
+      return "finished a CI pass that failed";
+    case "skipped":
+      return "finished a CI pass that was skipped";
+    case "interrupted":
+      return "finished a CI pass that was interrupted";
+    case "cancelled":
+      return "finished a CI pass that was cancelled";
+    case undefined:
+      return "finished a CI pass";
+  }
+}
+
+const CI_ACTIVITY_KINDS: ReadonlySet<BoardCardActivityEntry["kind"]> = new Set([
+  "card-ci-pass-finished",
+  "card-ci-sent-back",
+  "card-ci-skipped",
+  "card-ci-held",
+]);
 
 function roundsPhrase(rounds: number): string {
   return rounds === 1 ? "1 round" : `${rounds} rounds`;
@@ -390,6 +433,24 @@ function activitySentence(
       ) : (
         <>{payload.detail}</>
       );
+    case "card-ci-pass-finished":
+      return <>{ciPassSentence(payload.ciOutcome)}</>;
+    case "card-ci-sent-back": {
+      const step = payload.ciStepName ?? "a step";
+      const fixes = payload.ciFixAttempts ?? 0;
+      return fixes === 0 ? (
+        <>sent the card back to review: {step} failed</>
+      ) : (
+        <>
+          sent the card back to review: {step} still failing after {fixes} fix{" "}
+          {fixes === 1 ? "attempt" : "attempts"}
+        </>
+      );
+    }
+    case "card-ci-skipped":
+      return <>skipped CI</>;
+    case "card-ci-held":
+      return payload.detail === undefined ? <>held the card in CI</> : <>{payload.detail}</>;
     case "card-review-round-requested":
       return payload.detail === undefined ? (
         <>asked for another review round</>
@@ -544,12 +605,14 @@ function ActivityRow({
   agents,
   projectNames,
   toggle,
+  onOpenCi,
 }: {
   readonly entry: BoardCardActivityEntry;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly agents: BoardActivityAgentLookup | undefined;
   readonly projectNames: ReadonlyMap<string, string> | undefined;
   readonly toggle: ReactNode;
+  readonly onOpenCi: (() => void) | undefined;
 }) {
   const workers = useBoardWorkersState();
   const workerName = (workerId: BoardWorkerId) => boardWorkerLabel(workerId, workers);
@@ -561,6 +624,18 @@ function ActivityRow({
       <span className="min-w-0 flex-1 text-pretty">
         <ActorName agents={agents} entry={entry} />{" "}
         {activitySentence(entry, stages, projectNames, workerName)}
+        {onOpenCi !== undefined && CI_ACTIVITY_KINDS.has(entry.kind) ? (
+          <>
+            {" · "}
+            <button
+              className="cursor-pointer rounded-sm font-medium text-foreground underline-offset-2 hover:underline"
+              onClick={onOpenCi}
+              type="button"
+            >
+              View CI run
+            </button>
+          </>
+        ) : null}
         {toggle}
       </span>
       <BoardHint label={entry.createdAt}>
@@ -591,10 +666,13 @@ export function BoardCardActivityRail({
   stages,
   agents,
   projectNames,
+  onOpenCi,
 }: {
   readonly entries: ReadonlyArray<BoardCardActivityEntry>;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly agents?: BoardActivityAgentLookup | undefined;
+  /** Open the card's CI tab, from any CI row (T3O-44). */
+  readonly onOpenCi?: (() => void) | undefined;
   /** Project titles by id (T3O-33), for the one row that names a project. */
   readonly projectNames?: ReadonlyMap<string, string> | undefined;
 }) {
@@ -624,6 +702,7 @@ export function BoardCardActivityRail({
                 agents={agents}
                 entry={entry}
                 key={entry.activityId}
+                onOpenCi={onOpenCi}
                 projectNames={projectNames}
                 stages={stages}
                 toggle={index === rows.length - 1 ? toggle : null}

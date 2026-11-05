@@ -5,6 +5,7 @@
  * the read model the page already holds.
  */
 import {
+  BOARD_SEED_STAGE_IDS,
   boardAllStages,
   boardProjectStagesInOrder,
   compareBoardStages,
@@ -71,8 +72,14 @@ export function boardPipelineColumns(input: {
   const { view, projects, occupiedStageIds } = input;
   const all = [...boardAllStages(view)].sort(compareBoardStages);
   if (projects.length === 0) {
+    // CI is never in the global pipeline (T3O-44): only a project's t3o.json
+    // turns it on.
     return all
-      .filter((stage) => stage.projectId === null)
+      .filter(
+        (stage) =>
+          stage.projectId === null &&
+          (stage.stageId !== BOARD_SEED_STAGE_IDS.ci || occupiedStageIds.has(stage.stageId)),
+      )
       .map((stage) => ({ stage, kind: "shared", usedBy: [], hint: null }));
   }
   const users = stageUsers(view, projects);
@@ -103,7 +110,12 @@ export function boardPipelineColumns(input: {
       continue;
     }
     if (usedBy.length === projects.length) {
-      columns.push({ stage, kind: "shared", usedBy: [], hint: null });
+      columns.push({
+        stage,
+        kind: "shared",
+        usedBy: [],
+        hint: single ? ciStepsHint(view, stage, projects[0]!) : null,
+      });
       continue;
     }
     const others = projects.filter((project) => !usedBy.includes(project));
@@ -116,6 +128,18 @@ export function boardPipelineColumns(input: {
     });
   }
   return columns;
+}
+
+/** The CI column's header on a single-project board (T3O-44): the project's
+    steps in the order they run. */
+function ciStepsHint(
+  view: BoardStageView,
+  stage: BoardStageDefinition,
+  project: BoardPipelineProject,
+): string | null {
+  if (stage.stageId !== BOARD_SEED_STAGE_IDS.ci) return null;
+  const steps = view.projectStageConfigs?.[project.id]?.ci?.steps ?? [];
+  return steps.length === 0 ? null : steps.map((step) => step.name).join(" · ");
 }
 
 /** A lookup for the note a card carries when its project no longer uses the
@@ -162,7 +186,11 @@ export function boardPipelinesGrid(
   const users = stageUsers(view, projects);
   const stages = [...boardAllStages(view)]
     .sort(compareBoardStages)
-    .filter((stage) => stage.projectId === null || users.has(stage.stageId));
+    .filter(
+      (stage) =>
+        (stage.projectId === null && stage.stageId !== BOARD_SEED_STAGE_IDS.ci) ||
+        users.has(stage.stageId),
+    );
   return {
     stages,
     rows: projects.map((project) => ({

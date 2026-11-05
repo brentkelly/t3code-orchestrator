@@ -21,6 +21,7 @@
  * it; it never advances a card on its own.
  */
 import {
+  BOARD_SEED_STAGE_IDS,
   BOARD_DECISIONS_PER_CALL_MAX,
   isBoardCardAutoPlanPending,
   BOARD_CARD_BRIEF_BODY_KIND,
@@ -150,6 +151,7 @@ import {
   briefUnclosedFence,
   replaceBriefSection,
 } from "./briefEdits.ts";
+import { decideBoardCiRecord } from "./ci/ciRecord.ts";
 import { isKeptStepThread } from "./planningThreadKeep.ts";
 import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
 
@@ -1544,6 +1546,7 @@ const projectPlannedBoardEvents = Effect.fn("projectPlannedBoardEvents")(functio
 const GROUP_DERIVING_COMMANDS: ReadonlySet<BoardCommand["type"]> = new Set([
   "board.card.create",
   "board.card.move",
+  "board.card.pipeline-move",
   "board.card.move-cards",
   "board.card.archive",
   "board.card.unarchive",
@@ -2033,7 +2036,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       };
     }
 
+    // T3O-44: the board's own move is decided exactly like a human's, less
+    // CI's human move rules.
+    case "board.card.pipeline-move":
     case "board.card.move": {
+      const pipelineMove = command.type === "board.card.pipeline-move";
       const card = yield* requireActiveBoardCard({ board, command });
       if (command.toStage === card.stage) {
         return yield* invariant(
@@ -2050,6 +2057,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // override; the shared predicate is the drag layer's tooltip too.
       const projectRefusal = boardCardMoveRefusal(board, card, command.toStage, {
         override: true,
+        pipeline: pipelineMove,
       });
       if (projectRefusal !== null) return yield* invariant(command, projectRefusal);
       // Deferred (T3O-27): a parking lot inside a group, just before the
@@ -2089,6 +2097,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             boardStageIndex(board, buildStageForDeferred.stageId));
       const adjacencyRefusal = boardCardMoveRefusal(board, card, command.toStage, {
         override: toDeferred || leavesDeferredBeforeBuild || command.override === true,
+        pipeline: pipelineMove,
       });
       if (adjacencyRefusal !== null) return yield* invariant(command, adjacencyRefusal);
       // Sub-board plan cards (t3o-23, D3) are materialised work, restricted
@@ -2294,6 +2303,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           cards: board.cards,
         }),
         ...(startsNewRound ? retireBoardCardPullRequest(card) : {}),
+        // CI state (T3O-44) belongs to the CI stage: a card leaving it carries
+        // none, and one entering it starts clean.
+        ...(card.stage === BOARD_SEED_STAGE_IDS.ci || command.toStage === BOARD_SEED_STAGE_IDS.ci
+          ? { ci: null }
+          : {}),
+        ...(command.toStage === BOARD_SEED_STAGE_IDS.ci ? { ciLastOutcome: null } : {}),
         updatedAt: command.createdAt,
       };
       const moved: PlannedBoardEvent = {
@@ -2317,9 +2332,41 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // — exactly the staleness the archive/unarchive paths already re-flag.
       const crossesDone =
         doneStageId !== null && (card.stage === doneStageId) !== (command.toStage === doneStageId);
-      return crossesDone
-        ? [moved, ...(yield* boardDependentBlockedEvents({ board, command, changed: nextCard }))]
-        : moved;
+      // A card leaving CI settles its unfinished pass here, the last place that
+      // knows its run id: while a fix agent works there is no pass fiber to settle it.
+      const leftCi: ReadonlyArray<PlannedBoardEvent> =
+        card.stage === BOARD_SEED_STAGE_IDS.ci &&
+        command.toStage !== BOARD_SEED_STAGE_IDS.ci &&
+        card.ci !== null &&
+        card.ci.phase !== "passed"
+          ? [
+              {
+                ...(yield* makeBoardEventBase({
+                  cardId: command.cardId,
+                  occurredAt: command.createdAt,
+                  commandId: command.commandId,
+                })),
+                type: "board.card-ci-recorded",
+                payload: {
+                  cardId: command.cardId,
+                  action: { kind: "finish-pass", runId: card.ci.runId, result: "cancelled" },
+                  card: nextCard,
+                  started: null,
+                  settled: [
+                    { runId: card.ci.runId, outcome: "cancelled", finishedAt: command.createdAt },
+                  ],
+                  activity: null,
+                },
+              },
+            ]
+          : [];
+      return [
+        moved,
+        ...leftCi,
+        ...(crossesDone
+          ? yield* boardDependentBlockedEvents({ board, command, changed: nextCard })
+          : []),
+      ];
     }
 
     // T3O-27: the one regrouping primitive. Grouping alone never touches git;
@@ -3858,6 +3905,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Stage '${stage.label}' holds the '${heldRole}' role and cannot be deleted.`,
         );
       }
+      // Projects switch CI on from t3o.json by its id (T3O-44).
+      if (stage.stageId === BOARD_SEED_STAGE_IDS.ci) {
+        return yield* invariant(
+          command,
+          `Stage '${stage.label}' is the CI stage and cannot be deleted; projects turn it on from t3o.json.`,
+        );
+      }
       // Refused if the stage holds ANY card, archived included (D9). The error
       // names the count; t3o-13's archive view is how the user clears them.
       const held = board.cards.filter((card) => card.stage === command.stageId).length;
@@ -3875,6 +3929,21 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         })),
         type: "board.stage-deleted",
         payload: { stageId: command.stageId },
+      };
+    }
+
+    case "board.card.record-ci": {
+      const card = yield* requireBoardCard({ board, command });
+      const decided = decideBoardCiRecord(card, command);
+      if (!decided.ok) return yield* invariant(command, decided.refusal);
+      return {
+        ...(yield* makeBoardEventBase({
+          cardId: command.cardId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.card-ci-recorded",
+        payload: { cardId: command.cardId, action: command.action, ...decided.payload },
       };
     }
 

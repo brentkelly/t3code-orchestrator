@@ -19,6 +19,11 @@ import {
   BoardCardStepStalledReason,
   BoardCardWorkerMove,
   BoardCardPlacementOrphan,
+  BoardCardCi,
+  BoardCardCiLastOutcome,
+  BoardCiPass,
+  BoardCiPassSettle,
+  BoardCiPassStep,
   type BoardStepQueuedBy,
   BoardWorker,
   BoardWorkerId,
@@ -120,6 +125,17 @@ const settingToInt = (value: boolean | null): number | null =>
 const settingFromInt = (value: number | null): boolean | null =>
   value === null ? null : value !== 0;
 
+const encodeBoardCiPassStepJson = Schema.encodeSync(Schema.fromJsonString(BoardCiPassStep));
+const encodeBoardCiPassStepsJson = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Array(BoardCiPassStep)),
+);
+
+/** A CI pass row (T3O-44): its steps as JSON. */
+const BoardCiPassDbRow = Schema.Struct({
+  ...BoardCiPass.fields,
+  steps: Schema.fromJsonString(BoardCiPass.fields.steps),
+});
+
 const BoardCardDbRow = Schema.Struct({
   cardId: BoardCard.fields.id,
   key: BoardCard.fields.key,
@@ -194,6 +210,9 @@ const BoardCardDbRow = Schema.Struct({
   /** NULL before migration 049 and for every card whose worker is still on
       the board (T3O-66). */
   placementOrphaned: Schema.NullOr(Schema.fromJsonString(BoardCardPlacementOrphan)),
+  /** NULL before migration 059 and for every card outside CI (T3O-44). */
+  ci: Schema.NullOr(Schema.fromJsonString(BoardCardCi)),
+  ciLastOutcome: Schema.NullOr(Schema.fromJsonString(BoardCardCiLastOutcome)),
   /** Migration 051 (T3O-27): NULL `groupTarget` is a leaf. */
   groupTarget: Schema.NullOr(BoardCardGroupTarget),
   groupAutoBuild: Schema.Int,
@@ -618,6 +637,8 @@ const BoardCardShellDbRow = Schema.Struct({
   workerMoveTo: BoardCard.fields.pinnedWorkerId,
   /** The removed worker's label, for Worker removed (T3O-66). */
   orphanedWorkerLabel: Schema.NullOr(Schema.String),
+  ci: Schema.NullOr(Schema.fromJsonString(BoardCardCi)),
+  ciLastOutcome: Schema.NullOr(Schema.fromJsonString(BoardCardCiLastOutcome)),
   /** Group settings (T3O-27), the same columns the card row reads. */
   groupTarget: Schema.NullOr(BoardCardGroupTarget),
   groupAutoBuild: Schema.Int,
@@ -697,6 +718,8 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     placedWorkerId: card.placedWorkerId,
     workerMove: card.workerMove,
     placementOrphaned: card.placementOrphaned,
+    ci: card.ci,
+    ciLastOutcome: card.ciLastOutcome,
     groupTarget: card.group?.target ?? null,
     groupAutoBuild: card.group?.autoBuild === true ? 1 : 0,
     groupAutoMerge: card.group?.autoMerge === true ? 1 : 0,
@@ -794,6 +817,8 @@ function rowToBoardCard(
     placedWorkerId: row.placedWorkerId,
     workerMove: row.workerMove,
     placementOrphaned: row.placementOrphaned,
+    ci: row.ci,
+    ciLastOutcome: row.ciLastOutcome,
     group: boardCardGroupFromRow(row),
     blocked: row.blocked !== 0,
     threadLinks,
@@ -866,6 +891,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         placed_worker_id,
         worker_move,
         placement_orphaned,
+        ci,
+        ci_last_outcome,
         group_target,
         group_auto_build,
         group_auto_merge,
@@ -914,6 +941,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.placedWorkerId},
         ${row.workerMove},
         ${row.placementOrphaned},
+        ${row.ci},
+        ${row.ciLastOutcome},
         ${row.groupTarget},
         ${row.groupAutoBuild},
         ${row.groupAutoMerge},
@@ -962,6 +991,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         placed_worker_id = excluded.placed_worker_id,
         worker_move = excluded.worker_move,
         placement_orphaned = excluded.placement_orphaned,
+        ci = excluded.ci,
+        ci_last_outcome = excluded.ci_last_outcome,
         group_target = excluded.group_target,
         group_auto_build = excluded.group_auto_build,
         group_auto_merge = excluded.group_auto_merge,
@@ -1020,6 +1051,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         placed_worker_id AS "placedWorkerId",
         worker_move AS "workerMove",
         placement_orphaned AS "placementOrphaned",
+        ci,
+        ci_last_outcome AS "ciLastOutcome",
         group_target AS "groupTarget",
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
@@ -1172,6 +1205,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         json_extract(worker_move, '$.status') AS "workerMoveStatus",
         json_extract(worker_move, '$.toWorkerId') AS "workerMoveTo",
         json_extract(placement_orphaned, '$.workerLabel') AS "orphanedWorkerLabel",
+        ci,
+        ci_last_outcome AS "ciLastOutcome",
         group_target AS "groupTarget",
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
@@ -1273,6 +1308,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         json_extract(worker_move, '$.status') AS "workerMoveStatus",
         json_extract(worker_move, '$.toWorkerId') AS "workerMoveTo",
         json_extract(placement_orphaned, '$.workerLabel') AS "orphanedWorkerLabel",
+        ci,
+        ci_last_outcome AS "ciLastOutcome",
         group_target AS "groupTarget",
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
@@ -1420,6 +1457,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         placed_worker_id AS "placedWorkerId",
         worker_move AS "workerMove",
         placement_orphaned AS "placementOrphaned",
+        ci,
+        ci_last_outcome AS "ciLastOutcome",
         group_target AS "groupTarget",
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
@@ -2333,6 +2372,76 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     `,
   });
 
+  // CI passes (T3O-44): one row per pass, its steps (with output tails) as
+  // JSON. Table-only, read by the card detail.
+  const insertBoardCiPassRow = SqlSchema.void({
+    Request: BoardCiPass,
+    execute: (pass) => sql`
+      INSERT OR IGNORE INTO board_ci_passes (
+        run_id, card_id, entry, ordinal, started_at, finished_at, outcome, steps,
+        log_dir, fix_thread_id
+      ) VALUES (
+        ${pass.runId}, ${pass.cardId}, ${pass.entry}, ${pass.ordinal}, ${pass.startedAt},
+        ${pass.finishedAt}, ${pass.outcome}, ${encodeBoardCiPassStepsJson(pass.steps)}, ${pass.logDir},
+        ${pass.fixThreadId}
+      )
+    `,
+  });
+
+  const updateBoardCiPassStepRow = SqlSchema.void({
+    Request: Schema.Struct({
+      runId: Schema.String,
+      index: Schema.Int,
+      step: Schema.String,
+    }),
+    execute: (input) => sql`
+      UPDATE board_ci_passes
+      SET steps = json_set(steps, ${`$[${input.index}]`}, json(${input.step}))
+      WHERE run_id = ${input.runId}
+    `,
+  });
+
+  const settleBoardCiPassRow = SqlSchema.void({
+    Request: BoardCiPassSettle,
+    execute: (settle) => sql`
+      UPDATE board_ci_passes
+      SET
+        outcome = COALESCE(outcome, ${settle.outcome ?? null}),
+        finished_at = COALESCE(finished_at, ${settle.finishedAt ?? null}),
+        fix_thread_id = COALESCE(${settle.fixThreadId ?? null}, fix_thread_id)
+      WHERE run_id = ${settle.runId}
+    `,
+  });
+
+  const listBoardCiPassRowsForCard = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCiPassDbRow,
+    execute: (cardId) => sql`
+      SELECT
+        run_id AS "runId",
+        card_id AS "cardId",
+        entry,
+        ordinal,
+        started_at AS "startedAt",
+        finished_at AS "finishedAt",
+        outcome,
+        steps,
+        log_dir AS "logDir",
+        fix_thread_id AS "fixThreadId"
+      FROM board_ci_passes
+      WHERE card_id = ${cardId}
+      ORDER BY entry, ordinal, rowid
+    `,
+  });
+
+  const deleteBoardCiPassesForCard = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      DELETE FROM board_ci_passes
+      WHERE card_id = ${cardId}
+    `,
+  });
+
   const deleteBoardCardDecisionsForCard = SqlSchema.void({
     Request: BoardCardId,
     execute: (cardId) => sql`
@@ -2522,6 +2631,11 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     insertBoardCardDecisionRow,
     listBoardCardDecisionRowsForCard,
     deleteBoardCardDecisionsForCard,
+    insertBoardCiPassRow,
+    updateBoardCiPassStepRow,
+    settleBoardCiPassRow,
+    listBoardCiPassRowsForCard,
+    deleteBoardCiPassesForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
     listBoardPlanRows,
@@ -2577,6 +2691,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       yield* queries.deleteBoardThreadTodoRowsForCard(card.id);
       yield* queries.deleteBoardPlansForCard(card.id);
       yield* queries.deleteBoardCardDecisionsForCard(card.id);
+      yield* queries.deleteBoardCiPassesForCard(card.id);
     }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.purge:query")));
 
   // Wholesale rewrite of a card's link rows from the event's card state:
@@ -3109,6 +3224,41 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           payload: { prNumber: pullRequest.number, prState: pullRequest.state },
           threadId: null,
         });
+        return;
+      }
+
+      case "board.card-ci-recorded": {
+        yield* upsertCard(event.payload.card);
+        const { action, started, settled, activity } = event.payload;
+        const ciWrites = Effect.gen(function* () {
+          for (const pass of settled) yield* queries.settleBoardCiPassRow(pass);
+          if (started !== null) yield* queries.insertBoardCiPassRow(started);
+          if (action.kind === "step") {
+            yield* queries.updateBoardCiPassStepRow({
+              runId: action.runId,
+              index: action.index,
+              step: encodeBoardCiPassStepJson(action.step),
+            });
+          }
+        });
+        yield* ciWrites.pipe(
+          Effect.mapError(toPersistenceSqlError("BoardCardsProjection.ci:write")),
+        );
+        if (activity !== null) {
+          yield* recordActivity({
+            event,
+            cardId: event.payload.cardId,
+            kind: activity.kind,
+            payload: {
+              ...(activity.ciOutcome === undefined ? {} : { ciOutcome: activity.ciOutcome }),
+              ...(activity.ciStepName === undefined ? {} : { ciStepName: activity.ciStepName }),
+              ...(activity.ciFixAttempts === undefined
+                ? {}
+                : { ciFixAttempts: activity.ciFixAttempts }),
+            },
+            threadId: null,
+          });
+        }
         return;
       }
 
@@ -3946,6 +4096,8 @@ function boardShellCards(
               : { status: row.workerMoveStatus, toWorkerId: row.workerMoveTo },
           placementOrphaned:
             row.orphanedWorkerLabel === null ? null : { workerLabel: row.orphanedWorkerLabel },
+          ci: row.ci,
+          ciLastOutcome: row.ciLastOutcome,
           group: boardCardGroupFromRow(row),
           queuedBy: queueReasonByCard.get(row.cardId) ?? null,
           // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
@@ -4039,6 +4191,8 @@ function boardArchivedShellCards(
                 : { status: row.workerMoveStatus, toWorkerId: row.workerMoveTo },
             placementOrphaned:
               row.orphanedWorkerLabel === null ? null : { workerLabel: row.orphanedWorkerLabel },
+            ci: row.ci,
+            ciLastOutcome: row.ciLastOutcome,
             group: boardCardGroupFromRow(row),
             archivedAt: row.archivedAt,
             activeThreadId: null,
@@ -4182,6 +4336,7 @@ export function makeBoardCardDetailLoader(
       queries.findBoardCardStepErrorRow(cardId),
       queries.listBoardCardDecisionRowsForCard(cardId),
       queries.listBoardCardGroupDependencyRefRows(cardId),
+      queries.listBoardCiPassRowsForCard(cardId),
     ]).pipe(
       Effect.map(
         ([
@@ -4199,6 +4354,7 @@ export function makeBoardCardDetailLoader(
           stepErrorRow,
           decisionRows,
           groupDependencyRows,
+          ciPassRows,
         ]) => {
           if (Option.isNone(cardRow)) return null;
           const links = sortBoardCardThreadLinks(
@@ -4252,6 +4408,7 @@ export function makeBoardCardDetailLoader(
             // and live because `board.subscribeCard` re-emits the whole detail on
             // every board event for this card.
             activity: activityRows.map(toBoardCardActivityEntry),
+            ciPasses: ciPassRows,
             // Why the live step stopped (t3o-30, D2), or null when it is
             // healthy or absent — the failure banner's text.
             stepError: Option.getOrNull(stepErrorRow)?.lastError ?? null,

@@ -61,6 +61,8 @@ const card = (attachments: BoardCard["attachments"] = []): BoardCard => ({
   placedWorkerId: null,
   workerMove: null,
   placementOrphaned: null,
+  ci: null,
+  ciLastOutcome: null,
   worktree: null,
   pullRequest: null,
   pullRequestHistory: [],
