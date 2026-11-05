@@ -14,6 +14,7 @@
  * sub-board builds.
  */
 import {
+  BOARD_SEED_STAGE_IDS,
   boardCardChildAttentionLabel,
   boardSplitProposedNote,
   boardCardChildRunningLabel,
@@ -54,6 +55,7 @@ import {
   pickBoardCardTodoThread,
   type BoardTodoThreadState,
 } from "./boardCardProgressBlock";
+import { BoardCardCiFace } from "./BoardCardCiFace";
 import { boardConflictFix } from "./boardConflictFix";
 import { boardAutoMergePill } from "./boardAutoMergeHold";
 import { boardCardAutoBuildChip } from "./boardCardAutomation";
@@ -472,6 +474,7 @@ export function BoardCardContent({
   // The card's own turn wins the dot's wording; a parent with nothing running
   // of its own borrows its children's, counted.
   const isGroup = group !== null;
+  const inCi = card.stage === BOARD_SEED_STAGE_IDS.ci;
   const workingLabel =
     isBoardCardWorking(card) && !isGroup
       ? "Thread running"
@@ -821,7 +824,11 @@ export function BoardCardContent({
             );
           })()
         : null}
-      {!isGroup && progress.kind === "todos" ? (
+      {isGroup ? null : (
+        // CI (T3O-44): the steps while the card is in CI, or how it last left.
+        <BoardCardCiFace ci={card.ci} inCi={inCi} lastOutcome={card.ciLastOutcome} />
+      )}
+      {!isGroup && progress.kind === "todos" && !(inCi && card.ci !== undefined) ? (
         <BoardCardTodoStrip
           expanded={todos?.expanded ?? false}
           onToggleThreads={todos?.onToggleExpanded}

@@ -92,6 +92,7 @@ import {
   reorderBoardStage,
   startBoardStageThread,
   requestBoardReviewRound,
+  skipBoardCardCi,
   removeBoardCardWorktree,
   checkBoardCardWorktree,
   submitBoardCardForMerge,
@@ -763,6 +764,12 @@ export function createBoardEnvironmentAtoms<R, ER>(
     requestReviewRound: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:request-review-round",
       execute: (input: { readonly cardId: BoardCardId }) => requestBoardReviewRound(input),
+    }),
+    /** Skip CI for a card in the CI stage (T3O-44). Resolves to where the
+        card went, or why it could not. */
+    skipCi: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:skip-ci",
+      execute: (input: { readonly cardId: BoardCardId }) => skipBoardCardCi(input),
     }),
     /** Remove a finished card's kept worktree past the safety rule (T3O-52). */
     removeCardWorktree: createEnvironmentCommand(runtime, {

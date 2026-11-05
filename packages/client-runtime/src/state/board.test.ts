@@ -78,6 +78,8 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   placedWorkerId: null,
   workerMove: null,
   placementOrphaned: null,
+  ci: null,
+  ciLastOutcome: null,
   worktree: null,
   blocked: false,
   archivedAt: null,
@@ -125,6 +127,29 @@ describe("board shell reducer", () => {
       card: cardShell("card-1", { title: "Renamed" }),
     });
     expect(next.cards).toEqual([cardShell("card-1", { title: "Renamed" })]);
+  });
+
+  it("clears a card's CI entry and last CI outcome when an upsert omits them (T3O-44)", () => {
+    const inCi = cardShell("card-1", {
+      stage: BOARD_SEED_STAGE_IDS.ci,
+      ci: {
+        runId: "run-1",
+        entry: 1,
+        fixAttempts: 0,
+        maxFixAttempts: 2,
+        phase: "running",
+        steps: [{ name: "Check", status: "running", startedAt: NOW, finishedAt: null }],
+      },
+      ciLastOutcome: { kind: "skipped", actor: "Brent" },
+    });
+    expect(inCi.ci?.phase).toBe("running");
+    const next = applyBoardShellStreamEvent(snapshot({ cards: [inCi] }), {
+      kind: "card-upserted",
+      sequence: 2,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.merge }),
+    });
+    expect(next.cards[0]?.ci).toBeUndefined();
+    expect(next.cards[0]?.ciLastOutcome).toBeUndefined();
   });
 
   it("removes a card", () => {
