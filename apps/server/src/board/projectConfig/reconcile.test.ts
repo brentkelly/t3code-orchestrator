@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * T3o: reconciling a project's `t3o.json` (T3O-43). The reader caches by the
  * file's modification time, and the update is null whenever the resolved
@@ -213,7 +214,7 @@ describe("BoardProjectConfig.read", () => {
       assert.deepStrictEqual(yield* reader.read(root), { raw: null, warnings: [], source: null });
 
       NodeFS.writeFileSync(file, JSON.stringify({ stages: { remove: ["sprint"] } }));
-      NodeFS.utimesSync(file, new Date(1_000_000), new Date(1_000_000));
+      NodeFS.utimesSync(file, 1_000, 1_000);
       const first = yield* reader.read(root);
       assert.deepStrictEqual(first.raw, { stages: { remove: ["sprint"] } });
       assert.deepStrictEqual(first.source, { path: file, commitSha: "deadbeef" });
@@ -222,7 +223,7 @@ describe("BoardProjectConfig.read", () => {
       assert.strictEqual(gitCalls.length, 1);
 
       NodeFS.writeFileSync(file, "{ not json");
-      NodeFS.utimesSync(file, new Date(2_000_000), new Date(2_000_000));
+      NodeFS.utimesSync(file, 2_000, 2_000);
       // One bad save keeps the last good version, so the pipeline holds.
       const broken = yield* reader.read(root);
       assert.deepStrictEqual(broken.raw, { stages: { remove: ["sprint"] } });
