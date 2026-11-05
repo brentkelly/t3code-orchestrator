@@ -3072,7 +3072,6 @@ export function boardCardMoveRefusal(
   if (entry.retired) return `This card's project no longer uses the ${target.label} stage.`;
   if (
     !options.override &&
-    !isBoardDeferredStage(card.stage) &&
     !areBoardStagesAdjacent(board, card.stage, toStage, card.projectId)
   ) {
     return `Stage move '${card.stage}' -> '${toStage}' is not adjacent; a drag sends override to force it.`;
