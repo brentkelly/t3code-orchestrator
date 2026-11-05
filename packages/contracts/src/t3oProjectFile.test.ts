@@ -11,6 +11,7 @@ import {
   ProjectId,
   areBoardStagesAdjacent,
   boardCardMoveRefusal,
+  boardGroupRevertStage,
   boardNextStageId,
   boardProjectStageId,
   boardProjectStagesInOrder,
@@ -132,6 +133,24 @@ describe("resolveT3oProjectFile", () => {
     expect(config.warnings.join("\n")).toContain("holds the review role");
   });
 
+  it("keeps the stage before build: it can't be removed or have a stage put after it", () => {
+    const { config, stages } = resolve({
+      stages: {
+        remove: ["ready"],
+        add: [
+          { id: "gate", label: "Gate", after: "ready" },
+          { id: "chained", label: "Chained", after: "gate" },
+          { id: "early", label: "Early", after: "planning" },
+        ],
+      },
+    });
+    expect(config.removedStageIds).toEqual([]);
+    expect(stages.map((stage) => stage.label)).toEqual(["Early"]);
+    expect(config.warnings.join("\n")).toContain("where cards wait to build and can't be removed");
+    expect(config.warnings.join("\n")).toContain("can't come after Ready, where cards wait");
+    expect(config.warnings).toHaveLength(3);
+  });
+
   it("drops bad additions with a warning and keeps the good ones", () => {
     const { config, stages } = resolve({
       stages: {
@@ -243,6 +262,33 @@ describe("boardProjectStagesInOrder", () => {
     expect(areBoardStagesAdjacent(board, "backlog" as never, "planning" as never, projectB)).toBe(
       false,
     );
+  });
+});
+
+describe("boardGroupRevertStage per project", () => {
+  const triage = boardProjectStageId(projectA, "triage");
+  const file = {
+    stages: { remove: ["sprint"], add: [{ id: "triage", label: "Triage", after: "backlog" }] },
+  };
+  const revert = (board: BoardState, prevStage: BoardStageId, projectId: ProjectId) =>
+    boardGroupRevertStage(board, {
+      stage: BOARD_SEED_STAGE_IDS.building,
+      group: { prevStage } as never,
+      projectId,
+    });
+
+  it("reverts into a project-owned stage before planning without crashing", () => {
+    expect(revert(withFile(file), triage, projectA)).toBe(triage);
+  });
+
+  it("caps at the stage before planning in the card's own pipeline", () => {
+    // Sprint is removed for A, so A's cap is its own Triage stage.
+    expect(revert(withFile(file), BOARD_SEED_STAGE_IDS.ready, projectA)).toBe(triage);
+    expect(revert(withFile(file), BOARD_SEED_STAGE_IDS.ready, projectB)).toBe("sprint");
+  });
+
+  it("never reverts into a stage the card's project removed", () => {
+    expect(revert(withFile(file), BOARD_SEED_STAGE_IDS.sprint, projectA)).toBe(triage);
   });
 });
 

@@ -6,9 +6,11 @@ working on that project gets the same board.
 
 A project's file can:
 
-- **add stages** of its own, placed after any stage,
+- **add stages** of its own, placed after any stage except Done and the stage just before
+  Building,
 - **remove stages** it does not use (stages with a role, such as Planning, Building, Code review,
-  Ready for merge and Done, cannot be removed),
+  Ready for merge and Done, cannot be removed, and neither can Ready, the stage just before
+  Building where approved cards wait for Auto-build),
 - **override any stage setting** the global pipeline has, such as a prompt, model, timeout or the
   review loop's rounds.
 

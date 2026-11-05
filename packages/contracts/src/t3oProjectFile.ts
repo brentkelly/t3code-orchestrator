@@ -10,6 +10,7 @@ import {
   BoardStageExecutionPatch,
   boardOrderKeyBetween,
   boardProjectStageId,
+  boardStageBeforeBuild,
   boardStageExecutionKind,
   boardStagesInOrder,
   compareBoardStages,
@@ -237,6 +238,10 @@ export function resolveT3oProjectFile(input: {
 
   const globalStages = boardStagesInOrder(input.board);
   const globalById = new Map(globalStages.map((stage) => [String(stage.stageId), stage]));
+  // The stage before build is where approved work waits for Auto-build and
+  // where split children land, so a project can't remove it or put a stage
+  // between it and build: every project keeps the one global hold.
+  const beforeBuild = boardStageBeforeBuild(input.board);
 
   const removedStageIds: BoardStageId[] = [];
   const removeBlock = stagesBlock.remove;
@@ -257,6 +262,12 @@ export function resolveT3oProjectFile(input: {
       if (role !== null) {
         warnings.push(
           `stages.remove: "${entry}" (${stage.label}) holds the ${role} role and can't be removed; ignored.`,
+        );
+        continue;
+      }
+      if (stage.stageId === beforeBuild?.stageId) {
+        warnings.push(
+          `stages.remove: "${entry}" (${stage.label}) is where cards wait to build and can't be removed; ignored.`,
         );
         continue;
       }
@@ -339,6 +350,12 @@ export function resolveT3oProjectFile(input: {
       if (effectiveBoardStageRole(anchor) === "done") {
         warnings.push(
           `stages.add: "${add.fileId}" can't come after ${anchor.label}, the last stage; stage ignored.`,
+        );
+        continue;
+      }
+      if (anchor.stageId === beforeBuild?.stageId) {
+        warnings.push(
+          `stages.add: "${add.fileId}" can't come after ${anchor.label}, where cards wait to build; stage ignored.`,
         );
         continue;
       }
