@@ -47,7 +47,10 @@ import {
   effectiveBoardRuntimeMode,
   effectiveBoardStageRole,
   DEFAULT_BOARD_MERGE_CONFLICT_PROMPT,
+  BOARD_SEED_STAGE_IDS,
+  DEFAULT_BOARD_CI_FIX_PROMPT,
   isBoardBuildStageExecution,
+  isBoardCiStageExecution,
   isBoardMergeStageExecution,
   isBoardReviewStageExecution,
   resolveBoardStageExecution,
@@ -55,6 +58,7 @@ import {
   type BoardReviewPhaseId,
   type BoardStageDefinition,
   type BoardStageExecution,
+  type BoardStageExecutionCi,
   type BoardStageExecutionMerge,
   type BoardStageExecutionReview,
   type BoardStageRole,
@@ -74,6 +78,7 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { useAtomValue } from "@effect/atom-react";
+import * as Option from "effect/Option";
 import {
   ChevronDownIcon,
   GripVerticalIcon,
@@ -86,6 +91,7 @@ import {
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { boardEnvironment } from "../../state/board";
+import { environmentShell } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { boardWorkerOnlyProviders } from "../../board/workers/cardWorker";
 import { useBoardWorkersCardView } from "../../board/workers/BoardWorkersContext";
@@ -656,6 +662,24 @@ export function BoardPipelineSection() {
   );
   const stages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   const ordered = boardStagesInOrder(stageBoardState(stages));
+  // CI (T3O-44): which projects define steps, for the CI card's locked list.
+  const projectStageConfigs = useAtomValue(
+    boardEnvironment.projectStageConfigsAtom(environmentId ?? ("" as EnvironmentId)),
+  );
+  const shellState = useAtomValue(
+    environmentShell.stateValueAtom(environmentId ?? ("" as EnvironmentId)),
+  );
+  const shellProjects = Option.getOrNull(shellState.snapshot)?.projects;
+  const ciProjects = useMemo(
+    () =>
+      (shellProjects ?? []).flatMap((project) => {
+        const ci = projectStageConfigs?.[project.id]?.ci ?? null;
+        return ci === null
+          ? []
+          : [{ title: project.title, steps: ci.steps.length, active: ci.active }];
+      }),
+    [projectStageConfigs, shellProjects],
+  );
 
   const createStage = useAtomCommand(boardEnvironment.createStage);
   const renameStage = useAtomCommand(boardEnvironment.renameStage);
@@ -815,6 +839,7 @@ export function BoardPipelineSection() {
                 stage={stage}
                 index={index}
                 exec={resolveBoardStageExecution(board, stage.stageId)}
+                ciProjects={ciProjects}
                 expanded={openStageId === stage.stageId}
                 crudEnabled={crudEnabled}
                 instanceEntries={instanceEntries}
@@ -862,6 +887,8 @@ function StageAccordionRow(props: {
   stage: BoardStageDefinition;
   index: number;
   exec: BoardStageExecution;
+  /** The projects whose t3o.json defines CI steps (T3O-44). */
+  ciProjects: ReadonlyArray<BoardCiProject>;
   expanded: boolean;
   crudEnabled: boolean;
   instanceEntries: InstanceEntries;
@@ -885,31 +912,43 @@ function StageAccordionRow(props: {
 
   const isReview = isBoardReviewStageExecution(exec);
   const isMerge = isBoardMergeStageExecution(exec);
+  // CI is a seed stage with no role, but it is the board's own: it is never
+  // renamed, reordered or removed here (T3O-44).
+  const isCi = isBoardCiStageExecution(exec);
+  const fixed = isCi || stage.stageId === BOARD_SEED_STAGE_IDS.ci;
   const chips: ReadonlyArray<{ text: string; tone: "auto" | "quiet" }> = expanded
     ? []
-    : isMerge
+    : isCi
       ? [
-          // "Manual" is true of this stage but says nothing: it is manual by
-          // design and cannot be otherwise. What the reader wants at a glance
-          // is what the Merge button will do and whether branches get tidied.
-          { text: exec.strategy, tone: "quiet" as const },
-          // Auto-merge earns the "auto" tone the other stages use for
-          // auto-execute: it is the one thing about this stage that runs
-          // without a click, and the row above says so out loud.
-          ...(exec.autoMerge ? [{ text: "Auto-merge", tone: "auto" as const }] : []),
-          ...(exec.deleteBranchOnDone ? [{ text: "Delete branch", tone: "quiet" as const }] : []),
+          { text: "Per project", tone: "quiet" as const },
+          {
+            text: `${exec.maxFixAttempts} ${exec.maxFixAttempts === 1 ? "fix" : "fixes"}`,
+            tone: "quiet" as const,
+          },
         ]
-      : [
-          exec.autoExecute
-            ? { text: "Auto", tone: "auto" as const }
-            : { text: "Manual", tone: "quiet" as const },
-          ...(exec.autoExecute && isReview
-            ? [{ text: `${exec.rounds} rounds`, tone: "quiet" as const }]
-            : []),
-          ...(exec.autoExecute && !isReview && role !== "plan"
-            ? [{ text: `${msToMinutes(exec.timeoutMs)} min idle`, tone: "quiet" as const }]
-            : []),
-        ];
+      : isMerge
+        ? [
+            // "Manual" is true of this stage but says nothing: it is manual by
+            // design and cannot be otherwise. What the reader wants at a glance
+            // is what the Merge button will do and whether branches get tidied.
+            { text: exec.strategy, tone: "quiet" as const },
+            // Auto-merge earns the "auto" tone the other stages use for
+            // auto-execute: it is the one thing about this stage that runs
+            // without a click, and the row above says so out loud.
+            ...(exec.autoMerge ? [{ text: "Auto-merge", tone: "auto" as const }] : []),
+            ...(exec.deleteBranchOnDone ? [{ text: "Delete branch", tone: "quiet" as const }] : []),
+          ]
+        : [
+            exec.autoExecute
+              ? { text: "Auto", tone: "auto" as const }
+              : { text: "Manual", tone: "quiet" as const },
+            ...(exec.autoExecute && isReview
+              ? [{ text: `${exec.rounds} rounds`, tone: "quiet" as const }]
+              : []),
+            ...(exec.autoExecute && !isReview && role !== "plan"
+              ? [{ text: `${msToMinutes(exec.timeoutMs)} min idle`, tone: "quiet" as const }]
+              : []),
+          ];
 
   return (
     <div
@@ -934,7 +973,7 @@ function StageAccordionRow(props: {
           type="button"
           aria-label={`Reorder stage ${stage.label}`}
           className="flex w-4 shrink-0 cursor-grab items-center justify-center text-muted-foreground/60 hover:text-foreground"
-          disabled={!props.crudEnabled}
+          disabled={!props.crudEnabled || fixed}
           onClick={(event) => event.stopPropagation()}
           {...attributes}
           {...listeners}
@@ -947,7 +986,7 @@ function StageAccordionRow(props: {
         <StageNameField
           key={`name:${stage.stageId}:${stage.label}`}
           label={stage.label}
-          editable={props.crudEnabled}
+          editable={props.crudEnabled && !fixed}
           onRename={props.onRename}
         />
         {role !== null && role !== "done" ? (
@@ -977,7 +1016,17 @@ function StageAccordionRow(props: {
 
       {expanded ? (
         <div className="flex flex-col px-4 pb-4 pt-0.5 sm:pl-[52px] sm:pr-5">
-          {isReview ? (
+          {isCi ? (
+            <CiStageBody
+              stage={stage}
+              exec={exec}
+              ciProjects={props.ciProjects}
+              instanceEntries={props.instanceEntries}
+              getModelOptions={props.getModelOptions}
+              inheritedModelName={props.inheritedModelName}
+              updateStage={props.updateStage}
+            />
+          ) : isReview ? (
             <ReviewStageBody
               stage={stage}
               exec={exec}
@@ -1006,7 +1055,7 @@ function StageAccordionRow(props: {
               updateStage={props.updateStage}
             />
           )}
-          {role === null ? (
+          {role === null && !fixed ? (
             <div className="flex items-center pt-3">
               <Button
                 size="xs"
@@ -1023,6 +1072,122 @@ function StageAccordionRow(props: {
         </div>
       ) : null}
     </div>
+  );
+}
+
+interface BoardCiProject {
+  readonly title: string;
+  readonly steps: number;
+  readonly active: boolean;
+}
+
+/**
+ * The Continuous integration stage's body (T3O-44). The board runs the steps
+ * itself; what is configured here is the fix agent that runs when one fails.
+ * The steps belong to each project's t3o.json, so they are listed, not edited.
+ */
+function CiStageBody(props: {
+  stage: BoardStageDefinition;
+  exec: BoardStageExecutionCi;
+  ciProjects: ReadonlyArray<BoardCiProject>;
+  instanceEntries: InstanceEntries;
+  getModelOptions: (active: ActiveModel) => ModelOptionsByInstance;
+  inheritedModelName: string | null;
+  updateStage: (stageId: BoardStageId, patch: Partial<BoardStageExecution>) => void;
+}) {
+  const { stage, exec } = props;
+  const set = (patch: Partial<BoardStageExecutionCi>) => props.updateStage(stage.stageId, patch);
+  return (
+    <>
+      <p className="pb-1 text-xs leading-[1.5] text-muted-foreground">
+        Runs the project&apos;s CI steps in the card&apos;s worktree after code review. When a step
+        fails, a fix agent fixes small mechanical failures and every step re-runs from the top;
+        anything bigger goes back to Code review as a must-fix finding.
+      </p>
+      <div className="flex flex-col gap-1.5 py-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[13.5px] text-foreground">Steps</span>
+          <span className="rounded-md bg-accent px-1.5 py-px text-[11px] font-medium text-muted-foreground">
+            Defined per project
+          </span>
+        </div>
+        {props.ciProjects.length === 0 ? (
+          <span className="text-xs text-muted-foreground">
+            No project defines CI steps yet. Add them under stages.settings.ci in a project&apos;s
+            t3o.json.
+          </span>
+        ) : (
+          <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+            {props.ciProjects.map((project) => (
+              <li key={project.title}>
+                <span className="text-foreground">{project.title}</span> · {project.steps}{" "}
+                {project.steps === 1 ? "step" : "steps"}
+                {project.active ? "" : " · paused"}
+              </li>
+            ))}
+          </ul>
+        )}
+        <span className="text-xs leading-[1.5] text-muted-foreground/80">
+          CI can&apos;t be removed or renamed here: a project has it only while its t3o.json lists
+          steps, and &quot;enabled&quot;: false pauses it.
+        </span>
+      </div>
+      <NumberRow
+        label="Fix attempts"
+        hint="Fix agents one CI visit may start before the card goes back to Code review. 0 sends every failure straight back."
+        stepper={
+          <NumberStepper
+            value={exec.maxFixAttempts}
+            min={0}
+            max={10}
+            ariaLabel="CI fix attempts"
+            onChange={(maxFixAttempts) => set({ maxFixAttempts })}
+          />
+        }
+      />
+      <PromptRow
+        id={`stage-prompt:${stage.stageId}`}
+        label="Fix prompt"
+        value={exec.prompt}
+        defaultValue={DEFAULT_BOARD_CI_FIX_PROMPT}
+        preamble={boardStepPreamble({
+          card: { key: PREVIEW_CARD_KEY, title: PREVIEW_CARD_TITLE, stage: stage.stageId },
+          stageLabel: stage.label,
+          step: { stepLabel: null },
+        })}
+        postamble={boardStepPostamble({
+          humanInLoop: false,
+          role: null,
+          step: { stepId: stage.stageId, stepLabel: null },
+        })}
+        missingMessage={exec.prompt.trim().length === 0 ? "A fix prompt is required." : null}
+        onChange={(prompt) => set({ prompt })}
+      />
+      <ModelRow
+        label="Fix model"
+        ariaLabel="CI fix model"
+        selection={exec.model}
+        {...inheritedModelRowProps(
+          props.inheritedModelName,
+          "Pick the model the fix agent runs on.",
+        )}
+        instanceEntries={props.instanceEntries}
+        getModelOptions={props.getModelOptions}
+        onChange={(model) => set({ model })}
+        modelOptions={exec.model?.options}
+        onModelOptionsChange={(options) => {
+          if (exec.model === null) return;
+          set({
+            model:
+              options === undefined
+                ? { instanceId: exec.model.instanceId, model: exec.model.model }
+                : { instanceId: exec.model.instanceId, model: exec.model.model, options },
+          });
+        }}
+        runtimeMode={effectiveBoardRuntimeMode(exec.runtimeMode, exec.mode)}
+        onRuntimeModeChange={(runtimeMode) => set({ runtimeMode })}
+      />
+    </>
   );
 }
 

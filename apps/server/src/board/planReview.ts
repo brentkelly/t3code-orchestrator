@@ -6,6 +6,7 @@
  */
 import {
   boardCardStepState,
+  boardProjectStageConfig,
   boardStageWithRole,
   composePlanReviewInstructions,
   isBoardCardAutoPlanPending,
@@ -20,10 +21,14 @@ import {
   type BoardState,
 } from "@t3tools/contracts";
 
-function planStageExecution(board: BoardState, settings: BoardSettings) {
+function planStageExecution(board: BoardState, settings: BoardSettings, card: BoardCard) {
   const planStage = boardStageWithRole(board, "plan");
   if (planStage === null) return null;
-  const execution = resolveBoardStageExecution(settings, planStage.stageId);
+  const execution = resolveBoardStageExecution(
+    settings,
+    planStage.stageId,
+    boardProjectStageConfig(board, card.projectId),
+  );
   return execution.kind === "simple" ? execution : null;
 }
 
@@ -33,7 +38,10 @@ export function resolveCardPlanReview(input: {
   readonly card: BoardCard;
   readonly settings: BoardSettings;
 }): BoardCardPlanReview {
-  return resolveBoardCardPlanReview(input.card, planStageExecution(input.board, input.settings));
+  return resolveBoardCardPlanReview(
+    input.card,
+    planStageExecution(input.board, input.settings, input.card),
+  );
 }
 
 /** The card's live plan step while a plan review is running on it, or null.
@@ -63,7 +71,7 @@ export function planReviewInstructions(input: {
   const rounds = input.state.planReviewRounds;
   if (input.state.planReviewStartedAt === undefined || rounds === undefined) return null;
   const { prompt } = resolveBoardPlanReviewSettings(
-    planStageExecution(input.board, input.settings),
+    planStageExecution(input.board, input.settings, input.card),
   );
   return {
     rounds,

@@ -22,6 +22,7 @@ import {
   defaultBoardCardGroup,
   BoardClientCommand,
   EMPTY_BOARD_STATE,
+  EMPTY_BOARD_PROJECT_STAGE_CONFIG,
   resolveBoardCardForThread,
   type BoardCard,
   type BoardCardStepState,
@@ -83,6 +84,8 @@ function makeCard(
     placedWorkerId: null,
     workerMove: null,
     placementOrphaned: null,
+    ci: null,
+    ciLastOutcome: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -2608,6 +2611,28 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           step: { phase: "start", toWorkerId: EnvironmentId.make("env-worker-a"), sha: null },
           createdAt: NOW,
         },
+        "board.card.pipeline-move": {
+          type: "board.card.pipeline-move",
+          commandId: CommandId.make("cmd-pipeline-move"),
+          cardId: BoardCardId.make("card-ready"),
+          toStage: BoardStageId.make("building"),
+          createdAt: NOW,
+        },
+        "board.card.record-ci": {
+          type: "board.card.record-ci",
+          commandId: CommandId.make("cmd-record-ci"),
+          cardId: BoardCardId.make("card-ready"),
+          action: { kind: "finish-pass", runId: "run-1", result: "cancelled" },
+          createdAt: NOW,
+        },
+        "board.project.set-stage-config": {
+          type: "board.project.set-stage-config",
+          commandId: CommandId.make("cmd-project-stage-config"),
+          projectId: ProjectId.make("project-1"),
+          config: EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+          stages: [],
+          createdAt: NOW,
+        },
       };
 
       // The full decision is checked, not just the first event. Since t3o-28
@@ -2615,7 +2640,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       // command may emit a board.card-moved: the move itself. A card changes
       // stage because a human dragged it or pressed the button, and for no
       // other reason (D18).
-      const mayMoveIntoBuilding = new Set(["board.card.move"]);
+      // The board's own move (T3O-44) is the pipeline's, never a client's.
+      const mayMoveIntoBuilding = new Set(["board.card.move", "board.card.pipeline-move"]);
       for (const [commandType, command] of Object.entries(catalog)) {
         const events = yield* decideEvents(command, readModel);
         const movesIntoBuilding = events.some(

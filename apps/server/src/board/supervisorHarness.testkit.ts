@@ -193,6 +193,9 @@ export const makeBoardCard = (input: {
   readonly placedWorkerId?: BoardCard["placedWorkerId"];
   readonly workerMove?: BoardCard["workerMove"];
   readonly placementOrphaned?: BoardCard["placementOrphaned"];
+  /** The card's CI entry and last CI outcome (T3O-44). */
+  readonly ci?: BoardCard["ci"];
+  readonly ciLastOutcome?: BoardCard["ciLastOutcome"];
   /** The card's own merge strategy (T3O-80). Absent follows the default. */
   readonly mergeStrategy?: BoardCard["mergeStrategy"];
   /** The cards this one waits on (t3o-13). Absent is nothing. */
@@ -237,6 +240,8 @@ export const makeBoardCard = (input: {
   placedWorkerId: input.placedWorkerId ?? null,
   workerMove: input.workerMove ?? null,
   placementOrphaned: input.placementOrphaned ?? null,
+  ci: input.ci ?? null,
+  ciLastOutcome: input.ciLastOutcome ?? null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],

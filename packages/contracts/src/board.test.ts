@@ -12,6 +12,9 @@ import {
   boardPullRequestPredatesCard,
   BoardCardStepState,
   BOARD_CARD_LABELS_MAX,
+  BOARD_CI_MAX_STEPS,
+  BOARD_CI_SHELL_FINDING_MAX,
+  BOARD_CI_SHELL_STEP_NAME_MAX,
   BOARD_THREAD_TODO_CURRENT_MAX_BYTES,
   BOARD_THREAD_TODO_ITEMS_MAX,
   boardThreadTodosComplete,
@@ -226,6 +229,8 @@ const typicalCard = (index: number): BoardCard => ({
   placedWorkerId: null,
   workerMove: null,
   placementOrphaned: null,
+  ci: null,
+  ciLastOutcome: null,
   orderKey: "mmmm",
   title: `A realistically sized card title for card number ${index}`,
   briefRef: "brief",
@@ -262,6 +267,53 @@ const snapshotWithCards = (count: number): BoardShellSnapshot => ({
 });
 
 describe("BoardCardShell payload discipline", () => {
+  it("a card in CI carries its compact step list within a bounded budget (T3O-44)", () => {
+    // Only a card IN CI carries `ci`, so this is a per-CI-card cost, not a
+    // per-card one: steps are capped at BOARD_CI_MAX_STEPS and their names
+    // truncated, and no output or command ever rides the shell.
+    const base = typicalCard(1);
+    const inCi = boardCardShellFromCard({
+      ...base,
+      ci: {
+        runId: "ci-0b8a2c3d-4e5f-6789-abcd-ef0123456789",
+        entry: 3,
+        fixAttempts: 2,
+        maxFixAttempts: 2,
+        phase: "fixing",
+        steps: Array.from({ length: BOARD_CI_MAX_STEPS }, (_, index) => ({
+          name: `${String(index)}${"x".repeat(200)}`,
+          status: "passed" as const,
+          startedAt: "2026-01-01T00:00:00.000Z",
+          finishedAt: "2026-01-01T00:00:00.000Z",
+        })),
+      },
+      ciLastOutcome: { kind: "skipped", actor: "Someone With A Long Name" },
+    });
+    const extra =
+      utf8Bytes(encodeShell(inCi)) - utf8Bytes(encodeShell(boardCardShellFromCard(base)));
+    expect(extra).toBeLessThanOrEqual(2560);
+    expect(JSON.stringify(encodeShell(inCi))).not.toContain(
+      "x".repeat(BOARD_CI_SHELL_STEP_NAME_MAX + 1),
+    );
+  });
+
+  it("a CI send-back's finding rides the shell capped (T3O-44)", () => {
+    const base = typicalCard(1);
+    const sentBack = boardCardShellFromCard({
+      ...base,
+      ciLastOutcome: {
+        kind: "sent-back",
+        stepName: "Test",
+        fixAttemptsUsed: 2,
+        finding: "x".repeat(200_000),
+        round: 3,
+      },
+    });
+    const extra =
+      utf8Bytes(encodeShell(sentBack)) - utf8Bytes(encodeShell(boardCardShellFromCard(base)));
+    expect(extra).toBeLessThanOrEqual(BOARD_CI_SHELL_FINDING_MAX + 256);
+  });
+
   it("stays under the fixed serialized byte budget at full population", () => {
     const bytes = utf8Bytes(encodeShell(fullyPopulatedShell));
     expect(bytes).toBeLessThanOrEqual(BOARD_CARD_SHELL_BYTE_BUDGET);
@@ -274,6 +326,9 @@ describe("BoardCardShell payload discipline", () => {
     // and holds only strings; everything else stays scalar.
     const encoded = encodeShell(fullyPopulatedShell) as Record<string, unknown>;
     for (const [field, value] of Object.entries(encoded)) {
+      // CI (T3O-44) carries one bounded object; its own test below holds it
+      // to a budget.
+      if (field === "ci" || field === "ciLastOutcome") continue;
       if (field === "labelIds") {
         expect(Array.isArray(value)).toBe(true);
         const ids = value as unknown[];

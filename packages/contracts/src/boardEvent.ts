@@ -16,6 +16,7 @@ import {
   EventId,
   IsoDateTime,
   NonNegativeInt,
+  ProjectId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
@@ -51,6 +52,8 @@ export const BoardAggregateKind = Schema.Literals([
   "stage",
   // T3O-62: a registered worker, and the board's default-worker choice.
   "worker",
+  // T3O-43: a project's t3o.json stage config.
+  "project",
 ]);
 export type BoardAggregateKind = typeof BoardAggregateKind.Type;
 
@@ -61,7 +64,7 @@ const BoardEventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: BoardAggregateKind,
-  aggregateId: Schema.Union([BoardCardId, BoardLabelId, BoardStageId, BoardWorkerId]),
+  aggregateId: Schema.Union([BoardCardId, BoardLabelId, BoardStageId, BoardWorkerId, ProjectId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),

@@ -170,6 +170,8 @@ const supervisorStub: SupervisorReactorShape = {
       supervisorCalls.requestRound.push(String(cardId));
       return { outcome: "started", round: 2 } as const;
     }),
+  skipCi: () => Effect.succeed({ outcome: "not-in-ci" } as const),
+  drainCi: Effect.void,
 };
 
 const makeHandlers = (scopes: ReadonlyArray<AuthenticatedSession["scopes"][number]>) =>

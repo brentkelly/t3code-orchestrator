@@ -173,7 +173,7 @@ describe("BoardCardReviewPane", () => {
     expect(html).not.toContain("In progress");
     // No phase claims to be running: no spinner, and the review phase's note
     // is the resting one.
-    expect(html).not.toContain("Running now");
+    expect(html).not.toContain(`data-step-state="running"`);
     expect(html).not.toContain("A fresh thread is reading the diff");
     expect(html).toContain("Not started.");
     // The footer says when the loop WILL run rather than describing a run.
@@ -208,7 +208,7 @@ describe("BoardCardReviewPane", () => {
     );
     expect(html).toContain("Not running");
     expect(html).not.toContain("In progress");
-    expect(html).not.toContain("Running now");
+    expect(html).not.toContain(`data-step-state="running"`);
     // Triage is the due phase; off-stage it has simply not started.
     expect(html).not.toContain("still being worked");
     expect(html).toContain("Not started.");
@@ -245,7 +245,7 @@ describe("BoardCardReviewPane", () => {
     expect(html).toContain("Changes requested");
     expect(html).toContain("Not started");
     expect(html).not.toContain("In progress");
-    expect(html).not.toContain("Running now");
+    expect(html).not.toContain(`data-step-state="running"`);
   });
 
   // ── The round ceiling is gone (T3O-39, D4) ─────────────────────────────
@@ -303,7 +303,7 @@ describe("BoardCardReviewPane", () => {
       <BoardCardReviewPane completions={[]} live maxRounds={3} onBackToThread={noop} />,
     );
     expect(html).toContain("In progress");
-    expect(html).toContain("Running now");
+    expect(html).toContain(`data-step-state="running"`);
     expect(html).toContain("A fresh thread is reading the diff");
   });
 

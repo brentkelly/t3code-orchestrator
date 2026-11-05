@@ -18,6 +18,12 @@
  */
 import {
   BOARD_LOCAL_WORKER_ID,
+  BOARD_SEED_STAGE_IDS,
+  DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS,
+  areBoardStagesAdjacent,
+  isBoardCiActive,
+  isBoardCiStageExecution,
+  type BoardSkipCiResult,
   boardCardEffectiveWorkerId,
   boardRepositoryGroupingKey,
   boardThreadLinkWorkerId,
@@ -53,6 +59,7 @@ import {
   boardRunLabel,
   boardSelectedStepLabel,
   boardNextStageId,
+  boardProjectStageConfig,
   boardNonTerminalStepStates,
   boardSeedStageRole,
   boardStageById,
@@ -210,9 +217,22 @@ import {
   LOCAL_CONFLICT_MERGE_STATE,
   type BoardMergeState,
 } from "./boardMergeState.ts";
-import { stageExecutorForRole } from "./stageExecutor.ts";
+import { stageExecutorFor } from "./stageExecutor.ts";
+import { BoardCiRunner, boardCiLogDir } from "./ci/BoardCiRunner.ts";
+import { remoteCiRunner } from "./ci/remoteCiRunner.ts";
+import { WorkerConnections } from "./workers/WorkerConnections.ts";
+import { BOARD_HUMAN_ACTOR_FALLBACK_NAME, boardActivityActorFor } from "./activityActors.ts";
+import {
+  BOARD_CI_SLOT_INSTANCE,
+  makeBoardCiPasses,
+  type BoardCiPasses,
+  type BoardCiPassFinished,
+} from "./ci/ciPasses.ts";
+import type { BoardCiFailure, BoardStagePlan } from "./stageExecutor.ts";
 import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorkspace.ts";
 import { planReviewInstructions, runningPlanReviewStep } from "./planReview.ts";
+import { BoardProjectConfig } from "./projectConfig/BoardProjectConfig.ts";
+import { boardProjectStageConfigUpdate } from "./projectConfig/reconcile.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
@@ -424,6 +444,15 @@ export interface SupervisorReactorShape {
   /** Run one more review round on a settled loop (T3O-39, D6) — "Another
       review round" from Code review or Ready for merge, and "Request review"
       on a card that has never had one. */
+  /** Wait until no CI pass is running and what each one's end started has
+      been handled (T3O-44). Tests drain on it. */
+  readonly drainCi: Effect.Effect<void>;
+  /** Skip CI for a card in the CI stage (T3O-44): a human's override. `stamp`
+      marks the commands it dispatches as the human's. */
+  readonly skipCi: (
+    cardId: BoardCardId,
+    stamp: (command: BoardCommand) => Effect.Effect<void>,
+  ) => Effect.Effect<BoardSkipCiResult>;
   readonly requestReviewRound: (
     cardId: BoardCardId,
   ) => Effect.Effect<BoardRequestReviewRoundResult>;
@@ -458,7 +487,9 @@ type SupervisorInput =
   | { readonly source: "timeout-sweep" }
   // T3O-65: the board's workers changed — a clone finished, a worker came
   // online, an instance appeared — which may start a held card.
-  | { readonly source: "workers" };
+  | { readonly source: "workers" }
+  // T3O-44: a CI pass finished on its own fiber; what follows is decided here.
+  | { readonly source: "ci"; readonly finished: BoardCiPassFinished };
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -580,6 +611,11 @@ const make = Effect.gen(function* () {
   // defaulting to `undefined`, so every test that wires no activation waits for
   // nothing.
   const serverActivation = yield* ServerActivation;
+  // T3O-43: each project's committed t3o.json, read from its checkout here.
+  const projectConfig = yield* BoardProjectConfig;
+  // T3O-44: CI steps run by the board itself, here or on a card's worker.
+  const ciRunner = yield* BoardCiRunner;
+  const workerConnections = yield* Effect.serviceOption(WorkerConnections);
 
   const commandId = (tag: string) =>
     crypto.randomUUIDv4().pipe(Effect.map((uuid) => CommandId.make(`server:board-${tag}:${uuid}`)));
@@ -1895,7 +1931,7 @@ const make = Effect.gen(function* () {
         ? yield* runningPlanReviewFor(card, state)
         : null;
     return composeStepPrompt({
-      ...(role === "build" ? { draftPullRequests: yield* draftPullRequestsOn } : {}),
+      ...(role === "build" ? { draftPullRequests: yield* draftPullRequestsOn(card) } : {}),
       card: { ...card, baseBranch: yield* resolvePromptBaseBranch(card) },
       stageLabel: state.stageLabel,
       step: {
@@ -1980,10 +2016,15 @@ const make = Effect.gen(function* () {
   );
 
   /** Whether the Code review stage's open-as-draft setting is on (T3O-12). */
-  const draftPullRequestsOn = Effect.gen(function* () {
-    const reviewStage = boardStageWithRole(yield* readBoard, "review");
+  const draftPullRequestsOn = Effect.fnUntraced(function* (card: BoardCard) {
+    const board = yield* readBoard;
+    const reviewStage = boardStageWithRole(board, "review");
     if (reviewStage === null) return false;
-    const review = resolveBoardStageExecution(yield* boardSettings, reviewStage.stageId);
+    const review = resolveBoardStageExecution(
+      yield* boardSettings,
+      reviewStage.stageId,
+      boardProjectStageConfig(board, card.projectId),
+    );
     return isBoardReviewStageExecution(review) && review.draftPullRequests;
   });
 
@@ -2526,6 +2567,9 @@ const make = Effect.gen(function* () {
   // whose worktree is ready, are ordered by the priority rule (stage desc →
   // started before unstarted → drag order) and offered to the governor greedily.
   const schedule = Effect.fn("board-supervisor-schedule")(function* () {
+    // Queued CI passes go first: whatever freed a slot (a step settling, a
+    // pass ending) runs this pass, and CI cards are later-stage than any step.
+    yield* ciPasses.admitQueued;
     const board = yield* readBoard;
     const settings = yield* boardSettings;
     // Read once for the whole pass: every candidate is gated against the same
@@ -2823,7 +2867,11 @@ const make = Effect.gen(function* () {
       }
     }
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, card.stage);
+    const exec = resolveBoardStageExecution(
+      settings,
+      card.stage,
+      boardProjectStageConfig(board, card.projectId),
+    );
     const mergeRole = effectiveBoardStageRole(stage) === "merge";
     // An on-demand request for a stage that runs nothing (Backlog, Done, any
     // stage with no auto-execute and no prompt) must not spawn a promptless
@@ -2995,7 +3043,7 @@ const make = Effect.gen(function* () {
     // entering its stage has no completed step for this run, so a simple stage
     // yields its single seeded step; the `complete`/`escalate` arms are the seam
     // t3o-16's review executor returns through and are not reached at entry.
-    const plan = stageExecutorForRole(stage.role).planNext({
+    const plan = stageExecutorFor(stage.role, exec).planNext({
       card,
       config: {
         stepId: card.stage,
@@ -3020,6 +3068,14 @@ const make = Effect.gen(function* () {
         baseRetargetedTo: yield* resolveBaseRetargetTarget(card),
       },
     });
+    // CI (T3O-44): entering the stage, or restarting it, runs the steps.
+    if (plan.kind === "ci-pass" || plan.kind === "ci-return") {
+      // A pass already under way (the boot recovery got there first) is this
+      // entry's pass; only a human's restart replaces it.
+      if (!onDemand && ciPasses.current(card.id) !== null) return;
+      yield* actOnCiPlan(card, plan, { fixThreadId: null, stageLabel: stage.label, exec });
+      return;
+    }
     if (plan.kind === "complete") {
       // The executor considers this entry already complete — a multi-step
       // executor plans from the card's ALL-TIME completions, so a review loop
@@ -3145,7 +3201,11 @@ const make = Effect.gen(function* () {
   }) {
     const board = yield* readBoard;
     if (input.toRole !== undefined) {
-      const target = boardStageWithRole(board, input.toRole);
+      // A card bound for merge in a CI project (T3O-44) goes through CI first.
+      const target =
+        input.toRole === "merge" && isBoardCiActive(board, input.card.projectId)
+          ? boardStageById(board, BOARD_SEED_STAGE_IDS.ci)
+          : boardStageWithRole(board, input.toRole);
       if (target === null) {
         // The stage this step was aimed at was deleted from the pipeline while
         // the step ran — the same half-state as the gate-closed race below (the
@@ -3165,7 +3225,7 @@ const make = Effect.gen(function* () {
       // Already there — the move is a no-op, not a held one, so nothing to say.
       if (target.stageId === input.card.stage) return;
       const refusal = yield* dispatchRefusal({
-        type: "board.card.move",
+        type: "board.card.pipeline-move",
         commandId: yield* commandId("advance-directed"),
         cardId: input.card.id,
         toStage: target.stageId,
@@ -3190,17 +3250,478 @@ const make = Effect.gen(function* () {
       return;
     }
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, input.card.stage);
+    const exec = resolveBoardStageExecution(
+      settings,
+      input.card.stage,
+      boardProjectStageConfig(board, input.card.projectId),
+    );
     if (!exec.autoAdvance) return;
-    const next = boardNextStageId(board, input.card.stage);
+    const next = boardNextStageId(board, input.card.stage, input.card.projectId);
     if (next === null) return;
+    // The board's own move (T3O-44): it may carry a card into CI.
     yield* dispatch({
-      type: "board.card.move",
+      type: "board.card.pipeline-move",
       commandId: yield* commandId("advance"),
       cardId: input.card.id,
       toStage: next,
       createdAt: yield* nowIso,
     });
+  });
+
+  // ── Continuous integration (T3O-44) ──────────────────────────────────────
+  //
+  // The board runs a CI project's steps itself, in the card's worktree. A
+  // pass moves the card on and runs no agent; a failure is the CI executor's
+  // to decide (a fix agent, or back to review). Passes run on their own fibers
+  // (`ciPasses`); their ends come back through the serial worker.
+
+  const ciPasses: BoardCiPasses = yield* makeBoardCiPasses({
+    runner: ciRunner,
+    slots,
+    dispatch: (command) => dispatch(command),
+    commandId: (tag) => commandId(tag).pipe(Effect.orDie),
+    nowIso,
+    onFinished: (finished): Effect.Effect<void> =>
+      Effect.asVoid(worker.enqueue({ source: "ci", finished })),
+  });
+
+  /** Move a card out of CI to the next stage of its pipeline: the board's own
+      move, which CI's human rules do not hold back. */
+  const advanceFromCi = Effect.fn("board-supervisor-advanceFromCi")(function* (card: BoardCard) {
+    const board = yield* readBoard;
+    const next = boardNextStageId(board, BOARD_SEED_STAGE_IDS.ci, card.projectId);
+    if (next === null) return;
+    yield* dispatch({
+      type: "board.card.pipeline-move",
+      commandId: yield* commandId("ci-advance"),
+      cardId: card.id,
+      toStage: next,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /** Hold a card in CI with a reason on its rail: a human can Skip CI. */
+  const holdInCi = Effect.fn("board-supervisor-holdInCi")(function* (
+    card: BoardCard,
+    detail: string,
+  ) {
+    yield* dispatch({
+      type: "board.card.record-note",
+      commandId: yield* commandId("ci-held"),
+      cardId: card.id,
+      kind: "card-ci-held",
+      detail,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /** Start a pass at the first step (entry, a fix, or a restart). */
+  const startCiPass = Effect.fn("board-supervisor-startCiPass")(function* (
+    cardId: BoardCardId,
+    options: { readonly fixThreadId: ThreadId | null },
+  ) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined || card.archivedAt !== null) return;
+    if (card.stage !== BOARD_SEED_STAGE_IDS.ci) return;
+    // One pass at a time: a restart replaces the one in flight, which the new
+    // pass's record settles as interrupted.
+    yield* ciPasses.cancel(card.id);
+    const projectCi = boardProjectStageConfig(board, card.projectId)?.ci ?? null;
+    if (projectCi === null || !projectCi.active || projectCi.steps.length === 0) {
+      // CI was switched off for this project while the card sat in it: there
+      // is nothing to run, so it moves on like a card in a removed stage.
+      yield* advanceFromCi(card);
+      return;
+    }
+    const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
+    // A placed card's steps run on its worker (D21), streamed back here.
+    const runner =
+      workerId === BOARD_LOCAL_WORKER_ID
+        ? undefined
+        : Option.isSome(workerConnections)
+          ? remoteCiRunner(workerConnections.value, workerId)
+          : null;
+    if (runner === null) {
+      yield* holdInCi(card, "CI can't reach the card's worker. Restart the stage, or Skip CI.");
+      return;
+    }
+    const worktree = yield* ensureWorktree(card);
+    if (worktree.kind !== "ready") {
+      yield* holdInCi(card, "CI is waiting for the card's worktree, which is not ready.");
+      return;
+    }
+    const detail = yield* boardQueries
+      .boardCardDetail(card.id)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    const passes = detail?.ciPasses ?? [];
+    const entry =
+      card.ci?.entry ?? passes.reduce((highest, pass) => Math.max(highest, pass.entry), 0) + 1;
+    const ordinal = passes.filter((pass) => pass.entry === entry).length + 1;
+    const settings = yield* boardSettings;
+    const exec = resolveBoardStageExecution(
+      settings,
+      BOARD_SEED_STAGE_IDS.ci,
+      boardProjectStageConfig(board, card.projectId),
+    );
+    const runId = `ci-${yield* crypto.randomUUIDv4()}`;
+    const landed = yield* dispatchLanded({
+      type: "board.card.record-ci",
+      commandId: yield* commandId("ci-start"),
+      cardId: card.id,
+      action: {
+        kind: "start-pass",
+        runId,
+        entry,
+        ordinal,
+        steps: projectCi.steps,
+        maxFixAttempts: isBoardCiStageExecution(exec)
+          ? exec.maxFixAttempts
+          : DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS,
+        logDir: boardCiLogDir(worktree.path, runId),
+        // Until a slot admits it; its first step report says running.
+        queued: true,
+        fixThreadId: options.fixThreadId,
+      },
+      createdAt: yield* nowIso,
+    });
+    if (!landed) return;
+    yield* ciPasses.start({
+      cardId: card.id,
+      runId,
+      worktreePath: worktree.path,
+      workerId,
+      steps: projectCi.steps,
+      limits: resolveBoardConcurrencyLimit(settings.concurrency, BOARD_CI_SLOT_INSTANCE, workerId),
+      ...(runner === undefined ? {} : { runner }),
+    });
+  });
+
+  /** Back to the review-role stage with the CI failure as a must-fix finding,
+      for a fresh round: one more round when the card had used them all. */
+  const sendBackFromCi = Effect.fn("board-supervisor-sendBackFromCi")(function* (
+    card: BoardCard,
+    input: {
+      readonly stepName: string | null;
+      readonly finding: string;
+      readonly fixThreadId: ThreadId | null;
+    },
+  ) {
+    const board = yield* readBoard;
+    const reviewStage = boardStageWithRole(board, "review");
+    // A fresh round, through the same override "Another review round" writes:
+    // it floors the budget, so a card that used every round gets one more.
+    const round =
+      boardReviewRoundsStarted({
+        completions: boardCardStepCompletions(board, card.id),
+        liveStepId: null,
+      }) + 1;
+    const landed = yield* dispatchLanded({
+      type: "board.card.record-ci",
+      commandId: yield* commandId("ci-send-back"),
+      cardId: card.id,
+      action: {
+        kind: "send-back",
+        runId: card.ci?.runId ?? null,
+        stepName: input.stepName,
+        finding: input.finding,
+        round,
+        fixThreadId: input.fixThreadId,
+      },
+      createdAt: yield* nowIso,
+    });
+    if (!landed || reviewStage === null) return;
+    yield* dispatch({
+      type: "board.card.update",
+      commandId: yield* commandId("ci-send-back-round"),
+      cardId: card.id,
+      reviewOverrides: {
+        ...(card.reviewOverrides ?? EMPTY_BOARD_CARD_REVIEW_OVERRIDES),
+        runThroughRound: round,
+        stopAfterRound: null,
+      },
+      createdAt: yield* nowIso,
+    });
+    yield* dispatch({
+      type: "board.card.pipeline-move",
+      commandId: yield* commandId("ci-send-back-move"),
+      cardId: card.id,
+      toStage: reviewStage.stageId,
+      override: true,
+      createdAt: yield* nowIso,
+    });
+  });
+
+  /** Ask the CI executor what follows, and do it. */
+  const continueCi = Effect.fn("board-supervisor-continueCi")(function* (input: {
+    readonly cardId: BoardCardId;
+    readonly settledStepId: string | null;
+    readonly ciFailure: BoardCiFailure | null;
+    readonly fixThreadId: ThreadId | null;
+  }) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === input.cardId);
+    if (card === undefined || card.archivedAt !== null) return;
+    if (card.stage !== BOARD_SEED_STAGE_IDS.ci) return;
+    const stage = boardStageById(board, card.stage);
+    if (stage === null) return;
+    const settings = yield* boardSettings;
+    const exec = resolveBoardStageExecution(
+      settings,
+      card.stage,
+      boardProjectStageConfig(board, card.projectId),
+    );
+    const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
+    const plan = stageExecutorFor(stage.role, exec).planNext({
+      card,
+      config: {
+        stepId: card.stage,
+        stageLabel: stage.label,
+        prompt: exec.prompt,
+        model,
+        timeoutMs: exec.timeoutMs,
+        maxAttempts: exec.maxAttempts,
+        runtimeMode: exec.runtimeMode,
+        cardOverride: cardStageModelOverride(board, card),
+        execution: exec,
+      },
+      completions: boardCardStepCompletions(board, card.id),
+      runState: {
+        round: 1,
+        completedStepIds: [],
+        liveStepId: null,
+        settledStepId: input.settledStepId,
+        baseStale: false,
+        baseRetargetedTo: null,
+        ciFailure: input.ciFailure,
+      },
+    });
+    yield* actOnCiPlan(card, plan, {
+      fixThreadId: input.fixThreadId,
+      stageLabel: stage.label,
+      exec,
+    });
+  });
+
+  const actOnCiPlan = Effect.fn("board-supervisor-actOnCiPlan")(function* (
+    card: BoardCard,
+    plan: BoardStagePlan,
+    context: {
+      readonly fixThreadId: ThreadId | null;
+      readonly stageLabel: string;
+      readonly exec: ReturnType<typeof resolveBoardStageExecution>;
+    },
+  ) {
+    switch (plan.kind) {
+      case "ci-pass":
+        yield* startCiPass(card.id, { fixThreadId: context.fixThreadId });
+        return;
+      case "ci-return":
+        yield* sendBackFromCi(card, {
+          stepName: plan.stepName,
+          finding: plan.finding,
+          fixThreadId: context.fixThreadId,
+        });
+        return;
+      case "run": {
+        if (card.ci === null) return;
+        const began = yield* dispatchLanded({
+          type: "board.card.record-ci",
+          commandId: yield* commandId("ci-begin-fix"),
+          cardId: card.id,
+          action: { kind: "begin-fix", runId: card.ci.runId },
+          createdAt: yield* nowIso,
+        });
+        if (!began) return;
+        const board = yield* readBoard;
+        yield* dispatch({
+          type: "board.card.select-step",
+          commandId: yield* commandId("select-step"),
+          cardId: card.id,
+          stepId: plan.stepId,
+          stepLabel: plan.stepLabel,
+          stageLabel: context.stageLabel,
+          prompt: plan.prompt,
+          providerInstanceId: plan.model.instanceId,
+          model: plan.model.model,
+          runtimeMode: plan.runtimeMode,
+          ...(plan.model.options === undefined ? {} : { modelOptions: plan.model.options }),
+          mode: "build",
+          humanInLoop: false,
+          maxAttempts: plan.maxAttempts,
+          timeoutMs: plan.timeoutMs,
+          priorRecoveries: boardStageEntryRecoveryCount(board, card.id),
+          baseTipAtRoundStart: yield* baseTipForPlan(card, false),
+          createdAt: yield* nowIso,
+        });
+        yield* provisionPlacedBuildStep(card.id);
+        yield* schedule();
+        return;
+      }
+      default:
+        return;
+    }
+  });
+
+  /** A pass's fiber finished: record it, then move on or fix. */
+  const handleCiPassFinished = Effect.fn("board-supervisor-handleCiPassFinished")(function* (
+    finished: BoardCiPassFinished,
+  ) {
+    // The slot it held is free for the next queued pass or step.
+    yield* schedule();
+    const card = yield* readCard(finished.cardId);
+    if (card === null || card.archivedAt !== null) return;
+    // A pass the card has since left or replaced reports nothing more.
+    if (card.stage !== BOARD_SEED_STAGE_IDS.ci || card.ci?.runId !== finished.runId) return;
+    if (finished.outcome.result === "unavailable") {
+      yield* dispatch({
+        type: "board.card.record-ci",
+        commandId: yield* commandId("ci-unavailable"),
+        cardId: card.id,
+        action: { kind: "finish-pass", runId: finished.runId, result: "interrupted" },
+        createdAt: yield* nowIso,
+      });
+      yield* holdInCi(
+        card,
+        `${finished.outcome.detail} Restart the stage to run CI again, or Skip CI.`,
+      );
+      return;
+    }
+    const passed = finished.outcome.result === "passed";
+    const recorded = yield* dispatchLanded({
+      type: "board.card.record-ci",
+      commandId: yield* commandId("ci-finish"),
+      cardId: card.id,
+      action: { kind: "finish-pass", runId: finished.runId, result: passed ? "passed" : "failed" },
+      createdAt: yield* nowIso,
+    });
+    if (!recorded) return;
+    if (passed) {
+      yield* advanceFromCi(card);
+      return;
+    }
+    const detail = yield* boardQueries
+      .boardCardDetail(card.id)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    const pass = detail?.ciPasses.find((candidate) => candidate.runId === finished.runId);
+    const index = finished.outcome.failedIndex ?? -1;
+    const step = pass?.steps[index];
+    const failure: BoardCiFailure =
+      step === undefined
+        ? {
+            runId: finished.runId,
+            stepName: card.ci.steps[index]?.name ?? "CI",
+            command: "",
+            status: "failed",
+            exitCode: null,
+            tail: "",
+            logPath: null,
+          }
+        : {
+            runId: finished.runId,
+            stepName: step.name,
+            command: step.command,
+            status: step.status === "timed-out" ? "timed-out" : "failed",
+            exitCode: step.exitCode,
+            tail: step.tail,
+            logPath: pass?.logDir == null ? null : `${pass.logDir}/${index}.log`,
+          };
+    yield* continueCi({
+      cardId: card.id,
+      settledStepId: null,
+      ciFailure: failure,
+      fixThreadId: null,
+    });
+  });
+
+  /** A card left CI (any move): stop its pass. The move itself settled the
+      pass row as cancelled. */
+  const stopCiOnLeave = Effect.fn("board-supervisor-stopCiOnLeave")(function* (card: BoardCard) {
+    if ((yield* ciPasses.cancel(card.id)) === null) return;
+    yield* schedule();
+  });
+
+  /** A card archived while in CI: stop its pass (a queued one never starts)
+      and settle its row as cancelled, since no move will. */
+  const stopCiOnArchive = Effect.fn("board-supervisor-stopCiOnArchive")(function* (
+    card: BoardCard,
+  ) {
+    const stopped = yield* ciPasses.cancel(card.id);
+    const ci = card.ci;
+    if (ci !== null && ci.phase !== "passed" && ci.phase !== "held") {
+      yield* dispatch({
+        type: "board.card.record-ci",
+        commandId: yield* commandId("ci-archived"),
+        cardId: card.id,
+        action: { kind: "finish-pass", runId: ci.runId, result: "cancelled" },
+        createdAt: yield* nowIso,
+      });
+    }
+    if (stopped !== null) yield* schedule();
+  });
+
+  /** Skip CI (a human's override): stop any pass or fix agent, record who
+      skipped it, and move the card to the next stage. */
+  const skipCi = Effect.fn("board-supervisor-skipCi")(function* (
+    cardId: BoardCardId,
+    stamp: (command: BoardCommand) => Effect.Effect<void>,
+  ) {
+    const card = yield* readCard(cardId);
+    if (card === null || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
+    if (card.stage !== BOARD_SEED_STAGE_IDS.ci) return { outcome: "not-in-ci" } as const;
+    // Stopped first, quietly: the skip below settles the pass as skipped.
+    yield* ciPasses.cancel(card.id);
+    const command: BoardCommand = {
+      type: "board.card.record-ci",
+      commandId: yield* commandId("ci-skip"),
+      cardId: card.id,
+      action: { kind: "skip", actor: "You" },
+      createdAt: yield* nowIso,
+    };
+    yield* stamp(command);
+    const actor = boardActivityActorFor(command.commandId);
+    const skip: BoardCommand = {
+      ...command,
+      action: { kind: "skip", actor: actor.name ?? BOARD_HUMAN_ACTOR_FALLBACK_NAME },
+    };
+    if (!(yield* dispatchLanded(skip))) return { outcome: "failed" } as const;
+    const board = yield* readBoard;
+    const next = boardNextStageId(board, BOARD_SEED_STAGE_IDS.ci, card.projectId);
+    if (next !== null) {
+      const move: BoardCommand = {
+        type: "board.card.pipeline-move",
+        commandId: yield* commandId("ci-skip-move"),
+        cardId: card.id,
+        toStage: next,
+        createdAt: yield* nowIso,
+      };
+      yield* stamp(move);
+      if (!(yield* dispatchLanded(move))) return { outcome: "failed" } as const;
+    }
+    yield* schedule();
+    return { outcome: "skipped", toStage: next } as const;
+  });
+
+  /** Boot (T3O-44): a pass the restart cut off is marked interrupted and runs
+      again from the top; one that passed but never moved the card moves it.
+      A held pass stays held. */
+  const recoverCiPasses = Effect.fn("board-supervisor-recoverCiPasses")(function* () {
+    const board = yield* readBoard;
+    for (const card of board.cards) {
+      if (card.archivedAt !== null || card.stage !== BOARD_SEED_STAGE_IDS.ci) continue;
+      if (ciPasses.current(card.id) !== null) continue;
+      const state = boardCardStepState(board, card.id);
+      if (state !== null && !isBoardTerminalStepStatus(state.status)) continue;
+      if (card.ci?.phase === "passed") {
+        yield* advanceFromCi(card);
+        continue;
+      }
+      // A fix agent's step that ended without a verdict is the ordinary
+      // failed step's business (retry, then amber), not a restart's; a held
+      // pass waits for a human to restart or skip it.
+      if (card.ci?.phase === "fixing" || card.ci?.phase === "held") continue;
+      yield* startCiPass(card.id, { fixThreadId: null });
+    }
   });
 
   /**
@@ -3358,7 +3879,11 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const mergeStage = boardStageWithRole(board, "merge");
     if (mergeStage === null) return false;
-    const exec = resolveBoardStageExecution(yield* boardSettings, mergeStage.stageId);
+    const exec = resolveBoardStageExecution(
+      yield* boardSettings,
+      mergeStage.stageId,
+      boardProjectStageConfig(board, card.projectId),
+    );
     return boardCardAutoMergeArmed({
       board,
       card,
@@ -3682,14 +4207,18 @@ const make = Effect.gen(function* () {
     // race is caught by the decider's select-step invariant, whose reject the
     // dispatch helper swallows.
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, card.stage);
+    const exec = resolveBoardStageExecution(
+      settings,
+      card.stage,
+      boardProjectStageConfig(board, card.projectId),
+    );
     const completions = boardCardStepCompletions(board, card.id);
     const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
     const cardOverride = cardStageModelOverride(board, card);
     const completedStepIds = completions
       .filter((completion) => completion.outcome === "succeeded")
       .map((completion) => completion.stepId);
-    const plan = stageExecutorForRole(stage.role).planNext({
+    const plan = stageExecutorFor(stage.role, exec).planNext({
       card,
       config: {
         stepId: card.stage,
@@ -3780,6 +4309,16 @@ const make = Effect.gen(function* () {
         }
         return;
       }
+      // CI (T3O-44): a fix agent reported — re-run every step, or go back
+      // to review with its finding.
+      case "ci-pass":
+      case "ci-return":
+        yield* actOnCiPlan(card, plan, {
+          fixThreadId: state.threadId,
+          stageLabel: stage.label,
+          exec,
+        });
+        return;
       case "escalate": {
         // The executor cannot proceed and wants a human (e.g. a phase that
         // completed with an unreadable payload). Leave the card put — there is no
@@ -3829,7 +4368,11 @@ const make = Effect.gen(function* () {
     const stage = boardStageById(board, card.stage);
     if (stage === null) return;
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, card.stage);
+    const exec = resolveBoardStageExecution(
+      settings,
+      card.stage,
+      boardProjectStageConfig(board, card.projectId),
+    );
     // Same gate as every other spawn path: a stage the user drives by hand is
     // not started by an edit.
     if (!exec.autoExecute) return;
@@ -3842,7 +4385,7 @@ const make = Effect.gen(function* () {
     const completedStepIds = completions
       .filter((completion) => completion.outcome === "succeeded")
       .map((completion) => completion.stepId);
-    const plan = stageExecutorForRole(stage.role).planNext({
+    const plan = stageExecutorFor(stage.role, exec).planNext({
       card,
       config: {
         stepId: card.stage,
@@ -4343,7 +4886,11 @@ const make = Effect.gen(function* () {
     // total and its ceiling (settings). `recoveryDecision` stays pure.
     const board = yield* readBoard;
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, input.card.stage);
+    const exec = resolveBoardStageExecution(
+      settings,
+      input.card.stage,
+      boardProjectStageConfig(board, input.card.projectId),
+    );
     const progressedSinceLastNudge = yield* resolveProgressedSinceLastNudge(
       input.state,
       input.card,
@@ -4952,7 +5499,11 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const mergeStage = boardStageWithRole(board, "merge");
     if (mergeStage === null) return;
-    const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
+    const exec = resolveBoardStageExecution(
+      settings,
+      mergeStage.stageId,
+      boardProjectStageConfig(board, card.projectId),
+    );
     if (!isBoardMergeStageExecution(exec) || !exec.deleteBranchOnDone) return;
 
     const workspace = yield* workspaceFor(card);
@@ -5799,7 +6350,7 @@ const make = Effect.gen(function* () {
     function* (card: BoardCard, options: { readonly forMerge: boolean }) {
       const pullRequest = card.pullRequest;
       if (pullRequest === null || pullRequest.state !== "open") return false;
-      if (!options.forMerge && !(yield* draftPullRequestsOn)) return false;
+      if (!options.forMerge && !(yield* draftPullRequestsOn(card))) return false;
       const result = yield* (yield* workspaceFor(card))
         .markPullRequestReady({ number: pullRequest.number })
         .pipe(Effect.catch((error) => Effect.succeed({ failure: error.detail } as const)));
@@ -6019,10 +6570,15 @@ const make = Effect.gen(function* () {
     // resolving off the card's own stage would silently fall back to squash
     // the moment those two could differ. The card's own override, then its
     // nearest ancestor group's, wins over it (T3O-80).
-    const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
+    const boardNow = yield* readBoard;
+    const exec = resolveBoardStageExecution(
+      settings,
+      mergeStage.stageId,
+      boardProjectStageConfig(boardNow, fresh.projectId),
+    );
     const { strategy } = resolveBoardCardMergeStrategy({
       card: fresh,
-      ancestors: boardCardAncestors(yield* readBoard, fresh),
+      ancestors: boardCardAncestors(boardNow, fresh),
       stageStrategy: isBoardMergeStageExecution(exec) ? exec.strategy : null,
     });
 
@@ -6221,7 +6777,7 @@ const make = Effect.gen(function* () {
     }
 
     const board = yield* readBoard;
-    const nextStage = boardNextStageId(board, merged.stage);
+    const nextStage = boardNextStageId(board, merged.stage, merged.projectId);
     if (nextStage !== null) {
       yield* dispatch({
         type: "board.card.move",
@@ -6315,7 +6871,11 @@ const make = Effect.gen(function* () {
     }
 
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, card.stage);
+    const exec = resolveBoardStageExecution(
+      settings,
+      card.stage,
+      boardProjectStageConfig(board, card.projectId),
+    );
     // Read off the stage's own config, symmetrically with `mergeCardPullRequest`
     // reading the merge member's `strategy`. A build-role stage always resolves
     // to the build member, so the fallback is unreachable in practice and is
@@ -6884,7 +7444,7 @@ const make = Effect.gen(function* () {
       );
       return;
     }
-    const next = boardNextStageId(board, card.stage);
+    const next = boardNextStageId(board, card.stage, card.projectId);
     if (next === null) return;
     const toReady = yield* dispatchRefusal({
       type: "board.card.move",
@@ -7132,7 +7692,11 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const state = boardCardStepState(board, card.id);
     if (state !== null && state.stepId === card.stage && !isBoardTerminalStepStatus(state.status)) {
-      const desired = resolveBoardStageExecution(yield* boardSettings, card.stage).humanInLoop;
+      const desired = resolveBoardStageExecution(
+        yield* boardSettings,
+        card.stage,
+        boardProjectStageConfig(board, card.projectId),
+      ).humanInLoop;
       if (desired !== state.humanInLoop) {
         yield* dispatchOptional({
           type: "board.card.retune-step",
@@ -7893,10 +8457,15 @@ const make = Effect.gen(function* () {
     if (mergeStage === null) return;
     // Read once for the whole pass rather than per card: the arm is the same
     // question for every card here, and the sweep runs every 30s.
-    const exec = resolveBoardStageExecution(yield* boardSettings, mergeStage.stageId);
-    const boardWide = isBoardMergeStageExecution(exec) ? exec.autoMerge : false;
+    const settings = yield* boardSettings;
     const nowMs = yield* clockNowMs;
     for (const card of board.cards) {
+      const exec = resolveBoardStageExecution(
+        settings,
+        mergeStage.stageId,
+        boardProjectStageConfig(board, card.projectId),
+      );
+      const boardWide = isBoardMergeStageExecution(exec) ? exec.autoMerge : false;
       const deferred = autoMergeDeferredUntilUnblocked.has(String(card.id));
       const hold = card.autoMergeHold;
       if (hold === null && !deferred) continue;
@@ -7939,6 +8508,54 @@ const make = Effect.gen(function* () {
       yield* autoMergeCard(card);
     }
   });
+
+  /**
+   * Reconcile every project's `t3o.json` into the read model (T3O-43): on
+   * boot, and on the 30s tick. The reader is mtime-cached, and a project whose
+   * resolved config did not change dispatches nothing. Total, like the other
+   * sweeps, and per project: one that fails costs only itself one tick.
+   */
+  const reconcileProjectStageConfig = Effect.fn("board-supervisor-reconcileProjectStageConfig")(
+    function* (project: { readonly id: ProjectId; readonly workspaceRoot: string }) {
+      const read = yield* projectConfig.read(project.workspaceRoot);
+      const update = boardProjectStageConfigUpdate({
+        board: yield* readBoard,
+        projectId: project.id,
+        read,
+        now: yield* nowIso,
+      });
+      if (update === null) return;
+      yield* dispatch({
+        type: "board.project.set-stage-config",
+        commandId: yield* commandId("project-stage-config"),
+        projectId: update.projectId,
+        config: update.config,
+        stages: update.stages,
+        createdAt: yield* nowIso,
+      });
+    },
+  );
+
+  const sweepProjectStageConfigs = Effect.gen(function* () {
+    const projects = yield* threads.projects();
+    for (const project of projects) {
+      if (project.deleted || project.workspaceRoot.length === 0) continue;
+      yield* reconcileProjectStageConfig(project).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: project stage config failed", {
+            projectId: project.id,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: project stage config sweep failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
 
   const sweepAutoMergeHolds = fireDueAutoMerges().pipe(
     Effect.catchCause((cause) =>
@@ -8356,6 +8973,8 @@ const make = Effect.gen(function* () {
       // The abandoned step released its slot — offer it to whatever is queued.
       yield* schedule();
     }
+    // Before the reclaim below pulls the worktree out from under its steps.
+    yield* stopCiOnArchive(card);
     // Reclaim the card's worktree at archive (t3o-09, D6/D15) — without this,
     // every archived card leaks its worktree and `board/*` branch on disk.
     //
@@ -8436,6 +9055,9 @@ const make = Effect.gen(function* () {
     // process's life.
     const stepState = event.payload.stepState;
     if (stepState !== null) yield* releaseSlot(stepState);
+    // Its CI pass (T3O-44), running or queued, dies with it; the pass rows
+    // left with the card's other rows.
+    if ((yield* ciPasses.cancel(card.id)) !== null) yield* schedule();
 
     for (const threadId of event.payload.threadIds) {
       yield* logged(
@@ -8821,6 +9443,13 @@ const make = Effect.gen(function* () {
         return;
       }
     }
+    // A card leaving CI (T3O-44) stops its pass; the move cleared its CI state.
+    if (
+      event.payload.fromStage === BOARD_SEED_STAGE_IDS.ci &&
+      event.payload.toStage !== BOARD_SEED_STAGE_IDS.ci
+    ) {
+      yield* stopCiOnLeave(card);
+    }
     const existing = boardCardStepState(board, card.id);
     let kickoffCard = card;
     if (existing !== null && !isBoardTerminalStepStatus(existing.status)) {
@@ -8935,7 +9564,15 @@ const make = Effect.gen(function* () {
     if (
       boardStageWithRole(board, "merge")?.stageId === event.payload.toStage &&
       fromIndex >= 0 &&
-      toIndex === fromIndex + 1 &&
+      toIndex > fromIndex &&
+      // Adjacent in the card's own pipeline (T3O-44): the CI seed sits
+      // between review and merge globally, but only in a CI project's list.
+      areBoardStagesAdjacent(
+        board,
+        event.payload.fromStage,
+        event.payload.toStage,
+        card.projectId,
+      ) &&
       (yield* cardAutoMergeArmed(card))
     ) {
       // A pull request readied a moment ago has CI that has not registered
@@ -9519,6 +10156,9 @@ const make = Effect.gen(function* () {
     // The item is still ENQUEUED first, so live events stay queued behind it
     // and the "serialised ahead of live events" guarantee is untouched.
     if (serverActivation !== undefined) yield* serverActivation;
+    // Project pipelines first (T3O-43): every pass below walks a card's own
+    // project's stage list.
+    yield* sweepProjectStageConfigs;
     // Sweep cached todo rows whose thread or link no longer exists (t3o-18,
     // AC 20). The cache is a projection with no event to un-apply, so a row can
     // outlive its link when a delete lands while the server is down; a single
@@ -9566,6 +10206,8 @@ const make = Effect.gen(function* () {
     yield* schedule();
     // Kickoff pass for the cards reconcile itself advanced.
     yield* kickoffAdvanced(advanced);
+    // CI passes the restart cut off run again from the top (T3O-44).
+    yield* recoverCiPasses();
     // Resume review loops that halted BETWEEN phases (T3O-5). The pass above
     // only walks steps still in flight, but a loop whose phase settled
     // `succeeded` while the dispatch of the next one failed has nothing in
@@ -9743,7 +10385,11 @@ const make = Effect.gen(function* () {
     if (yield* supersededByPendingTurn(state)) return true;
     const charged = boardBackgroundCheckInCharged(wait.checkInsSent);
     if (charged) {
-      const exec = resolveBoardStageExecution(yield* boardSettings, card.stage);
+      const exec = resolveBoardStageExecution(
+        yield* boardSettings,
+        card.stage,
+        boardProjectStageConfig(board, card.projectId),
+      );
       const ceiling = recoveryCeilingCrossed({
         stallCount: state.stallCount + 1,
         maxAttempts: state.maxAttempts,
@@ -10151,6 +10797,8 @@ const make = Effect.gen(function* () {
         return gateThreadSignal(input.signal);
       case "reconcile":
         return reconcile;
+      case "ci":
+        return handleCiPassFinished(input.finished);
       case "workers":
         // T3O-66: a worker back online is reconciled before anything is
         // scheduled onto it.
@@ -10181,6 +10829,8 @@ const make = Effect.gen(function* () {
         // (T3O-66): nothing else would ask while its status stays the same.
         // And the auto-archive pass (T3O-77): idle Done cards age out on it.
         return syncWorkerReach.pipe(
+          // T3O-43: a project's t3o.json edit lands within one tick.
+          Effect.andThen(sweepProjectStageConfigs),
           Effect.andThen(sweepTimeouts),
           Effect.andThen(releaseFinishedThreads),
           Effect.andThen(sweepSchedules),
@@ -10334,6 +10984,24 @@ const make = Effect.gen(function* () {
       Effect.andThen(cardCleanupWorker.drain),
       Effect.andThen(cardRetireWorker.drain),
     ),
+    // CI passes (T3O-44) run on their own fibers and report through the
+    // worker; a pass's end can start the next one, so this loops until none
+    // is running. Never used by `drain`: a long pass would block it.
+    drainCi: Effect.suspend(function drainCi(): Effect.Effect<void> {
+      return ciPasses.awaitIdle.pipe(
+        Effect.andThen(worker.drain),
+        Effect.andThen(Effect.suspend(() => (ciPasses.busy() ? drainCi() : Effect.void))),
+      );
+    }),
+    skipCi: (cardId, stamp) =>
+      skipCi(cardId, stamp).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: skip CI failed", {
+            cardId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ outcome: "failed" } as const)),
+        ),
+      ),
     sweepWorktrees: requestWorktreeSweep,
     // The main worker first: boot reconcile and event handlers are what
     // request passes, so a pass may not be queued until they have run.

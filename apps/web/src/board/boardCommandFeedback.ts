@@ -10,6 +10,7 @@ import type {
   BoardRefreshCardPullRequestResult,
   BoardRemoveCardWorktreeResult,
   BoardRequestReviewRoundResult,
+  BoardSkipCiResult,
   BoardSubmitCardForMergeResult,
 } from "@t3tools/contracts";
 import { boardCardWorktreeKeptReason } from "@t3tools/contracts";
@@ -220,5 +221,34 @@ export function describeBoardCheckWorktreeOutcome(
       return "This card no longer exists.";
     case "failed":
       return "The worktree could not be checked. See the server log for details.";
+  }
+}
+
+/** The toast "Skip CI" leaves (T3O-44). `stageLabel` names where it went. */
+export function describeBoardSkipCiOutcome(
+  result: BoardSkipCiResult,
+  cardKey: string,
+  stageLabel: (stageId: string) => string,
+): { readonly title: string; readonly description?: string; readonly tone: "info" | "error" } {
+  switch (result.outcome) {
+    case "skipped":
+      return {
+        title: `CI skipped for ${cardKey}`,
+        description:
+          result.toStage === null
+            ? "The skip is recorded on the card under your name."
+            : `Moved to ${stageLabel(result.toStage)}. The skip is recorded on the card under your name.`,
+        tone: "info",
+      };
+    case "not-in-ci":
+      return { title: `${cardKey} is no longer in CI`, tone: "info" };
+    case "unknown-card":
+      return { title: "This card no longer exists.", tone: "error" };
+    case "failed":
+      return {
+        title: "CI could not be skipped",
+        description: "See the server log for details.",
+        tone: "error",
+      };
   }
 }

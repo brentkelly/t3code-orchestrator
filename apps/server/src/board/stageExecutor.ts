@@ -39,6 +39,7 @@ import type {
 } from "@t3tools/contracts";
 import { BOARD_SUBMIT_STEP_ID, boardModelSelectionOfOverride } from "@t3tools/contracts";
 
+import { CiStageExecutor } from "./ci/ciStageExecutor.ts";
 import { ReviewLoopExecutor } from "./reviewLoopExecutor.ts";
 
 /**
@@ -140,6 +141,21 @@ export interface BoardStageRunState {
    * is called with the settled state — so this only lets the seam express it.
    * Every other executor ignores it. */
   readonly settledStepId: string | null;
+  /** The CI step that just failed (T3O-44), when the reactor is asking the CI
+      executor what follows a failed pass; null otherwise. Reactor-resolved
+      from the pass record, because the output tail never rides the card. */
+  readonly ciFailure?: BoardCiFailure | null;
+}
+
+/** A failed CI step, as the fix agent needs to see it (T3O-44). */
+export interface BoardCiFailure {
+  readonly runId: string;
+  readonly stepName: string;
+  readonly command: string;
+  readonly status: "failed" | "timed-out";
+  readonly exitCode: number | null;
+  readonly tail: string;
+  readonly logPath: string | null;
 }
 
 /** What the executor decides the reactor should do next. */
@@ -185,7 +201,17 @@ export type BoardStagePlan =
           construction (D6). */
       readonly advanceToRole?: BoardStageRole;
     }
-  | { readonly kind: "escalate"; readonly question: string };
+  | { readonly kind: "escalate"; readonly question: string }
+  /** Run the stage's CI steps from the top (T3O-44): the board runs them
+      itself, no agent. */
+  | { readonly kind: "ci-pass" }
+  /** Send the card back to the review-role stage with `finding` as a
+      must-fix finding for a fresh round (T3O-44). */
+  | {
+      readonly kind: "ci-return";
+      readonly stepName: string | null;
+      readonly finding: string;
+    };
 
 export interface BoardStagePlanInput {
   readonly card: BoardCard;
@@ -294,4 +320,15 @@ const STAGE_EXECUTORS: Partial<Record<BoardStageRole, BoardStageExecutor>> = {
  */
 export function stageExecutorForRole(role: BoardStageRole | null): BoardStageExecutor {
   return (role !== null ? STAGE_EXECUTORS[role] : undefined) ?? SimpleStageExecutor;
+}
+
+/**
+ * The executor for a stage (T3O-44): by role, except the CI stage, which holds
+ * no role and runs scripts, so it is keyed by its execution member's kind.
+ */
+export function stageExecutorFor(
+  role: BoardStageRole | null,
+  execution: BoardStageExecution,
+): BoardStageExecutor {
+  return execution.kind === "ci" ? CiStageExecutor : stageExecutorForRole(role);
 }

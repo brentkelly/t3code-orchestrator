@@ -59,6 +59,7 @@ import {
   type BoardPlansProposeCommand,
   type BoardPlanWriteCommand,
   BOARD_SEED_STAGE_IDS,
+  boardProjectFirstStageId,
   type BoardSettings,
   type BoardState,
   unmetBoardCardDependencies,
@@ -1332,7 +1333,7 @@ export const boardHandlers = {
       const projectTitle = projects.find((project) => project.id === projectId)?.title ?? "";
       const board = yield* readBoardState(deps);
       const labels = yield* resolveLabelIds(board, input.labels ?? []);
-      const stage = input.stage ?? BOARD_SEED_STAGE_IDS.backlog;
+      const stage = input.stage ?? boardProjectFirstStageId(board, projectId);
       // Pre-validate dependencies for the friendlier tool-shaped message; the
       // decider re-checks existence inside the one atomic create below.
       const dependsOn = input.dependsOn ?? [];

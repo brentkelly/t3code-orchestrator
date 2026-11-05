@@ -103,6 +103,7 @@ import {
 } from "./boardCardThreadMenu";
 import type { BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { boardStageLabel } from "./boardStages";
+import { boardToast } from "./boardToast";
 import { indexBoardLabels } from "./labelColour";
 import {
   BoardCardDetailPopup,
@@ -122,6 +123,7 @@ import {
   isBoardGroupShell,
 } from "./boardGroups";
 import { boardMoveLeavesPlanningUnwritten } from "./boardStageActions";
+import { boardCardPipelineStages } from "./boardProjectPipelines";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
 import { boardCardProjectOptions } from "./BoardCardProjectSelect";
@@ -129,6 +131,7 @@ import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import {
   describeBoardCheckWorktreeOutcome,
   describeBoardCommandFailure,
+  describeBoardSkipCiOutcome,
   describeBoardMergeOutcome,
   // T3o: the forced re-check's answer (T3O-48).
   describeBoardRefreshOutcome,
@@ -195,7 +198,23 @@ export function BoardCardDetail({
 }) {
   const detail = useAtomValue(boardEnvironment.cardDetailValueAtom({ environmentId, cardId }));
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
-  const stages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
+  const allStages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
+  // T3O-43: the card's own project's pipeline, from its t3o.json.
+  const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
+  const pipelineCardProjectId = detail?.card.projectId ?? null;
+  const pipelineCardStage = detail?.card.stage ?? null;
+  const stages = useMemo(
+    () =>
+      pipelineCardProjectId === null || pipelineCardStage === null
+        ? allStages
+        : boardCardPipelineStages(
+            { stages: allStages, projectStageConfigs },
+            { stage: pipelineCardStage, projectId: pipelineCardProjectId },
+          ),
+    [allStages, pipelineCardProjectId, pipelineCardStage, projectStageConfigs],
+  );
+  const projectExecutionConfig =
+    pipelineCardProjectId === null ? null : (projectStageConfigs[pipelineCardProjectId] ?? null);
   // T3O-65: the board's workers, for the queue's reason.
   const workersState = useAtomValue(boardEnvironment.workersAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
@@ -256,6 +275,9 @@ export function BoardCardDetail({
   const requestReviewRound = useAtomCommand(boardEnvironment.requestReviewRound, {
     reportFailure: false,
   });
+  // "Skip CI" (T3O-44). A refusal is an answer, toasted below.
+  const skipCi = useAtomCommand(boardEnvironment.skipCi, { reportFailure: false });
+  const [skippingCi, setSkippingCi] = useState(false);
   const createCard = useAtomCommand(boardEnvironment.createCard);
   // "Remove worktree" (T3O-52). Same reason again: a refusal is an answer.
   const removeCardWorktree = useAtomCommand(boardEnvironment.removeCardWorktree, {
@@ -800,7 +822,11 @@ export function BoardCardDetail({
   const humanInLoop =
     buildStageId !== null && card.stage === buildStageId
       ? (() => {
-          const exec = resolveBoardStageExecution(boardSettings, buildStageId);
+          const exec = resolveBoardStageExecution(
+            boardSettings,
+            buildStageId,
+            projectExecutionConfig,
+          );
           const fallback = boardBuildHumanInLoopDefault(exec, detail.hasPlan);
           return {
             value: card.humanInLoop ?? fallback,
@@ -830,14 +856,20 @@ export function BoardCardDetail({
   // The review loop's round budget, for the Review pane's R1..Rn bar. Resolved
   // from the same settings the executor reads, so the bar and the real loop can
   // never disagree on the cap.
-  const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review);
+  const reviewExecution = resolveBoardStageExecution(
+    boardSettings,
+    BOARD_SEED_STAGE_IDS.review,
+    projectExecutionConfig,
+  );
   // The board-wide auto-merge default (T3O-38, D2/D3). Resolved off the
   // MERGE-ROLE stage, not off a stage literally named "Ready for merge": the
   // role is what the server reads, and keying on the name would silently
   // disagree with it on a renamed pipeline.
   const mergeStageId = boardStageWithRole(stageState, "merge")?.stageId ?? null;
   const mergeExecution =
-    mergeStageId === null ? null : resolveBoardStageExecution(boardSettings, mergeStageId);
+    mergeStageId === null
+      ? null
+      : resolveBoardStageExecution(boardSettings, mergeStageId, projectExecutionConfig);
   const boardWideAutoMerge =
     mergeExecution !== null && isBoardMergeStageExecution(mergeExecution)
       ? mergeExecution.autoMerge
@@ -888,7 +920,8 @@ export function BoardCardDetail({
     isBoardStageAtOrAfterBuild(stageState, card.stage) &&
     unmetDependencyKeys.length > 0;
   const stageRestart = resolveBoardThreadStageRestart({
-    autoExecute: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
+    autoExecute: resolveBoardStageExecution(boardSettings, card.stage, projectExecutionConfig)
+      .autoExecute,
     stageLabel: boardStageLabel(stages, card.stage),
     runInFlight: isBoardCardRunInFlight(cardShell),
     stalled: stepStalled,
@@ -975,6 +1008,28 @@ export function BoardCardDetail({
         return;
       }
       setFeedback(describeBoardReviewRoundOutcome(result.value));
+    });
+  };
+
+  const onSkipCi = () => {
+    setSkippingCi(true);
+    void skipCi({ environmentId, input: { cardId: card.id } }).then((result) => {
+      setSkippingCi(false);
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          boardToast({
+            title: "CI could not be skipped",
+            description: describeBoardCommandFailure(result),
+            tone: "error",
+          });
+        }
+        return;
+      }
+      boardToast(
+        describeBoardSkipCiOutcome(result.value, card.key, (stageId) =>
+          boardStageLabel(stages, stageId as BoardStageId),
+        ),
+      );
     });
   };
 
@@ -1107,7 +1162,9 @@ export function BoardCardDetail({
           cardId: card.id,
           toStage,
           ...(toDone ? {} : { orderKey: boardColumnAppendOrderKey(targetColumn) }),
-          ...(areBoardStagesAdjacent(stageState, card.stage, toStage) ? {} : { override: true }),
+          ...(areBoardStagesAdjacent(stageState, card.stage, toStage, null)
+            ? {}
+            : { override: true }),
         },
       }),
     );
@@ -1198,7 +1255,8 @@ export function BoardCardDetail({
         ),
         names: projectNames,
         stopsAgent: isBoardCardRunInFlight(cardShell),
-        restartsStage: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
+        restartsStage: resolveBoardStageExecution(boardSettings, card.stage, projectExecutionConfig)
+          .autoExecute,
       }}
       onSetProject={
         canSetProject
@@ -1246,7 +1304,7 @@ export function BoardCardDetail({
         card,
         isGroup: card.group !== null,
         stages,
-        planStageExecution: boardPlanStageExecution(boardSettings, stages),
+        planStageExecution: boardPlanStageExecution(boardSettings, stages, projectExecutionConfig),
         planReviewStarted: detail.planReviewStarted,
       })}
       onSetPlanReview={(planReview) =>
@@ -1447,6 +1505,8 @@ export function BoardCardDetail({
         });
       }}
       onRequestReviewRound={onRequestReviewRound}
+      onSkipCi={onSkipCi}
+      skipCiPending={skippingCi}
       onCreateFollowUp={onCreateFollowUp}
       stepLive={stepLive}
       onOpenPullRequest={(url) => {
@@ -1517,6 +1577,7 @@ export function BoardCardDetail({
       reviewMaxRounds={reviewMaxRounds}
       reviewOverrides={card.reviewOverrides}
       boardSettings={boardSettings}
+      projectExecutionConfig={projectExecutionConfig}
       onSetModelOverrides={(modelOverrides) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, modelOverrides } }))
       }

@@ -66,6 +66,8 @@ function makeCard(
     placedWorkerId: null,
     workerMove: null,
     placementOrphaned: null,
+    ci: null,
+    ciLastOutcome: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -403,6 +405,7 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
           orderKey: "b",
           createdAt: NOW,
           updatedAt: NOW,
+          projectId: null,
         },
         {
           stageId: BoardStageId.make("building"),
@@ -411,6 +414,7 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
           orderKey: "d",
           createdAt: NOW,
           updatedAt: NOW,
+          projectId: null,
         },
         {
           stageId: BoardStageId.make("planning"),
@@ -419,6 +423,7 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
           orderKey: "f",
           createdAt: NOW,
           updatedAt: NOW,
+          projectId: null,
         },
         {
           stageId: BoardStageId.make("review"),
@@ -427,6 +432,7 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
           orderKey: "h",
           createdAt: NOW,
           updatedAt: NOW,
+          projectId: null,
         },
         {
           stageId: BoardStageId.make("done"),
@@ -435,6 +441,7 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
           orderKey: "j",
           createdAt: NOW,
           updatedAt: NOW,
+          projectId: null,
         },
       ];
       const failure = yield* decideFail(
@@ -607,6 +614,7 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
           orderKey: "b",
           createdAt: NOW,
           updatedAt: NOW,
+          projectId: null,
         },
         {
           stageId: BoardStageId.make("review"),
@@ -615,6 +623,7 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
           orderKey: "d",
           createdAt: NOW,
           updatedAt: NOW,
+          projectId: null,
         },
         {
           stageId: BoardStageId.make("done"),
@@ -623,6 +632,7 @@ it.layer(NodeServices.layer)("sub-board decider (t3o-23)", (it) => {
           orderKey: "f",
           createdAt: NOW,
           updatedAt: NOW,
+          projectId: null,
         },
       ];
       const failure = yield* decideFail(

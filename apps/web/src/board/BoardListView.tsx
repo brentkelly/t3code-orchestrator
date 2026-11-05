@@ -1157,6 +1157,7 @@ function BoardListNewGroupDialog({
           stage: boardNewPhaseHeadingStage(
             stages,
             parent !== undefined && boardShellGroup(shells, parent)?.target === "own",
+            project,
           ),
           ...(parent === undefined ? {} : { parentCardId: parent.cardId }),
           ...(ids.length === 0 ? {} : { adoptCardIds: ids }),

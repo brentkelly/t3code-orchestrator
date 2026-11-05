@@ -46,6 +46,7 @@ import {
   setBoardProjectSetting,
 } from "./BoardSettingsPanel.logic";
 import { BoardPipelineSection, NumberStepper } from "./BoardPipelineSection";
+import { BoardProjectPipelinesSection } from "./BoardProjectPipelinesSection";
 import { BoardWorkerSettings } from "../../board/workers/BoardWorkerSettings";
 import { useBoardWorkers } from "../../board/workers/boardWorkersState";
 import { boardShowsWorkers } from "../../board/workers/cardWorker";
@@ -109,6 +110,8 @@ function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId
       <DisplaySection board={board} update={update} />
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
       <BoardPipelineSection />
+      {/* T3O-43: what each project's committed t3o.json changes. */}
+      <BoardProjectPipelinesSection environmentId={environmentId} />
       <BoardConcurrencySettings
         board={board}
         environmentId={environmentId}

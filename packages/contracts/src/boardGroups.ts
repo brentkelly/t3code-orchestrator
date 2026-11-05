@@ -14,12 +14,17 @@ import {
   boardCardPlans,
   isBoardPlanPlanned,
   boardNextStageId,
+  boardProjectStagesInOrder,
   boardStageBeforeBuild,
+  boardStageById,
   boardStageIndex,
+  boardProjectFirstStageId,
   boardStagesInOrder,
   boardStageWithRole,
   isBoardStageAtOrAfterBuild,
   boardPlanId,
+  compareBoardStages,
+  effectiveBoardStageRole,
   type BoardCard,
   type BoardCardGroup,
   type BoardCardId,
@@ -29,6 +34,7 @@ import {
   type BoardState,
   isBoardDeferredStage,
 } from "./board.ts";
+import type { ProjectId } from "./baseSchemas.ts";
 
 /**
  * A card's group settings, or null for a leaf. A card that has live children
@@ -217,20 +223,31 @@ export function defaultBoardCardGroup(
  * The stage an emptied group reverts to as an ordinary card: the stage it had
  * before it became a group, capped at Sprint (the stage before the plan
  * role) so a card that lost its children never claims a plan or a build it
- * no longer has. A deferred group stays deferred.
+ * no longer has. A deferred group stays deferred. It walks the card's own
+ * project pipeline (T3O-43), so it never lands in a stage that project
+ * removed; a stage the project no longer uses falls back to the nearest one
+ * before it.
  */
 export function boardGroupRevertStage(
   board: BoardState,
-  card: Pick<BoardCard, "stage" | "group">,
+  card: Pick<BoardCard, "stage" | "group"> & { readonly projectId: ProjectId | null },
 ): BoardStageId {
   if (isBoardDeferredStage(card.stage)) return card.stage;
-  const ordered = boardStagesInOrder(board);
-  const plan = boardStageWithRole(board, "plan");
-  const planIndex = plan === null ? -1 : boardStageIndex(board, plan.stageId);
+  const ordered = boardProjectStagesInOrder(board, card.projectId).filter(
+    (stage) => !stage.retired,
+  );
+  const planIndex = ordered.findIndex((stage) => effectiveBoardStageRole(stage) === "plan");
   const capIndex = planIndex > 0 ? planIndex - 1 : 0;
   const wanted = card.group?.prevStage ?? card.stage;
-  const index = boardStageIndex(board, wanted);
-  if (index < 0) return ordered[0]!.stageId;
+  let index = ordered.findIndex((stage) => stage.stageId === wanted);
+  if (index < 0) {
+    const row = boardStageById(board, wanted);
+    if (row === null) return ordered[0]!.stageId;
+    index = ordered.reduce(
+      (last, stage, position) => (compareBoardStages(stage, row) <= 0 ? position : last),
+      0,
+    );
+  }
   return ordered[Math.min(index, capIndex)]!.stageId;
 }
 
@@ -293,7 +310,7 @@ function integrationLaneStage(
   buildStageId: BoardStageId | null,
   doneStageId: BoardStageId,
 ): BoardStageId {
-  const lane = buildStageId === null ? null : boardNextStageId(board, buildStageId);
+  const lane = buildStageId === null ? null : boardNextStageId(board, buildStageId, card.projectId);
   if (lane === null) return doneStageId;
   const laneIndex = boardStageIndex(board, lane);
   const current = boardStageIndex(board, card.stage);
@@ -485,10 +502,14 @@ export type BoardNewPhasePlan =
       readonly cardStage: BoardStageId;
     };
 
-/** A new phase heading's stage: the first stage, or the floor under an `own`
-    parent, whose children live from there onward. */
-export function boardNewPhaseHeadingStage(board: BoardState, parentOwn: boolean): BoardStageId {
-  const first = boardStagesInOrder(board)[0]!.stageId;
+/** A new phase heading's stage: its project's first stage, or the floor under
+    an `own` parent, whose children live from there onward. */
+export function boardNewPhaseHeadingStage(
+  board: BoardState,
+  parentOwn: boolean,
+  projectId: ProjectId | null,
+): BoardStageId {
+  const first = boardProjectFirstStageId(board, projectId);
   return parentOwn ? (boardStageBeforeBuild(board)?.stageId ?? first) : first;
 }
 
@@ -516,7 +537,7 @@ export function boardNewPhasePlan(
       reason: `'${key}' is not a deferred card of '${group.key}'; only deferred cards move to a new phase.`,
     };
   }
-  const first = boardStagesInOrder(board)[0]!.stageId;
+  const first = boardProjectFirstStageId(board, group.projectId);
   const parent =
     group.parentCardId === null
       ? undefined
@@ -526,7 +547,7 @@ export function boardNewPhasePlan(
     kind: "ok",
     group,
     parentCardId: group.parentCardId,
-    headingStage: boardNewPhaseHeadingStage(board, parentOwn),
+    headingStage: boardNewPhaseHeadingStage(board, parentOwn, group.projectId),
     cardIds: deferred.filter((card) => wanted.has(card.id)).map((card) => card.id),
     cardStage: first,
   };

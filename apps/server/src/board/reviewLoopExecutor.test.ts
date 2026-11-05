@@ -228,6 +228,42 @@ describe("ReviewLoopExecutor.planNext (D1/D3)", () => {
     expect(clean).toEqual({ kind: "complete", outcome: "succeeded" });
   });
 
+  it("T3O-44: a CI send-back's finding is must-fix in the round it opened only", () => {
+    const sentBack = {
+      ...card,
+      ciLastOutcome: {
+        kind: "sent-back" as const,
+        stepName: "Lint",
+        finding: "Lint failed.",
+        round: 1,
+      },
+    };
+    const planFor = (completions: ReadonlyArray<BoardStepCompletion>) =>
+      ReviewLoopExecutor.planNext({
+        card: sentBack,
+        config: config(),
+        completions,
+        runState: {
+          round: 1,
+          completedStepIds: completions.map((c) => c.stepId),
+          liveStepId: null,
+          settledStepId: null,
+          baseStale: false,
+          baseRetargetedTo: null,
+        },
+      });
+    const first = planFor([]);
+    expect(first.kind === "run" && first.prompt).toContain("Lint failed.");
+    const roundOne = [
+      completion("review@1", reviewPayload([finding("critical")])),
+      completion("triage@1", { fixedSha: "s", dispositions: [] }),
+      completion("adjudicate@1", { verdicts: [] }),
+    ];
+    const second = planFor(roundOne);
+    expect(second.kind === "run" && second.stepId).toBe("review@2");
+    expect(second.kind === "run" && second.prompt).not.toContain("Lint failed.");
+  });
+
   const cappedRound = (round: number) => [
     completion(`review@${round}`, reviewPayload([finding("critical", `f${round}`)])),
     completion(`triage@${round}`, { fixedSha: `s${round}`, dispositions: [] }),

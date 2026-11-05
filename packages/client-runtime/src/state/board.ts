@@ -39,6 +39,7 @@ import {
   type BoardCardShell,
   type BoardCardThreadShell,
   type BoardLabel,
+  type BoardProjectStageConfig,
   type BoardStageDefinition,
   type BoardStageId,
   isBoardCardScheduleDue,
@@ -91,6 +92,7 @@ import {
   reorderBoardStage,
   startBoardStageThread,
   requestBoardReviewRound,
+  skipBoardCardCi,
   removeBoardCardWorktree,
   checkBoardCardWorktree,
   submitBoardCardForMerge,
@@ -643,6 +645,17 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }).pipe(Atom.withLabel(`environment-board-stages:${environmentId}`)),
   );
 
+  /** Each project's `t3o.json` stage config (T3O-43). Empty when no project
+      has one — every project then follows the global pipeline. */
+  const EMPTY_PROJECT_STAGE_CONFIGS: Readonly<Record<string, BoardProjectStageConfig>> = {};
+  const projectStageConfigsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(
+      (get) =>
+        get(options.boardSnapshotValueAtom(environmentId))?.projectStageConfigs ??
+        EMPTY_PROJECT_STAGE_CONFIGS,
+    ).pipe(Atom.withLabel(`environment-board-project-stage-configs:${environmentId}`)),
+  );
+
   /** The board's workers (T3O-62, D19), or the local-only summary when the
       board has none — which is every board until a worker is added. */
   const workersAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -704,6 +717,7 @@ export function createBoardEnvironmentAtoms<R, ER>(
     archivedCardsAtom,
     labelCatalogueAtom,
     stageListAtom,
+    projectStageConfigsAtom,
     workersAtom,
     /** Raw subscription state (loading/failure visible), keyed like
         `cardDetailValueAtom`. */
@@ -750,6 +764,12 @@ export function createBoardEnvironmentAtoms<R, ER>(
     requestReviewRound: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:request-review-round",
       execute: (input: { readonly cardId: BoardCardId }) => requestBoardReviewRound(input),
+    }),
+    /** Skip CI for a card in the CI stage (T3O-44). Resolves to where the
+        card went, or why it could not. */
+    skipCi: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:skip-ci",
+      execute: (input: { readonly cardId: BoardCardId }) => skipBoardCardCi(input),
     }),
     /** Remove a finished card's kept worktree past the safety rule (T3O-52). */
     removeCardWorktree: createEnvironmentCommand(runtime, {

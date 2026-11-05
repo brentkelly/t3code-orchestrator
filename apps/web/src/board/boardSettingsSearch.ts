@@ -41,6 +41,13 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     targetId: "board-projects",
   },
   { id: "board-pipeline", title: "Pipeline", to: "/settings/board" },
+  // T3O-43: each project's t3o.json, read-only.
+  {
+    id: "board-project-pipelines",
+    title: "Project pipelines",
+    to: "/settings/board",
+    searchTerms: ["t3o.json per project stages override"],
+  },
   {
     id: "board-default-model",
     title: "Board default model",

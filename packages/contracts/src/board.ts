@@ -346,10 +346,14 @@ export const BoardStageDefinition = Schema.Struct({
   orderKey: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /** The project whose committed `t3o.json` added this stage (T3O-43), or
+      null for a global stage. A project-owned stage is used by that project's
+      cards only, and its id is namespaced `<projectId>:<fileId>`. */
+  projectId: Schema.NullOr(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type BoardStageDefinition = typeof BoardStageDefinition.Type;
 
-/** The eight compiled-in seed stages ship with fixed ids matching the legacy
+/** The nine compiled-in seed stages ship with fixed ids matching the legacy
     stage names, so persisted card `stage` values keep resolving. Roles anchor
     Building / Code review / Done; the rest are ordinary movable stages. */
 export const BOARD_SEED_STAGE_IDS = {
@@ -359,6 +363,9 @@ export const BOARD_SEED_STAGE_IDS = {
   ready: BoardStageId.make("ready"),
   building: BoardStageId.make("building"),
   review: BoardStageId.make("review"),
+  /** Continuous integration (T3O-44): in a project's pipeline only when its
+      `t3o.json` defines CI steps. */
+  ci: BoardStageId.make("ci"),
   merge: BoardStageId.make("merge"),
   done: BoardStageId.make("done"),
 } as const;
@@ -375,6 +382,7 @@ const BOARD_SEED_STAGE_AT = {
   review: "1970-01-01T00:00:00.005Z",
   merge: "1970-01-01T00:00:00.006Z",
   done: "1970-01-01T00:00:00.007Z",
+  ci: "1970-01-01T00:00:00.008Z",
 } as const;
 
 // Spaced single-character order keys, leaving room for `pinOrderKeyBetween`
@@ -391,6 +399,12 @@ const BOARD_SEED_STAGE_SHAPES: ReadonlyArray<{
   { stageId: BOARD_SEED_STAGE_IDS.ready, label: "Ready", role: null, orderKey: "h" },
   { stageId: BOARD_SEED_STAGE_IDS.building, label: "Building", role: "build", orderKey: "j" },
   { stageId: BOARD_SEED_STAGE_IDS.review, label: "Code review", role: "review", orderKey: "l" },
+  {
+    stageId: BOARD_SEED_STAGE_IDS.ci,
+    label: "Continuous integration",
+    role: null,
+    orderKey: "m",
+  },
   { stageId: BOARD_SEED_STAGE_IDS.merge, label: "Ready for merge", role: "merge", orderKey: "n" },
   { stageId: BOARD_SEED_STAGE_IDS.done, label: "Done", role: "done", orderKey: "p" },
 ];
@@ -398,7 +412,7 @@ const BOARD_SEED_STAGE_SHAPES: ReadonlyArray<{
 export const BOARD_SEED_STAGES: ReadonlyArray<BoardStageDefinition> = BOARD_SEED_STAGE_SHAPES.map(
   (seed): BoardStageDefinition => {
     const at = BOARD_SEED_STAGE_AT[seed.stageId as keyof typeof BOARD_SEED_STAGE_AT];
-    return { ...seed, createdAt: at, updatedAt: at };
+    return { ...seed, createdAt: at, updatedAt: at, projectId: null };
   },
 );
 
@@ -415,9 +429,14 @@ export function compareBoardStages(a: BoardStageDefinition, b: BoardStageDefinit
     report an unused board's slice as absent so rehydration equals a from-empty
     replay. Assumes canonical `compareBoardStages` order (both inputs are). */
 export function boardStagesAreSeedOnly(stages: ReadonlyArray<BoardStageDefinition>): boolean {
-  if (stages.length !== BOARD_SEED_STAGES.length) return false;
+  // A table seeded before the CI stage existed (T3O-44) is untouched too.
+  const seeds =
+    stages.length === BOARD_SEED_STAGES.length - 1
+      ? BOARD_SEED_STAGES.filter((seed) => seed.stageId !== BOARD_SEED_STAGE_IDS.ci)
+      : BOARD_SEED_STAGES;
+  if (stages.length !== seeds.length) return false;
   return stages.every((stage, index) => {
-    const seed = BOARD_SEED_STAGES[index]!;
+    const seed = seeds[index]!;
     return (
       stage.stageId === seed.stageId &&
       stage.label === seed.label &&
@@ -1458,6 +1477,171 @@ export function sortBoardCardDecisions<T extends Pick<BoardCardDecision, "flag">
     .map((entry) => entry.decision);
 }
 
+// ── Continuous integration (T3O-44) ─────────────────────────────────────
+
+/** One CI step a project defines in its `t3o.json`: a named shell command the
+    board runs in the card's worktree, killed after `timeoutMinutes`. */
+/** A day. Node clamps a timer past 2^31-1 ms (about 24.8 days) to 1 ms, so an
+    unbounded value would time a step out at once. */
+const BOARD_CI_MAX_TIMEOUT_MINUTES = 1_440;
+
+export const BoardCiStepDefinition = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  command: TrimmedNonEmptyString,
+  timeoutMinutes: PositiveInt.check(Schema.isLessThanOrEqualTo(BOARD_CI_MAX_TIMEOUT_MINUTES)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(30)),
+  ),
+});
+export type BoardCiStepDefinition = typeof BoardCiStepDefinition.Type;
+
+const BOARD_CI_STEP_STATUSES = [
+  "pending",
+  "running",
+  "passed",
+  "failed",
+  "timed-out",
+  "cancelled",
+] as const;
+export const BoardCiStepStatus = Schema.Literals(BOARD_CI_STEP_STATUSES);
+export type BoardCiStepStatus = typeof BoardCiStepStatus.Type;
+
+/** A step status that ends its pass as a failure. */
+export function isBoardCiStepFailure(status: BoardCiStepStatus): boolean {
+  return status === "failed" || status === "timed-out";
+}
+
+/** How many output lines a step keeps for the card and the fix agent. The full
+    log stays in the worktree's `.t3/ci/<runId>/`, excluded from git. */
+export const BOARD_CI_TAIL_LINES = 200;
+
+/** A CI step's compact state on the card shell: no command, no output. */
+export const BoardCardCiStep = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  status: BoardCiStepStatus,
+  startedAt: Schema.NullOr(IsoDateTime),
+  finishedAt: Schema.NullOr(IsoDateTime),
+});
+export type BoardCardCiStep = typeof BoardCardCiStep.Type;
+
+/** Where a card's current CI entry stands. `queued` waits for a slot,
+    `running` runs its steps, `fixing` has a fix agent on a failed step and
+    `passed` is about to move on. `held` stopped without a verdict (the runner
+    was unavailable) and waits for a human to restart the stage or Skip CI. */
+export const BoardCardCiPhase = Schema.Literals(["queued", "running", "fixing", "passed", "held"]);
+export type BoardCardCiPhase = typeof BoardCardCiPhase.Type;
+
+/**
+ * The card's current CI entry (T3O-44), null outside CI. Compact on purpose:
+ * it rides every card shell, so step tails and commands stay in the detail.
+ */
+export const BoardCardCi = Schema.Struct({
+  /** The pass in progress, or the last one of this entry. */
+  runId: TrimmedNonEmptyString,
+  /** Which visit to CI this is, 1-based, so passes group by entry. */
+  entry: PositiveInt,
+  fixAttempts: NonNegativeInt,
+  maxFixAttempts: NonNegativeInt,
+  phase: BoardCardCiPhase,
+  steps: Schema.Array(BoardCardCiStep),
+});
+export type BoardCardCi = typeof BoardCardCi.Type;
+
+/** How a card last left CI other than by passing, for the card face: sent
+    back to review (the failing step and the fixes used) or skipped by a
+    human. Cleared when the card next enters CI. */
+export const BoardCardCiLastOutcome = Schema.Struct({
+  kind: Schema.Literals(["sent-back", "skipped"]),
+  stepName: Schema.optionalKey(TrimmedNonEmptyString),
+  fixAttemptsUsed: Schema.optionalKey(NonNegativeInt),
+  /** Who skipped it. */
+  actor: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Why it was sent back: the fix agent's finding, or the failure itself,
+      cut to `BOARD_CI_SHELL_FINDING_MAX`. The round it opened (`round`) carries
+      it as a must-fix finding; later rounds do not. */
+  finding: Schema.optionalKey(Schema.String),
+  round: Schema.optionalKey(PositiveInt),
+});
+export type BoardCardCiLastOutcome = typeof BoardCardCiLastOutcome.Type;
+
+/** How a CI pass ended. `fixed-in-place` failed and a fix agent fixed it;
+    `cancelled` was stopped because the card left CI. */
+const BOARD_CI_PASS_OUTCOMES = [
+  "passed",
+  "fixed-in-place",
+  "sent-back",
+  "skipped",
+  "interrupted",
+  "cancelled",
+] as const;
+export const BoardCiPassOutcome = Schema.Literals(BOARD_CI_PASS_OUTCOMES);
+export type BoardCiPassOutcome = typeof BoardCiPassOutcome.Type;
+
+/** One step of a recorded pass, with what the card detail shows. */
+export const BoardCiPassStep = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  command: TrimmedNonEmptyString,
+  timeoutMinutes: PositiveInt,
+  status: BoardCiStepStatus,
+  startedAt: Schema.NullOr(IsoDateTime),
+  finishedAt: Schema.NullOr(IsoDateTime),
+  exitCode: Schema.NullOr(Schema.Int),
+  /** The last `BOARD_CI_TAIL_LINES` lines of merged stdout and stderr, with
+      long lines clipped and the whole capped in size by the runner. */
+  tail: Schema.String,
+});
+export type BoardCiPassStep = typeof BoardCiPassStep.Type;
+
+/** One CI run over a card's steps (T3O-44), which the design calls a pass. */
+export const BoardCiPass = Schema.Struct({
+  runId: TrimmedNonEmptyString,
+  cardId: BoardCardId,
+  entry: PositiveInt,
+  /** 1-based within the entry. */
+  ordinal: PositiveInt,
+  startedAt: IsoDateTime,
+  finishedAt: Schema.NullOr(IsoDateTime),
+  /** Null while the pass runs, and while a fix agent works on its failure. */
+  outcome: Schema.NullOr(BoardCiPassOutcome),
+  steps: Schema.Array(BoardCiPassStep),
+  /** The worktree directory holding each step's full log. */
+  logDir: Schema.NullOr(Schema.String),
+  /** The fix agent that worked on this pass's failure. */
+  fixThreadId: Schema.NullOr(ThreadId),
+});
+export type BoardCiPass = typeof BoardCiPass.Type;
+
+/** The most CI steps a project may define; the rest of a longer list is
+    ignored with a warning, which keeps the card shell bounded. */
+export const BOARD_CI_MAX_STEPS = 12;
+
+/** How much of a step's name the card shell carries. */
+export const BOARD_CI_SHELL_STEP_NAME_MAX = 60;
+
+/** How much of a send-back finding the card shell carries; the failing step's
+    full tail stays on the pass row and in its log. */
+export const BOARD_CI_SHELL_FINDING_MAX = 2000;
+
+export function boardCiShellFinding(finding: string): string {
+  return finding.length <= BOARD_CI_SHELL_FINDING_MAX
+    ? finding
+    : `${finding.slice(0, BOARD_CI_SHELL_FINDING_MAX - 1)}…`;
+}
+
+/** The compact shell steps of a pass. */
+export function boardCardCiSteps(
+  steps: ReadonlyArray<Pick<BoardCiPassStep, "name" | "status" | "startedAt" | "finishedAt">>,
+): ReadonlyArray<BoardCardCiStep> {
+  return steps.map((step) => ({
+    name:
+      step.name.length > BOARD_CI_SHELL_STEP_NAME_MAX
+        ? `${step.name.slice(0, BOARD_CI_SHELL_STEP_NAME_MAX - 1).trimEnd()}…`
+        : step.name,
+    status: step.status,
+    startedAt: step.startedAt,
+    finishedAt: step.finishedAt,
+  }));
+}
+
 export const BoardCard = Schema.Struct({
   id: BoardCardId,
   /** Generated `<prefix>-<cardNumber>`, e.g. "T3-195" (D14). */
@@ -1715,6 +1899,13 @@ export const BoardCard = Schema.Struct({
       Decodes to null on every event written before, matching migration 049's
       NULL column. */
   placementOrphaned: Schema.NullOr(BoardCardPlacementOrphan).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** The card's current CI entry (T3O-44); null outside CI. Decodes to null on
+      every event written before CI, matching migration 060's NULL column. */
+  ci: Schema.NullOr(BoardCardCi).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** How the card last left CI other than by passing (T3O-44). */
+  ciLastOutcome: Schema.NullOr(BoardCardCiLastOutcome).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
@@ -2413,6 +2604,13 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
   "plan-review-started",
   "plan-review-stopped",
   "plan-review-finished",
+  /** CI (T3O-44): a pass ended (its outcome on the row), the card was sent
+      back to review, or a human skipped CI. Each links to the CI tab. */
+  "card-ci-pass-finished",
+  "card-ci-sent-back",
+  "card-ci-skipped",
+  /** CI is holding the card until a human acts (Skip CI, or a fix). */
+  "card-ci-held",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -2533,6 +2731,11 @@ export const BoardCardActivityPayload = Schema.Struct({
   planReviewRounds: Schema.optionalKey(PositiveInt),
   planReviewRoundsRun: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
   planReviewConverged: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+  /** card-ci-* (T3O-44): how the pass ended, the step that failed, and the
+      fix attempts used. */
+  ciOutcome: Schema.optionalKey(BoardCiPassOutcome),
+  ciStepName: Schema.optionalKey(TrimmedNonEmptyString),
+  ciFixAttempts: Schema.optionalKey(NonNegativeInt),
 });
 export type BoardCardActivityPayload = typeof BoardCardActivityPayload.Type;
 
@@ -2559,6 +2762,59 @@ export type BoardCardActivityEntry = typeof BoardCardActivityEntry.Type;
  * as an optional field so read models built by pre-board code — upstream
  * tests included — decode and compile unchanged.
  */
+/**
+ * Where a project's stage config was read from (T3O-43): the `t3o.json` path
+ * in the central server's checkout, and that checkout's HEAD when it was read.
+ */
+export const BoardProjectStageConfigSource = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  commitSha: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardProjectStageConfigSource = typeof BoardProjectStageConfigSource.Type;
+
+/**
+ * One project's resolved stage config from its committed `t3o.json`
+ * (T3O-43, D8): the decider and reactor branch on it, so it lives in the read
+ * model. Never the raw file — only what the board acts on.
+ *
+ * - `removedStageIds`: global role-less stages this project does not use.
+ * - `addedStageIds`: the project-owned stage rows the file currently declares,
+ *   in file order. A project-owned row missing from it is retired.
+ * - `overrides`: the decoded execution partials, keyed by the stage id they
+ *   apply to (namespaced for an added stage).
+ * - `warnings`: every entry the board ignored, and why.
+ */
+export const BoardProjectStageConfig = Schema.Struct({
+  removedStageIds: Schema.Array(BoardStageId),
+  addedStageIds: Schema.Array(BoardStageId),
+  overrides: Schema.Record(
+    Schema.String,
+    Schema.suspend(
+      (): Schema.Codec<BoardStageExecutionPatch, typeof BoardStageExecutionPatch.Encoded> =>
+        BoardStageExecutionPatch,
+    ),
+  ),
+  warnings: Schema.Array(Schema.String),
+  source: Schema.NullOr(BoardProjectStageConfigSource),
+  /** The project's CI steps from `stages.settings.ci` (T3O-44), or null when
+      it defines none. `active` is false when `enabled: false` pauses CI; an
+      inactive CI stage is not in the project's pipeline. */
+  ci: Schema.NullOr(
+    Schema.Struct({ steps: Schema.Array(BoardCiStepDefinition), active: Schema.Boolean }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+});
+export type BoardProjectStageConfig = typeof BoardProjectStageConfig.Type;
+
+/** A project with no `t3o.json`: it follows the global pipeline exactly. */
+export const EMPTY_BOARD_PROJECT_STAGE_CONFIG: BoardProjectStageConfig = {
+  removedStageIds: [],
+  addedStageIds: [],
+  overrides: {},
+  warnings: [],
+  source: null,
+  ci: null,
+};
+
 export const BoardState = Schema.Struct({
   cards: Schema.Array(BoardCard),
   /** The label catalogue (t3o-06a). In the read model because the decider
@@ -2605,6 +2861,12 @@ export const BoardState = Schema.Struct({
       never listed. Absent on a board that has never added one — every board
       before the distributed board decodes unchanged. */
   workers: Schema.optional(Schema.Array(BoardWorker)),
+  /** Per-project stage config from each project's committed `t3o.json`
+      (T3O-43, D8). In the read model because the decider refuses moves into
+      a stage a card's project does not use, and next-stage / adjacency walk
+      the card's project's list. Absent until the first project file is
+      reconciled; a project absent from it follows the global pipeline. */
+  projectStageConfigs: Schema.optional(Schema.Record(ProjectId, BoardProjectStageConfig)),
   /** The worker unpinned cards follow (D20). Absent means `local`. In the read
       model because removing the default is refused. */
   defaultWorkerId: Schema.optional(BoardWorkerId),
@@ -2873,42 +3135,145 @@ export function boardLabelCatalogue(board: BoardState): ReadonlyArray<BoardLabel
 
 // ── Stage read-model helpers (D2/D3, t3o-15) ───────────────────────────
 
-/** A board's stage list: its `stages`, or the compiled seeds when absent (a
-    board that has never touched a stage). The single reader every
-    decider/projector/UI path goes through, so "absent" and "the eight seeds"
-    are always the same list. */
-export function boardStages(board: BoardState): ReadonlyArray<BoardStageDefinition> {
+/** Every stage row the board holds: the global list plus every project-owned
+    row (T3O-43). Only the per-project and by-id readers want this. */
+export function boardAllStages(
+  board: Pick<BoardState, "stages">,
+): ReadonlyArray<BoardStageDefinition> {
   return board.stages ?? BOARD_SEED_STAGES;
 }
 
-/** The stage list in canonical (orderKey, stageId) order. */
-export function boardStagesInOrder(board: BoardState): ReadonlyArray<BoardStageDefinition> {
+/** A board's GLOBAL stage list: its `stages` less project-owned rows, or the
+    compiled seeds when absent (a board that has never touched a stage). The
+    single reader every global decider/projector/UI path goes through, so
+    "absent" and "the eight seeds" are always the same list. */
+export function boardStages(
+  board: Pick<BoardState, "stages">,
+): ReadonlyArray<BoardStageDefinition> {
+  const all = boardAllStages(board);
+  return all.some((stage) => stage.projectId !== null)
+    ? all.filter((stage) => stage.projectId === null)
+    : all;
+}
+
+/** The global stage list in canonical (orderKey, stageId) order. */
+export function boardStagesInOrder(
+  board: Pick<BoardState, "stages">,
+): ReadonlyArray<BoardStageDefinition> {
   return [...boardStages(board)].sort(compareBoardStages);
 }
 
-/** The stage with the given id, or null. */
+/** The stage with the given id, global or project-owned, or null. */
 export function boardStageById(
-  board: BoardState,
+  board: Pick<BoardState, "stages">,
   stageId: BoardStageId,
 ): BoardStageDefinition | null {
-  return boardStages(board).find((stage) => stage.stageId === stageId) ?? null;
+  return boardAllStages(board).find((stage) => stage.stageId === stageId) ?? null;
 }
 
-/** A stage's position in board order, or -1 when the id is unknown (a
-    since-deleted stage named by a legacy event). */
+/** A stage's position in global board order, or -1 when the id is unknown (a
+    since-deleted stage named by a legacy event). A project-owned stage sits
+    half a step after the global stage before it, so ordering comparisons
+    (before build, at or after review, …) hold for it too. */
 export function boardStageIndex(board: BoardState, stageId: BoardStageId): number {
-  return boardStagesInOrder(board).findIndex((stage) => stage.stageId === stageId);
+  const ordered = boardStagesInOrder(board);
+  const index = ordered.findIndex((stage) => stage.stageId === stageId);
+  if (index >= 0) return index;
+  const owned = boardAllStages(board).find(
+    (stage) => stage.stageId === stageId && stage.projectId !== null,
+  );
+  if (owned === undefined) return -1;
+  let before = -1;
+  ordered.forEach((stage, position) => {
+    if (compareBoardStages(stage, owned) < 0) before = position;
+  });
+  return before + 0.5;
 }
 
-/** Whether two stages are neighbours in board order. Unknown ids are never
-    adjacent. */
+/** A project's stage config (T3O-43), or null when its project has no
+    `t3o.json` and follows the global pipeline. */
+export function boardProjectStageConfig(
+  board: Pick<BoardState, "projectStageConfigs">,
+  projectId: ProjectId,
+): BoardProjectStageConfig | null {
+  return board.projectStageConfigs?.[projectId] ?? null;
+}
+
+/** A stage in one project's pipeline. `retired` marks a stage the project no
+    longer uses that is kept only while one of its live cards sits in it:
+    nothing new enters it and nothing advances into it. */
+export type BoardProjectStage = BoardStageDefinition & { readonly retired: boolean };
+
+/** What the per-project stage helpers read (T3O-43): the stage rows, the
+    project configs and where each live card sits. A `BoardState` is one; a
+    client passes its shells. An absent `archivedAt` reads as live. */
+export interface BoardStageView {
+  readonly stages?: BoardState["stages"];
+  readonly projectStageConfigs?: BoardState["projectStageConfigs"];
+  readonly cards: ReadonlyArray<
+    Pick<BoardCard, "stage" | "projectId"> & { readonly archivedAt?: string | null }
+  >;
+}
+
+/**
+ * One project's pipeline, in board order (T3O-43): the global stages less the
+ * ones its `t3o.json` removes, plus its own project-owned stages. A removed
+ * (or no longer declared) stage stays, flagged `retired`, while a live card of
+ * the project sits in it. A null project is the global list.
+ */
+export function boardProjectStagesInOrder(
+  board: BoardStageView,
+  projectId: ProjectId | null,
+): ReadonlyArray<BoardProjectStage> {
+  const config = projectId === null ? null : boardProjectStageConfig(board, projectId);
+  const all = boardAllStages(board);
+  const removed = new Set<string>(config?.removedStageIds ?? []);
+  // CI (T3O-44) is in a pipeline only while the project's CI is active; an
+  // inactive CI stage behaves exactly like a removed one.
+  if (config?.ci?.active !== true) removed.add(BOARD_SEED_STAGE_IDS.ci);
+  const added = new Set<string>(config?.addedStageIds ?? []);
+  const occupied = new Set<string>();
+  for (const card of board.cards) {
+    if (card.projectId === projectId && (card.archivedAt ?? null) === null) {
+      occupied.add(card.stage);
+    }
+  }
+  const out: BoardProjectStage[] = [];
+  for (const stage of all) {
+    if (stage.projectId !== null && stage.projectId !== projectId) continue;
+    const used = stage.projectId === null ? !removed.has(stage.stageId) : added.has(stage.stageId);
+    if (used) out.push({ ...stage, retired: false });
+    else if (occupied.has(stage.stageId)) out.push({ ...stage, retired: true });
+  }
+  return out.sort(compareBoardStages);
+}
+
+/** The first stage a project's new card lands in (T3O-43): its pipeline's
+    first live stage, so a project that removed Backlog starts cards after it. */
+export function boardProjectFirstStageId(
+  board: BoardStageView,
+  projectId: ProjectId | null,
+): BoardStageId {
+  return (
+    boardProjectStagesInOrder(board, projectId).find((stage) => !stage.retired)?.stageId ??
+    boardStagesInOrder(board)[0]!.stageId
+  );
+}
+
+/** Whether two stages are neighbours in a project's pipeline (T3O-43; a null
+    project walks the global list). Retired stages are skipped, except the one
+    being left. Unknown ids are never adjacent. */
 export function areBoardStagesAdjacent(
-  board: BoardState,
+  board: BoardStageView,
   a: BoardStageId,
   b: BoardStageId,
+  projectId: ProjectId | null,
 ): boolean {
-  const indexA = boardStageIndex(board, a);
-  const indexB = boardStageIndex(board, b);
+  const ordered = boardProjectStagesInOrder(board, projectId).filter(
+    (stage) => !stage.retired || stage.stageId === a,
+  );
+  const indexA = ordered.findIndex((stage) => stage.stageId === a);
+  const indexB = ordered.findIndex((stage) => stage.stageId === b);
   if (indexA < 0 || indexB < 0) return false;
   return Math.abs(indexA - indexB) === 1;
 }
@@ -2923,13 +3288,178 @@ export function boardStageWithRole(
   return boardStages(board).find((stage) => effectiveBoardStageRole(stage) === role) ?? null;
 }
 
-/** The stage immediately after `stageId` in board order, or null when it is
-    last or unknown (D8: auto-advance moves to the next stage in order). */
-export function boardNextStageId(board: BoardState, stageId: BoardStageId): BoardStageId | null {
-  const ordered = boardStagesInOrder(board);
+/** The stage after `stageId` in the project's pipeline, or null when it is
+    last or unknown (D8: auto-advance moves to the next stage in order). It
+    never lands on a retired stage (T3O-43); a null project walks the global
+    list. */
+export function boardNextStageId(
+  board: BoardStageView,
+  stageId: BoardStageId,
+  projectId: ProjectId | null,
+): BoardStageId | null {
+  const ordered = boardProjectStagesInOrder(board, projectId);
   const index = ordered.findIndex((stage) => stage.stageId === stageId);
-  if (index < 0 || index + 1 >= ordered.length) return null;
-  return ordered[index + 1]!.stageId;
+  if (index < 0) return null;
+  return ordered.slice(index + 1).find((stage) => !stage.retired)?.stageId ?? null;
+}
+
+/**
+ * Why a card may not move to `toStage`, as a sentence for a human, or null
+ * when it may (T3O-43). The decider refuses with it and the board's drag
+ * layer shows it as the tooltip on a refused drop, so the two never drift.
+ * A stage the card's project does not use, or has retired, is refused even
+ * with `override`; a non-adjacent move needs `override`.
+ */
+export function boardCardMoveRefusal(
+  board: BoardStageView,
+  card: Pick<BoardCard, "stage" | "projectId">,
+  toStage: BoardStageId,
+  options: {
+    readonly override: boolean;
+    /** The board's own pipeline move (T3O-44): CI's rules hold back people,
+        not the pipeline that runs CI. */
+    readonly pipeline?: boolean;
+  },
+): string | null {
+  if (isBoardDeferredStage(toStage)) return null;
+  if (options.pipeline !== true) {
+    const ciRefusal = boardCiMoveRefusal(board, card, toStage);
+    if (ciRefusal !== null) return ciRefusal;
+  }
+  const target = boardStageById(board, toStage);
+  if (target === null) return `Stage '${toStage}' does not exist.`;
+  const entry = boardProjectStagesInOrder(board, card.projectId).find(
+    (stage) => stage.stageId === toStage,
+  );
+  if (entry === undefined) {
+    return target.projectId === null
+      ? `This card's project doesn't use the ${target.label} stage.`
+      : `${target.label} belongs to another project's pipeline.`;
+  }
+  if (entry.retired) return `This card's project no longer uses the ${target.label} stage.`;
+  if (!options.override && !areBoardStagesAdjacent(board, card.stage, toStage, card.projectId)) {
+    return `Stage move '${card.stage}' -> '${toStage}' is not adjacent; a drag sends override to force it.`;
+  }
+  return null;
+}
+
+/** Whether a project's CI is on (T3O-44): it defines at least one step and
+    has not paused it with `enabled: false`. A null project never has CI. */
+export function isBoardCiActive(
+  board: Pick<BoardStageView, "projectStageConfigs">,
+  projectId: ProjectId | null,
+): boolean {
+  if (projectId === null) return false;
+  return board.projectStageConfigs?.[projectId]?.ci?.active === true;
+}
+
+/**
+ * Why a human may not make this move because of CI (T3O-44), or null. Only
+ * while the card's project has CI on: cards enter CI from the stage just
+ * before it (on their own, or by a human when the board held the card there),
+ * leave it forward only by passing or by Skip CI, and never jump over it.
+ * Override does not lift these; moving back out of CI is free.
+ */
+function boardCiMoveRefusal(
+  board: BoardStageView,
+  card: Pick<BoardCard, "stage" | "projectId">,
+  toStage: BoardStageId,
+): string | null {
+  if (!isBoardCiActive(board, card.projectId) || toStage === card.stage) return null;
+  const ci = BOARD_SEED_STAGE_IDS.ci;
+  const ordered = boardProjectStagesInOrder(board, card.projectId);
+  const ciIndex = ordered.findIndex((stage) => stage.stageId === ci);
+  if (toStage === ci) {
+    const before = ordered.slice(0, Math.max(0, ciIndex)).findLast((stage) => !stage.retired);
+    return before?.stageId === card.stage ? null : "Cards enter CI from the stage just before it.";
+  }
+  const toIndex = ordered.findIndex((stage) => stage.stageId === toStage);
+  const fromIndex = ordered.findIndex((stage) => stage.stageId === card.stage);
+  if (ciIndex < 0 || toIndex < 0 || toIndex < ciIndex) return null;
+  if (card.stage === ci) return "Use Skip CI to move a card past CI.";
+  if (fromIndex >= 0 && fromIndex < ciIndex) {
+    return "This card has to pass CI before it can move on. Cards enter CI on their own.";
+  }
+  return null;
+}
+
+/** A project-owned stage id (T3O-43): namespaced by project, so two projects
+    adding a `security` stage never collide with each other or a global id. */
+export function boardProjectStageId(projectId: ProjectId, fileId: string): BoardStageId {
+  return BoardStageId.make(`${projectId}:${fileId}`);
+}
+
+function boardProjectStageConfigsEqual(
+  left: BoardProjectStageConfig,
+  right: BoardProjectStageConfig,
+): boolean {
+  // The commit sha is provenance only: the checkout moving on with the file
+  // unchanged is not a config change.
+  const strip = (config: BoardProjectStageConfig) =>
+    canonicalJson({ ...config, source: config.source === null ? null : config.source.path });
+  return strip(left) === strip(right);
+}
+
+/** JSON with object keys sorted: the reconciler builds partials in file key
+    order but the projector decodes them into schema order. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    return `{${Object.keys(value)
+      .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+      .sort()
+      .map(
+        (key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`,
+      )
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/** What applying a project's resolved stage config would change (T3O-43):
+    shared by the reconciler (which emits nothing when it is empty) and the
+    decider (which records exactly it). */
+export interface BoardProjectStageConfigPlan {
+  readonly configChanged: boolean;
+  /** Project-owned rows to write: new ones, and ones whose label or order moved. */
+  readonly upserts: ReadonlyArray<BoardStageDefinition>;
+  /** Project-owned rows the file no longer declares and no card holds. */
+  readonly deletedStageIds: ReadonlyArray<BoardStageId>;
+}
+
+export function planBoardProjectStageConfig(input: {
+  readonly board: BoardState;
+  readonly projectId: ProjectId;
+  readonly config: BoardProjectStageConfig;
+  /** The rows the file declares, as resolved; timestamps are `now`. */
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+}): BoardProjectStageConfigPlan {
+  const current = boardProjectStageConfig(input.board, input.projectId);
+  const configChanged = !boardProjectStageConfigsEqual(
+    current ?? EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+    input.config,
+  );
+  const existing = boardAllStages(input.board).filter(
+    (stage) => stage.projectId === input.projectId,
+  );
+  const upserts: BoardStageDefinition[] = [];
+  for (const stage of input.stages) {
+    const prior = existing.find((candidate) => candidate.stageId === stage.stageId);
+    if (prior === undefined) upserts.push(stage);
+    else if (prior.label !== stage.label || prior.orderKey !== stage.orderKey) {
+      upserts.push({ ...stage, createdAt: prior.createdAt });
+    }
+  }
+  const declared = new Set<string>(input.stages.map((stage) => stage.stageId));
+  const held = new Set<string>(input.board.cards.map((card) => card.stage));
+  const deletedStageIds = existing
+    .filter((stage) => !declared.has(stage.stageId) && !held.has(stage.stageId))
+    .map((stage) => stage.stageId);
+  return { configChanged, upserts, deletedStageIds };
+}
+
+export function isBoardProjectStageConfigPlanEmpty(plan: BoardProjectStageConfigPlan): boolean {
+  return !plan.configChanged && plan.upserts.length === 0 && plan.deletedStageIds.length === 0;
 }
 
 /** Whether a stage sits at or after the `build` role in board order (D11):
@@ -3367,7 +3897,10 @@ export function isBoardStageAtOrAfterSubBoardFloor(
 export type BoardCardProjectLock =
   | { readonly kind: "child"; readonly parentCardId: BoardCardId }
   | { readonly kind: "parent"; readonly childCount: number }
-  | { readonly kind: "built" };
+  | { readonly kind: "built" }
+  /** The card sits in a stage its project's `t3o.json` added (T3O-43): no other
+      project's pipeline holds it, so the card would be in no stage at all. */
+  | { readonly kind: "project-stage"; readonly stageLabel: string };
 
 export function boardCardProjectLock(input: {
   readonly board: BoardState;
@@ -3391,6 +3924,10 @@ export function boardCardProjectLock(input: {
     card.pullRequestHistory.length > 0
   ) {
     return { kind: "built" };
+  }
+  const stage = boardStageById(input.board, card.stage);
+  if (stage !== null && stage.projectId !== null) {
+    return { kind: "project-stage", stageLabel: stage.label };
   }
   return null;
 }
@@ -4921,6 +5458,22 @@ export const BoardStageDeleteCommand = Schema.Struct({
 export type BoardStageDeleteCommand = typeof BoardStageDeleteCommand.Type;
 
 /**
+ * Record a project's resolved `t3o.json` stage config (T3O-43). Internal: the
+ * server's `BoardProjectConfig` reconciler dispatches it only when the
+ * resolved result changed. `stages` are the project-owned rows the file
+ * declares; the decider works out which old rows to retire or drop.
+ */
+export const BoardProjectSetStageConfigCommand = Schema.Struct({
+  type: Schema.Literal("board.project.set-stage-config"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  config: BoardProjectStageConfig,
+  stages: Schema.Array(BoardStageDefinition),
+  createdAt: IsoDateTime,
+});
+export type BoardProjectSetStageConfigCommand = typeof BoardProjectSetStageConfigCommand.Type;
+
+/**
  * Start a thread for the card's CURRENT stage on demand (D7), the on-demand
  * counterpart of auto-kickoff — consumed by t3o-14's `+` menu. The decider
  * validates the card exists and emits `board.card-stage-thread-requested`; the
@@ -5345,6 +5898,8 @@ export const BoardCardNoteKind = Schema.Literals([
   "card-pull-request-ready",
   /** What auto-planning did with a card's plan, or why it could not (T3O-32). */
   "card-auto-planned",
+  /** CI is holding the card, with the reason (T3O-44). */
+  "card-ci-held",
 ]);
 export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
 
@@ -5361,6 +5916,85 @@ export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
  * One command with a `kind` rather than one per event: the shapes are
  * identical and the projection's only job is to write the row.
  */
+/**
+ * What a CI record does (T3O-44). The supervisor dispatches every one: it runs
+ * the steps, so it is the only party that knows how a pass is going.
+ *
+ * - `start-pass`: a new pass at the first step. A pass already in flight on
+ *   this entry is settled `interrupted`, and one a fix agent was working on
+ *   `fixed-in-place`.
+ * - `step`: one step's progress.
+ * - `finish-pass`: the pass ended. `failed` only stamps its finish; the fix or
+ *   send-back that follows settles it.
+ * - `begin-fix`: a fix agent starts on the failed pass.
+ * - `send-back`: the card goes back to review with the failure.
+ * - `skip`: a human skipped CI.
+ */
+export const BoardCardCiAction = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("start-pass"),
+    runId: TrimmedNonEmptyString,
+    entry: PositiveInt,
+    ordinal: PositiveInt,
+    steps: Schema.Array(BoardCiStepDefinition),
+    maxFixAttempts: NonNegativeInt,
+    logDir: Schema.NullOr(Schema.String),
+    /** Starting the pass waits for a slot. */
+    queued: Schema.Boolean,
+    /** The fix agent whose fix this pass re-checks. */
+    fixThreadId: Schema.NullOr(ThreadId),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("step"),
+    runId: TrimmedNonEmptyString,
+    index: NonNegativeInt,
+    step: BoardCiPassStep,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("finish-pass"),
+    runId: TrimmedNonEmptyString,
+    result: Schema.Literals(["passed", "failed", "interrupted", "cancelled"]),
+  }),
+  Schema.Struct({ kind: Schema.Literal("begin-fix"), runId: TrimmedNonEmptyString }),
+  Schema.Struct({
+    kind: Schema.Literal("send-back"),
+    runId: Schema.NullOr(TrimmedNonEmptyString),
+    stepName: Schema.NullOr(TrimmedNonEmptyString),
+    finding: Schema.String,
+    /** The review round the send-back opens, the one that carries the finding. */
+    round: PositiveInt,
+    fixThreadId: Schema.NullOr(ThreadId),
+  }),
+  Schema.Struct({ kind: Schema.Literal("skip"), actor: TrimmedNonEmptyString }),
+]);
+export type BoardCardCiAction = typeof BoardCardCiAction.Type;
+
+export const BoardCardRecordCiCommand = Schema.Struct({
+  type: Schema.Literal("board.card.record-ci"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  action: BoardCardCiAction,
+  createdAt: IsoDateTime,
+});
+export type BoardCardRecordCiCommand = typeof BoardCardRecordCiCommand.Type;
+
+/**
+ * The board's own stage move (T3O-44): auto-advance, a CI pass, Skip CI.
+ * Decided exactly like `board.card.move`, except CI's human move rules do not
+ * apply. Internal, so no client can claim to be the pipeline.
+ */
+export const BoardCardPipelineMoveCommand = Schema.Struct({
+  type: Schema.Literal("board.card.pipeline-move"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  toStage: BoardStageId,
+  orderKey: Schema.optional(TrimmedNonEmptyString),
+  override: Schema.optional(Schema.Boolean),
+  cause: Schema.optional(Schema.Literal("auto-build")),
+  createdAt: IsoDateTime,
+});
+export type BoardCardPipelineMoveCommand = typeof BoardCardPipelineMoveCommand.Type;
+
 export const BoardCardRecordNoteCommand = Schema.Struct({
   type: Schema.Literal("board.card.record-note"),
   commandId: CommandId,
@@ -6275,6 +6909,16 @@ export const BoardCardWorkerRemovalPayload = Schema.Struct({
   card: BoardCard,
 });
 export type BoardCardWorkerRemovalPayload = typeof BoardCardWorkerRemovalPayload.Type;
+
+/** A project's `t3o.json` stage config recorded (T3O-43): the whole resolved
+    config, the project-owned stage rows written, and the rows dropped. */
+export const BoardProjectStageConfigSetPayload = Schema.Struct({
+  projectId: ProjectId,
+  config: BoardProjectStageConfig,
+  upserts: Schema.Array(BoardStageDefinition),
+  deletedStageIds: Schema.Array(BoardStageId),
+});
+export type BoardProjectStageConfigSetPayload = typeof BoardProjectStageConfigSetPayload.Type;
 // Worktree lifecycle payloads (t3o-09). Each carries the whole post-change
 // card, like every other non-created board event, so the shell-delta mapping
 // stays a pure function of the event and the projectors upsert exactly what
@@ -6375,6 +7019,35 @@ export const BoardCardAutoMergeHoldRecordedPayload = Schema.Struct({
 });
 export type BoardCardAutoMergeHoldRecordedPayload =
   typeof BoardCardAutoMergeHoldRecordedPayload.Type;
+
+/** A pass row change (T3O-44): only the keys present are written. */
+export const BoardCiPassSettle = Schema.Struct({
+  runId: TrimmedNonEmptyString,
+  outcome: Schema.optionalKey(BoardCiPassOutcome),
+  finishedAt: Schema.optionalKey(IsoDateTime),
+  fixThreadId: Schema.optionalKey(ThreadId),
+});
+export type BoardCiPassSettle = typeof BoardCiPassSettle.Type;
+
+/** A CI record (T3O-44): the card after it, plus exactly what the CI pass
+    table needs — a new pass, one step's progress, or settled pass rows. */
+export const BoardCardCiRecordedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  card: BoardCard,
+  action: BoardCardCiAction,
+  started: Schema.NullOr(BoardCiPass),
+  settled: Schema.Array(BoardCiPassSettle),
+  /** The activity row this record writes, if any. */
+  activity: Schema.NullOr(
+    Schema.Struct({
+      kind: Schema.Literals(["card-ci-pass-finished", "card-ci-sent-back", "card-ci-skipped"]),
+      ciOutcome: Schema.optionalKey(BoardCiPassOutcome),
+      ciStepName: Schema.optionalKey(TrimmedNonEmptyString),
+      ciFixAttempts: Schema.optionalKey(NonNegativeInt),
+    }),
+  ),
+});
+export type BoardCardCiRecordedPayload = typeof BoardCardCiRecordedPayload.Type;
 
 // Step-lifecycle event payloads (t3o-10). The recipe-snapshot event carries
 // the full post-change `card` (like every worktree event), so the projector
@@ -6976,6 +7649,11 @@ export const BoardCardShell = Schema.Struct({
       carry it; omitted otherwise. The label is the removed worker's, which
       the board's worker list no longer has. */
   placementOrphaned: Schema.optionalKey(Schema.Struct({ workerLabel: TrimmedNonEmptyString })),
+  /** The card's CI entry and how it last left CI (T3O-44). On the aggregate,
+      so both producers carry them; omitted when null. Step tails never ride
+      the shell. */
+  ci: Schema.optionalKey(BoardCardCi),
+  ciLastOutcome: Schema.optionalKey(BoardCardCiLastOutcome),
   /** Which limit holds a queued card (T3O-65, D11). Present only beside
       `queued`; rides the snapshot and the `card-queued` delta like `queued`
       itself, and card deltas preserve the last known value. */
@@ -7338,6 +8016,9 @@ export function makeBoardCardShell(input: {
   readonly workerMove?: Pick<BoardCardWorkerMove, "status" | "toWorkerId"> | null | undefined;
   /** T3O-66: the removed worker the card was left holding on. */
   readonly placementOrphaned?: Pick<BoardCardPlacementOrphan, "workerLabel"> | null | undefined;
+  /** T3O-44: the card's CI entry and last CI outcome. */
+  readonly ci?: BoardCardCi | null | undefined;
+  readonly ciLastOutcome?: BoardCardCiLastOutcome | null | undefined;
   /** Which limit holds a queued card (T3O-65). Real on the snapshot, absent
       on card deltas (the client keeps the last known value). */
   readonly queuedBy?: BoardStepQueuedBy | null | undefined;
@@ -7437,6 +8118,8 @@ export function makeBoardCardShell(input: {
     ...(input.placementOrphaned == null
       ? {}
       : { placementOrphaned: { workerLabel: input.placementOrphaned.workerLabel } }),
+    ...(input.ci == null ? {} : { ci: { ...input.ci, steps: boardCardCiSteps(input.ci.steps) } }),
+    ...(input.ciLastOutcome == null ? {} : { ciLastOutcome: input.ciLastOutcome }),
     ...(input.queued === true && input.queuedBy != null ? { queuedBy: input.queuedBy } : {}),
     // The review slice (t3o-22, D7). Spread whole or not at all: the counts and
     // the outcome describe one loop, so a producer must never publish half of
@@ -7522,6 +8205,11 @@ export function boardCardShellFromCard(
     workerId: boardCardBoundWorkerId(card),
     workerMove: card.workerMove,
     placementOrphaned: card.placementOrphaned,
+    ci: card.ci,
+    ciLastOutcome:
+      card.ciLastOutcome?.finding === undefined
+        ? card.ciLastOutcome
+        : { ...card.ciLastOutcome, finding: boardCiShellFinding(card.ciLastOutcome.finding) },
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined
@@ -7768,6 +8456,18 @@ export const BoardStageRemovedShellEvent = Schema.Struct({
 });
 export type BoardStageRemovedShellEvent = typeof BoardStageRemovedShellEvent.Type;
 
+/** A project's `t3o.json` stage config changed (T3O-43): its resolved config,
+    plus the project-owned stage rows written and dropped with it. */
+export const BoardProjectStageConfigShellEvent = Schema.Struct({
+  kind: Schema.Literal("project-stage-config"),
+  sequence: NonNegativeInt,
+  projectId: ProjectId,
+  config: BoardProjectStageConfig,
+  upserts: Schema.Array(BoardStageDefinition),
+  deletedStageIds: Schema.Array(BoardStageId),
+});
+export type BoardProjectStageConfigShellEvent = typeof BoardProjectStageConfigShellEvent.Type;
+
 /**
  * The board's whole worker summary (T3O-62, D7/D19), re-sent whenever any of
  * it changes: a registry event, a connection status change, a setup's
@@ -7899,6 +8599,11 @@ export const BOARD_INTERNAL_COMMANDS = [
   // move step lands after the git work behind it.
   BoardCardPlaceCommand,
   BoardCardMoveWorkerCommand,
+  // T3O-43: a project's committed t3o.json, reconciled by the server.
+  BoardProjectSetStageConfigCommand,
+  // T3O-44: CI passes, and the board's own stage moves.
+  BoardCardRecordCiCommand,
+  BoardCardPipelineMoveCommand,
 ] as const;
 
 /**
@@ -7975,6 +8680,10 @@ export const BOARD_EVENT_TYPES = [
   "board.card-worker-move-recorded",
   // T3O-66: a card's worker removed, or added back.
   "board.card-worker-removal",
+  // T3O-43: a project's t3o.json stage config.
+  "board.project-stage-config-set",
+  // T3O-44: a CI pass's progress, outcome, fix or skip.
+  "board.card-ci-recorded",
 ] as const;
 
 export const BOARD_SHELL_STREAM_EVENTS = [
@@ -7989,6 +8698,7 @@ export const BOARD_SHELL_STREAM_EVENTS = [
   BoardStageUpsertedShellEvent,
   BoardStageRemovedShellEvent,
   BoardWorkersShellEvent,
+  BoardProjectStageConfigShellEvent,
 ] as const;
 
 /** One board delta on `board.subscribeBoard`, stamped with the BOARD's sequence. */
@@ -8022,6 +8732,9 @@ export const BoardShellSnapshot = Schema.Struct({
   /** Workers (T3O-62, D19). Absent on a local-only board, which is then
       exactly today's board. */
   workers: Schema.optionalKey(BoardWorkersState),
+  /** Per-project `t3o.json` stage configs (T3O-43). Absent when no project
+      has one, which is then exactly the global pipeline. */
+  projectStageConfigs: Schema.optionalKey(Schema.Record(ProjectId, BoardProjectStageConfig)),
 });
 export type BoardShellSnapshot = typeof BoardShellSnapshot.Type;
 
@@ -8233,6 +8946,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
     }),
     Schema.Struct({
       ...base,
+      type: Schema.Literal("board.card-ci-recorded"),
+      payload: BoardCardCiRecordedPayload,
+    }),
+    Schema.Struct({
+      ...base,
       type: Schema.Literal("board.card-decisions-recorded"),
       payload: BoardCardDecisionsRecordedPayload,
     }),
@@ -8331,6 +9049,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       type: Schema.Literal("board.card-worker-removal"),
       payload: BoardCardWorkerRemovalPayload,
     }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.project-stage-config-set"),
+      payload: BoardProjectStageConfigSetPayload,
+    }),
   ] as const;
 }
 
@@ -8388,6 +9111,8 @@ export const BOARD_WS_METHODS = {
       moves, or the executor re-plans a converged loop, completes `succeeded`,
       and bounces the card straight back to Ready for merge. */
   requestReviewRound: "board.requestReviewRound",
+  /** T3O-44: a human skips CI for a card in the CI stage. */
+  skipCi: "board.skipCi",
   /** Auto-plan → Build (T3O-32, decision 7): end planning, have the agent
       decide what is left, approve the plan and start building. An RPC
       because it may steer a live planning thread. */
@@ -8607,6 +9332,17 @@ export const BoardRequestReviewRoundResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("failed") }),
 ]);
 export type BoardRequestReviewRoundResult = typeof BoardRequestReviewRoundResult.Type;
+
+/** What "Skip CI" did (T3O-44). */
+export const BoardSkipCiResult = Schema.Union([
+  /** CI was stopped and the card moved to `toStage`. */
+  Schema.Struct({ outcome: Schema.Literal("skipped"), toStage: Schema.NullOr(BoardStageId) }),
+  /** The card is not in the CI stage — a stale client. */
+  Schema.Struct({ outcome: Schema.Literal("not-in-ci") }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+  Schema.Struct({ outcome: Schema.Literal("failed") }),
+]);
+export type BoardSkipCiResult = typeof BoardSkipCiResult.Type;
 
 /** What "Remove worktree" did (T3O-52, D5). */
 export const BoardRemoveCardWorktreeResult = Schema.Union([
@@ -8845,6 +9581,9 @@ export const BoardCardDetail = Schema.Struct({
       must read as such rather than as a dangling id. An id with no row left
       is simply absent. */
   dependencies: Schema.Array(BoardCardDependencyRef),
+  /** Every CI pass of the card (T3O-44), oldest first, with commands and
+      output tails. Decodes to `[]` on legacy detail payloads. */
+  ciPasses: Schema.Array(BoardCiPass).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Dependencies the card inherits from its ancestor groups and does not
       hold itself (T3O-27): a waiting group holds back everything inside it,
       so the detail's build gate must count them. */
@@ -9051,6 +9790,11 @@ export const BOARD_RPCS = [
     success: BoardRequestReviewRoundResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.skipCi, {
+    payload: BoardCardPullRequestActionInput,
+    success: BoardSkipCiResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WS_METHODS.removeCardWorktree, {
     payload: BoardCardPullRequestActionInput,
     success: BoardRemoveCardWorktreeResult,
@@ -9120,6 +9864,7 @@ export const BOARD_RPC_SCOPES = {
   // and moves the card: the same mutation tier as merging.
   [BOARD_WS_METHODS.submitCardForMerge]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.requestReviewRound]: AuthOrchestrationOperateScope,
+  [BOARD_WS_METHODS.skipCi]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.removeCardWorktree]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.checkCardWorktree]: AuthOrchestrationOperateScope,
   // T3O-65: the move reads the source worker's git and then changes where the
@@ -9572,6 +10317,40 @@ export function unwrapStringifiedBoardStepPayload(value: unknown): unknown {
 
 /** A step completion's stored payload, decoded — `undefined` when it is absent
     or malformed, which no caller may read as "nothing to report". */
+// ── The CI fix step (T3O-44) ────────────────────────────────────────────
+
+/** A CI fix agent's step id: unique per CI entry and attempt, because step
+    completions are keyed by step id and never cleared. */
+export function boardCiFixStepId(entry: number, attempt: number): string {
+  return `ci-fix@${entry}.${attempt}`;
+}
+
+export function parseBoardCiFixStepId(
+  stepId: string,
+): { readonly entry: number; readonly attempt: number } | null {
+  const match = /^ci-fix@(\d+)\.(\d+)$/.exec(stepId);
+  if (match === null) return null;
+  return { entry: Number(match[1]), attempt: Number(match[2]) };
+}
+
+/** What a CI fix agent reports: it fixed the failure (the board re-runs every
+    step), or the card goes back to review with `finding`. */
+export const BoardCiFixPayload = Schema.Struct({
+  verdict: Schema.Literals(["fixed", "return-to-review"]),
+  finding: Schema.String,
+});
+export type BoardCiFixPayload = typeof BoardCiFixPayload.Type;
+
+export const BOARD_CI_FIX_PAYLOAD_SHAPE =
+  '{ "verdict": "fixed" | "return-to-review", "finding": string }';
+
+const decodeBoardCiFixPayloadOption = Schema.decodeUnknownOption(BoardCiFixPayload);
+
+/** The fix agent's verdict, or null when its payload is missing or malformed. */
+export function decodeBoardCiFixPayload(payload: string | null): BoardCiFixPayload | null {
+  return Option.getOrNull(decodeBoardCiFixPayloadOption(parseBoardStepPayloadJson(payload)));
+}
+
 export function parseBoardStepPayloadJson(payload: string | null): unknown {
   if (payload === null) return undefined;
   return unwrapStringifiedBoardStepPayload(parseJsonOrUndefined(payload));
@@ -9634,6 +10413,15 @@ export function boardStepPayloadDefect(input: {
   readonly stepId: string;
   readonly payload: string | null;
 }): string | null {
+  if (parseBoardCiFixStepId(input.stepId) !== null) {
+    const label = `The '${input.stepId}' step succeeds only with a payload shaped ${BOARD_CI_FIX_PAYLOAD_SHAPE}`;
+    if (input.payload === null) {
+      return `${label}, and none was recorded. Send it as the tool's own \`payload\` argument and complete the step again.`;
+    }
+    return decodeBoardCiFixPayload(input.payload) === null
+      ? `${label}, and the one recorded does not parse to it. Re-send a payload of that exact shape.`
+      : null;
+  }
   const parsed = parseReviewStepId(input.stepId);
   if (parsed === null) return null;
   const contract = BOARD_REVIEW_STEP_PAYLOAD_CONTRACTS[parsed.phase];
@@ -10589,6 +11377,52 @@ export const BoardStageExecutionBuild = Schema.Struct({
 });
 export type BoardStageExecutionBuild = typeof BoardStageExecutionBuild.Type;
 
+/** The CI fix agent's prompt (T3O-44), intent only: the envelope appends the
+    failure and the completion contract. */
+export const DEFAULT_BOARD_CI_FIX_PROMPT =
+  "This card must pass the project's CI steps to become ready for merge, and one of them just failed. If the failure is small and mechanical (lint, formatting, or an obviously broken test this card caused), fix it on the card's branch, commit and push. Otherwise don't fix it: return the card to review with a clear finding describing the failure.";
+
+/** The fix attempts one CI entry allows before the card goes back to review. */
+export const DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS = 2;
+
+/**
+ * The Continuous integration stage's member (T3O-44). The board runs `steps`
+ * itself; an agent runs only when one fails. `prompt`, `model` and
+ * `runtimeMode` configure that fix agent. `steps` are defined per project in
+ * `t3o.json` (`stages.settings.ci`); the global list is always empty, so a
+ * board with no project file never has CI. Build mode, unattended and
+ * auto-advance are forced by `resolveBoardStageExecution`.
+ */
+export const BoardStageExecutionCi = Schema.Struct({
+  kind: Schema.Literal("ci"),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  steps: Schema.Array(BoardCiStepDefinition).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  maxFixAttempts: NonNegativeInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS)),
+  ),
+  autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  prompt: Schema.String.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_CI_FIX_PROMPT)),
+  ),
+  model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  runtimeMode: Schema.optional(RuntimeMode),
+  mode: BoardStageMode.pipe(Schema.withDecodingDefault(Effect.succeed("build" as const))),
+  humanInLoop: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  humanInLoopWithPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  humanInLoopWithoutPlan: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  autoAdvance: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  timeoutMs: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_TIMEOUT_MS)),
+  ),
+  maxAttempts: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_STEP_MAX_ATTEMPTS)),
+  ),
+  maxInvocationsPerStageEntry: PositiveInt.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY)),
+  ),
+});
+export type BoardStageExecutionCi = typeof BoardStageExecutionCi.Type;
+
 /**
  * A stage's execution config (D4/D15) — a `kind`-discriminated union so the
  * codebase branches on stage kind in exactly two places (the executor registry
@@ -10602,6 +11436,7 @@ export const BoardStageExecution = Schema.Union([
   BoardStageExecutionReview,
   BoardStageExecutionMerge,
   BoardStageExecutionBuild,
+  BoardStageExecutionCi,
 ]);
 export type BoardStageExecution = typeof BoardStageExecution.Type;
 
@@ -10630,6 +11465,13 @@ export function isBoardBuildStageExecution(
   execution: BoardStageExecution,
 ): execution is BoardStageExecutionBuild {
   return execution.kind === "build";
+}
+
+/** True when a resolved stage config is the CI member (T3O-44). */
+export function isBoardCiStageExecution(
+  execution: BoardStageExecution,
+): execution is BoardStageExecutionCi {
+  return execution.kind === "ci";
 }
 
 /**
@@ -10670,6 +11512,12 @@ export const DEFAULT_BOARD_MERGE_STAGE_EXECUTION: BoardStageExecutionMerge = Sch
 export const DEFAULT_BOARD_BUILD_STAGE_EXECUTION: BoardStageExecutionBuild = Schema.decodeSync(
   BoardStageExecution,
 )({ kind: "build" }) as BoardStageExecutionBuild;
+
+/** The all-defaults CI config (T3O-44): no steps, two fix attempts, the
+    compiled-in fix prompt. */
+export const DEFAULT_BOARD_CI_STAGE_EXECUTION: BoardStageExecutionCi = Schema.decodeSync(
+  BoardStageExecution,
+)({ kind: "ci" }) as BoardStageExecutionCi;
 
 /** The Building prompt (D4), intent only: completion / question mechanics are
     force-appended by the prompt envelope (`composeStepPrompt`), never carried
@@ -10881,11 +11729,162 @@ export function boardWideAutoMergeOn(
   return isBoardMergeStageExecution(exec) && exec.autoMerge;
 }
 
+// ── Per-project execution overrides (T3O-43) ───────────────────────────
+
+const BoardStepExecutionPatch = Schema.Struct({
+  prompt: Schema.optionalKey(Schema.String),
+  model: Schema.optionalKey(Schema.NullOr(BoardModelSelection)),
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  timeoutMs: Schema.optionalKey(PositiveInt),
+  maxAttempts: Schema.optionalKey(PositiveInt),
+});
+
+/**
+ * A project's partial of one stage's execution config, from its committed
+ * `t3o.json` (T3O-43). Every key is optional and present only when the file
+ * set it; `kind` is never overridable, so a project cannot turn a stage into a
+ * different member. Which keys a stage accepts depends on the member it
+ * resolves to (`BOARD_STAGE_EXECUTION_PATCH_KEYS`).
+ */
+export const BoardStageExecutionPatch = Schema.Struct({
+  autoExecute: Schema.optionalKey(Schema.Boolean),
+  prompt: Schema.optionalKey(Schema.String),
+  model: Schema.optionalKey(Schema.NullOr(BoardModelSelection)),
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  mode: Schema.optionalKey(BoardStageMode),
+  humanInLoop: Schema.optionalKey(Schema.Boolean),
+  humanInLoopWithPlan: Schema.optionalKey(Schema.Boolean),
+  humanInLoopWithoutPlan: Schema.optionalKey(Schema.Boolean),
+  autoAdvance: Schema.optionalKey(Schema.Boolean),
+  timeoutMs: Schema.optionalKey(PositiveInt),
+  maxAttempts: Schema.optionalKey(PositiveInt),
+  maxInvocationsPerStageEntry: Schema.optionalKey(PositiveInt),
+  planReview: Schema.optionalKey(
+    Schema.Struct({
+      enabledByDefault: Schema.optionalKey(Schema.Boolean),
+      defaultRounds: Schema.optionalKey(BoardPlanReviewRounds),
+      prompt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    }),
+  ),
+  rounds: Schema.optionalKey(PositiveInt),
+  draftPullRequests: Schema.optionalKey(Schema.Boolean),
+  phases: Schema.optionalKey(
+    Schema.Struct({
+      review: Schema.optionalKey(BoardStepExecutionPatch),
+      triage: Schema.optionalKey(BoardStepExecutionPatch),
+      adjudicate: Schema.optionalKey(BoardStepExecutionPatch),
+    }),
+  ),
+  strategy: Schema.optionalKey(BoardMergeStrategy),
+  autoMerge: Schema.optionalKey(Schema.Boolean),
+  deleteBranchOnDone: Schema.optionalKey(Schema.Boolean),
+  submit: Schema.optionalKey(BoardStepExecutionPatch),
+  enabled: Schema.optionalKey(Schema.Boolean),
+  steps: Schema.optionalKey(Schema.Array(BoardCiStepDefinition)),
+  maxFixAttempts: Schema.optionalKey(NonNegativeInt),
+});
+export type BoardStageExecutionPatch = typeof BoardStageExecutionPatch.Type;
+
+export type BoardStageExecutionKind = BoardStageExecution["kind"];
+
+const BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS = [
+  "autoExecute",
+  "prompt",
+  "model",
+  "runtimeMode",
+  "mode",
+  "humanInLoop",
+  "humanInLoopWithPlan",
+  "humanInLoopWithoutPlan",
+  "autoAdvance",
+  "timeoutMs",
+  "maxAttempts",
+  "maxInvocationsPerStageEntry",
+] as const satisfies ReadonlyArray<keyof BoardStageExecutionPatch>;
+
+/** The patch keys each execution member accepts: exactly that member's own
+    fields, less `kind`. A key outside its stage's set is ignored with a
+    warning when a project file is decoded. */
+export const BOARD_STAGE_EXECUTION_PATCH_KEYS: Readonly<
+  Record<BoardStageExecutionKind, ReadonlyArray<keyof BoardStageExecutionPatch>>
+> = {
+  simple: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "planReview"],
+  review: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "rounds", "draftPullRequests", "phases"],
+  merge: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "strategy", "autoMerge", "deleteBranchOnDone"],
+  build: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "submit"],
+  ci: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "enabled", "steps", "maxFixAttempts"],
+};
+
+/** The member a stage id resolves to in `resolveBoardStageExecution`: the
+    three role seeds with members of their own, and the simple member for
+    every other stage (Planning included). */
+export function boardStageExecutionKind(stageId: string): BoardStageExecutionKind {
+  switch (stageId) {
+    case BOARD_SEED_STAGE_IDS.review:
+      return "review";
+    case BOARD_SEED_STAGE_IDS.merge:
+      return "merge";
+    case BOARD_SEED_STAGE_IDS.building:
+      return "build";
+    case BOARD_SEED_STAGE_IDS.ci:
+      return "ci";
+    default:
+      return "simple";
+  }
+}
+
+const withoutUndefined = <T extends object>(value: T): T =>
+  Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
+
+/** Merge a project's partial field by field over a resolved member. Nested
+    step configs (`phases.*`, `submit`, `planReview`) merge one level deeper,
+    so overriding the triage prompt keeps the triage model. A key the member
+    does not carry is dropped, never grafted on. */
+function applyBoardStageExecutionPatch<E extends BoardStageExecution>(
+  base: E,
+  patch: BoardStageExecutionPatch | undefined,
+): E {
+  if (patch === undefined) return base;
+  const allowed = new Set<string>(BOARD_STAGE_EXECUTION_PATCH_KEYS[base.kind]);
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined || !allowed.has(key)) continue;
+    if (key === "phases" && base.kind === "review") {
+      const phases = value as NonNullable<BoardStageExecutionPatch["phases"]>;
+      out.phases = {
+        review: { ...base.phases.review, ...withoutUndefined(phases.review ?? {}) },
+        triage: { ...base.phases.triage, ...withoutUndefined(phases.triage ?? {}) },
+        adjudicate: { ...base.phases.adjudicate, ...withoutUndefined(phases.adjudicate ?? {}) },
+      };
+    } else if (key === "submit" && base.kind === "build") {
+      out.submit = { ...base.submit, ...withoutUndefined(value as object) };
+    } else if (key === "planReview" && base.kind === "simple") {
+      out.planReview = {
+        enabledByDefault: false,
+        defaultRounds: DEFAULT_BOARD_PLAN_REVIEW_ROUNDS,
+        prompt: null,
+        ...base.planReview,
+        ...withoutUndefined(value as object),
+      };
+    } else {
+      out[key] = value;
+    }
+  }
+  return out as E;
+}
+
+/** The slice of a project's stage config execution resolution reads. */
+export type BoardProjectExecutionConfig = Pick<BoardProjectStageConfig, "overrides">;
+
 export function resolveBoardStageExecution(
   board: BoardSettings,
   stageId: BoardStageId,
+  projectConfig?: BoardProjectExecutionConfig | null,
 ): BoardStageExecution & { readonly runtimeMode: RuntimeMode } {
   const configured = board.pipeline[stageId];
+  // The project's `t3o.json` partial (T3O-43) merges over the resolved global
+  // member BEFORE the forced invariants below, so no project file can lift one.
+  const patch = projectConfig?.overrides[stageId];
   if (stageId === BOARD_SEED_STAGE_IDS.review) {
     // Coerce absent / legacy-simple entries to the review default, then FORCE
     // the build-mode + unattended invariants (D2/D6) even on a genuine review
@@ -10893,10 +11892,12 @@ export function resolveBoardStageExecution(
     // pass through and strand the loop without a worktree. Enforced here, the
     // one resolution point, so the reactor keeps reading `mode`/`humanInLoop`
     // uniformly.
-    const base =
+    const base = applyBoardStageExecutionPatch(
       configured !== undefined && isBoardReviewStageExecution(configured)
         ? configured
-        : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION;
+        : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
+      patch,
+    );
     return {
       ...base,
       mode: "build",
@@ -10913,10 +11914,12 @@ export function resolveBoardStageExecution(
     // `build` — nothing runs on entry, and the conflict step needs the
     // worktree — so neither a hand-edited settings file nor a stale stored
     // config can start an agent in this stage or strand one without a tree.
-    const base =
+    const base = applyBoardStageExecutionPatch(
       configured !== undefined && isBoardMergeStageExecution(configured)
         ? configured
-        : DEFAULT_BOARD_MERGE_STAGE_EXECUTION;
+        : DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
+      patch,
+    );
     return {
       ...base,
       prompt: RETIRED_BOARD_MERGE_CONFLICT_PROMPTS.includes(base.prompt)
@@ -10950,18 +11953,40 @@ export function resolveBoardStageExecution(
     //
     // The build-mode invariant is forced here as it always was.
     const seeded = DEFAULT_BOARD_PIPELINE[stageId] as BoardStageExecutionBuild;
-    const base =
+    const base = applyBoardStageExecutionPatch(
       configured === undefined
         ? seeded
         : isBoardBuildStageExecution(configured)
           ? configured
           : configured.kind === "simple"
             ? { ...seeded, ...configured, kind: "build" as const, submit: seeded.submit }
-            : seeded;
+            : seeded,
+      patch,
+    );
     return {
       ...base,
       mode: "build",
       humanInLoopWithPlan: false,
+      runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
+    };
+  }
+  if (stageId === BOARD_SEED_STAGE_IDS.ci) {
+    // CI (T3O-44): the steps come from the project file; the fix agent always
+    // runs in build mode, unattended, and a pass always moves the card on.
+    const base = applyBoardStageExecutionPatch(
+      configured !== undefined && isBoardCiStageExecution(configured)
+        ? configured
+        : DEFAULT_BOARD_CI_STAGE_EXECUTION,
+      patch,
+    );
+    return {
+      ...base,
+      autoExecute: true,
+      mode: "build",
+      humanInLoop: false,
+      humanInLoopWithPlan: false,
+      humanInLoopWithoutPlan: false,
+      autoAdvance: true,
       runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "build"),
     };
   }
@@ -10973,10 +11998,12 @@ export function resolveBoardStageExecution(
   if (stageId === BOARD_SEED_STAGE_IDS.planning) {
     // An ABSENT entry resolves to the SEEDED config for the same reason
     // Building's does.
-    const base =
+    const base = applyBoardStageExecutionPatch(
       configured !== undefined && !isBoardReviewStageExecution(configured)
         ? configured
-        : (DEFAULT_BOARD_PIPELINE[stageId] as BoardStageExecutionSimple);
+        : (DEFAULT_BOARD_PIPELINE[stageId] as BoardStageExecutionSimple),
+      patch,
+    );
     return {
       ...base,
       mode: "plan",
@@ -10985,7 +12012,10 @@ export function resolveBoardStageExecution(
       runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "plan"),
     };
   }
-  const resolved = configured ?? DEFAULT_BOARD_STAGE_EXECUTION;
+  const resolved = applyBoardStageExecutionPatch(
+    configured ?? DEFAULT_BOARD_STAGE_EXECUTION,
+    patch,
+  );
   return {
     ...resolved,
     runtimeMode: effectiveBoardRuntimeMode(resolved.runtimeMode, resolved.mode),

@@ -94,6 +94,8 @@ const card: BoardCard = {
   placedWorkerId: null,
   workerMove: null,
   placementOrphaned: null,
+  ci: null,
+  ciLastOutcome: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",
@@ -403,6 +405,7 @@ it.effect("t3o-22: a review loop that runs out of rounds does NOT advance the ca
     assert.include(types, "board.card.settle-step");
     // The whole point: nothing converged, so the card holds where it is.
     assert.notInclude(types, "board.card.move");
+    assert.notInclude(types, "board.card.pipeline-move");
     // ...and no round 2 is started either — the budget really is spent.
     assert.notInclude(types, "board.card.select-step");
   }),
@@ -429,7 +432,7 @@ it.effect("t3o-22: a review loop that CONVERGES still advances the card", () =>
         nextCardNumberByProject: {},
       },
     });
-    assert.include(types, "board.card.move");
+    assert.include(types, "board.card.pipeline-move");
   }),
 );
 
@@ -454,6 +457,7 @@ it.effect("t3o-22: a stopped loop holds even with budget remaining", () =>
       },
     });
     assert.notInclude(types, "board.card.move");
+    assert.notInclude(types, "board.card.pipeline-move");
     assert.notInclude(types, "board.card.select-step");
   }),
 );
@@ -566,7 +570,7 @@ it.effect("boot: a step that completed while the server was down is settled and 
     });
     assert.include(types, "board.card.settle-step");
     // Every step succeeded → board-driven Building → Code review advance (D18).
-    assert.include(types, "board.card.move");
+    assert.include(types, "board.card.pipeline-move");
   }),
 );
 
@@ -591,7 +595,7 @@ it.effect("boot: a human-in-the-loop step that completed while down advances too
       },
     });
     assert.include(types, "board.card.settle-step");
-    assert.include(types, "board.card.move");
+    assert.include(types, "board.card.pipeline-move");
   }),
 );
 

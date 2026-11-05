@@ -58,6 +58,8 @@ export function card(overrides?: Partial<BoardCard>): BoardCard {
     placedWorkerId: null,
     workerMove: null,
     placementOrphaned: null,
+    ci: null,
+    ciLastOutcome: null,
     worktree: null,
     blocked: false,
     archivedAt: null,
@@ -99,6 +101,7 @@ export function detail(
     stepError: null,
     stepCompletions: edges?.stepCompletions ?? [],
     decisions: edges?.decisions ?? [],
+    ciPasses: [],
   };
 }
 

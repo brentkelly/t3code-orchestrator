@@ -59,6 +59,7 @@ export const BOARD_DEFERRED_STAGE: BoardStageDefinition = {
   orderKey: "0",
   createdAt: "1970-01-01T00:00:00.000Z",
   updatedAt: "1970-01-01T00:00:00.000Z",
+  projectId: null,
 };
 
 /** The stages a scope renders: every stage on the root board; Deferred and

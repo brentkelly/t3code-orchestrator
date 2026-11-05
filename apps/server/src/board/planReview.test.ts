@@ -57,6 +57,8 @@ const card = (overrides: Partial<BoardCard> = {}): BoardCard => ({
   placedWorkerId: null,
   workerMove: null,
   placementOrphaned: null,
+  ci: null,
+  ciLastOutcome: null,
   worktree: null,
   pullRequest: null,
   pullRequestHistory: [],

@@ -76,6 +76,8 @@ export type BoardCardNotice =
   | { readonly kind: "blocked"; readonly dependencyCount: number }
   /** T3O-52: a finished card still holding its worktree, and why. */
   | { readonly kind: "worktree-kept"; readonly reason: string }
+  /** T3O-43: the card's project no longer uses the stage it sits in. */
+  | { readonly kind: "stage-gone"; readonly note: string }
   /** T3O-65: the card is moving to another worker, or its move failed. */
   | { readonly kind: "worker-move"; readonly move: BoardCardMoveNotice }
   /** T3O-66: the card's worker was removed, or is offline. */
@@ -103,6 +105,8 @@ export function boardCardNotice(input: {
   /** T3O-52: why a finished card kept its worktree, or null when it has not
       (`boardCardWorktreeKept`, resolved by the board page). */
   readonly worktreeKeptReason?: string | null | undefined;
+  /** T3O-43: why the card's stage is no longer in its project's pipeline. */
+  readonly stageGone?: string | null | undefined;
   /** T3O-65: Moving (blue) or Move failed (amber), or null. */
   readonly workerMove?: BoardCardMoveNotice | null | undefined;
   /** T3O-66: Worker removed or Worker offline (`boardCardWorkerTrouble`). */
@@ -135,6 +139,7 @@ export function boardCardNotice(input: {
   if (input.noPullRequestAtMerge) return { kind: "no-pull-request" };
   if (attention !== null) return { kind: "attention", attention };
   if (input.blocked) return { kind: "blocked", dependencyCount: input.dependencyCount };
+  if (input.stageGone != null) return { kind: "stage-gone", note: input.stageGone };
   if (input.worktreeKeptReason != null) {
     return { kind: "worktree-kept", reason: input.worktreeKeptReason };
   }
