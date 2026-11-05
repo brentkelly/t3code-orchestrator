@@ -3331,7 +3331,9 @@ it("loads every case file, since the runner reads only .ndjson cases", () => {
   );
   const decode = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
   for (const name of files) {
-    const lines = NodeFS.readFileSync(new URL(name, dir), "utf8").trim().split("\n");
+    const lines = NodeFS.readFileSync(new URL(name, dir), "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "");
     for (const line of lines) assert.doesNotThrow(() => expandCaseText(decode(line)), name);
   }
 });
