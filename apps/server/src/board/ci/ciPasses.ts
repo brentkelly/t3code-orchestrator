@@ -61,7 +61,7 @@ export interface BoardCiPassesDeps {
 export interface BoardCiPasses {
   /** Start a pass now if a slot is free (true), or queue it (false). */
   readonly start: (request: BoardCiPassRequest) => Effect.Effect<boolean>;
-  /** Start queued passes while slots are free, oldest first. */
+  /** Start every queued pass that has a free slot, oldest first. */
   readonly admitQueued: Effect.Effect<void>;
   /** Stop the card's pass, running or queued, recording nothing; returns the
       run id it stopped, or null. */
@@ -182,7 +182,8 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
 
   const admitQueued: BoardCiPasses["admitQueued"] = Effect.gen(function* () {
     for (const [cardId, request] of queued) {
-      if (!(yield* tryStart(request))) return;
+      // Slots are capped per worker, so a full worker must not hold back the rest.
+      if (!(yield* tryStart(request))) continue;
       // The runner's first step report moves the card from queued to running.
       queued.delete(cardId);
     }
