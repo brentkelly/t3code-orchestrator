@@ -78,8 +78,8 @@ const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
     "Pick a glyph by meaning from PullRequestGlyph in apps/web/src/components/pullRequest/pullRequestIcons.tsx so every surface draws the same pull request the same way.",
 };
 
-// T3o (T3O-45): board files restrict imports through their own override, which replaces the
-// server one below, so its forge pattern is shared from here.
+// T3o (T3O-45): the server override's forge pattern, hoisted so the board override, which
+// replaces it for board files, uses the same one. Upstream edits to the pattern land here.
 const SERVER_FORGE_CLIENT_PATTERN = {
   group: [
     "@t3tools/source-control-*/client/*",
@@ -458,25 +458,15 @@ export default defineConfig({
             "error",
             {
               paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
-              patterns: [
-                {
-                  group: [
-                    "@t3tools/source-control-*/client/*",
-                    "../client/*",
-                    "../../client/*",
-                    "../../../client/*",
-                  ],
-                  message:
-                    "A forge's client entry is UI-only; the server reads its `shared/definition`.",
-                },
-              ],
+              // T3o: shared with the board override below, which replaces this one for board files.
+              patterns: [SERVER_FORGE_CLIENT_PATTERN],
             },
           ],
         },
       },
       // T3o (T3O-45): upstream service modules bundle their tag with an implementation that
       // loads every provider driver, which made each board test file pay seconds of import.
-      // These replace the server override above for board files, so they repeat its patterns.
+      // These replace the server override above for board files, so they reuse its pattern.
       {
         files: ["apps/server/src/board/**/*.ts"],
         excludeFiles: [

@@ -21,7 +21,8 @@ export const t3oServerTestProjects = [
       setupFiles: ["./src/testUtils/t3oBoardTest.setup.ts"],
       // Repo-root runs drop the root's pool, and `execArgv` only applies to forks.
       pool: "forks" as const,
-      // Board agents share prod's cgroup; cap the one long-lived worker's heap.
+      // Board agents share prod's cgroup; cap the one long-lived worker's heap. It peaks
+      // ~1.0–1.15 GB RSS (712 MB isolated), the price of ~8x less CPU per full run.
       execArgv: ["--max-old-space-size=2048"],
       // vitest refuses a non-isolated project sharing a group with siblings
       // whose maxWorkers differ, which every repo-root run has.

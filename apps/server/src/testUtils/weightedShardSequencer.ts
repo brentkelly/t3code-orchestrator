@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 import { BaseSequencer, type TestSpecification } from "vite-plus/test/node";
 
 import shardWeights from "./shardWeights.json" with { type: "json" };
+// T3o (T3O-45): seeded file shuffle for the non-isolated board project.
+import { shuffleWithinProjects } from "./t3oShuffle.ts";
 
 // Use the recorded median for new files.
 const UNRECORDED_FILE_SECONDS = 0.6;
@@ -13,12 +15,9 @@ const recordedSeconds: Readonly<Record<string, number>> = shardWeights;
 
 // Include import time (~1/3 of CI shards) in weights; derive identical splits so each file runs once.
 export class WeightedShardSequencer extends BaseSequencer {
-  // T3o: `T3O_SHUFFLE_SEED=<n>` reorders files within each project, to prove
-  // the non-isolated board project does not depend on file order (T3O-45).
+  // T3o: `T3O_SHUFFLE_SEED=<n>` reorders files within each project (T3O-45).
   override async sort(files: TestSpecification[]) {
-    const sorted = await super.sort(files);
-    const seed = process.env.T3O_SHUFFLE_SEED;
-    return seed ? shuffleWithinProjects(sorted, Number(seed)) : sorted;
+    return shuffleWithinProjects(await super.sort(files), process.env.T3O_SHUFFLE_SEED);
   }
 
   override async shard(files: TestSpecification[]) {
@@ -41,34 +40,3 @@ export class WeightedShardSequencer extends BaseSequencer {
     return picked;
   }
 }
-
-// T3o: mulberry32, so a failing order replays from its seed.
-const seededRandom = (seed: number) => {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-};
-
-export const shuffleWithinProjects = <T extends { readonly project: { readonly name: string } }>(
-  files: ReadonlyArray<T>,
-  seed: number,
-): Array<T> => {
-  const random = seededRandom(seed);
-  const out = [...files];
-  let start = 0;
-  while (start < out.length) {
-    let end = start + 1;
-    while (end < out.length && out[end]!.project.name === out[start]!.project.name) end += 1;
-    for (let index = end - 1; index > start; index -= 1) {
-      const pick = start + Math.floor(random() * (index - start + 1));
-      [out[index], out[pick]] = [out[pick]!, out[index]!];
-    }
-    start = end;
-  }
-  return out;
-};
