@@ -75,6 +75,7 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   autoBuildSetting: null,
   autoMergeSetting: null,
   autoMergeHold: null,
+  mergeStrategy: null,
   pinnedWorkerId: null,
   placedWorkerId: null,
   workerMove: null,
@@ -892,7 +893,7 @@ describe("withBoardThreadFields", () => {
     createdAt: v2Now,
   };
   // Upstream holds a monitor only when the agent waits on it (#24610).
-  const monitorTask = { taskId: "monitor-1", kind: "monitor" as const, awaited: true };
+  const monitorTask = { taskId: "monitor-1", kind: "monitor" as const, awaited: true as const };
 
   const linked = cardShell("card-1", {
     threadLinks: [{ threadId, role: "build", linkedAt: NOW, tombstonedAt: null }],

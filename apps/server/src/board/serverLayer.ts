@@ -24,6 +24,9 @@ import { BoardMcpRelayClientLive } from "../mcp/toolkits/board/relayClient.ts";
 import { ThreadGatewayRouterLive } from "./ThreadGatewayRouter.ts";
 import { LocalThreadGatewayV2Live } from "./ThreadGatewayV2.ts";
 import { WorktreeRetirerLive } from "./worktreeRetire.ts";
+import { BoardSetupScriptRunnerLive } from "./ports/BoardSetupScriptRunner.live.ts";
+import { BoardTerminalsLive } from "./ports/BoardTerminals.live.ts";
+import { BoardGitStatusLive } from "./ports/BoardGitStatus.live.ts";
 import { BoardRelayStoreLive } from "./workers/BoardRelayStore.ts";
 import { BoardCardMoverLive } from "./workers/BoardCardMove.ts";
 import { BoardPlacementLive } from "./workers/BoardPlacement.ts";
@@ -60,7 +63,9 @@ const BoardThreadsLive = ThreadGatewayRouterLive.pipe(
 // The relay answers board tool calls with the same handlers `/mcp` runs, and
 // they reach the supervisor, so it sits on top.
 export const BoardServerLive = BoardMcpRelayClientLive.pipe(
-  Layer.provideMerge(SupervisorReactorLive),
+  // T3O-45: board code reaches upstream services through ports; the adapters
+  // live here so the upstream requirement still flows up to `server.ts`.
+  Layer.provideMerge(SupervisorReactorLive.pipe(Layer.provide(BoardSetupScriptRunnerLive))),
   // T3O-65: moving a card to another worker (D20), for the Move dialog's RPCs.
   Layer.provideMerge(BoardCardMoverLive),
   Layer.provide(BoardStepSlotsLive),
@@ -73,8 +78,8 @@ export const BoardServerLive = BoardMcpRelayClientLive.pipe(
   // the card is placed on, read off the board's engine (T3O-65).
   Layer.provideMerge(BoardWorkspacesLive),
   Layer.provideMerge(BoardRuntimeLive),
-  Layer.provideMerge(BoardPullRequestGatewayLive),
-  Layer.provideMerge(WorktreeRetirerLive),
+  Layer.provideMerge(BoardPullRequestGatewayLive.pipe(Layer.provide(BoardGitStatusLive))),
+  Layer.provideMerge(WorktreeRetirerLive.pipe(Layer.provide(BoardTerminalsLive))),
   Layer.provideMerge(BoardThreadsLive),
   // A board that cannot build is a server that cannot start; nothing upstream
   // can handle the board's own construction failures.

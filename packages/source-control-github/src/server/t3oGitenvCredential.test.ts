@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
 
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
@@ -44,6 +45,7 @@ function makeFixture() {
 function harness(status = 200) {
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   const invalidated: Array<string> = [];
+  const appInvalidated: Array<string> = [];
   const credentials = Layer.succeed(
     GitHubCredentials.GitHubCredentials,
     GitHubCredentials.GitHubCredentials.of({
@@ -54,9 +56,17 @@ function harness(status = 200) {
           source: "gh" as const,
           fingerprint: `${host}:ambient`,
         }),
+      saved: () => Effect.succeedNone,
+      fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
       invalidate: (host) => Effect.sync(() => void invalidated.push(host)),
     }),
   );
+  // Signed out of the GitHub app, so the ambient credential is the user's own.
+  const appSignIn = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
+    enabled: false,
+    token: () => Effect.succeedNone,
+    invalidate: (host) => Effect.sync(() => void appInvalidated.push(host)),
+  });
   const http = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
@@ -73,11 +83,11 @@ function harness(status = 200) {
     }),
   );
   const layer = GitHubRest.layer.pipe(
-    Layer.provide(Layer.mergeAll(credentials, http)),
+    Layer.provide(Layer.mergeAll(credentials, appSignIn, http)),
     Layer.provideMerge(GitHubQuota.layer),
     Layer.provideMerge(SourceControlRateLimit.layer),
   );
-  return { layer, requests, invalidated };
+  return { layer, requests, invalidated, appInvalidated };
 }
 
 const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
@@ -147,15 +157,17 @@ describe("GitHubRequestPolicy.credential under gitenv", () => {
 describe("a refused token", () => {
   it.effect("keeps the ambient cache when GitHub refuses the gitenv token", () => {
     const { project } = makeFixture();
-    const { layer, invalidated } = harness(401);
+    const { layer, invalidated, appInvalidated } = harness(401);
     return Effect.gen(function* () {
       const api = yield* GitHubRest.GitHubRest;
       const read = api.rest({ host: "github.com", operation: "read", path: "user" });
       yield* Effect.flip(read.pipe(Effect.provideService(T3oGitenvProject, project)));
       expect(invalidated).toEqual([]);
-      // The ambient token itself refused still drops the cache, as upstream intends.
+      expect(appInvalidated).toEqual([]);
+      // The ambient token itself refused still drops both caches, as upstream intends.
       yield* Effect.flip(read);
       expect(invalidated).toEqual(["github.com"]);
+      expect(appInvalidated).toEqual(["github.com"]);
     }).pipe(Effect.provide(layer));
   });
 });

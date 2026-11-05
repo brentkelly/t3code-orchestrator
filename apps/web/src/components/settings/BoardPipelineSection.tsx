@@ -102,12 +102,12 @@ import {
 } from "../../providerInstances";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
-  boardModelDisplayName,
   ModelRow,
   type ActiveModel,
   type InstanceEntries,
   type ModelOptionsByInstance,
 } from "./BoardModelRow";
+import { boardModelDisplayName } from "./boardModelDisplayName";
 import { cn, randomUUID } from "../../lib/utils";
 import {
   AlertDialog,
@@ -718,7 +718,9 @@ export function BoardPipelineSection() {
   // model of its own actually runs on.
   const defaultModel = board.defaultModel;
   const inheritedModelName =
-    defaultModel === null ? null : boardModelDisplayName(defaultModel, getModelOptions);
+    defaultModel === null
+      ? null
+      : boardModelDisplayName(defaultModel, getModelOptions, instanceEntries);
 
   const onRename = (stage: BoardStageDefinition, label: string) => {
     if (environmentId === null || label.length === 0 || label === stage.label) return;
@@ -1477,7 +1479,7 @@ function SimpleStageBody(props: {
           stageModelName={
             exec.model === null
               ? props.inheritedModelName
-              : boardModelDisplayName(exec.model, props.getModelOptions)
+              : boardModelDisplayName(exec.model, props.getModelOptions, props.instanceEntries)
           }
           instanceEntries={props.instanceEntries}
           getModelOptions={props.getModelOptions}
@@ -1674,7 +1676,7 @@ function ReviewStageBody(props: {
   const phaseInheritedName =
     exec.model === null
       ? props.inheritedModelName
-      : boardModelDisplayName(exec.model, props.getModelOptions);
+      : boardModelDisplayName(exec.model, props.getModelOptions, props.instanceEntries);
 
   return (
     <>

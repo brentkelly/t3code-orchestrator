@@ -6,6 +6,7 @@ import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 import rootPackageJson from "../../package.json" with { type: "json" };
 import packageJson from "./package.json" with { type: "json" };
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer.ts";
+import { t3oServerTestProjects } from "./src/testUtils/t3oBoardTestProject.ts";
 
 // NSIS install time tracks file count, not bytes.
 import {
@@ -29,11 +30,15 @@ if (!TELEMETRY_CHANNELS.includes(telemetryChannel)) {
 }
 
 // tsdown SEA needs one chunk (sourcemaps count) and Node >=25.7, so package separately.
-const packExecutable = process.env.T3CODE_PACK_EXE === "1";
+// TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
+// "1" builds dist-exe/t3 here; "bundle" stops at bin.mjs for scripts/cli.ts to inject (linux-arm64).
+const packMode = process.env.T3CODE_PACK_EXE;
+const packExecutable = packMode === "1" || packMode === "bundle";
+// TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
+// No linux-arm64: --build-sea output cannot load on 16/64 KiB page kernels, so it builds natively.
 const SEA_TARGETS = {
   "darwin-arm64": { platform: "darwin", arch: "arm64" },
   "darwin-x64": { platform: "darwin", arch: "x64" },
-  "linux-arm64": { platform: "linux", arch: "arm64" },
   "linux-x64": { platform: "linux", arch: "x64" },
   "win-arm64": { platform: "win", arch: "arm64" },
   "win-x64": { platform: "win", arch: "x64" },
@@ -83,7 +88,10 @@ export default mergeConfig(
       outDir: packExecutable ? "dist-exe" : "dist",
       sourcemap: !packExecutable,
       clean: true,
-      ...(packExecutable
+      // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
+      // SEA can only resolve built-ins; keep dynamic imports inside its one module.
+      ...(packExecutable ? { outputOptions: { codeSplitting: false } } : {}),
+      ...(packMode === "1"
         ? {
             exe: {
               fileName: "t3",
@@ -134,6 +142,8 @@ export default mergeConfig(
       ],
       hookTimeout: 120_000,
       testTimeout: 120_000,
+      // T3o: board tests run as their own non-isolated project (T3O-45).
+      projects: t3oServerTestProjects,
     },
   }),
 );

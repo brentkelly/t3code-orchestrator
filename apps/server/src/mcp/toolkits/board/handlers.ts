@@ -21,6 +21,10 @@ import {
   boardCardLiveDescendants,
   boardStageWithRole,
   boardStepPayloadDefect,
+  DEFAULT_BOARD_SETTINGS,
+  isBoardMergeStageExecution,
+  resolveBoardCardMergeStrategy,
+  resolveBoardStageExecution,
   isBoardTerminalStepStatus,
   boardPlanId,
   BoardCardId,
@@ -166,6 +170,27 @@ interface BoardToolDeps {
   readonly stateDir: string;
   readonly path: Path.Path;
 }
+
+/** The strategy the card's pull request would merge with now (T3O-80), so an
+    agent reading an inherited or board-default card sees the real answer. */
+const effectiveMergeStrategy = Effect.fn("board_get_card.effectiveMergeStrategy")(function* (
+  board: BoardState,
+  card: BoardCard,
+) {
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const boardSettings = yield* settings.getSettings.pipe(
+    Effect.map((current) => current.board ?? DEFAULT_BOARD_SETTINGS),
+    Effect.mapError(internalError),
+  );
+  const mergeStage = boardStageWithRole(board, "merge");
+  const exec =
+    mergeStage === null ? null : resolveBoardStageExecution(boardSettings, mergeStage.stageId);
+  return resolveBoardCardMergeStrategy({
+    card,
+    ancestors: boardCardAncestors(board, card),
+    stageStrategy: exec !== null && isBoardMergeStageExecution(exec) ? exec.strategy : null,
+  }).strategy;
+});
 
 /** Resolve the services every board tool needs. */
 const boardToolDeps = Effect.gen(function* () {
@@ -1226,6 +1251,8 @@ export const boardHandlers = {
         parent:
           parent === undefined ? null : { cardId: parent.id, key: parent.key, title: parent.title },
         baseBranch: card.baseBranch,
+        mergeStrategy: card.mergeStrategy,
+        effectiveMergeStrategy: yield* effectiveMergeStrategy(board, card),
         brief,
         briefVersion: boardBriefVersion(brief),
         dependencies: describeDependencies(board, card),
@@ -1354,6 +1381,7 @@ export const boardHandlers = {
         // stage's column (T3O-27), which is the only place that can see the
         // whole board — this tool's read model is filtered to one project.
         keyPrefix: yield* resolveCardKeyPrefix(projectId, projectTitle),
+        ...(input.mergeStrategy === undefined ? {} : { mergeStrategy: input.mergeStrategy }),
         createdAt: yield* nowIso,
       };
       // Stamps the agent actor (t3o-18, D11) via the deps-aware dispatch.
@@ -1536,6 +1564,7 @@ export const boardHandlers = {
         input.addLabels,
         input.removeLabels,
         input.externalRef,
+        input.mergeStrategy,
         input.planReview,
       ].some((value) => value !== undefined);
       if (updatesFields || input.pullRequest === undefined) {
@@ -1555,6 +1584,7 @@ export const boardHandlers = {
           addLabels,
           removeLabels,
           externalRef: input.externalRef,
+          mergeStrategy: input.mergeStrategy,
           planReview: input.planReview,
           createdAt: yield* nowIso,
         };

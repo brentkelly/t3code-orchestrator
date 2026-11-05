@@ -95,9 +95,54 @@ describe("boardGroupCardVm", () => {
       : null;
   const vm = boardGroupCardVm({ shells, stages: STAGES, attentionFor }, g)!;
 
-  it("draws one pip per active child, deferred ones excluded", () => {
-    expect(vm.pips.map((pip) => pip.state)).toEqual(["done", "waiting", "blocked", "running"]);
-    expect(vm.pips[1]!.tooltip).toBe("C-1 · Card c-1 — needs you");
+  it("draws one pip per active child, deferred ones excluded, sorted by state", () => {
+    expect(vm.pips.map((pip) => pip.state)).toEqual(["done", "running", "waiting", "blocked"]);
+    expect(vm.pips[2]!.tooltip).toBe("C-1 · Card c-1 — needs you");
+  });
+
+  it("orders pips done, running, needs you, blocked, not started, keeping child order within a state", () => {
+    const sorted = shell("g-4", "building", { group: group() });
+    const cards = [
+      sorted,
+      child("s-0", "planning", "g-4"),
+      child("s-1", "ready", "g-4", { blocked: true }),
+      child("s-2", "building", "g-4"),
+      child("s-3", "done", "g-4"),
+      child("s-4", "building", "g-4"),
+      child("s-5", "done", "g-4"),
+      child("s-6", "planning", "g-4"),
+    ];
+    const ask = (card: BoardCardShell): BoardCardAttention | null =>
+      card.cardId === BoardCardId.make("s-4")
+        ? ({
+            reason: "input",
+            tone: "attention",
+            label: "Input needed",
+            detail: "",
+          } as BoardCardAttention)
+        : null;
+    const sortedVm = boardGroupCardVm(
+      { shells: cards, stages: STAGES, attentionFor: ask },
+      sorted,
+    )!;
+    expect(sortedVm.pips.map((pip) => pip.tooltip.split(" · ")[0])).toEqual([
+      "S-3",
+      "S-5",
+      "S-2",
+      "S-4",
+      "S-1",
+      "S-0",
+      "S-6",
+    ]);
+    expect(sortedVm.pips.map((pip) => pip.state)).toEqual([
+      "done",
+      "done",
+      "running",
+      "waiting",
+      "blocked",
+      "idle",
+      "idle",
+    ]);
   });
 
   it("counts done, who needs you and what is blocked", () => {

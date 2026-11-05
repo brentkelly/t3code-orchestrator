@@ -101,6 +101,7 @@ import {
   resolveBoardStageExecution,
   resolveBoardDefaultModelSelection,
   resolveBoardStageModelSelection,
+  resolveBoardCardMergeStrategy,
   resolveBoardCardStageModelOverride,
   boardModelSelectionOfOverride,
   type BoardCardStageModelOverride,
@@ -153,7 +154,7 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
@@ -602,7 +603,7 @@ const make = Effect.gen(function* () {
   // workspace — this server's, or the worker it is placed on.
   const workspaces = yield* BoardWorkspaces;
   const workspaceFor = (card: Pick<BoardCard, "id" | "projectId">) => workspaces.forCard(card);
-  const setupRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const setupRunner = yield* BoardSetupScriptRunner;
   // The activation boundary the boot reconcile waits on (t3o-10, D3). Captured
   // at CONSTRUCTION, where the reference is in scope (`activationLayer` is
   // provided to the runtime services layer), because `reconcile` itself runs on
@@ -1855,7 +1856,7 @@ const make = Effect.gen(function* () {
         projectId: card.projectId,
         worktreePath: input.worktreePath,
       }).pipe(
-        Effect.provideService(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupRunner),
+        Effect.provideService(BoardSetupScriptRunner, setupRunner),
         Effect.catchCause(() => Effect.void),
       );
     }
@@ -4147,6 +4148,31 @@ const make = Effect.gen(function* () {
     if (hasLiveStageThread(card, card.stage)) return;
     yield* autoMergeCard(card);
   });
+
+  /** A held descendant with no strategy of its own, nor any group between it
+      and this one, merged with this card's (T3O-80), so a change here
+      releases it the same way a change to its own would: hold cleared, and
+      the merge re-attempted now. */
+  const releaseInheritingChildHolds = Effect.fn("board-supervisor-releaseInheritingChildHolds")(
+    function* (groupId: BoardCardId) {
+      const board = yield* readBoard;
+      for (const descendant of board.cards) {
+        if (descendant.mergeStrategy !== null || descendant.autoMergeHold === null) continue;
+        const ancestors = boardCardAncestors(board, descendant);
+        const at = ancestors.findIndex((ancestor) => ancestor.id === groupId);
+        if (at === -1 || ancestors.slice(0, at).some((between) => between.mergeStrategy !== null)) {
+          continue;
+        }
+        yield* clearAutoMergeHold(descendant);
+        if (
+          (yield* cardAutoMergeArmed(descendant)) ||
+          mergeAwaitingChecks.has(String(descendant.id))
+        ) {
+          yield* autoMergeArmedCard(descendant.id);
+        }
+      }
+    },
+  );
 
   /**
    * Ask the forge WHY it refused, and classify the answer (T3O-38, D6/D7).
@@ -6542,13 +6568,19 @@ const make = Effect.gen(function* () {
     // same stage today because of the gate above, but reading the role holder
     // is what makes the strategy the user configured the one that runs —
     // resolving off the card's own stage would silently fall back to squash
-    // the moment those two could differ.
+    // the moment those two could differ. The card's own override, then its
+    // nearest ancestor group's, wins over it (T3O-80).
+    const boardNow = yield* readBoard;
     const exec = resolveBoardStageExecution(
       settings,
       mergeStage.stageId,
-      boardProjectStageConfig(yield* readBoard, fresh.projectId),
+      boardProjectStageConfig(boardNow, fresh.projectId),
     );
-    const strategy = isBoardMergeStageExecution(exec) ? exec.strategy : "squash";
+    const { strategy } = resolveBoardCardMergeStrategy({
+      card: fresh,
+      ancestors: boardCardAncestors(boardNow, fresh),
+      stageStrategy: isBoardMergeStageExecution(exec) ? exec.strategy : null,
+    });
 
     const failure = yield* workspace
       .mergePullRequest({ number: pullRequest.number, method: strategy })
@@ -8631,6 +8663,20 @@ const make = Effect.gen(function* () {
         yield* reevaluateCardAutomation(event.payload.cardId, automationChanged);
       }
       return;
+    }
+    // A strategy change cleared the hold that WAS the retry (T3O-80), so the
+    // card re-attempts now, under the new strategy, rather than sitting with
+    // no hold for the sweep to find. Only an armed card, or one whose CI fix
+    // is still riding the ladder, merges by itself.
+    if (
+      event.payload.autoMergeHoldReleased === true &&
+      ((yield* cardAutoMergeArmed(event.payload.card)) ||
+        mergeAwaitingChecks.has(String(event.payload.cardId)))
+    ) {
+      yield* autoMergeArmedCard(event.payload.cardId);
+    }
+    if (event.payload.mergeStrategyEdited === true) {
+      yield* releaseInheritingChildHolds(event.payload.cardId);
     }
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);

@@ -4,8 +4,6 @@ import * as NodeURL from "node:url";
 import { remoteCacheUrl } from "./infra/task-cache/src/remoteCache.ts";
 import { cachedTestTasks } from "./scripts/lib/cached-tests.ts";
 
-const DOM_TEST_ENVIRONMENT_ALLOWLIST: Array<string> = [];
-
 const TEST_EXCLUDE = [
   "**/.repos/**",
   "**/.t3/**",
@@ -80,6 +78,25 @@ const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
     "Pick a glyph by meaning from PullRequestGlyph in apps/web/src/components/pullRequest/pullRequestIcons.tsx so every surface draws the same pull request the same way.",
 };
 
+// T3o (T3O-45): the server override's forge pattern, hoisted so the board override, which
+// replaces it for board files, uses the same one. Upstream edits to the pattern land here.
+const SERVER_FORGE_CLIENT_PATTERN = {
+  group: [
+    "@t3tools/source-control-*/client/*",
+    "../client/*",
+    "../../client/*",
+    "../../../client/*",
+  ],
+  message: "A forge's client entry is UI-only; the server reads its `shared/definition`.",
+};
+
+// Upstream modules board code reaches only through `board/ports/`.
+const BOARD_HEAVY_MODULES = [
+  "**/project/ProjectSetupScriptRunner*",
+  "**/terminal/Manager*",
+  "**/provider/builtInDrivers*",
+  "**/git/GitManager*",
+];
 // Vite+ supports remote configuration before its published types include it.
 const cacheUrl = remoteCacheUrl(import.meta.dirname);
 const taskCacheConfig = {
@@ -154,7 +171,11 @@ export default defineConfig({
       : {}),
   },
   staged: {
-    "*": "vp fmt --no-error-on-unmatched-pattern",
+    // In order, so lint reads the formatted file. CI lint failures cost a full round trip.
+    "*": ["vp fmt --no-error-on-unmatched-pattern", "vp lint --no-error-on-unmatched-pattern"],
+    // knip checks the whole repo, so it takes no file list. Any code or manifest change can leave
+    // a file, export, or dependency unused.
+    "{*.{js,jsx,ts,tsx,mjs,cjs,mts,cts},package.json,knip.jsonc}": () => "vp run knip:check",
   },
   fmt: {
     ignorePatterns: [
@@ -207,6 +228,8 @@ export default defineConfig({
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
+      // T3o: the tracked .plans/ prototype is a throwaway design sketch, not shipped code.
+      ".plans/**",
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
     jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint"],
@@ -320,7 +343,6 @@ export default defineConfig({
       },
       {
         files: ["apps/**/src/**", "packages/**/src/**"],
-        excludeFiles: DOM_TEST_ENVIRONMENT_ALLOWLIST,
         rules: { "t3code/no-dom-test-environment": "error" },
       },
       {
@@ -342,7 +364,6 @@ export default defineConfig({
       {
         files: [
           "apps/web/src/components/settings/AuthorizedClientsSettings.tsx",
-          "apps/web/src/components/settings/ConnectionsSettings.tsx",
           "apps/mobile/src/features/updates/app-updates.ts",
           "apps/web/src/components/device/DevicePhoneViewport.tsx",
           "apps/web/src/components/device/DeviceDuoViewport.tsx",
@@ -437,16 +458,33 @@ export default defineConfig({
             "error",
             {
               paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
+              // T3o: shared with the board override below, which replaces this one for board files.
+              patterns: [SERVER_FORGE_CLIENT_PATTERN],
+            },
+          ],
+        },
+      },
+      // T3o (T3O-45): upstream service modules bundle their tag with an implementation that
+      // loads every provider driver, which made each board test file pay seconds of import.
+      // These replace the server override above for board files, so they reuse its pattern.
+      {
+        files: ["apps/server/src/board/**/*.ts"],
+        excludeFiles: [
+          "apps/server/src/board/ports/*.live.ts",
+          "apps/server/src/board/ports/*.live.test.ts",
+        ],
+        rules: {
+          "eslint/no-restricted-imports": [
+            "error",
+            {
+              paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
               patterns: [
+                SERVER_FORGE_CLIENT_PATTERN,
                 {
-                  group: [
-                    "@t3tools/source-control-*/client/*",
-                    "../client/*",
-                    "../../client/*",
-                    "../../../client/*",
-                  ],
+                  group: BOARD_HEAVY_MODULES,
+                  allowTypeImports: true,
                   message:
-                    "A forge's client entry is UI-only; the server reads its `shared/definition`.",
+                    "Depend on the board port in board/ports/; only *.live.ts adapters import the upstream service.",
                 },
               ],
             },
@@ -524,9 +562,9 @@ export default defineConfig({
                 "transition",
                 "rounded-[inherit]",
                 "gap-[0.33em]",
-                "px-[0.5em]",
-                "rounded-[0.5em]",
-                "text-[0.86em]",
+                "gap-[0.2em]",
+                "leading-[normal]",
+                "underline-offset-[0.2em]",
                 "rounded-[25%]",
                 "text-[length:80cqh]",
                 "bg-[Highlight]",
@@ -579,11 +617,6 @@ export default defineConfig({
         },
       },
       {
-        // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
-        files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],
-        rules: { "shadcn/no-arbitrary-values": "off" },
-      },
-      {
         // ESNext types allow APIs absent from Hermes; restrict shared client code, exempting Node tests.
         files: [
           "apps/mobile/src/**",
@@ -601,7 +634,7 @@ export default defineConfig({
       },
       {
         files: ["apps/web/src/**", "apps/mobile/src/**", "packages/*/src/**"],
-        rules: { "t3code/react-effect-budget": "error" },
+        rules: { "t3code/no-unreasoned-state-sync": "error" },
       },
       {
         // React Compiler caches use* functions only if they call a hook.
@@ -618,20 +651,14 @@ export default defineConfig({
           "apps/mobile/src/features/files/AttachmentFileScreen.tsx",
           "apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx",
           "apps/mobile/src/features/files/thread-file-navigator-pane.tsx",
-          "apps/mobile/src/features/home/HomeHeader.tsx",
           "apps/mobile/src/features/review/ReviewSheet.tsx",
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
-          "apps/mobile/src/features/threads/GitActionProgressOverlay.tsx",
-          "apps/mobile/src/features/threads/NewTaskDraftScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
-          "apps/mobile/src/features/settings/appearance/components/FontSizeSliderRow.tsx",
-          "apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx",
           "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",
           "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
-          "apps/mobile/src/features/threads/thread-list-items.tsx",
           "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
@@ -661,7 +688,8 @@ export default defineConfig({
           "t3code/no-low-value-comments": "off",
           "t3code/no-manual-memo": "off",
           "t3code/no-em-dash-copy": "off",
-          "t3code/react-effect-budget": "off",
+          // T3o (T3O-79): replaced react-effect-budget upstream in v0.1.6.
+          "t3code/no-unreasoned-state-sync": "off",
           "react/purity": "off",
           "react/refs": "off",
           "react/set-state-in-effect": "off",

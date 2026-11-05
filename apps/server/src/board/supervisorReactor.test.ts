@@ -25,7 +25,7 @@ import * as Duration from "effect/Duration";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { ServerActivation } from "../serverActivation.ts";
@@ -89,6 +89,7 @@ const card: BoardCard = {
   autoBuildSetting: null,
   autoMergeSetting: null,
   autoMergeHold: null,
+  mergeStrategy: null,
   pinnedWorkerId: null,
   placedWorkerId: null,
   workerMove: null,
@@ -246,7 +247,7 @@ function reconcileCommandObjects(input: {
 
     const setupStub = {
       runForThread: () => Effect.succeed(undefined),
-    } as unknown as ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
+    } as unknown as BoardSetupScriptRunner["Service"];
 
     const deps = Layer.mergeAll(
       boardServicesTestLayer({
@@ -261,7 +262,7 @@ function reconcileCommandObjects(input: {
       worktreeRetirerTestLayer().pipe(
         Layer.provide(Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub)),
       ),
-      Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),
+      Layer.succeed(BoardSetupScriptRunner, setupStub),
       // Boot reconcile never looks a pull request up (it reconciles step state,
       // not forge state), so an always-empty gateway is the honest stub here.
       Layer.succeed(

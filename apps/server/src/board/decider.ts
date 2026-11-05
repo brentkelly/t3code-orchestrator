@@ -1942,6 +1942,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             : { scheduledStartAt: command.scheduledStartAt }),
           // Key-optional like `baseBranch`: absent IS "follow the default".
           ...(pinnedWorkerId === null ? {} : { pinnedWorkerId }),
+          ...(command.mergeStrategy === undefined ? {} : { mergeStrategy: command.mergeStrategy }),
           ...(heading === null ? {} : { group: heading }),
           dependsOn,
           stage,
@@ -2803,6 +2804,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         command.planReview === undefined &&
         command.baseBranch === undefined &&
         command.scheduledStartAt === undefined &&
+        command.mergeStrategy === undefined &&
         command.briefAppend === undefined &&
         command.briefSection === undefined &&
         command.addDependsOn === undefined &&
@@ -2906,6 +2908,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         !boardCardChildren(board, card.id).some((child) => child.archivedAt === null);
       const { planReview: _priorPlanReview, ...cardWithoutPlanReview } = card;
 
+      const mergeStrategy =
+        command.mergeStrategy === undefined ? card.mergeStrategy : command.mergeStrategy;
+      // A forge refusal of the old strategy is a permanent hold (T3O-80), so
+      // picking another one must release it or an armed card stays parked.
+      const mergeStrategyChanged = mergeStrategy !== card.mergeStrategy;
+
       const nextCard: BoardCard = {
         ...cardWithoutPlanReview,
         ...(planReview === undefined ? {} : { planReview }),
@@ -2938,6 +2946,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         // running step — the decider only records the intent.
         scheduledStartAt:
           command.scheduledStartAt === undefined ? card.scheduledStartAt : command.scheduledStartAt,
+        autoMergeHold: mergeStrategyChanged ? null : card.autoMergeHold,
+        mergeStrategy,
         updatedAt: command.createdAt,
       };
       const updated: PlannedBoardEvent = {
@@ -2961,6 +2971,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           // Says the edit TOUCHED the model overrides (T3O-65): the supervisor
           // restarts a provider-stalled step on Change model, and only then.
           ...(command.modelOverrides === undefined ? {} : { modelOverridesEdited: true as const }),
+          // Says a strategy change RELEASED an auto-merge hold (T3O-80). That
+          // hold was the retry, so the supervisor re-attempts the merge now;
+          // a card that never held stays under the arrival rules.
+          ...(mergeStrategyChanged && card.autoMergeHold !== null
+            ? { autoMergeHoldReleased: true as const }
+            : {}),
+          ...(mergeStrategyChanged ? { mergeStrategyEdited: true as const } : {}),
           // Fold the review summary onto the event when the edit could change
           // it (t3o-22, D7), so a pure override edit updates the card face live
           // — the same reason the step-completion path folds it. Only when the

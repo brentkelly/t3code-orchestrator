@@ -145,13 +145,7 @@ it.effect("parks automatic pull until activation without delaying command readin
         // T3o: startup starts the board supervisor (board/serverLayer.ts); not this test's subject.
         Layer.mock(SupervisorReactor)({ start: () => Effect.void }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getShellSnapshot: () =>
-            Effect.succeed({
-              schemaVersion: 1,
-              snapshotSequence: 0,
-              threads: [],
-              archivedThreads: [],
-            }),
+          countThreads: () => Effect.succeed(0),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({

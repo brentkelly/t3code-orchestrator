@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 import { BaseSequencer, type TestSpecification } from "vite-plus/test/node";
 
 import shardWeights from "./shardWeights.json" with { type: "json" };
+// T3o (T3O-45): seeded file shuffle for the non-isolated board project.
+import { shuffleWithinProjects } from "./t3oShuffle.ts";
 
 // Use the recorded median for new files.
 const UNRECORDED_FILE_SECONDS = 0.6;
@@ -13,6 +15,11 @@ const recordedSeconds: Readonly<Record<string, number>> = shardWeights;
 
 // Include import time (~1/3 of CI shards) in weights; derive identical splits so each file runs once.
 export class WeightedShardSequencer extends BaseSequencer {
+  // T3o: `T3O_SHUFFLE_SEED=<n>` reorders files within each project (T3O-45).
+  override async sort(files: TestSpecification[]) {
+    return shuffleWithinProjects(await super.sort(files), process.env.T3O_SHUFFLE_SEED);
+  }
+
   override async shard(files: TestSpecification[]) {
     const { index, count } = this.ctx.config.shard ?? { index: 1, count: 1 };
     const weighted = files
