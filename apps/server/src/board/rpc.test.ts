@@ -23,7 +23,7 @@ import * as Stream from "effect/Stream";
 
 import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
-import { boardRpcHandlers } from "./rpc.ts";
+import { boardClientOrigin, boardRpcHandlers } from "./rpc.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import { boardStackEngine, makeBoardStackTestLayer } from "./boardStack.testkit.ts";
 import { BoardCardMoverLive } from "./workers/BoardCardMove.ts";
@@ -177,7 +177,7 @@ const makeHandlers = (scopes: ReadonlyArray<AuthenticatedSession["scopes"][numbe
     return yield* boardRpcHandlers({
       currentSession: session(scopes),
       boardSupervisor: supervisorStub,
-      clientOrigin: {},
+      clientAnalyticsProps: {},
     });
   });
 
@@ -513,3 +513,20 @@ it.layer(makeBoardRpcTestLayer("t3o-board-rpc-archived-test-"))(
     );
   },
 );
+
+it("boardClientOrigin keeps only a valid surface and app version", () => {
+  assert.deepStrictEqual(
+    boardClientOrigin({
+      surface: "desktop",
+      appVersion: "0.1.6",
+      clientAppVersion: "0.1.6",
+      deviceType: "laptop",
+    }),
+    { surface: "desktop", appVersion: "0.1.6" },
+  );
+  assert.deepStrictEqual(boardClientOrigin({ surface: "toaster", appVersion: "0.1.6" }), {
+    appVersion: "0.1.6",
+  });
+  assert.strictEqual(boardClientOrigin({}), undefined);
+  assert.strictEqual(boardClientOrigin({ surface: 7, appVersion: "" }), undefined);
+});

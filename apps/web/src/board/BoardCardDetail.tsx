@@ -542,9 +542,12 @@ export function BoardCardDetail({
       )
         .get(override.instanceId)
         ?.find((candidate) => candidate.slug === override.model);
-      return option ? getTriggerDisplayModelName(option) : override.model;
+      const driverKind = providerEntries.find(
+        (entry) => entry.instanceId === override.instanceId,
+      )?.driverKind;
+      return option ? getTriggerDisplayModelName(option, driverKind) : override.model;
     },
-    [allSettings, serverProviders],
+    [allSettings, providerEntries, serverProviders],
   );
   const agents = useMemo<BoardActivityAgentLookup>(() => {
     const byId = new Map(providerEntries.map((entry) => [entry.instanceId, entry]));
