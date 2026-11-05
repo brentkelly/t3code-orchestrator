@@ -366,5 +366,6 @@ const makeLiveGatewayRpc = (
       wire(client[M.mcpRelayRespond](response), "The worker didn't take the board's answer."),
     stageAttachments: (input) =>
       wire(client[M.stageAttachments](input), "The worker couldn't stage the card's files."),
+    runCi: (input) => wireStream(client[M.runCi](input), "The worker's CI run ended early."),
   };
 };

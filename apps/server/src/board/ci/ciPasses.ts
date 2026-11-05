@@ -39,6 +39,8 @@ export interface BoardCiPassRequest {
   readonly workerId: BoardWorkerId;
   readonly steps: ReadonlyArray<BoardCiStepDefinition>;
   readonly limits: BoardConcurrencyLimit;
+  /** Where the steps run; this server's runner when absent. */
+  readonly runner?: BoardCiRunnerShape;
 }
 
 export interface BoardCiPassFinished {
@@ -110,7 +112,7 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
   const launch = (request: BoardCiPassRequest) =>
     Effect.gen(function* () {
       const key = slotKey(request);
-      const pass = deps.runner
+      const pass = (request.runner ?? deps.runner)
         .run(
           {
             runId: request.runId,

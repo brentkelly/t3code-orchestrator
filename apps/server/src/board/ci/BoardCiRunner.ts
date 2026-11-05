@@ -38,11 +38,15 @@ export interface BoardCiStepProgress {
   readonly step: BoardCiPassStep;
 }
 
-export interface BoardCiRunResult {
-  readonly result: "passed" | "failed";
-  /** The step that failed or timed out, or null on a pass. */
-  readonly failedIndex: number | null;
-}
+export type BoardCiRunResult =
+  | {
+      readonly result: "passed" | "failed";
+      /** The step that failed or timed out, or null on a pass. */
+      readonly failedIndex: number | null;
+    }
+  /** The pass could not run at all (a placed worker out of reach): not a CI
+      failure, so no fix agent is started. */
+  | { readonly result: "unavailable"; readonly failedIndex: null; readonly detail: string };
 
 export interface BoardCiRunnerShape {
   readonly run: (

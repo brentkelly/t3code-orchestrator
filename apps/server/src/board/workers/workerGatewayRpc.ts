@@ -13,6 +13,7 @@ import {
   type BoardGatewayCall,
   type BoardMcpRelayResponse,
   type BoardStageAttachmentsInput,
+  type BoardWorkerRunCiInput,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -150,5 +151,6 @@ export const workerGatewayRpcHandlers = (currentSession: AuthenticatedSession) =
     [M.stageAttachments]: call(M.stageAttachments, (host, input: BoardStageAttachmentsInput) =>
       host.stageAttachments(input),
     ),
+    [M.runCi]: stream(M.runCi, (host, input: BoardWorkerRunCiInput) => host.runCi(input)),
   };
 };

@@ -357,6 +357,46 @@ export const BOARD_GATEWAY_CALL_RESULTS = {
   todoLogHead: NonNegativeInt,
 } as const satisfies Record<BoardGatewayCall["_tag"], Schema.Top>;
 
+/**
+ * A CI pass run on the worker holding the card's worktree (T3O-44, D21). The
+ * shapes mirror `BoardCiStepDefinition` and `BoardCiPassStep` in `board.ts`,
+ * which this file cannot import.
+ */
+export const BoardWorkerRunCiInput = Schema.Struct({
+  runId: TrimmedNonEmptyString,
+  worktreePath: TrimmedNonEmptyString,
+  steps: Schema.Array(
+    Schema.Struct({
+      name: TrimmedNonEmptyString,
+      command: TrimmedNonEmptyString,
+      timeoutMinutes: Schema.Number,
+    }),
+  ),
+});
+export type BoardWorkerRunCiInput = typeof BoardWorkerRunCiInput.Type;
+
+/** One step's progress, then the pass's result. */
+export const BoardWorkerCiProgress = Schema.Union([
+  Schema.TaggedStruct("step", {
+    index: NonNegativeInt,
+    step: Schema.Struct({
+      name: TrimmedNonEmptyString,
+      command: TrimmedNonEmptyString,
+      timeoutMinutes: Schema.Number,
+      status: Schema.Literals(["pending", "running", "passed", "failed", "timed-out", "cancelled"]),
+      startedAt: Schema.NullOr(Schema.String),
+      finishedAt: Schema.NullOr(Schema.String),
+      exitCode: Schema.NullOr(Schema.Int),
+      tail: Schema.String,
+    }),
+  }),
+  Schema.TaggedStruct("done", {
+    result: Schema.Literals(["passed", "failed"]),
+    failedIndex: Schema.NullOr(NonNegativeInt),
+  }),
+]);
+export type BoardWorkerCiProgress = typeof BoardWorkerCiProgress.Type;
+
 export const BOARD_WORKER_GATEWAY_WS_METHODS = {
   /** Every request/response gateway method (`BoardGatewayCall`). */
   call: "boardWorker.gateway.call",
@@ -368,6 +408,8 @@ export const BOARD_WORKER_GATEWAY_WS_METHODS = {
   subscribeMcpRelay: "boardWorker.subscribeMcpRelay",
   mcpRelayRespond: "boardWorker.mcpRelayRespond",
   stageAttachments: "boardWorker.stageAttachments",
+  /** T3O-44: run a card's CI steps in its worktree, streaming progress. */
+  runCi: "boardWorker.gateway.runCi",
 } as const;
 
 const M = BOARD_WORKER_GATEWAY_WS_METHODS;
@@ -410,6 +452,12 @@ export const BOARD_WORKER_GATEWAY_RPCS = [
     success: BoardStageAttachmentsResult,
     error: failure,
   }),
+  Rpc.make(M.runCi, {
+    payload: BoardWorkerRunCiInput,
+    success: BoardWorkerCiProgress,
+    error: failure,
+    stream: true,
+  }),
 ] as const;
 
 /** Thread reads stream at the thread-shell tier. Calls start, steer and read
@@ -424,6 +472,8 @@ export const BOARD_WORKER_GATEWAY_RPC_SCOPES = {
   [M.subscribeMcpRelay]: AuthOrchestrationOperateScope,
   [M.mcpRelayRespond]: AuthOrchestrationOperateScope,
   [M.stageAttachments]: AuthOrchestrationOperateScope,
+  // Runs the project's own commands in a worktree, like a build agent would.
+  [M.runCi]: AuthOrchestrationOperateScope,
 } as const;
 
 /** How long a worker waits for the central server to answer a relayed call

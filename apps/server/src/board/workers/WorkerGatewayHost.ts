@@ -22,6 +22,7 @@ import {
   type BoardMcpRelayResponse,
   type EnvironmentId,
   type BoardStageAttachmentsInput,
+  type BoardWorkerCiProgress,
   type BoardStageAttachmentsResult,
   type BoardCardId,
 } from "@t3tools/contracts";
@@ -31,6 +32,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as Base64 from "effect/encoding/Base64";
@@ -48,6 +50,7 @@ import {
   type WorkerGatewayRpcOf,
 } from "./gatewayWire.ts";
 import { McpRelayHost, type McpRelayRefused } from "./McpRelayHost.ts";
+import { BoardCiRunner, boardCiLogDir } from "../ci/BoardCiRunner.ts";
 
 type CallerBound = "spawn" | "subscribeMcpRelay" | "mcpRelayRespond";
 
@@ -108,6 +111,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
+  const ciRunner = yield* BoardCiRunner;
 
   // A deleted thread makes no more board calls; its relay record goes too,
   // however it was deleted.
@@ -234,6 +238,31 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     mcpRelayRespond: (response, caller) =>
       relay.respond(response, caller).pipe(Effect.mapError(refused("mcpRelayRespond"))),
     stageAttachments,
+    // T3O-44 (D21): the card's CI steps, run here where its worktree is.
+    runCi: (input) =>
+      Stream.callback<BoardWorkerCiProgress>((queue) =>
+        ciRunner
+          .run(
+            {
+              runId: input.runId,
+              cwd: input.worktreePath,
+              steps: input.steps,
+              logDir: boardCiLogDir(input.worktreePath, input.runId),
+            },
+            (progress) =>
+              Queue.offer(queue, { _tag: "step", ...progress } as const).pipe(Effect.asVoid),
+          )
+          .pipe(
+            Effect.flatMap((outcome) =>
+              Queue.offer(queue, {
+                _tag: "done",
+                result: outcome.result === "passed" ? "passed" : "failed",
+                failedIndex: outcome.failedIndex,
+              } as const),
+            ),
+            Effect.andThen(Queue.end(queue)),
+          ),
+      ),
   } satisfies WorkerGatewayHostShape;
 });
 

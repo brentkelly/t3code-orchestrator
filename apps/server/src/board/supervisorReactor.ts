@@ -218,6 +218,8 @@ import {
 } from "./boardMergeState.ts";
 import { stageExecutorFor } from "./stageExecutor.ts";
 import { BoardCiRunner, boardCiLogDir } from "./ci/BoardCiRunner.ts";
+import { remoteCiRunner } from "./ci/remoteCiRunner.ts";
+import { WorkerConnections } from "./workers/WorkerConnections.ts";
 import { BOARD_HUMAN_ACTOR_FALLBACK_NAME, boardActivityActorFor } from "./activityActors.ts";
 import {
   BOARD_CI_SLOT_INSTANCE,
@@ -610,8 +612,9 @@ const make = Effect.gen(function* () {
   const serverActivation = yield* ServerActivation;
   // T3O-43: each project's committed t3o.json, read from its checkout here.
   const projectConfig = yield* BoardProjectConfig;
-  // T3O-44: CI steps run by the board itself.
+  // T3O-44: CI steps run by the board itself, here or on a card's worker.
   const ciRunner = yield* BoardCiRunner;
+  const workerConnections = yield* Effect.serviceOption(WorkerConnections);
 
   const commandId = (tag: string) =>
     crypto.randomUUIDv4().pipe(Effect.map((uuid) => CommandId.make(`server:board-${tag}:${uuid}`)));
@@ -3328,11 +3331,15 @@ const make = Effect.gen(function* () {
       return;
     }
     const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
-    if (workerId !== BOARD_LOCAL_WORKER_ID) {
-      yield* holdInCi(
-        card,
-        "CI steps can't run on a remote worker yet. Run them there by hand, then use Skip CI.",
-      );
+    // A placed card's steps run on its worker (D21), streamed back here.
+    const runner =
+      workerId === BOARD_LOCAL_WORKER_ID
+        ? undefined
+        : Option.isSome(workerConnections)
+          ? remoteCiRunner(workerConnections.value, workerId)
+          : null;
+    if (runner === null) {
+      yield* holdInCi(card, "CI can't reach the card's worker. Restart the stage, or Skip CI.");
       return;
     }
     const worktree = yield* ensureWorktree(card);
@@ -3382,6 +3389,7 @@ const make = Effect.gen(function* () {
       workerId,
       steps: projectCi.steps,
       limits: resolveBoardConcurrencyLimit(settings.concurrency, BOARD_CI_SLOT_INSTANCE, workerId),
+      ...(runner === undefined ? {} : { runner }),
     });
   });
 
@@ -3561,6 +3569,20 @@ const make = Effect.gen(function* () {
     if (card === null || card.archivedAt !== null) return;
     // A pass the card has since left or replaced reports nothing more.
     if (card.stage !== BOARD_SEED_STAGE_IDS.ci || card.ci?.runId !== finished.runId) return;
+    if (finished.outcome.result === "unavailable") {
+      yield* dispatch({
+        type: "board.card.record-ci",
+        commandId: yield* commandId("ci-unavailable"),
+        cardId: card.id,
+        action: { kind: "finish-pass", runId: finished.runId, result: "interrupted" },
+        createdAt: yield* nowIso,
+      });
+      yield* holdInCi(
+        card,
+        `${finished.outcome.detail} Restart the stage to run CI again, or Skip CI.`,
+      );
+      return;
+    }
     const passed = finished.outcome.result === "passed";
     const recorded = yield* dispatchLanded({
       type: "board.card.record-ci",

@@ -191,7 +191,7 @@ it.effect("a pass runs no agent and moves the card to Ready for merge", () =>
           ["start-pass", "step", "step", "finish-pass"],
         );
         assert.strictEqual(records.at(-1)!.payload.activity?.ciOutcome, "passed");
-        const spawned = (yield* h.commands).filter((command) => command.type === "spawn");
+        const spawned = (yield* h.commands).filter((command) => command.type === "thread.spawn");
         assert.lengthOf(spawned, 0);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
@@ -297,7 +297,7 @@ it.effect("with no fixes left, a failure goes straight back to review and buys a
         assert.strictEqual(sent.ciLastOutcome?.fixAttemptsUsed, 0);
         assert.include(sent.ciLastOutcome?.finding ?? "", 'CI step "Test"');
         assert.strictEqual(sent.reviewOverrides?.runThroughRound, 4);
-        const spawned = (yield* h.commands).filter((command) => command.type === "spawn");
+        const spawned = (yield* h.commands).filter((command) => command.type === "thread.spawn");
         assert.lengthOf(spawned, 0);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile({ maxFixAttempts: 0 })));
