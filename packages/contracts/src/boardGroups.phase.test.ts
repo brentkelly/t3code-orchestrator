@@ -42,6 +42,8 @@ function card(id: string, overrides: Partial<BoardCard> = {}): BoardCard {
     placedWorkerId: null,
     workerMove: null,
     placementOrphaned: null,
+    ci: null,
+    ciLastOutcome: null,
     orderKey: "m",
     title: `Card ${id}`,
     briefRef: null,
