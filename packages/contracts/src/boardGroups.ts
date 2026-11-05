@@ -293,7 +293,7 @@ function integrationLaneStage(
   buildStageId: BoardStageId | null,
   doneStageId: BoardStageId,
 ): BoardStageId {
-  const lane = buildStageId === null ? null : boardNextStageId(board, buildStageId);
+  const lane = buildStageId === null ? null : boardNextStageId(board, buildStageId, card.projectId);
   if (lane === null) return doneStageId;
   const laneIndex = boardStageIndex(board, lane);
   const current = boardStageIndex(board, card.stage);
