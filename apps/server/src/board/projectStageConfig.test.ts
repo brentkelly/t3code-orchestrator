@@ -235,3 +235,43 @@ it.layer(makeBoardStackTestLayer("t3o-project-stage-set-project-test-"))(
     );
   },
 );
+
+it.layer(makeBoardStackTestLayer("t3o-project-stage-set-project-removed-test-"))(
+  "per-project stage config: changing a card's project into one without its stage",
+  (it) => {
+    it.effect("refuses a project that removed the card's stage", () =>
+      Effect.gen(function* () {
+        const engine = yield* boardStackEngine;
+        const snapshots = yield* boardStackSnapshotQuery;
+        yield* engine.dispatch(createProject(projectA, "a"));
+        yield* engine.dispatch(createProject(projectB, "b"));
+        yield* engine.dispatch({
+          type: "board.card.create",
+          commandId: nextCommandId("create"),
+          cardId: cardB,
+          projectId: projectB,
+          title: "Card B",
+          stage: BoardStageId.make("sprint"),
+          createdAt: t0,
+        });
+        const model = yield* snapshots.getCommandReadModel();
+        yield* engine.dispatch(setConfig(model.board!, { stages: { remove: ["sprint"] } }));
+
+        const setProject = () =>
+          engine.dispatch({
+            type: "board.card.set-project",
+            commandId: nextCommandId("set-project"),
+            cardId: cardB,
+            projectId: projectA,
+            createdAt: t0,
+          });
+        const refused = yield* Effect.exit(setProject());
+        assert.isTrue(Exit.isFailure(refused));
+        assert.include(String(refused), "doesn't use the Sprint stage");
+
+        yield* engine.dispatch(move(cardB, "backlog"));
+        yield* setProject();
+      }),
+    );
+  },
+);

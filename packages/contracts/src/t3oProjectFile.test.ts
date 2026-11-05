@@ -13,6 +13,8 @@ import {
   boardCardMoveRefusal,
   boardGroupRevertStage,
   boardNextStageId,
+  boardNewPhaseHeadingStage,
+  boardProjectFirstStageId,
   boardProjectStageId,
   boardProjectStagesInOrder,
   isBoardReviewStageExecution,
@@ -224,6 +226,16 @@ describe("resolveT3oProjectFile", () => {
       ci: null,
     });
     expect(parseT3oProjectFile("{ nope").warning).toContain("not valid JSON");
+  });
+});
+
+describe("boardProjectFirstStageId", () => {
+  it("starts a project that removed Backlog in its next stage, and no one else", () => {
+    const board = withFile({ stages: { remove: ["backlog"] } });
+    expect(boardProjectFirstStageId(board, projectA)).toBe("sprint");
+    expect(boardNewPhaseHeadingStage(board, false, projectA)).toBe("sprint");
+    expect(boardProjectFirstStageId(board, projectB)).toBe(BOARD_SEED_STAGE_IDS.backlog);
+    expect(boardProjectFirstStageId(board, null)).toBe(BOARD_SEED_STAGE_IDS.backlog);
   });
 });
 

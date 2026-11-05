@@ -3227,6 +3227,18 @@ export function boardProjectStagesInOrder(
   return out.sort(compareBoardStages);
 }
 
+/** The first stage a project's new card lands in (T3O-43): its pipeline's
+    first live stage, so a project that removed Backlog starts cards after it. */
+export function boardProjectFirstStageId(
+  board: BoardStageView,
+  projectId: ProjectId | null,
+): BoardStageId {
+  return (
+    boardProjectStagesInOrder(board, projectId).find((stage) => !stage.retired)?.stageId ??
+    boardStagesInOrder(board)[0]!.stageId
+  );
+}
+
 /** Whether two stages are neighbours in a project's pipeline (T3O-43; a null
     project walks the global list). Retired stages are skipped, except the one
     being left. Unknown ids are never adjacent. */

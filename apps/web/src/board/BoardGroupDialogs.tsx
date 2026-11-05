@@ -17,7 +17,7 @@ import {
   boardNextPhaseTitle,
   boardNewPhaseHeadingStage,
   boardStageWithRole,
-  boardStagesInOrder,
+  boardProjectFirstStageId,
   isBoardStageAtOrAfterBuild,
   type BoardCardShell,
   type BoardStageId,
@@ -151,13 +151,14 @@ export function BoardNewPhaseDialog({
   const headingStage = boardNewPhaseHeadingStage(
     stages,
     parent !== undefined && boardShellGroup(shells, parent)?.target === "own",
+    group.projectId,
   );
   const headingPlace = `the ${boardStageLabel(stages.stages ?? [], headingStage)} of ${parent?.key ?? "the board"}`;
   const confirm = () => {
     const trimmed = title.trim();
     if (trimmed.length === 0 || chosen.length === 0) return;
     onClose();
-    const first = boardStagesInOrder(stages)[0]!.stageId;
+    const first = boardProjectFirstStageId(stages, group.projectId);
     const cardId = BoardCardId.make(randomUUID());
     const ids = chosen.map((card) => card.cardId);
     void (async () => {
@@ -192,7 +193,7 @@ export function BoardNewPhaseDialog({
   };
   return (
     <BoardDialogShell
-      body={`Creates a new group next to ${group.key}, in ${headingPlace}. The ticked cards move into its ${boardStageLabel(stages.stages ?? [], boardStagesInOrder(stages)[0]!.stageId)}.`}
+      body={`Creates a new group next to ${group.key}, in ${headingPlace}. The ticked cards move into its ${boardStageLabel(stages.stages ?? [], boardProjectFirstStageId(stages, group.projectId))}.`}
       checks={{
         items: deferred.map((card) => ({
           id: String(card.cardId),

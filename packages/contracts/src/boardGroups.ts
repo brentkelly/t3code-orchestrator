@@ -18,6 +18,7 @@ import {
   boardStageBeforeBuild,
   boardStageById,
   boardStageIndex,
+  boardProjectFirstStageId,
   boardStagesInOrder,
   boardStageWithRole,
   isBoardStageAtOrAfterBuild,
@@ -501,10 +502,14 @@ export type BoardNewPhasePlan =
       readonly cardStage: BoardStageId;
     };
 
-/** A new phase heading's stage: the first stage, or the floor under an `own`
-    parent, whose children live from there onward. */
-export function boardNewPhaseHeadingStage(board: BoardState, parentOwn: boolean): BoardStageId {
-  const first = boardStagesInOrder(board)[0]!.stageId;
+/** A new phase heading's stage: its project's first stage, or the floor under
+    an `own` parent, whose children live from there onward. */
+export function boardNewPhaseHeadingStage(
+  board: BoardState,
+  parentOwn: boolean,
+  projectId: ProjectId | null,
+): BoardStageId {
+  const first = boardProjectFirstStageId(board, projectId);
   return parentOwn ? (boardStageBeforeBuild(board)?.stageId ?? first) : first;
 }
 
@@ -532,7 +537,7 @@ export function boardNewPhasePlan(
       reason: `'${key}' is not a deferred card of '${group.key}'; only deferred cards move to a new phase.`,
     };
   }
-  const first = boardStagesInOrder(board)[0]!.stageId;
+  const first = boardProjectFirstStageId(board, group.projectId);
   const parent =
     group.parentCardId === null
       ? undefined
@@ -542,7 +547,7 @@ export function boardNewPhasePlan(
     kind: "ok",
     group,
     parentCardId: group.parentCardId,
-    headingStage: boardNewPhaseHeadingStage(board, parentOwn),
+    headingStage: boardNewPhaseHeadingStage(board, parentOwn, group.projectId),
     cardIds: deferred.filter((card) => wanted.has(card.id)).map((card) => card.id),
     cardStage: first,
   };

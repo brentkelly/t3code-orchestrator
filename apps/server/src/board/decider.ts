@@ -64,7 +64,6 @@ import {
   boardStageById,
   boardStageIndex,
   boardStages,
-  boardStagesInOrder,
   boardCardMergesIntoIntegrationBranch,
   boardStageWithRole,
   compareBoardStages,
@@ -79,6 +78,8 @@ import {
   boardCardGroupOf,
   boardCardInheritedDependsOn,
   boardNewPhaseHeadingStage,
+  boardProjectFirstStageId,
+  boardProjectStagesInOrder,
   boardCardGroupsEqual,
   boardCardIntegrationAncestor,
   boardCardLiveChildren,
@@ -88,7 +89,6 @@ import {
   boardGroupTargetLockReason,
   boardNextStageId,
   boardCardMoveRefusal,
-  boardProjectStagesInOrder,
   planBoardProjectStageConfig,
   defaultBoardCardGroup,
   boardSplitRecommendationFallback,
@@ -1739,9 +1739,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ? boardNewPhaseHeadingStage(
               board,
               createParent !== undefined && boardCardGroupOf(board, createParent)?.target === "own",
+              command.projectId,
             )
-          : (boardProjectStagesInOrder(board, command.projectId).find((entry) => !entry.retired)
-              ?.stageId ?? boardStagesInOrder(board)[0]!.stageId));
+          : boardProjectFirstStageId(board, command.projectId));
       // Deferred (T3O-27) is a system stage outside the stage list, open only
       // inside a group.
       if (isBoardDeferredStage(stage)) {
@@ -1999,6 +1999,20 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           );
         case undefined:
           break;
+      }
+      // T3O-43: the target project must use the stage the card sits in, or the
+      // card would land in a column that project's pipeline does not have.
+      if (
+        !isBoardDeferredStage(card.stage) &&
+        !boardProjectStagesInOrder(board, command.projectId).some(
+          (stage) => stage.stageId === card.stage && !stage.retired,
+        )
+      ) {
+        const label = boardStageById(board, card.stage)?.label ?? card.stage;
+        return yield* invariant(
+          command,
+          `That project doesn't use the ${label} stage; move '${card.key}' to a stage both projects use first.`,
+        );
       }
       // Allocated exactly as `board.card.create` does, from the TARGET
       // project's counter, so a moved card and a newly created one draw from
@@ -2429,7 +2443,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         }
       }
 
-      const firstStage = boardStagesInOrder(board)[0]!.stageId;
       const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
       const nextParentGroup =
         parent === null
@@ -2451,9 +2464,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ? null
           : { card: anchorCard, side: command.afterCardId !== undefined ? "after" : "before" };
       for (const mover of command.beforeCardId !== undefined ? [...roots].reverse() : roots) {
-        // A deferred card leaving every group lands in Backlog.
+        // A deferred card leaving every group lands in its project's first stage.
         const stage =
-          parent === null && isBoardDeferredStage(mover.stage) ? firstStage : mover.stage;
+          parent === null && isBoardDeferredStage(mover.stage)
+            ? boardProjectFirstStageId(board, mover.projectId)
+            : mover.stage;
         if (
           parent !== null &&
           nextParentGroup?.target === "own" &&
@@ -3384,7 +3399,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ? null
           : (board.cards.find((candidate) => candidate.id === card.parentCardId) ?? null);
       const parentIsGroup = formerParent !== null && boardCardGroupOf(board, formerParent) !== null;
-      const firstStage = boardStagesInOrder(board)[0]!.stageId;
+      const firstStage = boardProjectFirstStageId(board, card.projectId);
       const restoreCards = (detach: boolean) =>
         board.cards.map((candidate) => {
           if (!restoredIds.has(candidate.id)) {
@@ -4437,7 +4452,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       }
       // A child whose plan is only a brief lands in the first stage to be
       // planned on its own (T3O-31); a planned one lands on the floor.
-      const backlog = boardStagesInOrder(board)[0]!;
+      const backlog = boardProjectFirstStageId(board, card.projectId);
       const recommendation = boardSplitRecommendationOf(board, card);
       // An own group's children live from the floor onward, so a child that
       // lands in Backlog to be planned could never move again. A human who
@@ -4508,7 +4523,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         const childId = childIdByPlan.get(plan.planId)!;
         childCardIds.push(childId);
         const planned = isBoardPlanPlanned(plan);
-        const stage = planned ? floor.stageId : backlog.stageId;
+        const stage = planned ? floor.stageId : backlog;
         const orderKey = nextOrderKey(stage);
         const cardNumber = nextNumber;
         nextNumber += 1;
