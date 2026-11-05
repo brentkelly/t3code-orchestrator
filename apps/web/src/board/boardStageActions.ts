@@ -203,7 +203,8 @@ export function boardStagePrimaryAction(
       disabledReason: disabled ? (context.conflictFixReason ?? "Resolving conflicts…") : null,
     };
   }
-  const next = boardNextStageId(board, stageId);
+  // The stage list is already the card's own project's pipeline (T3O-43).
+  const next = boardNextStageId(board, stageId, null);
   if (next === null) return null;
   const nextStage = stages.find((stage) => stage.stageId === next);
   if (nextStage === undefined) return null;

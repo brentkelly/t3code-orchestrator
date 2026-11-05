@@ -433,5 +433,22 @@ export function applyBoardShellStreamEvent(
         stages: Arr.filter(stages, (stage) => stage.stageId !== event.stageId),
       };
     }
+    case "project-stage-config": {
+      // A project's t3o.json (T3O-43): its config replaced, and the
+      // project-owned stage rows it wrote and dropped, in one delta.
+      const dropped = new Set<string>(event.deletedStageIds);
+      const upserted = new Map<string, (typeof event.upserts)[number]>(
+        event.upserts.map((stage) => [stage.stageId, stage]),
+      );
+      const kept = snapshot.stages
+        .filter((stage) => !dropped.has(stage.stageId) && !upserted.has(stage.stageId))
+        .concat(event.upserts);
+      return {
+        ...snapshot,
+        // Spread-then-sort: Hermes (mobile) has no `Array#toSorted`.
+        stages: [...kept].sort(compareBoardStages),
+        projectStageConfigs: { ...snapshot.projectStageConfigs, [event.projectId]: event.config },
+      };
+    }
   }
 }

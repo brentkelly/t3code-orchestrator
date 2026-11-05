@@ -34,6 +34,7 @@ import {
   type ProjectId,
   boardShellAncestorIds,
 } from "@t3tools/contracts";
+import { boardCardPipelineStages } from "./boardProjectPipelines";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
@@ -137,7 +138,11 @@ export function BoardCardCreateDialog({
 }) {
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
-  const stages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
+  const allStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
+  // T3O-43: the picker offers the chosen project's own pipeline.
+  const projectStageConfigs = useAtomValue(
+    boardEnvironment.projectStageConfigsAtom(environmentId),
+  );
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const boardSettings = useBoardSettings((settings) => settings.board);
   const updateSettings = useUpdateBoardSettings();
@@ -171,6 +176,15 @@ export function BoardCardCreateDialog({
 
   const initialProjectId = defaultProjectId ?? projects[0]?.id ?? null;
   const [projectId, setProjectId] = useState<ProjectId | null>(initialProjectId);
+  const stages = useMemo(
+    () =>
+      projectId === null
+        ? allStages
+        : boardCardPipelineStages({ stages: allStages, projectStageConfigs }, { stage: "", projectId }),
+    [allStages, projectId, projectStageConfigs],
+  );
+  const projectExecutionConfig =
+    projectId === null ? null : (projectStageConfigs[projectId] ?? null);
   // The card's base branch (T3O-5, D13): null follows the chosen project's
   // default, which is what the picker reads until someone changes it.
   const [baseBranch, setBaseBranch] = useState<string | null>(null);
@@ -602,7 +616,7 @@ export function BoardCardCreateDialog({
         </div>
         {/* A card may be created into any stage (D10); warn when the chosen
             stage auto-executes, since creating there starts an agent. */}
-        {resolveBoardStageExecution(boardSettings, stage).autoExecute ? (
+        {resolveBoardStageExecution(boardSettings, stage, projectExecutionConfig).autoExecute ? (
           <p className="mx-4 mt-2 rounded-md bg-warning/10 px-2.5 py-1.5 text-[12px] text-warning-foreground">
             {boardStageLabel(stages, stage)} runs automatically — creating here starts an agent.
           </p>

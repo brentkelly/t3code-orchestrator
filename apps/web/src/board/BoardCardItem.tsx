@@ -42,6 +42,7 @@ import {
   ArrowRightLeftIcon,
   ChevronRightIcon,
   ServerOffIcon,
+  CircleSlashIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import type { DragEvent, ReactNode } from "react";
@@ -325,7 +326,16 @@ function BoardCardNoticeChip({ notice }: { readonly notice: BoardCardNotice }) {
                     tooltip: notice.trouble.tooltip,
                     tint: "text-warning-foreground",
                   }
-                : notice.kind === "worktree-kept"
+                : notice.kind === "stage-gone"
+                  ? {
+                      // T3O-43. Amber: held — the card's project dropped this
+                      // stage, so nothing moves the card on but a human.
+                      icon: <CircleSlashIcon className="size-3 shrink-0" />,
+                      label: "Stage removed",
+                      tooltip: `${notice.note}. Move the card on; the column goes once it's empty.`,
+                      tint: "text-warning-foreground",
+                    }
+                  : notice.kind === "worktree-kept"
                   ? {
                       // T3O-52. Amber: the card is finished but its cleanup is
                       // blocked, and only a human can clear what is in the way.
@@ -373,6 +383,7 @@ export function BoardCardContent({
   autoMergeArmed,
   autoBuildArmed,
   worktreeKeptReason,
+  stageGone,
   group = null,
 }: {
   readonly card: BoardCardShell;
@@ -388,6 +399,8 @@ export function BoardCardContent({
       settings and the stage roles. Absent on the surfaces that do not resolve
       it (the drag ghost). */
   readonly worktreeKeptReason?: string | null | undefined;
+  /** T3O-43: the card's project no longer uses the stage it sits in. */
+  readonly stageGone?: string | null | undefined;
   /** The parent card's key when this is a sub-board child (t3o-23); absent on
       surfaces that do not resolve it (the drag ghost, the archive sheet). */
   readonly parentKey?: string | undefined;
@@ -542,6 +555,7 @@ export function BoardCardContent({
     blocked: card.blocked,
     dependencyCount: card.dependencyCount,
     worktreeKeptReason: isGroup ? null : worktreeKeptReason,
+    stageGone: isGroup ? null : stageGone,
     workerMove: isGroup ? null : boardCardMoveNotice(card, workers),
     workerTrouble: isGroup ? null : boardCardWorkerTrouble(card, workers),
     providerMissing: !isGroup && card.stalled && card.stalledReason === "provider-not-on-worker",
@@ -868,6 +882,7 @@ export function DraggableBoardCard({
   autoMergeArmed,
   autoBuildArmed,
   worktreeKeptReason,
+  stageGone,
   group = null,
 }: {
   readonly card: BoardCardShell;
@@ -894,6 +909,7 @@ export function DraggableBoardCard({
   readonly autoMergeArmed?: boolean | undefined;
   readonly autoBuildArmed?: boolean | undefined;
   readonly worktreeKeptReason?: string | null | undefined;
+  readonly stageGone?: string | null | undefined;
 }) {
   return (
     // Keyboard path: the card is a focusable button-role element — Enter/Space
@@ -953,6 +969,7 @@ export function DraggableBoardCard({
         autoMergeArmed={autoMergeArmed}
         autoBuildArmed={autoBuildArmed}
         worktreeKeptReason={worktreeKeptReason}
+        stageGone={stageGone}
         group={group}
       />
     </div>

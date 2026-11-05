@@ -2910,7 +2910,9 @@ export function boardLabelCatalogue(board: BoardState): ReadonlyArray<BoardLabel
 
 /** Every stage row the board holds: the global list plus every project-owned
     row (T3O-43). Only the per-project and by-id readers want this. */
-export function boardAllStages(board: BoardState): ReadonlyArray<BoardStageDefinition> {
+export function boardAllStages(
+  board: Pick<BoardState, "stages">,
+): ReadonlyArray<BoardStageDefinition> {
   return board.stages ?? BOARD_SEED_STAGES;
 }
 
@@ -2918,7 +2920,7 @@ export function boardAllStages(board: BoardState): ReadonlyArray<BoardStageDefin
     compiled seeds when absent (a board that has never touched a stage). The
     single reader every global decider/projector/UI path goes through, so
     "absent" and "the eight seeds" are always the same list. */
-export function boardStages(board: BoardState): ReadonlyArray<BoardStageDefinition> {
+export function boardStages(board: Pick<BoardState, "stages">): ReadonlyArray<BoardStageDefinition> {
   const all = boardAllStages(board);
   return all.some((stage) => stage.projectId !== null)
     ? all.filter((stage) => stage.projectId === null)
@@ -2926,13 +2928,15 @@ export function boardStages(board: BoardState): ReadonlyArray<BoardStageDefiniti
 }
 
 /** The global stage list in canonical (orderKey, stageId) order. */
-export function boardStagesInOrder(board: BoardState): ReadonlyArray<BoardStageDefinition> {
+export function boardStagesInOrder(
+  board: Pick<BoardState, "stages">,
+): ReadonlyArray<BoardStageDefinition> {
   return [...boardStages(board)].sort(compareBoardStages);
 }
 
 /** The stage with the given id, global or project-owned, or null. */
 export function boardStageById(
-  board: BoardState,
+  board: Pick<BoardState, "stages">,
   stageId: BoardStageId,
 ): BoardStageDefinition | null {
   return boardAllStages(board).find((stage) => stage.stageId === stageId) ?? null;
@@ -2971,6 +2975,17 @@ export function boardProjectStageConfig(
     nothing new enters it and nothing advances into it. */
 export type BoardProjectStage = BoardStageDefinition & { readonly retired: boolean };
 
+/** What the per-project stage helpers read (T3O-43): the stage rows, the
+    project configs and where each live card sits. A `BoardState` is one; a
+    client passes its shells. An absent `archivedAt` reads as live. */
+export interface BoardStageView {
+  readonly stages?: BoardState["stages"];
+  readonly projectStageConfigs?: BoardState["projectStageConfigs"];
+  readonly cards: ReadonlyArray<
+    Pick<BoardCard, "stage" | "projectId"> & { readonly archivedAt?: string | null }
+  >;
+}
+
 /**
  * One project's pipeline, in board order (T3O-43): the global stages less the
  * ones its `t3o.json` removes, plus its own project-owned stages. A removed
@@ -2978,7 +2993,7 @@ export type BoardProjectStage = BoardStageDefinition & { readonly retired: boole
  * the project sits in it. A null project is the global list.
  */
 export function boardProjectStagesInOrder(
-  board: BoardState,
+  board: BoardStageView,
   projectId: ProjectId | null,
 ): ReadonlyArray<BoardProjectStage> {
   const config = projectId === null ? null : boardProjectStageConfig(board, projectId);
@@ -2990,7 +3005,9 @@ export function boardProjectStagesInOrder(
   const added = new Set<string>(config?.addedStageIds ?? []);
   const occupied = new Set<string>();
   for (const card of board.cards) {
-    if (card.projectId === projectId && card.archivedAt === null) occupied.add(card.stage);
+    if (card.projectId === projectId && (card.archivedAt ?? null) === null) {
+      occupied.add(card.stage);
+    }
   }
   const out: BoardProjectStage[] = [];
   for (const stage of all) {
@@ -3006,7 +3023,7 @@ export function boardProjectStagesInOrder(
     project walks the global list). Retired stages are skipped, except the one
     being left. Unknown ids are never adjacent. */
 export function areBoardStagesAdjacent(
-  board: BoardState,
+  board: BoardStageView,
   a: BoardStageId,
   b: BoardStageId,
   projectId: ProjectId | null,
@@ -3035,7 +3052,7 @@ export function boardStageWithRole(
     never lands on a retired stage (T3O-43); a null project walks the global
     list. */
 export function boardNextStageId(
-  board: BoardState,
+  board: BoardStageView,
   stageId: BoardStageId,
   projectId: ProjectId | null,
 ): BoardStageId | null {
@@ -3053,7 +3070,7 @@ export function boardNextStageId(
  * with `override`; a non-adjacent move needs `override`.
  */
 export function boardCardMoveRefusal(
-  board: BoardState,
+  board: BoardStageView,
   card: Pick<BoardCard, "stage" | "projectId">,
   toStage: BoardStageId,
   options: { readonly override: boolean },
