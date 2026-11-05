@@ -95,6 +95,53 @@ describe("boardProjectPipelineSummary", () => {
   });
 });
 
+describe("boardProjectPipelineSummary CI (T3O-44)", () => {
+  const ciFile = (enabled?: boolean) => ({
+    stages: {
+      settings: {
+        ci: {
+          ...(enabled === undefined ? {} : { enabled }),
+          maxFixAttempts: 3,
+          steps: [{ name: "Check", command: "cargo xtask check", timeoutMinutes: 30 }],
+        },
+      },
+    },
+  });
+
+  it("chips the step count, lists CI in the sequence and keeps the fix cap as an override", () => {
+    const summary = boardProjectPipelineSummary({
+      view: viewFor(ciFile()),
+      projectId,
+      settings: DEFAULT_BOARD_SETTINGS,
+    });
+    expect(summary.chips).toEqual(["CI · 1 step", "1 override"]);
+    expect(summary.ci).toEqual({
+      active: true,
+      steps: [{ name: "Check", command: "cargo xtask check", timeoutMinutes: 30 }],
+    });
+    expect(summary.sequence.map((step) => step.label)).toContain("Continuous integration");
+    expect(summary.overrides).toEqual([
+      {
+        stageLabel: "Continuous integration",
+        field: "maxFixAttempts",
+        projectValue: "3",
+        globalValue: "2",
+      },
+    ]);
+  });
+
+  it("says when CI is paused, and leaves it out of the sequence", () => {
+    const summary = boardProjectPipelineSummary({
+      view: viewFor(ciFile(false)),
+      projectId,
+      settings: DEFAULT_BOARD_SETTINGS,
+    });
+    expect(summary.chips[0]).toBe("CI · 1 step · paused");
+    expect(summary.ci?.active).toBe(false);
+    expect(summary.sequence.map((step) => step.label)).not.toContain("Continuous integration");
+  });
+});
+
 describe("formatBoardSettingValue", () => {
   it("keeps a cell to one short line", () => {
     expect(formatBoardSettingValue("a\n  b")).toBe("a b");

@@ -7,7 +7,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { ChevronDownIcon, ChevronRightIcon, FileCodeIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 
 import { BoardHint } from "../../board/BoardHint";
 import { useBoardSettings } from "../../board/useBoardEnvironmentId";
@@ -150,6 +150,34 @@ function ProjectPipelineDetail(props: {
           </div>
         </div>
       ) : null}
+      <div className="flex flex-col gap-1">
+        <span className="font-medium text-foreground">
+          Continuous integration
+          {summary.ci !== null && !summary.ci.active ? (
+            <span className="font-normal text-muted-foreground"> · paused</span>
+          ) : null}
+        </span>
+        {summary.ci === null ? (
+          <span className="text-muted-foreground">No CI</span>
+        ) : (
+          <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.6fr)_auto] gap-x-3 gap-y-1">
+            <span className="text-[11px] text-muted-foreground">Step</span>
+            <span className="text-[11px] text-muted-foreground">Command</span>
+            <span className="text-[11px] text-muted-foreground">Timeout</span>
+            {summary.ci.steps.map((step, index) => (
+              <Fragment key={`${index}:${step.name}`}>
+                <span className="min-w-0 truncate text-foreground">{step.name}</span>
+                <BoardHint label={step.command}>
+                  <span className="min-w-0 truncate font-mono text-[11.5px] text-foreground">
+                    {step.command}
+                  </span>
+                </BoardHint>
+                <span className="text-muted-foreground">{step.timeoutMinutes} min</span>
+              </Fragment>
+            ))}
+          </div>
+        )}
+      </div>
       {summary.overrides.length > 0 ? (
         <div className="flex flex-col gap-1">
           <span className="font-medium text-foreground">Overridden settings</span>

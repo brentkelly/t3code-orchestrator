@@ -322,10 +322,13 @@ function RailSections({
   props,
   group,
   onOpenThread,
+  onOpenCi,
 }: {
   readonly props: BoardCardDetailViewProps;
   readonly group: BoardCardDetailGroup | null;
   readonly onOpenThread: (threadId: ThreadId) => void;
+  /** Open the CI tab, which every CI activity row links to (T3O-44). */
+  readonly onOpenCi?: (() => void) | undefined;
 }) {
   const { card } = props.detail;
   const activity = props.detail.activity;
@@ -354,6 +357,7 @@ function RailSections({
           <BoardCardActivityRail
             agents={props.agents}
             entries={activity}
+            onOpenCi={onOpenCi}
             projectNames={props.project.names}
             stages={props.stages}
           />
@@ -1730,6 +1734,7 @@ function ActionsSection({
     stepHeld: props.stepHeld === true,
     hasBranch: card.worktree !== null,
     blocked: card.blocked,
+    ciEntryLive: card.ci !== null,
   };
   const primaryAction = boardStagePrimaryAction(props.stages, card.stage, actionContext);
   const forward =
@@ -2857,7 +2862,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
           )}
         >
-          {boardStageLabel(props.stages, card.stage)}
+          {/* "Continuous integration" is too long for this row (T3O-44). */}
+          {card.stage === BOARD_SEED_STAGE_IDS.ci
+            ? "CI"
+            : boardStageLabel(props.stages, card.stage)}
         </span>
         {archived ? (
           <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
@@ -3162,7 +3170,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   // exists because a held loop will never make the move on its
                   // own, not because the move is special.
                   const next = boardNextStageId(stageStateOf(props.stages), card.stage, null);
-                  return next === null || card.blocked ? undefined : () => props.onMoveStage(next);
+                  // Cards enter CI on their own (T3O-44), and this list is the
+                  // card's pipeline: a CI in it sits after the review stage.
+                  const ciAhead =
+                    card.stage !== BOARD_SEED_STAGE_IDS.ci &&
+                    props.stages.some((stage) => stage.stageId === BOARD_SEED_STAGE_IDS.ci);
+                  return next === null || ciAhead || card.blocked
+                    ? undefined
+                    : () => props.onMoveStage(next);
                 })()}
                 onBackToThread={() => setPane("thread")}
                 onSetRoundModel={props.onSetReviewRoundModel}
@@ -3299,7 +3314,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 {props.feedback}
               </p>
             ) : null}
-            <RailSections group={group} onOpenThread={selectThread} props={props} />
+            <RailSections
+              group={group}
+              onOpenCi={hasCi ? () => setPane("ci") : undefined}
+              onOpenThread={selectThread}
+              props={props}
+            />
           </div>
         </div>
       ) : (
@@ -3367,7 +3387,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 <GroupActionsSection group={group} props={props} unmet={unmet} />
               )}
               <PlanReviewSection props={props} />
-              <RailSections group={group} onOpenThread={selectThread} props={props} />
+              <RailSections
+                group={group}
+                onOpenCi={hasCi ? () => setPane("ci") : undefined}
+                onOpenThread={selectThread}
+                props={props}
+              />
             </div>
           </div>
         </div>

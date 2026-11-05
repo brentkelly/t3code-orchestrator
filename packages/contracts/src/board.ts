@@ -10232,6 +10232,40 @@ export function unwrapStringifiedBoardStepPayload(value: unknown): unknown {
 
 /** A step completion's stored payload, decoded — `undefined` when it is absent
     or malformed, which no caller may read as "nothing to report". */
+// ── The CI fix step (T3O-44) ────────────────────────────────────────────
+
+/** A CI fix agent's step id: unique per CI entry and attempt, because step
+    completions are keyed by step id and never cleared. */
+export function boardCiFixStepId(entry: number, attempt: number): string {
+  return `ci-fix@${entry}.${attempt}`;
+}
+
+export function parseBoardCiFixStepId(
+  stepId: string,
+): { readonly entry: number; readonly attempt: number } | null {
+  const match = /^ci-fix@(\d+)\.(\d+)$/.exec(stepId);
+  if (match === null) return null;
+  return { entry: Number(match[1]), attempt: Number(match[2]) };
+}
+
+/** What a CI fix agent reports: it fixed the failure (the board re-runs every
+    step), or the card goes back to review with `finding`. */
+export const BoardCiFixPayload = Schema.Struct({
+  verdict: Schema.Literals(["fixed", "return-to-review"]),
+  finding: Schema.String,
+});
+export type BoardCiFixPayload = typeof BoardCiFixPayload.Type;
+
+export const BOARD_CI_FIX_PAYLOAD_SHAPE =
+  '{ "verdict": "fixed" | "return-to-review", "finding": string }';
+
+const decodeBoardCiFixPayloadOption = Schema.decodeUnknownOption(BoardCiFixPayload);
+
+/** The fix agent's verdict, or null when its payload is missing or malformed. */
+export function decodeBoardCiFixPayload(payload: string | null): BoardCiFixPayload | null {
+  return Option.getOrNull(decodeBoardCiFixPayloadOption(parseBoardStepPayloadJson(payload)));
+}
+
 export function parseBoardStepPayloadJson(payload: string | null): unknown {
   if (payload === null) return undefined;
   return unwrapStringifiedBoardStepPayload(parseJsonOrUndefined(payload));
@@ -10294,6 +10328,15 @@ export function boardStepPayloadDefect(input: {
   readonly stepId: string;
   readonly payload: string | null;
 }): string | null {
+  if (parseBoardCiFixStepId(input.stepId) !== null) {
+    const label = `The '${input.stepId}' step succeeds only with a payload shaped ${BOARD_CI_FIX_PAYLOAD_SHAPE}`;
+    if (input.payload === null) {
+      return `${label}, and none was recorded. Send it as the tool's own \`payload\` argument and complete the step again.`;
+    }
+    return decodeBoardCiFixPayload(input.payload) === null
+      ? `${label}, and the one recorded does not parse to it. Re-send a payload of that exact shape.`
+      : null;
+  }
   const parsed = parseReviewStepId(input.stepId);
   if (parsed === null) return null;
   const contract = BOARD_REVIEW_STEP_PAYLOAD_CONTRACTS[parsed.phase];
