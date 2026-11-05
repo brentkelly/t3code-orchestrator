@@ -72,18 +72,18 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-"))("a CI pass", (it) => {
         stage: BoardStageId.make("review"),
         createdAt: at,
       });
-      // A human may not drag it in; the pipeline may.
+      // A human may not drag it over CI.
       const refused = yield* engine
         .dispatch({
           type: "board.card.move",
           commandId: id(),
           cardId,
-          toStage: BOARD_SEED_STAGE_IDS.ci,
+          toStage: BOARD_SEED_STAGE_IDS.merge,
           override: true,
           createdAt: at,
         })
         .pipe(Effect.flip);
-      assert.include(String(refused.message ?? refused), "enter CI on their own");
+      assert.include(String(refused.message ?? refused), "has to pass CI");
       yield* engine.dispatch({
         type: "board.card.pipeline-move",
         commandId: id(),

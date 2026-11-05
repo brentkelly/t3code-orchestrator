@@ -3322,9 +3322,10 @@ export function isBoardCiActive(
 
 /**
  * Why a human may not make this move because of CI (T3O-44), or null. Only
- * while the card's project has CI on: cards enter CI on their own, leave it
- * forward only by passing or by Skip CI, and never jump over it. Override
- * does not lift these; moving back out of CI to an earlier stage is free.
+ * while the card's project has CI on: cards enter CI from the stage just
+ * before it (on their own, or by a human when the board held the card there),
+ * leave it forward only by passing or by Skip CI, and never jump over it.
+ * Override does not lift these; moving back out of CI is free.
  */
 function boardCiMoveRefusal(
   board: BoardStageView,
@@ -3333,9 +3334,12 @@ function boardCiMoveRefusal(
 ): string | null {
   if (!isBoardCiActive(board, card.projectId) || toStage === card.stage) return null;
   const ci = BOARD_SEED_STAGE_IDS.ci;
-  if (toStage === ci) return "Cards enter CI on their own.";
   const ordered = boardProjectStagesInOrder(board, card.projectId);
   const ciIndex = ordered.findIndex((stage) => stage.stageId === ci);
+  if (toStage === ci) {
+    const before = ordered.slice(0, Math.max(0, ciIndex)).findLast((stage) => !stage.retired);
+    return before?.stageId === card.stage ? null : "Cards enter CI from the stage just before it.";
+  }
   const toIndex = ordered.findIndex((stage) => stage.stageId === toStage);
   const fromIndex = ordered.findIndex((stage) => stage.stageId === card.stage);
   if (ciIndex < 0 || toIndex < 0 || toIndex < ciIndex) return null;

@@ -36,7 +36,6 @@ import {
   boardCardPullRequestIsOpenDraft,
   boardCardHasLiveBranch,
   boardStageIndex,
-  boardNextStageId,
   boardStagesInOrder,
   boardStageById,
   boardStageWithRole,
@@ -175,6 +174,7 @@ import { boardCardHasSummaryPane, deriveBoardCardWorkSummary } from "./boardCard
 import { boardStageLabel } from "./boardStages";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 import {
+  boardCiAwareNextStageId,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
   isBoardStageManuallySelectable,
@@ -1843,6 +1843,7 @@ function ActionsSection({
     archived,
     blocked,
     handMoves: group === null,
+    ciEntryLive: card.ci != null,
   });
   // A merge from this card is mid-flight: the button holds its spot but shows a
   // spinner and refuses further clicks until the round trip settles.
@@ -3169,15 +3170,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   // like every other transition (t3o-22, D8) — the button
                   // exists because a held loop will never make the move on its
                   // own, not because the move is special.
-                  const next = boardNextStageId(stageStateOf(props.stages), card.stage, null);
-                  // Cards enter CI on their own (T3O-44), and this list is the
-                  // card's pipeline: a CI in it sits after the review stage.
-                  const ciAhead =
-                    card.stage !== BOARD_SEED_STAGE_IDS.ci &&
-                    props.stages.some((stage) => stage.stageId === BOARD_SEED_STAGE_IDS.ci);
-                  return next === null || ciAhead || card.blocked
-                    ? undefined
-                    : () => props.onMoveStage(next);
+                  // This list is the card's pipeline: a CI in it (T3O-44) is
+                  // the next stop, never one to step over.
+                  const next = boardCiAwareNextStageId(props.stages, card.stage, false);
+                  return next === null || card.blocked ? undefined : () => props.onMoveStage(next);
                 })()}
                 onBackToThread={() => setPane("thread")}
                 onSetRoundModel={props.onSetReviewRoundModel}

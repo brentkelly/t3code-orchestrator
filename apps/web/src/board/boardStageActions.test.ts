@@ -61,13 +61,19 @@ describe("boardStagePrimaryAction", () => {
     });
   });
 
-  it("offers no button into CI or out of a live CI entry (T3O-44)", () => {
+  it("moves into CI from the stage before it, never out of a live entry (T3O-44)", () => {
     // The card's own pipeline, CI on: the bare list carries the CI seed.
     const withCi = BOARD_SEED_STAGES;
     const withoutCi = BOARD_SEED_STAGES.filter(
       (stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.ci,
     );
-    expect(boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.review)).toBeNull();
+    // A review loop that stopped short leaves the card in review: the button
+    // sends it on into CI, never over it.
+    expect(boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.review)).toMatchObject({
+      kind: "move",
+      toStage: BOARD_SEED_STAGE_IDS.ci,
+      label: "Move to Continuous integration",
+    });
     expect(
       boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.ci, { ciEntryLive: true }),
     ).toBeNull();

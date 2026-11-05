@@ -179,12 +179,12 @@ export function boardStageSecondaryActions(
 /**
  * The forward move's target, CI aware (T3O-44). The list is the card's own
  * pipeline, so a CI in it is the project's live CI (or the one the card sits
- * in): cards enter CI on their own and leave it by passing or by Skip CI, so
- * nothing crosses it by button. A card left in a paused CI has no entry and
- * moves on like any held card. `boardNextStageId` reads a bare list as the
- * global pipeline, which never has CI, so CI is walked here.
+ * in): the stage before CI moves into it, and a card leaves CI by passing or
+ * by Skip CI, so nothing crosses it by button. A card left in a paused CI has
+ * no entry and moves on like any held card. `boardNextStageId` reads a bare
+ * list as the global pipeline, which never has CI, so CI is walked here.
  */
-function boardCiAwareNextStageId(
+export function boardCiAwareNextStageId(
   stages: ReadonlyArray<BoardStageDefinition>,
   stageId: BoardStageId,
   ciEntryLive: boolean,
@@ -198,7 +198,7 @@ function boardCiAwareNextStageId(
   if (next === null) return null;
   const fromIndex = ordered.findIndex((stage) => stage.stageId === stageId);
   const nextIndex = ordered.findIndex((stage) => stage.stageId === next);
-  return fromIndex < ciIndex && nextIndex > ciIndex ? null : next;
+  return fromIndex < ciIndex && nextIndex > ciIndex ? ci : next;
 }
 
 export function boardStagePrimaryAction(

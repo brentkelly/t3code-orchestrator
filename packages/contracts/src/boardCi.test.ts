@@ -210,9 +210,12 @@ describe("CI move refusals", () => {
       pipeline: pipelineMove,
     });
 
-  it("refuses a drag into CI, even with override", () => {
-    expect(refuse(review, ci)).toBe("Cards enter CI on their own.");
-    expect(refuse(building, ci)).toBe("Cards enter CI on their own.");
+  it("lets a card in, by hand, only from the stage just before CI", () => {
+    // A review loop that stopped short holds the card in review: a human
+    // must be able to send it on into CI.
+    expect(refuse(review, ci)).toBeNull();
+    expect(refuse(building, ci)).toContain("just before it");
+    expect(refuse(merge, ci)).toContain("just before it");
   });
 
   it("refuses leaving CI forward, and jumping over it", () => {

@@ -52,5 +52,7 @@ run. The skip is recorded on the card under your name.
 
 ## Moving cards by hand
 
-Cards enter CI on their own when Code review finishes, and leave it by passing or by Skip CI. You
-cannot drag a card into CI or past it. You can still move a card out of CI back to an earlier stage.
+Cards enter CI on their own when Code review finishes, and leave it by passing or by Skip CI. When
+review stops short and holds a card, you can move it on into CI yourself, but only from the stage
+just before CI, and you cannot move a card past CI. You can still move a card out of CI back to an
+earlier stage.
