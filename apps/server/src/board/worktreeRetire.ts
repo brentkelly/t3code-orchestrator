@@ -39,7 +39,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import { ServerSettingsService } from "../serverSettings.ts";
-import * as TerminalManager from "../terminal/Manager.ts";
+import { BoardTerminals } from "./ports/BoardTerminals.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { ThreadGateway, type BoardProject, type BoardWorktreeThread } from "./ThreadGateway.ts";
 
@@ -344,7 +344,7 @@ export const worktreeRemoveScripts = (
 
 export const makeWorktreeRetirer = (options: WorktreeRetirerOptions = {}) =>
   Effect.gen(function* () {
-    const terminals = yield* TerminalManager.TerminalManager;
+    const terminals = yield* BoardTerminals;
     const threads = yield* ThreadGateway;
     const serverSettings = yield* ServerSettingsService;
     const git = yield* GitVcsDriver.GitVcsDriver;

@@ -78,6 +78,41 @@ const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
     "Pick a glyph by meaning from PullRequestGlyph in apps/web/src/components/pullRequest/pullRequestIcons.tsx so every surface draws the same pull request the same way.",
 };
 
+// T3o (T3O-45): board files restrict imports through their own override, which replaces the
+// server one below, so its forge pattern is shared from here.
+const SERVER_FORGE_CLIENT_PATTERN = {
+  group: [
+    "@t3tools/source-control-*/client/*",
+    "../client/*",
+    "../../client/*",
+    "../../../client/*",
+  ],
+  message: "A forge's client entry is UI-only; the server reads its `shared/definition`.",
+};
+
+// Upstream modules board code reaches only through `board/ports/`.
+const BOARD_HEAVY_MODULES = [
+  "**/project/ProjectSetupScriptRunner*",
+  "**/terminal/Manager*",
+  "**/provider/builtInDrivers*",
+  "**/git/GitManager*",
+];
+const boardRestrictedImports = (modules: ReadonlyArray<string>) => [
+  "error" as const,
+  {
+    paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
+    patterns: [
+      SERVER_FORGE_CLIENT_PATTERN,
+      {
+        group: [...modules],
+        allowTypeImports: true,
+        message:
+          "Depend on the board port in board/ports/; only *.live.ts adapters import the upstream service.",
+      },
+    ],
+  },
+];
+
 // Vite+ supports remote configuration before its published types include it.
 const cacheUrl = remoteCacheUrl(import.meta.dirname);
 const taskCacheConfig = {
@@ -454,6 +489,17 @@ export default defineConfig({
             },
           ],
         },
+      },
+      // T3o (T3O-45): upstream service modules bundle their tag with an implementation that
+      // loads every provider driver, which made each board test file pay seconds of import.
+      // These replace the server override above for board files, so they repeat its patterns.
+      {
+        files: ["apps/server/src/board/**/*.ts"],
+        excludeFiles: [
+          "apps/server/src/board/ports/*.live.ts",
+          "apps/server/src/board/ports/*.live.test.ts",
+        ],
+        rules: { "eslint/no-restricted-imports": boardRestrictedImports(BOARD_HEAVY_MODULES) },
       },
       {
         files: ["apps/mobile/src/**"],

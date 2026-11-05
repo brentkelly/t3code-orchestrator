@@ -6,6 +6,7 @@ import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 import rootPackageJson from "../../package.json" with { type: "json" };
 import packageJson from "./package.json" with { type: "json" };
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer.ts";
+import { t3oServerTestProjects } from "./src/testUtils/t3oBoardTestProject.ts";
 
 // NSIS install time tracks file count, not bytes.
 import {
@@ -141,6 +142,8 @@ export default mergeConfig(
       ],
       hookTimeout: 120_000,
       testTimeout: 120_000,
+      // T3o: board tests run as their own non-isolated project (T3O-45).
+      projects: t3oServerTestProjects,
     },
   }),
 );

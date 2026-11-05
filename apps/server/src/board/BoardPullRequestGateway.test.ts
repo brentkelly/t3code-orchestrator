@@ -36,7 +36,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as BoardPullRequestGateway from "./BoardPullRequestGateway.ts";
-import * as GitManager from "../git/GitManager.ts";
+import { BoardGitStatus } from "./ports/BoardGitStatus.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -138,7 +138,7 @@ function makeGateway(
   const layer = BoardPullRequestGateway.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(GitManager.GitManager)({
+        Layer.mock(BoardGitStatus)({
           branchPullRequest: (input) =>
             Effect.sync(() => {
               calls.push(`branchPullRequest:${input.cwd}:${input.branch}`);

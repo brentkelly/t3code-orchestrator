@@ -147,7 +147,7 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import * as ServerConfig from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { forkParked, ServerActivation } from "../serverActivation.ts";
@@ -572,7 +572,7 @@ const make = Effect.gen(function* () {
   // workspace — this server's, or the worker it is placed on.
   const workspaces = yield* BoardWorkspaces;
   const workspaceFor = (card: Pick<BoardCard, "id" | "projectId">) => workspaces.forCard(card);
-  const setupRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const setupRunner = yield* BoardSetupScriptRunner;
   // The activation boundary the boot reconcile waits on (t3o-10, D3). Captured
   // at CONSTRUCTION, where the reference is in scope (`activationLayer` is
   // provided to the runtime services layer), because `reconcile` itself runs on
@@ -1820,7 +1820,7 @@ const make = Effect.gen(function* () {
         projectId: card.projectId,
         worktreePath: input.worktreePath,
       }).pipe(
-        Effect.provideService(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupRunner),
+        Effect.provideService(BoardSetupScriptRunner, setupRunner),
         Effect.catchCause(() => Effect.void),
       );
     }
