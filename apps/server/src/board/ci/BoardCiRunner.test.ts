@@ -138,6 +138,27 @@ it.live("an interrupted pass kills the step's whole process group", () =>
   }),
 );
 
+it.live("decodes a multi-byte character split across output chunks", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { events, emit } = collect();
+    yield* runBoardCiPass(
+      request(cwd, [
+        // ✓ is \342\234\223; the pause makes the two writes separate pipe chunks.
+        {
+          name: "Split",
+          command: "printf '\\342'; sleep 0.2; printf '\\234\\223 done\\n'",
+          timeoutMinutes: 1,
+        },
+      ]),
+      emit,
+    );
+    assert.strictEqual(events[1]!.step.tail, "✓ done");
+    const log = NodeFS.readFileSync(NodePath.join(cwd, ".t3", "ci", "run-1", "0.log"), "utf8");
+    assert.strictEqual(log, "✓ done\n");
+  }),
+);
+
 it("keeps only the last lines of output", () => {
   const tail = new BoardCiTail(3);
   tail.push("one\ntwo\nthr");
@@ -162,6 +183,13 @@ it("treats a bare carriage return as a line break, and \\r\\n split across chunk
   tail.push("10%\r20%\r30%\r");
   tail.push("\ndone");
   assert.strictEqual(tail.text(), "20%\n30%\ndone");
+});
+
+it("keeps a bare \\r that ends a clipped unfinished line", () => {
+  const tail = new BoardCiTail(3, 5);
+  tail.push("0123456789\r");
+  tail.push("ok\n");
+  assert.strictEqual(tail.text(), "01234 … [line truncated]\nok");
 });
 
 it("caps the whole tail in size on a line boundary", () => {

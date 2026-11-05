@@ -139,7 +139,8 @@ export class BoardCiTail {
     });
     if (parts.length > 0) this.partialClipped = false;
     if (rest.length > this.maxLineChars) {
-      this.partial = rest.slice(0, this.maxLineChars);
+      // Keep a held-back `\r` so the next redraw still starts a new line.
+      this.partial = rest.slice(0, this.maxLineChars) + (rest.endsWith("\r") ? "\r" : "");
       this.partialClipped = true;
     } else {
       this.partial = rest;
@@ -204,8 +205,10 @@ const runStep = (input: {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, CI: process.env.CI ?? "1" },
     });
-    const onData = (chunk: Buffer) => {
-      const text = chunk.toString("utf8");
+    // Per-stream decoders keep a multi-byte character split across chunks whole.
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    const onData = (text: string) => {
       input.tail.push(text);
       if (!logBroken) log.write(text);
     };
