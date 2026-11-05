@@ -254,6 +254,7 @@ export function BoardCardCiPane({
   onOpenThread,
   onSkipCi,
   skipPending = false,
+  skipToLabel = "Ready for merge",
   onBackToThread,
 }: {
   readonly cardKey: string;
@@ -268,6 +269,8 @@ export function BoardCardCiPane({
   readonly onOpenThread: (threadId: ThreadId) => void;
   readonly onSkipCi?: (() => void) | undefined;
   readonly skipPending?: boolean | undefined;
+  /** The stage after CI in the card's pipeline, where Skip CI moves it. */
+  readonly skipToLabel?: string | undefined;
   readonly onBackToThread: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -281,6 +284,7 @@ export function BoardCardCiPane({
   const attempt = ci == null ? 0 : Math.max(1, ci.fixAttempts);
   const lastAttempt = ci != null && attempt >= ci.maxFixAttempts;
   const showConfirm = inCi && confirming && onSkipCi !== undefined;
+  const usedFixes = lastOutcome?.fixAttemptsUsed ?? 0;
   return (
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pr-3 pl-3.5">
@@ -327,8 +331,8 @@ export function BoardCardCiPane({
             {lastOutcome.kind === "sent-back" ? (
               <span className="text-[11px] text-muted-foreground">
                 {lastOutcome.stepName === undefined ? "" : `${lastOutcome.stepName} · `}
-                {lastOutcome.fixAttemptsUsed ?? 0} fix attempts used · the failure went with the
-                card
+                {usedFixes} fix {usedFixes === 1 ? "attempt" : "attempts"} used · the failure went
+                with the card
               </span>
             ) : null}
           </div>
@@ -406,12 +410,16 @@ export function BoardCardCiPane({
         {inCi && onSkipCi !== undefined && !showConfirm ? (
           <div className="mt-1 flex shrink-0 items-center gap-3 rounded-xl border border-dashed border-input bg-foreground/3 px-3.5 py-3">
             <span className="min-w-0 text-[11.5px]/[1.5] text-pretty text-muted-foreground">
-              Moves the card to Ready for merge without a passing CI run. The skip is recorded on
-              the card under your name.
+              Moves the card to {skipToLabel} without a passing CI run. The skip is recorded on the
+              card under your name.
             </span>
             <span className="flex-1" />
             <button
-              className={cn(BUTTON_CLASS, "h-[30px] px-3 text-[12.5px] whitespace-nowrap")}
+              className={cn(
+                BUTTON_CLASS,
+                "h-[30px] px-3 text-[12.5px] whitespace-nowrap disabled:opacity-60",
+              )}
+              disabled={skipPending}
               onClick={() => setConfirming(true)}
               type="button"
             >
@@ -435,7 +443,7 @@ export function BoardCardCiPane({
                 : live
                   ? "The running step is cancelled and "
                   : ""}
-              the card moves to Ready for merge. Anyone opening it will see that you skipped CI.
+              the card moves to {skipToLabel}. Anyone opening it will see that you skipped CI.
             </span>
             <div className="flex items-center justify-end gap-2">
               <button
@@ -446,15 +454,14 @@ export function BoardCardCiPane({
                 Keep running
               </button>
               <button
-                className="inline-flex h-[30px] items-center rounded-lg bg-destructive px-3 text-[12.5px] font-medium text-white shadow-xs hover:brightness-95 disabled:opacity-60"
-                disabled={skipPending}
+                className="inline-flex h-[30px] items-center rounded-lg bg-destructive px-3 text-[12.5px] font-medium text-white shadow-xs hover:brightness-95"
                 onClick={() => {
                   setConfirming(false);
                   onSkipCi?.();
                 }}
                 type="button"
               >
-                Skip CI and move to Ready for merge
+                Skip CI and move to {skipToLabel}
               </button>
             </div>
           </div>

@@ -9,6 +9,7 @@ import {
   BOARD_SEED_STAGE_IDS,
   BOARD_SEED_STAGES,
   BoardLabelId,
+  EMPTY_BOARD_PROJECT_STAGE_CONFIG,
   BoardStageId,
   ProjectId,
   ThreadId,
@@ -110,6 +111,48 @@ const snapshot = (input?: Partial<BoardShellSnapshot>): BoardShellSnapshot => ({
 });
 
 describe("board shell reducer", () => {
+  it("project-stage-config replaces the project's config and its own stage rows (T3O-43)", () => {
+    const own = (id: string, label: string, orderKey: string) => ({
+      stageId: BoardStageId.make(`${projectId}:${id}`),
+      label,
+      role: null,
+      orderKey,
+      createdAt: NOW,
+      updatedAt: NOW,
+      projectId,
+    });
+    const backlog = BOARD_SEED_STAGES[0]!;
+    const before = snapshot({
+      stages: [own("old", "Old", "c"), own("kept", "Kept", "z"), backlog],
+      projectStageConfigs: {
+        [projectId]: EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+        [ProjectId.make("other")]: EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+      },
+    });
+    const config = {
+      ...EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+      removedStageIds: [BOARD_SEED_STAGE_IDS.sprint],
+    };
+    const next = applyBoardShellStreamEvent(before, {
+      kind: "project-stage-config",
+      sequence: 2,
+      projectId,
+      config,
+      // "kept" is re-ordered ahead of backlog, "new" is added, "old" is dropped.
+      upserts: [own("kept", "Kept again", "a"), own("new", "New", "m")],
+      deletedStageIds: [BoardStageId.make(`${projectId}:old`)],
+    });
+    expect(next.stages.map((stage) => [stage.stageId, stage.label])).toEqual([
+      [`${projectId}:kept`, "Kept again"],
+      [backlog.stageId, backlog.label],
+      [`${projectId}:new`, "New"],
+    ]);
+    expect(next.projectStageConfigs?.[projectId]).toEqual(config);
+    expect(next.projectStageConfigs?.[ProjectId.make("other")]).toEqual(
+      EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+    );
+  });
+
   it("appends a card to an empty board", () => {
     const next = applyBoardShellStreamEvent(snapshot(), {
       kind: "card-upserted",

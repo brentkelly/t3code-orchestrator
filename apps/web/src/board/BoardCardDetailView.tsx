@@ -3150,6 +3150,14 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onSkipCi={props.onSkipCi}
                 passes={props.detail.ciPasses}
                 skipPending={props.skipCiPending}
+                skipToLabel={(() => {
+                  const next = boardCiAwareNextStageId(
+                    props.stages,
+                    BOARD_SEED_STAGE_IDS.ci,
+                    false,
+                  );
+                  return next === null ? undefined : boardStageLabel(props.stages, next);
+                })()}
               />
             </Suspense>
           ) : activePane === "review" ? (

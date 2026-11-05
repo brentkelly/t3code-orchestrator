@@ -96,7 +96,11 @@ export function boardPipelineColumns(input: {
         stage,
         kind: "removed",
         usedBy: [],
-        hint: `Removed from ${single ? "this project" : nameList(goneFor)}'s pipeline. Stays until its cards move on.`,
+        hint: `${
+          single
+            ? "Removed from this project's pipeline"
+            : `Not in the ${goneFor.length === 1 ? "pipeline" : "pipelines"} of ${nameList(goneFor)}`
+        }. Stays until its cards move on.`,
       });
       continue;
     }
