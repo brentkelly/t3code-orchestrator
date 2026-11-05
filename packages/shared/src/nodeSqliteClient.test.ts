@@ -461,3 +461,43 @@ it.effect.each([
       );
     }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
 );
+
+// T3o: the reader sees databases the main connection attaches (T3O-41).
+it.effect("attaches the configured databases on the reader, read-only", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-reader-attach-" });
+    const filename = path.join(directory, "state.sqlite");
+    const extra = path.join(directory, "extra.sqlite");
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA journal_mode = WAL`;
+      yield* sql`ATTACH DATABASE ${extra} AS extra`;
+      yield* sql`PRAGMA extra.journal_mode = WAL`;
+      yield* sql`CREATE TABLE extra.cards(name TEXT NOT NULL)`;
+      yield* sql`INSERT INTO extra.cards VALUES ('card')`;
+
+      const rows = yield* sql
+        .withTransaction(sql<{ readonly name: string }>`SELECT name FROM extra.cards`)
+        .pipe(SqliteClient.readOnly);
+      assert.deepEqual(
+        rows.map((row) => row.name),
+        ["card"],
+      );
+      // A write failing as readonly proves the read ran on the reader, not the writer.
+      const error = yield* sql
+        .withTransaction(sql`INSERT INTO extra.cards VALUES ('blocked')`)
+        .pipe(SqliteClient.readOnly, Effect.flip);
+      assert.include(String(error.reason.cause), "readonly database");
+    }).pipe(
+      Effect.provide(
+        SqliteClient.layer({
+          filename,
+          readerWorker: true,
+          readerAttachments: [{ schema: "extra", filename: extra }],
+        }),
+      ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

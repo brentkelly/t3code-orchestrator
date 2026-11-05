@@ -22,6 +22,7 @@ import {
   type BoardCardStepState,
   type BoardState,
   type ThreadId,
+  isLiveBoardCardThreadLink,
 } from "@t3tools/contracts";
 
 const isPlanStage = (board: BoardState, stageId: string): boolean => {
@@ -58,7 +59,7 @@ export function keptPlanningThreadId(
 ): ThreadId | null {
   if (!isPlanStage(board, card.stage)) return null;
   const link = card.threadLinks.findLast(
-    (candidate) => candidate.role === card.stage && candidate.tombstonedAt === null,
+    (candidate) => candidate.role === card.stage && isLiveBoardCardThreadLink(candidate),
   );
   if (link === undefined) return null;
   return interviewFinished(board, card, card.stage, link.threadId) ? null : link.threadId;
@@ -147,7 +148,7 @@ export function keptPlanningStepId(
   threadId: ThreadId,
 ): string | null {
   const link = card.threadLinks.findLast(
-    (candidate) => candidate.threadId === threadId && candidate.tombstonedAt === null,
+    (candidate) => candidate.threadId === threadId && isLiveBoardCardThreadLink(candidate),
   );
   if (link === undefined || !isPlanStage(board, link.role)) return null;
   if (link.role === card.stage) {

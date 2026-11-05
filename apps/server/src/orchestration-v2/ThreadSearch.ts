@@ -35,6 +35,8 @@ import {
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
 import { indexedMessageCondition, nonPlaceholderMessageCondition } from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
+// T3o: the board adopt picker's card-thread exclusion (T3O-41).
+import { boardCardThreadExclusion } from "../board/boardCardThreadFilter.ts";
 
 // When the user last wrote in the thread aliased `threads`, as the clients
 // rank recency; agent notices in the user role do not count.
@@ -272,6 +274,8 @@ export class ThreadSearch extends Context.Service<
       /** The caller's name for this environment, which its palette also matches. */
       readonly environmentLabel?: string | undefined;
       readonly messageThreadIds: ReadonlyArray<ThreadId>;
+      // T3o: for the board's adopt picker, which cannot offer a thread already on a card (T3O-41).
+      readonly excludeBoardCardThreads?: boolean | undefined;
     }) => Effect.Effect<ReadonlyArray<ThreadId>, ThreadSearchError>;
   }
 >()("t3/orchestration-v2/ThreadSearch") {}
@@ -342,9 +346,10 @@ export const make = Effect.gen(function* () {
     Request: Schema.Struct({
       before: Schema.String,
       projectIds: Schema.NullOr(TokenList),
+      excludeBoardCardThreads: Schema.Boolean,
     }),
     Result: OlderSettledTitleRow,
-    execute: ({ before, projectIds }) => sql`
+    execute: ({ before, projectIds, excludeBoardCardThreads }) => sql`
       SELECT
         threads.thread_id AS id,
         json_extract(threads.payload_json, '$.title') AS title,
@@ -369,6 +374,7 @@ export const make = Effect.gen(function* () {
         AND json_extract(threads.payload_json, '$.settledAt') < ${before}
         AND (${projectIds} IS NULL
           OR threads.project_id IN (SELECT value FROM json_each(${projectIds})))
+        ${boardCardThreadExclusion(sql, excludeBoardCardThreads)}
     `,
   });
 
@@ -377,9 +383,10 @@ export const make = Effect.gen(function* () {
       before: Schema.String,
       threadIds: TokenList,
       projectIds: Schema.NullOr(TokenList),
+      excludeBoardCardThreads: Schema.Boolean,
     }),
     Result: Schema.Struct({ id: ThreadId }),
-    execute: ({ before, threadIds, projectIds }) => sql`
+    execute: ({ before, threadIds, projectIds, excludeBoardCardThreads }) => sql`
       SELECT threads.thread_id AS id
       FROM orchestration_v2_projection_threads AS threads
       WHERE threads.thread_id IN (SELECT value FROM json_each(${threadIds}))
@@ -392,6 +399,7 @@ export const make = Effect.gen(function* () {
         AND json_extract(threads.payload_json, '$.settledAt') < ${before}
         AND (${projectIds} IS NULL
           OR threads.project_id IN (SELECT value FROM json_each(${projectIds})))
+        ${boardCardThreadExclusion(sql, excludeBoardCardThreads)}
     `,
   });
 
@@ -577,11 +585,22 @@ export const make = Effect.gen(function* () {
 
   const searchOlderSettled: ThreadSearch["Service"]["searchOlderSettled"] = Effect.fn(
     "ThreadSearch.searchOlderSettled",
-  )(function* ({ query, before, projectIds, environmentLabel, messageThreadIds }) {
+  )(function* ({
+    query,
+    before,
+    projectIds,
+    environmentLabel,
+    messageThreadIds,
+    excludeBoardCardThreads = false,
+  }) {
     const normalizedQuery = foldSearchQuery(query);
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const candidates = yield* read(
-      olderSettledTitleCandidates({ before, projectIds: projectIds ?? null }),
+      olderSettledTitleCandidates({
+        before,
+        projectIds: projectIds ?? null,
+        excludeBoardCardThreads,
+      }),
     );
     const subjectOf = (row: typeof OlderSettledTitleRow.Type): ThreadSearchSubject => ({
       id: row.id,
@@ -615,6 +634,7 @@ export const make = Effect.gen(function* () {
                 before,
                 threadIds: messageCandidates,
                 projectIds: projectIds ?? null,
+                excludeBoardCardThreads,
               }),
             )).map((row) => row.id),
           );
@@ -649,8 +669,14 @@ export const searchThreadsWithOlderSettledRows = Effect.fn(
   ) => Effect.Effect<Effect.Effect<OrchestrationV2ThreadShellSnapshot, E4>, E3>;
   readonly latestSequence: Effect.Effect<number, E5>;
 }) {
-  const { olderSettledBefore, projectIds, environmentLabel, titlesOnly, ...request } =
-    input.request;
+  const {
+    olderSettledBefore,
+    projectIds,
+    environmentLabel,
+    titlesOnly,
+    excludeBoardCardThreads,
+    ...request
+  } = input.request;
   const messages: OrchestrationV2SearchThreadsResult =
     titlesOnly === true ? { matches: [] } : yield* input.search(request);
   if (olderSettledBefore === undefined) return messages;
@@ -661,6 +687,7 @@ export const searchThreadsWithOlderSettledRows = Effect.fn(
     projectIds,
     environmentLabel,
     messageThreadIds: messages.matches.map((match) => match.threadId),
+    excludeBoardCardThreads,
   });
   const older = yield* loadOlderSettledThreadsPage({
     sql: input.sql,

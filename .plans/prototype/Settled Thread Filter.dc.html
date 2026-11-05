@@ -1,612 +1,175 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <script src="./support.js"></script>
-  </head>
-  <body>
-    <x-dc>
-      <helmet>
-        <meta name="design_doc_mode" content="canvas" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap"
-          rel="stylesheet"
-        />
-        <style>
-          :root {
-            --bg: #fcfcfc;
-            --fg: #27272a;
-            --card: #fff;
-            --popover: #fff;
-            --muted-fg: #71717a;
-            --accent: #f4f4f5;
-            --border: #e4e4e7;
-            --input: #d4d4d8;
-            --sidebar: #fafafa;
-            --hover: #f2f2f3;
-            --primary: oklch(0.488 0.217 264);
-            --info-fg: #1d4ed8;
-            --icon: #a1a1aa;
-            --font-sans: "DM Sans", -apple-system, system-ui, sans-serif;
-          }
-          * {
-            box-sizing: border-box;
-          }
-          body {
-            margin: 0;
-            font-family: var(--font-sans);
-            background: #eeeef0;
-            color: var(--fg);
-            -webkit-font-smoothing: antialiased;
-          }
-          a {
-            color: var(--info-fg);
-            text-decoration: none;
-          }
-          a:hover {
-            text-decoration: underline;
-          }
-          @keyframes t3spin {
-            to {
-              transform: rotate(360deg);
-            }
-          }
-        </style>
-      </helmet>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#fcfcfc;--fg:#27272a;--card:#fff;--popover:#fff;--muted-fg:#71717a;--accent:#f4f4f5;--border:#e4e4e7;--input:#d4d4d8;--sidebar:#fafafa;--hover:#f2f2f3;--primary:oklch(0.488 0.217 264);--info-fg:#1d4ed8;--icon:#a1a1aa;--font-sans:"DM Sans",-apple-system,system-ui,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font-sans);background:#eeeef0;color:var(--fg);-webkit-font-smoothing:antialiased}
+a{color:var(--info-fg);text-decoration:none}
+a:hover{text-decoration:underline}
+@keyframes t3spin{to{transform:rotate(360deg)}}
+</style>
+</helmet>
 
-      <section style="padding: 48px; display: flex; flex-direction: column; gap: 20px">
-        <div style="display: flex; flex-direction: column; gap: 6px; max-width: 900px">
-          <div style="font: 600 20px var(--font-sans)">
-            Settled threads: hide card threads by default
-          </div>
-          <div
-            style="font: 400 14px/1.5 var(--font-sans); color: var(--muted-fg); text-wrap: pretty"
-          >
-            Card threads stay in Active while they run. Once settled they are hidden from the
-            archive unless you ask for them; reach historic card threads from the card itself. The
-            mock is interactive.
-          </div>
+<section style="padding:48px;display:flex;flex-direction:column;gap:20px">
+  <div style="display:flex;flex-direction:column;gap:6px;max-width:900px">
+    <div style="font:600 20px var(--font-sans)">Settled threads: hide card threads by default</div>
+    <div style="font:400 14px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">Card threads stay in Active while they run. Once settled they are hidden from the archive unless you ask for them; reach historic card threads from the card itself. The mock is interactive.</div>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:40px;align-items:flex-start">
+
+    <div id="1a" style="display:flex;flex-direction:column;gap:12px;width:300px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font:600 12px var(--font-sans);padding:2px 7px;border-radius:6px;background:var(--fg);color:#fff">1a</span>
+        <span style="font:500 13px var(--font-sans)">Toggle in filter menu + inline notice</span>
+      </div>
+      <aside style="position:relative;width:300px;height:760px;display:flex;flex-direction:column;background:var(--sidebar);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:14px;height:52px;padding:0 16px;flex:none">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M9 3v18"></path><path d="m16 15-3-3 3-3"></path></svg>
+          <div style="display:flex;align-items:baseline;gap:5px;font-size:15px;white-space:nowrap"><span style="font-weight:700">T3</span><span style="font-weight:500;color:var(--muted-fg)">Code</span></div>
         </div>
-        <div style="display: flex; flex-wrap: wrap; gap: 40px; align-items: flex-start">
-          <div id="1a" style="display: flex; flex-direction: column; gap: 12px; width: 300px">
-            <div style="display: flex; align-items: center; gap: 8px">
-              <span
-                style="
-                  font: 600 12px var(--font-sans);
-                  padding: 2px 7px;
-                  border-radius: 6px;
-                  background: var(--fg);
-                  color: #fff;
-                "
-                >1a</span
-              >
-              <span style="font: 500 13px var(--font-sans)"
-                >Toggle in filter menu + inline notice</span
-              >
+        <div style="display:flex;align-items:center;gap:4px;padding:0 10px 6px;flex:none">
+          <div style="display:flex;flex:1;align-items:center;gap:8px;height:32px;padding:0 8px;color:var(--muted-fg);font:500 14px var(--font-sans)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>Search
+          </div>
+          <button type="button" onClick="{{ aToggleMenu }}" title="Filter" style="{{ aFilterBtnStyle }}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18"></path><path d="M7 12h10"></path><path d="M10 18h4"></path></svg>
+          </button>
+          <button type="button" style="width:30px;height:30px;border:none;border-radius:8px;background:transparent;color:var(--muted-fg);display:inline-flex;align-items:center;justify-content:center">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10v6"></path><path d="M9 13h6"></path><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+          </button>
+          <button type="button" style="width:30px;height:30px;border:none;border-radius:8px;background:transparent;color:var(--muted-fg);display:inline-flex;align-items:center;justify-content:center">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"></path></svg>
+          </button>
+        </div>
+
+        <div style="flex:1;min-height:0;overflow-y:auto;padding:0 10px 10px;display:flex;flex-direction:column;gap:2px">
+          <sc-for list="{{ active }}" as="t" hint-placeholder-count="4">
+            <div style="{{ t.style }}">
+              <div style="display:flex;align-items:center;gap:6px;font:400 12px var(--font-sans);color:var(--muted-fg)">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#65a30d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path><path d="m10 10.5-2 2.5 2 2.5"></path><path d="m14 10.5 2 2.5-2 2.5"></path></svg>
+                <span style="flex:1">z5</span><span>{{ t.age }}</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;font:500 14px var(--font-sans);min-width:0">
+                <sc-if value="{{ t.working }}" hint-placeholder-val="{{ false }}">
+                  <span style="width:11px;height:11px;flex:none;border-radius:99px;border:2px solid color-mix(in srgb,#3b82f6 25%,transparent);border-top-color:#1d4ed8;animation:t3spin .8s linear infinite"></span>
+                </sc-if>
+                <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.title }}</span>
+              </div>
+              <div style="font:400 12px var(--font-sans);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.branch }}</div>
             </div>
-            <aside
-              style="
-                position: relative;
-                width: 300px;
-                height: 760px;
-                display: flex;
-                flex-direction: column;
-                background: var(--sidebar);
-                border: 1px solid var(--border);
-                border-radius: 12px;
-                overflow: hidden;
-              "
-            >
-              <div
-                style="
-                  display: flex;
-                  align-items: center;
-                  gap: 14px;
-                  height: 52px;
-                  padding: 0 16px;
-                  flex: none;
-                "
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="var(--muted-fg)"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <rect width="18" height="18" x="3" y="3" rx="2"></rect>
-                  <path d="M9 3v18"></path>
-                  <path d="m16 15-3-3 3-3"></path>
-                </svg>
-                <div
-                  style="
-                    display: flex;
-                    align-items: baseline;
-                    gap: 5px;
-                    font-size: 15px;
-                    white-space: nowrap;
-                  "
-                >
-                  <span style="font-weight: 700">T3</span
-                  ><span style="font-weight: 500; color: var(--muted-fg)">Code</span>
-                </div>
-              </div>
-              <div
-                style="
-                  display: flex;
-                  align-items: center;
-                  gap: 4px;
-                  padding: 0 10px 6px;
-                  flex: none;
-                "
-              >
-                <div
-                  style="
-                    display: flex;
-                    flex: 1;
-                    align-items: center;
-                    gap: 8px;
-                    height: 32px;
-                    padding: 0 8px;
-                    color: var(--muted-fg);
-                    font: 500 14px var(--font-sans);
-                  "
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                  >
-                    <circle cx="11" cy="11" r="8"></circle>
-                    <path d="m21 21-4.3-4.3"></path></svg
-                  >Search
-                </div>
-                <button
-                  type="button"
-                  onClick="{{ aToggleMenu }}"
-                  title="Filter"
-                  style="{{ aFilterBtnStyle }}"
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                  >
-                    <path d="M3 6h18"></path>
-                    <path d="M7 12h10"></path>
-                    <path d="M10 18h4"></path>
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  style="
-                    width: 30px;
-                    height: 30px;
-                    border: none;
-                    border-radius: 8px;
-                    background: transparent;
-                    color: var(--muted-fg);
-                    display: inline-flex;
-                    align-items: center;
-                    justify-content: center;
-                  "
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M12 10v6"></path>
-                    <path d="M9 13h6"></path>
-                    <path
-                      d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
-                    ></path>
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  style="
-                    width: 30px;
-                    height: 30px;
-                    border: none;
-                    border-radius: 8px;
-                    background: transparent;
-                    color: var(--muted-fg);
-                    display: inline-flex;
-                    align-items: center;
-                    justify-content: center;
-                  "
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                    <path
-                      d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"
-                    ></path>
-                  </svg>
-                </button>
-              </div>
+          </sc-for>
 
-              <div
-                style="
-                  flex: 1;
-                  min-height: 0;
-                  overflow-y: auto;
-                  padding: 0 10px 10px;
-                  display: flex;
-                  flex-direction: column;
-                  gap: 2px;
-                "
-              >
-                <sc-for list="{{ active }}" as="t" hint-placeholder-count="4">
-                  <div style="{{ t.style }}">
-                    <div
-                      style="
-                        display: flex;
-                        align-items: center;
-                        gap: 6px;
-                        font: 400 12px var(--font-sans);
-                        color: var(--muted-fg);
-                      "
-                    >
-                      <svg
-                        width="15"
-                        height="15"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="#65a30d"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path
-                          d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
-                        ></path>
-                        <path d="m10 10.5-2 2.5 2 2.5"></path>
-                        <path d="m14 10.5 2 2.5-2 2.5"></path>
-                      </svg>
-                      <span style="flex: 1">z5</span><span>{{ t.age }}</span>
-                    </div>
-                    <div
-                      style="
-                        display: flex;
-                        align-items: center;
-                        gap: 6px;
-                        font: 500 14px var(--font-sans);
-                        min-width: 0;
-                      "
-                    >
-                      <sc-if value="{{ t.working }}" hint-placeholder-val="{{ false }}">
-                        <span
-                          style="
-                            width: 11px;
-                            height: 11px;
-                            flex: none;
-                            border-radius: 99px;
-                            border: 2px solid color-mix(in srgb, #3b82f6 25%, transparent);
-                            border-top-color: #1d4ed8;
-                            animation: t3spin 0.8s linear infinite;
-                          "
-                        ></span>
-                      </sc-if>
-                      <span
-                        style="
-                          flex: 1;
-                          min-width: 0;
-                          overflow: hidden;
-                          text-overflow: ellipsis;
-                          white-space: nowrap;
-                        "
-                        >{{ t.title }}</span
-                      >
-                    </div>
-                    <div
-                      style="
-                        font: 400 12px var(--font-sans);
-                        color: var(--muted-fg);
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                        white-space: nowrap;
-                      "
-                    >
-                      {{ t.branch }}
-                    </div>
-                  </div>
-                </sc-for>
-
-                <button
-                  type="button"
-                  onClick="{{ aToggleSettled }}"
-                  style="
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    height: 34px;
-                    margin-top: 6px;
-                    padding: 0 10px;
-                    border: none;
-                    background: transparent;
-                    color: var(--muted-fg);
-                    font: 500 13px var(--font-sans);
-                    cursor: pointer;
-                    text-align: left;
-                  "
-                >
-                  <span style="flex: 1">Settled</span><span>{{ aCount }}</span>
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                  >
-                    <path d="m6 9 6 6 6-6"></path>
-                  </svg>
-                </button>
-                <div
-                  style="
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-                    margin: 0 6px 4px;
-                    padding: 6px 8px;
-                    border-radius: 8px;
-                    background: var(--accent);
-                    font: 400 12px var(--font-sans);
-                    color: var(--muted-fg);
-                  "
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    style="flex: none"
-                  >
-                    <rect width="18" height="18" x="3" y="3" rx="2"></rect>
-                    <path d="M8 7v7"></path>
-                    <path d="M12 7v4"></path>
-                    <path d="M16 7v9"></path>
-                  </svg>
-                  <span style="flex: 1">{{ aNotice }}</span>
-                  <button
-                    type="button"
-                    onClick="{{ aToggleHide }}"
-                    style="
-                      border: none;
-                      background: transparent;
-                      padding: 0;
-                      color: var(--fg);
-                      font: 500 12px var(--font-sans);
-                      cursor: pointer;
-                    "
-                    style-hover="text-decoration:underline"
-                  >
-                    {{ aNoticeAction }}
-                  </button>
-                </div>
-                <sc-for list="{{ aSettled }}" as="t" hint-placeholder-count="10">
-                  <div
-                    style="
-                      display: flex;
-                      align-items: center;
-                      gap: 10px;
-                      height: 34px;
-                      padding: 0 10px;
-                      border-radius: 8px;
-                      color: var(--muted-fg);
-                      font: 500 14px var(--font-sans);
-                      cursor: pointer;
-                    "
-                    style-hover="background:var(--hover);color:var(--fg)"
-                  >
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="#c4c4c8"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      style="flex: none"
-                    >
-                      <path
-                        d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
-                      ></path>
-                      <path d="m10 10.5-2 2.5 2 2.5"></path>
-                      <path d="m14 10.5 2 2.5-2 2.5"></path>
-                    </svg>
-                    <span
-                      style="
-                        flex: 1;
-                        min-width: 0;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                        white-space: nowrap;
-                      "
-                      >{{ t.title }}</span
-                    >
-                    <span style="font: 400 12px var(--font-sans)">{{ t.age }}</span>
-                  </div>
-                </sc-for>
-              </div>
-
-              <sc-if value="{{ aMenu }}" hint-placeholder-val="{{ false }}">
-                <div onClick="{{ aToggleMenu }}" style="position: absolute; inset: 0"></div>
-                <div
-                  style="
-                    position: absolute;
-                    top: 92px;
-                    left: 8px;
-                    right: 8px;
-                    background: var(--popover);
-                    border: 1px solid var(--border);
-                    border-radius: 12px;
-                    box-shadow: 0 16px 40px -16px rgb(0 0 0 / 30%);
-                    padding: 6px;
-                    display: flex;
-                    flex-direction: column;
-                    gap: 1px;
-                  "
-                >
-                  <div
-                    style="
-                      display: flex;
-                      align-items: center;
-                      gap: 8px;
-                      height: 34px;
-                      margin: 2px 6px 4px;
-                      border-bottom: 1px solid var(--primary);
-                      color: var(--muted-fg);
-                      font: 400 14px var(--font-sans);
-                    "
-                  >
-                    <svg
-                      width="15"
-                      height="15"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                    >
-                      <circle cx="11" cy="11" r="8"></circle>
-                      <path d="m21 21-4.3-4.3"></path></svg
-                    >Search projects…
-                  </div>
-                  <sc-for list="{{ projects }}" as="p" hint-placeholder-count="8">
-                    <div style="{{ p.style }}">
-                      <span style="{{ p.iconStyle }}">{{ p.mark }}</span>
-                      <span style="flex: 1">{{ p.name }}</span>
-                    </div>
-                  </sc-for>
-                  <div style="height: 1px; background: var(--border); margin: 6px 4px"></div>
-                  <div
-                    style="
-                      padding: 2px 8px 4px;
-                      font: 500 11px var(--font-sans);
-                      color: var(--muted-fg);
-                    "
-                  >
-                    Settled threads
-                  </div>
-                  <div
-                    onClick="{{ aToggleHide }}"
-                    style="
-                      display: flex;
-                      align-items: center;
-                      gap: 10px;
-                      padding: 7px 8px;
-                      border-radius: 8px;
-                      cursor: pointer;
-                    "
-                    style-hover="background:var(--accent)"
-                  >
-                    <div style="flex: 1; display: flex; flex-direction: column; gap: 1px">
-                      <span style="font: 500 14px var(--font-sans)">Hide card threads</span>
-                      <span style="font: 400 12px var(--font-sans); color: var(--muted-fg)"
-                        >Open them from the card instead</span
-                      >
-                    </div>
-                    <span style="{{ aSwitchStyle }}"><span style="{{ aKnobStyle }}"></span></span>
-                  </div>
-                </div>
-              </sc-if>
-            </aside>
+          <button type="button" onClick="{{ aToggleSettled }}" style="display:flex;align-items:center;gap:8px;height:34px;margin-top:6px;padding:0 10px;border:none;background:transparent;color:var(--muted-fg);font:500 13px var(--font-sans);cursor:pointer;text-align:left">
+            <span style="flex:1">Settled</span><span>{{ aCount }}</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"></path></svg>
+          </button>
+          <div style="display:flex;align-items:center;gap:6px;margin:0 6px 4px;padding:6px 8px;border-radius:8px;background:var(--accent);font:400 12px var(--font-sans);color:var(--muted-fg)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M8 7v7"></path><path d="M12 7v4"></path><path d="M16 7v9"></path></svg>
+            <span style="flex:1">{{ aNotice }}</span>
+            <button type="button" onClick="{{ aToggleHide }}" style="border:none;background:transparent;padding:0;color:var(--fg);font:500 12px var(--font-sans);cursor:pointer" style-hover="text-decoration:underline">{{ aNoticeAction }}</button>
           </div>
+          <sc-for list="{{ aSettled }}" as="t" hint-placeholder-count="10">
+            <div style="display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;color:var(--muted-fg);font:500 14px var(--font-sans);cursor:pointer" style-hover="background:var(--hover);color:var(--fg)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c4c4c8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path><path d="m10 10.5-2 2.5 2 2.5"></path><path d="m14 10.5 2 2.5-2 2.5"></path></svg>
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.title }}</span>
+              <span style="font:400 12px var(--font-sans)">{{ t.age }}</span>
+            </div>
+          </sc-for>
         </div>
-      </section>
-    </x-dc>
-    <script
-      type="text/x-dc"
-      data-dc-script
-      data-props='{"defaultHidden":{"editor":"boolean","default":true,"tsType":"boolean"}}'
-    >
-      class Component extends DCLogic {
-        state = { aHide: this.props.defaultHidden ?? true, aMenu: false };
-        renderVals() {
-          const CARD = 2431, ONE = 293;
-          const fmt = (n) => n.toLocaleString("en-US");
-          const settled = [
-            ["Z5-246 · Triage · round 3", "14m", 1], ["Z5-246 · Review · round 3", "29m", 1],
-            ["Fix stale worktree after rebase", "30m", 0], ["Z5-246 · Adjudicate · round 2", "31m", 1],
-            ["Z5-246 · Triage · round 2", "32m", 1], ["Z5-246 · Review · round 2", "50m", 1],
-            ["Why is the cold start slow on t3o?", "1h", 0], ["Z5-244 · Build · step 4", "2h", 1],
-            ["Z5-244 · Plan", "3h", 1], ["Draft release notes for 0.9", "5h", 0],
-            ["Z5-241 · Review · round 1", "6h", 1], ["Compare pnpm vs bun install times", "9h", 0],
-            ["Z5-239 · Build · step 2", "11h", 1], ["Rename worker env vars", "1d", 0],
-            ["Explain the review loop limits", "1d", 0], ["Z5-238 · Triage · round 1", "1d", 1],
-            ["Clean up old preview deploys", "2d", 0], ["Sketch onboarding copy", "2d", 0],
-          ].map(([title, age, card]) => ({ title, age, card }));
-          const baseRow = "display:flex;flex-direction:column;gap:3px;padding:10px 12px;border-radius:10px;cursor:pointer;";
-          const active = [
-            { title: "please rebuild the latest changes", age: "now", branch: "main", sel: 1 },
-            { title: "Z5-251 · Build · step 3 of 5", age: "4m", branch: "t3o/z5-251-retry-backoff", working: true },
-            { title: "Every card that currently builds…", age: "2d", branch: "fix/build-step-runs-affected-tests" },
-            { title: "I have made changes to z5, ma…", age: "2d", branch: "main" },
-          ].map((t) => ({ ...t, working: !!t.working, style: baseRow + (t.sel ? "background:var(--card);border:1px solid var(--border);box-shadow:0 1px 2px rgb(0 0 0 / 5%)" : "border:1px solid transparent") }));
 
-          const { aHide, aMenu } = this.state;
-          const aToggleHide = () => this.setState((s) => ({ aHide: !s.aHide }));
-          const projects = [
-            ["All projects", "", "#71717a", 1], ["z5", "", "#65a30d"], ["platinumhire", "S", "#1d4ed8"], ["macjimray", "", "#7c3aed"],
-            ["12z.hub", "", "#52525b"], ["open-design", "OD", "#ea580c"], ["walls", "WS", "#7c3aed"], ["t3o", "T3", "#2563eb"],
-          ].map(([name, mark, c, sel]) => ({
-            name, mark,
-            style: "display:flex;align-items:center;gap:10px;height:32px;padding:0 8px;border-radius:8px;font:400 14px var(--font-sans);cursor:pointer;" + (sel ? "background:var(--accent)" : ""),
-            iconStyle: "width:18px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;font:700 8px var(--font-sans);" +
-              (mark ? "background:color-mix(in srgb," + c + " 14%,transparent);color:" + c : "border:1.6px solid " + c + ";border-radius:3px 3px 4px 4px"),
-          }));
+        <sc-if value="{{ aMenu }}" hint-placeholder-val="{{ false }}">
+          <div onClick="{{ aToggleMenu }}" style="position:absolute;inset:0"></div>
+          <div style="position:absolute;top:92px;left:8px;right:8px;background:var(--popover);border:1px solid var(--border);border-radius:12px;box-shadow:0 16px 40px -16px rgb(0 0 0 / 30%);padding:6px;display:flex;flex-direction:column;gap:1px">
+            <div style="display:flex;align-items:center;gap:8px;height:34px;margin:2px 6px 4px;border-bottom:1px solid var(--primary);color:var(--muted-fg);font:400 14px var(--font-sans)">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>Search projects…
+            </div>
+            <sc-for list="{{ projects }}" as="p" hint-placeholder-count="8">
+              <div style="{{ p.style }}">
+                <span style="{{ p.iconStyle }}">{{ p.mark }}</span>
+                <span style="flex:1">{{ p.name }}</span>
+              </div>
+            </sc-for>
+            <div style="height:1px;background:var(--border);margin:6px 4px"></div>
+            <div style="padding:2px 8px 4px;font:500 11px var(--font-sans);color:var(--muted-fg)">Settled threads</div>
+            <div onClick="{{ aToggleHide }}" style="display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:8px;cursor:pointer" style-hover="background:var(--accent)">
+              <div style="flex:1;display:flex;flex-direction:column;gap:1px">
+                <span style="font:500 14px var(--font-sans)">Hide card threads</span>
+                <span style="font:400 12px var(--font-sans);color:var(--muted-fg)">Open them from the card instead</span>
+              </div>
+              <span style="{{ aSwitchStyle }}"><span style="{{ aKnobStyle }}"></span></span>
+            </div>
+          </div>
+        </sc-if>
+      </aside>
+    </div>
 
-          return {
-            active, projects,
-            aMenu,
-            aToggleMenu: () => this.setState((s) => ({ aMenu: !s.aMenu })),
-            aToggleSettled: () => {},
-            aToggleHide,
-            aCount: fmt(aHide ? ONE : ONE + CARD),
-            aNotice: aHide ? fmt(CARD) + " card threads hidden" : "Including card threads",
-            aNoticeAction: aHide ? "Show" : "Hide",
-            aSettled: settled.filter((t) => !aHide || !t.card),
-            aFilterBtnStyle: "position:relative;width:30px;height:30px;border:none;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;" +
-              (aMenu ? "background:var(--accent);color:var(--fg)" : "background:transparent;color:var(--muted-fg)"),
-            aSwitchStyle: "width:30px;height:18px;flex:none;border-radius:99px;padding:2px;display:flex;transition:background .15s;" + (aHide ? "background:var(--primary);justify-content:flex-end" : "background:var(--input);justify-content:flex-start"),
-            aKnobStyle: "width:14px;height:14px;border-radius:99px;background:#fff;box-shadow:0 1px 2px rgb(0 0 0 / 20%)",
-          };
-        }
-      }
-    </script>
-  </body>
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;defaultHidden&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  state = { aHide: this.props.defaultHidden ?? true, aMenu: false };
+  renderVals() {
+    const CARD = 2431, ONE = 293;
+    const fmt = (n) => n.toLocaleString("en-US");
+    const settled = [
+      ["Z5-246 · Triage · round 3", "14m", 1], ["Z5-246 · Review · round 3", "29m", 1],
+      ["Fix stale worktree after rebase", "30m", 0], ["Z5-246 · Adjudicate · round 2", "31m", 1],
+      ["Z5-246 · Triage · round 2", "32m", 1], ["Z5-246 · Review · round 2", "50m", 1],
+      ["Why is the cold start slow on t3o?", "1h", 0], ["Z5-244 · Build · step 4", "2h", 1],
+      ["Z5-244 · Plan", "3h", 1], ["Draft release notes for 0.9", "5h", 0],
+      ["Z5-241 · Review · round 1", "6h", 1], ["Compare pnpm vs bun install times", "9h", 0],
+      ["Z5-239 · Build · step 2", "11h", 1], ["Rename worker env vars", "1d", 0],
+      ["Explain the review loop limits", "1d", 0], ["Z5-238 · Triage · round 1", "1d", 1],
+      ["Clean up old preview deploys", "2d", 0], ["Sketch onboarding copy", "2d", 0],
+    ].map(([title, age, card]) => ({ title, age, card }));
+    const baseRow = "display:flex;flex-direction:column;gap:3px;padding:10px 12px;border-radius:10px;cursor:pointer;";
+    const active = [
+      { title: "please rebuild the latest changes", age: "now", branch: "main", sel: 1 },
+      { title: "Z5-251 · Build · step 3 of 5", age: "4m", branch: "t3o/z5-251-retry-backoff", working: true },
+      { title: "Every card that currently builds…", age: "2d", branch: "fix/build-step-runs-affected-tests" },
+      { title: "I have made changes to z5, ma…", age: "2d", branch: "main" },
+    ].map((t) => ({ ...t, working: !!t.working, style: baseRow + (t.sel ? "background:var(--card);border:1px solid var(--border);box-shadow:0 1px 2px rgb(0 0 0 / 5%)" : "border:1px solid transparent") }));
+
+    const { aHide, aMenu } = this.state;
+    const aToggleHide = () => this.setState((s) => ({ aHide: !s.aHide }));
+    const projects = [
+      ["All projects", "", "#71717a", 1], ["z5", "", "#65a30d"], ["platinumhire", "S", "#1d4ed8"], ["macjimray", "", "#7c3aed"],
+      ["12z.hub", "", "#52525b"], ["open-design", "OD", "#ea580c"], ["walls", "WS", "#7c3aed"], ["t3o", "T3", "#2563eb"],
+    ].map(([name, mark, c, sel]) => ({
+      name, mark,
+      style: "display:flex;align-items:center;gap:10px;height:32px;padding:0 8px;border-radius:8px;font:400 14px var(--font-sans);cursor:pointer;" + (sel ? "background:var(--accent)" : ""),
+      iconStyle: "width:18px;height:16px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;font:700 8px var(--font-sans);" +
+        (mark ? "background:color-mix(in srgb," + c + " 14%,transparent);color:" + c : "border:1.6px solid " + c + ";border-radius:3px 3px 4px 4px"),
+    }));
+
+    return {
+      active, projects,
+      aMenu,
+      aToggleMenu: () => this.setState((s) => ({ aMenu: !s.aMenu })),
+      aToggleSettled: () => {},
+      aToggleHide,
+      aCount: fmt(aHide ? ONE : ONE + CARD),
+      aNotice: aHide ? fmt(CARD) + " card threads hidden" : "Including card threads",
+      aNoticeAction: aHide ? "Show" : "Hide",
+      aSettled: settled.filter((t) => !aHide || !t.card),
+      aFilterBtnStyle: "position:relative;width:30px;height:30px;border:none;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;" +
+        (aMenu ? "background:var(--accent);color:var(--fg)" : "background:transparent;color:var(--muted-fg)"),
+      aSwitchStyle: "width:30px;height:18px;flex:none;border-radius:99px;padding:2px;display:flex;transition:background .15s;" + (aHide ? "background:var(--primary);justify-content:flex-end" : "background:var(--input);justify-content:flex-start"),
+      aKnobStyle: "width:14px;height:14px;border-radius:99px;background:#fff;box-shadow:0 1px 2px rgb(0 0 0 / 20%)",
+    };
+  }
+}
+</script>
+</body>
 </html>

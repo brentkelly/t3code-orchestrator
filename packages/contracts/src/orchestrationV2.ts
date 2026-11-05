@@ -2181,6 +2181,8 @@ export function isOlderSettledThreadShell(
 export const OrchestrationV2OlderSettledCount = Schema.Struct({
   projectId: ProjectId,
   count: NonNegativeInt,
+  // T3o: board card threads left out of `count`, only on `excludeBoardCardThreads` reads (T3O-78).
+  boardCardThreadCount: Schema.optionalKey(NonNegativeInt),
 });
 export type OrchestrationV2OlderSettledCount = typeof OrchestrationV2OlderSettledCount.Type;
 
@@ -3698,6 +3700,8 @@ export const OrchestrationV2SearchThreadsInput = Schema.Struct({
   environmentLabel: Schema.optionalKey(Schema.String),
   /** Skips message search, for pickers that match titles only. */
   titlesOnly: Schema.optionalKey(Schema.Boolean),
+  // T3o: leave board card threads out of the older settled rows; older servers ignore it (T3O-41).
+  excludeBoardCardThreads: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2SearchThreadsInput = typeof OrchestrationV2SearchThreadsInput.Type;
 
@@ -3721,6 +3725,8 @@ export const OrchestrationV2GetOlderSettledThreadsInput = Schema.Struct({
   projectIds: Schema.optionalKey(Schema.Array(ProjectId)),
   /** 0 reads only the counts. */
   limit: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 50 })),
+  // T3o: leave board card threads out of pages and counts; older servers ignore it (T3O-78).
+  excludeBoardCardThreads: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2GetOlderSettledThreadsInput =
   typeof OrchestrationV2GetOlderSettledThreadsInput.Type;
@@ -3734,6 +3740,8 @@ export const OrchestrationV2OlderSettledThreadsPage = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   threads: Schema.Array(OrchestrationV2ThreadShell),
   counts: Schema.Array(OrchestrationV2OlderSettledCount),
+  // T3o: board card threads the shell may carry, on filtered count reads (T3O-78).
+  boardCardThreadIds: Schema.optionalKey(Schema.Array(ThreadId)),
 });
 export type OrchestrationV2OlderSettledThreadsPage =
   typeof OrchestrationV2OlderSettledThreadsPage.Type;

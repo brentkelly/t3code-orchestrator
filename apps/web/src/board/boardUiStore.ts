@@ -16,7 +16,9 @@ import { resolveStorage } from "../lib/storage";
 
 export const BOARD_UI_STATE_STORAGE_KEY = "t3code:board-ui:v1";
 
-export type WorkspaceMode = "threads" | "board";
+export type WorkspaceMode = "threads" | "board" | "list";
+
+const WORKSPACE_MODES: ReadonlyArray<WorkspaceMode> = ["threads", "board", "list"];
 
 /**
  * Routes that are not a workspace location at all: settings (which replaces
@@ -45,7 +47,7 @@ function pathnameOf(href: string): string {
 /**
  * Which workspace mode an href belongs to, or `null` when it belongs to
  * neither. The board surface lives under `/board` (optionally with
- * `?project`/`?card`); threads, drafts and the root are threads-surface
+ * `?project`/`?card`), the List view (T3O-30) at `/list`; threads, drafts and the root are threads-surface
  * locations; everything in `NON_WORKSPACE_ROOTS` (settings, the auth flow,
  * onboarding, project links, usage) is not a workspace location.
  *
@@ -58,7 +60,14 @@ export function modeForHref(href: string): WorkspaceMode | null {
   if (NON_WORKSPACE_ROOTS.some((root) => pathname === root || pathname.startsWith(`${root}/`))) {
     return null;
   }
+  if (pathname === "/list" || pathname.startsWith("/list/")) return "list";
   return pathname === "/board" || pathname.startsWith("/board/") ? "board" : "threads";
+}
+
+/** The board-owned, full-bleed surfaces: the board and the List view. */
+export function isBoardSurfacePath(pathname: string): boolean {
+  const mode = modeForHref(pathname);
+  return mode === "board" || mode === "list";
 }
 
 /**
@@ -83,6 +92,14 @@ export function isTablessLocation(href: string): boolean {
  */
 export function isModeTabDestination(mode: WorkspaceMode, href: string): boolean {
   return modeForHref(href) === mode && !isTablessLocation(href);
+}
+
+/** One board action the command palette lists. */
+export interface BoardPaletteAction {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly run: () => void;
 }
 
 interface BoardUiState {
@@ -121,6 +138,16 @@ interface BoardUiStore extends BoardUiState {
       sub-board drill, clicking a different card) leaves this id behind, and a
       sheet is fullscreen only while it matches. The board clears it on close. */
   detailMaximisedCardId: string | null;
+  /** Each board's filter text (T3O-29), keyed by `boardScopeQueryKey`: the
+      root board and every sub-board keep their own. Transient — typing state,
+      not a preference. */
+  queryByBoard: Partial<Record<string, string>>;
+  setBoardQuery: (boardKey: string, query: string) => void;
+  /** What the mounted board offers the command palette (T3O-29): drill into
+      the selected group, go up a level. Transient, and empty off the board,
+      so the palette never subscribes to the board itself. */
+  paletteActions: ReadonlyArray<BoardPaletteAction>;
+  setPaletteActions: (actions: ReadonlyArray<BoardPaletteAction>) => void;
   recordModeLocation: (mode: WorkspaceMode, href: string) => void;
   setColumnCollapsed: (stageKey: string, collapsed: boolean) => void;
   setUtilityMenuCollapsed: (collapsed: boolean) => void;
@@ -153,7 +180,7 @@ export function migratePersistedBoardUiState(persistedState: unknown): BoardUiSt
   }
   const candidate = persistedState as Partial<BoardUiState>;
   const lastLocationByMode: BoardUiState["lastLocationByMode"] = {};
-  for (const mode of ["threads", "board"] as const) {
+  for (const mode of WORKSPACE_MODES) {
     const href = candidate.lastLocationByMode?.[mode];
     // Must be an in-app path AND belong to the mode it is filed under. The
     // second check repairs stores poisoned by the pre-guard bugs: a
@@ -174,7 +201,10 @@ export function migratePersistedBoardUiState(persistedState: unknown): BoardUiSt
     }
   }
   return {
-    mode: candidate.mode === "board" ? "board" : "threads",
+    mode:
+      typeof candidate.mode === "string" && WORKSPACE_MODES.includes(candidate.mode)
+        ? candidate.mode
+        : "threads",
     lastLocationByMode,
     collapsedByStage,
     // A blob persisted before T3O-34 has no such field; the menu opens.
@@ -191,6 +221,20 @@ export const useBoardUiStore = create<BoardUiStore>()(
       utilityMenuCollapsed: false,
       sidebarHostsModeTabs: false,
       detailMaximisedCardId: null,
+      queryByBoard: {},
+      paletteActions: [],
+      setPaletteActions: (actions) =>
+        set((state) =>
+          state.paletteActions.length === 0 && actions.length === 0
+            ? state
+            : { paletteActions: actions },
+        ),
+      setBoardQuery: (boardKey, query) =>
+        set((state) =>
+          (state.queryByBoard[boardKey] ?? "") === query
+            ? state
+            : { queryByBoard: { ...state.queryByBoard, [boardKey]: query } },
+        ),
       recordModeLocation: (mode, href) =>
         set((state) => {
           // The mounting surface fixes `mode`, but the router location updates

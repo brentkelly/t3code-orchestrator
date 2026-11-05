@@ -73,7 +73,7 @@ export function BoardPlanGraph({
           ))}
         </svg>
         {layout.nodes.map((node) => (
-          <PlanGraphNode key={node.planId} node={node} onOpenChild={onOpenChild} />
+          <PlanGraphNode key={node.rowId} node={node} onOpenChild={onOpenChild} />
         ))}
       </div>
     </div>

@@ -221,27 +221,26 @@ and run the normal checks for whatever the merge touched. Two things the root sc
 Land the sync with a **merge commit, never a squash**: squashing a 1,500-file upstream merge
 destroys the ancestry the next `git merge main` relies on.
 
-**A sync card lands through the board with a per-card `merge` strategy override (`T3O-80`).** The
-board's default merge is a squash, so set the sync card's override to `merge` before it reaches
-Ready for merge, and keep the card's auto-merge **off** until the override is set. Push the
-fast-forwarded mirror and its tag during the build (`git push origin main vX.Y.Z`); `main` is only
-a copy of upstream, so pushing it before the merge is harmless.
+**Set the sync card's merge strategy to Merge commit** before anything merges it: the card's **⋮**
+menu → **Merge strategy** → **Merge commit**, or `board_update_card` with `mergeStrategy: "merge"`.
+The header then shows a **Merge commit** pill. Keep the card's auto-merge **off** until the override
+is set. Without it the card follows the board default, which is squash, and both the Merge button
+and auto-merge would squash the sync. The repository has to allow merge commits; if it does not,
+the forge refuses and the card says so.
 
-Until `T3O-80` ships, or if the override is unavailable, land it by hand instead (`gh pr merge
---merge`, or):
-
-```bash
-git checkout t3o && git merge --no-ff sync/upstream-vX.Y.Z && git push
-```
-
-Either way, check the ancestry once it has landed:
+After the PR merges, push the mirror and its tag to `origin`, the fork's own mirror (never to
+`upstream`, which is pull-only), and check the ancestry:
 
 ```bash
-git fetch && git merge-base --is-ancestor vX.Y.Z origin/t3o && echo ok  # must print ok
+git push origin main vX.Y.Z                         # the fast-forwarded mirror and its tag
+git fetch origin && git merge-base --is-ancestor vX.Y.Z origin/t3o && echo ok  # must print ok
 ```
 
-The repository's default merge method stays squash on purpose: every other board card relies on
-squash merges being clean, so the protection is the per-card override, not a setting.
+Landing by hand (`gh pr merge --merge`, or `git checkout t3o && git merge --no-ff
+sync/upstream-vX.Y.Z && git push`) still works when the sync has no card or the override is
+unavailable; run the same ancestry check afterwards. The board default stays squash on purpose:
+every other card relies on squash merges being clean, so the protection is the per-card override,
+not a repository setting.
 
 ### If a sync was squashed anyway
 

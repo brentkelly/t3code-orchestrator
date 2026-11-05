@@ -896,6 +896,19 @@ describe("applyServerSettingsPatch board settings (T3o, D4)", () => {
     });
     expect(cleared.board.concurrency.perInstance[instance]).toBe(null);
   });
+
+  it("toggles auto-collapse empty stages without disturbing sibling board fields", () => {
+    expect(DEFAULT_SERVER_SETTINGS.board.display.autoCollapseEmptyStages).toBe(false);
+    const on = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      board: { display: { autoCollapseEmptyStages: true } },
+    });
+    expect(on.board.display.autoCollapseEmptyStages).toBe(true);
+    expect(on.board.lifecycle).toEqual(DEFAULT_SERVER_SETTINGS.board.lifecycle);
+    const off = applyServerSettingsPatch(on, {
+      board: { display: { autoCollapseEmptyStages: false } },
+    });
+    expect(off.board).toEqual(DEFAULT_SERVER_SETTINGS.board);
+  });
 });
 
 describe("worktreesDirectory", () => {

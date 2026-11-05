@@ -103,6 +103,9 @@ export type BoardWorkspaceWorktree = typeof BoardWorkspaceWorktree.Type;
 export const BoardWorkspaceBranchCleanup = Schema.Struct({
   remoteDeleted: Schema.Boolean,
   localDeleted: Schema.Boolean,
+  /** No remote to delete from. A pre-T3O-26 worker omits it; false keeps a
+      group discard retrying rather than settling with a remote copy alive. */
+  remoteAbsent: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   skippedReason: Schema.NullOr(Schema.String),
 });
 export type BoardWorkspaceBranchCleanup = typeof BoardWorkspaceBranchCleanup.Type;
@@ -203,6 +206,7 @@ export const BOARD_WORKER_GIT_WS_METHODS = {
   mergePullRequest: "boardWorker.git.mergePullRequest",
   pullRequestMergeState: "boardWorker.git.pullRequestMergeState",
   markPullRequestReady: "boardWorker.git.markPullRequestReady",
+  closePullRequest: "boardWorker.git.closePullRequest",
   pullRequestRepository: "boardWorker.git.pullRequestRepository",
 } as const;
 
@@ -380,6 +384,11 @@ export const BOARD_WORKER_GIT_RPCS = [
     success: Schema.Literals(["readied", "not-draft"]),
     error: gitError,
   }),
+  Rpc.make(M.closePullRequest, {
+    payload: { ...onProject, number: PositiveInt },
+    success: Schema.Literals(["closed", "not-open"]),
+    error: gitError,
+  }),
   Rpc.make(M.pullRequestRepository, {
     payload: onProject,
     success: BoardWorkspaceRepository,
@@ -427,6 +436,7 @@ export const BOARD_WORKER_GIT_RPC_SCOPES = {
   [M.mergePullRequest]: AuthSourceControlWriteScope,
   [M.pullRequestMergeState]: AuthOrchestrationReadScope,
   [M.markPullRequestReady]: AuthSourceControlWriteScope,
+  [M.closePullRequest]: AuthSourceControlWriteScope,
   [M.pullRequestRepository]: AuthOrchestrationReadScope,
 } as const satisfies Record<BoardWorkerGitMethod, string>;
 

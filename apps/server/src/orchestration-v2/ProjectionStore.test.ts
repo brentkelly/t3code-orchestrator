@@ -28,9 +28,12 @@ import {
   type ThreadPullRequestLink,
   isLiveSubagentShell,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -39,6 +42,7 @@ import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -1488,6 +1492,234 @@ it.effect("SQL list older settled threads below a cursor", () =>
       counts: [{ projectId: ProjectId.make("project:b"), count: 1 }],
     });
   }).pipe(Effect.provide(layerTest)),
+);
+
+// T3o: the Settled shelf's card-thread filter (T3O-78).
+it.effect("leaves board card threads out of older settled pages and counts on request", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const id = (name: string) => ThreadId.make(`thread:card-filter:${name}`);
+    const at = (day: number) => DateTime.makeUnsafe(Date.UTC(2026, 9, day));
+    const createThread = (name: string, settledDay: number, project = "project:a") =>
+      store.apply({
+        id: EventId.make(`event:card-filter:${name}`),
+        type: "thread.created",
+        threadId: id(name),
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: id(name),
+          projectId: ProjectId.make(project),
+          title: name,
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id(name) },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: "settled",
+          settledAt: at(settledDay),
+          snoozedUntil: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+    yield* createThread("one-off-a", 9);
+    yield* createThread("card", 8);
+    yield* createThread("tombstoned", 7);
+    yield* createThread("one-off-b", 6);
+    yield* createThread("relayed", 5);
+    yield* createThread("one-off-c", 4);
+    yield* createThread("card-b", 3, "project:b");
+    // Above the cut: the shell carries these, so the client filters them itself.
+    yield* createThread("archived-card-recent", 11);
+    yield* createThread("one-off-recent", 12);
+    const linkedAt = DateTime.formatIso(now);
+    yield* sql`
+      INSERT INTO boards.board_card_thread_links (thread_id, card_id, role, linked_at, tombstoned_at)
+      VALUES (${id("card")}, 'card:1', 'building', ${linkedAt}, NULL),
+        (${id("tombstoned")}, 'card:archived', 'planning', ${linkedAt}, ${linkedAt}),
+        (${id("card-b")}, 'card:2', 'manual', ${linkedAt}, NULL),
+        (${id("archived-card-recent")}, 'card:archived', 'review@1', ${linkedAt}, ${linkedAt})
+    `;
+    yield* sql`
+      INSERT INTO boards.board_relayed_threads (thread_id, central_environment_id, created_at)
+      VALUES (${id("relayed")}, 'environment:central', ${linkedAt})
+    `;
+
+    const before = { settledAt: DateTime.formatIso(at(10)) };
+    const list = (
+      input: Omit<ProjectionStore.OlderSettledThreadsQuery, "before"> & {
+        readonly before?: ProjectionStore.OlderSettledThreadsQuery["before"];
+      },
+    ) => store.listOlderSettledThreads({ before, ...input });
+
+    // Without the flag nothing changes: every thread lists, and counts carry no card count.
+    assert.deepEqual(
+      (yield* list({ limit: 25 })).threadIds,
+      ["one-off-a", "card", "tombstoned", "one-off-b", "relayed", "one-off-c", "card-b"].map(id),
+    );
+    assert.sameDeepMembers(
+      [...(yield* list({ limit: 0 })).counts],
+      [
+        { projectId: ProjectId.make("project:a"), count: 6 },
+        { projectId: ProjectId.make("project:b"), count: 1 },
+      ],
+    );
+
+    // Pages skip card threads, and a cursor from the last row walks on correctly.
+    const first = yield* list({ limit: 2, excludeBoardCardThreads: true });
+    assert.deepEqual(first.threadIds, [id("one-off-a"), id("one-off-b")]);
+    const next = yield* list({
+      before: { settledAt: DateTime.formatIso(at(6)), threadId: id("one-off-b") },
+      limit: 2,
+      excludeBoardCardThreads: true,
+    });
+    assert.deepEqual(next.threadIds, [id("one-off-c")]);
+
+    // Counts leave card threads out and report them apart, including a project of only card threads.
+    assert.sameDeepMembers(
+      [...(yield* list({ limit: 0, excludeBoardCardThreads: true })).counts],
+      [
+        { projectId: ProjectId.make("project:a"), count: 3, boardCardThreadCount: 3 },
+        { projectId: ProjectId.make("project:b"), count: 0, boardCardThreadCount: 1 },
+      ],
+    );
+    assert.deepEqual(
+      (yield* list({
+        before: { settledAt: DateTime.formatIso(at(6)) },
+        projectIds: [ProjectId.make("project:a")],
+        limit: 0,
+        excludeBoardCardThreads: true,
+      })).counts,
+      [{ projectId: ProjectId.make("project:a"), count: 1, boardCardThreadCount: 1 }],
+    );
+
+    // A filtered count read names the card threads the shell carries: above the cut, whatever the
+    // link's state, plus older ones the shell keeps because they are pinned. Others are left out.
+    assert.isUndefined((yield* list({ limit: 0 })).boardCardThreadIds);
+    assert.isUndefined(
+      (yield* list({ limit: 2, excludeBoardCardThreads: true })).boardCardThreadIds,
+    );
+    assert.deepEqual(
+      (yield* list({ limit: 0, excludeBoardCardThreads: true })).boardCardThreadIds,
+      [id("archived-card-recent")],
+    );
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.pinnedAt', ${linkedAt})
+      WHERE thread_id = ${id("card-b")}
+    `;
+    assert.sameMembers(
+      [...((yield* list({ limit: 0, excludeBoardCardThreads: true })).boardCardThreadIds ?? [])],
+      [id("archived-card-recent"), id("card-b")],
+    );
+
+    // Older card threads above a subagent stay in the shell as its parent or root, so they are named.
+    yield* createThread("subagent", 1);
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(
+        payload_json,
+        '$.lineage.relationshipToParent', 'subagent',
+        '$.lineage.parentThreadId', ${id("tombstoned")},
+        '$.lineage.rootThreadId', ${id("relayed")}
+      )
+      WHERE thread_id = ${id("subagent")}
+    `;
+    assert.sameMembers(
+      [...((yield* list({ limit: 0, excludeBoardCardThreads: true })).boardCardThreadIds ?? [])],
+      [id("archived-card-recent"), id("card-b"), id("tombstoned"), id("relayed")],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+// T3o: the reader worker opens state.sqlite alone, without boards.sqlite attached (T3O-78).
+it.effect("reads the card-thread filter on a file database", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3o-card-filter-" });
+    const layerFile = ProjectionStore.layer.pipe(
+      Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"))),
+      Layer.provide(NodeServices.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = DateTime.makeUnsafe(Date.UTC(2026, 9, 1));
+      const threadId = ThreadId.make("thread:card-filter-file");
+      yield* store.apply({
+        id: EventId.make("event:card-filter-file"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:a"),
+          title: "card",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: "settled",
+          settledAt: now,
+          snoozedUntil: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* sql`
+        INSERT INTO boards.board_card_thread_links (thread_id, card_id, role, linked_at, tombstoned_at)
+        VALUES (${threadId}, 'card:1', 'building', ${DateTime.formatIso(now)}, NULL)
+      `;
+
+      const counts = yield* store.listOlderSettledThreads({
+        before: { settledAt: "2026-01-01T00:00:00.000Z" },
+        limit: 0,
+        excludeBoardCardThreads: true,
+      });
+      assert.deepEqual(counts.boardCardThreadIds, [threadId]);
+      const page = yield* store.listOlderSettledThreads({
+        before: { settledAt: "2027-01-01T00:00:00.000Z" },
+        limit: 25,
+        excludeBoardCardThreads: true,
+      });
+      assert.deepEqual(page.threadIds, []);
+      // The getOlderSettledThreads handler wraps the whole read in readOnly (T3O-41).
+      const handled = yield* loadOlderSettledThreadsPage({
+        sql,
+        listThreads: store.listOlderSettledThreads({
+          before: { settledAt: "2026-01-01T00:00:00.000Z" },
+          limit: 0,
+          excludeBoardCardThreads: true,
+        }),
+        readThreads: (threadIds) => store.readShellSnapshot({ location: "active", threadIds }),
+        latestSequence: Effect.succeed(0),
+      });
+      assert.deepEqual(handled.boardCardThreadIds, [threadId]);
+    }).pipe(Effect.provide(layerFile));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("lists only active subagent IDs without loading shell data", () =>

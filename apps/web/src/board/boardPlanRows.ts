@@ -1,24 +1,19 @@
 /**
- * T3o plan rows and the dependency chart's layout (t3o-29). Pure functions,
- * no React — the Plans panel and the sub-board both render from these, and
- * they are unit-tested without a DOM.
+ * T3o group rows and the dependency chart's layout (t3o-29, T3O-34). Pure
+ * functions, no React — the Cards pane and the sub-board both render from
+ * these, and they are unit-tested without a DOM.
  *
- * Everything here is DERIVED from state the client already holds (D1). The
- * plans and the plan↔child pairing come from the parent's card detail; every
- * live per-child fact — stage, `blocked`, PR number, whether an agent is
- * working, whether a human is being asked something — comes from the child's
- * `BoardCardShell`, which rides the same unscoped shell snapshot the root
- * board already reads to compute a parent's plan pips. Nothing on the wire
- * changed for this to work, and nothing should: `BoardCardShell` is the D7
- * byte budget, and a second copy of these fields on `BoardCardChildRef` would
- * be a second thing to keep true.
+ * Rows are CARDS first: every child of the group gets one, whether it was cut
+ * from a plan or made by hand and grouped, and the plans no child claims are
+ * listed after them as "No card". Every live per-child fact — stage,
+ * `blocked`, PR number, whether an agent is working, whether a human is being
+ * asked something — comes from the child's `BoardCardShell`, which rides the
+ * unscoped shell snapshot the root board already reads.
  *
- * The one fact the shells cannot supply is the dependency EDGES: the shell
- * carries `dependencyCount`, a number, because D7 is explicit that "the ids
- * themselves never ride the shell". So edges come from `plans[].dependsOn`,
- * mapped through `sourcePlanId` (D3). A dependency added to a child by hand
- * after materialisation therefore shows in the row's blocked state — that is
- * a shell field — but draws no edge in the chart.
+ * The edges between card rows come from each child's own `dependsOn`, carried
+ * on the detail-only `BoardCardChildRef` (the shell's D7 budget only has room
+ * for `dependencyCount`). A card-less plan's edges come from `plan.dependsOn`,
+ * resolved to the card cut from each plan where there is one.
  */
 import {
   effectiveBoardStageRole,
@@ -78,8 +73,12 @@ export interface BoardPlanRowBlocker {
 }
 
 export interface BoardPlanRow {
-  readonly planId: BoardPlanId;
-  /** 1-based position in the plan set — the `#N` the whole panel counts in. */
+  /** `card:<cardId>` or `plan:<planId>` — stable across renders, and the id
+      edges and React keys use. */
+  readonly rowId: string;
+  /** The plan behind the row, null for a child made by hand. */
+  readonly planId: BoardPlanId | null;
+  /** 1-based position in dependency order — the `#N` the whole pane counts in. */
   readonly n: number;
   readonly title: string;
   readonly state: BoardPlanRowState;
@@ -91,9 +90,9 @@ export interface BoardPlanRow {
   readonly done: boolean;
   readonly tone: BoardPlanRowTone;
   readonly live: BoardPlanRowLive | null;
-  /** Plan ids, for the chart's edges. */
-  readonly dependsOn: ReadonlyArray<BoardPlanId>;
-  /** `#N`s of everything this plan comes after, whatever their state — the
+  /** Row ids of the siblings this row comes after, for the chart's edges. */
+  readonly dependsOn: ReadonlyArray<string>;
+  /** `#N`s of everything this row comes after, whatever their state — the
       row's "after #1, #2" line. */
   readonly dependsOnNumbers: ReadonlyArray<number>;
   /** The subset still unfinished, which is what actually holds this one up. */
@@ -116,12 +115,11 @@ const EMPTY_ROWS: BoardPlanRows = { rows: [], liveTotal: 0, liveDone: 0 };
 type DraftPlanRow = BoardPlanRow & { readonly started: boolean };
 
 /**
- * The rows a parent's plan set makes, in ordinal order.
- *
- * Ordinal order IS dependency order: `board_propose_plans` validates the plan
- * graph acyclic on ingest and materialisation walks the same order, so the
- * panel does not re-topologise what the planner already sorted. The chart is
- * where the shape gets drawn.
+ * The rows a group's children and its unclaimed plans make, in dependency
+ * order: a topological sort over the row edges, ties broken by input order
+ * (children in `card_number` order, then plans in `ordinal` order). Hand-made
+ * children have no ordinal to sort by, so the order has to be derived here.
+ * Cycle-safe: whatever a cycle leaves unplaced follows in input order.
  */
 export function deriveBoardPlanRows(input: {
   readonly plans: ReadonlyArray<BoardPlanRowPlan>;
@@ -132,7 +130,7 @@ export function deriveBoardPlanRows(input: {
   readonly cards: ReadonlyArray<BoardCardShell>;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
 }): BoardPlanRows {
-  if (input.plans.length === 0) return EMPTY_ROWS;
+  if (input.plans.length === 0 && input.children.length === 0) return EMPTY_ROWS;
 
   const doneStageId =
     input.stages.find((stage) => effectiveBoardStageRole(stage) === "done")?.stageId ?? null;
@@ -144,19 +142,76 @@ export function deriveBoardPlanRows(input: {
     input.stages.find((stage) => stage.stageId === stageId)?.label ?? stageId;
 
   const plans = [...input.plans].sort((left, right) => left.ordinal - right.ordinal);
-  const numberByPlan = new Map(plans.map((plan, index) => [plan.planId, index + 1]));
-  const childByPlan = new Map(
-    input.children
-      .filter((child) => child.sourcePlanId !== null)
-      .map((child) => [child.sourcePlanId as BoardPlanId, child]),
+  const planById = new Map(plans.map((plan) => [plan.planId, plan]));
+  const cardRowId = (cardId: string) => `card:${cardId}`;
+  const planRowId = (planId: BoardPlanId) => `plan:${planId}`;
+  const siblingIds = new Set(input.children.map((child) => child.cardId as string));
+  // The row a plan resolves to: the card cut from it where one exists, else
+  // the plan's own "No card" row.
+  const rowIdByPlan = new Map<BoardPlanId, string>(
+    plans.map((plan) => [plan.planId, planRowId(plan.planId)]),
+  );
+  for (const child of input.children) {
+    if (child.sourcePlanId !== null && planById.has(child.sourcePlanId)) {
+      rowIdByPlan.set(child.sourcePlanId, cardRowId(child.cardId));
+    }
+  }
+  const claimed = new Set(
+    input.children.flatMap((child) => (child.sourcePlanId === null ? [] : [child.sourcePlanId])),
   );
   const shellByCard = new Map(input.cards.map((card) => [card.cardId as string, card]));
 
-  const rows = plans.map((plan, index): DraftPlanRow => {
-    const child = childByPlan.get(plan.planId);
-    const shell = child === undefined ? undefined : shellByCard.get(child.cardId as string);
+  interface Seed {
+    readonly rowId: string;
+    readonly planId: BoardPlanId | null;
+    readonly title: string;
+    readonly child: BoardCardChildRef | null;
+    readonly dependsOn: ReadonlyArray<string>;
+  }
+  const unique = (ids: ReadonlyArray<string>, self: string) =>
+    [...new Set(ids)].filter((id) => id !== self);
+  const seeds: ReadonlyArray<Seed> = [
+    ...input.children.map((child): Seed => {
+      const rowId = cardRowId(child.cardId);
+      return {
+        rowId,
+        planId: child.sourcePlanId,
+        title: child.title,
+        child,
+        dependsOn: unique(
+          child.dependsOn.filter((id) => siblingIds.has(id)).map((id) => cardRowId(id)),
+          rowId,
+        ),
+      };
+    }),
+    ...plans
+      .filter((plan) => !claimed.has(plan.planId))
+      .map((plan): Seed => {
+        const rowId = planRowId(plan.planId);
+        return {
+          rowId,
+          planId: plan.planId,
+          title: plan.title,
+          child: null,
+          dependsOn: unique(
+            plan.dependsOn.flatMap((dependency) => {
+              const target = rowIdByPlan.get(dependency);
+              return target === undefined ? [] : [target];
+            }),
+            rowId,
+          ),
+        };
+      }),
+  ];
+
+  const ordered = topologicalOrder(seeds);
+  const numberByRow = new Map(ordered.map((seed, index) => [seed.rowId, index + 1]));
+
+  const rows = ordered.map((seed, index): DraftPlanRow => {
+    const child = seed.child;
+    const shell = child === null ? undefined : shellByCard.get(child.cardId as string);
     const state: BoardPlanRowState =
-      child === undefined ? "missing" : child.archivedAt !== null ? "archived" : "live";
+      child === null ? "missing" : child.archivedAt !== null ? "archived" : "live";
     // The child ref's stage is the last one the projection saw, which for an
     // archived card is the last one it will ever have; a live child's shell is
     // fresher, so it wins where both exist.
@@ -165,15 +220,16 @@ export function deriveBoardPlanRows(input: {
     const started =
       buildIndex !== null && stage !== null && (stageIndex.get(stage) ?? -1) >= buildIndex;
 
-    const dependsOnNumbers = plan.dependsOn
-      .map((dependency) => numberByPlan.get(dependency))
+    const dependsOnNumbers = seed.dependsOn
+      .map((dependency) => numberByRow.get(dependency))
       .filter((n): n is number => n !== undefined)
       .toSorted((left, right) => left - right);
 
     return {
-      planId: plan.planId,
+      rowId: seed.rowId,
+      planId: seed.planId,
       n: index + 1,
-      title: plan.title,
+      title: seed.title,
       state,
       started,
       key: child?.key ?? null,
@@ -196,12 +252,12 @@ export function deriveBoardPlanRows(input: {
               queued: shell.queued,
               stalled: shell.stalled,
             },
-      dependsOn: plan.dependsOn,
+      dependsOn: seed.dependsOn,
       dependsOnNumbers,
     };
   });
 
-  const rowByPlan = new Map(rows.map((row) => [row.planId, row]));
+  const rowById = new Map(rows.map((row) => [row.rowId, row]));
   const settled = rows.map((row): BoardPlanRow => {
     // Only a LIVE, unfinished sibling holds a row up. An archived dependency
     // no longer gates (t3o-13, D1) and a deleted one has nothing left to
@@ -209,7 +265,7 @@ export function deriveBoardPlanRows(input: {
     // the panel never shows a card as waiting on something the board would
     // happily let it past.
     const blockers = row.dependsOn
-      .map((dependency) => rowByPlan.get(dependency))
+      .map((dependency) => rowById.get(dependency))
       .filter(
         (dependency): dependency is DraftPlanRow =>
           dependency !== undefined && dependency.state === "live" && !dependency.done,
@@ -231,6 +287,27 @@ export function deriveBoardPlanRows(input: {
     liveTotal: live.length,
     liveDone: live.filter((row) => row.done).length,
   };
+}
+
+/** Each pass places the earliest-input row whose dependencies are all placed;
+    when a cycle leaves none placeable, the earliest remaining row goes next. */
+function topologicalOrder<
+  T extends { readonly rowId: string; readonly dependsOn: ReadonlyArray<string> },
+>(seeds: ReadonlyArray<T>): ReadonlyArray<T> {
+  const known = new Set(seeds.map((seed) => seed.rowId));
+  const placed = new Set<string>();
+  const remaining = [...seeds];
+  const ordered: Array<T> = [];
+  while (remaining.length > 0) {
+    const ready = remaining.findIndex((seed) =>
+      seed.dependsOn.every((dependency) => !known.has(dependency) || placed.has(dependency)),
+    );
+    const [next] = remaining.splice(ready === -1 ? 0 : ready, 1);
+    if (next === undefined) break;
+    placed.add(next.rowId);
+    ordered.push(next);
+  }
+  return ordered;
 }
 
 /** A row's dot, in precedence order. `blocked` outranks `active` on purpose:
@@ -259,12 +336,13 @@ const GAP_X = 62;
 const GAP_Y = 14;
 
 export interface BoardPlanGraphNode {
-  readonly planId: BoardPlanId;
+  readonly rowId: string;
   readonly n: number;
   readonly title: string;
   readonly stageLabel: string | null;
   readonly tone: BoardPlanRowTone;
-  /** Null when the plan has no card to open — deleted, or never materialised. */
+  /** Null when the row has no live card to open — a plan never materialised,
+      or a child deleted or archived. */
   readonly cardId: string | null;
   /** A thread on the child asked a question or wants permission — the same
       violet the row list gives either. */
@@ -305,43 +383,43 @@ export function boardPlanGraphLayout(
   rows: ReadonlyArray<BoardPlanRow>,
 ): BoardPlanGraphLayout | null {
   if (rows.length === 0) return null;
-  const rowByPlan = new Map(rows.map((row) => [row.planId, row]));
+  const rowById = new Map(rows.map((row) => [row.rowId, row]));
 
-  const depth = new Map<BoardPlanId, number>();
-  const visiting = new Set<BoardPlanId>();
-  const depthOf = (planId: BoardPlanId): number => {
-    const memo = depth.get(planId);
+  const depth = new Map<string, number>();
+  const visiting = new Set<string>();
+  const depthOf = (rowId: string): number => {
+    const memo = depth.get(rowId);
     if (memo !== undefined) return memo;
     // A back edge: stop rather than recur. The node keeps whatever depth its
     // other edges give it, so a cycle degrades to a flat layout instead of a
     // stack overflow.
-    if (visiting.has(planId)) return 0;
-    const row = rowByPlan.get(planId);
+    if (visiting.has(rowId)) return 0;
+    const row = rowById.get(rowId);
     if (row === undefined) return 0;
-    visiting.add(planId);
+    visiting.add(rowId);
     let result = 0;
     for (const dependency of row.dependsOn) {
-      if (!rowByPlan.has(dependency)) continue;
+      if (!rowById.has(dependency)) continue;
       result = Math.max(result, depthOf(dependency) + 1);
     }
-    visiting.delete(planId);
-    depth.set(planId, result);
+    visiting.delete(rowId);
+    depth.set(rowId, result);
     return result;
   };
 
   const waves: Array<Array<BoardPlanRow>> = [];
   for (const row of rows) {
-    const column = depthOf(row.planId);
+    const column = depthOf(row.rowId);
     (waves[column] ??= []).push(row);
   }
   // `Array.from`, not `.map`: a cycle-guarded depth walk can skip a column,
   // and `.map` preserves holes rather than filling them.
   const filled = Array.from(waves, (wave) => wave ?? []);
 
-  const position = new Map<BoardPlanId, { readonly x: number; readonly y: number }>();
+  const position = new Map<string, { readonly x: number; readonly y: number }>();
   filled.forEach((wave, column) => {
     wave.forEach((row, index) => {
-      position.set(row.planId, {
+      position.set(row.rowId, {
         x: column * (NODE_WIDTH + GAP_X),
         y: index * (NODE_HEIGHT + GAP_Y),
       });
@@ -355,18 +433,18 @@ export function boardPlanGraphLayout(
 
   const edges: Array<BoardPlanGraphEdge> = [];
   for (const row of rows) {
-    const to = position.get(row.planId);
+    const to = position.get(row.rowId);
     if (to === undefined) continue;
     for (const dependency of row.dependsOn) {
       const from = position.get(dependency);
-      const source = rowByPlan.get(dependency);
+      const source = rowById.get(dependency);
       if (from === undefined || source === undefined) continue;
       const x1 = from.x + NODE_WIDTH;
       const y1 = from.y + NODE_HEIGHT / 2;
       const x2 = to.x;
       const y2 = to.y + NODE_HEIGHT / 2;
       edges.push({
-        id: `${dependency}->${row.planId}`,
+        id: `${dependency}->${row.rowId}`,
         d: `M${x1} ${y1}C${x1 + GAP_X * 0.65} ${y1},${x2 - GAP_X * 0.65} ${y2},${x2} ${y2}`,
         done: source.done,
       });
@@ -374,11 +452,11 @@ export function boardPlanGraphLayout(
   }
 
   const nodes = rows.flatMap((row): ReadonlyArray<BoardPlanGraphNode> => {
-    const at = position.get(row.planId);
+    const at = position.get(row.rowId);
     if (at === undefined) return [];
     return [
       {
-        planId: row.planId,
+        rowId: row.rowId,
         n: row.n,
         title: row.title,
         stageLabel: row.stageLabel,
@@ -421,10 +499,10 @@ export function boardPlanFinalReview(input: {
   readonly liveDone: number;
 }): BoardPlanFinalReview {
   const { liveTotal, liveDone } = input;
-  const plural = liveTotal === 1 ? "plan" : "plans";
+  const plural = liveTotal === 1 ? "card" : "cards";
   const note =
     liveTotal === 0
-      ? "No plan cards are left on this split."
+      ? "No cards are left in this group."
       : liveDone === liveTotal
         ? `All ${liveTotal} ${plural} done. The final review runs on the integration branch.`
         : `${liveDone} of ${liveTotal} ${plural} done. The final review starts on its own when the last one lands.`;

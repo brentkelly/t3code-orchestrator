@@ -217,7 +217,8 @@ export interface BoardTodoItem {
  * - `interrupt-requested` — someone pressed Stop.
  * - `approval-responded` — a human answered a permission prompt.
  * - `input-requested` / `input-resolved` — a structured question raised, and
- *   closed; `answered` separates an answer from a cancellation.
+ *   closed; `answered` separates an answer from a cancellation, and `byBoard`
+ *   marks the board's own answer (`answerPendingInput`).
  * - `session-started` — a provider session came up.
  * - `todos-changed` — the agent's todo list was replaced.
  * - `thread-deleted` — the thread is gone for good.
@@ -239,7 +240,12 @@ export type ThreadSignal =
   | { readonly type: "interrupt-requested"; readonly threadId: ThreadId }
   | { readonly type: "approval-responded"; readonly threadId: ThreadId }
   | { readonly type: "input-requested"; readonly threadId: ThreadId }
-  | { readonly type: "input-resolved"; readonly threadId: ThreadId; readonly answered: boolean }
+  | {
+      readonly type: "input-resolved";
+      readonly threadId: ThreadId;
+      readonly answered: boolean;
+      readonly byBoard?: boolean;
+    }
   | { readonly type: "session-started"; readonly threadId: ThreadId }
   | {
       readonly type: "todos-changed";
@@ -304,6 +310,10 @@ export interface ThreadTargetInput {
   readonly threadId: ThreadId;
 }
 
+export interface ThreadAnswerInput extends ThreadTargetInput {
+  readonly text: string;
+}
+
 export interface ThreadSettleInput extends ThreadTargetInput {
   /** The automatic settle: re-checks `autoSettleCandidate` itself and refuses
       a thread that is not one, or that changed between that check and the
@@ -329,6 +339,12 @@ export interface ThreadGatewayShape {
       thread is not limited, or the provider named no reset time to wait for. */
   readonly armLimitRecovery: (
     input: ThreadTargetInput,
+  ) => Effect.Effect<boolean, ThreadCommandError>;
+  /** Answer every question of the thread's pending structured user-input
+      request with `text` (T3O-38). False when nothing is pending, or the
+      provider cannot take the answer — the caller then sends a turn instead. */
+  readonly answerPendingInput: (
+    input: ThreadAnswerInput,
   ) => Effect.Effect<boolean, ThreadCommandError>;
 
   /** One thread, deleted ones included, or null when it never existed —

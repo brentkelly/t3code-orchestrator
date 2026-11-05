@@ -12,6 +12,10 @@ import * as NodeZlib from "node:zlib";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  BOARD_AUTO_PLAN_INSTRUCTION,
+  boardAutoPlanInstruction,
+  BOARD_ENVELOPE_PLAN_DELIVERABLE,
+  BOARD_ENVELOPE_REGROUP_GUARD,
   ComposerContextRecord,
   DeviceOperationError,
   DeviceSummary,
@@ -42,6 +46,7 @@ import { buildCodexAdditionalContext } from "../../apps/server/src/provider/Code
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
+import { BoardToolkit } from "../../apps/server/src/mcp/toolkits/board/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
@@ -266,6 +271,37 @@ export const McpToolUseCase = Schema.Struct({
   notes: Schema.optional(Schema.String),
 });
 export type McpToolUseCase = typeof McpToolUseCase.Type;
+/**
+ * Model-facing text a case quotes by name instead of copying, so it always
+ * tests the current wording: `{{NAME}}` in a case's prompt or context.
+ */
+const CASE_TEXT: Record<string, string> = {
+  BOARD_AUTO_PLAN_INSTRUCTION,
+  BOARD_AUTO_PLAN_GATED_INSTRUCTION: boardAutoPlanInstruction(false),
+  BOARD_AUTO_PLAN_APPROVED_INSTRUCTION: boardAutoPlanInstruction(true),
+  BOARD_ENVELOPE_PLAN_DELIVERABLE,
+  BOARD_ENVELOPE_REGROUP_GUARD,
+};
+
+const expandText = (text: string): string =>
+  text.replace(/\{\{([A-Z_]+)\}\}/g, (_, name: string) => {
+    const value = CASE_TEXT[name];
+    if (value === undefined) throw new Error(`Unknown case text '{{${name}}}'.`);
+    return value;
+  });
+
+/** A case with its `{{NAME}}` references to T3 text filled in. */
+export const expandCaseText = (testCase: McpToolUseCase): McpToolUseCase => ({
+  ...testCase,
+  prompt: expandText(testCase.prompt),
+  setup: {
+    ...testCase.setup,
+    ...(testCase.setup.context === undefined
+      ? {}
+      : { context: expandText(testCase.setup.context) }),
+  },
+});
+
 const AnyBlock = Schema.StructWithRest(
   Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) }),
   Rest,
@@ -370,6 +406,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewToolkit,
   DeviceToolkit,
   HtmlToolkit,
+  BoardToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({
   name: `${T3_PREFIX}${tool.name}`,
@@ -1938,7 +1975,9 @@ const main = Effect.gen(function* () {
       .filter((name) => name.endsWith(".ndjson"))
       .toSorted()
       .map((name) => path.join(casesDir, name));
-  const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase))).flat();
+  const cases = (yield* Effect.forEach(caseFiles, (file) => readNdjson(file, decodeCase)))
+    .flat()
+    .map(expandCaseText);
   const wanted = flags.case?.flatMap((ids) => ids.split(","));
   const codex = isCodex(flags.model);
   const harness = codex ? "codex" : "claude";

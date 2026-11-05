@@ -19,15 +19,21 @@
 import {
   BoardCard,
   BoardCardActivityEntry,
+  BoardCardDecision,
+  BoardCardDecisionInput,
+  BOARD_DECISIONS_PER_CALL_MAX,
   BoardCardThreadShell,
   BoardCardExternalRef,
+  BoardCardPlanReview,
   BoardCardAttachmentId,
   BoardCardId,
+  BoardCardGroupTarget,
   BoardCardPullRequestState,
   BoardCardPullRequestTarget,
   BoardBriefSectionEdit,
   BoardLabelColour,
   BoardLabelName,
+  BoardMergeStrategy,
   BoardPlan,
   BoardPlanWithBody,
   BoardProposedPlanInput,
@@ -40,6 +46,7 @@ import {
   ProjectId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Crypto from "effect/Crypto";
 import * as Path from "effect/Path";
@@ -133,6 +140,29 @@ const BoardCardContextAttachment = Schema.Struct({
   path: TrimmedNonEmptyString,
 });
 
+/** One ancestor of the card (T3O-32, decision 9): the group it sits in, then
+    that group's group, nearest first. Plans are metadata only — read a body
+    with board_get_plan, which accepts an ancestor's plan ids. The brief is cut
+    at a few thousand characters (read the whole card with board_get_card). */
+const BoardCardContextAncestor = Schema.Struct({
+  cardId: BoardCardId,
+  key: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  brief: Schema.NullOr(Schema.String),
+  briefTruncated: Schema.Boolean,
+  plans: Schema.Array(BoardPlan),
+  /** The decisions its planning recorded, unclear and important first,
+      capped at 40 entries. */
+  decisions: Schema.Array(BoardCardDecision),
+});
+
+/** A plan review's instructions, as the planning agent receives them (plan
+    review, T3O-39). */
+const BoardPlanReviewToolResult = Schema.Struct({
+  rounds: PositiveInt,
+  instructions: Schema.String,
+});
+
 const BoardCardContext = Schema.Struct({
   card: BoardCard,
   brief: Schema.NullOr(Schema.String),
@@ -179,6 +209,25 @@ const BoardCardContext = Schema.Struct({
       were doing", but "what is each thread on this card working through right
       now". */
   threads: Schema.Array(BoardCardThreadShell),
+  /** The groups this card sits in, nearest first (T3O-32). Read their
+      decisions before planning, so a child does not re-decide what its parent
+      settled. Empty for a top-level card. */
+  // Defaults decode the answer of a central built before T3O-32 (relay).
+  ancestors: Schema.Array(BoardCardContextAncestor).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** The plan this card was cut from, with its full body; null for a card
+      that was not cut from a plan. `body` is null when it is the brief word for
+      word, which it is unless the brief was edited since. */
+  sourcePlan: Schema.NullOr(
+    Schema.Struct({ plan: BoardPlan, body: Schema.NullOr(Schema.String) }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** This card's own decision log so far (T3O-32), unclear and important
+      first, capped at 40 entries like each ancestor's. */
+  decisions: Schema.Array(BoardCardDecision).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** The plan review running on this card's planning step (plan review,
+      T3O-39), with its instructions; absent when none is running. */
+  planReview: Schema.optionalKey(BoardPlanReviewToolResult),
 });
 
 /** A card's pull request as an agent checks it (T3O-18). `linked` is true
@@ -217,6 +266,10 @@ const BoardCardReadResult = Schema.Struct({
   ),
   /** The pinned base branch, or null to follow the project default. */
   baseBranch: Schema.NullOr(TrimmedNonEmptyString),
+  /** The card's own merge strategy, or null to follow the board default. */
+  mergeStrategy: Schema.NullOr(BoardMergeStrategy),
+  /** What the pull request merges with now: the card's own, its parent's, or the board default. */
+  effectiveMergeStrategy: BoardMergeStrategy,
   brief: Schema.NullOr(Schema.String),
   /** Pass back as board_update_card's expectedBriefVersion to guard an edit. */
   briefVersion: TrimmedNonEmptyString,
@@ -286,7 +339,7 @@ export const BoardGetCardContextTool = Tool.make("board_get_card_context", {
 
 export const BoardCompleteStepTool = Tool.make("board_complete_step", {
   description:
-    "Report that your work on this stage is finished. THIS IS THE COMPLETION CONTRACT: the board considers the work done ONLY when you call this. If you finish your work but never call it, the board cannot tell you apart from an agent that crashed, and your work will be treated as failed and retried. Call it exactly once, at the very end, with outcome 'succeeded' when the work is done, 'blocked' when you need something you cannot get yourself, or 'failed' when you could not complete it; include a summary (max 2 KiB) and optional structured payload (max 16 KiB serialised). OMIT stepId: the board resolves the work you were assigned from your own thread. Pass one only if your prompt explicitly gave you a stepId — stages that run several steps, such as the code review loop, always do — and then pass exactly that string; any other value is rejected. A review-loop step (review@N, triage@N, adjudicate@N, sync@N) or the Build stage's step may only succeed with the exact payload its prompt asked for: a succeeded call with a missing or malformed one is REFUSED rather than recorded, so complete with outcome 'failed' instead when you cannot produce it. Never put the payload inside the summary — it is a separate argument, and a summary carrying serialised call markup is rejected. Retry-safe: a repeat call with the same stepId re-returns a recorded 'succeeded' outcome unchanged, UNLESS that record's payload is unreadable, in which case your call repairs it; after a 'failed' or 'blocked' report, a later call on the live step records your new outcome (that is how a recovered retry reports success). Your card is resolved from your thread.",
+    "Report that your work on this stage is finished. Planning with plan review on: the first succeeded call after your plan is posted is not recorded; it replies completed: false with the review's instructions instead, so run the review and call again. THIS IS THE COMPLETION CONTRACT: the board considers the work done ONLY when you call this. If you finish your work but never call it, the board cannot tell you apart from an agent that crashed, and your work will be treated as failed and retried. Call it exactly once, at the very end, with outcome 'succeeded' when the work is done, 'blocked' when you need something you cannot get yourself, or 'failed' when you could not complete it; include a summary (max 2 KiB) and optional structured payload (max 16 KiB serialised). OMIT stepId: the board resolves the work you were assigned from your own thread. Pass one only if your prompt explicitly gave you a stepId — stages that run several steps, such as the code review loop, always do — and then pass exactly that string; any other value is rejected. A review-loop step (review@N, triage@N, adjudicate@N, sync@N) or the Build stage's step may only succeed with the exact payload its prompt asked for: a succeeded call with a missing or malformed one is REFUSED rather than recorded, so complete with outcome 'failed' instead when you cannot produce it. Never put the payload inside the summary — it is a separate argument, and a summary carrying serialised call markup is rejected. Retry-safe: a repeat call with the same stepId re-returns a recorded 'succeeded' outcome unchanged, UNLESS that record's payload is unreadable, in which case your call repairs it; after a 'failed' or 'blocked' report, a later call on the live step records your new outcome (that is how a recovered retry reports success). Your card is resolved from your thread.",
   parameters: Schema.Struct({
     /** Omitted means "the live step of my thread" (t3o-19, D3). Only a stage
         that runs several steps states one, and only then is it passed back. */
@@ -302,6 +355,11 @@ export const BoardCompleteStepTool = Tool.make("board_complete_step", {
     /** True when this stepId was already completed and the first outcome was
         returned unchanged (an idempotent retry). */
     alreadyCompleted: Schema.Boolean,
+    /** False when plan review held the completion back (plan review, T3O-39):
+        nothing was recorded, run the review in `planReview` and call again. */
+    completed: Schema.optionalKey(Schema.Boolean),
+    planReview: Schema.optionalKey(BoardPlanReviewToolResult),
+    message: Schema.optionalKey(Schema.String),
   }),
   failure: BoardToolFailure,
   dependencies,
@@ -371,7 +429,7 @@ export const BoardListProjectsTool = Tool.make("board_list_projects", {
 
 export const BoardCreateCardTool = Tool.make("board_create_card", {
   description:
-    "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. Omit projectId to create the card in this thread's own project (the common case); pass one only to target a different project. A projectId is matched first as a project id, then leniently against a project's title or workspace-root folder name, so a name from the app usually resolves — but the id from board_list_projects is unambiguous. An unresolvable projectId is rejected with the live project list. A card may be created into ANY existing stage (omit stage for Backlog). CAUTION: creating into an auto-executing stage (e.g. Building) starts an unattended agent run immediately, with a worktree and a concurrency slot — default to the early stages unless a human asked for mid-pipeline work; the build-onward dependency gate still applies. When you make a card for an existing pull request, pass pullRequest so the card tracks it (status, merge, settling) from the start — a url, or repository and number; it must be on the card's project repository, and a pull request the forge cannot find rejects the call before any card is made. NOT idempotent: a retried call creates a second card, so on a timeout list cards before retrying. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created, so create a new label with board_manage_labels first. dependsOn lists card ids this card waits on. A dependency must sit at the card's own level: a top-level card depends on top-level cards, and a sub-board child only on its siblings. To wait on another card's child, depend on that child's parent instead, because the child merges into its parent's branch, not the base.",
+    "Create a new board card and return its allocated key. Use it to populate a board conversationally — e.g. one card per feature. Omit projectId to create the card in this thread's own project (the common case); pass one only to target a different project. A projectId is matched first as a project id, then leniently against a project's title or workspace-root folder name, so a name from the app usually resolves — but the id from board_list_projects is unambiguous. An unresolvable projectId is rejected with the live project list. A card may be created into ANY existing stage (omit stage for Backlog). CAUTION: creating into an auto-executing stage (e.g. Building) starts an unattended agent run immediately, with a worktree and a concurrency slot — default to the early stages unless a human asked for mid-pipeline work; the build-onward dependency gate still applies. When you make a card for an existing pull request, pass pullRequest so the card tracks it (status, merge, settling) from the start — a url, or repository and number; it must be on the card's project repository, and a pull request the forge cannot find rejects the call before any card is made. NOT idempotent: a retried call creates a second card, so on a timeout list cards before retrying. Labels are named against the existing catalogue; an unknown label name is rejected with the live list rather than created, so create a new label with board_manage_labels first. dependsOn lists card ids this card waits on. parentCardId (a card key or id) creates the card inside that group. If that card is not a group yet, this turns it into one, which is regrouping: describe it to the user, get their explicit confirmation, and only then pass approved: true (the server refuses without it). A card already being built cannot become a group. Dependencies may cross groups; a dependency on a group is met when the whole group is done. A card cannot depend on a group it is inside, and a group cannot depend on a card inside it. mergeStrategy sets how this card's pull request merges (squash, merge or rebase); omit it to follow its group's strategy or the board default. An upstream-sync card must use merge, or the upstream ancestry is lost.",
   parameters: Schema.Struct({
     projectId: Schema.optional(ProjectId),
     title: TrimmedNonEmptyString,
@@ -380,8 +438,13 @@ export const BoardCreateCardTool = Tool.make("board_create_card", {
     labels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
     stage: Schema.optional(BoardStageId),
     dependsOn: Schema.optional(Schema.Array(BoardCardId)),
+    /** Card key or id of the group to create the card inside. */
+    parentCardId: Schema.optional(TrimmedNonEmptyString),
+    /** Required when parentCardId is not a group yet: a human confirmed it. */
+    approved: Schema.optional(Schema.Boolean),
     /** A pull request on the project's repository for the card to track. */
     pullRequest: Schema.optional(BoardCardPullRequestTarget),
+    mergeStrategy: Schema.optional(BoardMergeStrategy),
   }),
   success: Schema.Struct({ cardId: BoardCardId, key: TrimmedNonEmptyString }),
   failure: BoardToolFailure,
@@ -390,11 +453,17 @@ export const BoardCreateCardTool = Tool.make("board_create_card", {
 
 export const BoardMoveCardTool = Tool.make("board_move_card", {
   description:
-    "Move a card to another stage, subject to the same rules a human drag obeys: a blocked card (unmet dependencies) cannot cross into the build stage or beyond, and you have no privileged path around that. Set override to move to a non-adjacent stage (e.g. dragging backwards). CAUTION: the server does not require a human sign-off on forward moves — moving a card into an auto-executing stage starts an unattended agent run (worktree, concurrency slot). Use this for board tidying and explicitly requested moves, not to advance your own work; leave forward transitions to a human unless one asked you to make them.",
+    "Move a card to another stage, into another group, or both. A stage move obeys the same rules a human drag obeys: a blocked card (unmet dependencies) cannot cross into the build stage or beyond, and you have no privileged path around that. Set override to move to a non-adjacent stage (e.g. dragging backwards). A group's stage follows its children, so moving a group only places it before Building, or starts it at Building. CAUTION: the server does not require a human sign-off on forward moves — moving a card into an auto-executing stage starts an unattended agent run (worktree, concurrency slot). Use this for board tidying and explicitly requested moves, not to advance your own work; leave forward transitions to a human unless one asked you to make them. parentCardId (a card key or id, or null for the top level) moves the card into that group; pass afterCardId or beforeCardId to place it next to a card already there. With both, the regroup happens first and stays if the stage move is then refused. REGROUPING NEEDS A HUMAN: moving cards between groups changes how they build and where they merge, so before calling, describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses a regroup without it.",
   parameters: Schema.Struct({
     cardId: BoardCardId,
-    toStage: BoardStageId,
+    toStage: Schema.optional(BoardStageId),
     override: Schema.optional(Schema.Boolean),
+    /** Card key or id of the destination group; null moves to the top level. */
+    parentCardId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    afterCardId: Schema.optional(TrimmedNonEmptyString),
+    beforeCardId: Schema.optional(TrimmedNonEmptyString),
+    /** True only once a human confirmed this regrouping. */
+    approved: Schema.optional(Schema.Boolean),
   }),
   success: Schema.Struct({ cardId: BoardCardId, stage: BoardStageId }),
   failure: BoardToolFailure,
@@ -403,7 +472,7 @@ export const BoardMoveCardTool = Tool.make("board_move_card", {
 
 export const BoardUpdateCardTool = Tool.make("board_update_card", {
   description:
-    "Update a card's title, brief, labels, dependencies, external reference, or linked pull request. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (the whole label set, named against the catalogue; unknown names are rejected, so create a new label with board_manage_labels first); dependsOn (the whole dependency set); externalRef (null clears); pullRequest links a pull request to the card so it tracks its status, merge and settling just as if the card's own branch had opened it — a url, or repository and number, on the card's project repository, checked with the forge first. Use it to link a pull request to ANY card, not only your own, instead of setting externalRef. Linking the pull request the card already has changes nothing; pullRequest null removes an explicit link only, and a pull request found on the card's own branch reappears on the next refresh. ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing); addLabels and removeLabels add or remove single labels by name, leaving the rest alone (adding one the card has, or removing one it does not, does nothing; a name that is no label at all is rejected; a deleted label can be removed but not added; a name in both is rejected). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, not dependsOn together with addDependsOn/removeDependsOn, and not labels together with addLabels/removeLabels. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. A dependency must sit at the card's own level: a top-level card depends on top-level cards, and a sub-board child only on its siblings. To wait on another card's child, depend on that child's parent instead, because the child merges into its parent's branch, not the base.",
+    "Update a card's title, brief, labels, dependencies, external reference, or linked pull request. cardId takes the card's key (e.g. 'Z5-39') or id. Only the fields you pass change. REPLACING fields overwrite the whole value: title; brief (pass null to clear); labels (the whole label set, named against the catalogue; unknown names are rejected, so create a new label with board_manage_labels first); dependsOn (the whole dependency set); externalRef (null clears); pullRequest links a pull request to the card so it tracks its status, merge and settling just as if the card's own branch had opened it — a url, or repository and number, on the card's project repository, checked with the forge first. Use it to link a pull request to ANY card, not only your own, instead of setting externalRef. Linking the pull request the card already has changes nothing; pullRequest null removes an explicit link only, and a pull request found on the card's own branch reappears on the next refresh. ADDING fields keep what is there: briefAppend adds text to the end of the brief; briefSection replaces only the section under one markdown heading (e.g. '## Notes from Z5-34'), or adds it at the end if that heading is not there yet, so repeating the same call does not duplicate it (the section is closed by a '<!-- end <heading> -->' line; leave that line in place); addDependsOn and removeDependsOn add or remove single dependencies by key or id, leaving the rest alone (removing one that is not there does nothing); addLabels and removeLabels add or remove single labels by name, leaving the rest alone (adding one the card has, or removing one it does not, does nothing; a name that is no label at all is rejected; a deleted label can be removed but not added; a name in both is rejected). These are applied to the card as it is when your update lands, so prefer them to read-change-replace: they never overwrite an edit made before yours lands. They do not stop a later whole-brief replace (for example a person saving the brief in the board UI) from overwriting yours. Pass at most one of brief, briefAppend and briefSection, not dependsOn together with addDependsOn/removeDependsOn, and not labels together with addLabels/removeLabels. expectedBriefVersion (from board_get_card or board_get_card_context) makes any brief change fail if the brief changed since you read it; re-read and reapply when that happens. Any dependency change is rejected if it would form a cycle. Dependencies may cross groups; a dependency on a group is met when the whole group is done. A card cannot depend on a group it is inside, and a group cannot depend on a card inside it. planReview turns the card's adversarial plan review on or off and sets its rounds (1-20); null follows the Settings default. Rounds cannot change once a review has started, and turning it off stops a running review. mergeStrategy sets how this card's pull request merges (squash, merge or rebase), and null returns it to its group's strategy or the board default. An upstream-sync card must use merge, or the upstream ancestry is lost.",
   parameters: Schema.Struct({
     /** Card key or id. */
     cardId: TrimmedNonEmptyString,
@@ -424,6 +493,9 @@ export const BoardUpdateCardTool = Tool.make("board_update_card", {
     removeLabels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
     externalRef: Schema.optional(Schema.NullOr(BoardCardExternalRef)),
     pullRequest: Schema.optional(Schema.NullOr(BoardCardPullRequestTarget)),
+    mergeStrategy: Schema.optional(Schema.NullOr(BoardMergeStrategy)),
+    /** Plan review (T3O-39): { enabled, rounds 1-20 }, or null for the Settings default. */
+    planReview: Schema.optional(Schema.NullOr(BoardCardPlanReview)),
   }),
   success: Schema.Struct({ cardId: BoardCardId }),
   failure: BoardToolFailure,
@@ -443,8 +515,13 @@ const BoardCardWriteResult = Schema.Struct({
 
 export const BoardArchiveCardTool = Tool.make("board_archive_card", {
   description:
-    "Archive a card — the reversible way to take it off the board. The card, its threads, its history and its dependency edges all survive; it leaves the columns, stops gating the cards that depend on it, and is still readable in the archive. Use it for cards that are done with, duplicated, or no longer wanted. Rejected on a card that is already archived, on a card whose plan cards are still unfinished (finish or archive those first), and on YOUR OWN card — archiving reclaims the worktree you are running in and unarchiving does not bring it back, so ask a human to do it from the app. Allowed on a card ANOTHER agent is working on — it is the softer route board_delete_card points at — but it is not free there: the in-flight step is settled as abandoned, so that agent's turn is orphaned, and the card's checkout is reclaimed unless it holds uncommitted or unpushed work. Wait for the step to settle if you are only tidying. Reverse it with board_unarchive_card; use board_delete_card only when nothing should survive.",
-  parameters: Schema.Struct({ cardId: BoardCardId }),
+    "Archive a card — the reversible way to take it off the board. The card, its threads, its history and its dependency edges all survive; it leaves the columns, stops gating the cards that depend on it, and is still readable in the archive. Use it for cards that are done with, duplicated, or no longer wanted. Rejected on a card that is already archived, on a card whose plan cards are still unfinished (finish or archive those first), and on YOUR OWN card — archiving reclaims the worktree you are running in and unarchiving does not bring it back, so ask a human to do it from the app. Allowed on a card ANOTHER agent is working on — it is the softer route board_delete_card points at — but it is not free there: the in-flight step is settled as abandoned, so that agent's turn is orphaned, and the card's checkout is reclaimed unless it holds uncommitted or unpushed work. Wait for the step to settle if you are only tidying. Reverse it with board_unarchive_card; use board_delete_card only when nothing should survive. ARCHIVING A WHOLE GROUP: pass confirmCardKey (the group's own key) to archive the group and every card inside it, Deferred ones included, for good — every thread stops, every pull request closes, and every worktree and branch is deleted, remote copies included. Unarchiving brings back the cards, plans and history, never the branch work. Describe exactly that to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
+  parameters: Schema.Struct({
+    cardId: BoardCardId,
+    /** The group's own key, to archive its whole subtree and discard its work. */
+    confirmCardKey: Schema.optional(TrimmedNonEmptyString),
+    approved: Schema.optional(Schema.Boolean),
+  }),
   success: BoardCardWriteResult,
   failure: BoardToolFailure,
   dependencies,
@@ -467,6 +544,137 @@ export const BoardDeleteCardTool = Tool.make("board_delete_card", {
   failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Delete board card");
+
+// ── Grouping tools (T3O-27) ────────────────────────────────────────────
+
+const BoardRegroupResult = Schema.Struct({
+  cardIds: Schema.Array(BoardCardId),
+  /** Where the cards now sit: a group's key, or null for the top level. */
+  parentKey: Schema.NullOr(TrimmedNonEmptyString),
+});
+
+const regroupApproved = Schema.optional(Schema.Boolean);
+
+export const BoardIndentCardsTool = Tool.make("board_indent_cards", {
+  description:
+    "Indent cards one level: they move inside the card just above them, which becomes a group if it is not one yet. The cards must share a parent. A card already being built cannot become a group. Grouping alone never touches git. REGROUPING NEEDS A HUMAN: moving cards between groups changes how they build and where they merge, so before calling, describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses a regroup without it.",
+  parameters: Schema.Struct({
+    /** Card keys or ids, all under the same parent. */
+    cardIds: Schema.Array(TrimmedNonEmptyString),
+    approved: regroupApproved,
+  }),
+  success: BoardRegroupResult,
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Indent board cards");
+
+export const BoardOutdentCardsTool = Tool.make("board_outdent_cards", {
+  description:
+    "Outdent cards one level: they move out of their group to sit directly after it. The cards must share a parent. A group left with no cards becomes an ordinary card again, no further on than Sprint. REGROUPING NEEDS A HUMAN: moving cards between groups changes how they build and where they merge, so before calling, describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses a regroup without it.",
+  parameters: Schema.Struct({
+    /** Card keys or ids, all under the same parent. */
+    cardIds: Schema.Array(TrimmedNonEmptyString),
+    approved: regroupApproved,
+  }),
+  success: BoardRegroupResult,
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Outdent board cards");
+
+export const BoardGroupCardsTool = Tool.make("board_group_cards", {
+  description:
+    "Put cards into a new group titled title, created beside them under their shared parent. The cards must share a parent. Returns the new group's key. REGROUPING NEEDS A HUMAN: moving cards between groups changes how they build and where they merge, so before calling, describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses a regroup without it.",
+  parameters: Schema.Struct({
+    /** Card keys or ids, all under the same parent. */
+    cardIds: Schema.Array(TrimmedNonEmptyString),
+    title: TrimmedNonEmptyString,
+    approved: regroupApproved,
+  }),
+  success: Schema.Struct({
+    groupCardId: BoardCardId,
+    groupKey: TrimmedNonEmptyString,
+    cardIds: Schema.Array(BoardCardId),
+  }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Group board cards");
+
+const BoardNewPhaseTool = Tool.make("board_new_phase", {
+  description:
+    "Start the next phase of a group: its deferred cards (cardIds, each one in the group's Deferred column) move into a new group titled title, created next to the group under the same parent, and land in that new group's Backlog. Use it when the deferred work of a group is to be planned and built as its own round. Returns the new group's key. REGROUPING NEEDS A HUMAN: describe the new phase and the cards moving into it to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
+  parameters: Schema.Struct({
+    /** Card key or id of the group whose deferred cards move. */
+    groupCardId: TrimmedNonEmptyString,
+    /** Card keys or ids of the deferred cards to move. */
+    cardIds: Schema.Array(TrimmedNonEmptyString),
+    title: TrimmedNonEmptyString,
+    approved: regroupApproved,
+  }),
+  success: Schema.Struct({
+    groupCardId: BoardCardId,
+    groupKey: TrimmedNonEmptyString,
+    cardIds: Schema.Array(BoardCardId),
+  }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Start a group's next phase");
+
+const BoardShareParentTool = Tool.make("board_share_parent", {
+  description:
+    "Give a card that is already being built some sibling cards: a new group titled title is created where that card sits, and the card and cardIds all move into it, side by side. Use it when someone wants cards under a card whose work has started — a started card cannot become a group itself. The started card keeps its branch and where it merges. Returns the new group's key. REGROUPING NEEDS A HUMAN: describe the regrouping to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
+  parameters: Schema.Struct({
+    /** Card key or id of the started card. */
+    cardId: TrimmedNonEmptyString,
+    /** Card keys or ids to put beside it. */
+    cardIds: Schema.Array(TrimmedNonEmptyString),
+    title: TrimmedNonEmptyString,
+    approved: regroupApproved,
+  }),
+  success: Schema.Struct({
+    groupCardId: BoardCardId,
+    groupKey: TrimmedNonEmptyString,
+    cardIds: Schema.Array(BoardCardId),
+  }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Share a parent with a started card");
+
+const BoardCancelCardWorkTool = Tool.make("board_cancel_card_work", {
+  description:
+    "Cancel a started card's work so it can become a group, then optionally move cardIds into it. DESTRUCTIVE: the card's threads stop, its pull request closes, and its branch — with every commit on it — is deleted once its worktree is reclaimed (work that exists nowhere else keeps the worktree until a human removes it). The card becomes an empty group no further on than Sprint. confirmCardKey must be the card's own key. Rejected on YOUR OWN card. Prefer board_share_parent, which keeps the work. Describe what is lost to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
+  parameters: Schema.Struct({
+    /** Card key or id of the started card. */
+    cardId: TrimmedNonEmptyString,
+    confirmCardKey: TrimmedNonEmptyString,
+    /** Card keys or ids to move into it once it is a group. */
+    cardIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+    approved: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Struct({
+    cardId: BoardCardId,
+    key: TrimmedNonEmptyString,
+    cardIds: Schema.Array(BoardCardId),
+  }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Cancel a card's work and make it a group");
+
+export const BoardSetGroupSettingsTool = Tool.make("board_set_group_settings", {
+  description:
+    "Change a group's settings, which every child that does not set its own value inherits. target 'own' gives the group its own integration branch, which its children merge into and which is reviewed and merged to its own target once they are all done; 'inherit' passes the children through to wherever the group itself lands. Switching to 'own' turns autoMerge on and switching to 'inherit' turns it off, unless you pass autoMerge too. target is locked while any card inside has started building. autoBuild: ready children with their dependencies met start themselves once the group has been started; turning it off never stops a running child. autoMerge: children merge themselves, into the group's branch or wherever they land. autoPlan: children are planned by the agent without questions; their plans wait for approval unless autoBuild is on too. Only the fields you pass change, and they apply at once to inheriting children already under way. These settings decide how cards build and merge, so describe the change to the user, get their explicit confirmation, and only then pass approved: true. The server refuses without it.",
+  parameters: Schema.Struct({
+    /** Card key or id of the group. */
+    cardId: TrimmedNonEmptyString,
+    target: Schema.optional(BoardCardGroupTarget),
+    autoBuild: Schema.optional(Schema.Boolean),
+    autoMerge: Schema.optional(Schema.Boolean),
+    autoPlan: Schema.optional(Schema.Boolean),
+    approved: regroupApproved,
+  }),
+  success: Schema.Struct({ cardId: BoardCardId, key: TrimmedNonEmptyString }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Set board group settings");
 
 // ── Label tools (T3O-68) ───────────────────────────────────────────────
 
@@ -510,21 +718,28 @@ export const BoardProposePlansTool = Tool.make("board_propose_plans", {
   // the description now leads with the split's consequence, and the split
   // itself has to argue for the human click it triggers.
   description:
-    "Record your card's plan (the planning output). Pass ONE plan in almost every case: the array is how a card is SPLIT, and two or more plans each become a child card with its own branch, build and review, behind a human approval gate that blocks the card until a human approves it. Split only for a large feature worth building and reviewing in separate pieces, or where building parts concurrently buys a real speed-up — and then splitRationale is required and is shown to the human at the gate. Each plan has a key (a short unique slug), a title, a summary, a dependsOn list referencing other plans' keys (only meaningful in a split), and a markdown body. Validated on ingest — unique keys, known dependency references, and no cycles — and rejected naming the offending edge. Proposing again replaces the card's whole plan set. Your card is resolved from your thread.",
+    "Record your card's plan (the planning output). Pass ONE plan in almost every case: the array is how a card is SPLIT, and two or more plans each become a child card with its own branch, build and review, behind a human approval gate that blocks the card until a human approves it. Split only for a large feature worth building and reviewing in separate pieces, or where building parts concurrently buys a real speed-up — and then splitRationale is required and is shown to the human at the gate. Each plan has a key (a short unique slug), a title, a summary, a dependsOn list referencing other plans' keys (only meaningful in a split), and a markdown body. In a split, mark each plan planned: true when its body is a full implementation plan, so its child lands in Ready to be built, or planned: false when its body is a brief that still needs its own planning, so its child lands in Backlog. A split also recommends the group's settings, which the human sees pre-set at the gate and can change: recommendedAutoBuild (children start themselves once the group is started) and recommendedMergeTarget ('own' cuts the group its own integration branch with one final review; 'inherit' merges each child wherever this card itself merges). Every child fully planned: recommend autoBuild true and 'own'. An epic breakdown whose children still need planning: recommend autoBuild false and 'inherit', with those children planned: false. If your card already sits inside a group that has its own branch (its base branch is an integration branch such as board/<KEY>), prefer 'inherit'. Omitted recommendations fall back to these rules. Approval creates the children; it starts nothing unless the card's Auto-build is on, which also approves the split without the gate. Validated on ingest — unique keys, known dependency references, and no cycles — and rejected naming the offending edge. Proposing again replaces the card's whole plan set. When plan review is on for the card, the first proposal returns planReview with the review's instructions: follow them before completing. Your card is resolved from your thread.",
   parameters: Schema.Struct({
     plans: Schema.Array(BoardProposedPlanInput),
     /** Required once `plans` holds two or more (enforced by the decider, which
         also nulls it below two). Omitted is the single-plan case. */
     splitRationale: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    /** A split's recommended group settings (T3O-31); ignored below two plans. */
+    recommendedAutoBuild: Schema.optional(Schema.Boolean),
+    recommendedMergeTarget: Schema.optional(BoardCardGroupTarget),
   }),
-  success: Schema.Struct({ planIds: Schema.Array(BoardPlan.fields.planId) }),
+  success: Schema.Struct({
+    planIds: Schema.Array(BoardPlan.fields.planId),
+    /** Plan review started by this proposal (plan review, T3O-39). */
+    planReview: Schema.optionalKey(BoardPlanReviewToolResult),
+  }),
   failure: BoardToolFailure,
   dependencies,
 }).annotate(Tool.Title, "Propose board plans");
 
 export const BoardGetPlanTool = Tool.make("board_get_plan", {
   description:
-    "Read one plan of your card — its metadata and full markdown body — by plan id (from board_get_card_context or board_propose_plans). Your card is resolved from your thread; a plan belonging to another card is not returned.",
+    "Read one plan of your card, or of a group your card sits in, with its metadata and full markdown body, by plan id (from board_get_card_context or board_propose_plans). Your card is resolved from your thread; a plan belonging to any other card is not returned.",
   parameters: Schema.Struct({
     planId: BoardPlan.fields.planId,
   }),
@@ -548,6 +763,52 @@ export const BoardWritePlanTool = Tool.make("board_write_plan", {
   dependencies,
 }).annotate(Tool.Title, "Write board plan");
 
+const BoardRecordDecisionsTool = Tool.make("board_record_decisions", {
+  description:
+    "Record the decisions a planning session made on your card's decision log, in one batch. Record a decision for every planning session, attended or automatic, before you call board_propose_plans: what was asked, what was decided, a one-line reason, and who decided (agent when you made the call, human when the user answered). Flag a call you were not sure about as unclear, so a human reviews it, and a call that shapes the work as important; everything else is normal. The log is shown on the card's Summary pane and handed to the planning agents of any child cards. Your card is resolved from your thread.",
+  parameters: Schema.Struct({
+    decisions: Schema.Array(BoardCardDecisionInput).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(BOARD_DECISIONS_PER_CALL_MAX),
+    ),
+  }),
+  success: Schema.Struct({ recorded: Schema.Number }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Record planning decisions");
+
+const BoardAutomationToggleState = Schema.Struct({
+  /** What the board acts on. */
+  value: Schema.Boolean,
+  /** `own`: set on this card. `inherited`: from its group. `board`: board-wide
+      auto-merge. null: off by default. */
+  source: Schema.NullOr(Schema.Literals(["own", "inherited", "board"])),
+  locked: Schema.Boolean,
+  lockReason: Schema.NullOr(Schema.String),
+});
+
+const BoardSetAutomationTool = Tool.make("board_set_automation", {
+  description:
+    "Turn a card's Automation toggles on or off. autoPlan: its planning agent stops asking questions and decides everything itself; without autoBuild the plan then waits for the user's approval. autoBuild: an approved plan starts building by itself once its dependencies are done, and with autoPlan the plan is approved automatically, so the card runs unattended to Ready for merge. autoMerge: the card merges itself once it reaches Ready for merge. Each takes true, false, or null to inherit from the card's group again; only the fields you pass change. Turning a toggle on stands in for a human approving and starting work, so do it only when the user explicitly asks for that card: confirm with them, then pass approved: true. A null that picks up a group's on counts as turning it on. The server refuses without approved, and refuses an unattended run. Never turn on your own card's toggles. Turning a toggle on after its stage has passed is refused with the reason; turning one off is always accepted. The change takes effect in the background, so the result is the card's resolved toggles, not what the board then did. For a group's own settings use board_set_group_settings.",
+  parameters: Schema.Struct({
+    /** Card key or id. */
+    cardId: TrimmedNonEmptyString,
+    autoPlan: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    autoBuild: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    autoMerge: Schema.optional(Schema.NullOr(Schema.Boolean)),
+    approved: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Struct({
+    cardId: BoardCardId,
+    key: TrimmedNonEmptyString,
+    autoPlan: BoardAutomationToggleState,
+    autoBuild: BoardAutomationToggleState,
+    autoMerge: BoardAutomationToggleState,
+  }),
+  failure: BoardToolFailure,
+  dependencies,
+}).annotate(Tool.Title, "Set a board card's automation");
+
 export const BoardToolkit = Toolkit.make(
   BoardGetCardContextTool,
   BoardCompleteStepTool,
@@ -560,8 +821,17 @@ export const BoardToolkit = Toolkit.make(
   BoardArchiveCardTool,
   BoardUnarchiveCardTool,
   BoardDeleteCardTool,
+  BoardIndentCardsTool,
+  BoardOutdentCardsTool,
+  BoardGroupCardsTool,
+  BoardShareParentTool,
+  BoardNewPhaseTool,
+  BoardCancelCardWorkTool,
+  BoardSetGroupSettingsTool,
   BoardManageLabelsTool,
   BoardProposePlansTool,
   BoardGetPlanTool,
   BoardWritePlanTool,
+  BoardRecordDecisionsTool,
+  BoardSetAutomationTool,
 );

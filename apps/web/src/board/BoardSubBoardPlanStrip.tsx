@@ -34,6 +34,7 @@ export function BoardSubBoardPlanStrip({
   stages,
   chartOpen,
   onOpenChild,
+  ownBranch,
 }: {
   readonly environmentId: EnvironmentId;
   readonly parentCardId: BoardCardId;
@@ -43,6 +44,9 @@ export function BoardSubBoardPlanStrip({
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly chartOpen: boolean;
   readonly onOpenChild: (childCardId: string) => void;
+  /** The final review banner describes an integration branch (T3O-29), so
+      only an own-branch group shows it. */
+  readonly ownBranch: boolean;
 }) {
   const detail = useAtomValue(
     boardEnvironment.cardDetailValueAtom({ environmentId, cardId: parentCardId }),
@@ -68,7 +72,7 @@ export function BoardSubBoardPlanStrip({
   return (
     <div className="flex shrink-0 flex-col gap-2.5 px-3 pb-3 sm:px-5">
       {chartOpen ? <BoardPlanGraph onOpenChild={onOpenChild} rows={planRows.rows} /> : null}
-      <BoardPlanFinalReviewCard branch={final.branch} note={final.note} />
+      {ownBranch ? <BoardPlanFinalReviewCard branch={final.branch} note={final.note} /> : null}
     </div>
   );
 }

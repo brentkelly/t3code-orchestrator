@@ -35,6 +35,11 @@ export interface SqliteClientConfig {
   readonly spanAttributes?: Record<string, unknown> | undefined;
   /** Ignored for in-memory databases, which cannot share a second connection. */
   readonly readerWorker?: boolean | undefined;
+  // T3o: databases the main connection ATTACHes; the reader must see them too (T3O-41).
+  readonly readerAttachments?: ReadonlyArray<{
+    readonly schema: string;
+    readonly filename: string;
+  }>;
   /** Ignored for in-memory databases. */
   readonly checkpointWorker?: boolean | undefined;
 }
@@ -205,6 +210,11 @@ try {
     allowExtension: workerData.allowExtension,
   });
   next.exec("PRAGMA busy_timeout = 5000;");
+  // T3o: attached files open read-only like main (T3O-41).
+  for (const { schema, filename } of workerData.attachments) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(schema)) throw new Error("invalid attachment schema " + schema);
+    next.prepare("ATTACH DATABASE ? AS " + schema).run(filename);
+  }
   // Without WAL a reader's shared lock blocks the writer's commits, so refuse.
   const mode = String(next.prepare("PRAGMA journal_mode").get().journal_mode).toLowerCase();
   if (mode !== "wal") throw new Error("database uses journal_mode " + mode + ", not wal");
@@ -317,6 +327,8 @@ const makeReader = Effect.fnUntraced(function* (
         filename: options.filename,
         allowExtension: false,
         prepareCacheSize: 200,
+        // T3o: see readerAttachments.
+        attachments: options.readerAttachments ?? [],
       },
     });
     let announce: (startup: ReaderStartup) => void = () => {};

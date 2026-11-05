@@ -759,16 +759,16 @@ it.layer(makeTestLayer("t3o-card-auto-merge-"))(
         const quiet = yield* shellCard;
         assert.isFalse(quiet !== undefined && "autoMergeHeldSince" in quiet);
         assert.isFalse(quiet !== undefined && "autoMergeGaveUp" in quiet);
-        assert.isFalse(quiet !== undefined && "autoMergeArmed" in quiet);
+        assert.isFalse(quiet !== undefined && "autoMergeSetting" in quiet);
 
         yield* engine.dispatch({
-          type: "board.card.update",
+          type: "board.card.set-automation",
           commandId: CommandId.make("cmd-arm-auto-merge"),
           cardId,
           autoMerge: true,
           createdAt,
         });
-        assert.strictEqual((yield* shellCard)?.autoMergeArmed, true);
+        assert.strictEqual((yield* shellCard)?.autoMergeSetting, true);
 
         // A SOFT hold: the clock runs, the pill reads "held", and `gaveUp` stays
         // absent because rungs remain.
@@ -823,21 +823,22 @@ it.layer(makeTestLayer("t3o-card-auto-merge-"))(
         const delta = boardCardShellFromCard(aggregate!);
         assert.strictEqual(delta.autoMergeHeldSince, hard?.autoMergeHeldSince);
         assert.strictEqual(delta.autoMergeGaveUp, hard?.autoMergeGaveUp);
-        assert.strictEqual(delta.autoMergeArmed, hard?.autoMergeArmed);
+        assert.strictEqual(delta.autoMergeSetting, hard?.autoMergeSetting);
+        assert.strictEqual(delta.autoPlanPending, hard?.autoPlanPending);
 
         // Disarming clears the hold (D10) and, with it, both hold keys — the
         // reverse state a one-way door would have missed.
         yield* engine.dispatch({
-          type: "board.card.update",
+          type: "board.card.set-automation",
           commandId: CommandId.make("cmd-disarm-auto-merge"),
           cardId,
-          autoMerge: false,
+          autoMerge: null,
           createdAt,
         });
         const cleared = yield* shellCard;
         assert.isFalse(cleared !== undefined && "autoMergeHeldSince" in cleared);
         assert.isFalse(cleared !== undefined && "autoMergeGaveUp" in cleared);
-        assert.isFalse(cleared !== undefined && "autoMergeArmed" in cleared);
+        assert.isFalse(cleared !== undefined && "autoMergeSetting" in cleared);
       }),
     );
   },

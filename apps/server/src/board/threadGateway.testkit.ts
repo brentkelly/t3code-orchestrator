@@ -42,6 +42,7 @@ import {
   type ThreadSettleInput,
   type ThreadSignal,
   type ThreadSpawnInput,
+  type ThreadAnswerInput,
   type ThreadTargetInput,
   type TodoLogEntry,
   type TodoSignal,
@@ -55,7 +56,8 @@ export type ThreadGatewayCall =
   | ({ readonly type: "thread.stop-session" } & ThreadTargetInput)
   | ({ readonly type: "thread.settle" } & ThreadSettleInput)
   | ({ readonly type: "thread.delete" } & ThreadTargetInput)
-  | ({ readonly type: "thread.arm-limit-recovery" } & ThreadTargetInput);
+  | ({ readonly type: "thread.arm-limit-recovery" } & ThreadTargetInput)
+  | ({ readonly type: "thread.answer-pending-input" } & ThreadAnswerInput);
 
 /** The fields a fixture sets on a thread; everything derived is computed. */
 export interface FakeThreadInput {
@@ -289,6 +291,17 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
             settlementDecided: true,
           }));
         }),
+      // As the engine does: answered only while a question is pending.
+      answerPendingInput: (input) =>
+        Effect.gen(function* () {
+          yield* record({ type: "thread.answer-pending-input", ...input });
+          const state = (yield* Ref.get(states)).get(String(input.threadId));
+          if (state === undefined || !state.awaitingUserInput) return false;
+          yield* Ref.update(states, (current) =>
+            new Map(current).set(String(input.threadId), { ...state, awaitingUserInput: false }),
+          );
+          return true;
+        }),
       // As the engine does: armed only for a limit that names its reset time.
       armLimitRecovery: (input) =>
         Effect.gen(function* () {
@@ -427,6 +440,7 @@ export const inertThreadGateway = (
   settle: () => Effect.void,
   delete: () => Effect.void,
   armLimitRecovery: () => Effect.succeed(false),
+  answerPendingInput: () => Effect.succeed(false),
   threadState: () => Effect.succeed(null),
   threadRecords: () => Effect.succeed(new Map()),
   threadsInWorktree: () => Effect.succeed([]),

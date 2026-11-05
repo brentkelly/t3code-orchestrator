@@ -106,6 +106,7 @@ function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId
 
   return (
     <>
+      <DisplaySection board={board} update={update} />
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
       <BoardPipelineSection />
       <BoardConcurrencySettings
@@ -401,6 +402,31 @@ function BoardConcurrencySettings(props: {
         onChange={(patch) => props.update({ board: { concurrency: patch } })}
         workers={workers.state}
       />
+    </SettingsSection>
+  );
+}
+
+// ── Display ────────────────────────────────────────────────────────────
+
+function DisplaySection({ board, update }: { board: BoardSettings; update: UpdateFn }) {
+  const anchor = searchableSetting("board-auto-collapse-empty-stages");
+  return (
+    <SettingsSection id="board-display" title="Display" variant="plain">
+      <CardListContainer id="board-auto-collapse-empty-stages">
+        <CardRow
+          label={anchor.title}
+          description="Stages with no cards fold to a narrow strip and open again when a card lands in them. Applies to everyone using this board."
+          control={
+            <Switch
+              checked={board.display.autoCollapseEmptyStages}
+              onCheckedChange={(checked) =>
+                update({ board: { display: { autoCollapseEmptyStages: Boolean(checked) } } })
+              }
+              aria-label={anchor.title}
+            />
+          }
+        />
+      </CardListContainer>
     </SettingsSection>
   );
 }

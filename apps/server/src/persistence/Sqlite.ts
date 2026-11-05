@@ -9,6 +9,7 @@ import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 // T3o: the board database boots on upstream's connection (t3o-26).
 import { initialiseBoardDatabase, runBoardMigrations } from "../board/migrations/index.ts";
+import { boardReaderAttachments } from "../board/boardDatabase.ts";
 import * as ServerConfig from "../config.ts";
 
 const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -62,6 +63,8 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
     NodeSqliteClient.layer({
       filename: dbPath,
       readerWorker: true,
+      // T3o: the reader attaches boards.sqlite like the main connection (T3O-41).
+      readerAttachments: boardReaderAttachments(dbPath),
       // Run checkpoint fsyncs off the event loop so slow disk flushes cannot stall clients.
       checkpointWorker: true,
       spanAttributes: {

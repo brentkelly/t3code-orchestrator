@@ -48,7 +48,9 @@ import {
   XIcon,
   ArrowRightLeftIcon,
   ServerIcon,
+  ScanSearchIcon,
   ServerOffIcon,
+  FastForwardIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { Fragment, useMemo, useState, type ReactNode } from "react";
@@ -156,6 +158,10 @@ function ActivityIcon({
     // CI starting is work about to run, not a verdict, so it stays neutral.
     case "card-pull-request-ready":
       return <PullRequestGlyph.pullRequest className={className} />;
+    // Auto-planning approving a plan is a board-driven move, so it stays
+    // neutral like the other notes that explain one (T3O-32).
+    case "card-auto-planned":
+      return <FastForwardIcon className={className} />;
     // T3O-52: a kept worktree is a cleanup that is blocked — amber; a removal
     // is disk given back, which claims nothing and stays neutral.
     case "card-worktree-kept":
@@ -181,7 +187,16 @@ function ActivityIcon({
       ) : (
         <ServerIcon className={className} />
       );
+    // T3O-39: plan review rows claim nothing about the work — neutral.
+    case "plan-review-started":
+    case "plan-review-stopped":
+    case "plan-review-finished":
+      return <ScanSearchIcon className={className} />;
   }
+}
+
+function roundsPhrase(rounds: number): string {
+  return rounds === 1 ? "1 round" : `${rounds} rounds`;
 }
 
 /** The terminal outcome of a completed step, shown as a glyph rather than a
@@ -387,6 +402,8 @@ function activitySentence(
       ) : (
         <>{payload.detail}</>
       );
+    case "card-auto-planned":
+      return payload.detail === undefined ? <>auto-planned the card</> : <>{payload.detail}</>;
     case "card-worktree-kept":
       return payload.detail === undefined ? (
         <>kept the worktree</>
@@ -472,6 +489,27 @@ function activitySentence(
         default:
           return <>{worker} was removed from the board</>;
       }
+    }
+    case "plan-review-started":
+      return payload.planReviewRounds === undefined ? (
+        <>started the plan review</>
+      ) : (
+        <>started the plan review ({roundsPhrase(payload.planReviewRounds)})</>
+      );
+    case "plan-review-stopped":
+      return <>turned the plan review off</>;
+    case "plan-review-finished": {
+      const run = payload.planReviewRoundsRun ?? null;
+      const of = payload.planReviewRounds === undefined ? "" : ` of ${payload.planReviewRounds}`;
+      return run === null ? (
+        <>finished the plan review; rounds not reported</>
+      ) : (
+        <>
+          finished the plan review after {run}
+          {of} {run === 1 && of === "" ? "round" : "rounds"}
+          {payload.planReviewConverged === true ? ", converged" : ""}
+        </>
+      );
     }
   }
 }

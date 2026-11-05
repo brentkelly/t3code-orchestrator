@@ -154,6 +154,13 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
+// T3o: card threads leave Settled by default (T3O-78).
+import {
+  SidebarCardThreadsNotice,
+  SidebarCardThreadsSwitch,
+  useSettledCardThreadFilter,
+} from "../board/sidebarCardThreads";
+import { filterSettledCardThreads, settledCardThreadCount } from "../board/sidebarCardThreadFilter";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
@@ -479,18 +486,30 @@ function useSidebarThreads(input: {
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
 
-  const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
-    partition;
+  const { pinnedThreads, activeThreads, workingThreads, snoozedThreads } = partition;
+  // T3o: card threads leave Settled by default (T3O-78).
+  const environmentIds = [...serverConfigs.keys()];
+  const cardThreadFilter = useSettledCardThreadFilter(environmentIds);
+  const settledCardThreads = filterSettledCardThreads({
+    hide: cardThreadFilter.hide,
+    isCardThread: cardThreadFilter.isCardThread,
+    settledThreads: partition.settledThreads,
+    visibleThreads: partition.visibleThreads,
+    isRouteThread: (thread) => threadShellKey(thread) === routeRowThreadKey,
+  });
+  const settledThreads = settledCardThreads.settledThreads;
+  const unfilteredSettledScopes = olderSettledScopes(environmentIds, scopedProjectKeys);
+  const settledScopes = cardThreadFilter.scopes(unfilteredSettledScopes);
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
-    scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
+    scopes: settledScopes,
     expanded: settledShelfExpanded,
     visibleCount: settledVisibleCount,
   });
   const listedSettledThreads = settledThreads.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettledThreads);
   const settledCount =
-    settledThreads.length + olderSettledShelf.unloadedCount(partition.visibleThreads);
+    settledThreads.length + olderSettledShelf.unloadedCount(settledCardThreads.held);
   const visibleSettledThreads = (() => {
     const visible = listedSettledThreads.slice(0, settledVisibleCount);
     if (
@@ -548,12 +567,15 @@ function useSidebarThreads(input: {
     [activeThreads, "active"],
     [workingThreads, "working"],
     [snoozedThreads, "snoozed"],
-    [settledThreads, "settled"],
+    // T3o: hidden card threads still read as settled, as when search finds them (T3O-78).
+    [partition.settledThreads, "settled"],
   ] as const) {
     for (const thread of list) sectionByThreadKey.set(threadShellKey(thread), section);
   }
   return {
     ...partition,
+    // T3o: without the card threads it hides (T3O-78).
+    settledThreads,
     threads,
     workingShelfEnabled,
     searchableThreads: [
@@ -561,11 +583,23 @@ function useSidebarThreads(input: {
       ...activeThreads,
       ...workingThreads,
       ...snoozedThreads,
-      ...settledThreads,
+      // T3o: search still finds hidden card threads (T3O-78).
+      ...partition.settledThreads,
     ],
     settledVisibleCount,
     settledCount,
     olderSettledShelf,
+    // T3o: the Settled notice's count and switch (T3O-78).
+    settledCardThreadsNotice: {
+      hide: cardThreadFilter.hide,
+      cardThreadCount: settledCardThreadCount({
+        localCardCount: settledCardThreads.localCardCount,
+        scopes: unfilteredSettledScopes,
+        olderSettled: cardThreadFilter.olderSettled,
+        heldCardThreads: settledCardThreads.heldCardThreads,
+      }),
+      onToggle: () => cardThreadFilter.setHide(!cardThreadFilter.hide),
+    },
     hiddenSettledCount: Math.max(0, settledCount - visibleSettledThreads.length),
     showMoreSettled: () =>
       setSettledTail((current) => ({
@@ -588,7 +622,8 @@ function useSidebarThreads(input: {
     visibleWorkingThreads,
     orderedThreadKeys: orderedThreads.map(threadShellKey),
     threadByKey: new Map(orderedThreads.map((thread) => [threadShellKey(thread), thread] as const)),
-    settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
+    // T3o: hidden card threads included, as above (T3O-78).
+    settledThreadKeys: new Set(partition.settledThreads.map(threadShellKey)),
     snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
     sectionByThreadKey,
     pinnedKeys: pinnedThreads.map(threadShellKey),
@@ -1291,6 +1326,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     settledVisibleCount,
     settledCount,
     olderSettledShelf,
+    settledCardThreadsNotice,
     hiddenSettledCount,
     showMoreSettled,
     settledShelfExpanded,
@@ -3134,6 +3170,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         );
                       }}
                     </ComboboxList>
+                    {/* T3o: hide card threads from Settled (T3O-78). */}
+                    <SidebarCardThreadsSwitch />
                   </ComboboxPopup>
                 </Combobox>
               }
@@ -3515,6 +3553,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 }}
                               />,
                             );
+                            // T3o: what the card-thread filter hides (T3O-78).
+                            if (settledShelfExpanded) {
+                              items.push(
+                                <SidebarCardThreadsNotice
+                                  key="settled-card-threads-notice"
+                                  {...settledCardThreadsNotice}
+                                />,
+                              );
+                            }
                             break;
                           case "settled-placeholder":
                             items.push(

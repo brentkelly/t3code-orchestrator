@@ -29,7 +29,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
-  type BoardCardId,
+  BoardCardId,
   type BoardCardStepState,
   type VcsStatusChangeRequest,
 } from "@t3tools/contracts";
@@ -1048,6 +1048,70 @@ describe("card ↔ pull request link", () => {
 });
 
 describe("merging a card's pull request", () => {
+  describe("merge strategy (T3O-80)", () => {
+    const parent = (mergeStrategy: BoardCard["mergeStrategy"]) =>
+      makeBoardCard({
+        id: "card-parent",
+        stage: String(BOARD_SEED_STAGE_IDS.building),
+        orderKey: "a",
+        mergeStrategy,
+      });
+    const child = (mergeStrategy: BoardCard["mergeStrategy"]): BoardCard => ({
+      ...cardInMerge(),
+      parentCardId: BoardCardId.make("card-parent"),
+      mergeStrategy,
+    });
+
+    const mergesWith = (
+      expected: string,
+      input: {
+        readonly cards: ReadonlyArray<BoardCard>;
+        readonly stageStrategy?: BoardCard["mergeStrategy"];
+      },
+    ) =>
+      withGovernor(
+        {
+          board: { nextCardNumberByProject: {}, cards: [...input.cards] },
+          settings: settings(
+            input.stageStrategy == null ? undefined : { strategy: input.stageStrategy },
+          ),
+          pullRequest: openPr,
+        },
+        (h) =>
+          Effect.gen(function* () {
+            const result = yield* h.reactor.mergePullRequest(cardInMerge().id);
+            assert.equal(result.outcome, "merged");
+            assert.deepStrictEqual(yield* h.mergeMethods, [expected]);
+          }),
+      );
+
+    it.effect("merges with the merge stage's strategy when the card has none", () =>
+      mergesWith("rebase", { cards: [cardInMerge()], stageStrategy: "rebase" }),
+    );
+
+    it.effect("falls back to squash when nothing is configured", () =>
+      mergesWith("squash", { cards: [cardInMerge()] }),
+    );
+
+    it.effect("the card's own strategy wins over the merge stage's", () =>
+      mergesWith("merge", {
+        cards: [{ ...cardInMerge(), mergeStrategy: "merge" }],
+        stageStrategy: "squash",
+      }),
+    );
+
+    it.effect("a sub-board child inherits its parent's", () =>
+      mergesWith("merge", { cards: [parent("merge"), child(null)], stageStrategy: "squash" }),
+    );
+
+    it.effect("a sub-board child's own strategy wins over its parent's", () =>
+      mergesWith("rebase", {
+        cards: [parent("merge"), child("rebase")],
+        stageStrategy: "squash",
+      }),
+    );
+  });
+
   it.effect("merges and advances the card to the next stage", () =>
     withGovernor(
       {
@@ -1731,12 +1795,13 @@ describe("merging a card's pull request", () => {
             // again, so the card stays put — and the thread must be released.
             yield* h.pumpDomain(mergeStepCompleted(card.id, 1));
 
-            const unlinked = (yield* h.commands).filter(
+            // Retired, not unlinked (T3O-41): it stays on the card as history.
+            const retired = (yield* h.commands).filter(
               (command) =>
-                command.type === "board.card.unlink-thread" &&
+                command.type === "board.card.retire-thread" &&
                 String(command.threadId) === "thread-1",
             );
-            assert.equal(unlinked.length, 1, "the conflict fix's thread must be unlinked");
+            assert.equal(retired.length, 1, "the conflict fix's thread must be retired");
           }),
       );
     }),

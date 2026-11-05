@@ -41,8 +41,11 @@ import { ProviderInstanceId } from "./providerInstance.ts";
  * The board-worker protocol this build speaks. Bumped when the central server
  * starts relying on a `boardWorker.*` call (or a change to one) that an older
  * worker does not have.
+ *
+ * 2: `boardWorker.git.closePullRequest` (T3O-28), used by group archive and
+ *    cancel-work. Best-effort, so the floor stays at 1.
  */
-export const BOARD_WORKER_PROTOCOL_VERSION = 1;
+export const BOARD_WORKER_PROTOCOL_VERSION = 2;
 
 /** The oldest protocol a worker may speak and still be used (D16). */
 export const BOARD_WORKER_PROTOCOL_FLOOR = 1;

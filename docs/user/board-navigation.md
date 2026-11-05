@@ -5,9 +5,11 @@ front of you, because the board is where work is planned, watched and picked up.
 
 ## Switching modes
 
-**Board** and **Threads** sit side by side as a pair of tabs. Selecting one takes you back to where
+**Board**, **List** and **Threads** sit side by side as tabs. Selecting one takes you back to where
 you were the last time you were in that mode — the thread you were reading, or the board scoped to
-the project you were watching — rather than dumping you at that mode's front page.
+the project you were watching — rather than dumping you at that mode's front page. The command
+palette offers the same switch: **Go to Board**, **Go to List** and **Go to Threads**. The List view
+is described in [Groups on the board](board-groups.md#regrouping-in-the-list-view).
 
 Going home stays going home. Deleting a thread, discarding a draft or closing settings returns you
 to your threads, exactly as before. Only opening the app fresh takes you to the board. Finishing a
@@ -15,7 +17,7 @@ pairing does too, so a newly connected device starts where everyone else does.
 
 ## Where the tabs sit
 
-In board mode the tabs are in the top bar, next to the T3 Code wordmark.
+In board and list mode the tabs are in the top bar, next to the T3 Code wordmark.
 
 In threads mode they move up into the sidebar's header, beside the same wordmark, whenever that
 header is wide enough to hold them. Drag the sidebar narrower and the tabs move back down into the
@@ -38,6 +40,18 @@ the menu.
 
 Collapsing the menu also hides the app-update indicator that shares it. If an update finishes
 downloading while the menu is collapsed, T3 Code still tells you.
+
+## Folding empty stages
+
+Turn on **Auto-collapse empty stages** in **Settings → Board → Display** and every stage with no
+cards folds to a narrow strip, on the board and inside sub-boards alike. A stage opens again as soon
+as a card lands in it, and drag a card over a folded stage to open it and drop the card where you
+want it. The setting belongs to the board, so everyone using it sees the same thing.
+
+Select a folded empty stage to look inside it. It stays open while it is empty, and folds again the
+next time it empties after holding cards. Folding happens on top of the stages you
+collapse or expand yourself, so it never changes them: a stage you collapsed stays collapsed when
+cards arrive.
 
 ## Stepping between cards
 

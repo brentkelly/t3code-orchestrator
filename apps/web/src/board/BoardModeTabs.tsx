@@ -1,5 +1,5 @@
 /**
- * T3o Threads/Board segmented control (t3o-05), rendered before the
+ * T3o Board/List/Threads segmented control (t3o-05, T3O-30), rendered before the
  * breadcrumb in the workspace top bar. The threads surface mounts it through
  * the one D1 shell-tab seam in `ChatView`; the board surface's top bar is
  * board-owned and mounts it directly.
@@ -9,7 +9,7 @@
  * where you were, not to that mode's root.
  */
 import { useRouter, useRouterState } from "@tanstack/react-router";
-import { Columns3Icon, MessageSquareIcon } from "lucide-react";
+import { Columns3Icon, ListTreeIcon, MessageSquareIcon } from "lucide-react";
 import { useCallback, useEffect } from "react";
 
 import { cn } from "../lib/utils";
@@ -32,7 +32,7 @@ function locationForMode(
   mode: WorkspaceMode,
   lastLocationByMode: Partial<Record<WorkspaceMode, string>>,
 ): string {
-  const fallback = mode === "board" ? "/board" : "/";
+  const fallback = mode === "board" ? "/board" : mode === "list" ? "/list" : "/";
   const stored = lastLocationByMode[mode];
   return stored !== undefined && isModeTabDestination(mode, stored) ? stored : fallback;
 }
@@ -160,6 +160,15 @@ export function BoardModeTabs({
         onSelect={() => switchTo("board")}
       >
         <Columns3Icon />
+      </ModeTab>
+      {/* T3o (T3O-30): the whole card tree as an outline. */}
+      <ModeTab
+        active={mode === "list"}
+        href={hrefFor("list")}
+        label="List"
+        onSelect={() => switchTo("list")}
+      >
+        <ListTreeIcon />
       </ModeTab>
       <ModeTab
         active={mode === "threads"}

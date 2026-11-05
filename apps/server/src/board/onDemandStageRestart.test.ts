@@ -188,15 +188,11 @@ it.effect("restarts a planning step parked on a question — the reported no-op"
       ),
       "the restarted thread is linked to the card",
     );
-    // The superseded run is gone from the card: unlinking a live thread removes
-    // the link outright, so the strip stops offering a conversation the board is
-    // no longer supervising.
-    assert.isUndefined(
-      outcome.card.threadLinks.find(
-        (entry) => entry.threadId === oldThread && entry.tombstonedAt === null,
-      ),
-      "the superseded planning thread is unlinked",
-    );
+    // The superseded run stays on the card as a retired past thread (T3O-41):
+    // the board no longer supervises it, but its history is not lost.
+    const superseded = outcome.card.threadLinks.find((entry) => entry.threadId === oldThread);
+    assert.isDefined(superseded?.retiredAt, "the superseded planning thread is retired");
+    assert.strictEqual(superseded?.tombstonedAt, null);
   }),
 );
 

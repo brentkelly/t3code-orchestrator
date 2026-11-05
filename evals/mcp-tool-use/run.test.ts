@@ -10,6 +10,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import {
   buildBase,
   buildMessages,
+  expandCaseText,
   failedEarly,
   executeCodex,
   gradeSample,
@@ -3302,4 +3303,21 @@ it.each([
     }),
     [],
   );
+});
+
+it("fills a case's {{NAME}} references with the current T3 text, and refuses unknown ones", () => {
+  const base = {
+    id: "x",
+    area: "board",
+    kind: "bad",
+    pattern: "p",
+    experience: "e",
+    setup: { role: "top", context: "Context. {{BOARD_ENVELOPE_REGROUP_GUARD}}" },
+    prompt: "{{BOARD_AUTO_PLAN_INSTRUCTION}}",
+    expect: {},
+  } as unknown as McpToolUseCase;
+  const expanded = expandCaseText(base);
+  expect(expanded.prompt).toContain("board_record_decisions");
+  expect(expanded.setup.context).toContain("regroup");
+  expect(() => expandCaseText({ ...base, prompt: "{{NOT_A_THING}}" })).toThrow("NOT_A_THING");
 });

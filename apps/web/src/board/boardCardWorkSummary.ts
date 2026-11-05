@@ -9,6 +9,7 @@ import {
   boardCardDisplayPullRequest,
   boardReviewHeldLabel,
   boardStageById,
+  boardStageIndex,
   boardStageWithRole,
   decodeBoardBuildSummaryPayloadOption,
   effectiveBoardStageRole,
@@ -129,11 +130,24 @@ export function boardCardHasSummaryPane(input: {
   readonly stage: BoardStageId;
   readonly stepCompletions: ReadonlyArray<BoardStepCompletion>;
   readonly card: Pick<BoardCard, "pullRequest" | "pullRequestHistory">;
+  /** How many planning decisions the card has logged (T3O-32). */
+  readonly decisionCount?: number;
 }): boolean {
   const role = stageRoleOf(input.stages, input.stage);
   if (role === "review" || role === "merge" || role === "done") return true;
+  // The decision log opens the pane from the stage after planning onward.
+  if ((input.decisionCount ?? 0) > 0 && isPastPlanning(input.stages, input.stage)) return true;
   if (hasBoardReviewSteps(input.stepCompletions)) return true;
   return boardCardDisplayPullRequest(input.card) !== null;
+}
+
+/** The card is in a stage after the plan-role stage (Ready onward). */
+function isPastPlanning(stages: ReadonlyArray<BoardStageDefinition>, stage: BoardStageId): boolean {
+  const state: BoardState = { cards: [], stages, nextCardNumberByProject: {} };
+  const plan = boardStageWithRole(state, "plan");
+  if (plan === null) return false;
+  const planIndex = boardStageIndex(state, plan.stageId);
+  return planIndex >= 0 && boardStageIndex(state, stage) > planIndex;
 }
 
 function pickVerdict(

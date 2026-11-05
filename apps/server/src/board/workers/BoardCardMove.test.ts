@@ -81,6 +81,7 @@ const makeCard = (overrides: Partial<BoardCard> = {}): BoardCard => ({
   dependsOn: [],
   parentCardId: null,
   sourcePlanId: null,
+  group: null,
   threadLinks: [
     {
       threadId: ThreadId.make("thread-build"),
@@ -97,9 +98,11 @@ const makeCard = (overrides: Partial<BoardCard> = {}): BoardCard => ({
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: null,
-  autoStart: false,
-  autoMerge: false,
+  autoPlanSetting: null,
+  autoBuildSetting: null,
+  autoMergeSetting: null,
   autoMergeHold: null,
+  mergeStrategy: null,
   pinnedWorkerId: null,
   placedWorkerId: BOARD_LOCAL_WORKER_ID,
   workerMove: null,

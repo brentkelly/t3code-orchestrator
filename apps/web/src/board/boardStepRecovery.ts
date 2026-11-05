@@ -43,6 +43,9 @@ export function resolveBoardStepRecovery(input: {
   readonly stalled: boolean;
   readonly archived: boolean;
   readonly blocked: boolean;
+  /** False on a group card: its stage is derived from its children, so a hand
+      move is not a way out. */
+  readonly handMoves?: boolean;
 }): BoardStepRecovery | null {
   if (!input.stalled || input.archived) return null;
   const stage = boardStageLabelMidSentence(boardStageLabel(input.stages, input.stage));
@@ -54,7 +57,7 @@ export function resolveBoardStepRecovery(input: {
     continueLabel: `Continue ${stage}`,
     restartLabel: `Restart ${stage}`,
     next:
-      nextStage === null
+      nextStage === null || input.handMoves === false
         ? null
         : {
             label: `Move to ${boardStageLabel(input.stages, nextStage)}`,

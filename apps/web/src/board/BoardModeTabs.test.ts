@@ -156,6 +156,15 @@ describe("modeTabHref", () => {
   it("addresses each mode's root when nothing has been visited yet", () => {
     expect(modeTabHref(browserHistory, "board", {})).toBe("/board");
     expect(modeTabHref(browserHistory, "threads", {})).toBe("/");
+    expect(modeTabHref(browserHistory, "list", {})).toBe("/list");
+  });
+
+  it("gives the List tab its own last location, never the board's (T3O-30)", () => {
+    expect(modeTabHref(browserHistory, "list", { list: "/list?project=web" })).toBe(
+      "/list?project=web",
+    );
+    expect(modeTabHref(browserHistory, "list", { list: "/board" })).toBe("/list");
+    expect(modeTabHref(browserHistory, "board", { board: "/list" })).toBe("/board");
   });
 
   it("addresses the mode's last-seen location, so the link opens where you were", () => {

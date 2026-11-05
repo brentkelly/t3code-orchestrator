@@ -10,25 +10,26 @@
 import {
   BOARD_SEED_STAGE_IDS,
   BOARD_SEED_STAGES,
-  DEFAULT_SERVER_SETTINGS,
-  EMPTY_BOARD_WORKERS_STATE,
   BoardCardId,
-  BoardLabelId,
   BoardStageId,
-  ProjectId,
   ThreadId,
   boardPlanId,
-  makeBoardCardShell,
   type BoardCard,
   type BoardCardDetail,
   type BoardCardThreadLink,
-  type BoardLabel,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Menu } from "../components/ui/menu";
-import { boardAutoMergeToggleCopy } from "./boardAutoMergeHold";
 import { boardConflictFix } from "./boardConflictFix";
-import { boardThreadWorker } from "./workers/threadWorker";
+import {
+  NOW,
+  baseProps,
+  cardId,
+  detail,
+  localWorker,
+  noop,
+  splitDetail,
+  splitShells,
+} from "./boardCardDetailFixtures";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 // The Threads section deep-links with TanStack Router's <Link>, which needs a
@@ -39,214 +40,8 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
-const {
-  BoardCardAutoMergeMenuItem,
-  BoardCardDetailPanel,
-  boardCardIsDone,
-  initialBoardCardPane,
-  initialBoardCardThreadId,
-} = await import("./BoardCardDetailView");
-
-const NOW = "2026-01-01T00:00:00.000Z";
-const environmentId = "env-1" as never;
-
-const cardId = BoardCardId.make("card-1");
-
-function card(overrides?: Partial<BoardCard>): BoardCard {
-  return {
-    id: cardId,
-    key: "T3-7",
-    cardNumber: 7,
-    projectId: ProjectId.make("project-gone"),
-    labels: [],
-    pullRequest: null,
-    pullRequestHistory: [],
-    pullRequestFloor: null,
-    stage: BOARD_SEED_STAGE_IDS.ready,
-    orderKey: "m",
-    title: "Wire the widget",
-    briefRef: null,
-    dependsOn: [],
-    parentCardId: null,
-    sourcePlanId: null,
-    threadLinks: [],
-    attachments: [],
-    externalRef: null,
-    humanInLoop: null,
-    reviewOverrides: null,
-    modelOverrides: null,
-    splitRationale: null,
-    baseBranch: null,
-    scheduledStartAt: null,
-    autoStart: false,
-    autoMerge: false,
-    autoMergeHold: null,
-    pinnedWorkerId: null,
-    placedWorkerId: null,
-    workerMove: null,
-    placementOrphaned: null,
-    worktree: null,
-    blocked: false,
-    archivedAt: null,
-    createdAt: NOW,
-    updatedAt: NOW,
-    ...overrides,
-  };
-}
-
-function detail(
-  overrides?: Partial<BoardCard>,
-  brief: string | null = null,
-  edges?: Partial<
-    Pick<BoardCardDetail, "dependencies" | "dependents" | "stepCompletions" | "activity" | "plans">
-  >,
-): BoardCardDetail {
-  const plans = edges?.plans ?? [];
-  return {
-    card: card(overrides),
-    brief,
-    hasPlan: plans.length > 0,
-    plans,
-    children: [],
-    dependencies: edges?.dependencies ?? [],
-    dependents: edges?.dependents ?? [],
-    activity: edges?.activity ?? [],
-    parentModelOverrides: null,
-    stepError: null,
-    stepCompletions: edges?.stepCompletions ?? [],
-  };
-}
-
-/** A parent with `childCount` plans, and one materialised child per plan from
-    `archivedFrom` onward marked archived (t3o-29). */
-function splitDetail(options: {
-  readonly childCount: number;
-  readonly archivedFrom?: number;
-  readonly stage?: BoardStageId;
-}): BoardCardDetail {
-  const count = Math.max(options.childCount, 1);
-  const plans = Array.from({ length: count }, (_, index) => ({
-    planId: boardPlanId(cardId, `p${index}`),
-    cardId,
-    title: `Plan ${index + 1}`,
-    summary: `Summary ${index + 1}`,
-    dependsOn: index === 0 ? [] : [boardPlanId(cardId, "p0")],
-    ordinal: index,
-    locked: false,
-    createdAt: NOW,
-    updatedAt: NOW,
-    body: `# Plan ${index + 1}`,
-  })) as BoardCardDetail["plans"];
-  const children =
-    options.childCount === 0
-      ? []
-      : (Array.from({ length: options.childCount }, (_, index) => ({
-          cardId: BoardCardId.make(`child-${index}`),
-          key: `T3-1${index}`,
-          title: `Plan ${index + 1}`,
-          stage: BOARD_SEED_STAGE_IDS.ready,
-          archivedAt:
-            options.archivedFrom !== undefined && index >= options.archivedFrom ? NOW : null,
-          sourcePlanId: boardPlanId(cardId, `p${index}`),
-        })) as BoardCardDetail["children"]);
-  return {
-    ...detail({ stage: options.stage ?? BOARD_SEED_STAGE_IDS.planning }, null, { plans }),
-    children,
-  };
-}
-
-/** The children's shells, as the unscoped snapshot carries them. */
-function splitShells(count: number) {
-  return Array.from({ length: count }, (_, index) =>
-    makeBoardCardShell({
-      cardId: BoardCardId.make(`child-${index}`),
-      key: `T3-1${index}`,
-      projectId: ProjectId.make("project-gone"),
-      labelIds: [],
-      stage: BOARD_SEED_STAGE_IDS.ready,
-      orderKey: "m",
-      title: `Plan ${index + 1}`,
-      blocked: false,
-      dependencyCount: 0,
-      hasBrief: false,
-      activeThreadId: null,
-    }),
-  );
-}
-
-const noop = () => {};
-const localWorker = boardThreadWorker({
-  workerId: undefined,
-  workers: EMPTY_BOARD_WORKERS_STATE,
-  boardEnvironmentId: environmentId,
-});
-const baseProps = {
-  environmentId,
-  baseBranch: {
-    effective: "main",
-    retargeted: false,
-    inheritedFrom: null,
-    workspaceRoot: "/tmp/project",
-  },
-  project: {
-    lock: null,
-    options: [],
-    accent: null,
-    names: new Map<string, string>(),
-    stopsAgent: false,
-    restartsStage: false,
-  },
-  onMergePullRequest: noop,
-  onOpenPullRequest: noop,
-  conflictFix: null,
-  stepFailure: null,
-  stepPaused: null,
-  merging: false,
-  catalogue: [] as ReadonlyArray<BoardLabel>,
-  stages: BOARD_SEED_STAGES,
-  humanInLoop: null,
-  onSetHumanInLoop: noop,
-  labelsById: new Map<BoardLabelId, BoardLabel>(),
-  branch: null,
-  dependencies: [],
-  dependencyOptions: [],
-  threadLinks: [],
-  attachments: [],
-  adoptableThreads: [],
-  stageRestart: null,
-  onRestartStage: noop,
-  onCreateBlankThread: () => Promise.resolve(null),
-  feedback: null,
-  maximised: false,
-  onToggleMaximised: noop,
-  paneChoice: null,
-  onSelectPane: noop,
-  onClose: noop,
-  onSetLabels: noop,
-  onCreateLabel: noop,
-  onRecolourLabel: noop,
-  onDeleteLabel: noop,
-  onUndeleteLabel: noop,
-  onSaveBrief: noop,
-  attachmentLimits: { known: false, enabled: false, maxFileBytes: null },
-  onAttachFile: () => Promise.resolve(null),
-  onDetachFile: noop,
-  onSaveTitle: noop,
-  onAddDependency: noop,
-  onRemoveDependency: noop,
-  onMoveStage: noop,
-  onArchiveToggle: noop,
-  onDelete: noop,
-  canApproveSplit: false,
-  approveSplitTargetLabel: null,
-  onApproveSplit: noop,
-  onLinkThread: noop,
-  onUnlinkThread: noop,
-  boardSettings: DEFAULT_SERVER_SETTINGS.board,
-  onSetModelOverrides: noop,
-  scheduleKind: "before-build" as const,
-  onSetScheduledStartAt: noop,
-} as const;
+const { BoardCardDetailPanel, boardCardIsDone, initialBoardCardPane, initialBoardCardThreadId } =
+  await import("./BoardCardDetailView");
 
 /** The pane switch's selected tab — the one tab styled active (`bg-card`) —
     read back out of the static markup by its label. */
@@ -532,7 +327,7 @@ describe("BoardCardDetailPanel", () => {
         {...baseProps}
         detail={detail({
           stage: BOARD_SEED_STAGE_IDS.merge,
-          autoMerge: true,
+          autoMergeSetting: true,
           autoMergeHold: {
             reason: "Required status check 'test' has not passed.",
             classification: "soft",
@@ -559,7 +354,7 @@ describe("BoardCardDetailPanel", () => {
         {...baseProps}
         detail={detail({
           stage: BOARD_SEED_STAGE_IDS.merge,
-          autoMerge: true,
+          autoMergeSetting: true,
           autoMergeHold: {
             reason: "ci/test failed.",
             classification: "checks-failed",
@@ -592,49 +387,15 @@ describe("BoardCardDetailPanel", () => {
     expect(html).not.toContain("Auto-merge stopped");
   });
 
-  it("moves the per-card auto-merge switch out of the action rail and into the kebab (T3O-42)", () => {
-    const html = renderToStaticMarkup(
-      <BoardCardDetailPanel
-        {...baseProps}
-        detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
-        onSetAutoMerge={() => {}}
-        projectName="P"
-      />,
-    );
-    // Gone from the stage's own actions, where it competed with the buttons a
-    // user reaches for on every pass through a card...
-    expect(html).not.toContain("Auto-merge when ready");
-    expect(html).toContain("More actions");
-    // ...and present in the kebab. The popup is a portal and renders nothing
-    // on the server, so the row is rendered directly, the way
-    // `BoardCardThreadAddMenuBody` is. Which cards get one at all is pinned
-    // against `boardAutoMergeArm` in boardAutoMergeHold.test.ts.
-    const copy = boardAutoMergeToggleCopy(false);
-    const item = renderToStaticMarkup(
-      // A Base UI menu part needs its root's context; nothing else about the
-      // root renders.
-      <Menu>
-        <BoardCardAutoMergeMenuItem arm={{ armed: false, copy }} onToggle={() => {}} />
-      </Menu>,
-    );
-    expect(item).toContain(copy.label);
-    expect(item).toContain(copy.hint);
-    // Nothing to render when the card gets no arm, so the kebab keeps its
-    // narrow shape.
-    expect(
-      renderToStaticMarkup(<BoardCardAutoMergeMenuItem arm={null} onToggle={() => {}} />),
-    ).toBe("");
-  });
-
   it("names the source in the header when the board-wide setting owns it (T3O-38, D3)", () => {
     // Two controls that can disagree about one card is worse than one, so the
     // per-card switch goes and the header says where the decision lives.
     const boardWide = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
+        autoMergeArmed
         autoMergeFromBoardSetting
         detail={detail({ stage: BOARD_SEED_STAGE_IDS.building })}
-        onSetAutoMerge={() => {}}
         projectName="P"
       />,
     );
@@ -1052,7 +813,7 @@ describe("BoardCardDetailPanel", () => {
     expect(html).toContain(">1 plan</button>");
   });
 
-  it("renders the whole stage ladder with the card's stage marked current", () => {
+  it("collapses the stage ladder, naming the card's stage on its header (T3O-38)", () => {
     const html = renderToStaticMarkup(
       <BoardCardDetailPanel
         {...baseProps}
@@ -1060,9 +821,8 @@ describe("BoardCardDetailPanel", () => {
         projectName="P"
       />,
     );
-    for (const stage of BOARD_SEED_STAGES) expect(html).toContain(stage.label);
-    // Exactly one rung is the current one.
-    expect(html.match(/aria-current="true"/g)).toHaveLength(1);
+    expect(html).toContain("Code review");
+    expect(html).not.toContain('aria-current="true"');
   });
 
   it("names the unmet dependencies on a blocked card and disables the forward gate", () => {
@@ -1094,6 +854,32 @@ describe("BoardCardDetailPanel", () => {
     // The met dependency is not part of the reason.
     expect(html).toContain("Blocked by T3-2");
     expect(html).not.toContain("Blocked by T3-1");
+    expect(html).toContain("disabled");
+  });
+  it("counts the dependencies a card inherits from its group at the build gate (T3O-26)", () => {
+    const html = renderToStaticMarkup(
+      <BoardCardDetailPanel
+        {...baseProps}
+        dependencies={[]}
+        detail={detail(
+          { stage: BOARD_SEED_STAGE_IDS.ready, parentCardId: BoardCardId.make("card-group") },
+          null,
+          {
+            groupDependencies: [
+              {
+                cardId: BoardCardId.make("dep-group"),
+                key: "T3-7",
+                title: "What the group waits on",
+                stage: BOARD_SEED_STAGE_IDS.building,
+                archivedAt: null,
+              },
+            ],
+          },
+        )}
+        projectName="P"
+      />,
+    );
+    expect(html).toContain("Blocked by T3-7");
     expect(html).toContain("disabled");
   });
   // The modal opens on the pane the card's stage has made current (planning
@@ -1133,6 +919,173 @@ describe("BoardCardDetailPanel", () => {
     // Skip-review Done still opens on Summary — the recap is how the work
     // went, including "No review summary".
     expect(paneFor(BOARD_SEED_STAGE_IDS.done, false)).toBe("Summary");
+  });
+
+  describe("a group card's panes (T3O-34)", () => {
+    const group = {
+      chip: "Group · 3 cards",
+      note: "Its cards are being built.",
+      onOpenBoard: undefined,
+      onArchive: noop,
+      ownBranch: false,
+    };
+    const planningThread = ThreadId.make("thread-planning");
+    const otherThread = ThreadId.make("thread-other");
+    const viewLink = (threadId: ThreadId, role: string) => ({
+      threadId,
+      role,
+      tombstoned: false,
+      title: null,
+      threadState: "none" as const,
+      awaitingInput: false,
+      worker: localWorker,
+      ranOn: null,
+    });
+    const cardLink = (threadId: ThreadId, role: string, linkedAt: string) => ({
+      threadId,
+      role,
+      linkedAt,
+      tombstonedAt: null,
+    });
+    /** Three children made by hand and grouped: no plan behind any. */
+    const handMadeChildren = Array.from({ length: 3 }, (_, index) => ({
+      cardId: BoardCardId.make(`child-${index}`),
+      key: `T3-1${index}`,
+      title: `Card ${index + 1}`,
+      stage: BOARD_SEED_STAGE_IDS.ready,
+      archivedAt: null,
+      sourcePlanId: null,
+      dependsOn: index === 0 ? [] : [BoardCardId.make("child-0")],
+    }));
+    const render = (options: {
+      readonly paneChoice?: "thread" | "planning" | null;
+      readonly grouped?: boolean;
+      readonly links?: ReadonlyArray<readonly [ThreadId, string]>;
+    }) => {
+      const links = options.links ?? [[planningThread, "planning"]];
+      return renderToStaticMarkup(
+        <BoardCardDetailPanel
+          {...baseProps}
+          childShells={splitShells(3)}
+          detail={{
+            ...detail({
+              stage: BOARD_SEED_STAGE_IDS.building,
+              threadLinks: links.map(([threadId, role], index) =>
+                cardLink(threadId, role, `2026-01-01T00:00:0${index}.000Z`),
+              ),
+            }),
+            children: handMadeChildren,
+          }}
+          group={options.grouped === false ? null : group}
+          paneChoice={options.paneChoice ?? null}
+          projectName="P"
+          threadLinks={links.map(([threadId, role]) => viewLink(threadId, role))}
+        />,
+      );
+    };
+
+    it("opens on Cards for a group whose children have no plans", () => {
+      // The pill used to need a plan row; the rows themselves are pinned in
+      // boardPlanRows.test.ts.
+      expect(selectedTab(render({}))).toBe("Cards");
+    });
+
+    it("never locks the Thread pill and drops the Planning thread box", () => {
+      const html = render({ paneChoice: "thread" });
+      expect(html).not.toContain("lucide-lock");
+      expect(html).not.toContain("Reopen thread");
+      expect(html).not.toContain("Planning thread");
+      expect(html).toMatch(/<button(?![^>]*disabled)[^>]*>(?:(?!<\/button>).)*Thread<\/button>/);
+    });
+
+    it("lights the pill the user picked, even when the planning thread is the only one", () => {
+      // The planning thread is the Thread pane's default here, so the pill
+      // must follow the pane chosen, not the thread on show.
+      expect(selectedTab(render({ paneChoice: "thread" }))).toBe("Thread");
+      expect(selectedTab(render({ paneChoice: "planning" }))).toBe("Planning");
+      expect(
+        selectedTab(
+          render({
+            paneChoice: "planning",
+            links: [
+              [planningThread, "planning"],
+              [otherThread, "linked"],
+            ],
+          }),
+        ),
+      ).toBe("Planning");
+    });
+
+    it("falls back to Thread when Planning is picked with no planning thread", () => {
+      expect(
+        selectedTab(render({ paneChoice: "planning", links: [[otherThread, "linked"]] })),
+      ).toBe("Thread");
+    });
+
+    it("offers no Planning pill without a planning thread, or off a group", () => {
+      expect(render({ links: [] })).not.toContain("Planning</button>");
+      expect(render({ grouped: false })).not.toContain("Planning</button>");
+      expect(render({})).toContain("Planning</button>");
+    });
+  });
+
+  it("opens an own-branch group in its integration review on the Review pane", () => {
+    const group = {
+      chip: "Group · 2 cards",
+      note: "Every card is done; its integration review is open.",
+      onOpenBoard: undefined,
+      onArchive: noop,
+      ownBranch: true,
+    };
+    const paneFor = (stage: BoardCard["stage"]) =>
+      selectedTab(
+        renderToStaticMarkup(
+          <BoardCardDetailPanel
+            {...baseProps}
+            group={group}
+            detail={detail({ stage })}
+            projectName="P"
+          />,
+        ),
+      );
+    expect(paneFor(BOARD_SEED_STAGE_IDS.review)).toBe("Review");
+    expect(paneFor(BOARD_SEED_STAGE_IDS.sprint)).toBe("Brief");
+  });
+
+  it("opens an inherit group's decision log on the Summary pane (T3O-26)", () => {
+    const group = {
+      chip: "Group · 2 cards",
+      note: "Its cards are being planned.",
+      onOpenBoard: undefined,
+      onArchive: noop,
+      ownBranch: false,
+    };
+    const render = (decisions: BoardCardDetail["decisions"]) =>
+      renderToStaticMarkup(
+        <BoardCardDetailPanel
+          {...baseProps}
+          group={group}
+          detail={detail({ stage: BOARD_SEED_STAGE_IDS.planning }, null, { decisions })}
+          projectName="P"
+        />,
+      );
+    expect(render([])).not.toContain(">Summary</button>");
+    const html = render([
+      {
+        decisionId: "d-1",
+        cardId,
+        stepId: null,
+        threadId: null,
+        question: "Split by surface?",
+        decision: "Yes",
+        reason: "Each ships alone.",
+        flag: "normal",
+        decidedBy: "agent",
+        createdAt: NOW,
+      },
+    ]);
+    expect(html).toContain(">Summary</button>");
+    expect(html).not.toContain(">Review</button>");
   });
 
   it("shows the Summary pill from Code review on, and keeps it after a real loop", () => {
@@ -1373,6 +1326,27 @@ describe("initialBoardCardThreadId", () => {
   it("leaves the review stages on the card's active thread", () => {
     expect(initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.review, links)).toBe(
       "thread-review",
+    );
+  });
+
+  it("passes over a retired thread, but opens one when every thread is retired (T3O-41)", () => {
+    const retired = (threadId: string, role: string, linkedAt: string) => ({
+      ...link(threadId, role, linkedAt),
+      retiredAt: "2026-01-02T00:00:00.000Z",
+    });
+    const conflicts = [
+      link("thread-plan", BOARD_SEED_STAGE_IDS.planning, "2026-01-01T00:00:00.000Z"),
+      retired("thread-fix", BOARD_SEED_STAGE_IDS.planning, "2026-01-01T03:00:00.000Z"),
+    ];
+    expect(
+      initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.planning, conflicts),
+    ).toBe("thread-plan");
+    const allRetired = [
+      retired("thread-old", "merge", "2026-01-01T00:00:00.000Z"),
+      retired("thread-new", "merge", "2026-01-01T03:00:00.000Z"),
+    ];
+    expect(initialBoardCardThreadId(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.done, allRetired)).toBe(
+      "thread-new",
     );
   });
 

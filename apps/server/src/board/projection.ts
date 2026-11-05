@@ -56,6 +56,10 @@ import {
   BoardCardWorktree,
   BoardCardPullRequest,
   BoardCardModelOverrides,
+  BoardSplitRecommendation,
+  BoardCardAutoPlan,
+  BoardCardPlanReview,
+  BoardCardDecision,
   BoardCardReviewOverrides,
   BoardCardReviewSummary,
   deriveBoardCardReviewSummary,
@@ -65,6 +69,9 @@ import {
   isBoardChecksFixLive,
   isBoardTerminalStepStatus,
   makeBoardCardShell,
+  boardSplitChildPlanCopy,
+  BoardCardGroupTarget,
+  type BoardCardGroup,
   BoardCardAttachment,
   BoardCardAutoMergeHold,
   sortBoardCardAttachments,
@@ -106,6 +113,12 @@ export const BOARD_CARD_ACTIVITY_TAIL_LIMIT = 50;
 // `blocked` travels as 0/1 (SQLite has no boolean); the JSON-shaped columns
 // encode/decode through fromJsonString so the row schema's Type side stays
 // the domain shape.
+/** An own Automation toggle as a nullable SQLite integer (T3O-38). */
+const settingToInt = (value: boolean | null): number | null =>
+  value === null ? null : value ? 1 : 0;
+const settingFromInt = (value: number | null): boolean | null =>
+  value === null ? null : value !== 0;
+
 const BoardCardDbRow = Schema.Struct({
   cardId: BoardCard.fields.id,
   key: BoardCard.fields.key,
@@ -140,11 +153,21 @@ const BoardCardDbRow = Schema.Struct({
       has never set a per-stage model override — indistinguishable on purpose,
       exactly as `reviewOverrides` is, so replay equals rehydration (t3o-29). */
   modelOverrides: Schema.NullOr(Schema.fromJsonString(BoardCardModelOverrides)),
+  /** NULL before migration 057 and for every card that follows the default
+      merge strategy (T3O-80) — indistinguishable on purpose. */
+  mergeStrategy: BoardCard.fields.mergeStrategy,
   /** NULL for every row written before migration 035, and for every card whose
       latest plan proposal was a single plan — indistinguishable on purpose, so
       replay equals rehydration (t3o card 11). Plain text, not JSON: one prose
       paragraph the human reads at the Approve split gate. */
   splitRationale: BoardCard.fields.splitRationale,
+  /** NULL for every row written before migration 052 and for every card with
+      no split proposed since T3O-31 (D8: replay equals rehydration). */
+  splitRecommendation: Schema.NullOr(Schema.fromJsonString(BoardSplitRecommendation)),
+  autoPlan: Schema.NullOr(Schema.fromJsonString(BoardCardAutoPlan)),
+  /** NULL for every row written before migration 054 and for every card that
+      follows the Settings default (plan review, T3O-39). */
+  planReview: Schema.NullOr(Schema.fromJsonString(BoardCardPlanReview)),
   /** NULL for every row written before migration 036, and for every card that
       follows its project's default branch — indistinguishable on purpose, which
       is what makes replay equal rehydration (T3O-5, D1). */
@@ -154,16 +177,12 @@ const BoardCardDbRow = Schema.Struct({
       (the supervisor clears it in the pass that acts on it) — indistinguishable
       on purpose, which is what makes replay equal rehydration (T3O-19, D1). */
   scheduledStartAt: BoardCard.fields.scheduledStartAt,
-  /** 0 for every row written before migration 039, for every card that has
-      never been armed, and for every card whose arm has been spent (the decider
-      clears it inside the move that leaves the pre-build stage) — indistinguish-
-      able on purpose, which is what makes replay equal rehydration (T3O-24). */
-  autoStart: Schema.Int,
-  /** 0 for every row written before migration 043 and for every card that has
-      never been armed to merge itself — indistinguishable on purpose, which is
-      what makes replay equal rehydration (T3O-38). Unlike `auto_start` this
-      arm is never spent, so it also survives the card reaching Done. */
-  autoMerge: Schema.Int,
+  /** The card's own Automation toggles (T3O-38): NULL inherits, 0/1 is an
+      own value. Migration 055 backfilled them from the retired `auto_start` /
+      `auto_merge` columns, which are no longer written. */
+  autoPlanSetting: Schema.NullOr(Schema.Int),
+  autoBuildSetting: Schema.NullOr(Schema.Int),
+  autoMergeSetting: Schema.NullOr(Schema.Int),
   /** NULL for every row written before migration 043, for every card whose
       armed merge has never been refused, and for every card whose hold has
       been cleared — indistinguishable on purpose (T3O-38, D4/D10). */
@@ -177,6 +196,16 @@ const BoardCardDbRow = Schema.Struct({
   /** NULL before migration 049 and for every card whose worker is still on
       the board (T3O-66). */
   placementOrphaned: Schema.NullOr(Schema.fromJsonString(BoardCardPlacementOrphan)),
+  /** Migration 051 (T3O-27): NULL `groupTarget` is a leaf. */
+  groupTarget: Schema.NullOr(BoardCardGroupTarget),
+  groupAutoBuild: Schema.Int,
+  groupAutoMerge: Schema.Int,
+  groupAutoPlan: Schema.Int,
+  groupStarted: Schema.Int,
+  groupPlaced: Schema.NullOr(BoardStageId),
+  groupPrevStage: Schema.NullOr(BoardStageId),
+  groupHeading: Schema.Int,
+  groupIntegrated: Schema.Int,
   blocked: Schema.Int,
   archivedAt: BoardCard.fields.archivedAt,
   createdAt: BoardCard.fields.createdAt,
@@ -192,6 +221,8 @@ const BoardCardThreadLinkDbRow = Schema.Struct({
   tombstonedAt: BoardCardThreadLink.fields.tombstonedAt,
   /** Null for `local` (T3O-63). */
   workerId: Schema.NullOr(EnvironmentId),
+  /** Null while live (T3O-41). */
+  retiredAt: Schema.NullOr(IsoDateTime),
 });
 type BoardCardThreadLinkDbRow = typeof BoardCardThreadLinkDbRow.Type;
 
@@ -324,6 +355,10 @@ function toBoardCardActivityEntry(row: BoardCardActivityDbRow): BoardCardActivit
 const linkWorker = (row: { readonly workerId: EnvironmentId | null }) =>
   row.workerId === null ? {} : { workerId: row.workerId };
 
+// T3O-41: key-optional like `workerId`, so rehydration equals replay.
+const linkRetired = (row: { readonly retiredAt: string | null }) =>
+  row.retiredAt === null ? {} : { retiredAt: row.retiredAt };
+
 /** Map a joined row to the wire shell (t3o-18, D3): the todo fields are
     key-optional, so a thread with no list serialises as a bare link entry. */
 function toBoardCardThreadShell(row: BoardCardThreadShellDbRow): BoardCardThreadShell {
@@ -440,6 +475,9 @@ const BoardCardStepStateDbRow = Schema.Struct({
   // NULLABLE in the DB, and a null already MEANS "nothing scheduled": before
   // T3O-22 the next nudge went instantly, so no row had a time to record.
   retryAt: BoardCardStepState.fields.retryAt,
+  // NULL before migration 054 and on every step with no plan review started.
+  planReviewStartedAt: Schema.NullOr(IsoDateTime),
+  planReviewRounds: Schema.NullOr(Schema.Int),
   humanInLoop: Schema.Int,
   maxAttempts: BoardCardStepState.fields.maxAttempts,
   timeoutMs: BoardCardStepState.fields.timeoutMs,
@@ -474,6 +512,8 @@ const BoardPlanDbRow = Schema.Struct({
   dependsOn: Schema.fromJsonString(Schema.Array(BoardPlanId)),
   ordinal: Schema.Int,
   locked: Schema.Int,
+  /** 0/1; migration 052 defaults every older row to 1 (planned). */
+  planned: Schema.Int,
   body: Schema.String,
   createdAt: BoardPlan.fields.createdAt,
   updatedAt: BoardPlan.fields.updatedAt,
@@ -492,6 +532,7 @@ function rowToBoardPlan(row: BoardPlanDbRow): BoardPlan {
     dependsOn: row.dependsOn,
     ordinal: row.ordinal,
     locked: row.locked !== 0,
+    ...(row.planned === 0 ? { planned: false } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -541,17 +582,20 @@ const BoardCardShellDbRow = Schema.Struct({
       the aggregate like `parentCardId`, so this snapshot and the JS delta path
       both carry it — or a scheduled card's pill would vanish on reconnect. */
   scheduledStartAt: BoardCard.fields.scheduledStartAt,
-  /** The card's auto-start arm (T3O-24), 0 when it is not armed. On the
-      aggregate like `parentCardId`, so this snapshot and the JS delta path both
-      carry it — or an armed card's chip would vanish on reconnect. */
-  autoStart: Schema.Int,
-  /** The card's auto-merge hold, flattened to the three facts the shell
-      carries (T3O-38, D14): when the hold started, whether its ladder is
-      spent, and whether the card's own arming is set. Derived in SQL here and
-      in JS on the delta path; `cardMetaShellFields.test.ts` pins the pair. */
+  /** The card's own Automation toggles and unattended-run flag (T3O-38). On
+      the aggregate like `parentCardId`, so this snapshot and the JS delta path
+      both carry them — or a card's Automation summary would change on
+      reconnect. */
+  autoPlanSetting: Schema.NullOr(Schema.Int),
+  autoBuildSetting: Schema.NullOr(Schema.Int),
+  autoMergeSetting: Schema.NullOr(Schema.Int),
+  autoPlanPending: Schema.Int,
+  /** The card's auto-merge hold, flattened to the facts the shell carries
+      (T3O-38, D14): when the hold started and whether its ladder is spent.
+      Derived in SQL here and in JS on the delta path;
+      `cardMetaShellFields.test.ts` pins the pair. */
   autoMergeHeldSince: Schema.NullOr(IsoDateTime),
   autoMergeGaveUp: Schema.Int,
-  autoMergeArmed: Schema.Int,
   /** Whether the CURRENT pull request is an open draft (T3O-12) — the SQL
       twin of `boardCardPullRequestIsOpenDraft`. */
   prDraft: Schema.Int,
@@ -567,6 +611,16 @@ const BoardCardShellDbRow = Schema.Struct({
   workerMoveTo: BoardCard.fields.pinnedWorkerId,
   /** The removed worker's label, for Worker removed (T3O-66). */
   orphanedWorkerLabel: Schema.NullOr(Schema.String),
+  /** Group settings (T3O-27), the same columns the card row reads. */
+  groupTarget: Schema.NullOr(BoardCardGroupTarget),
+  groupAutoBuild: Schema.Int,
+  groupAutoMerge: Schema.Int,
+  groupAutoPlan: Schema.Int,
+  groupStarted: Schema.Int,
+  groupPlaced: Schema.NullOr(BoardStageId),
+  groupPrevStage: Schema.NullOr(BoardStageId),
+  groupHeading: Schema.Int,
+  groupIntegrated: Schema.Int,
   /** The review-summary CACHE (t3o-22, D7); NULL for a card with no review
       history. Its `outcome` is provisional — `resolveBoardCardReviewOutcome`
       settles it against the card's live step at assembly. */
@@ -590,6 +644,7 @@ const BoardCardDependencyRefDbRow = Schema.Struct({
 const BoardCardChildRefDbRow = Schema.Struct({
   ...BoardCardDependencyRefDbRow.fields,
   sourcePlanId: Schema.NullOr(BoardPlanId),
+  dependsOn: Schema.fromJsonString(Schema.Array(BoardCardId)),
 });
 
 function boardCardToRow(card: BoardCard): BoardCardDbRow {
@@ -622,19 +677,62 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
       ? null
       : card.modelOverrides,
     splitRationale: card.splitRationale,
+    splitRecommendation: card.splitRecommendation ?? null,
+    autoPlan: card.autoPlan ?? null,
+    planReview: card.planReview ?? null,
     baseBranch: card.baseBranch,
     scheduledStartAt: card.scheduledStartAt,
-    autoStart: card.autoStart ? 1 : 0,
-    autoMerge: card.autoMerge ? 1 : 0,
+    autoPlanSetting: settingToInt(card.autoPlanSetting),
+    autoBuildSetting: settingToInt(card.autoBuildSetting),
+    autoMergeSetting: settingToInt(card.autoMergeSetting),
     autoMergeHold: card.autoMergeHold,
+    mergeStrategy: card.mergeStrategy,
     pinnedWorkerId: card.pinnedWorkerId,
     placedWorkerId: card.placedWorkerId,
     workerMove: card.workerMove,
     placementOrphaned: card.placementOrphaned,
+    groupTarget: card.group?.target ?? null,
+    groupAutoBuild: card.group?.autoBuild === true ? 1 : 0,
+    groupAutoMerge: card.group?.autoMerge === true ? 1 : 0,
+    groupAutoPlan: card.group?.autoPlan === true ? 1 : 0,
+    groupStarted: card.group?.started === true ? 1 : 0,
+    groupPlaced: card.group?.placed ?? null,
+    groupPrevStage: card.group?.prevStage ?? null,
+    groupHeading: card.group?.heading === true ? 1 : 0,
+    groupIntegrated: card.group?.integrated === true ? 1 : 0,
     blocked: card.blocked ? 1 : 0,
     archivedAt: card.archivedAt,
     createdAt: card.createdAt,
     updatedAt: card.updatedAt,
+  };
+}
+
+function boardCardGroupFromRow(
+  row: Pick<
+    BoardCardDbRow,
+    | "stage"
+    | "groupTarget"
+    | "groupAutoBuild"
+    | "groupAutoMerge"
+    | "groupAutoPlan"
+    | "groupStarted"
+    | "groupPlaced"
+    | "groupPrevStage"
+    | "groupHeading"
+    | "groupIntegrated"
+  >,
+): BoardCardGroup | null {
+  if (row.groupTarget === null) return null;
+  return {
+    target: row.groupTarget,
+    autoBuild: row.groupAutoBuild !== 0,
+    autoMerge: row.groupAutoMerge !== 0,
+    autoPlan: row.groupAutoPlan !== 0,
+    started: row.groupStarted !== 0,
+    placed: row.groupPlaced ?? row.stage,
+    prevStage: row.groupPrevStage,
+    heading: row.groupHeading !== 0,
+    integrated: row.groupIntegrated !== 0,
   };
 }
 
@@ -677,15 +775,21 @@ function rowToBoardCard(
     reviewOverrides: row.reviewOverrides,
     modelOverrides: row.modelOverrides,
     splitRationale: row.splitRationale,
+    ...(row.splitRecommendation === null ? {} : { splitRecommendation: row.splitRecommendation }),
+    ...(row.autoPlan === null ? {} : { autoPlan: row.autoPlan }),
+    ...(row.planReview === null ? {} : { planReview: row.planReview }),
     baseBranch: row.baseBranch,
     scheduledStartAt: row.scheduledStartAt,
-    autoStart: row.autoStart !== 0,
-    autoMerge: row.autoMerge !== 0,
+    autoPlanSetting: settingFromInt(row.autoPlanSetting),
+    autoBuildSetting: settingFromInt(row.autoBuildSetting),
+    autoMergeSetting: settingFromInt(row.autoMergeSetting),
     autoMergeHold: row.autoMergeHold,
+    mergeStrategy: row.mergeStrategy,
     pinnedWorkerId: row.pinnedWorkerId,
     placedWorkerId: row.placedWorkerId,
     workerMove: row.workerMove,
     placementOrphaned: row.placementOrphaned,
+    group: boardCardGroupFromRow(row),
     blocked: row.blocked !== 0,
     threadLinks,
     attachments,
@@ -744,15 +848,29 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         review_overrides,
         model_overrides,
         split_rationale,
+        split_recommendation,
+        auto_plan,
+        plan_review,
         base_branch,
         scheduled_start_at,
-        auto_start,
-        auto_merge,
+        auto_plan_setting,
+        auto_build_setting,
+        auto_merge_setting,
         auto_merge_hold,
+        merge_strategy,
         pinned_worker_id,
         placed_worker_id,
         worker_move,
         placement_orphaned,
+        group_target,
+        group_auto_build,
+        group_auto_merge,
+        group_auto_plan,
+        group_started,
+        group_placed,
+        group_prev_stage,
+        group_heading,
+        group_integrated,
         blocked,
         archived_at,
         created_at,
@@ -779,15 +897,29 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.reviewOverrides},
         ${row.modelOverrides},
         ${row.splitRationale},
+        ${row.splitRecommendation},
+        ${row.autoPlan},
+        ${row.planReview},
         ${row.baseBranch},
         ${row.scheduledStartAt},
-        ${row.autoStart},
-        ${row.autoMerge},
+        ${row.autoPlanSetting},
+        ${row.autoBuildSetting},
+        ${row.autoMergeSetting},
         ${row.autoMergeHold},
+        ${row.mergeStrategy},
         ${row.pinnedWorkerId},
         ${row.placedWorkerId},
         ${row.workerMove},
         ${row.placementOrphaned},
+        ${row.groupTarget},
+        ${row.groupAutoBuild},
+        ${row.groupAutoMerge},
+        ${row.groupAutoPlan},
+        ${row.groupStarted},
+        ${row.groupPlaced},
+        ${row.groupPrevStage},
+        ${row.groupHeading},
+        ${row.groupIntegrated},
         ${row.blocked},
         ${row.archivedAt},
         ${row.createdAt},
@@ -814,15 +946,29 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         review_overrides = excluded.review_overrides,
         model_overrides = excluded.model_overrides,
         split_rationale = excluded.split_rationale,
+        split_recommendation = excluded.split_recommendation,
+        auto_plan = excluded.auto_plan,
+        plan_review = excluded.plan_review,
         base_branch = excluded.base_branch,
         scheduled_start_at = excluded.scheduled_start_at,
-        auto_start = excluded.auto_start,
-        auto_merge = excluded.auto_merge,
+        auto_plan_setting = excluded.auto_plan_setting,
+        auto_build_setting = excluded.auto_build_setting,
+        auto_merge_setting = excluded.auto_merge_setting,
         auto_merge_hold = excluded.auto_merge_hold,
+        merge_strategy = excluded.merge_strategy,
         pinned_worker_id = excluded.pinned_worker_id,
         placed_worker_id = excluded.placed_worker_id,
         worker_move = excluded.worker_move,
         placement_orphaned = excluded.placement_orphaned,
+        group_target = excluded.group_target,
+        group_auto_build = excluded.group_auto_build,
+        group_auto_merge = excluded.group_auto_merge,
+        group_auto_plan = excluded.group_auto_plan,
+        group_started = excluded.group_started,
+        group_placed = excluded.group_placed,
+        group_prev_stage = excluded.group_prev_stage,
+        group_heading = excluded.group_heading,
+        group_integrated = excluded.group_integrated,
         blocked = excluded.blocked,
         archived_at = excluded.archived_at,
         created_at = excluded.created_at,
@@ -859,15 +1005,29 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         review_overrides AS "reviewOverrides",
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
+        split_recommendation AS "splitRecommendation",
+        auto_plan AS "autoPlan",
+        plan_review AS "planReview",
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
-        auto_start AS "autoStart",
-        auto_merge AS "autoMerge",
+        auto_plan_setting AS "autoPlanSetting",
+        auto_build_setting AS "autoBuildSetting",
+        auto_merge_setting AS "autoMergeSetting",
         auto_merge_hold AS "autoMergeHold",
+        merge_strategy AS "mergeStrategy",
         pinned_worker_id AS "pinnedWorkerId",
         placed_worker_id AS "placedWorkerId",
         worker_move AS "workerMove",
         placement_orphaned AS "placementOrphaned",
+        group_target AS "groupTarget",
+        group_auto_build AS "groupAutoBuild",
+        group_auto_merge AS "groupAutoMerge",
+        group_auto_plan AS "groupAutoPlan",
+        group_started AS "groupStarted",
+        group_placed AS "groupPlaced",
+        group_prev_stage AS "groupPrevStage",
+        group_heading AS "groupHeading",
+        group_integrated AS "groupIntegrated",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -887,7 +1047,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         role,
         linked_at AS "linkedAt",
         tombstoned_at AS "tombstonedAt",
-        worker_id AS "workerId"
+        worker_id AS "workerId",
+        retired_at AS "retiredAt"
       FROM board_card_thread_links
       ORDER BY linked_at ASC, thread_id ASC
     `,
@@ -907,9 +1068,11 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         role,
         linked_at AS "linkedAt",
         tombstoned_at AS "tombstonedAt",
-        worker_id AS "workerId"
+        worker_id AS "workerId",
+        retired_at AS "retiredAt"
       FROM board_card_thread_links
       WHERE tombstoned_at IS NULL
+        AND retired_at IS NULL
         AND card_id IN (SELECT card_id FROM board_cards WHERE archived_at IS NULL)
     `,
   });
@@ -960,10 +1123,18 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ) AS "prNumber",
         parent_card_id AS "parentCardId",
         scheduled_start_at AS "scheduledStartAt",
-        auto_start AS "autoStart",
-        -- The SECOND producer of the auto-merge shell trio (T3O-38, D14). The
+        auto_plan_setting AS "autoPlanSetting",
+        auto_build_setting AS "autoBuildSetting",
+        auto_merge_setting AS "autoMergeSetting",
+        -- The unattended-run flag (T3O-38): the JS twin is
+        -- isBoardCardAutoPlanPending.
+        CASE
+          WHEN auto_plan IS NOT NULL AND json_extract(auto_plan, '$.endedAt') IS NULL THEN 1
+          ELSE 0
+        END AS "autoPlanPending",
+        -- The SECOND producer of the auto-merge shell facts (T3O-38, D14). The
         -- delta path derives the same three in JS off the card aggregate's
-        -- autoMergeHold / autoMerge / parentCardId; these derive them in SQL
+        -- autoMergeHold; these derive them in SQL
         -- off the same columns, and the two must agree or a held card's pill
         -- would appear
         -- after an edit and vanish on reconnect (cardMetaShellFields.test.ts
@@ -976,12 +1147,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
             AND json_extract(auto_merge_hold, '$.retryAt') IS NULL THEN 1
           ELSE 0
         END AS "autoMergeGaveUp",
-        -- The AGGREGATE half of the arm only: the board-wide merge-stage
-        -- setting is ORed in client-side, because this query cannot see
-        -- settings and a field only one producer could compute would be the
-        -- very flicker the pair test exists to prevent.
-        CASE WHEN auto_merge <> 0 OR parent_card_id IS NOT NULL THEN 1 ELSE 0 END
-          AS "autoMergeArmed",
         -- The SECOND producer of prDraft (T3O-12); the delta path reads it
         -- through boardCardPullRequestIsOpenDraft. Current link only: a retired
         -- round's pull request is never a draft worth tagging.
@@ -1006,6 +1171,15 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         json_extract(worker_move, '$.status') AS "workerMoveStatus",
         json_extract(worker_move, '$.toWorkerId') AS "workerMoveTo",
         json_extract(placement_orphaned, '$.workerLabel') AS "orphanedWorkerLabel",
+        group_target AS "groupTarget",
+        group_auto_build AS "groupAutoBuild",
+        group_auto_merge AS "groupAutoMerge",
+        group_auto_plan AS "groupAutoPlan",
+        group_started AS "groupStarted",
+        group_placed AS "groupPlaced",
+        group_prev_stage AS "groupPrevStage",
+        group_heading AS "groupHeading",
+        group_integrated AS "groupIntegrated",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -1050,10 +1224,18 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ) AS "prNumber",
         parent_card_id AS "parentCardId",
         scheduled_start_at AS "scheduledStartAt",
-        auto_start AS "autoStart",
-        -- The SECOND producer of the auto-merge shell trio (T3O-38, D14). The
+        auto_plan_setting AS "autoPlanSetting",
+        auto_build_setting AS "autoBuildSetting",
+        auto_merge_setting AS "autoMergeSetting",
+        -- The unattended-run flag (T3O-38): the JS twin is
+        -- isBoardCardAutoPlanPending.
+        CASE
+          WHEN auto_plan IS NOT NULL AND json_extract(auto_plan, '$.endedAt') IS NULL THEN 1
+          ELSE 0
+        END AS "autoPlanPending",
+        -- The SECOND producer of the auto-merge shell facts (T3O-38, D14). The
         -- delta path derives the same three in JS off the card aggregate's
-        -- autoMergeHold / autoMerge / parentCardId; these derive them in SQL
+        -- autoMergeHold; these derive them in SQL
         -- off the same columns, and the two must agree or a held card's pill
         -- would appear
         -- after an edit and vanish on reconnect (cardMetaShellFields.test.ts
@@ -1066,12 +1248,6 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
             AND json_extract(auto_merge_hold, '$.retryAt') IS NULL THEN 1
           ELSE 0
         END AS "autoMergeGaveUp",
-        -- The AGGREGATE half of the arm only: the board-wide merge-stage
-        -- setting is ORed in client-side, because this query cannot see
-        -- settings and a field only one producer could compute would be the
-        -- very flicker the pair test exists to prevent.
-        CASE WHEN auto_merge <> 0 OR parent_card_id IS NOT NULL THEN 1 ELSE 0 END
-          AS "autoMergeArmed",
         -- The SECOND producer of prDraft (T3O-12); the delta path reads it
         -- through boardCardPullRequestIsOpenDraft. Current link only: a retired
         -- round's pull request is never a draft worth tagging.
@@ -1096,6 +1272,15 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         json_extract(worker_move, '$.status') AS "workerMoveStatus",
         json_extract(worker_move, '$.toWorkerId') AS "workerMoveTo",
         json_extract(placement_orphaned, '$.workerLabel') AS "orphanedWorkerLabel",
+        group_target AS "groupTarget",
+        group_auto_build AS "groupAutoBuild",
+        group_auto_merge AS "groupAutoMerge",
+        group_auto_plan AS "groupAutoPlan",
+        group_started AS "groupStarted",
+        group_placed AS "groupPlaced",
+        group_prev_stage AS "groupPrevStage",
+        group_heading AS "groupHeading",
+        group_integrated AS "groupIntegrated",
         review_summary AS "reviewSummary",
         archived_at AS "archivedAt",
         created_at AS "createdAt"
@@ -1121,6 +1306,40 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       WHERE card_id IN (
         SELECT value FROM json_each((SELECT depends_on FROM board_cards WHERE card_id = ${cardId}))
       )
+    `,
+  });
+
+  // The ancestors' dependencies, minus the card's own (T3O-27). The depth cap
+  // guards a corrupt parent cycle, as `boardCardAncestors` does.
+  const listBoardCardGroupDependencyRefRows = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardDependencyRefDbRow,
+    execute: (cardId) => sql`
+      WITH RECURSIVE ancestors(card_id, depth) AS (
+        SELECT parent_card_id, 1 FROM board_cards
+        WHERE card_id = ${cardId} AND parent_card_id IS NOT NULL
+        UNION ALL
+        SELECT board_cards.parent_card_id, ancestors.depth + 1
+        FROM board_cards JOIN ancestors ON board_cards.card_id = ancestors.card_id
+        WHERE board_cards.parent_card_id IS NOT NULL AND ancestors.depth < 64
+      )
+      SELECT
+        card_id AS "cardId",
+        key,
+        title,
+        stage,
+        archived_at AS "archivedAt"
+      FROM board_cards
+      WHERE card_id IN (
+        SELECT dependency.value
+        FROM ancestors
+        JOIN board_cards AS group_card ON group_card.card_id = ancestors.card_id,
+        json_each(group_card.depends_on) AS dependency
+      )
+      AND card_id NOT IN (
+        SELECT value FROM json_each((SELECT depends_on FROM board_cards WHERE card_id = ${cardId}))
+      )
+      AND card_id <> ${cardId}
     `,
   });
 
@@ -1154,7 +1373,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         title,
         stage,
         archived_at AS "archivedAt",
-        source_plan_id AS "sourcePlanId"
+        source_plan_id AS "sourcePlanId",
+        depends_on AS "dependsOn"
       FROM board_cards
       WHERE parent_card_id = ${cardId}
       ORDER BY card_number
@@ -1186,15 +1406,29 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         review_overrides AS "reviewOverrides",
         model_overrides AS "modelOverrides",
         split_rationale AS "splitRationale",
+        split_recommendation AS "splitRecommendation",
+        auto_plan AS "autoPlan",
+        plan_review AS "planReview",
         base_branch AS "baseBranch",
         scheduled_start_at AS "scheduledStartAt",
-        auto_start AS "autoStart",
-        auto_merge AS "autoMerge",
+        auto_plan_setting AS "autoPlanSetting",
+        auto_build_setting AS "autoBuildSetting",
+        auto_merge_setting AS "autoMergeSetting",
         auto_merge_hold AS "autoMergeHold",
+        merge_strategy AS "mergeStrategy",
         pinned_worker_id AS "pinnedWorkerId",
         placed_worker_id AS "placedWorkerId",
         worker_move AS "workerMove",
         placement_orphaned AS "placementOrphaned",
+        group_target AS "groupTarget",
+        group_auto_build AS "groupAutoBuild",
+        group_auto_merge AS "groupAutoMerge",
+        group_auto_plan AS "groupAutoPlan",
+        group_started AS "groupStarted",
+        group_placed AS "groupPlaced",
+        group_prev_stage AS "groupPrevStage",
+        group_heading AS "groupHeading",
+        group_integrated AS "groupIntegrated",
         blocked,
         archived_at AS "archivedAt",
         created_at AS "createdAt",
@@ -1214,7 +1448,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         role,
         linked_at AS "linkedAt",
         tombstoned_at AS "tombstonedAt",
-        worker_id AS "workerId"
+        worker_id AS "workerId",
+        retired_at AS "retiredAt"
       FROM board_card_thread_links
       WHERE card_id = ${cardId}
     `,
@@ -1365,7 +1600,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         role,
         linked_at,
         tombstoned_at,
-        worker_id
+        worker_id,
+        retired_at
       )
       VALUES (
         ${row.threadId},
@@ -1373,7 +1609,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.role},
         ${row.linkedAt},
         ${row.tombstonedAt},
-        ${row.workerId}
+        ${row.workerId},
+        ${row.retiredAt}
       )
       ON CONFLICT (thread_id)
       DO UPDATE SET
@@ -1381,7 +1618,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         role = excluded.role,
         linked_at = excluded.linked_at,
         tombstoned_at = excluded.tombstoned_at,
-        worker_id = excluded.worker_id
+        worker_id = excluded.worker_id,
+        retired_at = excluded.retired_at
     `,
   });
 
@@ -1713,7 +1951,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       FROM board_card_thread_links links
       INNER JOIN board_cards cards ON cards.card_id = links.card_id
       LEFT JOIN board_thread_todos todos ON todos.thread_id = links.thread_id
-      WHERE links.tombstoned_at IS NULL AND cards.archived_at IS NULL
+      WHERE links.tombstoned_at IS NULL
+        AND links.retired_at IS NULL
+        AND cards.archived_at IS NULL
       ORDER BY links.card_id ASC, links.linked_at ASC, links.thread_id ASC
     `,
   });
@@ -1737,6 +1977,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       LEFT JOIN board_thread_todos todos ON todos.thread_id = links.thread_id
       WHERE links.card_id = ${cardId}
         AND links.tombstoned_at IS NULL
+        AND links.retired_at IS NULL
         AND cards.archived_at IS NULL
       ORDER BY links.linked_at ASC, links.thread_id ASC
     `,
@@ -1751,7 +1992,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     execute: (threadId) => sql`
       SELECT card_id AS "cardId"
       FROM board_card_thread_links
-      WHERE thread_id = ${threadId} AND tombstoned_at IS NULL
+      WHERE thread_id = ${threadId} AND tombstoned_at IS NULL AND retired_at IS NULL
     `,
   });
 
@@ -1824,10 +2065,12 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: Schema.Struct({
       cardId: BoardCardId,
       splitRationale: BoardCard.fields.splitRationale,
+      splitRecommendation: Schema.NullOr(Schema.fromJsonString(BoardSplitRecommendation)),
     }),
     execute: (row) => sql`
       UPDATE board_cards
-      SET split_rationale = ${row.splitRationale}
+      SET split_rationale = ${row.splitRationale},
+        split_recommendation = ${row.splitRecommendation}
       WHERE card_id = ${row.cardId}
     `,
   });
@@ -1860,6 +2103,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         stage_entry_recoveries, last_nudge_at, prompt,
         provider_instance_id, model, mode, runtime_mode, model_options, base_tip_at_round_start,
         last_error, awaiting_reason, human_turn_at, stalled_reason, retry_at,
+        plan_review_started_at, plan_review_rounds,
         human_in_loop, max_attempts, timeout_ms, thread_id, status, slot_held, force_start,
         queued_by, started_at, updated_at
       )
@@ -1869,6 +2113,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.providerInstanceId}, ${row.model}, ${row.mode}, ${row.runtimeMode}, ${row.modelOptions},
         ${row.baseTipAtRoundStart},
         ${row.lastError}, ${row.awaitingReason}, ${row.humanTurnAt}, ${row.stalledReason}, ${row.retryAt},
+        ${row.planReviewStartedAt}, ${row.planReviewRounds},
         ${row.humanInLoop}, ${row.maxAttempts},
         ${row.timeoutMs}, ${row.threadId}, ${row.status}, ${row.slotHeld}, ${row.forceStart},
         ${row.queuedBy}, ${row.startedAt}, ${row.updatedAt}
@@ -1894,6 +2139,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         human_turn_at = excluded.human_turn_at,
         stalled_reason = excluded.stalled_reason,
         retry_at = excluded.retry_at,
+        plan_review_started_at = excluded.plan_review_started_at,
+        plan_review_rounds = excluded.plan_review_rounds,
         human_in_loop = excluded.human_in_loop,
         max_attempts = excluded.max_attempts,
         timeout_ms = excluded.timeout_ms,
@@ -1932,6 +2179,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         human_turn_at AS "humanTurnAt",
         stalled_reason AS "stalledReason",
         retry_at AS "retryAt",
+        plan_review_started_at AS "planReviewStartedAt",
+        plan_review_rounds AS "planReviewRounds",
         human_in_loop AS "humanInLoop",
         max_attempts AS "maxAttempts",
         timeout_ms AS "timeoutMs",
@@ -2001,9 +2250,18 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
       run config, and the detail already runs a bundle of per-card queries. */
   const findBoardCardStepErrorRow = SqlSchema.findOneOption({
     Request: BoardCardId,
-    Result: Schema.Struct({ lastError: BoardCardStepState.fields.lastError }),
+    Result: Schema.Struct({
+      lastError: BoardCardStepState.fields.lastError,
+      status: BoardCardStepState.fields.status,
+      planReviewStartedAt: Schema.NullOr(IsoDateTime),
+      planReviewRounds: Schema.NullOr(Schema.Int),
+    }),
     execute: (cardId) => sql`
-      SELECT last_error AS "lastError"
+      SELECT
+        last_error AS "lastError",
+        status,
+        plan_review_started_at AS "planReviewStartedAt",
+        plan_review_rounds AS "planReviewRounds"
       FROM board_card_step_state
       WHERE card_id = ${cardId}
     `,
@@ -2011,6 +2269,52 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
 
   // Wholesale rewrite of a card's plan rows from the proposal: idempotent, and
   // structurally incapable of drifting from the read model.
+  // The decision log (T3O-32). `INSERT OR IGNORE` on the event-derived id
+  // makes a re-projected event a no-op.
+  const insertBoardCardDecisionRow = SqlSchema.void({
+    Request: BoardCardDecision,
+    execute: (row) => sql`
+      INSERT OR IGNORE INTO board_card_decisions (
+        decision_id, card_id, step_id, thread_id, question, decision, reason,
+        flag, decided_by, created_at
+      ) VALUES (
+        ${row.decisionId}, ${row.cardId}, ${row.stepId}, ${row.threadId},
+        ${row.question}, ${row.decision}, ${row.reason}, ${row.flag},
+        ${row.decidedBy}, ${row.createdAt}
+      )
+    `,
+  });
+
+  const listBoardCardDecisionRowsForCard = SqlSchema.findAll({
+    Request: BoardCardId,
+    Result: BoardCardDecision,
+    execute: (cardId) => sql`
+      SELECT
+        decision_id AS "decisionId",
+        card_id AS "cardId",
+        step_id AS "stepId",
+        thread_id AS "threadId",
+        question,
+        decision,
+        reason,
+        flag,
+        decided_by AS "decidedBy",
+        created_at AS "createdAt"
+      FROM board_card_decisions
+      WHERE card_id = ${cardId}
+      -- rowid, not decision_id: "evt:10" sorts before "evt:2" as text.
+      ORDER BY created_at, rowid
+    `,
+  });
+
+  const deleteBoardCardDecisionsForCard = SqlSchema.void({
+    Request: BoardCardId,
+    execute: (cardId) => sql`
+      DELETE FROM board_card_decisions
+      WHERE card_id = ${cardId}
+    `,
+  });
+
   const deleteBoardPlansForCard = SqlSchema.void({
     Request: BoardCardId,
     execute: (cardId) => sql`
@@ -2023,11 +2327,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     Request: BoardPlanDbRow,
     execute: (row) => sql`
       INSERT INTO board_plans (
-        plan_id, card_id, title, summary, depends_on, ordinal, locked, body, created_at, updated_at
+        plan_id, card_id, title, summary, depends_on, ordinal, locked, planned, body,
+        created_at, updated_at
       )
       VALUES (
         ${row.planId}, ${row.cardId}, ${row.title}, ${row.summary}, ${row.dependsOn},
-        ${row.ordinal}, ${row.locked}, ${row.body}, ${row.createdAt}, ${row.updatedAt}
+        ${row.ordinal}, ${row.locked}, ${row.planned}, ${row.body}, ${row.createdAt},
+        ${row.updatedAt}
       )
       ON CONFLICT (plan_id)
       DO UPDATE SET
@@ -2037,6 +2343,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         depends_on = excluded.depends_on,
         ordinal = excluded.ordinal,
         locked = excluded.locked,
+        planned = excluded.planned,
         body = excluded.body,
         created_at = excluded.created_at,
         updated_at = excluded.updated_at
@@ -2069,6 +2376,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         depends_on AS "dependsOn",
         ordinal,
         locked,
+        planned,
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2091,6 +2399,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         depends_on AS "dependsOn",
         ordinal,
         locked,
+        planned,
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2111,6 +2420,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         depends_on AS "dependsOn",
         ordinal,
         locked,
+        planned,
         body,
         created_at AS "createdAt",
         updated_at AS "updatedAt"
@@ -2127,6 +2437,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     listBoardCardShellRows,
     listArchivedBoardCardShellRows,
     listBoardCardDependencyRefRows,
+    listBoardCardGroupDependencyRefRows,
     listBoardCardDependentRefRows,
     listBoardCardChildRefRows,
     findBoardCardRow,
@@ -2180,6 +2491,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     findBoardDefaultWorkerRow,
     findBoardCardStepErrorRow,
     deleteBoardPlansForCard,
+    insertBoardCardDecisionRow,
+    listBoardCardDecisionRowsForCard,
+    deleteBoardCardDecisionsForCard,
     insertBoardPlanRow,
     updateBoardPlanBodyRow,
     listBoardPlanRows,
@@ -2234,6 +2548,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
       yield* queries.deleteBoardCardStepStateForCard(card.id);
       yield* queries.deleteBoardThreadTodoRowsForCard(card.id);
       yield* queries.deleteBoardPlansForCard(card.id);
+      yield* queries.deleteBoardCardDecisionsForCard(card.id);
     }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.purge:query")));
 
   // Wholesale rewrite of a card's link rows from the event's card state:
@@ -2249,6 +2564,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           linkedAt: link.linkedAt,
           tombstonedAt: link.tombstonedAt,
           workerId: link.workerId ?? null,
+          retiredAt: link.retiredAt ?? null,
         });
       }
     }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.threadLinks:query")));
@@ -2314,11 +2630,15 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
     readonly kind: BoardCardActivityEntry["kind"];
     readonly payload: BoardCardActivityPayload;
     readonly threadId: ThreadId | null;
+    /** A second row from the same event needs its own id (plan review, T3O-39). */
+    readonly activityIdSuffix?: string;
   }) => {
     const actor = boardActivityActorFor(input.event.commandId);
     return queries
       .insertBoardCardActivityRow({
-        activityId: BoardActivityId.make(String(input.event.eventId)),
+        activityId: BoardActivityId.make(
+          `${String(input.event.eventId)}${input.activityIdSuffix ?? ""}`,
+        ),
         cardId: input.cardId,
         kind: input.kind,
         payload: input.payload,
@@ -2483,6 +2803,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         humanTurnAt: state.humanTurnAt,
         stalledReason: state.stalledReason,
         retryAt: state.retryAt,
+        planReviewStartedAt: state.planReviewStartedAt ?? null,
+        planReviewRounds: state.planReviewRounds ?? null,
         humanInLoop: state.humanInLoop ? 1 : 0,
         maxAttempts: state.maxAttempts,
         timeoutMs: state.timeoutMs,
@@ -2546,6 +2868,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           dependsOn: plan.dependsOn,
           ordinal: plan.ordinal,
           locked: plan.locked ? 1 : 0,
+          planned: plan.planned === false ? 0 : 1,
           body: plan.body,
           createdAt: plan.createdAt,
           updatedAt: plan.updatedAt,
@@ -2606,6 +2929,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
             .findBoardPlanRow(event.payload.briefFromPlanId)
             .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.planBody:query")));
           if (Option.isSome(planRow)) {
+            const briefOnly = event.payload.briefOnly === true;
             yield* queries
               .upsertBoardCardBodyRow({
                 cardId: event.payload.cardId,
@@ -2614,6 +2938,23 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
                 updatedAt: event.payload.updatedAt,
               })
               .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.body:query")));
+            // The child owns a copy of its plan (T3O-27), so it counts as
+            // planned without a parent special case — unless the plan was a
+            // brief that still needs planning (T3O-31).
+            if (!briefOnly) {
+              const copy = boardSplitChildPlanCopy(planRow.value, {
+                id: card.id,
+                createdAt: card.createdAt,
+              });
+              yield* queries
+                .insertBoardPlanRow({
+                  ...copy,
+                  locked: 0,
+                  planned: 1,
+                  body: planRow.value.body,
+                })
+                .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.plans:query")));
+            }
           }
         }
         yield* recordActivity({
@@ -2741,6 +3082,13 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         });
         return;
       }
+
+      case "board.card-decisions-recorded":
+        // Table-only (D8): the log never rides the read model.
+        yield* Effect.forEach(event.payload.decisions, queries.insertBoardCardDecisionRow, {
+          discard: true,
+        }).pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.decisions:insert")));
+        return;
 
       case "board.card-note-recorded":
         // No card write: the event exists only so the deletion (or the reason
@@ -2924,6 +3272,49 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           },
           threadId: event.payload.completion.threadId,
         });
+        if (event.payload.planReviewFinished !== undefined) {
+          yield* recordActivity({
+            event,
+            cardId: event.payload.cardId,
+            kind: "plan-review-finished",
+            payload: {
+              stepId: event.payload.completion.stepId,
+              planReviewRounds: event.payload.planReviewFinished.rounds,
+              planReviewRoundsRun: event.payload.planReviewFinished.roundsRun,
+              planReviewConverged: event.payload.planReviewFinished.converged,
+            },
+            threadId: event.payload.completion.threadId,
+            activityIdSuffix: ":plan-review-finished",
+          });
+        }
+        return;
+
+      // Plan review (T3O-39): on the rail, so the card shows a review happened.
+      case "board.plan-review-started":
+        yield* upsertStepState(event.payload.state);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "plan-review-started",
+          payload: {
+            stepId: event.payload.state.stepId,
+            ...(event.payload.state.planReviewRounds === undefined
+              ? {}
+              : { planReviewRounds: event.payload.state.planReviewRounds }),
+          },
+          threadId: event.payload.state.threadId,
+        });
+        return;
+
+      case "board.plan-review-stopped":
+        yield* upsertStepState(event.payload.state);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "plan-review-stopped",
+          payload: { stepId: event.payload.stepId },
+          threadId: event.payload.threadId,
+        });
         return;
 
       // The override is recorded on the step row and nothing else (t3o-33):
@@ -3002,6 +3393,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
           .updateBoardCardSplitRationaleRow({
             cardId: event.payload.cardId,
             splitRationale: event.payload.splitRationale,
+            splitRecommendation: event.payload.splitRecommendation ?? null,
           })
           .pipe(
             Effect.mapError(toPersistenceSqlError("BoardCardsProjection.splitRationale:query")),
@@ -3234,6 +3626,7 @@ export function loadBoardState(
             linkedAt: row.linkedAt,
             tombstonedAt: row.tombstonedAt,
             ...linkWorker(row),
+            ...linkRetired(row),
           });
           linksByCard.set(row.cardId, links);
         }
@@ -3286,6 +3679,10 @@ export function loadBoardState(
             // could only have stalled through recovery giving up.
             stalledReason: row.stalledReason ?? "gave-up",
             retryAt: row.retryAt,
+            ...(row.planReviewStartedAt === null
+              ? {}
+              : { planReviewStartedAt: row.planReviewStartedAt }),
+            ...(row.planReviewRounds === null ? {} : { planReviewRounds: row.planReviewRounds }),
             humanInLoop: row.humanInLoop !== 0,
             maxAttempts: row.maxAttempts,
             timeoutMs: row.timeoutMs,
@@ -3383,6 +3780,7 @@ function boardShellCards(
           linkedAt: row.linkedAt,
           tombstonedAt: row.tombstonedAt,
           ...linkWorker(row),
+          ...linkRetired(row),
         });
         linksByCard.set(row.cardId, links);
       }
@@ -3480,10 +3878,12 @@ function boardShellCards(
           // counted against its parent.
           parentCardId: row.parentCardId,
           scheduledStartAt: row.scheduledStartAt,
-          autoStart: row.autoStart !== 0,
+          autoPlanSetting: settingFromInt(row.autoPlanSetting),
+          autoBuildSetting: settingFromInt(row.autoBuildSetting),
+          autoMergeSetting: settingFromInt(row.autoMergeSetting),
+          autoPlanPending: row.autoPlanPending !== 0,
           autoMergeHeldSince: row.autoMergeHeldSince,
           autoMergeGaveUp: row.autoMergeGaveUp !== 0,
-          autoMergeArmed: row.autoMergeArmed !== 0,
           prDraft: row.prDraft !== 0,
           worktreeReady: row.worktreeReady !== 0,
           worktreeKeptReason: row.worktreeKeptReason,
@@ -3494,6 +3894,7 @@ function boardShellCards(
               : { status: row.workerMoveStatus, toWorkerId: row.workerMoveTo },
           placementOrphaned:
             row.orphanedWorkerLabel === null ? null : { workerLabel: row.orphanedWorkerLabel },
+          group: boardCardGroupFromRow(row),
           queuedBy: queueReasonByCard.get(row.cardId) ?? null,
           // Carried UNRESOLVED (t3o-22, D7). The renderer settles the outcome
           // against `stepRunning`, which every shell already holds — resolving
@@ -3570,10 +3971,12 @@ function boardArchivedShellCards(
             prNumber: row.prNumber,
             parentCardId: row.parentCardId,
             scheduledStartAt: row.scheduledStartAt,
-            autoStart: row.autoStart !== 0,
+            autoPlanSetting: settingFromInt(row.autoPlanSetting),
+            autoBuildSetting: settingFromInt(row.autoBuildSetting),
+            autoMergeSetting: settingFromInt(row.autoMergeSetting),
+            autoPlanPending: row.autoPlanPending !== 0,
             autoMergeHeldSince: row.autoMergeHeldSince,
             autoMergeGaveUp: row.autoMergeGaveUp !== 0,
-            autoMergeArmed: row.autoMergeArmed !== 0,
             prDraft: row.prDraft !== 0,
             worktreeReady: row.worktreeReady !== 0,
             worktreeKeptReason: row.worktreeKeptReason,
@@ -3584,6 +3987,7 @@ function boardArchivedShellCards(
                 : { status: row.workerMoveStatus, toWorkerId: row.workerMoveTo },
             placementOrphaned:
               row.orphanedWorkerLabel === null ? null : { workerLabel: row.orphanedWorkerLabel },
+            group: boardCardGroupFromRow(row),
             archivedAt: row.archivedAt,
             activeThreadId: null,
           }),
@@ -3691,6 +4095,8 @@ export function makeBoardCardDetailLoader(
       queries.listBoardCardStepRowsForCard(cardId),
       queries.listBoardCardActivityRowsForCard(cardId),
       queries.findBoardCardStepErrorRow(cardId),
+      queries.listBoardCardDecisionRowsForCard(cardId),
+      queries.listBoardCardGroupDependencyRefRows(cardId),
     ]).pipe(
       Effect.map(
         ([
@@ -3706,6 +4112,8 @@ export function makeBoardCardDetailLoader(
           stepRows,
           activityRows,
           stepErrorRow,
+          decisionRows,
+          groupDependencyRows,
         ]) => {
           if (Option.isNone(cardRow)) return null;
           const links = sortBoardCardThreadLinks(
@@ -3715,6 +4123,7 @@ export function makeBoardCardDetailLoader(
               linkedAt: row.linkedAt,
               tombstonedAt: row.tombstonedAt,
               ...linkWorker(row),
+              ...linkRetired(row),
             })),
           );
           const labels = [...labelRows]
@@ -3742,6 +4151,7 @@ export function makeBoardCardDetailLoader(
               const row = dependencyRefsById.get(dependencyId);
               return row === undefined ? [] : [row];
             }),
+            groupDependencies: groupDependencyRows,
             dependents: dependentRows,
             hasPlan: plans.length > 0,
             plans,
@@ -3760,9 +4170,25 @@ export function makeBoardCardDetailLoader(
             // Why the live step stopped (t3o-30, D2), or null when it is
             // healthy or absent — the failure banner's text.
             stepError: Option.getOrNull(stepErrorRow)?.lastError ?? null,
+            ...(() => {
+              const step = Option.getOrNull(stepErrorRow);
+              return step === null ||
+                step.planReviewStartedAt === null ||
+                step.planReviewRounds === null ||
+                isBoardTerminalStepStatus(step.status)
+                ? {}
+                : {
+                    planReviewStarted: {
+                      startedAt: step.planReviewStartedAt,
+                      rounds: step.planReviewRounds,
+                    },
+                  };
+            })(),
+            decisions: decisionRows,
             // Filled below for a sub-board child; a top-level card has no
             // parent to inherit from and keeps the null.
             parentModelOverrides: null,
+            parentMergeStrategy: null,
           };
         },
       ),
@@ -3780,6 +4206,9 @@ export function makeBoardCardDetailLoader(
                 parentModelOverrides: Option.isNone(parentRow)
                   ? null
                   : parentRow.value.modelOverrides,
+                parentMergeStrategy: Option.isNone(parentRow)
+                  ? null
+                  : parentRow.value.mergeStrategy,
               })),
             ),
       ),
@@ -3853,6 +4282,10 @@ export interface BoardQueriesShape {
   readonly boardCardBrief: (
     cardId: BoardCardId,
   ) => Effect.Effect<string | null, ProjectionRepositoryError>;
+  /** A card's decision log (T3O-32), oldest first. */
+  readonly boardCardDecisions: (
+    cardId: BoardCardId,
+  ) => Effect.Effect<ReadonlyArray<BoardCardDecision>, ProjectionRepositoryError>;
   /** One plan's body for `board_get_plan` (t3o-08); null when absent. */
   readonly boardPlanBody: (
     planId: BoardPlanId,
@@ -3917,7 +4350,8 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
     execute: ({ liveThreadIdsJson, listedAt }) => sql`
       DELETE FROM boards.board_thread_todos
       WHERE thread_id NOT IN (
-              SELECT thread_id FROM boards.board_card_thread_links WHERE tombstoned_at IS NULL
+              SELECT thread_id FROM boards.board_card_thread_links
+              WHERE tombstoned_at IS NULL AND retired_at IS NULL
             )
          OR card_id NOT IN (SELECT card_id FROM boards.board_cards WHERE archived_at IS NULL)
          OR (
@@ -3935,6 +4369,11 @@ export function makeBoardQueries(sql: SqlClient.SqlClient): BoardQueriesShape {
     // Board-only readers for the MCP context / plan tools (t3o-08).
     boardCardActivity: makeBoardCardActivityLoader(queries),
     boardPlanBody: makeBoardPlanBodyLoader(queries),
+    // A card's decision log (T3O-32): ancestor context for planning agents.
+    boardCardDecisions: (cardId) =>
+      queries
+        .listBoardCardDecisionRowsForCard(cardId)
+        .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.decisions:query"))),
     // The brief alone, for the engine's pre-decide read (T3O-53).
     boardCardBrief: (cardId) =>
       queries

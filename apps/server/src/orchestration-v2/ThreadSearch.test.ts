@@ -958,6 +958,51 @@ it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows", (it) => {
   );
 });
 
+// T3o: the board adopt picker cannot offer a thread already on a card (T3O-41).
+it.layer(layerTest)("ThreadSearch.searchThreadsWithOlderSettledRows card threads", (it) => {
+  it.effect("leaves every board card thread out of the rows on request", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const sql = yield* SqlClient.SqlClient;
+      const project = ProjectId.make("project:grebe");
+      yield* createProject(project);
+      const id = (name: string) => ThreadId.make(`thread:grebe-${name}`);
+      const names = ["free", "live", "retired", "archived-card"];
+      yield* Effect.forEach(
+        names.map((name) => thread(id(name), project, { title: "Grebe nest", settledAt: at(10) })),
+        projections.apply,
+        { discard: true },
+      );
+      const linkedAt = DateTime.formatIso(at(5));
+      yield* sql`
+        INSERT INTO boards.board_card_thread_links
+          (thread_id, card_id, role, linked_at, tombstoned_at, retired_at)
+        VALUES (${id("live")}, 'card:grebe-1', 'building', ${linkedAt}, NULL, NULL),
+          (${id("retired")}, 'card:grebe-1', 'conflicts', ${linkedAt}, NULL, ${linkedAt}),
+          (${id("archived-card")}, 'card:grebe-archived', 'planning', ${linkedAt}, NULL, NULL)
+      `;
+      const rows = (excludeBoardCardThreads: boolean) =>
+        ThreadSearch.searchThreadsWithOlderSettledRows({
+          request: {
+            query: "grebe",
+            olderSettledBefore: DateTime.formatIso(at(30)),
+            titlesOnly: true,
+            ...(excludeBoardCardThreads ? { excludeBoardCardThreads } : {}),
+          },
+          search: search.search,
+          searchOlderSettled: search.searchOlderSettled,
+          sql,
+          readThreads: (threadIds) =>
+            projections.readShellSnapshot({ location: "active", threadIds }),
+          latestSequence: Effect.succeed(1),
+        }).pipe(Effect.map((result) => result.threads?.map((row) => row.id) ?? []));
+      assert.sameMembers(yield* rows(false), names.map(id));
+      assert.deepEqual(yield* rows(true), [id("free")]);
+    }),
+  );
+});
+
 it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
   it.effect("keeps room for a message-only thread behind many titled ones", () =>
     Effect.gen(function* () {

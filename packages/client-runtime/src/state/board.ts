@@ -77,6 +77,10 @@ import {
   detachBoardCardFile,
   mergeBoardCardPullRequest,
   moveBoardCard,
+  moveBoardCards,
+  setBoardCardGroupSettings,
+  setBoardCardAutomation,
+  cancelBoardCardWork,
   refreshBoardCardPullRequest,
   linkBoardCardPullRequest,
   renameBoardStage,
@@ -109,6 +113,10 @@ import {
   type DeleteBoardStageInput,
   type LinkBoardCardThreadInput,
   type MoveBoardCardInput,
+  type MoveBoardCardsInput,
+  type SetBoardCardGroupSettingsInput,
+  type SetBoardCardAutomationInput,
+  type CancelBoardCardWorkInput,
   type RenameBoardStageInput,
   type ReorderBoardCardInput,
   type RequeueBoardCardStepInput,
@@ -136,6 +144,10 @@ export * from "./boardReducer.ts";
 export * from "./boardSubscription.ts";
 
 export type {
+  MoveBoardCardsInput,
+  SetBoardCardGroupSettingsInput,
+  SetBoardCardAutomationInput,
+  CancelBoardCardWorkInput,
   ApproveBoardPlansInput,
   ArchiveBoardCardInput,
   CreateBoardCardInput,
@@ -788,6 +800,25 @@ export function createBoardEnvironmentAtoms<R, ER>(
     dismissWorkerSetup: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:dismiss-worker-setup",
       execute: (input: BoardWorkersDismissSetupInput) => dismissBoardWorkerSetup(input),
+    }),
+    /** Regroup cards (T3O-27); the board's New phase and shared parent. */
+    moveCards: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:move-cards",
+      execute: (input: MoveBoardCardsInput) => moveBoardCards(input),
+    }),
+    setGroupSettings: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-group-settings",
+      execute: (input: SetBoardCardGroupSettingsInput) => setBoardCardGroupSettings(input),
+    }),
+    /** A card's own Automation toggles (T3O-38). */
+    setCardAutomation: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-card-automation",
+      execute: (input: SetBoardCardAutomationInput) => setBoardCardAutomation(input),
+    }),
+    /** Destructive: the caller confirmed it by the card's typed key. */
+    cancelCardWork: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:cancel-card-work",
+      execute: (input: CancelBoardCardWorkInput) => cancelBoardCardWork(input),
     }),
     reorderCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reorder-card",

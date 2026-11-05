@@ -221,16 +221,17 @@ export function boardStagePrimaryAction(
  * question is whether the human meant to skip planning.
  *
  * A backward move (deprioritising the card) is deliberate and goes through
- * unasked. A sub-board child is planned by its parent and never asks.
+ * unasked. A split child owns a copy of its plan (T3O-27), so `planCount`
+ * alone decides.
  */
 export function boardMoveLeavesPlanningUnwritten(input: {
   readonly stages: ReadonlyArray<BoardStageDefinition>;
-  readonly card: { readonly stage: BoardStageId; readonly parentCardId: string | null };
+  readonly card: { readonly stage: BoardStageId };
   readonly toStage: BoardStageId;
   readonly planCount: number;
 }): boolean {
   const { card, toStage } = input;
-  if (input.planCount > 0 || card.parentCardId !== null) return false;
+  if (input.planCount > 0) return false;
   const board = stateOf(input.stages);
   const from = boardStageById(board, card.stage);
   if (from === null || effectiveBoardStageRole(from) !== "plan") return false;

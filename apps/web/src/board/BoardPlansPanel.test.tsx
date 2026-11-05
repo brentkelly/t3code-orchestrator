@@ -46,6 +46,7 @@ function child(
   cardId: string,
   stage: BoardStageId,
   archivedAt: string | null = null,
+  dependsOn: ReadonlyArray<string> = [],
 ): BoardCardChildRef {
   return {
     cardId: BoardCardId.make(cardId),
@@ -54,6 +55,7 @@ function child(
     stage,
     archivedAt,
     sourcePlanId: planIdOf(key),
+    dependsOn: dependsOn.map((id) => BoardCardId.make(id)),
   };
 }
 
@@ -80,6 +82,7 @@ function shell(cardId: string, stage: BoardStageId, overrides?: Partial<BoardCar
 /** #1 done with a PR, #2 building, #3 waiting on #2, #4 archived. */
 function render(options?: {
   readonly branch?: string | null;
+  readonly ownBranch?: boolean;
   readonly onOpenChild?: ((childCardId: string) => void) | undefined;
   readonly onOpenSubBoard?: (() => void) | undefined;
 }) {
@@ -87,8 +90,8 @@ function render(options?: {
     plans: [plan("a", 0), plan("b", 1, ["a"]), plan("c", 2, ["b"]), plan("d", 3)],
     children: [
       child("a", "c1", BOARD_SEED_STAGE_IDS.done),
-      child("b", "c2", BOARD_SEED_STAGE_IDS.building),
-      child("c", "c3", BOARD_SEED_STAGE_IDS.ready),
+      child("b", "c2", BOARD_SEED_STAGE_IDS.building, null, ["c1"]),
+      child("c", "c3", BOARD_SEED_STAGE_IDS.ready, null, ["c2"]),
       child("d", "c4", BOARD_SEED_STAGE_IDS.building, NOW),
     ],
     cards: [
@@ -103,6 +106,7 @@ function render(options?: {
       integrationBranch={options?.branch === undefined ? "t3o/TT-9-services" : options.branch}
       onOpenChild={options?.onOpenChild}
       onOpenSubBoard={options?.onOpenSubBoard}
+      ownBranch={options?.ownBranch}
       planRows={planRows}
     />,
   );
@@ -111,7 +115,7 @@ function render(options?: {
 describe("BoardPlansPanel", () => {
   it("heads the panel and offers the chart and the board", () => {
     const html = render({ onOpenSubBoard: () => {} });
-    expect(html).toContain("Plans");
+    expect(html).toContain(">Cards<");
     expect(html).toContain("in dependency order");
     expect(html).toContain("Dependency chart");
     expect(html).toContain("Board");
@@ -154,11 +158,18 @@ describe("BoardPlansPanel", () => {
     expect(html).toContain("Final review");
     expect(html).toContain("t3o/TT-9-services");
     expect(html).toContain(
-      "1 of 3 plans done. The final review starts on its own when the last one lands.",
+      "1 of 3 cards done. The final review starts on its own when the last one lands.",
     );
     // D5: no action. The reactor owns this transition.
     expect(html).not.toContain("Start final review");
     expect(html).not.toContain("Waiting on plans");
+  });
+
+  it("shows no final review for a group that inherits its parent's branch", () => {
+    // T3O-34: an inheriting group has no integration branch to review.
+    const html = render({ ownBranch: false, branch: null });
+    expect(html).not.toContain("Final review");
+    expect(html).not.toContain("integration branch pending");
   });
 
   it("says the branch is pending rather than inventing one", () => {

@@ -96,6 +96,8 @@ import {
   queueWorkspaceFocusFromPalette,
   restoreWorkspaceFocusFromPalette,
 } from "../lib/workspaceFocus";
+// T3o: the board's command palette entries (T3O-29).
+import { useBoardCommandPaletteItems } from "../board/boardCommandPaletteItems";
 import {
   composerPromptLink,
   copyPromptLink,
@@ -480,6 +482,8 @@ function OpenCommandPaletteDialog(props: {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const providersByEnvironment = useEnvironmentProviders();
   const { changeThemeItem, changeAppearanceItem, themeEditorItem } = useCommandPaletteThemeItems();
+  // T3o: the board's group drill-in and back actions (T3O-29).
+  const boardPaletteItems = useBoardCommandPaletteItems();
   const currentView = viewStack.at(-1)?.view ?? null;
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
   const [browseGeneration, setBrowseGeneration] = useState(0);
@@ -1520,6 +1524,8 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  // T3o: board actions, present only while a board is mounted (T3O-29).
+  actionItems.push(...boardPaletteItems);
   actionItems.push(changeThemeItem);
   actionItems.push(changeAppearanceItem);
 
