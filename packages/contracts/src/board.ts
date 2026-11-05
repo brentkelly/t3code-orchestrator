@@ -3122,7 +3122,7 @@ function canonicalJson(value: unknown): string {
   if (typeof value === "object" && value !== null) {
     return `{${Object.keys(value)
       .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
-      .toSorted()
+      .sort()
       .map(
         (key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`,
       )

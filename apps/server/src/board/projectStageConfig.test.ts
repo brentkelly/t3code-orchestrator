@@ -123,7 +123,7 @@ it.layer(makeBoardStackTestLayer("t3o-project-stage-config-test-"))(
         );
         // Project B is untouched.
         assert.include(
-          boardProjectStagesInOrder(configured, projectB).map((stage) => stage.stageId),
+          boardProjectStagesInOrder(configured, projectB).map((stage) => String(stage.stageId)),
           "sprint",
         );
 
@@ -157,7 +157,9 @@ it.layer(makeBoardStackTestLayer("t3o-project-stage-config-test-"))(
         assert.isUndefined(pruned.stages?.find((stage) => stage.stageId === security));
 
         const shell = yield* snapshots.getBoardSnapshot();
-        assert.deepStrictEqual(shell.projectStageConfigs?.[projectA]?.removedStageIds, ["sprint"]);
+        assert.deepStrictEqual(shell.projectStageConfigs?.[projectA]?.removedStageIds, [
+          BoardStageId.make("sprint"),
+        ]);
 
         const rehydrated = yield* snapshots.getCommandReadModel();
         const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
@@ -201,6 +203,18 @@ it.layer(makeBoardStackTestLayer("t3o-project-stage-set-project-test-"))(
             }),
           );
           yield* engine.dispatch(move(cardA, intake));
+
+          // A project-owned row belongs to its file, not to the global stage commands.
+          const renamed = yield* Effect.exit(
+            engine.dispatch({
+              type: "board.stage.rename",
+              commandId: nextCommandId("rename"),
+              stageId: intake,
+              label: "Renamed",
+              createdAt: t0,
+            }),
+          );
+          assert.include(String(renamed), "comes from a project's t3o.json");
 
           const setProject = () =>
             engine.dispatch({

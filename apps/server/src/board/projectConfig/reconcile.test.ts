@@ -9,6 +9,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  BoardStageId,
   EMPTY_BOARD_STATE,
   ProjectId,
   T3O_PROJECT_FILE_NAME,
@@ -92,7 +93,7 @@ describe("boardProjectStageConfigUpdate", () => {
       const first = yield* apply(EMPTY_BOARD_STATE, read);
       assert.isTrue(first.emitted);
       const config = first.board.projectStageConfigs?.[projectId];
-      assert.deepStrictEqual(config?.removedStageIds, ["sprint"]);
+      assert.deepStrictEqual(config?.removedStageIds, [BoardStageId.make("sprint")]);
       // Removing a role stage is ignored with a warning.
       assert.isTrue(config?.warnings.some((warning) => warning.includes("review role")));
 

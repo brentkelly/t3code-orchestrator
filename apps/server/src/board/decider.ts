@@ -1131,6 +1131,28 @@ function requireBoardProject(input: {
   );
 }
 
+/** The global stage a stage command names, or the refusal: a project-owned
+    row (T3O-43) belongs to its `t3o.json`, and the next reconcile would undo
+    any rename, reorder or delete made here. */
+function requireGlobalBoardStage(
+  board: BoardState,
+  command: Extract<BoardCommand, { readonly stageId: BoardStageId }>,
+): Effect.Effect<BoardStageDefinition, BoardCommandInvariantError> {
+  const stage = boardStageById(board, command.stageId);
+  if (stage === null) {
+    return Effect.fail(invariant(command, `Stage '${command.stageId}' does not exist.`));
+  }
+  if (stage.projectId !== null) {
+    return Effect.fail(
+      invariant(
+        command,
+        `Stage '${stage.label}' comes from a project's t3o.json; change it in that file.`,
+      ),
+    );
+  }
+  return Effect.succeed(stage);
+}
+
 /** Whether a command needs `BoardDecisionContext` loaded before it is decided
     (T3O-53): an update that edits the brief incrementally or guards it with a
     version. */
@@ -3752,10 +3774,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.stage.rename": {
-      const stage = boardStageById(board, command.stageId);
-      if (stage === null) {
-        return yield* invariant(command, `Stage '${command.stageId}' does not exist.`);
-      }
+      const stage = yield* requireGlobalBoardStage(board, command);
       const nextStage: BoardStageDefinition = {
         ...stage,
         label: command.label,
@@ -3773,10 +3792,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.stage.reorder": {
-      const stage = boardStageById(board, command.stageId);
-      if (stage === null) {
-        return yield* invariant(command, `Stage '${command.stageId}' does not exist.`);
-      }
+      const stage = yield* requireGlobalBoardStage(board, command);
       const nextStage: BoardStageDefinition = {
         ...stage,
         orderKey: command.orderKey,
@@ -3827,10 +3843,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.stage.delete": {
-      const stage = boardStageById(board, command.stageId);
-      if (stage === null) {
-        return yield* invariant(command, `Stage '${command.stageId}' does not exist.`);
-      }
+      const stage = yield* requireGlobalBoardStage(board, command);
       // Effective role (not the raw field): a legacy stage list carries
       // Planning with a null role, and the plan pipeline must not lose its
       // stage on such a board.
