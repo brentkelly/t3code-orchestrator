@@ -113,6 +113,36 @@ describe("boardProjectStageConfigUpdate", () => {
     }),
   );
 
+  it.effect("emits nothing again when the file's keys are not in schema order", () =>
+    Effect.gen(function* () {
+      const read: BoardProjectFileRead = {
+        raw: {
+          stages: {
+            add: [
+              {
+                prompt: "Audit it.",
+                autoAdvance: true,
+                after: "review",
+                label: "Security",
+                id: "security",
+              },
+            ],
+            settings: {
+              building: { autoAdvance: false, prompt: "Build it." },
+              review: { phases: { triage: { prompt: "Triage it." } }, rounds: 2 },
+            },
+          },
+        },
+        warnings: [],
+        source: { path: "/repo/t3o.json", commitSha: "aaa" },
+      };
+      const first = yield* apply(EMPTY_BOARD_STATE, read);
+      assert.isTrue(first.emitted);
+      const again = yield* apply(first.board, read);
+      assert.isFalse(again.emitted);
+    }),
+  );
+
   it.effect("carries a read failure's warning", () =>
     Effect.gen(function* () {
       const result = yield* apply(EMPTY_BOARD_STATE, {

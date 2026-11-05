@@ -3111,8 +3111,24 @@ function boardProjectStageConfigsEqual(
   // The commit sha is provenance only: the checkout moving on with the file
   // unchanged is not a config change.
   const strip = (config: BoardProjectStageConfig) =>
-    JSON.stringify({ ...config, source: config.source === null ? null : config.source.path });
+    canonicalJson({ ...config, source: config.source === null ? null : config.source.path });
   return strip(left) === strip(right);
+}
+
+/** JSON with object keys sorted: the reconciler builds partials in file key
+    order but the projector decodes them into schema order. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    return `{${Object.keys(value)
+      .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+      .toSorted()
+      .map(
+        (key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`,
+      )
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 /** What applying a project's resolved stage config would change (T3O-43):
