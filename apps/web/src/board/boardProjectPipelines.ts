@@ -118,18 +118,29 @@ export function boardPipelineColumns(input: {
   return columns;
 }
 
-/** The note a card carries when its project no longer uses the stage it sits
-    in, or null. */
-export function boardCardStageGoneNote(
+/** A lookup for the note a card carries when its project no longer uses the
+    stage it sits in, or null. */
+export function boardCardStageGoneNotes(
   view: BoardStageView,
-  card: { readonly stage: string; readonly projectId: ProjectId },
-  projectTitle: string,
-): string | null {
-  const entry = boardProjectStagesInOrder(view, card.projectId).find(
-    (stage) => stage.stageId === card.stage,
-  );
-  if (entry === undefined || !entry.retired) return null;
-  return `${entry.label} is no longer in ${projectTitle}'s pipeline`;
+  projectTitle: (projectId: ProjectId) => string,
+): (card: { readonly stage: string; readonly projectId: ProjectId }) => string | null {
+  // One pipeline walk per project, not per card: the board calls this for every card.
+  const retiredByProject = new Map<ProjectId, ReadonlyMap<string, string>>();
+  return (card) => {
+    let retired = retiredByProject.get(card.projectId);
+    if (retired === undefined) {
+      retired = new Map(
+        boardProjectStagesInOrder(view, card.projectId)
+          .filter((stage) => stage.retired)
+          .map((stage) => [String(stage.stageId), stage.label]),
+      );
+      retiredByProject.set(card.projectId, retired);
+    }
+    const label = retired.get(card.stage);
+    return label === undefined
+      ? null
+      : `${label} is no longer in ${projectTitle(card.projectId)}'s pipeline`;
+  };
 }
 
 export type BoardPipelineCell = "global" | "added" | "unused";

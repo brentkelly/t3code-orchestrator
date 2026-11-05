@@ -120,7 +120,7 @@ import {
   boardShellGroup,
   isBoardGroupShell,
 } from "./boardGroups";
-import { boardCardStageGoneNote, boardPipelineColumns } from "./boardProjectPipelines";
+import { boardCardStageGoneNotes, boardPipelineColumns } from "./boardProjectPipelines";
 import { BoardPipelinesButton } from "./BoardPipelinesButton";
 import { BOARD_UTILITY_MENU_RESERVED_SPACE, BoardUtilityMenu } from "./BoardUtilityMenu";
 import { BoardSubBoardPlanStrip } from "./BoardSubBoardPlanStrip";
@@ -849,12 +849,11 @@ function EnvironmentBoard({
     () => new Map(allProjects.map((project) => [String(project.id), project.title])),
     [allProjects],
   );
-  const stageGoneFor = useCallback(
-    (card: BoardCardShell) =>
-      boardCardStageGoneNote(
+  const stageGoneFor = useMemo(
+    () =>
+      boardCardStageGoneNotes(
         pipelineView,
-        card,
-        projectTitleById.get(card.projectId) ?? "its project",
+        (projectId) => projectTitleById.get(projectId) ?? "its project",
       ),
     [pipelineView, projectTitleById],
   );

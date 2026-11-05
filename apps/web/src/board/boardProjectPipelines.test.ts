@@ -13,7 +13,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCardPipelineStages,
-  boardCardStageGoneNote,
+  boardCardStageGoneNotes,
   boardPipelineColumns,
   boardPipelinesGrid,
 } from "./boardProjectPipelines";
@@ -116,19 +116,16 @@ describe("boardPipelineColumns", () => {
   });
 });
 
-describe("boardCardStageGoneNote", () => {
+describe("boardCardStageGoneNotes", () => {
   it("notes a card whose project no longer uses its stage, and nothing otherwise", () => {
     const view = makeView([{ stage: BOARD_SEED_STAGE_IDS.ready, projectId: web.id }]);
-    expect(
-      boardCardStageGoneNote(
-        view,
-        { stage: BOARD_SEED_STAGE_IDS.ready, projectId: web.id },
-        "mesh.web",
-      ),
-    ).toBe("Ready is no longer in mesh.web's pipeline");
-    expect(
-      boardCardStageGoneNote(view, { stage: BOARD_SEED_STAGE_IDS.ready, projectId: relay.id }, "x"),
-    ).toBeNull();
+    const noteFor = boardCardStageGoneNotes(view, (projectId) =>
+      projectId === web.id ? "mesh.web" : "x",
+    );
+    expect(noteFor({ stage: BOARD_SEED_STAGE_IDS.ready, projectId: web.id })).toBe(
+      "Ready is no longer in mesh.web's pipeline",
+    );
+    expect(noteFor({ stage: BOARD_SEED_STAGE_IDS.ready, projectId: relay.id })).toBeNull();
   });
 });
 
