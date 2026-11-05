@@ -28,6 +28,13 @@ import {
   BoardStageId,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_PLANNING_PROMPT,
+  DEFAULT_BOARD_PLAN_REVIEW_PROMPT,
+  DEFAULT_BOARD_PLAN_REVIEW_ROUNDS,
+  BOARD_PLAN_REVIEW_ROUNDS_MAX,
+  BOARD_PLAN_REVIEW_ROUNDS_MIN,
+  planReviewInstructionsClosing,
+  planReviewInstructionsLead,
+  type BoardPlanReviewSettings,
   DEFAULT_BOARD_REVIEW_PHASES,
   boardDraftPullRequestLine,
   boardReviewPhasePreamble,
@@ -1211,6 +1218,13 @@ function SimpleStageBody(props: {
             runtimeMode={effectiveBoardRuntimeMode(exec.runtimeMode, exec.mode)}
             onRuntimeModeChange={(runtimeMode) => set({ runtimeMode })}
           />
+          {role === "plan" && exec.kind === "simple" ? (
+            <PlanReviewSettingsBlock
+              stageId={stage.stageId}
+              settings={exec.planReview}
+              onChange={(planReview) => set({ planReview })}
+            />
+          ) : null}
           {role === null || role === "done" ? (
             <ToggleRow
               label="Agent can edit the card's worktree"
@@ -1305,6 +1319,65 @@ function SimpleStageBody(props: {
           onChange={(patch) => set({ submit: { ...exec.submit, ...patch } })}
         />
       ) : null}
+    </>
+  );
+}
+
+/**
+ * Plan review defaults (T3O-39), on the plan-role stage. The default prompt is
+ * never written into settings: Reset and an untouched prompt both store null.
+ */
+function PlanReviewSettingsBlock(props: {
+  stageId: BoardStageId;
+  settings: BoardPlanReviewSettings | undefined;
+  onChange: (next: BoardPlanReviewSettings) => void;
+}) {
+  const current: BoardPlanReviewSettings = props.settings ?? {
+    enabledByDefault: false,
+    defaultRounds: DEFAULT_BOARD_PLAN_REVIEW_ROUNDS,
+    prompt: null,
+  };
+  const set = (patch: Partial<BoardPlanReviewSettings>) => props.onChange({ ...current, ...patch });
+  return (
+    <>
+      <PhaseHeader label="Plan review" />
+      <ToggleRow
+        label="Review plans by default"
+        hint="Each card can still turn it on or off and set its own rounds."
+        checked={current.enabledByDefault}
+        ariaLabel="Review plans by default"
+        onChange={(enabledByDefault) => set({ enabledByDefault })}
+      />
+      <NumberRow
+        label="Default rounds"
+        hint="Stops early once the reviewers converge."
+        stepper={
+          <NumberStepper
+            value={current.defaultRounds}
+            min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
+            max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
+            ariaLabel="Default plan review rounds"
+            onChange={(defaultRounds) => set({ defaultRounds })}
+          />
+        }
+      />
+      <p className="pt-1 text-xs text-muted-foreground">
+        Given to the planning agent when it posts its plan. {"{rounds}"} is the card's round count.
+      </p>
+      <PromptRow
+        id={`${props.stageId}:plan-review`}
+        label="Prompt"
+        value={current.prompt ?? DEFAULT_BOARD_PLAN_REVIEW_PROMPT}
+        defaultValue={DEFAULT_BOARD_PLAN_REVIEW_PROMPT}
+        preamble={planReviewInstructionsLead(current.defaultRounds)}
+        postamble={planReviewInstructionsClosing({
+          rounds: current.defaultRounds,
+          humanInLoop: true,
+        })}
+        onChange={(prompt) =>
+          set({ prompt: prompt === DEFAULT_BOARD_PLAN_REVIEW_PROMPT ? null : prompt })
+        }
+      />
     </>
   );
 }

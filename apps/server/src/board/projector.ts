@@ -16,6 +16,7 @@
  */
 import {
   BOARD_CARD_BRIEF_BODY_KIND,
+  boardSplitChildPlanCopy,
   BoardCardArchivedPayload,
   boardCardCreatedDependsOn,
   boardCardCreatedLabels,
@@ -65,6 +66,8 @@ import {
   BoardLabelUpdatedPayload,
   BoardPlansApprovedPayload,
   BoardPlansProposedPayload,
+  BoardPlanReviewStartedPayload,
+  BoardPlanReviewStoppedPayload,
   BoardCardBaseRefRecordedPayload,
   BoardCardPlacedPayload,
   BoardCardWorkerMoveRecordedPayload,
@@ -136,6 +139,12 @@ const decodeBoardCardStepCompletedPayload = Schema.decodeUnknownEffect(
   BoardCardStepCompletedPayload,
 );
 const decodeBoardPlansProposedPayload = Schema.decodeUnknownEffect(BoardPlansProposedPayload);
+const decodeBoardPlanReviewStartedPayload = Schema.decodeUnknownEffect(
+  BoardPlanReviewStartedPayload,
+);
+const decodeBoardPlanReviewStoppedPayload = Schema.decodeUnknownEffect(
+  BoardPlanReviewStoppedPayload,
+);
 const decodeBoardPlanWrittenPayload = Schema.decodeUnknownEffect(BoardPlanWrittenPayload);
 const decodeBoardPlansApprovedPayload = Schema.decodeUnknownEffect(BoardPlansApprovedPayload);
 const decodeBoardCardIntegrationBranchRecordedPayload = Schema.decodeUnknownEffect(
@@ -245,6 +254,8 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // approve decider emits; absent on every other create.
     parentCardId: payload.parentCardId ?? null,
     sourcePlanId: payload.sourcePlanId ?? null,
+    // A heading is born a group (T3O-27); every other card is born a leaf.
+    group: payload.group ?? null,
     threadLinks: [],
     attachments: [],
     externalRef: null,
@@ -279,8 +290,9 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // the D18 build gate on a card they can already see waiting, and there is
     // no create-command field to set it with. Nor born auto-merging (T3O-38,
     // D3), for the same reason — and with nothing merged, nothing held.
-    autoStart: false,
-    autoMerge: false,
+    autoPlanSetting: null,
+    autoBuildSetting: null,
+    autoMergeSetting: null,
     autoMergeHold: null,
     // A created card never has a worktree: it is provisioned lazily on its
     // first `build`-mode stage entry (D5/D6), never at birth.
@@ -548,6 +560,7 @@ function setCardSplitRationale<M extends BoardReadModel>(
   model: M,
   cardId: BoardCardId,
   splitRationale: BoardCard["splitRationale"],
+  splitRecommendation: BoardCard["splitRecommendation"],
 ): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   if (!board.cards.some((card) => card.id === cardId)) return model;
@@ -555,7 +568,15 @@ function setCardSplitRationale<M extends BoardReadModel>(
     ...model,
     board: {
       ...board,
-      cards: board.cards.map((card) => (card.id === cardId ? { ...card, splitRationale } : card)),
+      cards: board.cards.map((card) => {
+        if (card.id !== cardId) return card;
+        const { splitRecommendation: _prior, ...rest } = card;
+        return {
+          ...rest,
+          splitRationale,
+          ...(splitRecommendation === undefined ? {} : { splitRecommendation }),
+        };
+      }),
     },
   };
 }
@@ -593,9 +614,19 @@ export function projectBoardEvent<M extends BoardReadModel>(
     case "board.card-created":
       return decodeBoardCardCreatedPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
-        Effect.map((payload) =>
-          bumpNextCardNumber(upsertCard(model, boardCardFromCreatedPayload(payload)), payload),
-        ),
+        Effect.map((payload) => {
+          const card = boardCardFromCreatedPayload(payload);
+          const next = bumpNextCardNumber(upsertCard(model, card), payload);
+          // A split child owns a copy of its plan (T3O-27), mirroring the SQL
+          // projection's row.
+          const source =
+            payload.briefFromPlanId === undefined || payload.briefOnly === true
+              ? undefined
+              : next.board?.plans?.find((plan) => plan.planId === payload.briefFromPlanId);
+          return source === undefined
+            ? next
+            : upsertPlan(next, boardSplitChildPlanCopy(source, card));
+        }),
       );
 
     case "board.card-moved":
@@ -717,7 +748,12 @@ export function projectBoardEvent<M extends BoardReadModel>(
           // carries the card id and the plans, never the card itself. Applied
           // BEFORE the plans so an unknown card id is a no-op on both.
           replaceCardPlans(
-            setCardSplitRationale(model, payload.cardId, payload.splitRationale),
+            setCardSplitRationale(
+              model,
+              payload.cardId,
+              payload.splitRationale,
+              payload.splitRecommendation,
+            ),
             payload.cardId,
             // Strip the body — read model holds metadata only (D8).
             payload.plans.map(({ body: _body, ...plan }) => plan),
@@ -821,6 +857,8 @@ export function projectBoardEvent<M extends BoardReadModel>(
     // unchanged and a replay that includes it lands exactly where a replay
     // without it would.
     case "board.card-note-recorded":
+    // The decision log is table-only (T3O-32, D8).
+    case "board.card-decisions-recorded":
       return Effect.succeed(model);
 
     case "board.stage-created":
@@ -911,6 +949,20 @@ export function projectBoardEvent<M extends BoardReadModel>(
 
     case "board.card-step-checked-in":
       return decodeBoardCardStepCheckedInPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
+    // T3o: plan review (T3O-39). Starting writes the step state; stopping
+    // clears it, so turning review back on starts a fresh one.
+    case "board.plan-review-started":
+      return decodeBoardPlanReviewStartedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
+    case "board.plan-review-stopped":
+      return decodeBoardPlanReviewStoppedPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
@@ -1324,9 +1376,13 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     // A background-wait check-in (T3O-20) leaves the step running on the same
     // thread; the card's "Waiting" label is thread-derived, not step-derived.
     case "board.card-step-checked-in":
+    // Plan review (T3O-39) is card detail: the sidebar and the rail show it.
+    case "board.plan-review-started":
+    case "board.plan-review-stopped":
     // Branch cleanup is card DETAIL too: it lands on the activity rail, which
     // rides `board.subscribeCard`, and changes nothing a column card renders.
     case "board.card-note-recorded":
+    case "board.card-decisions-recorded":
       // Agent write-path events are card DETAIL, not column-card shell fields
       // (D7): an agent's progress note, a non-review step completion or a plan
       // BODY rewrite changes nothing a column card renders, so they emit no

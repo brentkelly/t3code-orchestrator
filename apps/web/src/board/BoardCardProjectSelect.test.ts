@@ -13,6 +13,7 @@ import {
   DEFAULT_BOARD_SETTINGS,
   ProjectId,
   boardCardProjectLock,
+  defaultBoardCardGroup,
   type BoardCard,
   type BoardCardPullRequest,
   type BoardSettings,
@@ -33,13 +34,13 @@ const stageState: BoardState = {
   nextCardNumberByProject: {},
 };
 
-type LockCard = Pick<BoardCard, "stage" | "worktree" | "pullRequestHistory" | "parentCardId">;
+type LockCard = Pick<BoardCard, "stage" | "worktree" | "pullRequestHistory" | "group">;
 
 const lockCard = (overrides: Partial<LockCard> = {}): LockCard => ({
   stage: BOARD_SEED_STAGES[3]!.stageId, // Ready
   worktree: null,
   pullRequestHistory: [],
-  parentCardId: null,
+  group: null,
   ...overrides,
 });
 
@@ -55,7 +56,14 @@ const mergedPr: BoardCardPullRequest = {
 
 describe("boardCardProjectLock", () => {
   it("leaves a card that has never been built editable", () => {
-    expect(boardCardProjectLock({ board: stageState, card: lockCard(), childCount: 0 })).toBeNull();
+    expect(
+      boardCardProjectLock({
+        board: stageState,
+        card: lockCard(),
+        childCount: 0,
+        integrationParentId: null,
+      }),
+    ).toBeNull();
   });
 
   it("pins a card that has reached the build stage", () => {
@@ -63,6 +71,7 @@ describe("boardCardProjectLock", () => {
       board: stageState,
       card: lockCard({ stage: BOARD_SEED_STAGES[4]!.stageId }),
       childCount: 0,
+      integrationParentId: null,
     });
     expect(lock?.kind).toBe("built");
   });
@@ -83,6 +92,7 @@ describe("boardCardProjectLock", () => {
         },
       }),
       childCount: 0,
+      integrationParentId: null,
     });
     expect(lock?.kind).toBe("built");
   });
@@ -92,25 +102,42 @@ describe("boardCardProjectLock", () => {
       board: stageState,
       card: lockCard({ pullRequestHistory: [mergedPr] }),
       childCount: 0,
+      integrationParentId: null,
     });
     expect(lock?.kind).toBe("built");
   });
 
-  // Both halves of a sub-board refuse, and each says which half it is: a child
-  // inherits its parent's project, a split parent would cascade key reissues
-  // across every card on its sub-board.
-  it("pins a sub-board child, naming its parent", () => {
+  // An integration branch lives in one repository; trunk does not pin anyone.
+  it("pins a card landing on an integration branch, naming its owner", () => {
     const lock = boardCardProjectLock({
       board: stageState,
-      card: lockCard({ parentCardId: BoardCardId.make("parent") }),
+      card: lockCard(),
       childCount: 0,
+      integrationParentId: BoardCardId.make("parent"),
     });
     expect(lock).toEqual({ kind: "child", parentCardId: "parent" });
   });
 
   it("pins a split parent even while it sits before the build stage", () => {
-    const lock = boardCardProjectLock({ board: stageState, card: lockCard(), childCount: 3 });
+    const lock = boardCardProjectLock({
+      board: stageState,
+      card: lockCard(),
+      childCount: 3,
+      integrationParentId: null,
+    });
     expect(lock).toEqual({ kind: "parent", childCount: 3 });
+  });
+
+  it("leaves an unbuilt inherit group editable", () => {
+    const lock = boardCardProjectLock({
+      board: stageState,
+      card: lockCard({
+        group: defaultBoardCardGroup(stageState, { stage: BOARD_SEED_STAGES[3]!.stageId }),
+      }),
+      childCount: 3,
+      integrationParentId: null,
+    });
+    expect(lock).toBeNull();
   });
 
   it("gives every reason its own hint", () => {

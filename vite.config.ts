@@ -651,6 +651,7 @@ export default defineConfig({
           "apps/web/src/board/**",
           "apps/web/src/components/settings/Board*.{ts,tsx}",
           "apps/web/src/routes/board*.tsx",
+          "apps/web/src/routes/list*.tsx",
         ],
         rules: {
           "shadcn/no-arbitrary-values": "off",

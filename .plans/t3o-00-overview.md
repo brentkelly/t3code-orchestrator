@@ -261,20 +261,56 @@ Ordering rule, unchanged: **stage descending → started before unstarted → dr
 beats starting; a nearly-merged card is never starved by new work. Preemption takes effect at the
 **next step boundary** — nothing in flight is wasted and the worktree is always left clean.
 
-### D12 — Sub-boards are stacked branches, depth 1
+### D12 — Groups nest; a group's stage is derived from its children
 
-**Decision:** the planning agent _proposes_ a split; the human approves it at the existing
-"Approve plan" gate, which materialises the plan cards and the integration branch. Plan cards are
-real cards with fewer columns (Ready onward). They branch off `feat/x` and their PRs target it. The
-parent's own Code Review is the final `feat/x → main` review, gated until every plan is Done. The
-parent's stage is **derived** while children are live and cannot be dragged independently.
+**Decision:** a card with children is a **group**; a card without is a **leaf**, and only leaves run
+the pipeline. Groups nest to any depth. A group's settings live on the card (`BoardCard.group`):
+its merge **target** (`own` integration branch, or `inherit` from its own parent, else trunk),
+**auto-build**, **auto-merge**, **auto-plan**, whether the human has **started** it, the column it
+was **placed** in, the stage it had before it became a group, whether it is an empty **heading**,
+and whether its own branch is **integrated**.
 
-The dependency graph is **agent-authored and therefore validated for cycles at the approve gate**.
-Single-plan is the default; most cards never split. No nesting beyond depth 1.
+A group's stage is **derived, never set by hand**: Done when every active child (not Deferred) is
+done — an `own` group first sits in its integration review, the stage after build, until it
+reaches Done and is marked integrated; Building while any active child is at build or later;
+otherwise the placed column. `stage` stays the authoritative column, so filters, columns and
+dependencies need no special case. The **decider** derives it, in the same decision as the child
+change: after any command that changes a child's stage, parent, archive state or deferral, it walks
+the ancestors and emits a move for each group whose stage changed. The reactor only heals a group it
+finds out of step, by asking the decider to re-derive. A human moving a group places it before
+build, or starts it at build; the integration-review lane of an `own` group is walked as any card's.
 
-On a distributed board the integration branch is **cut on the parent's worker and pushed**, and
+The planning agent _proposes_ a split, marking each child Planned (a full plan) or Needs planning
+(a brief), and recommends the group's auto-build and merge target (T3O-31). The human approves it at
+the split gate with those settings or edited ones. Approval creates the children — a Planned child
+owns a copy of its plan and lands in Ready, so "planned" is a property of the card; a Needs-planning
+child gets the body as its brief only and lands in Backlog — and makes the card a group with the
+chosen settings. Omitted advice falls back to: every child planned → `own` with auto-build;
+otherwise inherit, auto-build off; under an ancestor with its own branch → inherit. Approval starts
+nothing: the human starting the group
+(moving it to build) does, and from then on every ready child whose dependencies are met starts
+itself while auto-build is on. Children of an `own` group branch off its integration branch, their
+pull requests target it, and the group's own review is the final integration review against its
+target. **Grouping alone never touches git**: an inherit group has no branch at all.
+
+Auto-merge resolves **nearest wins**: a card's own override arms it; inside a group its parent
+decides — auto-build when the card lands on an integration branch, "Auto-merge to trunk" when it
+lands on trunk — and the board-wide merge-stage setting applies to top-level cards only. An
+integration branch never spans projects. Archiving a group (decision 14) archives its whole subtree
+for good once the human types its key: threads stop, pull requests close, worktrees and branches go,
+remote copies included.
+
+**Deferred** is a fixed system stage before Backlog, outside the stage list, open only inside a
+group; a started card cannot be deferred, and a deferred card moved to the top level lands in
+Backlog. A group whose last live child leaves reverts to an ordinary card at its previous stage,
+capped at Sprint, unless it is a heading. A started leaf cannot become a group. Dependencies may
+cross groups, are cycle-checked across the whole tree (a group waits for its children), and are
+refused along a card's own ancestry; a dependency on a group is met when the group reaches Done.
+Regrouping is one `move-cards` primitive; agents may regroup only with a human's explicit approval.
+
+On a distributed board the integration branch is **cut on the group's worker and pushed**, and
 children cut their branches **from the remote**, so a child placed on another worker never needs
-the parent's checkout (D21).
+the group's checkout (D21).
 
 Sibling plans run in parallel from the same base, so a merge makes siblings stale. That is resolved
 by a **`sync-base` step** enqueued at a stage boundary — never by writing into a worktree while an
@@ -376,15 +412,37 @@ a human act unless listed below.
 | Backlog → Sprint              | Add to sprint                                          |
 | Sprint → Planning             | Begin planning _(starts the planning thread on entry)_ |
 | Planning → Ready              | Approve plan                                           |
-| **Ready → Building**          | **Begin build — never automatic**                      |
+| **Ready → Building**          | **Begin build — automatic only under Auto-build**      |
 | Code review → Ready for merge | Approve review                                         |
 | Ready for merge → Done        | Merge                                                  |
 
 **Board-driven transitions** (the only ones):
 
 - Building → Code review when the build step reports success.
-- A parent card advances when its last child plan card reaches Done (D12).
+- A group's stage follows its children (D12): it is derived, so a group reaches Building, its
+  integration review or Done as its children do.
+- Once a human has started a group with auto-build on, each ready child whose dependencies are met
+  starts itself (D12). Turning auto-build off stops new starts and never interrupts a running child.
 - Done → archived after the configured window, when auto-archive is enabled (D15).
+- **Automation toggles** (T3O-38): each card has Auto-plan, Auto-build and Auto-merge, each on,
+  off or inherited from its parent group. Turning one on is the human act that authorises the
+  transition it names, for that card — set ahead of time rather than clicked at the moment.
+  - Auto-plan: the planning run is unattended; the agent decides what is left and logs each
+    decision. Alone, its plan still waits at the approval gate (Planning → Ready stays human).
+  - Auto-plan + Auto-build: the plan is approved when it arrives, unclear decisions included, and
+    the card goes on through Ready to Building once its dependencies are met (every gate still
+    applies). A split is approved with the card's toggles, and its group starts.
+  - Auto-build alone: an approved card at Ready starts itself once its dependencies are met.
+  - A card's **own** Auto-build is its authorisation by itself; an **inherited** one acts only once
+    a human has started the group (D12, t3o-28 D1 — begun is `group.started`, set by a human or
+    cascade move into build, never by a child's own Auto-build). Approving a split still starts
+    nothing on its own.
+  - Board-wide auto-merge turns every card's Auto-merge on, group children included.
+  - Dragging a card back out of Building turns its Auto-build off, back into Planning its Auto-plan
+    off (D7), so a card pulled back never relaunches under the person parking it. A human Stop or
+    answer on an unattended planning run turns Auto-plan off; a machine failure does not.
+  - Auto-planning steers the card's current planning thread whatever its status; it never replaces
+    it.
 - A card whose worker is removed while it has no worktree falls back to the default worker, with an
   activity entry (D22).
 

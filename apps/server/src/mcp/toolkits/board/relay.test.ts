@@ -28,6 +28,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -71,6 +72,7 @@ import * as ServerSettings from "../../../serverSettings.ts";
 import { McpInvocationContext, type McpInvocationScope } from "../../McpInvocationContext.ts";
 import { boardHandlers } from "./handlers.ts";
 import { relayable } from "./relay.ts";
+import { BoardToolkit } from "./tools.ts";
 import { makeBoardMcpRelayClient } from "./relayClient.ts";
 
 const t0 = "2026-01-01T00:00:00.000Z";
@@ -422,6 +424,42 @@ describe("the board MCP relay", () => {
           request,
         );
         assert.strictEqual(replayed._tag === "failure" ? replayed.code : replayed._tag, "rejected");
+      }),
+    ),
+  );
+
+  it.effect("a worker decodes card context from a central built before T3O-32", () =>
+    inCentral(
+      Effect.gen(function* () {
+        const world = yield* setup();
+        const cardId = BoardCardId.make("card-old-central");
+        const threadId = ThreadId.make("thread-old-central");
+        yield* seedCard(world, { cardId, threadId }).pipe(Effect.provide(world.runtime));
+        const answer = yield* world.relayClient.answer(WORKER_ID, {
+          callId: "relay:call-old-central",
+          toolName: "board_get_card_context",
+          params: {},
+          threadId,
+          providerSessionId: "sess-1",
+          providerInstanceId: CODEX,
+          stateDir: world.workerStateDir,
+        });
+        assert.strictEqual(answer._tag, "success");
+        if (answer._tag !== "success") return;
+        const {
+          ancestors: _ancestors,
+          sourcePlan: _sourcePlan,
+          decisions: _decisions,
+          ...older
+        } = answer.value as Record<string, unknown>;
+        const decoded = yield* Schema.decodeUnknownEffect(
+          BoardToolkit.tools.board_get_card_context.successSchema as unknown as Schema.Codec<
+            Record<string, unknown>
+          >,
+        )(older);
+        assert.deepStrictEqual(decoded.ancestors, []);
+        assert.isNull(decoded.sourcePlan);
+        assert.deepStrictEqual(decoded.decisions, []);
       }),
     ),
   );

@@ -18,6 +18,15 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/board",
     searchTerms: ["central board remote environment connection"],
   },
+  // T3O-40: board display preferences.
+  { id: "board-display", title: "Board display", to: "/settings/board" },
+  {
+    id: "board-auto-collapse-empty-stages",
+    title: "Auto-collapse empty stages",
+    to: "/settings/board",
+    targetId: "board-display",
+    searchTerms: ["fold hide empty columns"],
+  },
   { id: "board-projects", title: "Projects", to: "/settings/board" },
   {
     id: "board-key-prefix",

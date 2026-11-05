@@ -175,6 +175,7 @@ export const makeThreadGatewayRouter = (deps: ThreadGatewayRouterDeps): ThreadGa
     settle: routed("settle", (gateway) => gateway.settle),
     delete: routed("delete", (gateway) => gateway.delete),
     armLimitRecovery: routed("armLimitRecovery", (gateway) => gateway.armLimitRecovery),
+    answerPendingInput: routed("answerPendingInput", (gateway) => gateway.answerPendingInput),
     threadState: routedRead((gateway) => gateway.threadState),
     latestAssistantMessage: routedRead((gateway) => gateway.latestAssistantMessage),
     lastSignalAt: routedRead((gateway) => gateway.lastSignalAt),

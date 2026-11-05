@@ -75,6 +75,7 @@ const card: BoardCard = {
   dependsOn: [],
   parentCardId: null,
   sourcePlanId: null,
+  group: null,
   threadLinks: [],
   attachments: [],
   externalRef: null,
@@ -84,8 +85,9 @@ const card: BoardCard = {
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: null,
-  autoStart: false,
-  autoMerge: false,
+  autoPlanSetting: null,
+  autoBuildSetting: null,
+  autoMergeSetting: null,
   autoMergeHold: null,
   mergeStrategy: null,
   pinnedWorkerId: null,
@@ -272,6 +274,7 @@ function reconcileCommandObjects(input: {
             ),
           merge: () => Effect.void,
           markReady: () => Effect.succeed("not-draft" as const),
+          close: () => Effect.succeed("not-open" as const),
           mergeState: () =>
             Effect.fail(
               new BoardPullRequestGatewayError({

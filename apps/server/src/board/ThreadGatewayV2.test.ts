@@ -209,13 +209,25 @@ describe("makeSignalReader", () => {
     assert.isNull(read(stored("runtime-request.updated", request("q1", "pending"))));
     assert.deepStrictEqual(
       read(stored("runtime-request.updated", request("q1", "resolved", { which: "A" }))),
-      { type: "input-resolved", threadId, answered: true },
+      { type: "input-resolved", threadId, answered: true, byBoard: false },
     );
     assert.deepStrictEqual(read(stored("runtime-request.updated", request("q2", "cancelled"))), {
       type: "input-resolved",
       threadId,
       answered: false,
+      byBoard: false,
     });
+    // The board's own answer (the auto-plan steer) says so, durably.
+    assert.deepStrictEqual(
+      read(
+        stored(
+          "runtime-request.updated",
+          request("q3", "resolved", { which: "B" }),
+          "server:board-auto-plan-answer:uuid",
+        ),
+      ),
+      { type: "input-resolved", threadId, answered: true, byBoard: true },
+    );
   });
 
   it("reads an answered permission prompt, and ignores an auth refresh", () => {

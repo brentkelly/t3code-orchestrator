@@ -21,11 +21,18 @@ import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
 import { BoardModeTabs } from "./BoardModeTabs";
 
-export function BoardTopBar({ children }: { readonly children?: ReactNode }) {
+export function BoardTopBar({
+  children,
+  mode = "board",
+}: {
+  readonly children?: ReactNode;
+  /** Which board-owned surface this bar heads: the board or the List view. */
+  readonly mode?: "board" | "list";
+}) {
   return (
     <WorkspacePageHeader className="gap-2" electron={isElectron}>
       <BoardBrand />
-      <BoardModeTabs mode="board" />
+      <BoardModeTabs mode={mode} />
       <span className="flex-1" />
       {children}
     </WorkspacePageHeader>

@@ -59,10 +59,15 @@ export function BoardPickerSearchBody({
   placeholder,
   options,
   onPick,
+  onQueryChange,
+  pending = false,
 }: {
   readonly placeholder: string;
   readonly options: ReadonlyArray<BoardPickerOption>;
   readonly onPick: (id: string) => void;
+  /** For a caller that searches beyond `options` as the user types (T3O-41). */
+  readonly onQueryChange?: ((query: string) => void) | undefined;
+  readonly pending?: boolean | undefined;
 }) {
   const [query, setQuery] = useState("");
   const { visible: filtered, hidden } = boardPickerVisibleOptions(options, query);
@@ -71,13 +76,18 @@ export function BoardPickerSearchBody({
       <Input
         autoFocus
         className="h-7 text-sm"
-        onChange={(event) => setQuery(event.target.value)}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          onQueryChange?.(event.target.value);
+        }}
         placeholder={placeholder}
         value={query}
       />
       <div className="mt-1.5 flex max-h-64 flex-col gap-0.5 overflow-y-auto">
         {filtered.length === 0 ? (
-          <span className="px-1.5 py-1 text-[12.5px] text-muted-foreground">No matches.</span>
+          <span className="px-1.5 py-1 text-[12.5px] text-muted-foreground">
+            {pending ? "Searching…" : "No matches."}
+          </span>
         ) : (
           <>
             {filtered.map((option) => (
@@ -120,11 +130,15 @@ export function BoardSearchAddPicker({
   placeholder,
   options,
   onPick,
+  onQueryChange,
+  pending,
 }: {
   readonly label: string;
   readonly placeholder: string;
   readonly options: ReadonlyArray<BoardPickerOption>;
   readonly onPick: (id: string) => void;
+  readonly onQueryChange?: ((query: string) => void) | undefined;
+  readonly pending?: boolean | undefined;
 }) {
   const [open, setOpen] = useState(false);
   // Bumped on OPEN only. Keying the body on `open` itself would also remount it
@@ -150,7 +164,9 @@ export function BoardSearchAddPicker({
             onPick(id);
             setOpen(false);
           }}
+          onQueryChange={onQueryChange}
           options={options}
+          pending={pending}
           placeholder={placeholder}
         />
       </PopoverPopup>

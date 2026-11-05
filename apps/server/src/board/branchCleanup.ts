@@ -2,8 +2,8 @@
  * Branch cleanup for a card that is finished with its branch.
  *
  * Deleting a branch is irreversible, so nothing here decides on its own that a
- * branch is spent — the CALLER carries that burden, and there are exactly two,
- * with two different justifications:
+ * branch is spent — the CALLER carries that burden, and each caller below has
+ * its own justification:
  *
  * - **Arrival at Done with a merged pull request.** The commits already live in
  *   the base branch, so the branch holds nothing that exists nowhere else. This
@@ -13,8 +13,17 @@
  *   lost. What makes it legitimate is that a human confirmed the destruction of
  *   the card at a dialog that says so; the card is being erased, and a branch
  *   named after a card that no longer exists has no owner left.
+ * - **Confirmed group archive** (T3O-28, decision 14). The human typed the
+ *   group's key to say no further work happens on the subtree, ever.
+ * - **Archive of a `branch-only` integration branch whose PR merged** (T3O-28).
+ *   It has no checkout for a reclaim to remove, and its merge made it durable.
+ * - **Cancelled work, after its worktree goes** (T3O-28, decision 12). A human
+ *   confirmed the cancellation by typing the card's key and its PR was closed,
+ *   so the work is not wanted. The reclaim's safety rule only proves the work
+ *   is pushed, not merged, so this deletes the remote copy on that confirmation
+ *   alone; the branch goes with the checkout.
  *
- * Two deletions, with different risk:
+ * Each caller runs two deletions, with different risk:
  *
  * - **Remote** — what GitHub's own "delete branch on merge" does, and safe for
  *   the same reason.
@@ -41,6 +50,8 @@ import { safeProcessOutput } from "../vcs/VcsProcess.ts";
 export interface BoardBranchCleanupResult {
   readonly remoteDeleted: boolean;
   readonly localDeleted: boolean;
+  /** The repository has no remote, so there was no remote copy to delete. */
+  readonly remoteAbsent: boolean;
   /** Why a deletion was skipped or failed; null when everything asked for
       happened. Human-facing — it lands on the card. */
   readonly skippedReason: string | null;
@@ -91,8 +102,24 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
     .resolvePrimaryRemoteName(input.cwd)
     .pipe(Effect.catch(() => Effect.succeed(null)));
   let remoteDeleted = false;
+  let remoteAbsent = false;
   if (remoteName === null) {
-    skipped.push("no remote to delete the branch from");
+    // Absent only when git listed the remotes and there were none: a lookup
+    // that failed outright says nothing about the remote branch.
+    const remotes = yield* git
+      .execute({
+        operation: "board.deleteCardBranch.remotes",
+        cwd: input.cwd,
+        args: ["remote"],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    remoteAbsent = remotes !== null && remotes.exitCode === 0 && remotes.stdout.trim() === "";
+    skipped.push(
+      remoteAbsent
+        ? "no remote to delete the branch from"
+        : "remote branch not deleted: no remote resolved",
+    );
   } else {
     // `allowNonZeroExit`: the branch already being gone is the single most
     // likely outcome here — GitHub deletes it itself when the repository has
@@ -174,6 +201,7 @@ export const deleteCardBranch = Effect.fn("deleteCardBranch")(function* (input: 
   return {
     remoteDeleted,
     localDeleted,
+    remoteAbsent,
     skippedReason: skipped.length === 0 ? null : skipped.join("; "),
   } satisfies BoardBranchCleanupResult;
 });

@@ -207,6 +207,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
     settle: (input) => wireCommand(local.settle(input)),
     delete: (input) => wireCommand(local.delete(input)),
     armLimitRecovery: (input) => wireCommand(local.armLimitRecovery(input)),
+    answerPendingInput: (input) => wireCommand(local.answerPendingInput(input)),
     threadState: (threadId) => wireRead(local.threadState(threadId)),
     threadRecords: (threadIds) =>
       wireRead(local.threadRecords(threadIds)).pipe(Effect.map((records) => [...records.values()])),

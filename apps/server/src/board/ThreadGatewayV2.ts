@@ -400,6 +400,7 @@ export const makeSignalReader = () => {
                   threadId: event.threadId,
                   answered:
                     request.status === "resolved" && Object.keys(request.answers ?? {}).length > 0,
+                  byBoard: isBoardMintedCommandId(stored.commandId),
                 },
               ]
             : [];
@@ -754,6 +755,40 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
           commandId: input.commandId,
           threadId: input.threadId,
           limitRecovery: { runId: shell.latestRunId, resetAt: limit.resetAt, autoResume: true },
+        });
+        return true;
+      }),
+
+    answerPendingInput: (input) =>
+      Effect.gen(function* () {
+        const shell = yield* liveShell("runtime-request.respond", input.threadId);
+        const pending = shell.pendingRuntimeRequest;
+        if (pending === null || pending.kind !== "user_input") return false;
+        const context = yield* projections
+          .getRuntimeResponseContext(input.threadId, pending.id)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ThreadCommandFailedError({
+                  command: "runtime-request.respond",
+                  threadId: input.threadId,
+                  detail: describe(cause),
+                  cause,
+                }),
+            ),
+          );
+        const request = context.request;
+        if (request === undefined || request.status !== "pending") return false;
+        if (request.responseCapability.type === "not_resumable") return false;
+        const item = context.item;
+        if (item === undefined || item.type !== "user_input_request") return false;
+        if (item.questions.length === 0) return false;
+        yield* run({
+          type: "runtime-request.respond",
+          commandId: input.commandId,
+          threadId: input.threadId,
+          requestId: pending.id,
+          answers: Object.fromEntries(item.questions.map((question) => [question.id, input.text])),
         });
         return true;
       }),

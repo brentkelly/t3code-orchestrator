@@ -106,6 +106,11 @@ export const resolveBoardDatabasePath = (mainFile: string): string => {
     : `${mainFile.slice(0, separator + 1)}${BOARD_DATABASE_FILENAME}`;
 };
 
+/** The board database for the SQLite reader worker, which opens `main` alone. */
+export const boardReaderAttachments = (mainFile: string) => [
+  { schema: BOARD_SCHEMA, filename: resolveBoardDatabasePath(mainFile) },
+];
+
 /** Row-for-row equality of the two migration ledgers, timestamps included. */
 const ledgersIdentical = Effect.fn("ledgersIdentical")(function* () {
   const sql = yield* SqlClient.SqlClient;

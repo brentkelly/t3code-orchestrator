@@ -23,6 +23,7 @@ import {
   BoardStageId,
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
+  DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
   DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
@@ -178,6 +179,9 @@ export const makeBoardCard = (input: {
   readonly scheduledStartAt?: string | null;
   /** The card's auto-start arm (T3O-24). Absent is unarmed. */
   readonly autoStart?: boolean;
+  readonly autoPlanSetting?: boolean | null;
+  readonly autoBuildSetting?: boolean | null;
+  readonly autoMergeSetting?: boolean | null;
   /** The per-card auto-merge arm (T3O-38, D3). */
   readonly autoMerge?: boolean;
   /** A recorded auto-merge hold (T3O-38, D4) — the state a refused armed
@@ -212,6 +216,7 @@ export const makeBoardCard = (input: {
   dependsOn: (input.dependsOn ?? []).map((id) => BoardCardId.make(id)),
   parentCardId: input.parentCardId == null ? null : BoardCardId.make(input.parentCardId),
   sourcePlanId: null,
+  group: null,
   threadLinks: [],
   attachments: [],
   externalRef: null,
@@ -222,8 +227,11 @@ export const makeBoardCard = (input: {
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: (input.scheduledStartAt ?? null) as BoardCard["scheduledStartAt"],
-  autoStart: input.autoStart ?? false,
-  autoMerge: input.autoMerge ?? false,
+  // `autoStart` / `autoMerge` are the pre-T3O-38 spellings of an own
+  // Auto-build / Auto-merge on.
+  autoPlanSetting: input.autoPlanSetting ?? null,
+  autoBuildSetting: input.autoBuildSetting ?? (input.autoStart === true ? true : null),
+  autoMergeSetting: input.autoMergeSetting ?? (input.autoMerge === true ? true : null),
   autoMergeHold: input.autoMergeHold ?? null,
   pinnedWorkerId: input.pinnedWorkerId ?? null,
   placedWorkerId: input.placedWorkerId ?? null,
@@ -413,6 +421,7 @@ export const settingsWith = (input: {
     autoArchiveDone: input.autoArchiveDone ?? DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
     autoArchiveAfterDays: input.autoArchiveAfterDays ?? DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   },
+  display: { autoCollapseEmptyStages: DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES },
 });
 
 export type Harness = {
@@ -445,6 +454,8 @@ export type Harness = {
   readonly mergeStateProbes: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** Every mark-ready request the reactor made (T3O-12), in order. */
   readonly markReadyCalls: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
+  /** Every pull request the reactor asked the forge to close (T3O-28), in order. */
+  readonly closePullRequestCalls: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** T3o (T3O-48): every pull request lookup, with whether it was FORCED — so a
       test can tell a human's "Check again" from the automatic cached refresh. */
   readonly pullRequestLookups: Effect.Effect<ReadonlyArray<{ readonly forced: boolean }>>;
@@ -519,8 +530,9 @@ export function withGovernor(
     /** Make git itself fail on an otherwise healthy repository (T3O-15):
         `worktree-add` fails `createWorktree`, `branch-create` makes every
         `git branch <name> <start>` exit non-zero. The transient failures the
-        reactor must retry on its next pass rather than park. */
-    readonly gitFailure?: "worktree-add" | "branch-create";
+        reactor must retry on its next pass rather than park. `remote-delete`
+        makes `git push <remote> --delete` fail as an auth or network error does. */
+    readonly gitFailure?: "worktree-add" | "branch-create" | "remote-delete";
     /** Reject every `thread.create`, so a test can drive the spawn-failure path
         (a thread the engine refuses to create) without a provider double. */
     readonly rejectThreadCreate?: boolean;
@@ -933,6 +945,17 @@ export function withGovernor(
         if (request.args?.[0] === "rev-list" && request.args[1] === "--count") {
           return Effect.succeed({ stdout: "2\n", stderr: "", exitCode: 0 });
         }
+        if (
+          input.gitFailure === "remote-delete" &&
+          request.args?.[0] === "push" &&
+          request.args.includes("--delete")
+        ) {
+          return Effect.succeed({
+            stdout: "",
+            stderr: "fatal: Authentication failed",
+            exitCode: 128,
+          });
+        }
         if (request.args?.[0] === "worktree" && request.args[1] === "list") {
           return Effect.succeed({
             stdout: input.registeredWorktrees ?? "",
@@ -940,11 +963,15 @@ export function withGovernor(
             exitCode: 0,
           });
         }
-        if (request.args?.[0] === "branch" && request.args[1] !== undefined) {
+        const createdBranch =
+          request.args?.[0] === "branch"
+            ? request.args.slice(1).find((arg) => !arg.startsWith("-"))
+            : undefined;
+        if (createdBranch !== undefined) {
           if (input.gitFailure === "branch-create") {
             return Effect.succeed({ stdout: "", stderr: "fatal: cannot lock ref", exitCode: 128 });
           }
-          createdBranches.add(request.args[1]);
+          createdBranches.add(createdBranch);
           return Effect.succeed({ stdout: "", stderr: "", exitCode: 0 });
         }
         // `git log -1 --format=%cI` answers the configured commit time (the
@@ -984,7 +1011,12 @@ export function withGovernor(
       ReadonlyArray<{ readonly number: number; readonly forced: boolean }>
     >([]);
     const markReadyCalls = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
+    const closePullRequestCalls = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
     const pullRequestStub = BoardPullRequestGateway.of({
+      close: (request) =>
+        Ref.update(closePullRequestCalls, (calls) => [...calls, { number: request.number }]).pipe(
+          Effect.as("closed" as const),
+        ),
       repository: () =>
         Effect.succeed(
           boardRepositoryOf(projectRepositoryIdentity, input.projectOriginUrl ?? null),
@@ -1149,7 +1181,10 @@ export function withGovernor(
           event.type === "board.card-updated" ||
           // And a pin (T3O-65): a client command whose card the placement
           // pass re-reads from the model.
-          event.type === "board.card-worker-pinned"
+          event.type === "board.card-worker-pinned" ||
+          // And plan review turned on late (T3O-39): a card edit's second
+          // event, read back as the step's started review.
+          event.type === "board.plan-review-started"
             ? Ref.get(model).pipe(
                 Effect.flatMap((m) => projectBoardEvent(m, event)),
                 Effect.flatMap((next) => Ref.set(model, next)),
@@ -1189,6 +1224,7 @@ export function withGovernor(
           mergeMethods: Ref.get(mergeMethods),
           mergeStateProbes: Ref.get(mergeStateProbes),
           markReadyCalls: Ref.get(markReadyCalls),
+          closePullRequestCalls: Ref.get(closePullRequestCalls),
           pullRequestLookups: Ref.get(pullRequestLookups),
           pullRequestGets: Ref.get(pullRequestGets),
           removedWorktrees: Ref.get(removedWorktrees),
@@ -1381,18 +1417,45 @@ export const cardTitleUpdated = (card: BoardCard, sequence: number): HarnessEven
     payload: { cardId: card.id, card: { ...card, title: `${card.title} (edited)` } },
   }) as unknown as HarnessEvent;
 
-/** An edit that TOUCHED the auto-merge arm (T3O-38, D3). The marker key is
-    what the reactor keys the fire-on-toggle on, so a helper that only set the
+/** An edit that TOUCHED the auto-merge toggle (T3O-38). The marker is what
+    the reactor keys the fire-on-toggle on, so a helper that only set the
     card's field would prove nothing. */
 export const cardAutoMergeUpdated = (
   card: BoardCard,
   autoMerge: boolean,
   sequence: number,
+): HarnessEvent => cardAutomationUpdated(card, { autoMerge: autoMerge ? true : null }, sequence);
+
+/** A `board.card.set-automation` as the decider records it: the card with its
+    new own toggles, and the marker naming which moved. The harness does not
+    loop the reactor's events back, so a test writes the card into the model
+    itself (see `setAutomation`) and pumps this. */
+const cardAutomationUpdated = (
+  card: BoardCard,
+  settings: {
+    readonly autoPlan?: boolean | null;
+    readonly autoBuild?: boolean | null;
+    readonly autoMerge?: boolean | null;
+  },
+  sequence: number,
 ): HarnessEvent =>
   ({
     type: "board.card-updated",
     sequence,
-    payload: { cardId: card.id, card: { ...card, autoMerge }, autoMerge },
+    payload: {
+      cardId: card.id,
+      card: {
+        ...card,
+        ...(settings.autoPlan === undefined ? {} : { autoPlanSetting: settings.autoPlan }),
+        ...(settings.autoBuild === undefined ? {} : { autoBuildSetting: settings.autoBuild }),
+        ...(settings.autoMerge === undefined ? {} : { autoMergeSetting: settings.autoMerge }),
+      },
+      automationChanged: {
+        ...(settings.autoPlan === undefined ? {} : { autoPlan: true }),
+        ...(settings.autoBuild === undefined ? {} : { autoBuild: true }),
+        ...(settings.autoMerge === undefined ? {} : { autoMerge: true }),
+      },
+    },
   }) as unknown as HarnessEvent;
 
 export const cardArchived = (card: BoardCard, sequence: number): HarnessEvent =>
@@ -1466,3 +1529,43 @@ export const stepStatus = (board: BoardState, cardId: BoardCardId) =>
 /** The stage a card currently sits in, per the live read model. */
 export const cardStage = (board: BoardState, cardId: BoardCardId): BoardStageId | null =>
   board.cards.find((candidate) => candidate.id === cardId)?.stage ?? null;
+
+/**
+ * Flip a card's own Automation toggles the way `board.card.set-automation`
+ * does (T3O-38): the card is written into the model, then the decider's event
+ * is delivered to the reactor.
+ */
+export const setAutomation = (
+  h: Pick<Harness, "model" | "pumpDomain">,
+  cardId: BoardCardId,
+  settings: {
+    readonly autoPlan?: boolean | null;
+    readonly autoBuild?: boolean | null;
+    readonly autoMerge?: boolean | null;
+  },
+  sequence: number,
+) =>
+  Effect.gen(function* () {
+    let updated: BoardCard | undefined;
+    yield* Ref.update(h.model, (current) => {
+      const board = current.board!;
+      return {
+        ...current,
+        board: {
+          ...board,
+          cards: board.cards.map((card) => {
+            if (card.id !== cardId) return card;
+            updated = {
+              ...card,
+              ...(settings.autoPlan === undefined ? {} : { autoPlanSetting: settings.autoPlan }),
+              ...(settings.autoBuild === undefined ? {} : { autoBuildSetting: settings.autoBuild }),
+              ...(settings.autoMerge === undefined ? {} : { autoMergeSetting: settings.autoMerge }),
+            };
+            return updated;
+          }),
+        },
+      };
+    });
+    if (updated === undefined) return;
+    yield* h.pumpDomain(cardAutomationUpdated(updated, settings, sequence));
+  });

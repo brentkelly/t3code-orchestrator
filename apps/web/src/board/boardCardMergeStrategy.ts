@@ -60,7 +60,7 @@ export function boardCardMergeStrategyView(input: {
 }): BoardCardMergeStrategyView {
   const { strategy, source } = resolveBoardCardMergeStrategy({
     card: input.card,
-    parent: input.parent,
+    ancestors: input.parent === null ? [] : [input.parent],
     stageStrategy: input.boardStrategy,
   });
   const parentStrategy = input.parent?.mergeStrategy ?? null;

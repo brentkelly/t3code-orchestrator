@@ -644,7 +644,7 @@ describe("replay equals rehydration for a pre-t3o-22 log", () => {
     // this spec genuinely HAD no base branch, so replaying its payload must
     // reach null — "follow the project default" — rather than any branch name.
     assert.strictEqual(decodeBoardCard(legacy).baseBranch, null);
-    // T3O-80: migration 051's `merge_strategy` defaults to NULL, so an older
+    // T3O-80: migration 057's `merge_strategy` defaults to NULL, so an older
     // payload replays to "follow the default".
     assert.strictEqual(decodeBoardCard(legacy).mergeStrategy, null);
   });

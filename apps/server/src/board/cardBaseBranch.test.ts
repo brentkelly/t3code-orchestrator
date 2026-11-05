@@ -250,8 +250,9 @@ describe("a split's integration branch is cut from the parent's base (T3O-5, D8)
             (yield* h.gitInvocations).some(
               (args) =>
                 args[0] === "branch" &&
-                args[1] === "board/card-parent" &&
-                args[2] === "release/2.4",
+                args[1] === "--no-track" &&
+                args[2] === "board/card-parent" &&
+                args[3] === "release/2.4",
             ),
           );
         }),
@@ -415,6 +416,52 @@ describe("retargeting a card whose branch already exists (T3O-5, D10)", () => {
       }),
     ),
   );
+
+  it.effect("a child of an inherit group plans a sync when the GROUP is retargeted", () => {
+    // The child has no base of its own: it lands wherever its inherit group
+    // would. Pinning the group at `develop` retargets a child cut from `main`.
+    const group: BoardCard = {
+      ...makeBoardCard({ id: "group-1", stage: merge, orderKey: "a" }),
+      baseBranch: "develop",
+      group: {
+        target: "inherit",
+        autoBuild: false,
+        autoMerge: false,
+        autoPlan: false,
+        started: true,
+        placed: BOARD_SEED_STAGE_IDS.building,
+        prevStage: null,
+        heading: true,
+        integrated: false,
+      },
+    };
+    const child = (stage: string): BoardCard => ({
+      ...card(stage, null),
+      parentCardId: BoardCardId.make("group-1"),
+    });
+    return withGovernor(
+      {
+        board: {
+          cards: [group, child(merge)],
+          stepStates: [settledReviewStep()],
+          stepCompletions: [convergedRound],
+          nextCardNumberByProject: {},
+        },
+        settings,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* h.pumpDomain(cardMoved(child(merge), review, merge, 1));
+          assert.strictEqual(cardStage(yield* h.board, BoardCardId.make("card-1")), review);
+          yield* h.pumpDomain(cardMoved(child(review), merge, review, 2));
+          const step = ((yield* h.board).stepStates ?? []).find(
+            (state) => state.cardId === BoardCardId.make("card-1"),
+          );
+          assert.strictEqual(step?.stepId, reviewStepId("sync", 1));
+          assert.include(step?.prompt ?? "", "retargeted at `develop`");
+        }),
+    );
+  });
 
   it.effect("AC12: the sync step's prompt names both the old base and the new", () =>
     withGovernor({ board: boardWith(merge, "develop"), settings }, (h) =>

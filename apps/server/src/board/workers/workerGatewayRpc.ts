@@ -46,6 +46,8 @@ export const runGatewayCall = (
         return host.delete(call.input).pipe(Effect.as(null));
       case "armLimitRecovery":
         return host.armLimitRecovery(call.input);
+      case "answerPendingInput":
+        return host.answerPendingInput(call.input);
       case "threadState":
         return host.threadState(call.threadId);
       case "threadRecords":

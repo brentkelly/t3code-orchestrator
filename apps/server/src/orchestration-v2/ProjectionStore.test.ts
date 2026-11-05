@@ -26,9 +26,12 @@ import {
   TurnItemId,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -37,6 +40,7 @@ import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -1435,6 +1439,85 @@ it.effect("leaves board card threads out of older settled pages and counts on re
       [id("archived-card-recent"), id("card-b"), id("tombstoned"), id("relayed")],
     );
   }).pipe(Effect.provide(layerTest)),
+);
+
+// T3o: the reader worker opens state.sqlite alone, without boards.sqlite attached (T3O-78).
+it.effect("reads the card-thread filter on a file database", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3o-card-filter-" });
+    const layerFile = ProjectionStore.layer.pipe(
+      Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"))),
+      Layer.provide(NodeServices.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = DateTime.makeUnsafe(Date.UTC(2026, 9, 1));
+      const threadId = ThreadId.make("thread:card-filter-file");
+      yield* store.apply({
+        id: EventId.make("event:card-filter-file"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:a"),
+          title: "card",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: "settled",
+          settledAt: now,
+          snoozedUntil: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* sql`
+        INSERT INTO boards.board_card_thread_links (thread_id, card_id, role, linked_at, tombstoned_at)
+        VALUES (${threadId}, 'card:1', 'building', ${DateTime.formatIso(now)}, NULL)
+      `;
+
+      const counts = yield* store.listOlderSettledThreads({
+        before: { settledAt: "2026-01-01T00:00:00.000Z" },
+        limit: 0,
+        excludeBoardCardThreads: true,
+      });
+      assert.deepEqual(counts.boardCardThreadIds, [threadId]);
+      const page = yield* store.listOlderSettledThreads({
+        before: { settledAt: "2027-01-01T00:00:00.000Z" },
+        limit: 25,
+        excludeBoardCardThreads: true,
+      });
+      assert.deepEqual(page.threadIds, []);
+      // The getOlderSettledThreads handler wraps the whole read in readOnly (T3O-41).
+      const handled = yield* loadOlderSettledThreadsPage({
+        sql,
+        listThreads: store.listOlderSettledThreads({
+          before: { settledAt: "2026-01-01T00:00:00.000Z" },
+          limit: 0,
+          excludeBoardCardThreads: true,
+        }),
+        readThreads: (threadIds) => store.readShellSnapshot({ location: "active", threadIds }),
+        latestSequence: Effect.succeed(0),
+      });
+      assert.deepEqual(handled.boardCardThreadIds, [threadId]);
+    }).pipe(Effect.provide(layerFile));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("lists only active subagent IDs without loading shell data", () =>

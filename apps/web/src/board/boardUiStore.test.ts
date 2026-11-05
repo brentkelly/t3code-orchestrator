@@ -7,6 +7,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   isBoardColumnCollapsed,
+  isBoardSurfacePath,
   migratePersistedBoardUiState,
   modeForHref,
   useBoardUiStore,
@@ -151,6 +152,34 @@ describe("modeForHref", () => {
     expect(modeForHref("/welcome")).toBeNull();
     // Same prefix rule as /board: a longer word is a different route.
     expect(modeForHref("/settingsish")).toBe("threads");
+  });
+});
+
+describe("the List view mode (T3O-30)", () => {
+  it("classifies /list as its own mode and a full-bleed surface", () => {
+    expect(modeForHref("/list")).toBe("list");
+    expect(modeForHref("/list?project=web&card=c1")).toBe("list");
+    expect(modeForHref("/listing")).toBe("threads");
+    expect(isBoardSurfacePath("/list")).toBe(true);
+    expect(isBoardSurfacePath("/board/card-1")).toBe(true);
+    expect(isBoardSurfacePath("/env-1/thread-1")).toBe(false);
+  });
+
+  it("keeps the list mode and its last location across a rehydrate, and drops a stray href", () => {
+    const migrated = migratePersistedBoardUiState({
+      mode: "list",
+      lastLocationByMode: { list: "/list?project=web", board: "/list" },
+    });
+    expect(migrated.mode).toBe("list");
+    expect(migrated.lastLocationByMode).toEqual({ list: "/list?project=web" });
+    expect(migratePersistedBoardUiState({ mode: "kanban" }).mode).toBe("threads");
+  });
+
+  it("records a list location only under list", () => {
+    resetStore();
+    useBoardUiStore.getState().recordModeLocation("list", "/list?project=web");
+    useBoardUiStore.getState().recordModeLocation("board", "/list");
+    expect(useBoardUiStore.getState().lastLocationByMode).toEqual({ list: "/list?project=web" });
   });
 });
 

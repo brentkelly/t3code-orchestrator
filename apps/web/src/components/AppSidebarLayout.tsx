@@ -63,6 +63,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { resolveThreadRouteRef } from "../threadRoutes";
+// T3o: the board and List view are full-bleed (T3O-30).
+import { isBoardSurfacePath } from "../board/boardUiStore";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -384,11 +386,11 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const pathname = useLocation({ select: (location) => location.pathname });
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
-  // T3o: the board is a full-bleed surface: it owns its own top bar and scopes by
+  // T3o: the board (and the List view) is a full-bleed surface: it owns its own top bar and scopes by
   // project itself, so the thread sidebar has nothing to offer there. Hide it
   // outright — including its toggle, so there is no way to summon it back into
   // a layout that does not account for it.
-  const isOnBoard = pathname === "/board" || pathname.startsWith("/board/");
+  const isOnBoard = isBoardSurfacePath(pathname);
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
   const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
   // A clamped drag may not change width, so viewport changes need a separate subscription.

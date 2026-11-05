@@ -69,7 +69,13 @@ import Migration047 from "./047_BoardDistributedThreads.ts";
 import Migration048 from "./048_BoardCardPlacement.ts";
 import Migration049 from "./049_BoardCardPlacementOrphaned.ts";
 import Migration050 from "./050_BoardDropProviderLimits.ts";
-import Migration051 from "./051_BoardCardsMergeStrategy.ts";
+import Migration051 from "./051_BoardCardGroups.ts";
+import Migration052 from "./052_BoardSplitGate.ts";
+import Migration053 from "./053_BoardCardDecisions.ts";
+import Migration054 from "./054_BoardCardsPlanReview.ts";
+import Migration055 from "./055_BoardCardAutomation.ts";
+import Migration056 from "./056_BoardThreadLinkRetired.ts";
+import Migration057 from "./057_BoardCardsMergeStrategy.ts";
 
 /** Ledger table for the board migration lineage, independent of upstream. */
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
@@ -149,7 +155,13 @@ export const BOARD_MIGRATIONS = [
   [48, "BoardCardPlacement", Migration048],
   [49, "BoardCardPlacementOrphaned", Migration049],
   [50, "BoardDropProviderLimits", Migration050],
-  [51, "BoardCardsMergeStrategy", Migration051],
+  [51, "BoardCardGroups", Migration051],
+  [52, "BoardSplitGate", Migration052],
+  [53, "BoardCardDecisions", Migration053],
+  [54, "BoardCardsPlanReview", Migration054],
+  [55, "BoardCardAutomation", Migration055],
+  [56, "BoardThreadLinkRetired", Migration056],
+  [57, "BoardCardsMergeStrategy", Migration057],
 ] as const;
 
 const boardLoader = Migrator.fromRecord(

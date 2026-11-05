@@ -808,6 +808,39 @@ it.effect("re-attempts a held child at once when its parent's merge strategy cha
   );
 });
 
+// Groups nest (T3O-27): the nearest ancestor with a strategy governs, so a
+// grandparent's change reaches a held grandchild through a group with none.
+it.effect("re-attempts a held grandchild when a grandparent's merge strategy changes", () => {
+  const grandparent = makeBoardCard({ id: "card-grandparent", stage: BUILDING, orderKey: "a" });
+  const parent = {
+    ...makeBoardCard({ id: "card-parent", stage: BUILDING, orderKey: "b" }),
+    parentCardId: grandparent.id,
+  };
+  const child = { ...cardAtMerge(), parentCardId: parent.id };
+  return withGovernor(
+    setup({
+      cards: [grandparent, parent, child],
+      mergeOutcomes: ["This host cannot merge with the squash strategy.", null],
+      mergeRefusal: "blocked",
+    }),
+    (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(cardMoved(child, REVIEW, MERGE, 1));
+        yield* h.pumpDomain({
+          type: "board.card-updated",
+          sequence: 2,
+          payload: {
+            cardId: grandparent.id,
+            card: { ...grandparent, mergeStrategy: "merge" },
+            mergeStrategyEdited: true,
+          },
+        } as never);
+        assert.deepStrictEqual(yield* h.mergeMethods, ["squash", "merge"]);
+        assert.strictEqual(stageOf(yield* h.board), DONE);
+      }),
+  );
+});
+
 it.effect("a parent's strategy change leaves a child with its own strategy held", () => {
   const parent = makeBoardCard({ id: "card-parent", stage: BUILDING, orderKey: "a" });
   const child = { ...cardAtMerge(), parentCardId: parent.id, mergeStrategy: "squash" as const };

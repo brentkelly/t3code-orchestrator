@@ -158,6 +158,14 @@ const scopeFor = (threadId: ThreadId): McpInvocationScope => ({
 const withScope = (threadId: ThreadId) =>
   Effect.provideService(McpInvocationContext.McpInvocationContext, scopeFor(threadId));
 
+const withSubagentScope = (threadId: ThreadId) => {
+  const scope = scopeFor(threadId);
+  return Effect.provideService(McpInvocationContext.McpInvocationContext, {
+    ...scope,
+    thread: { ...scope.thread!, subagent: true },
+  });
+};
+
 /** Create a project, a card, a real thread, and link the thread to the card,
     so a handler call from `linkedThread` resolves `card-1`. */
 const seed = Effect.fn("seed")(function* () {
@@ -1245,6 +1253,39 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("board_propose_plans carries the Planned flags and the recommendation (T3O-31)", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* boardHandlers
+        .board_propose_plans({
+          plans: [
+            { key: "now", title: "Now", summary: "s", dependsOn: [], body: "plan" },
+            {
+              key: "later",
+              title: "Later",
+              summary: "s",
+              dependsOn: [],
+              body: "brief",
+              planned: false,
+            },
+          ],
+          splitRationale: "Now and later are separate deliveries, each worth its own review round.",
+          recommendedAutoBuild: true,
+          recommendedMergeTarget: "own",
+        })
+        .pipe(withScope(linkedThread));
+      const snapshotQuery = yield* boardStackSnapshotQuery;
+      const board = (yield* snapshotQuery.getCommandReadModel()).board;
+      const card = board?.cards.find((candidate) => candidate.id === cardId);
+      // Explicit advice wins over the fallback (which would say off, inherit).
+      assert.deepStrictEqual(card?.splitRecommendation, { autoBuild: true, mergeTarget: "own" });
+      assert.strictEqual(
+        board?.plans?.find((plan) => plan.planId === boardPlanId(cardId, "later"))?.planned,
+        false,
+      );
+    }),
+  );
+
   it.effect("board_propose_plans rejects a cycle from the handler, naming the edge", () =>
     Effect.gen(function* () {
       yield* seed();
@@ -1491,6 +1532,386 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       assert.strictEqual(failure.code, "rejected");
       assert.include(failure.message, "card-ghost");
     }),
+  );
+
+  // ── Grouping (T3O-27) ────────────────────────────────────────────────
+
+  const readCards = Effect.gen(function* () {
+    const snapshotQuery = yield* boardStackSnapshotQuery;
+    const model = yield* snapshotQuery.getCommandReadModel();
+    return model.board?.cards ?? [];
+  });
+
+  it.effect("refuses every regroup without approved: true, telling the agent to ask", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const a = yield* boardHandlers
+        .board_create_card({ projectId, title: "A", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const b = yield* boardHandlers
+        .board_create_card({ projectId, title: "B", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const refusals = [
+        yield* Effect.flip(
+          boardHandlers
+            .board_move_card({ cardId: b.cardId, parentCardId: a.key })
+            .pipe(withScope(orphanThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers.board_indent_cards({ cardIds: [b.key] }).pipe(withScope(orphanThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers
+            .board_outdent_cards({ cardIds: [b.key], approved: false })
+            .pipe(withScope(orphanThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers
+            .board_group_cards({ cardIds: [a.key, b.key], title: "Epic" })
+            .pipe(withScope(orphanThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers
+            .board_set_group_settings({ cardId: a.key, autoBuild: true })
+            .pipe(withScope(orphanThread)),
+        ),
+        // Creating under a leaf turns it into a group: the same regroup.
+        yield* Effect.flip(
+          boardHandlers
+            .board_create_card({ projectId, title: "Under A", parentCardId: a.key })
+            .pipe(withScope(orphanThread)),
+        ),
+      ];
+      for (const failure of refusals) {
+        assert.strictEqual(failure.code, "invalid-input");
+        assert.include(failure.message, "approved: true");
+        assert.include(failure.message, "ask them to confirm");
+      }
+      // Nothing moved, and nothing was created under A.
+      const cards = yield* readCards;
+      assert.isNull(cards.find((card) => card.id === b.cardId)?.parentCardId ?? null);
+      assert.isFalse(cards.some((card) => card.parentCardId === a.cardId));
+    }),
+  );
+
+  it.effect("refuses a regroup from an unattended run even with approved: true", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("unattended-regroup");
+      yield* startStep({ ...own, suffix: "unattended-regroup" });
+      const a = yield* boardHandlers
+        .board_create_card({ projectId, title: "A", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const b = yield* boardHandlers
+        .board_create_card({ projectId, title: "B", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_group_cards({ cardIds: [a.key, b.key], title: "Epic", approved: true })
+          .pipe(withScope(own.ownThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "unattended");
+      const cards = yield* readCards;
+      assert.isNull(cards.find((card) => card.id === a.cardId)?.parentCardId ?? null);
+    }),
+  );
+
+  it.effect("refuses approved: true from a delegated child thread", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const a = yield* boardHandlers
+        .board_create_card({ projectId, title: "A", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const b = yield* boardHandlers
+        .board_create_card({ projectId, title: "B", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_group_cards({ cardIds: [a.key, b.key], title: "Epic", approved: true })
+          .pipe(withSubagentScope(ThreadId.make("thread-child"))),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "delegated task");
+      const cards = yield* readCards;
+      assert.isNull(cards.find((card) => card.id === a.cardId)?.parentCardId ?? null);
+    }),
+  );
+
+  it.effect("refuses destructive flows and auto-plan from an unattended run", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("unattended-destroy");
+      yield* startStep({ ...own, suffix: "unattended-destroy" });
+      const group = yield* boardHandlers
+        .board_create_card({ projectId, title: "G", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      yield* boardHandlers
+        .board_create_card({
+          projectId,
+          title: "Inside G",
+          stage: BoardStageId.make("backlog"),
+          parentCardId: group.key,
+          approved: true,
+        })
+        .pipe(withScope(orphanThread));
+      const leaf = yield* boardHandlers
+        .board_create_card({ projectId, title: "Leaf", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const refusals = [
+        yield* Effect.flip(
+          boardHandlers
+            .board_archive_card({
+              cardId: group.cardId,
+              confirmCardKey: group.key,
+              approved: true,
+            })
+            .pipe(withScope(own.ownThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers
+            .board_cancel_card_work({
+              cardId: leaf.cardId,
+              confirmCardKey: leaf.key,
+              approved: true,
+            })
+            .pipe(withScope(own.ownThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers
+            .board_set_automation({ cardId: leaf.cardId, autoPlan: true, approved: true })
+            .pipe(withScope(own.ownThread)),
+        ),
+      ];
+      for (const failure of refusals) {
+        assert.strictEqual(failure.code, "invalid-input");
+        assert.include(failure.message, "unattended");
+      }
+      const cards = yield* readCards;
+      assert.isNull(cards.find((card) => card.id === group.cardId)?.archivedAt ?? null);
+    }),
+  );
+
+  it.effect(
+    "regroups with approval: create inside, indent, outdent, group into new, settings",
+    () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const a = yield* boardHandlers
+          .board_create_card({ projectId, title: "A", stage: BoardStageId.make("backlog") })
+          .pipe(withScope(orphanThread));
+        const inside = yield* boardHandlers
+          .board_create_card({
+            projectId,
+            title: "Inside A",
+            stage: BoardStageId.make("backlog"),
+            parentCardId: a.key,
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        let cards = yield* readCards;
+        assert.strictEqual(cards.find((card) => card.id === inside.cardId)?.parentCardId, a.cardId);
+        assert.isNotNull(cards.find((card) => card.id === a.cardId)?.group ?? null);
+        // A is a group now, so creating another card inside it is no regroup.
+        const second = yield* boardHandlers
+          .board_create_card({
+            projectId,
+            title: "Also inside A",
+            stage: BoardStageId.make("backlog"),
+            parentCardId: a.key,
+          })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        assert.strictEqual(cards.find((card) => card.id === second.cardId)?.parentCardId, a.cardId);
+
+        const b = yield* boardHandlers
+          .board_create_card({ projectId, title: "B", stage: BoardStageId.make("backlog") })
+          .pipe(withScope(orphanThread));
+        // B sits below A in the column, so indenting it lands it inside A.
+        const indented = yield* boardHandlers
+          .board_indent_cards({ cardIds: [b.key], approved: true })
+          .pipe(withScope(orphanThread));
+        assert.strictEqual(indented.parentKey, a.key);
+
+        const outdented = yield* boardHandlers
+          .board_outdent_cards({ cardIds: [b.key], approved: true })
+          .pipe(withScope(orphanThread));
+        assert.isNull(outdented.parentKey);
+        cards = yield* readCards;
+        assert.isNull(cards.find((card) => card.id === b.cardId)?.parentCardId ?? null);
+
+        const grouped = yield* boardHandlers
+          .board_group_cards({ cardIds: [b.key], title: "Phase 2", approved: true })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        assert.strictEqual(
+          cards.find((card) => card.id === b.cardId)?.parentCardId,
+          grouped.groupCardId,
+        );
+        assert.isTrue(
+          cards.find((card) => card.id === grouped.groupCardId)?.group?.heading ?? false,
+        );
+
+        yield* boardHandlers
+          .board_set_group_settings({ cardId: grouped.groupKey, autoBuild: true, approved: true })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        assert.isTrue(
+          cards.find((card) => card.id === grouped.groupCardId)?.group?.autoBuild ?? false,
+        );
+
+        // board_move_card's parent argument moves it back to the top level.
+        yield* boardHandlers
+          .board_move_card({ cardId: b.cardId, parentCardId: null, approved: true })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        assert.isNull(cards.find((card) => card.id === b.cardId)?.parentCardId ?? null);
+      }),
+  );
+
+  it.effect(
+    "destructive group flows need approval and the key: share a parent, cancel work, archive a group (T3O-28)",
+    () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const create = (title: string, stage: string) =>
+          boardHandlers
+            .board_create_card({ projectId, title, stage: BoardStageId.make(stage) })
+            .pipe(withScope(orphanThread));
+
+        // Share a parent: a started card and another go side by side.
+        const started = yield* create("Started", "building");
+        const other = yield* create("Other", "backlog");
+        const shared = yield* boardHandlers
+          .board_share_parent({
+            cardId: started.key,
+            cardIds: [other.key],
+            title: "Shared",
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        let cards = yield* readCards;
+        for (const id of [started.cardId, other.cardId]) {
+          assert.strictEqual(
+            cards.find((card) => card.id === id)?.parentCardId,
+            shared.groupCardId,
+          );
+        }
+
+        // Cancel work: refused without approval, and with the wrong key.
+        const leaf = yield* create("Leaf", "building");
+        const extra = yield* create("Extra", "backlog");
+        const unapproved = yield* Effect.flip(
+          boardHandlers
+            .board_cancel_card_work({ cardId: leaf.key, confirmCardKey: leaf.key })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(unapproved.message, "approved: true");
+        const wrongKey = yield* Effect.flip(
+          boardHandlers
+            .board_cancel_card_work({ cardId: leaf.key, confirmCardKey: other.key, approved: true })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(wrongKey.message, "does not match");
+        const cancelled = yield* boardHandlers
+          .board_cancel_card_work({
+            cardId: leaf.key,
+            confirmCardKey: leaf.key,
+            cardIds: [extra.key],
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        assert.deepStrictEqual(cancelled.cardIds, [extra.cardId]);
+        cards = yield* readCards;
+        const parent = cards.find((card) => card.id === leaf.cardId);
+        assert.strictEqual(parent?.stage, "sprint");
+        assert.isNotNull(parent?.group ?? null);
+        assert.strictEqual(
+          cards.find((card) => card.id === extra.cardId)?.parentCardId,
+          leaf.cardId,
+        );
+
+        // Archive a group: the key needs approval, then the subtree goes.
+        const unapprovedArchive = yield* Effect.flip(
+          boardHandlers
+            .board_archive_card({ cardId: shared.groupCardId, confirmCardKey: shared.groupKey })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(unapprovedArchive.message, "approved: true");
+        yield* boardHandlers
+          .board_archive_card({
+            cardId: shared.groupCardId,
+            confirmCardKey: shared.groupKey,
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        for (const id of [shared.groupCardId, started.cardId, other.cardId]) {
+          assert.isNotNull(cards.find((card) => card.id === id)?.archivedAt ?? null);
+        }
+      }),
+  );
+
+  it.effect(
+    "board_new_phase moves a group's deferred cards into a sibling heading's Backlog (T3O-29)",
+    () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const group = yield* boardHandlers
+          .board_create_card({ projectId, title: "Event log", stage: BoardStageId.make("sprint") })
+          .pipe(withScope(orphanThread));
+        const createChild = (title: string, stage: string) =>
+          boardHandlers
+            .board_create_card({
+              projectId,
+              title,
+              stage: BoardStageId.make(stage),
+              parentCardId: group.cardId,
+              approved: true,
+            })
+            .pipe(withScope(orphanThread));
+        const later = yield* createChild("Later", "deferred");
+        const active = yield* createChild("Now", "backlog");
+
+        const unapproved = yield* Effect.flip(
+          boardHandlers
+            .board_new_phase({ groupCardId: group.key, cardIds: [later.key], title: "Phase 2" })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(unapproved.message, "approved: true");
+        const notDeferred = yield* Effect.flip(
+          boardHandlers
+            .board_new_phase({
+              groupCardId: group.key,
+              cardIds: [active.key],
+              title: "Phase 2",
+              approved: true,
+            })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(notDeferred.message, "only deferred cards move");
+
+        const phase = yield* boardHandlers
+          .board_new_phase({
+            groupCardId: group.key,
+            cardIds: [later.key],
+            title: "Event log: Phase 2",
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        const cards = yield* readCards;
+        const heading = cards.find((card) => card.id === phase.groupCardId);
+        assert.strictEqual(heading?.title, "Event log: Phase 2");
+        assert.isNull(heading?.parentCardId ?? null);
+        assert.isTrue(heading?.group?.heading ?? false);
+        const moved = cards.find((card) => card.id === later.cardId);
+        assert.strictEqual(moved?.parentCardId, phase.groupCardId);
+        assert.strictEqual(moved?.stage, "backlog");
+        assert.strictEqual(
+          cards.find((card) => card.id === active.cardId)?.parentCardId,
+          group.cardId,
+        );
+      }),
   );
 
   it.effect("board_update_card resolves label names on update and rejects unknown ones", () =>

@@ -1,4 +1,5 @@
 import {
+  BOARD_WORKER_PROTOCOL_VERSION,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -88,7 +89,7 @@ it.effect("goes online, and reports the worker's providers and checkouts", () =>
       yield* waitFor(connections, "online");
       const runtime = yield* statusOf(connections);
       assert.strictEqual(runtime?.status.t3oVersion, "0.0.45");
-      assert.strictEqual(runtime?.status.protocolVersion, 1);
+      assert.strictEqual(runtime?.status.protocolVersion, BOARD_WORKER_PROTOCOL_VERSION);
       assert.deepStrictEqual(worker.dialedTokens, ["token-1"]);
       assert.deepStrictEqual(
         runtime?.snapshot?.checkouts.map((checkout) => checkout.repositoryKey),
