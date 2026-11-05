@@ -103,6 +103,21 @@ it.live("times a step out and kills it", () =>
   }),
 );
 
+it.live("a step settles when its shell exits, even if an escaped child holds the pipes", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    // setsid puts the sleeper outside the step's process group, so the group
+    // kill misses it and it keeps stdout open well past the project timeout.
+    const result = yield* runBoardCiPass(
+      request(cwd, [
+        { name: "Daemon", command: "setsid sleep 600 & echo started", timeoutMinutes: 5 },
+      ]),
+      () => Effect.void,
+    );
+    assert.deepStrictEqual(result, { result: "passed", failedIndex: null });
+  }),
+);
+
 /** Resolves once `path` exists, woken by the directory's change events. */
 const awaitFile = (path: string) =>
   Effect.callback<void>((resume) => {

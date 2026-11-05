@@ -30,6 +30,8 @@ import { BoardProjectConfig } from "./projectConfig/BoardProjectConfig.ts";
 import {
   NOW,
   buildingCard,
+  cardArchived,
+  cardDeleted,
   movedToBuilding,
   stepCompleted,
   cardMoved,
@@ -497,6 +499,82 @@ it.effect("a queued pass starts when an agent step frees the slot", () =>
         yield* h.reactor.drainCi;
         assert.strictEqual(yield* calls, 1);
         assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+  }),
+);
+
+/** The fixture's card as the projection leaves it after a decision. */
+const setCard = (h: Harness, id: BoardCardId, next: BoardCard | null) =>
+  Ref.update(h.model, (model) => ({
+    ...model,
+    board: {
+      ...model.board!,
+      cards: model.board!.cards.flatMap((existing) =>
+        existing.id !== id ? [existing] : next === null ? [] : [next],
+      ),
+    },
+  }));
+
+it.effect("archiving a card in CI stops its pass, frees the slot and settles the row", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner(["hang"]);
+    const subject = card("archived-in-ci", review);
+    yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCi(h, subject, 1);
+        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 1);
+        const runId = (yield* live(h, subject.id)).ci!.runId;
+        const archived = { ...(yield* live(h, subject.id)), archivedAt: NOW };
+        yield* setCard(h, subject.id, archived);
+        yield* h.pumpDomain(cardArchived(archived, 2));
+        yield* h.reactor.drainCi;
+        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 0);
+        const settled = ciRecords(yield* h.decided).flatMap((record) => record.payload.settled);
+        assert.isTrue(
+          settled.some((entry) => entry.runId === runId && entry.outcome === "cancelled"),
+        );
+        assert.isNull((yield* live(h, subject.id)).ci);
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+  }),
+);
+
+it.effect("a queued pass of an archived card never starts", () =>
+  Effect.gen(function* () {
+    const { runner, calls } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const blocker = buildingCard("blocker", "b");
+    const subject = card("archived-queued", review);
+    const oneSlot = settingsWith({ building: [codexStep], globalMaxConcurrent: 1 });
+    yield* withGovernor({ board: boardWith([blocker, subject]), settings: oneSlot }, (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(movedToBuilding(blocker, 1));
+        yield* enterCi(h, subject, 2);
+        assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "queued");
+        const archived = { ...(yield* live(h, subject.id)), archivedAt: NOW };
+        yield* setCard(h, subject.id, archived);
+        yield* h.pumpDomain(cardArchived(archived, 3));
+        yield* h.pumpDomain(stepCompleted(blocker.id, "blocked", 4));
+        yield* h.reactor.drainCi;
+        assert.strictEqual(yield* calls, 0);
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+  }),
+);
+
+it.effect("deleting a card in CI stops its pass and frees the slot", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner(["hang"]);
+    const subject = card("deleted-in-ci", review);
+    yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCi(h, subject, 1);
+        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 1);
+        const doomed = yield* live(h, subject.id);
+        yield* setCard(h, subject.id, null);
+        yield* h.pumpDomain(cardDeleted(doomed, 2, null));
+        yield* h.reactor.drainCi;
+        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 0);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
   }),

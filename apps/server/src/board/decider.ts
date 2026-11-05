@@ -2338,7 +2338,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         card.stage === BOARD_SEED_STAGE_IDS.ci &&
         command.toStage !== BOARD_SEED_STAGE_IDS.ci &&
         card.ci !== null &&
-        card.ci.phase !== "passed"
+        card.ci.phase !== "passed" &&
+        card.ci.phase !== "held"
           ? [
               {
                 ...(yield* makeBoardEventBase({

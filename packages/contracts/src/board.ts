@@ -1506,8 +1506,9 @@ export type BoardCardCiStep = typeof BoardCardCiStep.Type;
 
 /** Where a card's current CI entry stands. `queued` waits for a slot,
     `running` runs its steps, `fixing` has a fix agent on a failed step and
-    `passed` is about to move on. */
-export const BoardCardCiPhase = Schema.Literals(["queued", "running", "fixing", "passed"]);
+    `passed` is about to move on. `held` stopped without a verdict (the runner
+    was unavailable) and waits for a human to restart the stage or Skip CI. */
+export const BoardCardCiPhase = Schema.Literals(["queued", "running", "fixing", "passed", "held"]);
 export type BoardCardCiPhase = typeof BoardCardCiPhase.Type;
 
 /**

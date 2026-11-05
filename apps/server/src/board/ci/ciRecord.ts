@@ -50,7 +50,9 @@ export function decideBoardCiRecord(
       const settled: BoardCiPassSettle[] = [];
       let activity: BoardCardCiRecordedPayload["activity"] = null;
       if (current !== null && current.runId !== action.runId) {
-        if (current.phase === "fixing") {
+        // Only a fix agent's re-run is fixed in place; a human restart while
+        // fixing replaces the pass like any other.
+        if (current.phase === "fixing" && action.fixThreadId !== null) {
           settled.push({
             runId: current.runId,
             outcome: "fixed-in-place",
@@ -58,7 +60,7 @@ export function decideBoardCiRecord(
             ...(action.fixThreadId === null ? {} : { fixThreadId: action.fixThreadId }),
           });
           activity = { kind: "card-ci-pass-finished", ciOutcome: "fixed-in-place" };
-        } else if (current.phase !== "passed") {
+        } else if (current.phase !== "passed" && current.phase !== "held") {
           settled.push({ runId: current.runId, outcome: "interrupted", finishedAt: at });
         }
       }
@@ -142,14 +144,24 @@ export function decideBoardCiRecord(
           { settled: [{ runId: action.runId, finishedAt: at }] },
         );
       }
-      // Interrupted (a restart) or cancelled (the card left CI): the row is
-      // settled; a card that left CI carries no CI state.
+      // Interrupted (the pass could not run) or cancelled (the card left CI or
+      // was archived): the row is settled. A card still live in CI is held,
+      // its unfinished steps cancelled, until a human restarts or skips it.
       const outcome = action.result;
+      const held =
+        live && card.stage === BOARD_SEED_STAGE_IDS.ci && card.archivedAt === null
+          ? {
+              ...current,
+              phase: "held" as const,
+              steps: current.steps.map((step) =>
+                step.status === "running" || step.status === "pending"
+                  ? { ...step, status: "cancelled" as const }
+                  : step,
+              ),
+            }
+          : null;
       return done(
-        {
-          ci: live && card.stage === BOARD_SEED_STAGE_IDS.ci ? current : null,
-          ciLastOutcome: card.ciLastOutcome,
-        },
+        { ci: held, ciLastOutcome: card.ciLastOutcome },
         { settled: [{ runId: action.runId, outcome, finishedAt: at }] },
       );
     }
@@ -213,7 +225,7 @@ export function decideBoardCiRecord(
         { ci: null, ciLastOutcome: { kind: "skipped", actor: action.actor } },
         {
           settled:
-            current === null || current.phase === "passed"
+            current === null || current.phase === "passed" || current.phase === "held"
               ? []
               : [{ runId: current.runId, outcome: "skipped", finishedAt: at }],
           activity: { kind: "card-ci-skipped" },

@@ -99,6 +99,10 @@ export const ensureCiLogsExcluded = (cwd: string): Effect.Effect<void> =>
 
 /** How long a killed step's process group gets to exit before SIGKILL. */
 const KILL_GRACE_MS = 5_000;
+/** How long output may keep flowing after the step's shell exits. A child that
+    escaped the process group (setsid, a daemon) can hold the pipes open for
+    ever, so the step settles on exit plus this, not on the pipes closing. */
+const EXIT_DRAIN_MS = 2_000;
 
 /** Longest line the tail keeps; the rest of a longer line is dropped. */
 export const BOARD_CI_TAIL_LINE_CHARS = 500;
@@ -222,10 +226,17 @@ const runStep = (input: {
       log.end();
       resume(Effect.succeed(exit));
     };
+    // Not unref()'d: on shutdown the SIGKILL must still land, or a step that
+    // ignores TERM outlives the server and overlaps the recovered pass.
     const terminate = () => {
       killGroup(child, "SIGTERM");
       killTimer = setTimeout(() => killGroup(child, "SIGKILL"), KILL_GRACE_MS);
-      killTimer.unref?.();
+    };
+    let drainTimer: ReturnType<typeof setTimeout> | null = null;
+    const settleExit = (code: number | null) => {
+      if (drainTimer !== null) clearTimeout(drainTimer);
+      if (timedOut) finish({ status: "timed-out", exitCode: code });
+      else finish({ status: code === 0 ? "passed" : "failed", exitCode: code });
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -238,18 +249,25 @@ const runStep = (input: {
       input.tail.push(`\n[board] Could not run the step: ${error.message}\n`);
       finish({ status: "failed", exitCode: null });
     });
-    child.on("close", (code) => {
-      if (timedOut) finish({ status: "timed-out", exitCode: code });
-      else finish({ status: code === 0 ? "passed" : "failed", exitCode: code });
+    child.on("exit", (code) => {
+      if (settled) return;
+      // What the step left running in its group is stopped with it.
+      killGroup(child, "SIGTERM");
+      drainTimer = setTimeout(() => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        settleExit(code);
+      }, EXIT_DRAIN_MS);
     });
+    child.on("close", (code) => settleExit(code));
     return Effect.sync(() => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       // Interrupted: kill now, and make sure nothing survives the grace.
       killGroup(child, "SIGTERM");
-      const hard = setTimeout(() => killGroup(child, "SIGKILL"), KILL_GRACE_MS);
-      hard.unref?.();
+      if (drainTimer !== null) clearTimeout(drainTimer);
+      setTimeout(() => killGroup(child, "SIGKILL"), KILL_GRACE_MS);
       log.end();
     });
   });

@@ -3640,6 +3640,25 @@ const make = Effect.gen(function* () {
     yield* schedule();
   });
 
+  /** A card archived while in CI: stop its pass (a queued one never starts)
+      and settle its row as cancelled, since no move will. */
+  const stopCiOnArchive = Effect.fn("board-supervisor-stopCiOnArchive")(function* (
+    card: BoardCard,
+  ) {
+    const stopped = yield* ciPasses.cancel(card.id);
+    const ci = card.ci;
+    if (ci !== null && ci.phase !== "passed" && ci.phase !== "held") {
+      yield* dispatch({
+        type: "board.card.record-ci",
+        commandId: yield* commandId("ci-archived"),
+        cardId: card.id,
+        action: { kind: "finish-pass", runId: ci.runId, result: "cancelled" },
+        createdAt: yield* nowIso,
+      });
+    }
+    if (stopped !== null) yield* schedule();
+  });
+
   /** Skip CI (a human's override): stop any pass or fix agent, record who
       skipped it, and move the card to the next stage. */
   const skipCi = Effect.fn("board-supervisor-skipCi")(function* (
@@ -8893,6 +8912,8 @@ const make = Effect.gen(function* () {
       // The abandoned step released its slot — offer it to whatever is queued.
       yield* schedule();
     }
+    // Before the reclaim below pulls the worktree out from under its steps.
+    yield* stopCiOnArchive(card);
     // Reclaim the card's worktree at archive (t3o-09, D6/D15) — without this,
     // every archived card leaks its worktree and `board/*` branch on disk.
     //
@@ -8973,6 +8994,9 @@ const make = Effect.gen(function* () {
     // process's life.
     const stepState = event.payload.stepState;
     if (stepState !== null) yield* releaseSlot(stepState);
+    // Its CI pass (T3O-44), running or queued, dies with it; the pass rows
+    // left with the card's other rows.
+    if ((yield* ciPasses.cancel(card.id)) !== null) yield* schedule();
 
     for (const threadId of event.payload.threadIds) {
       yield* logged(
