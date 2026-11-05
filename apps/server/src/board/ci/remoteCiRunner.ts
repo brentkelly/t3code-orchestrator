@@ -4,13 +4,32 @@
  * gateway (`boardWorker.gateway.runCi`). Interrupting the pass closes the
  * stream, which interrupts the worker's run and kills its process group.
  */
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { BoardWorkerCiProgress, EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import type { WorkerConnectionsShape } from "../workers/WorkerConnections.ts";
 import type { BoardCiRunnerShape, BoardCiRunResult } from "./BoardCiRunner.ts";
+
+type WireCiDone = Extract<BoardWorkerCiProgress, { _tag: "done" }>;
+
+/** The worker's end of a pass, as sent over its gateway. */
+export function toWireCiDone(outcome: BoardCiRunResult): WireCiDone {
+  return outcome.result === "unavailable"
+    ? { _tag: "done", result: "unavailable", failedIndex: null, detail: outcome.detail }
+    : { _tag: "done", result: outcome.result, failedIndex: outcome.failedIndex };
+}
+
+function fromWireCiDone(done: WireCiDone): BoardCiRunResult {
+  return done.result === "unavailable"
+    ? {
+        result: "unavailable",
+        failedIndex: null,
+        detail: done.detail ?? "CI couldn't run on the card's worker.",
+      }
+    : { result: done.result, failedIndex: done.failedIndex };
+}
 
 export const remoteCiRunner = (
   connections: Pick<WorkerConnectionsShape, "get">,
@@ -26,7 +45,7 @@ export const remoteCiRunner = (
           Stream.runForEach((progress) =>
             progress._tag === "step"
               ? emit({ index: progress.index, step: progress.step })
-              : Ref.set(result, { result: progress.result, failedIndex: progress.failedIndex }),
+              : Ref.set(result, fromWireCiDone(progress)),
           ),
         );
       const outcome = yield* Ref.get(result);

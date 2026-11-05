@@ -51,6 +51,7 @@ import {
 } from "./gatewayWire.ts";
 import { McpRelayHost, type McpRelayRefused } from "./McpRelayHost.ts";
 import { BoardCiRunner, boardCiLogDir } from "../ci/BoardCiRunner.ts";
+import { toWireCiDone } from "../ci/remoteCiRunner.ts";
 
 type CallerBound = "spawn" | "subscribeMcpRelay" | "mcpRelayRespond";
 
@@ -253,13 +254,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
               Queue.offer(queue, { _tag: "step", ...progress } as const).pipe(Effect.asVoid),
           )
           .pipe(
-            Effect.flatMap((outcome) =>
-              Queue.offer(queue, {
-                _tag: "done",
-                result: outcome.result === "passed" ? "passed" : "failed",
-                failedIndex: outcome.failedIndex,
-              } as const),
-            ),
+            Effect.flatMap((outcome) => Queue.offer(queue, toWireCiDone(outcome))),
             Effect.andThen(Queue.end(queue)),
           ),
       ),

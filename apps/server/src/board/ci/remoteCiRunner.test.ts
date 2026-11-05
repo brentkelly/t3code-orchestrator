@@ -11,7 +11,7 @@ import * as Stream from "effect/Stream";
 import { WorkerUnavailable, type WorkerConnectionsShape } from "../workers/WorkerConnections.ts";
 import type { WorkerRpc } from "../workers/WorkerTransport.ts";
 import type { BoardCiStepProgress } from "./BoardCiRunner.ts";
-import { remoteCiRunner } from "./remoteCiRunner.ts";
+import { remoteCiRunner, toWireCiDone } from "./remoteCiRunner.ts";
 
 const worker = EnvironmentId.make("worker-1");
 const request = {
@@ -66,5 +66,25 @@ it.effect("a worker out of reach is unavailable, not a failed step", () =>
       worker,
     ).run(request, () => Effect.void);
     assert.strictEqual(result.result, "unavailable");
+  }),
+);
+
+it.effect("a pass the worker could not run arrives as unavailable, with its reason", () =>
+  Effect.gen(function* () {
+    const result = yield* remoteCiRunner(
+      connected([
+        toWireCiDone({
+          result: "unavailable",
+          failedIndex: null,
+          detail: "CI couldn't write its logs.",
+        }),
+      ]),
+      worker,
+    ).run(request, () => Effect.void);
+    assert.deepStrictEqual(result, {
+      result: "unavailable",
+      failedIndex: null,
+      detail: "CI couldn't write its logs.",
+    });
   }),
 );

@@ -391,8 +391,10 @@ export const BoardWorkerCiProgress = Schema.Union([
     }),
   }),
   Schema.TaggedStruct("done", {
-    result: Schema.Literals(["passed", "failed"]),
+    result: Schema.Literals(["passed", "failed", "unavailable"]),
     failedIndex: Schema.NullOr(NonNegativeInt),
+    /** Why the pass could not run, when `result` is "unavailable". */
+    detail: Schema.optional(Schema.String),
   }),
 ]);
 export type BoardWorkerCiProgress = typeof BoardWorkerCiProgress.Type;
