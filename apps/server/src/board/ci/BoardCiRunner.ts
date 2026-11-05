@@ -13,7 +13,7 @@
  * shell.
  */
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import {
@@ -107,7 +107,7 @@ const runStep = (input: {
   readonly logPath: string;
 }): Effect.Effect<StepExit> =>
   Effect.callback<StepExit>((resume) => {
-    const log = NodeFs.createWriteStream(input.logPath, { flags: "w" });
+    const log = NodeFS.createWriteStream(input.logPath, { flags: "w" });
     let settled = false;
     let timedOut = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
@@ -169,7 +169,7 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunner.run")(
   function* (request, emit) {
-    yield* Effect.sync(() => NodeFs.mkdirSync(request.logDir, { recursive: true }));
+    yield* Effect.sync(() => NodeFS.mkdirSync(request.logDir, { recursive: true }));
     for (const [index, definition] of request.steps.entries()) {
       const tail = new BoardCiTail();
       const startedAt = yield* nowIso;

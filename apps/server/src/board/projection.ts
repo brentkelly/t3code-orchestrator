@@ -2406,7 +2406,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     execute: (settle) => sql`
       UPDATE board_ci_passes
       SET
-        outcome = COALESCE(${settle.outcome ?? null}, outcome),
+        outcome = COALESCE(outcome, ${settle.outcome ?? null}),
         finished_at = COALESCE(finished_at, ${settle.finishedAt ?? null}),
         fix_thread_id = COALESCE(${settle.fixThreadId ?? null}, fix_thread_id)
       WHERE run_id = ${settle.runId}

@@ -3,14 +3,13 @@
  * The CI script runner (T3O-44) against real subprocesses: a pass, fail-fast,
  * a timeout, a cancel that kills the process group, and the output tail.
  */
-import * as NodeFs from "node:fs";
-import * as NodeOs from "node:os";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as Deferred from "effect/Deferred";
 
 import {
   BoardCiTail,
@@ -19,7 +18,7 @@ import {
   type BoardCiRunRequest,
 } from "./BoardCiRunner.ts";
 
-const workdir = () => NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "t3o-ci-"));
+const workdir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-ci-"));
 
 const request = (cwd: string, steps: BoardCiRunRequest["steps"]): BoardCiRunRequest => ({
   runId: "run-1",
@@ -57,11 +56,11 @@ it.live("runs every step in the worktree and passes", () =>
         [1, "passed"],
       ],
     );
-    assert.strictEqual(events[1]!.step.tail.trim(), NodeFs.realpathSync(cwd));
+    assert.strictEqual(events[1]!.step.tail.trim(), NodeFS.realpathSync(cwd));
     assert.include(events[3]!.step.tail, "out");
     assert.include(events[3]!.step.tail, "err");
     assert.strictEqual(events[3]!.step.exitCode, 0);
-    const log = NodeFs.readFileSync(NodePath.join(cwd, ".t3", "ci", "run-1", "1.log"), "utf8");
+    const log = NodeFS.readFileSync(NodePath.join(cwd, ".t3", "ci", "run-1", "1.log"), "utf8");
     assert.include(log, "err");
   }),
 );
@@ -83,7 +82,7 @@ it.live("stops at the first failing step", () =>
     assert.strictEqual(last.step.exitCode, 3);
     assert.include(last.step.tail, "broken");
     assert.isFalse(events.some((event) => event.index === 1));
-    assert.isFalse(NodeFs.existsSync(NodePath.join(cwd, "ran")));
+    assert.isFalse(NodeFS.existsSync(NodePath.join(cwd, "ran")));
   }),
 );
 
@@ -102,43 +101,38 @@ it.live("times a step out and kills it", () =>
   }),
 );
 
+/** Resolves once `path` exists, woken by the directory's change events. */
+const awaitFile = (path: string) =>
+  Effect.callback<void>((resume) => {
+    const watcher = NodeFS.watch(NodePath.dirname(path), () => {
+      if (NodeFS.existsSync(path)) {
+        watcher.close();
+        resume(Effect.void);
+      }
+    });
+    if (NodeFS.existsSync(path)) {
+      watcher.close();
+      resume(Effect.void);
+    }
+    return Effect.sync(() => watcher.close());
+  });
+
 it.live("an interrupted pass kills the step's whole process group", () =>
   Effect.gen(function* () {
     const cwd = workdir();
-    const started = yield* Deferred.make<void>();
-    const pidFile = NodePath.join(cwd, "child.pid");
+    const started = NodePath.join(cwd, "started");
+    const gone = NodePath.join(cwd, "gone");
+    // The shell forks a grandchild that would outlive a kill of the shell
+    // alone; it records the TERM the process-group kill sends it.
+    const grandchild = `sh -c 'trap "echo gone > ${gone}; exit 0" TERM; echo up > ${started}; while :; do sleep 1; done' & wait`;
     const fiber = yield* runBoardCiPass(
-      request(cwd, [
-        // The shell forks a grandchild that would outlive a plain kill.
-        { name: "Long", command: `sleep 60 & echo $! > ${pidFile}; wait`, timeoutMinutes: 5 },
-      ]),
-      (progress) =>
-        progress.step.status === "running" ? Deferred.succeed(started, undefined) : Effect.void,
+      request(cwd, [{ name: "Long", command: grandchild, timeoutMinutes: 5 }]),
+      () => Effect.void,
     ).pipe(Effect.forkChild);
-    yield* Deferred.await(started);
-    // The grandchild writes its pid as soon as it is forked.
-    const pid = yield* Effect.promise(async () => {
-      for (;;) {
-        if (NodeFs.existsSync(pidFile)) {
-          const text = NodeFs.readFileSync(pidFile, "utf8").trim();
-          if (text.length > 0) return Number(text);
-        }
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-    });
+    yield* awaitFile(started);
     yield* Fiber.interrupt(fiber);
-    const alive = yield* Effect.promise(async () => {
-      for (let attempt = 0; attempt < 500; attempt += 1) {
-        try {
-          process.kill(pid, 0);
-        } catch {
-          return false;
-        }
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-      return true;
-    });
-    assert.isFalse(alive);
+    yield* awaitFile(gone);
+    assert.strictEqual(NodeFS.readFileSync(gone, "utf8").trim(), "gone");
   }),
 );
 

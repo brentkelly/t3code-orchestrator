@@ -164,7 +164,7 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
     });
 
   const admitQueued: BoardCiPasses["admitQueued"] = Effect.gen(function* () {
-    for (const [cardId, request] of [...queued]) {
+    for (const [cardId, request] of queued) {
       if (!(yield* tryStart(request))) return;
       // The runner's first step report moves the card from queued to running.
       queued.delete(cardId);
