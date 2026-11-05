@@ -20,4 +20,4 @@ export class BoardSetupScriptRunner extends Context.Service<
       input: ProjectSetupScriptRunnerInput,
     ) => Effect.Effect<ProjectSetupScriptRunnerResult, ProjectSetupScriptRunnerError>;
   }
->()("t3o/board/ports/BoardSetupScriptRunner") {}
+>()("t3/board/ports/BoardSetupScriptRunner") {}

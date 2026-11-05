@@ -18,4 +18,4 @@ export class BoardGitStatus extends Context.Service<
     }) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
   }
->()("t3o/board/ports/BoardGitStatus") {}
+>()("t3/board/ports/BoardGitStatus") {}

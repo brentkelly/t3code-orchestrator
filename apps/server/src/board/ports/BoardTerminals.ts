@@ -13,4 +13,4 @@ export class BoardTerminals extends Context.Service<
     /** Omit terminalId to close all sessions for the thread. */
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
   }
->()("t3o/board/ports/BoardTerminals") {}
+>()("t3/board/ports/BoardTerminals") {}

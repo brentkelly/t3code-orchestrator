@@ -176,6 +176,15 @@ lives in board-owned files (`packages/contracts/src/board.ts`, `apps/server/src/
   (`supervisorReactor.ts`, t3o-10 D3). Keep the wait even though the start line now sits after
   recovery: our correctness must not be a property of upstream's phase ordering, which a sync can
   reshuffle with no test that could catch it.
+- **Board code reaches heavy upstream services through ports in `board/ports/` (`T3O-45`).**
+  Upstream service modules define the tag beside the implementation, so importing
+  `ProjectSetupScriptRunner`, `TerminalManager` or `GitManager` for the tag alone loaded every
+  provider driver, and every board test file paid seconds of import for it. A port is a narrow
+  `Context.Service` with only the methods the board calls, typed from upstream through
+  `import type`; its `*.live.ts` adapter is the one file that imports the upstream service, and
+  `board/serverLayer.ts` provides it. A lint override in the root `vite.config.ts` enforces this.
+  `src/board` tests also run as a non-isolated vitest project, one process sharing one module
+  graph, so testkits must not keep module-level state between files.
 
 ---
 
@@ -1086,6 +1095,10 @@ files (see [Seam grammar](#seam-grammar-since-t3o-02a)).
 | `apps/server/src/serviceLauncher.test.ts`                                       | `t3o-26`           | Import and exercise the multi-database backup helpers                                                                                                                                                                              | import + fork tests                                                          |
 | `docs/internals/server-updates.md`                                              | `t3o-26`           | "Every database, not just `state.sqlite`" section                                                                                                                                                                                  | Self-contained section                                                       |
 | `vite.config.ts`                                                                | `T3O-54`, `T3O-74` | Design-token, React Compiler, copy and comment lint rules off for fork-owned files (two override blocks, last in the list so they win)                                                                                             | two override blocks                                                          |
+| `vite.config.ts`                                                                | `T3O-45`           | Board files may not import the upstream services that have a port in `board/ports/` (one override block after the server forge-client block, repeating its patterns)                                                               | constants + one override block                                               |
+| `apps/server/vite.config.ts`                                                    | `T3O-45`           | Server tests split into `server` and a non-isolated, heap-capped `board` project (`src/testUtils/t3oBoardTestProject.ts`)                                                                                                          | one import + one `projects` line                                             |
+| `apps/server/src/testUtils/gitConfig.setup.ts`                                  | `T3O-45`           | Apply the git env once per process: non-isolated projects re-run setup files per test file                                                                                                                                         | one guard                                                                    |
+| `apps/server/src/testUtils/weightedShardSequencer.ts`                           | `T3O-45`           | `T3O_SHUFFLE_SEED` shuffles files within each project                                                                                                                                                                              | one `sort` override + helper                                                 |
 | `tsconfig.base.json`                                                            | `T3O-74`           | Upstream's v0.1.3 Effect style diagnostics off for fork-owned `board/` and `t3o/` code                                                                                                                                             | one override block                                                           |
 | `apps/server/src/ws.ts`                                                         | `T3O-23`           | Import the worktree retirer and its thread-delete delegate                                                                                                                                                                         | one-line append (import)                                                     |
 | `apps/server/src/ws.ts`                                                         | `T3O-23`           | Resolve `WorktreeRetirer` for the RPC handlers                                                                                                                                                                                     | one-line append (service yield)                                              |

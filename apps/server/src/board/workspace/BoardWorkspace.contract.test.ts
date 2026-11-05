@@ -108,7 +108,7 @@ interface Env {
 
 /** The env every test starts from, built once per file: cloning is most of an env's git work. */
 class RepoTemplate extends Context.Service<RepoTemplate, Env>()(
-  "test/BoardWorkspace/RepoTemplate",
+  "t3/board/workspace/BoardWorkspace.contract.test/RepoTemplate",
 ) {}
 
 const RepoTemplateLive = Layer.effect(

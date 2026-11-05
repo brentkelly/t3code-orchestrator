@@ -97,22 +97,6 @@ const BOARD_HEAVY_MODULES = [
   "**/provider/builtInDrivers*",
   "**/git/GitManager*",
 ];
-const boardRestrictedImports = (modules: ReadonlyArray<string>) => [
-  "error" as const,
-  {
-    paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
-    patterns: [
-      SERVER_FORGE_CLIENT_PATTERN,
-      {
-        group: [...modules],
-        allowTypeImports: true,
-        message:
-          "Depend on the board port in board/ports/; only *.live.ts adapters import the upstream service.",
-      },
-    ],
-  },
-];
-
 // Vite+ supports remote configuration before its published types include it.
 const cacheUrl = remoteCacheUrl(import.meta.dirname);
 const taskCacheConfig = {
@@ -499,7 +483,23 @@ export default defineConfig({
           "apps/server/src/board/ports/*.live.ts",
           "apps/server/src/board/ports/*.live.test.ts",
         ],
-        rules: { "eslint/no-restricted-imports": boardRestrictedImports(BOARD_HEAVY_MODULES) },
+        rules: {
+          "eslint/no-restricted-imports": [
+            "error",
+            {
+              paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
+              patterns: [
+                SERVER_FORGE_CLIENT_PATTERN,
+                {
+                  group: BOARD_HEAVY_MODULES,
+                  allowTypeImports: true,
+                  message:
+                    "Depend on the board port in board/ports/; only *.live.ts adapters import the upstream service.",
+                },
+              ],
+            },
+          ],
+        },
       },
       {
         files: ["apps/mobile/src/**"],
