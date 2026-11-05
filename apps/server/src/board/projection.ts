@@ -23,6 +23,7 @@ import {
   BoardCardCiLastOutcome,
   BoardCiPass,
   BoardCiPassSettle,
+  BoardCiPassStep,
   type BoardStepQueuedBy,
   BoardWorker,
   BoardWorkerId,
@@ -123,6 +124,11 @@ const settingToInt = (value: boolean | null): number | null =>
   value === null ? null : value ? 1 : 0;
 const settingFromInt = (value: number | null): boolean | null =>
   value === null ? null : value !== 0;
+
+const encodeBoardCiPassStepJson = Schema.encodeSync(Schema.fromJsonString(BoardCiPassStep));
+const encodeBoardCiPassStepsJson = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Array(BoardCiPassStep)),
+);
 
 /** A CI pass row (T3O-44): its steps as JSON. */
 const BoardCiPassDbRow = Schema.Struct({
@@ -2376,7 +2382,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         log_dir, fix_thread_id
       ) VALUES (
         ${pass.runId}, ${pass.cardId}, ${pass.entry}, ${pass.ordinal}, ${pass.startedAt},
-        ${pass.finishedAt}, ${pass.outcome}, ${JSON.stringify(pass.steps)}, ${pass.logDir},
+        ${pass.finishedAt}, ${pass.outcome}, ${encodeBoardCiPassStepsJson(pass.steps)}, ${pass.logDir},
         ${pass.fixThreadId}
       )
     `,
@@ -3231,7 +3237,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
             yield* queries.updateBoardCiPassStepRow({
               runId: action.runId,
               index: action.index,
-              step: JSON.stringify(action.step),
+              step: encodeBoardCiPassStepJson(action.step),
             });
           }
         });

@@ -292,6 +292,8 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     placedWorkerId: null,
     workerMove: null,
     placementOrphaned: null,
+    ci: null,
+    ciLastOutcome: null,
     // A card is never born armed (T3O-24, D2): the arm is a human delegating
     // the D18 build gate on a card they can already see waiting, and there is
     // no create-command field to set it with. Nor born auto-merging (T3O-38,

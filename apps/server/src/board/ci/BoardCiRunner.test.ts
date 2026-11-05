@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * The CI script runner (T3O-44) against real subprocesses: a pass, fail-fast,
  * a timeout, a cancel that kills the process group, and the output tail.

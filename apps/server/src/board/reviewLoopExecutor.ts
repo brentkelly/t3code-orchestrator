@@ -180,6 +180,8 @@ export function reviewLoopDecision(input: {
       from `baseRefName`; null for the ordinary tip-moved staleness. Read only
       to word the sync prompt — the rebase mechanics are identical either way. */
   readonly baseRetargetedTo: string | null;
+  /** The failure CI sent the card back with (T3O-44), surfaced as must-fix. */
+  readonly ciFinding?: { readonly stepName: string | null; readonly finding: string } | null;
 }): BoardStagePlan {
   const { review, config, overrides } = input;
   const done = succeededReviewSteps(input.completions);
@@ -216,6 +218,9 @@ export function reviewLoopDecision(input: {
         rounds: Math.max(rounds, round),
         prompt: phaseConfig.prompt,
         draftPullRequests: review.draftPullRequests,
+        // A card CI sent back (T3O-44) carries the failure into the round
+        // that follows; entering CI again clears it.
+        ciFinding: input.ciFinding ?? null,
       }),
       model: resolvePhaseModel({
         phase,
@@ -410,6 +415,15 @@ export const ReviewLoopExecutor: BoardStageExecutor = {
       baseStale: input.runState.baseStale,
       baseRefName: input.card.worktree?.baseRefName ?? null,
       baseRetargetedTo: input.runState.baseRetargetedTo,
+      // A card CI sent back (T3O-44) carries the failure into the rounds that
+      // follow, until it next enters CI.
+      ciFinding:
+        input.card.ciLastOutcome?.kind === "sent-back"
+          ? {
+              stepName: input.card.ciLastOutcome.stepName ?? null,
+              finding: input.card.ciLastOutcome.finding ?? "",
+            }
+          : null,
     });
   },
 };

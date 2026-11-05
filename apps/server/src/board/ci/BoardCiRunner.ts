@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalTimersInEffect:off
 /**
  * Runs a CI pass's steps in a card's worktree (T3O-44).
  *
@@ -23,7 +24,6 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 export interface BoardCiRunRequest {
   readonly runId: string;
@@ -51,10 +51,6 @@ export interface BoardCiRunnerShape {
   ) => Effect.Effect<BoardCiRunResult>;
 }
 
-export class BoardCiRunner extends Context.Service<BoardCiRunner, BoardCiRunnerShape>()(
-  "t3/board/BoardCiRunner",
-) {}
-
 /** The worktree-relative log directory of one pass. Gitignored by the
     worktree's `.t3/` entry. */
 export function boardCiLogDir(worktreePath: string, runId: string): string {
@@ -68,7 +64,10 @@ const KILL_GRACE_MS = 5_000;
 export class BoardCiTail {
   private lines: string[] = [];
   private partial = "";
-  constructor(private readonly max: number = BOARD_CI_TAIL_LINES) {}
+  private readonly max: number;
+  constructor(max: number = BOARD_CI_TAIL_LINES) {
+    this.max = max;
+  }
 
   push(chunk: string): void {
     const parts = (this.partial + chunk).split(/\r?\n/);
@@ -207,4 +206,8 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
   },
 );
 
-export const BoardCiRunnerLive = Layer.succeed(BoardCiRunner, { run: runBoardCiPass });
+/** A Reference, like `BoardProjectConfig`, so every board layer gets the real
+    runner and a test swaps in a scripted one. */
+export class BoardCiRunner extends Context.Reference<BoardCiRunnerShape>("t3/board/BoardCiRunner", {
+  defaultValue: () => ({ run: runBoardCiPass }),
+}) {}
