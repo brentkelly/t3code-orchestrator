@@ -14,12 +14,16 @@ import {
   boardCardPlans,
   isBoardPlanPlanned,
   boardNextStageId,
+  boardProjectStagesInOrder,
   boardStageBeforeBuild,
+  boardStageById,
   boardStageIndex,
   boardStagesInOrder,
   boardStageWithRole,
   isBoardStageAtOrAfterBuild,
   boardPlanId,
+  compareBoardStages,
+  effectiveBoardStageRole,
   type BoardCard,
   type BoardCardGroup,
   type BoardCardId,
@@ -29,6 +33,7 @@ import {
   type BoardState,
   isBoardDeferredStage,
 } from "./board.ts";
+import type { ProjectId } from "./baseSchemas.ts";
 
 /**
  * A card's group settings, or null for a leaf. A card that has live children
@@ -217,20 +222,31 @@ export function defaultBoardCardGroup(
  * The stage an emptied group reverts to as an ordinary card: the stage it had
  * before it became a group, capped at Sprint (the stage before the plan
  * role) so a card that lost its children never claims a plan or a build it
- * no longer has. A deferred group stays deferred.
+ * no longer has. A deferred group stays deferred. It walks the card's own
+ * project pipeline (T3O-43), so it never lands in a stage that project
+ * removed; a stage the project no longer uses falls back to the nearest one
+ * before it.
  */
 export function boardGroupRevertStage(
   board: BoardState,
-  card: Pick<BoardCard, "stage" | "group">,
+  card: Pick<BoardCard, "stage" | "group"> & { readonly projectId: ProjectId | null },
 ): BoardStageId {
   if (isBoardDeferredStage(card.stage)) return card.stage;
-  const ordered = boardStagesInOrder(board);
-  const plan = boardStageWithRole(board, "plan");
-  const planIndex = plan === null ? -1 : boardStageIndex(board, plan.stageId);
+  const ordered = boardProjectStagesInOrder(board, card.projectId).filter(
+    (stage) => !stage.retired,
+  );
+  const planIndex = ordered.findIndex((stage) => effectiveBoardStageRole(stage) === "plan");
   const capIndex = planIndex > 0 ? planIndex - 1 : 0;
   const wanted = card.group?.prevStage ?? card.stage;
-  const index = boardStageIndex(board, wanted);
-  if (index < 0) return ordered[0]!.stageId;
+  let index = ordered.findIndex((stage) => stage.stageId === wanted);
+  if (index < 0) {
+    const row = boardStageById(board, wanted);
+    if (row === null) return ordered[0]!.stageId;
+    index = ordered.reduce(
+      (last, stage, position) => (compareBoardStages(stage, row) <= 0 ? position : last),
+      0,
+    );
+  }
   return ordered[Math.min(index, capIndex)]!.stageId;
 }
 

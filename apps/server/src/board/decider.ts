@@ -3453,7 +3453,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `'${card.key}' is Done and its work has merged, so there is nothing to cancel; use a shared parent instead.`,
         );
       }
-      const capped = boardGroupRevertStage(board, { stage: card.stage, group: null });
+      const capped = boardGroupRevertStage(board, {
+        stage: card.stage,
+        group: null,
+        projectId: card.projectId,
+      });
       const nextCard: BoardCard = {
         ...card,
         stage: capped,
