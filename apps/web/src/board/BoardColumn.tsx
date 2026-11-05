@@ -29,6 +29,7 @@ import { BoardHint } from "./BoardHint";
 import { DraggableBoardCard, type BoardCardTodoContext } from "./BoardCardItem";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 import type { BoardGroupCardVm } from "./boardGroups";
+import { projectAccent } from "./projectAccent";
 
 /** Vertical gap (px) between cards; kept in sync with the list's `gap-2` so
     the drop-index math can subtract the placeholder it inserts. */
@@ -120,6 +121,12 @@ export interface BoardColumnProps extends BoardColumnDragProps {
   /** T3O-52: why a finished card kept its worktree, or null
       (`boardCardWorktreeKept`). Resolved by the page, which holds the settings. */
   readonly worktreeKeptFor: (card: BoardCardShell) => string | null;
+  /** T3O-43: the note for a card whose project no longer uses this stage. */
+  readonly stageGoneFor?: ((card: BoardCardShell) => string | null) | undefined;
+  /** T3O-43: the projects in view using this stage, when only some do. */
+  readonly usedBy?: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }> | undefined;
+  /** T3O-43: no project in view uses this stage any more; a card still sits in it. */
+  readonly removed?: boolean | undefined;
   /** Thread todo lists for one card (t3o-18) — built once by the page and read
       per card, so the column adds no state of its own. */
   readonly todosFor: (cardId: string) => BoardCardTodoContext;
@@ -222,6 +229,9 @@ function ExpandedColumn(props: BoardColumnProps) {
     childRunningFor,
     noPullRequestFor,
     worktreeKeptFor,
+    stageGoneFor,
+    usedBy,
+    removed,
     draggedCardId,
     dragOverIndex,
     dragHeight,
@@ -269,6 +279,7 @@ function ExpandedColumn(props: BoardColumnProps) {
         "flex min-h-[104px] w-[268px] shrink-0 flex-col rounded-xl border border-transparent bg-foreground/5 p-2.5 transition-colors",
         BOARD_COLUMN_DARK_SURFACE,
         isOver && "border-ring/60 bg-foreground/10 dark:bg-[#1e1e22]",
+        removed === true && !isOver && "border-dashed border-foreground/20 bg-transparent",
         refused && "border-dashed border-foreground/30",
       )}
       data-board-column={stage}
@@ -292,6 +303,28 @@ function ExpandedColumn(props: BoardColumnProps) {
           <ChevronLeftIcon className="text-muted-foreground/70" />
         </Button>
         <span className="truncate text-sm font-semibold text-muted-foreground">{label}</span>
+        {usedBy !== undefined && usedBy.length > 0 ? (
+          <BoardHint label={`Used by ${usedBy.map((project) => project.title).join(", ")}`}>
+            <span className="ml-1 inline-flex shrink-0 items-center gap-[3px]">
+              {usedBy.map((project) => (
+                <span
+                  className={cn(
+                    "size-1.5 shrink-0 rounded-full",
+                    projectAccent(project.id, accentNameFor(project.id)).dot,
+                  )}
+                  key={project.id}
+                />
+              ))}
+            </span>
+          </BoardHint>
+        ) : null}
+        {removed === true ? (
+          <BoardHint label="No project in view uses this stage any more">
+            <span className="ml-1 shrink-0 rounded-[5px] border border-border px-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+              Removed
+            </span>
+          </BoardHint>
+        ) : null}
         <span className="flex-1" />
         <span className="text-[11px] font-medium text-muted-foreground">{cards.length}</span>
         {canAdd ? (
@@ -351,6 +384,7 @@ function ExpandedColumn(props: BoardColumnProps) {
                   childRunning={childRunningFor(card)}
                   noPullRequest={noPullRequestFor(card)}
                   worktreeKeptReason={worktreeKeptFor(card)}
+                  stageGone={stageGoneFor?.(card) ?? null}
                   todos={todosFor(card.cardId)}
                   onOpenSubBoard={
                     onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card)

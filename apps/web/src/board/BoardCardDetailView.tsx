@@ -75,6 +75,7 @@ import {
   type BoardCardStepStalledReason,
   type BoardSplitRecommendation,
   isLiveBoardCardThreadLink,
+  type BoardProjectExecutionConfig,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { Link } from "@tanstack/react-router";
@@ -631,6 +632,8 @@ export interface BoardCardDetailViewProps {
   /** The workspace pipeline config (t3o-29), for resolving what each override
       row falls back to when this card sets nothing. */
   readonly boardSettings: BoardSettings;
+  /** The card's project's `t3o.json` overrides (T3O-43). */
+  readonly projectExecutionConfig?: BoardProjectExecutionConfig | null | undefined;
   /** Write this card's per-stage model overrides; null clears them. */
   readonly onSetModelOverrides: (next: BoardCardModelOverrides | null) => void;
   /** What the card's schedule control is offering (T3O-19, D13), derived by the
@@ -2548,6 +2551,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const modelRows = boardCardModelRows({
     stages: props.stages,
     boardSettings: props.boardSettings,
+    projectConfig: props.projectExecutionConfig,
     // The parent's key comes from the board's shells (the "part of" chip's
     // source), its overrides from the detail payload — only together do they
     // let a child's row say "(from T3O-41)".
@@ -3065,7 +3069,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   // like every other transition (t3o-22, D8) — the button
                   // exists because a held loop will never make the move on its
                   // own, not because the move is special.
-                  const next = boardNextStageId(stageStateOf(props.stages), card.stage);
+                  const next = boardNextStageId(stageStateOf(props.stages), card.stage, null);
                   return next === null || card.blocked ? undefined : () => props.onMoveStage(next);
                 })()}
                 onBackToThread={() => setPane("thread")}

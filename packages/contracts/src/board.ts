@@ -346,6 +346,10 @@ export const BoardStageDefinition = Schema.Struct({
   orderKey: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  /** The project whose committed `t3o.json` added this stage (T3O-43), or
+      null for a global stage. A project-owned stage is used by that project's
+      cards only, and its id is namespaced `<projectId>:<fileId>`. */
+  projectId: Schema.NullOr(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type BoardStageDefinition = typeof BoardStageDefinition.Type;
 
@@ -398,7 +402,7 @@ const BOARD_SEED_STAGE_SHAPES: ReadonlyArray<{
 export const BOARD_SEED_STAGES: ReadonlyArray<BoardStageDefinition> = BOARD_SEED_STAGE_SHAPES.map(
   (seed): BoardStageDefinition => {
     const at = BOARD_SEED_STAGE_AT[seed.stageId as keyof typeof BOARD_SEED_STAGE_AT];
-    return { ...seed, createdAt: at, updatedAt: at };
+    return { ...seed, createdAt: at, updatedAt: at, projectId: null };
   },
 );
 
@@ -2538,6 +2542,52 @@ export type BoardCardActivityEntry = typeof BoardCardActivityEntry.Type;
  * as an optional field so read models built by pre-board code — upstream
  * tests included — decode and compile unchanged.
  */
+/**
+ * Where a project's stage config was read from (T3O-43): the `t3o.json` path
+ * in the central server's checkout, and that checkout's HEAD when it was read.
+ */
+export const BoardProjectStageConfigSource = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  commitSha: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type BoardProjectStageConfigSource = typeof BoardProjectStageConfigSource.Type;
+
+/**
+ * One project's resolved stage config from its committed `t3o.json`
+ * (T3O-43, D8): the decider and reactor branch on it, so it lives in the read
+ * model. Never the raw file — only what the board acts on.
+ *
+ * - `removedStageIds`: global role-less stages this project does not use.
+ * - `addedStageIds`: the project-owned stage rows the file currently declares,
+ *   in file order. A project-owned row missing from it is retired.
+ * - `overrides`: the decoded execution partials, keyed by the stage id they
+ *   apply to (namespaced for an added stage).
+ * - `warnings`: every entry the board ignored, and why.
+ */
+export const BoardProjectStageConfig = Schema.Struct({
+  removedStageIds: Schema.Array(BoardStageId),
+  addedStageIds: Schema.Array(BoardStageId),
+  overrides: Schema.Record(
+    Schema.String,
+    Schema.suspend(
+      (): Schema.Codec<BoardStageExecutionPatch, typeof BoardStageExecutionPatch.Encoded> =>
+        BoardStageExecutionPatch,
+    ),
+  ),
+  warnings: Schema.Array(Schema.String),
+  source: Schema.NullOr(BoardProjectStageConfigSource),
+});
+export type BoardProjectStageConfig = typeof BoardProjectStageConfig.Type;
+
+/** A project with no `t3o.json`: it follows the global pipeline exactly. */
+export const EMPTY_BOARD_PROJECT_STAGE_CONFIG: BoardProjectStageConfig = {
+  removedStageIds: [],
+  addedStageIds: [],
+  overrides: {},
+  warnings: [],
+  source: null,
+};
+
 export const BoardState = Schema.Struct({
   cards: Schema.Array(BoardCard),
   /** The label catalogue (t3o-06a). In the read model because the decider
@@ -2584,6 +2634,12 @@ export const BoardState = Schema.Struct({
       never listed. Absent on a board that has never added one — every board
       before the distributed board decodes unchanged. */
   workers: Schema.optional(Schema.Array(BoardWorker)),
+  /** Per-project stage config from each project's committed `t3o.json`
+      (T3O-43, D8). In the read model because the decider refuses moves into
+      a stage a card's project does not use, and next-stage / adjacency walk
+      the card's project's list. Absent until the first project file is
+      reconciled; a project absent from it follows the global pipeline. */
+  projectStageConfigs: Schema.optional(Schema.Record(ProjectId, BoardProjectStageConfig)),
   /** The worker unpinned cards follow (D20). Absent means `local`. In the read
       model because removing the default is refused. */
   defaultWorkerId: Schema.optional(BoardWorkerId),
@@ -2852,42 +2908,136 @@ export function boardLabelCatalogue(board: BoardState): ReadonlyArray<BoardLabel
 
 // ── Stage read-model helpers (D2/D3, t3o-15) ───────────────────────────
 
-/** A board's stage list: its `stages`, or the compiled seeds when absent (a
-    board that has never touched a stage). The single reader every
-    decider/projector/UI path goes through, so "absent" and "the eight seeds"
-    are always the same list. */
-export function boardStages(board: BoardState): ReadonlyArray<BoardStageDefinition> {
+/** Every stage row the board holds: the global list plus every project-owned
+    row (T3O-43). Only the per-project and by-id readers want this. */
+export function boardAllStages(
+  board: Pick<BoardState, "stages">,
+): ReadonlyArray<BoardStageDefinition> {
   return board.stages ?? BOARD_SEED_STAGES;
 }
 
-/** The stage list in canonical (orderKey, stageId) order. */
-export function boardStagesInOrder(board: BoardState): ReadonlyArray<BoardStageDefinition> {
+/** A board's GLOBAL stage list: its `stages` less project-owned rows, or the
+    compiled seeds when absent (a board that has never touched a stage). The
+    single reader every global decider/projector/UI path goes through, so
+    "absent" and "the eight seeds" are always the same list. */
+export function boardStages(
+  board: Pick<BoardState, "stages">,
+): ReadonlyArray<BoardStageDefinition> {
+  const all = boardAllStages(board);
+  return all.some((stage) => stage.projectId !== null)
+    ? all.filter((stage) => stage.projectId === null)
+    : all;
+}
+
+/** The global stage list in canonical (orderKey, stageId) order. */
+export function boardStagesInOrder(
+  board: Pick<BoardState, "stages">,
+): ReadonlyArray<BoardStageDefinition> {
   return [...boardStages(board)].sort(compareBoardStages);
 }
 
-/** The stage with the given id, or null. */
+/** The stage with the given id, global or project-owned, or null. */
 export function boardStageById(
-  board: BoardState,
+  board: Pick<BoardState, "stages">,
   stageId: BoardStageId,
 ): BoardStageDefinition | null {
-  return boardStages(board).find((stage) => stage.stageId === stageId) ?? null;
+  return boardAllStages(board).find((stage) => stage.stageId === stageId) ?? null;
 }
 
-/** A stage's position in board order, or -1 when the id is unknown (a
-    since-deleted stage named by a legacy event). */
+/** A stage's position in global board order, or -1 when the id is unknown (a
+    since-deleted stage named by a legacy event). A project-owned stage sits
+    half a step after the global stage before it, so ordering comparisons
+    (before build, at or after review, …) hold for it too. */
 export function boardStageIndex(board: BoardState, stageId: BoardStageId): number {
-  return boardStagesInOrder(board).findIndex((stage) => stage.stageId === stageId);
+  const ordered = boardStagesInOrder(board);
+  const index = ordered.findIndex((stage) => stage.stageId === stageId);
+  if (index >= 0) return index;
+  const owned = boardAllStages(board).find(
+    (stage) => stage.stageId === stageId && stage.projectId !== null,
+  );
+  if (owned === undefined) return -1;
+  let before = -1;
+  ordered.forEach((stage, position) => {
+    if (compareBoardStages(stage, owned) < 0) before = position;
+  });
+  return before + 0.5;
 }
 
-/** Whether two stages are neighbours in board order. Unknown ids are never
-    adjacent. */
+/** A project's stage config (T3O-43), or null when its project has no
+    `t3o.json` and follows the global pipeline. */
+export function boardProjectStageConfig(
+  board: Pick<BoardState, "projectStageConfigs">,
+  projectId: ProjectId,
+): BoardProjectStageConfig | null {
+  return board.projectStageConfigs?.[projectId] ?? null;
+}
+
+/** A stage in one project's pipeline. `retired` marks a stage the project no
+    longer uses that is kept only while one of its live cards sits in it:
+    nothing new enters it and nothing advances into it. */
+export type BoardProjectStage = BoardStageDefinition & { readonly retired: boolean };
+
+/** What the per-project stage helpers read (T3O-43): the stage rows, the
+    project configs and where each live card sits. A `BoardState` is one; a
+    client passes its shells. An absent `archivedAt` reads as live. */
+export interface BoardStageView {
+  readonly stages?: BoardState["stages"];
+  readonly projectStageConfigs?: BoardState["projectStageConfigs"];
+  readonly cards: ReadonlyArray<
+    Pick<BoardCard, "stage" | "projectId"> & { readonly archivedAt?: string | null }
+  >;
+}
+
+/**
+ * One project's pipeline, in board order (T3O-43): the global stages less the
+ * ones its `t3o.json` removes, plus its own project-owned stages. A removed
+ * (or no longer declared) stage stays, flagged `retired`, while a live card of
+ * the project sits in it. A null project is the global list.
+ */
+export function boardProjectStagesInOrder(
+  board: BoardStageView,
+  projectId: ProjectId | null,
+): ReadonlyArray<BoardProjectStage> {
+  const config = projectId === null ? null : boardProjectStageConfig(board, projectId);
+  const all = boardAllStages(board);
+  if (
+    config === null &&
+    !all.some((stage) => stage.projectId !== null && stage.projectId === projectId)
+  ) {
+    return boardStagesInOrder(board).map((stage) => ({ ...stage, retired: false }));
+  }
+  const removed = new Set<string>(config?.removedStageIds ?? []);
+  const added = new Set<string>(config?.addedStageIds ?? []);
+  const occupied = new Set<string>();
+  for (const card of board.cards) {
+    if (card.projectId === projectId && (card.archivedAt ?? null) === null) {
+      occupied.add(card.stage);
+    }
+  }
+  const out: BoardProjectStage[] = [];
+  for (const stage of all) {
+    if (stage.projectId !== null && stage.projectId !== projectId) continue;
+    const used = stage.projectId === null ? !removed.has(stage.stageId) : added.has(stage.stageId);
+    if (used) out.push({ ...stage, retired: false });
+    else if (occupied.has(stage.stageId)) out.push({ ...stage, retired: true });
+  }
+  return out.sort(compareBoardStages);
+}
+
+/** Whether two stages are neighbours in a project's pipeline (T3O-43; a null
+    project walks the global list). Retired stages are skipped, except the one
+    being left. Unknown ids are never adjacent. */
 export function areBoardStagesAdjacent(
-  board: BoardState,
+  board: BoardStageView,
   a: BoardStageId,
   b: BoardStageId,
+  projectId: ProjectId | null,
 ): boolean {
-  const indexA = boardStageIndex(board, a);
-  const indexB = boardStageIndex(board, b);
+  const ordered = boardProjectStagesInOrder(board, projectId).filter(
+    (stage) => !stage.retired || stage.stageId === a,
+  );
+  const indexA = ordered.findIndex((stage) => stage.stageId === a);
+  const indexB = ordered.findIndex((stage) => stage.stageId === b);
   if (indexA < 0 || indexB < 0) return false;
   return Math.abs(indexA - indexB) === 1;
 }
@@ -2902,13 +3052,129 @@ export function boardStageWithRole(
   return boardStages(board).find((stage) => effectiveBoardStageRole(stage) === role) ?? null;
 }
 
-/** The stage immediately after `stageId` in board order, or null when it is
-    last or unknown (D8: auto-advance moves to the next stage in order). */
-export function boardNextStageId(board: BoardState, stageId: BoardStageId): BoardStageId | null {
-  const ordered = boardStagesInOrder(board);
+/** The stage after `stageId` in the project's pipeline, or null when it is
+    last or unknown (D8: auto-advance moves to the next stage in order). It
+    never lands on a retired stage (T3O-43); a null project walks the global
+    list. */
+export function boardNextStageId(
+  board: BoardStageView,
+  stageId: BoardStageId,
+  projectId: ProjectId | null,
+): BoardStageId | null {
+  const ordered = boardProjectStagesInOrder(board, projectId);
   const index = ordered.findIndex((stage) => stage.stageId === stageId);
-  if (index < 0 || index + 1 >= ordered.length) return null;
-  return ordered[index + 1]!.stageId;
+  if (index < 0) return null;
+  return ordered.slice(index + 1).find((stage) => !stage.retired)?.stageId ?? null;
+}
+
+/**
+ * Why a card may not move to `toStage`, as a sentence for a human, or null
+ * when it may (T3O-43). The decider refuses with it and the board's drag
+ * layer shows it as the tooltip on a refused drop, so the two never drift.
+ * A stage the card's project does not use, or has retired, is refused even
+ * with `override`; a non-adjacent move needs `override`.
+ */
+export function boardCardMoveRefusal(
+  board: BoardStageView,
+  card: Pick<BoardCard, "stage" | "projectId">,
+  toStage: BoardStageId,
+  options: { readonly override: boolean },
+): string | null {
+  if (isBoardDeferredStage(toStage)) return null;
+  const target = boardStageById(board, toStage);
+  if (target === null) return `Stage '${toStage}' does not exist.`;
+  const entry = boardProjectStagesInOrder(board, card.projectId).find(
+    (stage) => stage.stageId === toStage,
+  );
+  if (entry === undefined) {
+    return target.projectId === null
+      ? `This card's project doesn't use the ${target.label} stage.`
+      : `${target.label} belongs to another project's pipeline.`;
+  }
+  if (entry.retired) return `This card's project no longer uses the ${target.label} stage.`;
+  if (!options.override && !areBoardStagesAdjacent(board, card.stage, toStage, card.projectId)) {
+    return `Stage move '${card.stage}' -> '${toStage}' is not adjacent; a drag sends override to force it.`;
+  }
+  return null;
+}
+
+/** A project-owned stage id (T3O-43): namespaced by project, so two projects
+    adding a `security` stage never collide with each other or a global id. */
+export function boardProjectStageId(projectId: ProjectId, fileId: string): BoardStageId {
+  return BoardStageId.make(`${projectId}:${fileId}`);
+}
+
+function boardProjectStageConfigsEqual(
+  left: BoardProjectStageConfig,
+  right: BoardProjectStageConfig,
+): boolean {
+  // The commit sha is provenance only: the checkout moving on with the file
+  // unchanged is not a config change.
+  const strip = (config: BoardProjectStageConfig) =>
+    canonicalJson({ ...config, source: config.source === null ? null : config.source.path });
+  return strip(left) === strip(right);
+}
+
+/** JSON with object keys sorted: the reconciler builds partials in file key
+    order but the projector decodes them into schema order. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    return `{${Object.keys(value)
+      .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+      .sort()
+      .map(
+        (key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`,
+      )
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/** What applying a project's resolved stage config would change (T3O-43):
+    shared by the reconciler (which emits nothing when it is empty) and the
+    decider (which records exactly it). */
+export interface BoardProjectStageConfigPlan {
+  readonly configChanged: boolean;
+  /** Project-owned rows to write: new ones, and ones whose label or order moved. */
+  readonly upserts: ReadonlyArray<BoardStageDefinition>;
+  /** Project-owned rows the file no longer declares and no card holds. */
+  readonly deletedStageIds: ReadonlyArray<BoardStageId>;
+}
+
+export function planBoardProjectStageConfig(input: {
+  readonly board: BoardState;
+  readonly projectId: ProjectId;
+  readonly config: BoardProjectStageConfig;
+  /** The rows the file declares, as resolved; timestamps are `now`. */
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+}): BoardProjectStageConfigPlan {
+  const current = boardProjectStageConfig(input.board, input.projectId);
+  const configChanged = !boardProjectStageConfigsEqual(
+    current ?? EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+    input.config,
+  );
+  const existing = boardAllStages(input.board).filter(
+    (stage) => stage.projectId === input.projectId,
+  );
+  const upserts: BoardStageDefinition[] = [];
+  for (const stage of input.stages) {
+    const prior = existing.find((candidate) => candidate.stageId === stage.stageId);
+    if (prior === undefined) upserts.push(stage);
+    else if (prior.label !== stage.label || prior.orderKey !== stage.orderKey) {
+      upserts.push({ ...stage, createdAt: prior.createdAt });
+    }
+  }
+  const declared = new Set<string>(input.stages.map((stage) => stage.stageId));
+  const held = new Set<string>(input.board.cards.map((card) => card.stage));
+  const deletedStageIds = existing
+    .filter((stage) => !declared.has(stage.stageId) && !held.has(stage.stageId))
+    .map((stage) => stage.stageId);
+  return { configChanged, upserts, deletedStageIds };
+}
+
+export function isBoardProjectStageConfigPlanEmpty(plan: BoardProjectStageConfigPlan): boolean {
+  return !plan.configChanged && plan.upserts.length === 0 && plan.deletedStageIds.length === 0;
 }
 
 /** Whether a stage sits at or after the `build` role in board order (D11):
@@ -3346,7 +3612,10 @@ export function isBoardStageAtOrAfterSubBoardFloor(
 export type BoardCardProjectLock =
   | { readonly kind: "child"; readonly parentCardId: BoardCardId }
   | { readonly kind: "parent"; readonly childCount: number }
-  | { readonly kind: "built" };
+  | { readonly kind: "built" }
+  /** The card sits in a stage its project's `t3o.json` added (T3O-43): no other
+      project's pipeline holds it, so the card would be in no stage at all. */
+  | { readonly kind: "project-stage"; readonly stageLabel: string };
 
 export function boardCardProjectLock(input: {
   readonly board: BoardState;
@@ -3370,6 +3639,10 @@ export function boardCardProjectLock(input: {
     card.pullRequestHistory.length > 0
   ) {
     return { kind: "built" };
+  }
+  const stage = boardStageById(input.board, card.stage);
+  if (stage !== null && stage.projectId !== null) {
+    return { kind: "project-stage", stageLabel: stage.label };
   }
   return null;
 }
@@ -4893,6 +5166,22 @@ export const BoardStageDeleteCommand = Schema.Struct({
 export type BoardStageDeleteCommand = typeof BoardStageDeleteCommand.Type;
 
 /**
+ * Record a project's resolved `t3o.json` stage config (T3O-43). Internal: the
+ * server's `BoardProjectConfig` reconciler dispatches it only when the
+ * resolved result changed. `stages` are the project-owned rows the file
+ * declares; the decider works out which old rows to retire or drop.
+ */
+export const BoardProjectSetStageConfigCommand = Schema.Struct({
+  type: Schema.Literal("board.project.set-stage-config"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  config: BoardProjectStageConfig,
+  stages: Schema.Array(BoardStageDefinition),
+  createdAt: IsoDateTime,
+});
+export type BoardProjectSetStageConfigCommand = typeof BoardProjectSetStageConfigCommand.Type;
+
+/**
  * Start a thread for the card's CURRENT stage on demand (D7), the on-demand
  * counterpart of auto-kickoff — consumed by t3o-14's `+` menu. The decider
  * validates the card exists and emits `board.card-stage-thread-requested`; the
@@ -6236,6 +6525,16 @@ export const BoardCardWorkerRemovalPayload = Schema.Struct({
   card: BoardCard,
 });
 export type BoardCardWorkerRemovalPayload = typeof BoardCardWorkerRemovalPayload.Type;
+
+/** A project's `t3o.json` stage config recorded (T3O-43): the whole resolved
+    config, the project-owned stage rows written, and the rows dropped. */
+export const BoardProjectStageConfigSetPayload = Schema.Struct({
+  projectId: ProjectId,
+  config: BoardProjectStageConfig,
+  upserts: Schema.Array(BoardStageDefinition),
+  deletedStageIds: Schema.Array(BoardStageId),
+});
+export type BoardProjectStageConfigSetPayload = typeof BoardProjectStageConfigSetPayload.Type;
 // Worktree lifecycle payloads (t3o-09). Each carries the whole post-change
 // card, like every other non-created board event, so the shell-delta mapping
 // stays a pure function of the event and the projectors upsert exactly what
@@ -7729,6 +8028,18 @@ export const BoardStageRemovedShellEvent = Schema.Struct({
 });
 export type BoardStageRemovedShellEvent = typeof BoardStageRemovedShellEvent.Type;
 
+/** A project's `t3o.json` stage config changed (T3O-43): its resolved config,
+    plus the project-owned stage rows written and dropped with it. */
+export const BoardProjectStageConfigShellEvent = Schema.Struct({
+  kind: Schema.Literal("project-stage-config"),
+  sequence: NonNegativeInt,
+  projectId: ProjectId,
+  config: BoardProjectStageConfig,
+  upserts: Schema.Array(BoardStageDefinition),
+  deletedStageIds: Schema.Array(BoardStageId),
+});
+export type BoardProjectStageConfigShellEvent = typeof BoardProjectStageConfigShellEvent.Type;
+
 /**
  * The board's whole worker summary (T3O-62, D7/D19), re-sent whenever any of
  * it changes: a registry event, a connection status change, a setup's
@@ -7860,6 +8171,8 @@ export const BOARD_INTERNAL_COMMANDS = [
   // move step lands after the git work behind it.
   BoardCardPlaceCommand,
   BoardCardMoveWorkerCommand,
+  // T3O-43: a project's committed t3o.json, reconciled by the server.
+  BoardProjectSetStageConfigCommand,
 ] as const;
 
 /**
@@ -7936,6 +8249,8 @@ export const BOARD_EVENT_TYPES = [
   "board.card-worker-move-recorded",
   // T3O-66: a card's worker removed, or added back.
   "board.card-worker-removal",
+  // T3O-43: a project's t3o.json stage config.
+  "board.project-stage-config-set",
 ] as const;
 
 export const BOARD_SHELL_STREAM_EVENTS = [
@@ -7950,6 +8265,7 @@ export const BOARD_SHELL_STREAM_EVENTS = [
   BoardStageUpsertedShellEvent,
   BoardStageRemovedShellEvent,
   BoardWorkersShellEvent,
+  BoardProjectStageConfigShellEvent,
 ] as const;
 
 /** One board delta on `board.subscribeBoard`, stamped with the BOARD's sequence. */
@@ -7983,6 +8299,9 @@ export const BoardShellSnapshot = Schema.Struct({
   /** Workers (T3O-62, D19). Absent on a local-only board, which is then
       exactly today's board. */
   workers: Schema.optionalKey(BoardWorkersState),
+  /** Per-project `t3o.json` stage configs (T3O-43). Absent when no project
+      has one, which is then exactly the global pipeline. */
+  projectStageConfigs: Schema.optionalKey(Schema.Record(ProjectId, BoardProjectStageConfig)),
 });
 export type BoardShellSnapshot = typeof BoardShellSnapshot.Type;
 
@@ -8291,6 +8610,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.card-worker-removal"),
       payload: BoardCardWorkerRemovalPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.project-stage-config-set"),
+      payload: BoardProjectStageConfigSetPayload,
     }),
   ] as const;
 }
@@ -10849,11 +11173,156 @@ export function boardWideAutoMergeOn(
   return isBoardMergeStageExecution(exec) && exec.autoMerge;
 }
 
+// ── Per-project execution overrides (T3O-43) ───────────────────────────
+
+const BoardStepExecutionPatch = Schema.Struct({
+  prompt: Schema.optionalKey(Schema.String),
+  model: Schema.optionalKey(Schema.NullOr(BoardModelSelection)),
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  timeoutMs: Schema.optionalKey(PositiveInt),
+  maxAttempts: Schema.optionalKey(PositiveInt),
+});
+
+/**
+ * A project's partial of one stage's execution config, from its committed
+ * `t3o.json` (T3O-43). Every key is optional and present only when the file
+ * set it; `kind` is never overridable, so a project cannot turn a stage into a
+ * different member. Which keys a stage accepts depends on the member it
+ * resolves to (`BOARD_STAGE_EXECUTION_PATCH_KEYS`).
+ */
+export const BoardStageExecutionPatch = Schema.Struct({
+  autoExecute: Schema.optionalKey(Schema.Boolean),
+  prompt: Schema.optionalKey(Schema.String),
+  model: Schema.optionalKey(Schema.NullOr(BoardModelSelection)),
+  runtimeMode: Schema.optionalKey(RuntimeMode),
+  mode: Schema.optionalKey(BoardStageMode),
+  humanInLoop: Schema.optionalKey(Schema.Boolean),
+  humanInLoopWithPlan: Schema.optionalKey(Schema.Boolean),
+  humanInLoopWithoutPlan: Schema.optionalKey(Schema.Boolean),
+  autoAdvance: Schema.optionalKey(Schema.Boolean),
+  timeoutMs: Schema.optionalKey(PositiveInt),
+  maxAttempts: Schema.optionalKey(PositiveInt),
+  maxInvocationsPerStageEntry: Schema.optionalKey(PositiveInt),
+  planReview: Schema.optionalKey(
+    Schema.Struct({
+      enabledByDefault: Schema.optionalKey(Schema.Boolean),
+      defaultRounds: Schema.optionalKey(BoardPlanReviewRounds),
+      prompt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+    }),
+  ),
+  rounds: Schema.optionalKey(PositiveInt),
+  draftPullRequests: Schema.optionalKey(Schema.Boolean),
+  phases: Schema.optionalKey(
+    Schema.Struct({
+      review: Schema.optionalKey(BoardStepExecutionPatch),
+      triage: Schema.optionalKey(BoardStepExecutionPatch),
+      adjudicate: Schema.optionalKey(BoardStepExecutionPatch),
+    }),
+  ),
+  strategy: Schema.optionalKey(BoardMergeStrategy),
+  autoMerge: Schema.optionalKey(Schema.Boolean),
+  deleteBranchOnDone: Schema.optionalKey(Schema.Boolean),
+  submit: Schema.optionalKey(BoardStepExecutionPatch),
+});
+export type BoardStageExecutionPatch = typeof BoardStageExecutionPatch.Type;
+
+export type BoardStageExecutionKind = BoardStageExecution["kind"];
+
+const BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS = [
+  "autoExecute",
+  "prompt",
+  "model",
+  "runtimeMode",
+  "mode",
+  "humanInLoop",
+  "humanInLoopWithPlan",
+  "humanInLoopWithoutPlan",
+  "autoAdvance",
+  "timeoutMs",
+  "maxAttempts",
+  "maxInvocationsPerStageEntry",
+] as const satisfies ReadonlyArray<keyof BoardStageExecutionPatch>;
+
+/** The patch keys each execution member accepts: exactly that member's own
+    fields, less `kind`. A key outside its stage's set is ignored with a
+    warning when a project file is decoded. */
+export const BOARD_STAGE_EXECUTION_PATCH_KEYS: Readonly<
+  Record<BoardStageExecutionKind, ReadonlyArray<keyof BoardStageExecutionPatch>>
+> = {
+  simple: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "planReview"],
+  review: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "rounds", "draftPullRequests", "phases"],
+  merge: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "strategy", "autoMerge", "deleteBranchOnDone"],
+  build: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "submit"],
+};
+
+/** The member a stage id resolves to in `resolveBoardStageExecution`: the
+    three role seeds with members of their own, and the simple member for
+    every other stage (Planning included). */
+export function boardStageExecutionKind(stageId: string): BoardStageExecutionKind {
+  switch (stageId) {
+    case BOARD_SEED_STAGE_IDS.review:
+      return "review";
+    case BOARD_SEED_STAGE_IDS.merge:
+      return "merge";
+    case BOARD_SEED_STAGE_IDS.building:
+      return "build";
+    default:
+      return "simple";
+  }
+}
+
+const withoutUndefined = <T extends object>(value: T): T =>
+  Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
+
+/** Merge a project's partial field by field over a resolved member. Nested
+    step configs (`phases.*`, `submit`, `planReview`) merge one level deeper,
+    so overriding the triage prompt keeps the triage model. A key the member
+    does not carry is dropped, never grafted on. */
+function applyBoardStageExecutionPatch<E extends BoardStageExecution>(
+  base: E,
+  patch: BoardStageExecutionPatch | undefined,
+): E {
+  if (patch === undefined) return base;
+  const allowed = new Set<string>(BOARD_STAGE_EXECUTION_PATCH_KEYS[base.kind]);
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined || !allowed.has(key)) continue;
+    if (key === "phases" && base.kind === "review") {
+      const phases = value as NonNullable<BoardStageExecutionPatch["phases"]>;
+      out.phases = {
+        review: { ...base.phases.review, ...withoutUndefined(phases.review ?? {}) },
+        triage: { ...base.phases.triage, ...withoutUndefined(phases.triage ?? {}) },
+        adjudicate: { ...base.phases.adjudicate, ...withoutUndefined(phases.adjudicate ?? {}) },
+      };
+    } else if (key === "submit" && base.kind === "build") {
+      out.submit = { ...base.submit, ...withoutUndefined(value as object) };
+    } else if (key === "planReview" && base.kind === "simple") {
+      out.planReview = {
+        enabledByDefault: false,
+        defaultRounds: DEFAULT_BOARD_PLAN_REVIEW_ROUNDS,
+        prompt: null,
+        ...base.planReview,
+        ...withoutUndefined(value as object),
+      };
+    } else {
+      out[key] = value;
+    }
+  }
+  return out as E;
+}
+
+/** The slice of a project's stage config execution resolution reads. */
+export type BoardProjectExecutionConfig = Pick<BoardProjectStageConfig, "overrides">;
+
 export function resolveBoardStageExecution(
   board: BoardSettings,
   stageId: BoardStageId,
+  projectConfig?: BoardProjectExecutionConfig | null,
 ): BoardStageExecution & { readonly runtimeMode: RuntimeMode } {
   const configured = board.pipeline[stageId];
+  // The project's `t3o.json` partial (T3O-43) merges over the resolved global
+  // member BEFORE the forced invariants below, so no project file can lift one.
+  const patch = projectConfig?.overrides[stageId];
   if (stageId === BOARD_SEED_STAGE_IDS.review) {
     // Coerce absent / legacy-simple entries to the review default, then FORCE
     // the build-mode + unattended invariants (D2/D6) even on a genuine review
@@ -10861,10 +11330,12 @@ export function resolveBoardStageExecution(
     // pass through and strand the loop without a worktree. Enforced here, the
     // one resolution point, so the reactor keeps reading `mode`/`humanInLoop`
     // uniformly.
-    const base =
+    const base = applyBoardStageExecutionPatch(
       configured !== undefined && isBoardReviewStageExecution(configured)
         ? configured
-        : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION;
+        : DEFAULT_BOARD_REVIEW_STAGE_EXECUTION,
+      patch,
+    );
     return {
       ...base,
       mode: "build",
@@ -10881,10 +11352,12 @@ export function resolveBoardStageExecution(
     // `build` — nothing runs on entry, and the conflict step needs the
     // worktree — so neither a hand-edited settings file nor a stale stored
     // config can start an agent in this stage or strand one without a tree.
-    const base =
+    const base = applyBoardStageExecutionPatch(
       configured !== undefined && isBoardMergeStageExecution(configured)
         ? configured
-        : DEFAULT_BOARD_MERGE_STAGE_EXECUTION;
+        : DEFAULT_BOARD_MERGE_STAGE_EXECUTION,
+      patch,
+    );
     return {
       ...base,
       prompt: RETIRED_BOARD_MERGE_CONFLICT_PROMPTS.includes(base.prompt)
@@ -10918,14 +11391,16 @@ export function resolveBoardStageExecution(
     //
     // The build-mode invariant is forced here as it always was.
     const seeded = DEFAULT_BOARD_PIPELINE[stageId] as BoardStageExecutionBuild;
-    const base =
+    const base = applyBoardStageExecutionPatch(
       configured === undefined
         ? seeded
         : isBoardBuildStageExecution(configured)
           ? configured
           : configured.kind === "simple"
             ? { ...seeded, ...configured, kind: "build" as const, submit: seeded.submit }
-            : seeded;
+            : seeded,
+      patch,
+    );
     return {
       ...base,
       mode: "build",
@@ -10941,10 +11416,12 @@ export function resolveBoardStageExecution(
   if (stageId === BOARD_SEED_STAGE_IDS.planning) {
     // An ABSENT entry resolves to the SEEDED config for the same reason
     // Building's does.
-    const base =
+    const base = applyBoardStageExecutionPatch(
       configured !== undefined && !isBoardReviewStageExecution(configured)
         ? configured
-        : (DEFAULT_BOARD_PIPELINE[stageId] as BoardStageExecutionSimple);
+        : (DEFAULT_BOARD_PIPELINE[stageId] as BoardStageExecutionSimple),
+      patch,
+    );
     return {
       ...base,
       mode: "plan",
@@ -10953,7 +11430,10 @@ export function resolveBoardStageExecution(
       runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "plan"),
     };
   }
-  const resolved = configured ?? DEFAULT_BOARD_STAGE_EXECUTION;
+  const resolved = applyBoardStageExecutionPatch(
+    configured ?? DEFAULT_BOARD_STAGE_EXECUTION,
+    patch,
+  );
   return {
     ...resolved,
     runtimeMode: effectiveBoardRuntimeMode(resolved.runtimeMode, resolved.mode),

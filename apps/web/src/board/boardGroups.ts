@@ -6,6 +6,7 @@
  * before a command is sent, so a refused column says why instead of bouncing.
  */
 import {
+  boardCardMoveRefusal,
   BOARD_AUTOMATION_BOARD_WIDE_MERGE_REASON,
   boardStageBeforeBuild,
   boardStageIndex,
@@ -330,6 +331,15 @@ export function boardDropRefusal(input: {
 }): string | null {
   const { shells, stages, card, toStage } = input;
   if (toStage === card.stage) return null;
+  // A stage the card's project does not use (T3O-43): the decider's own
+  // sentence, so the tooltip and the refusal never drift.
+  const pipelineRefusal = boardCardMoveRefusal(
+    { stages: stages.stages, projectStageConfigs: stages.projectStageConfigs, cards: shells },
+    card,
+    toStage,
+    { override: true },
+  );
+  if (pipelineRefusal !== null) return pipelineRefusal;
   if (isBoardDeferredStage(toStage)) {
     if (isBoardShellStarted(shells, stages, card)) {
       return `Work has started on ${card.key}. Let it finish, or archive it.`;

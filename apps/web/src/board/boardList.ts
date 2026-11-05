@@ -491,7 +491,14 @@ export function planBoardListMove(input: {
     );
     if (left.length > 0) return [];
     return [
-      { card: old, stageId: boardGroupRevertStage(stages, { stage: old.stage, group: old.group }) },
+      {
+        card: old,
+        stageId: boardGroupRevertStage(stages, {
+          stage: old.stage,
+          group: old.group,
+          projectId: old.projectId,
+        }),
+      },
     ];
   });
   return {

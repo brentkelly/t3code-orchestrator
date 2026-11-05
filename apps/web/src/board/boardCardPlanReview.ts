@@ -15,6 +15,7 @@ import {
   type BoardPlanReviewSettings,
   type BoardStageDefinition,
   type BoardStageId,
+  type BoardProjectExecutionConfig,
 } from "@t3tools/contracts";
 
 export interface BoardCardPlanReviewView {
@@ -32,10 +33,11 @@ export interface BoardCardPlanReviewView {
 export function boardPlanStageExecution(
   settings: BoardSettings,
   stages: ReadonlyArray<BoardStageDefinition>,
+  projectConfig?: BoardProjectExecutionConfig | null,
 ): { readonly planReview?: BoardPlanReviewSettings | undefined } | null {
   const planStage = stages.find((stage) => effectiveBoardStageRole(stage) === "plan");
   if (planStage === undefined) return null;
-  const execution = resolveBoardStageExecution(settings, planStage.stageId);
+  const execution = resolveBoardStageExecution(settings, planStage.stageId, projectConfig);
   return execution.kind === "simple" ? execution : null;
 }
 

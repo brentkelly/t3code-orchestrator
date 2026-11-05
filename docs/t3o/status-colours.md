@@ -60,7 +60,8 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   `BOARD_ATTENTION_SETTLE_MS` grace the other two ambers do, because a card arriving at Ready for
   merge is briefly PR-less while the stage-move lookup is still in flight. The gate is last because it is the
   one notice whose fact survives elsewhere on the card: the meta row's chain icon carries the count at
-  every stage. This is deliberately not a comparison of tones — amber-versus-violet says how loud a
+  every stage. Below the gate, `Stage removed` (T3O-43) is amber: the card's project dropped its stage
+  in `t3o.json`, so it is held there until a human moves it on. This is deliberately not a comparison of tones — amber-versus-violet says how loud a
   notice is, not which fact the human needs, and `Merge needs you` beating `Needs a human` is a
   ranking between two ambers. The winner truncates rather than pushing, so a long label clips inside
   its card instead of overflowing the column. The neutral informational pills — a queue position, a

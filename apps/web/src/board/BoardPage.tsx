@@ -120,6 +120,8 @@ import {
   boardShellGroup,
   isBoardGroupShell,
 } from "./boardGroups";
+import { boardCardStageGoneNotes, boardPipelineColumns } from "./boardProjectPipelines";
+import { BoardPipelinesButton } from "./BoardPipelinesButton";
 import { BOARD_UTILITY_MENU_RESERVED_SPACE, BoardUtilityMenu } from "./BoardUtilityMenu";
 import { BoardSubBoardPlanStrip } from "./BoardSubBoardPlanStrip";
 import { BoardCardFilterField, BoardTopBar } from "./BoardTopBar";
@@ -139,8 +141,16 @@ const EMPTY_CARD_THREADS: ReadonlyArray<BoardCardThreadShell> = [];
 
 /** A `BoardState` view over a bare ordered stage list, so the read-model stage
     helpers (`areBoardStagesAdjacent`, `boardStageWithRole`, …) apply. */
-function stageStateOf(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
-  return { cards: [], stages, nextCardNumberByProject: {} };
+function stageStateOf(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  projectStageConfigs?: BoardState["projectStageConfigs"],
+): BoardState {
+  return {
+    cards: [],
+    stages,
+    nextCardNumberByProject: {},
+    ...(projectStageConfigs === undefined ? {} : { projectStageConfigs }),
+  };
 }
 
 interface FoundCard {
@@ -304,19 +314,18 @@ function EnvironmentBoard({
   // back to the compiled seeds until the first shell snapshot arrives.
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
   const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
-  const stageState = useMemo(() => stageStateOf(orderedStages), [orderedStages]);
+  // Each project's t3o.json (T3O-43): which stages its cards use.
+  const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
+  const stageState = useMemo(
+    () => stageStateOf(orderedStages, projectStageConfigs),
+    [orderedStages, projectStageConfigs],
+  );
   const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
   // The merge-role stage, for the armed-and-quiet `Auto` glyph (T3O-38, D13):
   // an armed card in Building looks normal because it is, so the glyph is
   // offered only where the merge is actually imminent.
   const mergeStageId = boardStageWithRole(stageState, "merge")?.stageId ?? null;
   const doneStageId = boardStageWithRole(stageState, "done")?.stageId ?? null;
-  // The columns this SCOPE renders (t3o-25, D1; T3O-29): every stage on the
-  // root board; Deferred and then every stage inside a group.
-  const renderedStages = useMemo(
-    () => boardScopeStages(orderedStages, scope),
-    [orderedStages, scope],
-  );
   /** Collapse state keys on `(scope, stageId)` (D1); the defaults are
       `boardScopeColumnCollapsedByDefault`'s. */
   const collapseKeyOf = useCallback(
@@ -791,6 +800,64 @@ function EnvironmentBoard({
   // hidden cards keep their order.
   const scopedColumns = useMemo(() => filterBoardColumnsByScope(columns, scope), [columns, scope]);
 
+  // Every live card, as the per-project stage helpers read them (T3O-43).
+  const pipelineView = useMemo(
+    () => ({ stages: orderedStages, projectStageConfigs, cards: everyCard }),
+    [orderedStages, projectStageConfigs, everyCard],
+  );
+  // The projects whose pipelines this view draws: the scoped project, a
+  // sub-board's parent's, or every visible project.
+  const pipelineProjects = useMemo(() => {
+    const parentProjectId = parentShell?.projectId ?? null;
+    const inView =
+      scope.kind === "sub-board"
+        ? allProjects.filter((project) => project.id === parentProjectId)
+        : scopeProjectId === null
+          ? projects
+          : allProjects.filter((project) => project.id === scopeProjectId);
+    return inView.map((project) => ({ id: project.id, title: project.title }));
+  }, [allProjects, parentShell?.projectId, projects, scope.kind, scopeProjectId]);
+  const pipelineColumns = useMemo(
+    () =>
+      boardPipelineColumns({
+        view: pipelineView,
+        projects: pipelineProjects,
+        occupiedStageIds: new Set(
+          Object.entries(scopedColumns)
+            .filter(([, cards]) => cards.length > 0)
+            .map(([stageId]) => stageId),
+        ),
+      }),
+    [pipelineProjects, pipelineView, scopedColumns],
+  );
+  const pipelineColumnById = useMemo(
+    () => new Map(pipelineColumns.map((column) => [String(column.stage.stageId), column])),
+    [pipelineColumns],
+  );
+  // The columns this SCOPE renders (t3o-25, D1; T3O-29): every stage the
+  // projects in view use (T3O-43) on the root board; Deferred and then those
+  // stages inside a group.
+  const renderedStages = useMemo(
+    () =>
+      boardScopeStages(
+        pipelineColumns.map((column) => column.stage),
+        scope,
+      ),
+    [pipelineColumns, scope],
+  );
+  const projectTitleById = useMemo(
+    () => new Map(allProjects.map((project) => [String(project.id), project.title])),
+    [allProjects],
+  );
+  const stageGoneFor = useMemo(
+    () =>
+      boardCardStageGoneNotes(
+        pipelineView,
+        (projectId) => projectTitleById.get(projectId) ?? "its project",
+      ),
+    [pipelineView, projectTitleById],
+  );
+
   // Auto-collapse empty stages (T3O-40). A peek opens an auto-folded column
   // for this mounted board only; it never touches `collapsedByStage`.
   const autoCollapseEmpty = boardSettings.display.autoCollapseEmptyStages;
@@ -934,7 +1001,12 @@ function EnvironmentBoard({
                   orderKey: assignment.orderKey,
                   // A drag may cross several stages; override forces the
                   // non-adjacent transition (never the dependency gate).
-                  ...(areBoardStagesAdjacent(stageState, source.stage, targetStage)
+                  ...(areBoardStagesAdjacent(
+                    pipelineView,
+                    source.stage,
+                    targetStage,
+                    source.card.projectId,
+                  )
                     ? {}
                     : { override: true }),
                 },
@@ -999,7 +1071,16 @@ function EnvironmentBoard({
         }
       });
     },
-    [columns, environmentId, everyCard, liveColumns, moveCard, orderedStages, reorderCard],
+    [
+      columns,
+      environmentId,
+      everyCard,
+      liveColumns,
+      moveCard,
+      orderedStages,
+      pipelineView,
+      reorderCard,
+    ],
   );
 
   // T3o (T3O-19): a drag out of Planning with no plan written waits for the
@@ -1605,6 +1686,14 @@ function EnvironmentBoard({
                   ))}
                 </div>
               ) : null}
+              {/* T3O-43: which stages each project in view uses. */}
+              {scopeProjectId === null && projects.length > 1 ? (
+                <BoardPipelinesButton
+                  accentNameFor={accentNameFor}
+                  projects={pipelineProjects}
+                  view={pipelineView}
+                />
+              ) : null}
             </>
           )}
           <span className="flex-1" />
@@ -1704,7 +1793,14 @@ function EnvironmentBoard({
                   collapsed={collapsed}
                   dropRefusal={dropRefusal}
                   groupFor={groupFor}
-                  hint={deferredColumn ? "Not this round. Doesn't count toward done." : undefined}
+                  hint={
+                    deferredColumn
+                      ? "Not this round. Doesn't count toward done."
+                      : (pipelineColumnById.get(stage.stageId)?.hint ?? undefined)
+                  }
+                  usedBy={pipelineColumnById.get(stage.stageId)?.usedBy}
+                  removed={pipelineColumnById.get(stage.stageId)?.kind === "removed"}
+                  stageGoneFor={stageGoneFor}
                   headerAction={
                     deferredColumn && deferredCards.length > 0 ? (
                       <Button

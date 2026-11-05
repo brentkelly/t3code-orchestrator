@@ -75,7 +75,7 @@ export function BoardGroupStartDialog({
             input: {
               cardId: group.cardId,
               toStage: buildStageId,
-              ...(areBoardStagesAdjacent(stages, group.stage, buildStageId)
+              ...(areBoardStagesAdjacent(stages, group.stage, buildStageId, group.projectId)
                 ? {}
                 : { override: true }),
             },

@@ -1263,6 +1263,7 @@ describe("initialBoardCardPane", () => {
         orderKey: "s",
         createdAt: NOW,
         updatedAt: NOW,
+        projectId: null,
       },
     ];
     expect(initialBoardCardPane(stages, qaId)).toBe("review");
@@ -1288,6 +1289,7 @@ describe("boardCardIsDone", () => {
         orderKey: "r",
         createdAt: NOW,
         updatedAt: NOW,
+        projectId: null,
       },
     ];
     expect(boardCardIsDone(stages, BOARD_SEED_STAGE_IDS.done)).toBe(true);

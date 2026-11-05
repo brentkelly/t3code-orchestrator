@@ -53,6 +53,7 @@ import {
   boardRunLabel,
   boardSelectedStepLabel,
   boardNextStageId,
+  boardProjectStageConfig,
   boardNonTerminalStepStates,
   boardSeedStageRole,
   boardStageById,
@@ -212,6 +213,8 @@ import {
 import { stageExecutorForRole } from "./stageExecutor.ts";
 import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorkspace.ts";
 import { planReviewInstructions, runningPlanReviewStep } from "./planReview.ts";
+import { BoardProjectConfig } from "./projectConfig/BoardProjectConfig.ts";
+import { boardProjectStageConfigUpdate } from "./projectConfig/reconcile.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
@@ -579,6 +582,8 @@ const make = Effect.gen(function* () {
   // defaulting to `undefined`, so every test that wires no activation waits for
   // nothing.
   const serverActivation = yield* ServerActivation;
+  // T3O-43: each project's committed t3o.json, read from its checkout here.
+  const projectConfig = yield* BoardProjectConfig;
 
   const commandId = (tag: string) =>
     crypto.randomUUIDv4().pipe(Effect.map((uuid) => CommandId.make(`server:board-${tag}:${uuid}`)));
@@ -1894,7 +1899,7 @@ const make = Effect.gen(function* () {
         ? yield* runningPlanReviewFor(card, state)
         : null;
     return composeStepPrompt({
-      ...(role === "build" ? { draftPullRequests: yield* draftPullRequestsOn } : {}),
+      ...(role === "build" ? { draftPullRequests: yield* draftPullRequestsOn(card) } : {}),
       card: { ...card, baseBranch: yield* resolvePromptBaseBranch(card) },
       stageLabel: state.stageLabel,
       step: {
@@ -1979,10 +1984,15 @@ const make = Effect.gen(function* () {
   );
 
   /** Whether the Code review stage's open-as-draft setting is on (T3O-12). */
-  const draftPullRequestsOn = Effect.gen(function* () {
-    const reviewStage = boardStageWithRole(yield* readBoard, "review");
+  const draftPullRequestsOn = Effect.fnUntraced(function* (card: BoardCard) {
+    const board = yield* readBoard;
+    const reviewStage = boardStageWithRole(board, "review");
     if (reviewStage === null) return false;
-    const review = resolveBoardStageExecution(yield* boardSettings, reviewStage.stageId);
+    const review = resolveBoardStageExecution(
+      yield* boardSettings,
+      reviewStage.stageId,
+      boardProjectStageConfig(board, card.projectId),
+    );
     return isBoardReviewStageExecution(review) && review.draftPullRequests;
   });
 
@@ -2822,7 +2832,11 @@ const make = Effect.gen(function* () {
       }
     }
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, card.stage);
+    const exec = resolveBoardStageExecution(
+      settings,
+      card.stage,
+      boardProjectStageConfig(board, card.projectId),
+    );
     const mergeRole = effectiveBoardStageRole(stage) === "merge";
     // An on-demand request for a stage that runs nothing (Backlog, Done, any
     // stage with no auto-execute and no prompt) must not spawn a promptless
@@ -3189,9 +3203,13 @@ const make = Effect.gen(function* () {
       return;
     }
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, input.card.stage);
+    const exec = resolveBoardStageExecution(
+      settings,
+      input.card.stage,
+      boardProjectStageConfig(board, input.card.projectId),
+    );
     if (!exec.autoAdvance) return;
-    const next = boardNextStageId(board, input.card.stage);
+    const next = boardNextStageId(board, input.card.stage, input.card.projectId);
     if (next === null) return;
     yield* dispatch({
       type: "board.card.move",
@@ -3357,7 +3375,11 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const mergeStage = boardStageWithRole(board, "merge");
     if (mergeStage === null) return false;
-    const exec = resolveBoardStageExecution(yield* boardSettings, mergeStage.stageId);
+    const exec = resolveBoardStageExecution(
+      yield* boardSettings,
+      mergeStage.stageId,
+      boardProjectStageConfig(board, card.projectId),
+    );
     return boardCardAutoMergeArmed({
       board,
       card,
@@ -3656,7 +3678,11 @@ const make = Effect.gen(function* () {
     // race is caught by the decider's select-step invariant, whose reject the
     // dispatch helper swallows.
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, card.stage);
+    const exec = resolveBoardStageExecution(
+      settings,
+      card.stage,
+      boardProjectStageConfig(board, card.projectId),
+    );
     const completions = boardCardStepCompletions(board, card.id);
     const model = resolveBoardStageModelSelection(exec.model, yield* fallbackModelSelection);
     const cardOverride = cardStageModelOverride(board, card);
@@ -3803,7 +3829,11 @@ const make = Effect.gen(function* () {
     const stage = boardStageById(board, card.stage);
     if (stage === null) return;
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, card.stage);
+    const exec = resolveBoardStageExecution(
+      settings,
+      card.stage,
+      boardProjectStageConfig(board, card.projectId),
+    );
     // Same gate as every other spawn path: a stage the user drives by hand is
     // not started by an edit.
     if (!exec.autoExecute) return;
@@ -4317,7 +4347,11 @@ const make = Effect.gen(function* () {
     // total and its ceiling (settings). `recoveryDecision` stays pure.
     const board = yield* readBoard;
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, input.card.stage);
+    const exec = resolveBoardStageExecution(
+      settings,
+      input.card.stage,
+      boardProjectStageConfig(board, input.card.projectId),
+    );
     const progressedSinceLastNudge = yield* resolveProgressedSinceLastNudge(
       input.state,
       input.card,
@@ -4926,7 +4960,11 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const mergeStage = boardStageWithRole(board, "merge");
     if (mergeStage === null) return;
-    const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
+    const exec = resolveBoardStageExecution(
+      settings,
+      mergeStage.stageId,
+      boardProjectStageConfig(board, card.projectId),
+    );
     if (!isBoardMergeStageExecution(exec) || !exec.deleteBranchOnDone) return;
 
     const workspace = yield* workspaceFor(card);
@@ -5773,7 +5811,7 @@ const make = Effect.gen(function* () {
     function* (card: BoardCard, options: { readonly forMerge: boolean }) {
       const pullRequest = card.pullRequest;
       if (pullRequest === null || pullRequest.state !== "open") return false;
-      if (!options.forMerge && !(yield* draftPullRequestsOn)) return false;
+      if (!options.forMerge && !(yield* draftPullRequestsOn(card))) return false;
       const result = yield* (yield* workspaceFor(card))
         .markPullRequestReady({ number: pullRequest.number })
         .pipe(Effect.catch((error) => Effect.succeed({ failure: error.detail } as const)));
@@ -5992,7 +6030,11 @@ const make = Effect.gen(function* () {
     // is what makes the strategy the user configured the one that runs —
     // resolving off the card's own stage would silently fall back to squash
     // the moment those two could differ.
-    const exec = resolveBoardStageExecution(settings, mergeStage.stageId);
+    const exec = resolveBoardStageExecution(
+      settings,
+      mergeStage.stageId,
+      boardProjectStageConfig(yield* readBoard, fresh.projectId),
+    );
     const strategy = isBoardMergeStageExecution(exec) ? exec.strategy : "squash";
 
     const failure = yield* workspace
@@ -6190,7 +6232,7 @@ const make = Effect.gen(function* () {
     }
 
     const board = yield* readBoard;
-    const nextStage = boardNextStageId(board, merged.stage);
+    const nextStage = boardNextStageId(board, merged.stage, merged.projectId);
     if (nextStage !== null) {
       yield* dispatch({
         type: "board.card.move",
@@ -6284,7 +6326,11 @@ const make = Effect.gen(function* () {
     }
 
     const settings = yield* boardSettings;
-    const exec = resolveBoardStageExecution(settings, card.stage);
+    const exec = resolveBoardStageExecution(
+      settings,
+      card.stage,
+      boardProjectStageConfig(board, card.projectId),
+    );
     // Read off the stage's own config, symmetrically with `mergeCardPullRequest`
     // reading the merge member's `strategy`. A build-role stage always resolves
     // to the build member, so the fallback is unreachable in practice and is
@@ -6853,7 +6899,7 @@ const make = Effect.gen(function* () {
       );
       return;
     }
-    const next = boardNextStageId(board, card.stage);
+    const next = boardNextStageId(board, card.stage, card.projectId);
     if (next === null) return;
     const toReady = yield* dispatchRefusal({
       type: "board.card.move",
@@ -7101,7 +7147,11 @@ const make = Effect.gen(function* () {
     const board = yield* readBoard;
     const state = boardCardStepState(board, card.id);
     if (state !== null && state.stepId === card.stage && !isBoardTerminalStepStatus(state.status)) {
-      const desired = resolveBoardStageExecution(yield* boardSettings, card.stage).humanInLoop;
+      const desired = resolveBoardStageExecution(
+        yield* boardSettings,
+        card.stage,
+        boardProjectStageConfig(board, card.projectId),
+      ).humanInLoop;
       if (desired !== state.humanInLoop) {
         yield* dispatchOptional({
           type: "board.card.retune-step",
@@ -7862,10 +7912,15 @@ const make = Effect.gen(function* () {
     if (mergeStage === null) return;
     // Read once for the whole pass rather than per card: the arm is the same
     // question for every card here, and the sweep runs every 30s.
-    const exec = resolveBoardStageExecution(yield* boardSettings, mergeStage.stageId);
-    const boardWide = isBoardMergeStageExecution(exec) ? exec.autoMerge : false;
+    const settings = yield* boardSettings;
     const nowMs = yield* clockNowMs;
     for (const card of board.cards) {
+      const exec = resolveBoardStageExecution(
+        settings,
+        mergeStage.stageId,
+        boardProjectStageConfig(board, card.projectId),
+      );
+      const boardWide = isBoardMergeStageExecution(exec) ? exec.autoMerge : false;
       const deferred = autoMergeDeferredUntilUnblocked.has(String(card.id));
       const hold = card.autoMergeHold;
       if (hold === null && !deferred) continue;
@@ -7908,6 +7963,41 @@ const make = Effect.gen(function* () {
       yield* autoMergeCard(card);
     }
   });
+
+  /**
+   * Reconcile every project's `t3o.json` into the read model (T3O-43): on
+   * boot, and on the 30s tick. The reader is mtime-cached, and a project whose
+   * resolved config did not change dispatches nothing. Total, like the other
+   * sweeps: a failed pass costs one tick.
+   */
+  const sweepProjectStageConfigs = Effect.gen(function* () {
+    const projects = yield* threads.projects();
+    for (const project of projects) {
+      if (project.deleted || project.workspaceRoot.length === 0) continue;
+      const read = yield* projectConfig.read(project.workspaceRoot);
+      const update = boardProjectStageConfigUpdate({
+        board: yield* readBoard,
+        projectId: project.id,
+        read,
+        now: yield* nowIso,
+      });
+      if (update === null) continue;
+      yield* dispatch({
+        type: "board.project.set-stage-config",
+        commandId: yield* commandId("project-stage-config"),
+        projectId: update.projectId,
+        config: update.config,
+        stages: update.stages,
+        createdAt: yield* nowIso,
+      });
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board supervisor: project stage config sweep failed", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
 
   const sweepAutoMergeHolds = fireDueAutoMerges().pipe(
     Effect.catchCause((cause) =>
@@ -9474,6 +9564,9 @@ const make = Effect.gen(function* () {
     // The item is still ENQUEUED first, so live events stay queued behind it
     // and the "serialised ahead of live events" guarantee is untouched.
     if (serverActivation !== undefined) yield* serverActivation;
+    // Project pipelines first (T3O-43): every pass below walks a card's own
+    // project's stage list.
+    yield* sweepProjectStageConfigs;
     // Sweep cached todo rows whose thread or link no longer exists (t3o-18,
     // AC 20). The cache is a projection with no event to un-apply, so a row can
     // outlive its link when a delete lands while the server is down; a single
@@ -9698,7 +9791,11 @@ const make = Effect.gen(function* () {
     if (yield* supersededByPendingTurn(state)) return true;
     const charged = boardBackgroundCheckInCharged(wait.checkInsSent);
     if (charged) {
-      const exec = resolveBoardStageExecution(yield* boardSettings, card.stage);
+      const exec = resolveBoardStageExecution(
+        yield* boardSettings,
+        card.stage,
+        boardProjectStageConfig(board, card.projectId),
+      );
       const ceiling = recoveryCeilingCrossed({
         stallCount: state.stallCount + 1,
         maxAttempts: state.maxAttempts,
@@ -10136,6 +10233,8 @@ const make = Effect.gen(function* () {
         // (T3O-66): nothing else would ask while its status stays the same.
         // And the auto-archive pass (T3O-77): idle Done cards age out on it.
         return syncWorkerReach.pipe(
+          // T3O-43: a project's t3o.json edit lands within one tick.
+          Effect.andThen(sweepProjectStageConfigs),
           Effect.andThen(sweepTimeouts),
           Effect.andThen(releaseFinishedThreads),
           Effect.andThen(sweepSchedules),
