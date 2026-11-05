@@ -180,10 +180,22 @@ describe("BoardProjectConfig.read", () => {
 
       NodeFS.writeFileSync(file, "{ not json");
       NodeFS.utimesSync(file, new Date(2_000_000), new Date(2_000_000));
+      // One bad save keeps the last good version, so the pipeline holds.
       const broken = yield* reader.read(root);
-      assert.isNull(broken.raw);
+      assert.deepStrictEqual(broken.raw, { stages: { remove: ["sprint"] } });
       assert.include(broken.warnings[0] ?? "", "not valid JSON");
+      assert.include(broken.warnings[0] ?? "", "last version");
       assert.strictEqual(gitCalls.length, 2);
+
+      // Deleting the file is deliberate: the project goes back to global.
+      NodeFS.rmSync(file);
+      assert.deepStrictEqual(yield* reader.read(root), { raw: null, warnings: [], source: null });
+      // And a broken file with no good version before it is no file plus a warning.
+      NodeFS.writeFileSync(file, "{ not json");
+      NodeFS.utimesSync(file, new Date(3_000_000), new Date(3_000_000));
+      const fresh = yield* reader.read(root);
+      assert.isNull(fresh.raw);
+      assert.include(fresh.warnings[0] ?? "", "not valid JSON");
 
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, StubGit))),

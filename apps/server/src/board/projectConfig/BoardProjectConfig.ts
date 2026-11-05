@@ -3,9 +3,10 @@
  * this — the central — server. The only source, for every stage: pre-build
  * stages have no worktree (D6), so a branch's own edits apply after merge.
  *
- * Never fails. A missing file is "no file"; an unreadable or unparseable one
- * is "no file" plus a warning, so the project falls back to the global
- * pipeline and Settings says why. Modelled on upstream's
+ * Never fails. A missing file is "no file". An unreadable or unparseable one
+ * keeps the last version that parsed, plus a warning, so one bad save never
+ * resets a project's pipeline; with none it is "no file" plus the warning,
+ * and Settings says why. Modelled on upstream's
  * `T3ProjectFileLoader`, with a cache keyed by the file's modification time so
  * the supervisor's 30s sweep reads and runs git only when the file changed.
  */
@@ -50,6 +51,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const cache = new Map<string, { readonly stamp: string; readonly read: BoardProjectFileRead }>();
+  const lastGood = new Map<string, BoardProjectFileRead>();
 
   const headSha = (workspaceRoot: string) =>
     git
@@ -74,6 +76,7 @@ export const make = Effect.gen(function* () {
       const stat = yield* fileSystem.stat(filePath).pipe(Effect.option);
       if (Option.isNone(stat)) {
         cache.delete(workspaceRoot);
+        lastGood.delete(workspaceRoot);
         return NO_FILE;
       }
       const mtime = Option.getOrNull(stat.value.mtime);
@@ -83,14 +86,20 @@ export const make = Effect.gen(function* () {
 
       const source = { path: filePath, commitSha: yield* headSha(workspaceRoot) };
       const text = yield* fileSystem.readFileString(filePath).pipe(Effect.option);
-      const result: BoardProjectFileRead = Option.isNone(text)
-        ? { raw: null, warnings: [`${T3O_PROJECT_FILE_NAME} could not be read; ignored.`], source }
-        : (() => {
-            const parsed = parseT3oProjectFile(text.value);
-            return parsed.warning === null
-              ? { raw: parsed.raw, warnings: [], source }
-              : { raw: null, warnings: [parsed.warning], source };
-          })();
+      const parsed = Option.isNone(text) ? null : parseT3oProjectFile(text.value);
+      const failure =
+        parsed === null ? `${T3O_PROJECT_FILE_NAME} could not be read; ignored.` : parsed.warning;
+      const previous = lastGood.get(workspaceRoot);
+      const result: BoardProjectFileRead =
+        failure === null
+          ? { raw: parsed!.raw, warnings: [], source }
+          : previous === undefined
+            ? { raw: null, warnings: [failure], source }
+            : {
+                ...previous,
+                warnings: [`${failure} Using the last version that could be read.`],
+              };
+      if (failure === null) lastGood.set(workspaceRoot, result);
       cache.set(workspaceRoot, { stamp, read: result });
       return result;
     },

@@ -440,6 +440,21 @@ export function resolveT3oProjectFile(input: {
   if (ciPatch !== undefined && ciSteps.length === 0 && ciPatch.enabled === true) {
     warnings.push(`stages.settings.ci: "enabled" needs at least one step to turn CI on; ignored.`);
   }
+  // Placed, but after a stage this pipeline skips: it sits where that stage
+  // would be, which is easy to misread, so say so.
+  for (const add of pending) {
+    if (!placed.has(add.fileId)) continue;
+    const anchor = globalById.get(add.after);
+    if (anchor === undefined) continue;
+    const skipped =
+      removedStageIds.includes(anchor.stageId) ||
+      (anchor.stageId === BOARD_SEED_STAGE_IDS.ci && ci?.active !== true);
+    if (skipped) {
+      warnings.push(
+        `stages.add: "${add.fileId}" is after "${add.after}", which this project doesn't use; it sits where ${anchor.label} would be.`,
+      );
+    }
+  }
   return {
     config: { removedStageIds, addedStageIds, overrides, warnings, source: input.source, ci },
     stages: [...placed.values()].sort(compareBoardStages),

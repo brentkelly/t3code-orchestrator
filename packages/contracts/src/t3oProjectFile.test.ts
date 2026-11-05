@@ -229,6 +229,21 @@ describe("resolveT3oProjectFile", () => {
   });
 });
 
+describe("added stages anchored after a skipped stage", () => {
+  it("warns, and still places the stage", () => {
+    const removed = resolve({
+      stages: { remove: ["sprint"], add: [{ id: "a", label: "A", after: "sprint" }] },
+    });
+    expect(removed.stages.map((stage) => stage.label)).toEqual(["A"]);
+    expect(removed.config.warnings.join("\n")).toContain("which this project doesn't use");
+    const noCi = resolve({ stages: { add: [{ id: "b", label: "B", after: "ci" }] } });
+    expect(noCi.stages.map((stage) => stage.label)).toEqual(["B"]);
+    expect(noCi.config.warnings.join("\n")).toContain("which this project doesn't use");
+    const used = resolve({ stages: { add: [{ id: "c", label: "C", after: "sprint" }] } });
+    expect(used.config.warnings).toEqual([]);
+  });
+});
+
 describe("boardProjectFirstStageId", () => {
   it("starts a project that removed Backlog in its next stage, and no one else", () => {
     const board = withFile({ stages: { remove: ["backlog"] } });

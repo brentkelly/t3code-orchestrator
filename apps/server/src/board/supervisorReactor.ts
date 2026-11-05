@@ -8479,12 +8479,10 @@ const make = Effect.gen(function* () {
    * Reconcile every project's `t3o.json` into the read model (T3O-43): on
    * boot, and on the 30s tick. The reader is mtime-cached, and a project whose
    * resolved config did not change dispatches nothing. Total, like the other
-   * sweeps: a failed pass costs one tick.
+   * sweeps, and per project: one that fails costs only itself one tick.
    */
-  const sweepProjectStageConfigs = Effect.gen(function* () {
-    const projects = yield* threads.projects();
-    for (const project of projects) {
-      if (project.deleted || project.workspaceRoot.length === 0) continue;
+  const reconcileProjectStageConfig = Effect.fn("board-supervisor-reconcileProjectStageConfig")(
+    function* (project: { readonly id: ProjectId; readonly workspaceRoot: string }) {
       const read = yield* projectConfig.read(project.workspaceRoot);
       const update = boardProjectStageConfigUpdate({
         board: yield* readBoard,
@@ -8492,7 +8490,7 @@ const make = Effect.gen(function* () {
         read,
         now: yield* nowIso,
       });
-      if (update === null) continue;
+      if (update === null) return;
       yield* dispatch({
         type: "board.project.set-stage-config",
         commandId: yield* commandId("project-stage-config"),
@@ -8501,6 +8499,21 @@ const make = Effect.gen(function* () {
         stages: update.stages,
         createdAt: yield* nowIso,
       });
+    },
+  );
+
+  const sweepProjectStageConfigs = Effect.gen(function* () {
+    const projects = yield* threads.projects();
+    for (const project of projects) {
+      if (project.deleted || project.workspaceRoot.length === 0) continue;
+      yield* reconcileProjectStageConfig(project).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: project stage config failed", {
+            projectId: project.id,
+            cause: Cause.pretty(cause),
+          }),
+        ),
+      );
     }
   }).pipe(
     Effect.catchCause((cause) =>
