@@ -21,6 +21,7 @@ import {
   boardCardStepState,
   BOARD_SEED_STAGE_IDS,
   BoardStageId,
+  DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
   DEFAULT_BOARD_BUILD_PROMPT,
@@ -422,6 +423,7 @@ export const settingsWith = (input: {
     autoArchiveDone: input.autoArchiveDone ?? DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
     autoArchiveAfterDays: input.autoArchiveAfterDays ?? DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   },
+  display: { autoCollapseEmptyStages: DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES },
 });
 
 export type Harness = {
