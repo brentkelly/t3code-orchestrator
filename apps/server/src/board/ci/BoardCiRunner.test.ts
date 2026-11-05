@@ -118,6 +118,47 @@ it.live("a step settles when its shell exits, even if an escaped child holds the
   }),
 );
 
+it.live("a step's log is complete by the time the step settles", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const result = yield* runBoardCiPass(
+      request(cwd, [
+        { name: "Loud", command: "head -c 8000000 /dev/zero | tr '\\0' a", timeoutMinutes: 1 },
+      ]),
+      () => Effect.void,
+    );
+    assert.deepStrictEqual(result, { result: "passed", failedIndex: null });
+    const log = NodeFS.statSync(NodePath.join(cwd, ".t3", "ci", "run-1", "0.log"));
+    assert.strictEqual(log.size, 8_000_000);
+  }),
+);
+
+/** Resolves when process `pid` exits, via `tail --pid` rather than polling. */
+const awaitExit = (pid: number) =>
+  Effect.callback<void>((resume) => {
+    const watcher = NodeChildProcess.spawn("tail", [`--pid=${pid}`, "-f", "/dev/null"], {
+      stdio: "ignore",
+    });
+    watcher.on("exit", () => resume(Effect.void));
+    return Effect.sync(() => watcher.kill());
+  });
+
+it.live("a group member that ignores TERM is killed after the step exits", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const pidFile = NodePath.join(cwd, "pid");
+    // Stays in the step's group with its pipes closed, so the step settles,
+    // and ignores the TERM sent on exit; only the SIGKILL fallback stops it.
+    const stubborn = `sh -c 'trap "" TERM; echo $$ > ${pidFile}; exec sleep 600' >/dev/null 2>&1 & while [ ! -s ${pidFile} ]; do sleep 0.05; done`;
+    const result = yield* runBoardCiPass(
+      request(cwd, [{ name: "Leaves one", command: stubborn, timeoutMinutes: 1 }]),
+      () => Effect.void,
+    );
+    assert.deepStrictEqual(result, { result: "passed", failedIndex: null });
+    yield* awaitExit(Number(NodeFS.readFileSync(pidFile, "utf8").trim()));
+  }),
+);
+
 /** Resolves once `path` exists, woken by the directory's change events. */
 const awaitFile = (path: string) =>
   Effect.callback<void>((resume) => {

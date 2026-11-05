@@ -3702,7 +3702,8 @@ const make = Effect.gen(function* () {
   });
 
   /** Boot (T3O-44): a pass the restart cut off is marked interrupted and runs
-      again from the top; one that passed but never moved the card moves it. */
+      again from the top; one that passed but never moved the card moves it.
+      A held pass stays held. */
   const recoverCiPasses = Effect.fn("board-supervisor-recoverCiPasses")(function* () {
     const board = yield* readBoard;
     for (const card of board.cards) {
@@ -3715,8 +3716,9 @@ const make = Effect.gen(function* () {
         continue;
       }
       // A fix agent's step that ended without a verdict is the ordinary
-      // failed step's business (retry, then amber), not a restart's.
-      if (card.ci?.phase === "fixing") continue;
+      // failed step's business (retry, then amber), not a restart's; a held
+      // pass waits for a human to restart or skip it.
+      if (card.ci?.phase === "fixing" || card.ci?.phase === "held") continue;
       yield* startCiPass(card.id, { fixThreadId: null });
     }
   });

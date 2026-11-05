@@ -31,6 +31,9 @@ export interface BoardProjectFileRead {
   readonly warnings: ReadonlyArray<string>;
   /** The file path and the checkout's HEAD when it was read; null with no file. */
   readonly source: BoardProjectStageConfigSource | null;
+  /** The file exists but could not be used and no earlier version parsed in
+      this process; the reconciler then keeps the board's persisted config. */
+  readonly unusable?: boolean;
 }
 
 const NO_FILE: BoardProjectFileRead = { raw: null, warnings: [], source: null };
@@ -94,7 +97,7 @@ export const make = Effect.gen(function* () {
         failure === null
           ? { raw: parsed!.raw, warnings: [], source }
           : previous === undefined
-            ? { raw: null, warnings: [failure], source }
+            ? { raw: null, warnings: [failure], source, unusable: true }
             : {
                 ...previous,
                 warnings: [`${failure} Using the last version that could be read.`],

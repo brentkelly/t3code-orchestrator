@@ -218,19 +218,29 @@ const runStep = (input: {
     };
     child.stdout?.on("data", onData);
     child.stderr?.on("data", onData);
+    // Resolves only once the log is flushed (or has failed), so a reader of
+    // the step's log after it settles sees all of it.
     const finish = (exit: StepExit) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (killTimer !== null) clearTimeout(killTimer);
-      log.end();
-      resume(Effect.succeed(exit));
+      let resumed = false;
+      const done = () => {
+        if (resumed) return;
+        resumed = true;
+        resume(Effect.succeed(exit));
+      };
+      if (logBroken || log.destroyed) return done();
+      log.once("error", done);
+      log.end(done);
     };
     // Not unref()'d: on shutdown the SIGKILL must still land, or a step that
     // ignores TERM outlives the server and overlaps the recovered pass.
     const terminate = () => {
       killGroup(child, "SIGTERM");
-      killTimer = setTimeout(() => killGroup(child, "SIGKILL"), KILL_GRACE_MS);
+      if (killTimer === null) {
+        killTimer = setTimeout(() => killGroup(child, "SIGKILL"), KILL_GRACE_MS);
+      }
     };
     let drainTimer: ReturnType<typeof setTimeout> | null = null;
     const settleExit = (code: number | null) => {
@@ -252,7 +262,7 @@ const runStep = (input: {
     child.on("exit", (code) => {
       if (settled) return;
       // What the step left running in its group is stopped with it.
-      killGroup(child, "SIGTERM");
+      terminate();
       drainTimer = setTimeout(() => {
         child.stdout?.destroy();
         child.stderr?.destroy();

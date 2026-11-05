@@ -5,6 +5,8 @@
  * global stage edit that changes what the file means is picked up too.
  */
 import {
+  boardAllStages,
+  boardProjectStageConfig,
   isBoardProjectStageConfigPlanEmpty,
   planBoardProjectStageConfig,
   resolveT3oProjectFile,
@@ -28,14 +30,16 @@ export function boardProjectStageConfigUpdate(input: {
   readonly read: BoardProjectFileRead;
   readonly now: string;
 }): BoardProjectStageConfigUpdate | null {
-  const resolved = resolveT3oProjectFile({
-    raw: input.read.raw,
-    board: input.board,
-    projectId: input.projectId,
-    source: input.read.source,
-    now: input.now,
-    warnings: input.read.warnings,
-  });
+  const resolved =
+    keepPersistedOnUnusable(input) ??
+    resolveT3oProjectFile({
+      raw: input.read.raw,
+      board: input.board,
+      projectId: input.projectId,
+      source: input.read.source,
+      now: input.now,
+      warnings: input.read.warnings,
+    });
   const plan = planBoardProjectStageConfig({
     board: input.board,
     projectId: input.projectId,
@@ -44,4 +48,31 @@ export function boardProjectStageConfigUpdate(input: {
   });
   if (isBoardProjectStageConfigPlanEmpty(plan)) return null;
   return { projectId: input.projectId, config: resolved.config, stages: resolved.stages };
+}
+
+/** A broken file the reader has no good version of (first read after a
+    restart): keep what the board last loaded, with the new warning, so a bad
+    save never resets the pipeline — or lets CI cards skip CI at boot. */
+function keepPersistedOnUnusable(input: {
+  readonly board: BoardState;
+  readonly projectId: ProjectId;
+  readonly read: BoardProjectFileRead;
+}): { config: BoardProjectStageConfig; stages: ReadonlyArray<BoardStageDefinition> } | null {
+  if (input.read.unusable !== true) return null;
+  const persisted = boardProjectStageConfig(input.board, input.projectId);
+  if (persisted === null || persisted.source === null) return null;
+  const rows = boardAllStages(input.board);
+  const stages = persisted.addedStageIds.flatMap((stageId) =>
+    rows.filter((row) => row.stageId === stageId && row.projectId === input.projectId),
+  );
+  return {
+    config: {
+      ...persisted,
+      warnings: input.read.warnings.map(
+        (warning) =>
+          `${warning.replace(/; ignored\.$/, ".")} Using the version the board last loaded.`,
+      ),
+    },
+    stages,
+  };
 }

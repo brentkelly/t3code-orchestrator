@@ -157,6 +157,49 @@ describe("boardProjectStageConfigUpdate", () => {
       ]);
     }),
   );
+
+  it.effect("keeps the board's config when a restart finds the file broken", () =>
+    Effect.gen(function* () {
+      const good = yield* apply(EMPTY_BOARD_STATE, {
+        raw: {
+          stages: {
+            remove: ["sprint"],
+            add: [{ id: "security", label: "Security", after: "review" }],
+          },
+        },
+        warnings: [],
+        source: { path: "/repo/t3o.json", commitSha: "aaa" },
+      });
+      assert.isTrue(good.emitted);
+      const before = good.board.projectStageConfigs?.[projectId];
+      // What the reader returns on its first read of a broken file: no good
+      // version in memory, so nothing to fall back to but the board.
+      const broken = yield* apply(good.board, {
+        raw: null,
+        warnings: ["t3o.json is not valid JSON (x); ignored."],
+        source: { path: "/repo/t3o.json", commitSha: "bbb" },
+        unusable: true,
+      });
+      const after = broken.board.projectStageConfigs?.[projectId];
+      assert.deepStrictEqual(after?.removedStageIds, before?.removedStageIds);
+      assert.deepStrictEqual(after?.addedStageIds, before?.addedStageIds);
+      assert.deepStrictEqual(after?.warnings, [
+        "t3o.json is not valid JSON (x). Using the version the board last loaded.",
+      ]);
+      assert.isTrue(
+        broken.board.stages?.some((stage) => stage.stageId === before?.addedStageIds[0]),
+      );
+      // The same broken read again is not a change.
+      assert.isFalse(
+        (yield* apply(broken.board, {
+          raw: null,
+          warnings: ["t3o.json is not valid JSON (x); ignored."],
+          source: { path: "/repo/t3o.json", commitSha: "bbb" },
+          unusable: true,
+        })).emitted,
+      );
+    }),
+  );
 });
 
 describe("BoardProjectConfig.read", () => {
@@ -195,6 +238,7 @@ describe("BoardProjectConfig.read", () => {
       NodeFS.utimesSync(file, 3_000, 3_000);
       const fresh = yield* reader.read(root);
       assert.isNull(fresh.raw);
+      assert.isTrue(fresh.unusable);
       assert.include(fresh.warnings[0] ?? "", "not valid JSON");
 
       NodeFS.rmSync(root, { recursive: true, force: true });

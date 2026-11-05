@@ -418,6 +418,36 @@ it.effect("a restart marks the cut-off pass interrupted and runs again from the 
   }),
 );
 
+it.effect("a restart leaves a held pass held for a human", () =>
+  Effect.gen(function* () {
+    const { runner, calls } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const subject = card("held", ci, {
+      ci: {
+        runId: "ci-held",
+        entry: 1,
+        fixAttempts: 0,
+        maxFixAttempts: 2,
+        phase: "held",
+        steps: STEPS.map((step) => ({
+          name: step.name,
+          status: "cancelled" as const,
+          startedAt: null,
+          finishedAt: null,
+        })),
+      },
+    });
+    yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
+      Effect.gen(function* () {
+        yield* h.reactor.drainCi;
+        assert.strictEqual(yield* calls, 0);
+        const held = yield* live(h, subject.id);
+        assert.strictEqual(held.stage, ci);
+        assert.strictEqual(held.ci?.phase, "held");
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+  }),
+);
+
 it.effect("Skip CI stops the pass, records who skipped it, and moves the card on", () =>
   Effect.gen(function* () {
     const { runner } = yield* scriptedRunner(["hang"]);
