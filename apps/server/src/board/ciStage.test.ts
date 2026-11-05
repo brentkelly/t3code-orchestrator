@@ -28,6 +28,9 @@ import {
 import { BoardProjectConfig } from "./projectConfig/BoardProjectConfig.ts";
 import {
   NOW,
+  buildingCard,
+  movedToBuilding,
+  stepCompleted,
   cardMoved,
   cardStage,
   codexStep,
@@ -465,6 +468,29 @@ it.effect("dragging a card back out of CI cancels its pass", () =>
         );
         const settled = ciRecords(yield* h.decided).flatMap((record) => record.payload.settled);
         assert.isTrue(settled.some((entry) => entry.outcome === "cancelled"));
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+  }),
+);
+
+it.effect("a queued pass starts when an agent step frees the slot", () =>
+  Effect.gen(function* () {
+    const { runner, calls } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const blocker = buildingCard("blocker", "b");
+    const subject = card("waiting", review);
+    const oneSlot = settingsWith({ building: [codexStep], globalMaxConcurrent: 1 });
+    yield* withGovernor({ board: boardWith([blocker, subject]), settings: oneSlot }, (h) =>
+      Effect.gen(function* () {
+        yield* h.pumpDomain(movedToBuilding(blocker, 1));
+        assert.strictEqual(stepStatus(yield* h.board, blocker.id), "running");
+        yield* enterCiAndRun(h, subject, 2);
+        assert.strictEqual(yield* calls, 0);
+        assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "queued");
+
+        yield* h.pumpDomain(stepCompleted(blocker.id, "blocked", 3));
+        yield* h.reactor.drainCi;
+        assert.strictEqual(yield* calls, 1);
+        assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
   }),

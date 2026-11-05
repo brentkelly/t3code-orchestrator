@@ -2566,6 +2566,9 @@ const make = Effect.gen(function* () {
   // whose worktree is ready, are ordered by the priority rule (stage desc →
   // started before unstarted → drag order) and offered to the governor greedily.
   const schedule = Effect.fn("board-supervisor-schedule")(function* () {
+    // Queued CI passes go first: whatever freed a slot (a step settling, a
+    // pass ending) runs this pass, and CI cards are later-stage than any step.
+    yield* ciPasses.admitQueued;
     const board = yield* readBoard;
     const settings = yield* boardSettings;
     // Read once for the whole pass: every candidate is gated against the same
@@ -3563,7 +3566,6 @@ const make = Effect.gen(function* () {
     finished: BoardCiPassFinished,
   ) {
     // The slot it held is free for the next queued pass or step.
-    yield* ciPasses.admitQueued;
     yield* schedule();
     const card = yield* readCard(finished.cardId);
     if (card === null || card.archivedAt !== null) return;
@@ -3641,7 +3643,6 @@ const make = Effect.gen(function* () {
       action: { kind: "finish-pass", runId, result: "cancelled" },
       createdAt: yield* nowIso,
     });
-    yield* ciPasses.admitQueued;
     yield* schedule();
   });
 
@@ -3683,7 +3684,7 @@ const make = Effect.gen(function* () {
       yield* stamp(move);
       if (!(yield* dispatchLanded(move))) return { outcome: "failed" } as const;
     }
-    yield* ciPasses.admitQueued;
+    yield* schedule();
     return { outcome: "skipped", toStage: next } as const;
   });
 
