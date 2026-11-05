@@ -31,9 +31,9 @@ export interface BoardProjectFileRead {
   readonly warnings: ReadonlyArray<string>;
   /** The file path and the checkout's HEAD when it was read; null with no file. */
   readonly source: BoardProjectStageConfigSource | null;
-  /** The file exists but could not be used and no earlier version parsed in
-      this process; the reconciler then keeps the board's persisted config. */
-  readonly unusable?: boolean;
+  /** Why the file could not be used, set only when no earlier version parsed
+      in this process; the reconciler then keeps the board's persisted config. */
+  readonly unusable?: string;
 }
 
 const NO_FILE: BoardProjectFileRead = { raw: null, warnings: [], source: null };
@@ -91,16 +91,16 @@ export const make = Effect.gen(function* () {
       const text = yield* fileSystem.readFileString(filePath).pipe(Effect.option);
       const parsed = Option.isNone(text) ? null : parseT3oProjectFile(text.value);
       const failure =
-        parsed === null ? `${T3O_PROJECT_FILE_NAME} could not be read; ignored.` : parsed.warning;
+        parsed === null ? `${T3O_PROJECT_FILE_NAME} could not be read` : parsed.warning;
       const previous = lastGood.get(workspaceRoot);
       const result: BoardProjectFileRead =
         failure === null
           ? { raw: parsed!.raw, warnings: [], source }
           : previous === undefined
-            ? { raw: null, warnings: [failure], source, unusable: true }
+            ? { raw: null, warnings: [`${failure}; ignored.`], source, unusable: failure }
             : {
                 ...previous,
-                warnings: [`${failure} Using the last version that could be read.`],
+                warnings: [`${failure}. Using the last version that could be read.`],
               };
       if (failure === null) lastGood.set(workspaceRoot, result);
       cache.set(workspaceRoot, { stamp, read: result });

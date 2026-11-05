@@ -57,7 +57,7 @@ export function decideBoardCiRecord(
             runId: current.runId,
             outcome: "fixed-in-place",
             finishedAt: at,
-            ...(action.fixThreadId === null ? {} : { fixThreadId: action.fixThreadId }),
+            fixThreadId: action.fixThreadId,
           });
           activity = { kind: "card-ci-pass-finished", ciOutcome: "fixed-in-place" };
         } else if (current.phase !== "passed" && current.phase !== "held") {

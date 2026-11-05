@@ -58,7 +58,8 @@ function keepPersistedOnUnusable(input: {
   readonly projectId: ProjectId;
   readonly read: BoardProjectFileRead;
 }): { config: BoardProjectStageConfig; stages: ReadonlyArray<BoardStageDefinition> } | null {
-  if (input.read.unusable !== true) return null;
+  const problem = input.read.unusable;
+  if (problem === undefined) return null;
   const persisted = boardProjectStageConfig(input.board, input.projectId);
   if (persisted === null || persisted.source === null) return null;
   const rows = boardAllStages(input.board);
@@ -68,10 +69,7 @@ function keepPersistedOnUnusable(input: {
   return {
     config: {
       ...persisted,
-      warnings: input.read.warnings.map(
-        (warning) =>
-          `${warning.replace(/; ignored\.$/, ".")} Using the version the board last loaded.`,
-      ),
+      warnings: [`${problem}. Using the version the board last loaded.`],
     },
     stages,
   };

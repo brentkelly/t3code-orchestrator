@@ -11,6 +11,7 @@ import * as NodePath from "node:path";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import { vi } from "vite-plus/test";
 
 import {
   BoardCiTail,
@@ -156,6 +157,23 @@ it.live("a group member that ignores TERM is killed after the step exits", () =>
     );
     assert.deepStrictEqual(result, { result: "passed", failedIndex: null });
     yield* awaitExit(Number(NodeFS.readFileSync(pidFile, "utf8").trim()));
+  }),
+);
+
+it.live("a step that leaves nothing running arms no SIGKILL fallback", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    using timers = vi.spyOn(globalThis, "setTimeout");
+    const result = yield* runBoardCiPass(
+      request(cwd, [{ name: "Clean", command: "true", timeoutMinutes: 1 }]),
+      () => Effect.void,
+    );
+    assert.deepStrictEqual(result, { result: "passed", failedIndex: null });
+    // The exit's TERM finds the group empty, so no SIGKILL can later hit a reused pgid.
+    assert.notInclude(
+      timers.mock.calls.map((call) => call[1]),
+      5_000,
+    );
   }),
 );
 

@@ -179,7 +179,7 @@ describe("boardProjectStageConfigUpdate", () => {
         raw: null,
         warnings: ["t3o.json is not valid JSON (x); ignored."],
         source: { path: "/repo/t3o.json", commitSha: "bbb" },
-        unusable: true,
+        unusable: "t3o.json is not valid JSON (x)",
       });
       const after = broken.board.projectStageConfigs?.[projectId];
       assert.deepStrictEqual(after?.removedStageIds, before?.removedStageIds);
@@ -196,7 +196,7 @@ describe("boardProjectStageConfigUpdate", () => {
           raw: null,
           warnings: ["t3o.json is not valid JSON (x); ignored."],
           source: { path: "/repo/t3o.json", commitSha: "bbb" },
-          unusable: true,
+          unusable: "t3o.json is not valid JSON (x)",
         })).emitted,
       );
     }),
@@ -227,8 +227,10 @@ describe("BoardProjectConfig.read", () => {
       // One bad save keeps the last good version, so the pipeline holds.
       const broken = yield* reader.read(root);
       assert.deepStrictEqual(broken.raw, { stages: { remove: ["sprint"] } });
-      assert.include(broken.warnings[0] ?? "", "not valid JSON");
-      assert.include(broken.warnings[0] ?? "", "last version");
+      assert.match(
+        broken.warnings[0] ?? "",
+        /^t3o\.json is not valid JSON \(.*\)\. Using the last version that could be read\.$/,
+      );
       assert.strictEqual(gitCalls.length, 2);
 
       // Deleting the file is deliberate: the project goes back to global.
@@ -239,8 +241,8 @@ describe("BoardProjectConfig.read", () => {
       NodeFS.utimesSync(file, 3_000, 3_000);
       const fresh = yield* reader.read(root);
       assert.isNull(fresh.raw);
-      assert.isTrue(fresh.unusable);
-      assert.include(fresh.warnings[0] ?? "", "not valid JSON");
+      assert.include(fresh.unusable ?? "", "not valid JSON");
+      assert.match(fresh.warnings[0] ?? "", /not valid JSON \(.*\); ignored\.$/);
 
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(Layer.merge(NodeServices.layer, StubGit))),

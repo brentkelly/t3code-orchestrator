@@ -461,7 +461,8 @@ export function resolveT3oProjectFile(input: {
   };
 }
 
-/** Parse a `t3o.json` body to JSON, or a warning saying why it could not be. */
+/** Parse a `t3o.json` body to JSON, or say why it could not be; the warning
+    has no ending so each caller adds what it does instead. */
 export function parseT3oProjectFile(
   text: string,
 ):
@@ -473,7 +474,7 @@ export function parseT3oProjectFile(
     const detail = cause instanceof Error ? cause.message : String(cause);
     return {
       raw: null,
-      warning: `${T3O_PROJECT_FILE_NAME} is not valid JSON (${detail}); ignored.`,
+      warning: `${T3O_PROJECT_FILE_NAME} is not valid JSON (${detail})`,
     };
   }
 }

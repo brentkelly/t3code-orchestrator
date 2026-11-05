@@ -171,12 +171,14 @@ interface StepExit {
   readonly exitCode: number | null;
 }
 
+/** False when the group is already empty, so nothing is left to signal. */
 const killGroup = (child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals) => {
-  if (child.pid === undefined) return;
+  if (child.pid === undefined) return false;
   try {
     process.kill(-child.pid, signal);
+    return true;
   } catch {
-    // Already gone.
+    return false;
   }
 };
 
@@ -236,8 +238,9 @@ const runStep = (input: {
     };
     // Not unref()'d: on shutdown the SIGKILL must still land, or a step that
     // ignores TERM outlives the server and overlaps the recovered pass.
+    // An empty group arms no SIGKILL: its pgid could be reused by then.
     const terminate = () => {
-      killGroup(child, "SIGTERM");
+      if (!killGroup(child, "SIGTERM")) return;
       if (killTimer === null) {
         killTimer = setTimeout(() => killGroup(child, "SIGKILL"), KILL_GRACE_MS);
       }
@@ -275,9 +278,8 @@ const runStep = (input: {
       settled = true;
       clearTimeout(timer);
       // Interrupted: kill now, and make sure nothing survives the grace.
-      killGroup(child, "SIGTERM");
+      terminate();
       if (drainTimer !== null) clearTimeout(drainTimer);
-      setTimeout(() => killGroup(child, "SIGKILL"), KILL_GRACE_MS);
       log.end();
     });
   });
