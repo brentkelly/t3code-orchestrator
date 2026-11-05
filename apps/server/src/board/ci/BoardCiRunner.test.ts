@@ -3,6 +3,7 @@
  * The CI script runner (T3O-44) against real subprocesses: a pass, fail-fast,
  * a timeout, a cancel that kills the process group, and the output tail.
  */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -142,3 +143,39 @@ it("keeps only the last lines of output", () => {
   tail.push("ee\nfour\nfive");
   assert.strictEqual(tail.text(), "three\nfour\nfive");
 });
+
+it.live("keeps its logs out of git status in a repo that does not ignore .t3/", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    NodeChildProcess.execFileSync("git", ["init", "-q"], { cwd });
+    const { emit } = collect();
+    const steps = [{ name: "Say", command: "echo hi", timeoutMinutes: 1 }];
+    yield* runBoardCiPass(request(cwd, steps), emit);
+    yield* runBoardCiPass(request(cwd, steps), emit);
+    assert.isTrue(NodeFS.existsSync(NodePath.join(cwd, ".t3", "ci", "run-1", "0.log")));
+    const status = NodeChildProcess.execFileSync("git", ["status", "--porcelain"], {
+      cwd,
+      encoding: "utf8",
+    });
+    assert.strictEqual(status, "");
+    const exclude = NodeFS.readFileSync(NodePath.join(cwd, ".git", "info", "exclude"), "utf8");
+    assert.lengthOf(
+      exclude.split("\n").filter((line) => line === "/.t3/ci/"),
+      1,
+    );
+  }),
+);
+
+it.live("a log directory it cannot create makes the pass unavailable, not a crash", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    NodeFS.writeFileSync(NodePath.join(cwd, ".t3"), "a file, not a directory");
+    const { events, emit } = collect();
+    const result = yield* runBoardCiPass(
+      request(cwd, [{ name: "Say", command: "echo hi", timeoutMinutes: 1 }]),
+      emit,
+    );
+    assert.strictEqual(result.result, "unavailable");
+    assert.lengthOf(events, 0);
+  }),
+);

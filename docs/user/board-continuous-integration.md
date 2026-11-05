@@ -42,7 +42,8 @@ is in **Settings** → **Board** → **Pipeline** → **Continuous integration**
 
 The card's **CI** tab shows each step, its command and how long it took, the last 200 lines of a
 failed step's output, the fix agent at work, and earlier passes. Full logs stay in the worktree's
-gitignored `.t3/ci/<runId>/` folder.
+`.t3/ci/<runId>/` folder, which the board adds to the repository's `.git/info/exclude` so git
+never sees it.
 
 ## Skip CI
 

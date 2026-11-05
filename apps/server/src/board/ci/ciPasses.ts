@@ -129,13 +129,29 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
               return deps.slots.release(key);
             }),
           ),
+          // A defect in the run still reports, as a pass that could not run,
+          // so the card never sits in CI "running" with no fiber behind it.
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.logWarning("board CI pass failed", {
+                  cardId: request.cardId,
+                  cause: Cause.pretty(cause),
+                }).pipe(
+                  Effect.as<BoardCiRunResult>({
+                    result: "unavailable",
+                    failedIndex: null,
+                    detail: "CI stopped on an internal error.",
+                  }),
+                ),
+          ),
           Effect.flatMap((outcome) =>
             deps.onFinished({ cardId: request.cardId, runId: request.runId, outcome }),
           ),
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)
               ? Effect.void
-              : Effect.logWarning("board CI pass failed", {
+              : Effect.logWarning("board CI pass result could not be handled", {
                   cardId: request.cardId,
                   cause: Cause.pretty(cause),
                 }),

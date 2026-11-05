@@ -1492,7 +1492,7 @@ export function isBoardCiStepFailure(status: BoardCiStepStatus): boolean {
 }
 
 /** How many output lines a step keeps for the card and the fix agent. The full
-    log stays in the worktree's gitignored `.t3/ci/<runId>/`. */
+    log stays in the worktree's `.t3/ci/<runId>/`, excluded from git. */
 export const BOARD_CI_TAIL_LINES = 200;
 
 /** A CI step's compact state on the card shell: no command, no output. */

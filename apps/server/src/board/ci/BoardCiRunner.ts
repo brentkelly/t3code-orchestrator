@@ -21,6 +21,7 @@ import {
   type BoardCiPassStep,
   type BoardCiStepDefinition,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -55,11 +56,46 @@ export interface BoardCiRunnerShape {
   ) => Effect.Effect<BoardCiRunResult>;
 }
 
-/** The worktree-relative log directory of one pass. Gitignored by the
-    worktree's `.t3/` entry. */
+/** The worktree-relative log directory of one pass. The runner keeps it out
+    of git through the repository's `info/exclude` (`ensureCiLogsExcluded`). */
 export function boardCiLogDir(worktreePath: string, runId: string): string {
   return NodePath.join(worktreePath, ".t3", "ci", runId);
 }
+
+const CI_LOG_EXCLUDE = "/.t3/ci/";
+
+/** Keep CI logs out of `git status` (worktree reclaim refuses an untracked
+    file) and out of the fix agent's commits, in repos that don't ignore
+    `.t3/`. `info/exclude` is shared by every worktree of the repository. */
+export const ensureCiLogsExcluded = (cwd: string): Effect.Effect<void> =>
+  Effect.callback<string | null>((resume) => {
+    NodeChildProcess.execFile(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"],
+      { cwd },
+      (error, stdout) => resume(Effect.succeed(error === null ? stdout.trim() : null)),
+    );
+  }).pipe(
+    Effect.flatMap((excludePath) =>
+      excludePath === null || excludePath.length === 0
+        ? Effect.void
+        : Effect.try(() => {
+            const current = NodeFS.existsSync(excludePath)
+              ? NodeFS.readFileSync(excludePath, "utf8")
+              : "";
+            if (current.split(/\r?\n/).includes(CI_LOG_EXCLUDE)) return;
+            NodeFS.mkdirSync(NodePath.dirname(excludePath), { recursive: true });
+            const separator = current.length === 0 || current.endsWith("\n") ? "" : "\n";
+            NodeFS.appendFileSync(excludePath, `${separator}${CI_LOG_EXCLUDE}\n`);
+          }),
+    ),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("board CI could not exclude its logs from git", {
+        cwd,
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
 
 /** How long a killed step's process group gets to exit before SIGKILL. */
 const KILL_GRACE_MS = 5_000;
@@ -112,6 +148,14 @@ const runStep = (input: {
 }): Effect.Effect<StepExit> =>
   Effect.callback<StepExit>((resume) => {
     const log = NodeFS.createWriteStream(input.logPath, { flags: "w" });
+    let logBroken = false;
+    // Without a listener a write error (ENOSPC, EACCES) is an uncaught
+    // exception; the step still runs and its tail still reports.
+    log.on("error", (error) => {
+      if (logBroken) return;
+      logBroken = true;
+      input.tail.push(`\n[board] Could not write the step's log: ${error.message}\n`);
+    });
     let settled = false;
     let timedOut = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
@@ -125,7 +169,7 @@ const runStep = (input: {
     const onData = (chunk: Buffer) => {
       const text = chunk.toString("utf8");
       input.tail.push(text);
-      log.write(text);
+      if (!logBroken) log.write(text);
     };
     child.stdout?.on("data", onData);
     child.stderr?.on("data", onData);
@@ -173,7 +217,21 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunner.run")(
   function* (request, emit) {
-    yield* Effect.sync(() => NodeFS.mkdirSync(request.logDir, { recursive: true }));
+    yield* ensureCiLogsExcluded(request.cwd);
+    const logDirError = yield* Effect.try({
+      try: () => NodeFS.mkdirSync(request.logDir, { recursive: true }),
+      catch: (error) => (error instanceof Error ? error.message : String(error)),
+    }).pipe(
+      Effect.as(null),
+      Effect.catch((message) => Effect.succeed(message)),
+    );
+    if (logDirError !== null) {
+      return {
+        result: "unavailable",
+        failedIndex: null,
+        detail: `CI could not create its log directory: ${logDirError}.`,
+      } as const;
+    }
     for (const [index, definition] of request.steps.entries()) {
       const tail = new BoardCiTail();
       const startedAt = yield* nowIso;
