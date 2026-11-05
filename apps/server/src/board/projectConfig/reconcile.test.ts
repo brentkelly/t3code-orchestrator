@@ -192,7 +192,7 @@ describe("BoardProjectConfig.read", () => {
       assert.deepStrictEqual(yield* reader.read(root), { raw: null, warnings: [], source: null });
       // And a broken file with no good version before it is no file plus a warning.
       NodeFS.writeFileSync(file, "{ not json");
-      NodeFS.utimesSync(file, new Date(3_000_000), new Date(3_000_000));
+      NodeFS.utimesSync(file, 3_000, 3_000);
       const fresh = yield* reader.read(root);
       assert.isNull(fresh.raw);
       assert.include(fresh.warnings[0] ?? "", "not valid JSON");
