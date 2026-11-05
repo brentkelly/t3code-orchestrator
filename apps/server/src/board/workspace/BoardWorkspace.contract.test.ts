@@ -15,13 +15,14 @@
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, it as vitest } from "@effect/vitest";
 import {
   AuthOrchestrationReadScope,
   EnvironmentId,
   ProjectId,
   type BoardWorkspacePullRequest,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -105,11 +106,16 @@ interface Env {
   readonly pusher: string;
 }
 
-/** A bare remote with one commit on `main`, the project checkout, and a second clone. */
-const makeEnv = (label: string) =>
+/** The env every test starts from, built once per file: cloning is most of an env's git work. */
+class RepoTemplate extends Context.Service<RepoTemplate, Env>()(
+  "test/BoardWorkspace/RepoTemplate",
+) {}
+
+const RepoTemplateLive = Layer.effect(
+  RepoTemplate,
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: `board-ws-${label}-` });
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "board-ws-template-" });
     const remote = NodePath.join(root, "remote.git");
     yield* git(root, ["init", "--bare", "-b", "main", remote]);
     const seed = NodePath.join(root, "seed");
@@ -118,13 +124,42 @@ const makeEnv = (label: string) =>
     yield* git(seed, ["checkout", "-b", "main"]);
     yield* commitFile(seed, "README.md", "# repo\n", "initial");
     yield* git(seed, ["push", "origin", "main"]);
-    const checkout = NodePath.join(root, `repo-${label}`);
+    yield* fileSystem.remove(seed, { recursive: true });
+    const checkout = NodePath.join(root, "repo");
     yield* git(root, ["clone", remote, checkout]);
     yield* identify(checkout);
     const pusher = NodePath.join(root, "pusher");
     yield* git(root, ["clone", remote, pusher]);
     yield* identify(pusher);
     return { root, remote, checkout, pusher } satisfies Env;
+  }),
+).pipe(Layer.provide(TestLayer));
+
+/**
+ * A bare remote with one commit on `main`, the project checkout, and a second
+ * clone: a copy of the template, with each clone's `origin` pointed at its own
+ * copy of the remote.
+ */
+const makeEnv = (label: string) =>
+  Effect.gen(function* () {
+    const template = yield* RepoTemplate;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: `board-ws-${label}-` });
+    yield* fileSystem.copy(template.root, root, { preserveTimestamps: true });
+    const checkout = NodePath.join(root, `repo-${label}`);
+    yield* fileSystem.rename(NodePath.join(root, "repo"), checkout);
+    const env = {
+      root,
+      remote: NodePath.join(root, "remote.git"),
+      checkout,
+      pusher: NodePath.join(root, "pusher"),
+    };
+    for (const clone of [env.checkout, env.pusher]) {
+      const config = NodePath.join(clone, ".git", "config");
+      const contents = yield* fileSystem.readFileString(config);
+      yield* fileSystem.writeFileString(config, contents.split(template.remote).join(env.remote));
+    }
+    return env satisfies Env;
   });
 
 const foundPullRequest: BoardWorkspacePullRequest = {
@@ -337,799 +372,822 @@ const normalise = (env: Env, label: string, transcript: unknown) =>
     JSON.stringify(transcript).split(env.root).join("<root>").split(`repo-${label}`).join("repo"),
   );
 
-describe("BoardWorkspace contract (T3O-64)", () => {
-  it.effect("every named operation answers the same locally and through a worker", () =>
-    Effect.gen(function* () {
-      const localEnv = yield* makeEnv("local");
-      const localAsked: Array<string> = [];
-      const local = (yield* workspacesOver(localEnv.checkout, scriptedForge(localAsked))).local;
-      const localTranscript = normalise(
-        localEnv,
-        "local",
-        yield* scenario(local, localEnv, localAsked),
-      );
-
-      const remoteEnv = yield* makeEnv("remote");
-      const remoteAsked: Array<string> = [];
-      const worker = makeInProcessWorker(
-        yield* workspacesOver(remoteEnv.checkout, scriptedForge(remoteAsked)),
-      );
-      const remoteTranscript = normalise(
-        remoteEnv,
-        "remote",
-        yield* scenario(remoteOver(worker), remoteEnv, remoteAsked),
-      );
-
-      assert.deepStrictEqual(remoteTranscript, localTranscript);
-      // And the scenario did real work, rather than two empty answers agreeing.
-      assert.strictEqual(localTranscript.defaultBranch.defaultBranch, "main");
-      assert.deepStrictEqual(localTranscript.ensureDevelop, { exists: true });
-      assert.deepStrictEqual(localTranscript.ensureMissing, { exists: false });
-      assert.notStrictEqual(localTranscript.tipBefore.tip, localTranscript.tipAfter.tip);
-      assert.deepStrictEqual(localTranscript.integration, { outcome: "ready", pushed: true });
-      assert.isNull(localTranscript.remoteTipMissing);
-      assert.strictEqual(localTranscript.remoteTipUnreachable, "BoardWorkerGitError");
-      assert.strictEqual(localTranscript.remoteTip.author, "Board Tester");
-      assert.strictEqual(localTranscript.mergeConflict.result, "clean");
-      assert.deepStrictEqual(localTranscript.pullMergedBase, {
-        updated: true,
-        skippedReason: null,
-      });
-      assert.strictEqual(localTranscript.listBoardWorktrees.worktrees.length, 1);
-      assert.isNull(localTranscript.goneWhileThere.path);
-      assert.isNotNull(localTranscript.goneAfterRetire.path);
-      assert.strictEqual(localTranscript.gitUserName.name, "Board Tester");
-      assert.deepStrictEqual(localTranscript.retire, { outcome: "removed", hookWarning: null });
-      assert.strictEqual(localTranscript.heartbeatBefore.committedAt, null);
-      assert.isString(localTranscript.heartbeatAfter.committedAt);
-      assert.strictEqual(localTranscript.unknownProject._tag, "BoardWorkerGitError");
-      assert.strictEqual(localTranscript.deleteCardBranch.localDeleted, true);
-      assert.deepStrictEqual(localTranscript.forgeAsked, [
-        "find:board/t-1:true",
-        "get:7:false",
-        "merge:7:squash",
-        "mergeState:7",
-        "markReady:7",
-        "close:7",
-        "repository",
-      ]);
-      // The remote run reached the worker for every one of them.
-      assert.isAtLeast(new Set(worker.calls).size, 25);
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect("a merge pushed from another clone is base movement without a local pull", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("stale");
-      const ws = remoteOver(makeInProcessWorker(yield* workspacesOver(env.checkout)));
-      const before = yield* ws.measureBaseTip({ projectId, baseRefName: "main" });
-      const localMainBefore = yield* git(env.checkout, ["rev-parse", "refs/heads/main"]);
-      assert.strictEqual(before.tip, localMainBefore);
-
-      yield* commitFile(env.pusher, "elsewhere.txt", "x\n", "merged on another worker");
-      yield* git(env.pusher, ["push", "origin", "main"]);
-      const pushed = yield* git(env.pusher, ["rev-parse", "HEAD"]);
-
-      const after = yield* ws.measureBaseTip({ projectId, baseRefName: "main" });
-      assert.strictEqual(after.tip, pushed);
-      // Nothing pulled the merge into the checkout's own branch.
-      assert.strictEqual(
-        yield* git(env.checkout, ["rev-parse", "refs/heads/main"]),
-        localMainBefore,
-      );
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect("a board with no workers measures its local base without fetching", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("localonly");
-      const workspaces = yield* workspacesOver(env.checkout, scriptedForge([]), false);
-      const localMain = yield* git(env.checkout, ["rev-parse", "refs/heads/main"]);
-      const trackedBefore = yield* git(env.checkout, ["rev-parse", "refs/remotes/origin/main"]);
-
-      // The remote moves on and nothing pulls it here: a base that is merely
-      // behind is not movement, so a tip recorded before workers existed
-      // still compares equal.
-      yield* commitFile(env.pusher, "elsewhere.txt", "x\n", "pushed elsewhere");
-      yield* git(env.pusher, ["push", "origin", "main"]);
-
-      const measured = yield* workspaces.local.measureBaseTip({ projectId, baseRefName: "main" });
-      assert.strictEqual(measured.tip, localMain);
-      // No fetch ran: the remote-tracking ref has not moved.
-      assert.strictEqual(
-        yield* git(env.checkout, ["rev-parse", "refs/remotes/origin/main"]),
-        trackedBefore,
-      );
-      // The same server, working for a central board, does read the remote.
-      const forCentral = yield* workspaces.forCentral.measureBaseTip({
-        projectId,
-        baseRefName: "main",
-      });
-      assert.strictEqual(forCentral.tip, yield* git(env.pusher, ["rev-parse", "HEAD"]));
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect("a checkout with no remote measures its local base, as it always did", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("noremote");
-      yield* git(env.checkout, ["remote", "remove", "origin"]);
-      const local = (yield* workspacesOver(env.checkout)).local;
-      const tip = yield* local.measureBaseTip({ projectId, baseRefName: "main" });
-      assert.strictEqual(tip.tip, yield* git(env.checkout, ["rev-parse", "refs/heads/main"]));
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect("an integration branch cut on worker A is provisioned for a child on worker B", () =>
-    Effect.gen(function* () {
-      // Two workers, one remote: A is the env's checkout, B the second clone,
-      // cloned BEFORE the integration branch existed.
-      const env = yield* makeEnv("split");
-      const workerA = remoteOver(makeInProcessWorker(yield* workspacesOver(env.checkout)));
-      const workerB = remoteOver(makeInProcessWorker(yield* workspacesOver(env.pusher)));
-
-      const cut = yield* workerA.createIntegrationBranch({
-        projectId,
-        branch: "board/t-parent",
-        base: "main",
-      });
-      assert.deepStrictEqual(cut, { outcome: "ready", pushed: true });
-      const integrationTip = yield* git(env.checkout, ["rev-parse", "refs/heads/board/t-parent"]);
-
-      // B has never seen it; making it a local base fetches it from the remote.
-      const base = yield* workerB.ensureLocalBaseBranch({ projectId, base: "board/t-parent" });
-      assert.deepStrictEqual(base, { exists: true });
-      const child = yield* workerB.provisionWorktree({
-        projectId,
-        branch: "board/t-child",
-        baseRefName: "board/t-parent",
-      });
-      assert.strictEqual(yield* git(child.path, ["rev-parse", "HEAD"]), integrationTip);
-      assert.strictEqual(child.baseRefName, "board/t-parent");
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect(
-    "a nested integration branch is cut from the remote tip of the outer one (T3O-28)",
-    () =>
+vitest.layer(RepoTemplateLive)((it) => {
+  describe("BoardWorkspace contract (T3O-64)", () => {
+    it.effect("every named operation answers the same locally and through a worker", () =>
       Effect.gen(function* () {
-        // Worker A cuts the outer group's branch; a child's merge lands on it from
-        // worker B; A then cuts the inner group's branch off the outer, and must
-        // see the merge it never pulled.
-        const env = yield* makeEnv("nested");
-        const workerA = (yield* workspacesOver(env.checkout)).local;
-        yield* workerA.createIntegrationBranch({
-          projectId,
-          branch: "board/t-outer",
-          base: "main",
+        const localRun = Effect.gen(function* () {
+          const localEnv = yield* makeEnv("local");
+          const localAsked: Array<string> = [];
+          const local = (yield* workspacesOver(localEnv.checkout, scriptedForge(localAsked))).local;
+          return normalise(localEnv, "local", yield* scenario(local, localEnv, localAsked));
         });
-        yield* git(env.pusher, ["fetch", "origin", "board/t-outer:board/t-outer"]);
-        yield* git(env.pusher, ["checkout", "board/t-outer"]);
-        yield* commitFile(env.pusher, "child.txt", "x\n", "a child merged into the outer branch");
-        yield* git(env.pusher, ["push", "origin", "board/t-outer"]);
-        const outerTip = yield* git(env.pusher, ["rev-parse", "HEAD"]);
-        assert.notStrictEqual(
-          yield* git(env.checkout, ["rev-parse", "refs/heads/board/t-outer"]),
-          outerTip,
+        const remoteRun = Effect.gen(function* () {
+          const remoteEnv = yield* makeEnv("remote");
+          const remoteAsked: Array<string> = [];
+          const worker = makeInProcessWorker(
+            yield* workspacesOver(remoteEnv.checkout, scriptedForge(remoteAsked)),
+          );
+          const transcript = normalise(
+            remoteEnv,
+            "remote",
+            yield* scenario(remoteOver(worker), remoteEnv, remoteAsked),
+          );
+          return { transcript, worker };
+        });
+        // The two sets of repositories share nothing, so the halves run side by side.
+        const [localTranscript, { transcript: remoteTranscript, worker }] = yield* Effect.all(
+          [localRun, remoteRun],
+          { concurrency: 2 },
         );
+
+        assert.deepStrictEqual(remoteTranscript, localTranscript);
+        // And the scenario did real work, rather than two empty answers agreeing.
+        assert.strictEqual(localTranscript.defaultBranch.defaultBranch, "main");
+        assert.deepStrictEqual(localTranscript.ensureDevelop, { exists: true });
+        assert.deepStrictEqual(localTranscript.ensureMissing, { exists: false });
+        assert.notStrictEqual(localTranscript.tipBefore.tip, localTranscript.tipAfter.tip);
+        assert.deepStrictEqual(localTranscript.integration, { outcome: "ready", pushed: true });
+        assert.isNull(localTranscript.remoteTipMissing);
+        assert.strictEqual(localTranscript.remoteTipUnreachable, "BoardWorkerGitError");
+        assert.strictEqual(localTranscript.remoteTip.author, "Board Tester");
+        assert.strictEqual(localTranscript.mergeConflict.result, "clean");
+        assert.deepStrictEqual(localTranscript.pullMergedBase, {
+          updated: true,
+          skippedReason: null,
+        });
+        assert.strictEqual(localTranscript.listBoardWorktrees.worktrees.length, 1);
+        assert.isNull(localTranscript.goneWhileThere.path);
+        assert.isNotNull(localTranscript.goneAfterRetire.path);
+        assert.strictEqual(localTranscript.gitUserName.name, "Board Tester");
+        assert.deepStrictEqual(localTranscript.retire, { outcome: "removed", hookWarning: null });
+        assert.strictEqual(localTranscript.heartbeatBefore.committedAt, null);
+        assert.isString(localTranscript.heartbeatAfter.committedAt);
+        assert.strictEqual(localTranscript.unknownProject._tag, "BoardWorkerGitError");
+        assert.strictEqual(localTranscript.deleteCardBranch.localDeleted, true);
+        assert.deepStrictEqual(localTranscript.forgeAsked, [
+          "find:board/t-1:true",
+          "get:7:false",
+          "merge:7:squash",
+          "mergeState:7",
+          "markReady:7",
+          "close:7",
+          "repository",
+        ]);
+        // The remote run reached the worker for every one of them.
+        assert.isAtLeast(new Set(worker.calls).size, 25);
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect("a merge pushed from another clone is base movement without a local pull", () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("stale");
+        const ws = remoteOver(makeInProcessWorker(yield* workspacesOver(env.checkout)));
+        const before = yield* ws.measureBaseTip({ projectId, baseRefName: "main" });
+        const localMainBefore = yield* git(env.checkout, ["rev-parse", "refs/heads/main"]);
+        assert.strictEqual(before.tip, localMainBefore);
+
+        yield* commitFile(env.pusher, "elsewhere.txt", "x\n", "merged on another worker");
+        yield* git(env.pusher, ["push", "origin", "main"]);
+        const pushed = yield* git(env.pusher, ["rev-parse", "HEAD"]);
+
+        const after = yield* ws.measureBaseTip({ projectId, baseRefName: "main" });
+        assert.strictEqual(after.tip, pushed);
+        // Nothing pulled the merge into the checkout's own branch.
+        assert.strictEqual(
+          yield* git(env.checkout, ["rev-parse", "refs/heads/main"]),
+          localMainBefore,
+        );
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect("a board with no workers measures its local base without fetching", () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("localonly");
+        const workspaces = yield* workspacesOver(env.checkout, scriptedForge([]), false);
+        const localMain = yield* git(env.checkout, ["rev-parse", "refs/heads/main"]);
+        const trackedBefore = yield* git(env.checkout, ["rev-parse", "refs/remotes/origin/main"]);
+
+        // The remote moves on and nothing pulls it here: a base that is merely
+        // behind is not movement, so a tip recorded before workers existed
+        // still compares equal.
+        yield* commitFile(env.pusher, "elsewhere.txt", "x\n", "pushed elsewhere");
+        yield* git(env.pusher, ["push", "origin", "main"]);
+
+        const measured = yield* workspaces.local.measureBaseTip({ projectId, baseRefName: "main" });
+        assert.strictEqual(measured.tip, localMain);
+        // No fetch ran: the remote-tracking ref has not moved.
+        assert.strictEqual(
+          yield* git(env.checkout, ["rev-parse", "refs/remotes/origin/main"]),
+          trackedBefore,
+        );
+        // The same server, working for a central board, does read the remote.
+        const forCentral = yield* workspaces.forCentral.measureBaseTip({
+          projectId,
+          baseRefName: "main",
+        });
+        assert.strictEqual(forCentral.tip, yield* git(env.pusher, ["rev-parse", "HEAD"]));
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect("a checkout with no remote measures its local base, as it always did", () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("noremote");
+        yield* git(env.checkout, ["remote", "remove", "origin"]);
+        const local = (yield* workspacesOver(env.checkout)).local;
+        const tip = yield* local.measureBaseTip({ projectId, baseRefName: "main" });
+        assert.strictEqual(tip.tip, yield* git(env.checkout, ["rev-parse", "refs/heads/main"]));
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect("an integration branch cut on worker A is provisioned for a child on worker B", () =>
+      Effect.gen(function* () {
+        // Two workers, one remote: A is the env's checkout, B the second clone,
+        // cloned BEFORE the integration branch existed.
+        const env = yield* makeEnv("split");
+        const workerA = remoteOver(makeInProcessWorker(yield* workspacesOver(env.checkout)));
+        const workerB = remoteOver(makeInProcessWorker(yield* workspacesOver(env.pusher)));
 
         const cut = yield* workerA.createIntegrationBranch({
           projectId,
-          branch: "board/t-inner",
-          base: "board/t-outer",
-        });
-        assert.deepStrictEqual(cut, { outcome: "ready", pushed: true });
-        assert.strictEqual(
-          yield* git(env.checkout, ["rev-parse", "refs/heads/board/t-inner"]),
-          outerTip,
-        );
-        const upstream = yield* Effect.exit(
-          git(env.checkout, ["config", "--get", "branch.board/t-inner.merge"]),
-        );
-        assert.isTrue(upstream._tag === "Failure", "the inner branch must not track its base");
-      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect(
-    "an integration branch cut while the fetch fails uses the local base, not a stale remote ref",
-    () =>
-      Effect.gen(function* () {
-        const env = yield* makeEnv("stalefetch");
-        const workerA = (yield* workspacesOver(env.checkout)).local;
-        const staleRemote = yield* git(env.checkout, ["rev-parse", "refs/remotes/origin/main"]);
-        yield* git(env.checkout, ["checkout", "main"]);
-        const localTip = yield* commitFile(env.checkout, "local.txt", "l\n", "local only");
-        assert.notStrictEqual(localTip, staleRemote);
-        yield* git(env.checkout, ["remote", "set-url", "origin", `${env.root}/missing.git`]);
-
-        yield* workerA.createIntegrationBranch({
-          projectId,
-          branch: "board/t-stale",
+          branch: "board/t-parent",
           base: "main",
         });
-        assert.strictEqual(
-          yield* git(env.checkout, ["rev-parse", "refs/heads/board/t-stale"]),
-          localTip,
-        );
-      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
+        assert.deepStrictEqual(cut, { outcome: "ready", pushed: true });
+        const integrationTip = yield* git(env.checkout, ["rev-parse", "refs/heads/board/t-parent"]);
 
-  it.effect("a card moved A→B→A lands on what B pushed, not A's stale local branch", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("roundtrip");
-      const workerA = (yield* workspacesOver(env.checkout)).local;
-      const workerB = (yield* workspacesOver(env.pusher)).local;
-      const branch = "board/t-rt";
-      const retire = (ws: BoardWorkspace, worktreePath: string) =>
-        ws.retireWorktree({ projectId, worktreePath, kind: "forced", verifiedClean: false });
-
-      const onA = yield* workerA.provisionWorktree({ projectId, branch, baseRefName: "main" });
-      yield* commitFile(onA.path, "a.txt", "a\n", "on A");
-      yield* git(onA.path, ["push", "-u", "origin", branch]);
-      yield* retire(workerA, onA.path);
-
-      const onB = yield* workerB.provisionWorktreeFromRemoteBranch({
-        projectId,
-        branch,
-        baseRefName: "main",
-      });
-      const pushedFromB = yield* commitFile(onB.path, "b.txt", "b\n", "on B");
-      yield* git(onB.path, ["push", "origin", branch]);
-      yield* retire(workerB, onB.path);
-
-      const backOnA = yield* workerA.provisionWorktreeFromRemoteBranch({
-        projectId,
-        branch,
-        baseRefName: "main",
-      });
-      assert.strictEqual(yield* git(backOnA.path, ["rev-parse", "HEAD"]), pushedFromB);
-
-      // Commits only A's copy holds are never thrown away to match the remote.
-      yield* commitFile(backOnA.path, "only-a.txt", "a\n", "not pushed");
-      yield* retire(workerA, backOnA.path);
-      const diverged = yield* Effect.flip(
-        workerA.provisionWorktreeFromRemoteBranch({ projectId, branch, baseRefName: "main" }),
-      );
-      assert.include(detailOf(diverged), "has commits origin does not");
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect("a card moved A→B→A lands on B's rebased, force-pushed branch", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("rebased");
-      const workerA = (yield* workspacesOver(env.checkout)).local;
-      const workerB = (yield* workspacesOver(env.pusher)).local;
-      const branch = "board/t-rb";
-      const retire = (ws: BoardWorkspace, worktreePath: string) =>
-        ws.retireWorktree({ projectId, worktreePath, kind: "forced", verifiedClean: false });
-
-      const onA = yield* workerA.provisionWorktree({ projectId, branch, baseRefName: "main" });
-      yield* commitFile(onA.path, "a.txt", "a\n", "on A");
-      yield* git(onA.path, ["push", "-u", "origin", branch]);
-      yield* retire(workerA, onA.path);
-
-      // B rewrites what A pushed and force-pushes it, so A's leftover branch
-      // is no longer an ancestor of the remote tip.
-      const onB = yield* workerB.provisionWorktreeFromRemoteBranch({
-        projectId,
-        branch,
-        baseRefName: "main",
-      });
-      yield* commitFile(onB.path, "b.txt", "b\n", "on B");
-      yield* git(onB.path, ["reset", "--soft", "HEAD~2"]);
-      const rewritten = yield* commitFile(onB.path, "c.txt", "c\n", "squashed on B");
-      yield* git(onB.path, ["push", "--force", "origin", branch]);
-      yield* retire(workerB, onB.path);
-
-      // The move's own check (and any plain fetch on A) moves A's tracking
-      // ref to the rewritten tip before A provisions from it.
-      assert.strictEqual((yield* workerA.remoteBranchTip({ projectId, branch }))?.sha, rewritten);
-
-      const backOnA = yield* workerA.provisionWorktreeFromRemoteBranch({
-        projectId,
-        branch,
-        baseRefName: "main",
-      });
-      assert.strictEqual(yield* git(backOnA.path, ["rev-parse", "HEAD"]), rewritten);
-
-      // Commits only A holds are still refused after the rewrite.
-      yield* commitFile(backOnA.path, "only-a.txt", "a\n", "not pushed");
-      yield* retire(workerA, backOnA.path);
-      const diverged = yield* Effect.flip(
-        workerA.provisionWorktreeFromRemoteBranch({ projectId, branch, baseRefName: "main" }),
-      );
-      assert.include(detailOf(diverged), "has commits origin does not");
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect(
-    "the durability probe reports uncommitted files, unpushed commits and the upstream",
-    () =>
-      Effect.gen(function* () {
-        const env = yield* makeEnv("durable");
-        const ws = remoteOver(makeInProcessWorker(yield* workspacesOver(env.checkout)));
-        const worktree = yield* ws.provisionWorktree({
+        // B has never seen it; making it a local base fetches it from the remote.
+        const base = yield* workerB.ensureLocalBaseBranch({ projectId, base: "board/t-parent" });
+        assert.deepStrictEqual(base, { exists: true });
+        const child = yield* workerB.provisionWorktree({
           projectId,
-          branch: "board/t-d",
-          baseRefName: "main",
+          branch: "board/t-child",
+          baseRefName: "board/t-parent",
         });
-        const probe = (baseAlreadyFetched = false) =>
-          ws.probeWorktreeDurability({
+        assert.strictEqual(yield* git(child.path, ["rev-parse", "HEAD"]), integrationTip);
+        assert.strictEqual(child.baseRefName, "board/t-parent");
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect(
+      "a nested integration branch is cut from the remote tip of the outer one (T3O-28)",
+      () =>
+        Effect.gen(function* () {
+          // Worker A cuts the outer group's branch; a child's merge lands on it from
+          // worker B; A then cuts the inner group's branch off the outer, and must
+          // see the merge it never pulled.
+          const env = yield* makeEnv("nested");
+          const workerA = (yield* workspacesOver(env.checkout)).local;
+          yield* workerA.createIntegrationBranch({
             projectId,
-            worktreePath: worktree.path,
-            baseRefName: "main",
-            branch: "board/t-d",
-            mergedPullRequestNumbers: [],
-            openPullRequestNumber: null,
-            baseAlreadyFetched,
+            branch: "board/t-outer",
+            base: "main",
           });
+          yield* git(env.pusher, ["fetch", "origin", "board/t-outer:board/t-outer"]);
+          yield* git(env.pusher, ["checkout", "board/t-outer"]);
+          yield* commitFile(env.pusher, "child.txt", "x\n", "a child merged into the outer branch");
+          yield* git(env.pusher, ["push", "origin", "board/t-outer"]);
+          const outerTip = yield* git(env.pusher, ["rev-parse", "HEAD"]);
+          assert.notStrictEqual(
+            yield* git(env.checkout, ["rev-parse", "refs/heads/board/t-outer"]),
+            outerTip,
+          );
 
-        const fileSystem = yield* FileSystem.FileSystem;
-        yield* fileSystem.writeFileString(NodePath.join(worktree.path, "draft.txt"), "draft\n");
-        const dirty = yield* probe();
-        assert.isTrue(dirty.hasWorkingTreeChanges);
-        assert.deepStrictEqual(dirty.changedPaths, ["draft.txt"]);
-        assert.isFalse(dirty.durable);
-        assert.isFalse(dirty.hasUpstream);
+          const cut = yield* workerA.createIntegrationBranch({
+            projectId,
+            branch: "board/t-inner",
+            base: "board/t-outer",
+          });
+          assert.deepStrictEqual(cut, { outcome: "ready", pushed: true });
+          assert.strictEqual(
+            yield* git(env.checkout, ["rev-parse", "refs/heads/board/t-inner"]),
+            outerTip,
+          );
+          const upstream = yield* Effect.exit(
+            git(env.checkout, ["config", "--get", "branch.board/t-inner.merge"]),
+          );
+          assert.isTrue(upstream._tag === "Failure", "the inner branch must not track its base");
+        }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
 
-        yield* git(worktree.path, ["add", "."]);
-        yield* git(worktree.path, ["commit", "-m", "draft"]);
-        const unpushed = yield* probe();
-        assert.isFalse(unpushed.hasWorkingTreeChanges);
-        assert.isFalse(unpushed.durable);
-        assert.isFalse(unpushed.hasUpstream);
-        assert.strictEqual(unpushed.unpushedCount, 1);
-        assert.strictEqual(unpushed.unmergedCount, 1);
-        assert.isTrue(unpushed.baseFetched);
+    it.effect(
+      "an integration branch cut while the fetch fails uses the local base, not a stale remote ref",
+      () =>
+        Effect.gen(function* () {
+          const env = yield* makeEnv("stalefetch");
+          const workerA = (yield* workspacesOver(env.checkout)).local;
+          const staleRemote = yield* git(env.checkout, ["rev-parse", "refs/remotes/origin/main"]);
+          yield* git(env.checkout, ["checkout", "main"]);
+          const localTip = yield* commitFile(env.checkout, "local.txt", "l\n", "local only");
+          assert.notStrictEqual(localTip, staleRemote);
+          yield* git(env.checkout, ["remote", "set-url", "origin", `${env.root}/missing.git`]);
 
-        yield* git(worktree.path, ["push", "-u", "origin", "board/t-d"]);
-        const pushed = yield* probe(true);
-        assert.isTrue(pushed.durable);
-        assert.isTrue(pushed.hasUpstream);
-        assert.strictEqual(pushed.unpushedCount, 0);
-        // Already fetched this pass, so it is not fetched again.
-        assert.isFalse(pushed.baseFetched);
-      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
+          yield* workerA.createIntegrationBranch({
+            projectId,
+            branch: "board/t-stale",
+            base: "main",
+          });
+          assert.strictEqual(
+            yield* git(env.checkout, ["rev-parse", "refs/heads/board/t-stale"]),
+            localTip,
+          );
+        }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
 
-  it.effect(
-    "a reclaim through a worker removes a durable worktree and keeps an undurable one",
-    () =>
+    it.effect("a card moved A→B→A lands on what B pushed, not A's stale local branch", () =>
       Effect.gen(function* () {
-        const env = yield* makeEnv("reclaim");
-        const ws = remoteOver(makeInProcessWorker(yield* workspacesOver(env.checkout)));
-        const kept = yield* ws.provisionWorktree({
-          projectId,
-          branch: "board/t-kept",
-          baseRefName: "main",
-        });
-        yield* commitFile(kept.path, "kept.txt", "kept\n", "not pushed");
-        const keptOutcome = yield* ws.reclaimWorktree({
-          projectId,
-          worktreePath: kept.path,
-          baseRefName: "main",
-          branch: "board/t-kept",
-          mergedPullRequestNumbers: [],
-        });
-        assert.strictEqual(keptOutcome?.outcome, "blocked");
+        const env = yield* makeEnv("roundtrip");
+        const workerA = (yield* workspacesOver(env.checkout)).local;
+        const workerB = (yield* workspacesOver(env.pusher)).local;
+        const branch = "board/t-rt";
+        const retire = (ws: BoardWorkspace, worktreePath: string) =>
+          ws.retireWorktree({ projectId, worktreePath, kind: "forced", verifiedClean: false });
 
-        const clean = yield* ws.provisionWorktree({
+        const onA = yield* workerA.provisionWorktree({ projectId, branch, baseRefName: "main" });
+        yield* commitFile(onA.path, "a.txt", "a\n", "on A");
+        yield* git(onA.path, ["push", "-u", "origin", branch]);
+        yield* retire(workerA, onA.path);
+
+        const onB = yield* workerB.provisionWorktreeFromRemoteBranch({
           projectId,
-          branch: "board/t-clean",
+          branch,
           baseRefName: "main",
         });
-        // Asked before removal; a board that no longer wants it gone keeps it.
-        const abandoned = yield* ws.reclaimWorktree(
-          {
+        const pushedFromB = yield* commitFile(onB.path, "b.txt", "b\n", "on B");
+        yield* git(onB.path, ["push", "origin", branch]);
+        yield* retire(workerB, onB.path);
+
+        const backOnA = yield* workerA.provisionWorktreeFromRemoteBranch({
+          projectId,
+          branch,
+          baseRefName: "main",
+        });
+        assert.strictEqual(yield* git(backOnA.path, ["rev-parse", "HEAD"]), pushedFromB);
+
+        // Commits only A's copy holds are never thrown away to match the remote.
+        yield* commitFile(backOnA.path, "only-a.txt", "a\n", "not pushed");
+        yield* retire(workerA, backOnA.path);
+        const diverged = yield* Effect.flip(
+          workerA.provisionWorktreeFromRemoteBranch({ projectId, branch, baseRefName: "main" }),
+        );
+        assert.include(detailOf(diverged), "has commits origin does not");
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect("a card moved A→B→A lands on B's rebased, force-pushed branch", () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("rebased");
+        const workerA = (yield* workspacesOver(env.checkout)).local;
+        const workerB = (yield* workspacesOver(env.pusher)).local;
+        const branch = "board/t-rb";
+        const retire = (ws: BoardWorkspace, worktreePath: string) =>
+          ws.retireWorktree({ projectId, worktreePath, kind: "forced", verifiedClean: false });
+
+        const onA = yield* workerA.provisionWorktree({ projectId, branch, baseRefName: "main" });
+        yield* commitFile(onA.path, "a.txt", "a\n", "on A");
+        yield* git(onA.path, ["push", "-u", "origin", branch]);
+        yield* retire(workerA, onA.path);
+
+        // B rewrites what A pushed and force-pushes it, so A's leftover branch
+        // is no longer an ancestor of the remote tip.
+        const onB = yield* workerB.provisionWorktreeFromRemoteBranch({
+          projectId,
+          branch,
+          baseRefName: "main",
+        });
+        yield* commitFile(onB.path, "b.txt", "b\n", "on B");
+        yield* git(onB.path, ["reset", "--soft", "HEAD~2"]);
+        const rewritten = yield* commitFile(onB.path, "c.txt", "c\n", "squashed on B");
+        yield* git(onB.path, ["push", "--force", "origin", branch]);
+        yield* retire(workerB, onB.path);
+
+        // The move's own check (and any plain fetch on A) moves A's tracking
+        // ref to the rewritten tip before A provisions from it.
+        assert.strictEqual((yield* workerA.remoteBranchTip({ projectId, branch }))?.sha, rewritten);
+
+        const backOnA = yield* workerA.provisionWorktreeFromRemoteBranch({
+          projectId,
+          branch,
+          baseRefName: "main",
+        });
+        assert.strictEqual(yield* git(backOnA.path, ["rev-parse", "HEAD"]), rewritten);
+
+        // Commits only A holds are still refused after the rewrite.
+        yield* commitFile(backOnA.path, "only-a.txt", "a\n", "not pushed");
+        yield* retire(workerA, backOnA.path);
+        const diverged = yield* Effect.flip(
+          workerA.provisionWorktreeFromRemoteBranch({ projectId, branch, baseRefName: "main" }),
+        );
+        assert.include(detailOf(diverged), "has commits origin does not");
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect(
+      "the durability probe reports uncommitted files, unpushed commits and the upstream",
+      () =>
+        Effect.gen(function* () {
+          const env = yield* makeEnv("durable");
+          const ws = remoteOver(makeInProcessWorker(yield* workspacesOver(env.checkout)));
+          const worktree = yield* ws.provisionWorktree({
+            projectId,
+            branch: "board/t-d",
+            baseRefName: "main",
+          });
+          const probe = (baseAlreadyFetched = false) =>
+            ws.probeWorktreeDurability({
+              projectId,
+              worktreePath: worktree.path,
+              baseRefName: "main",
+              branch: "board/t-d",
+              mergedPullRequestNumbers: [],
+              openPullRequestNumber: null,
+              baseAlreadyFetched,
+            });
+
+          const fileSystem = yield* FileSystem.FileSystem;
+          yield* fileSystem.writeFileString(NodePath.join(worktree.path, "draft.txt"), "draft\n");
+          const dirty = yield* probe();
+          assert.isTrue(dirty.hasWorkingTreeChanges);
+          assert.deepStrictEqual(dirty.changedPaths, ["draft.txt"]);
+          assert.isFalse(dirty.durable);
+          assert.isFalse(dirty.hasUpstream);
+
+          yield* git(worktree.path, ["add", "."]);
+          yield* git(worktree.path, ["commit", "-m", "draft"]);
+          const unpushed = yield* probe();
+          assert.isFalse(unpushed.hasWorkingTreeChanges);
+          assert.isFalse(unpushed.durable);
+          assert.isFalse(unpushed.hasUpstream);
+          assert.strictEqual(unpushed.unpushedCount, 1);
+          assert.strictEqual(unpushed.unmergedCount, 1);
+          assert.isTrue(unpushed.baseFetched);
+
+          yield* git(worktree.path, ["push", "-u", "origin", "board/t-d"]);
+          const pushed = yield* probe(true);
+          assert.isTrue(pushed.durable);
+          assert.isTrue(pushed.hasUpstream);
+          assert.strictEqual(pushed.unpushedCount, 0);
+          // Already fetched this pass, so it is not fetched again.
+          assert.isFalse(pushed.baseFetched);
+        }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect(
+      "a reclaim through a worker removes a durable worktree and keeps an undurable one",
+      () =>
+        Effect.gen(function* () {
+          const env = yield* makeEnv("reclaim");
+          const ws = remoteOver(makeInProcessWorker(yield* workspacesOver(env.checkout)));
+          const kept = yield* ws.provisionWorktree({
+            projectId,
+            branch: "board/t-kept",
+            baseRefName: "main",
+          });
+          yield* commitFile(kept.path, "kept.txt", "kept\n", "not pushed");
+          const keptOutcome = yield* ws.reclaimWorktree({
+            projectId,
+            worktreePath: kept.path,
+            baseRefName: "main",
+            branch: "board/t-kept",
+            mergedPullRequestNumbers: [],
+          });
+          assert.strictEqual(keptOutcome?.outcome, "blocked");
+
+          const clean = yield* ws.provisionWorktree({
+            projectId,
+            branch: "board/t-clean",
+            baseRefName: "main",
+          });
+          // Asked before removal; a board that no longer wants it gone keeps it.
+          const abandoned = yield* ws.reclaimWorktree(
+            {
+              projectId,
+              worktreePath: clean.path,
+              baseRefName: "main",
+              branch: "board/t-clean",
+              mergedPullRequestNumbers: [],
+            },
+            Effect.succeed(false),
+          );
+          assert.isNull(abandoned);
+          const removed = yield* ws.reclaimWorktree({
             projectId,
             worktreePath: clean.path,
             baseRefName: "main",
             branch: "board/t-clean",
             mergedPullRequestNumbers: [],
-          },
-          Effect.succeed(false),
-        );
-        assert.isNull(abandoned);
-        const removed = yield* ws.reclaimWorktree({
-          projectId,
-          worktreePath: clean.path,
-          baseRefName: "main",
-          branch: "board/t-clean",
-          mergedPullRequestNumbers: [],
-        });
-        assert.strictEqual(removed?.outcome, "removed");
-        const fileSystem = yield* FileSystem.FileSystem;
-        assert.isFalse(yield* fileSystem.exists(clean.path));
-        assert.isTrue(yield* fileSystem.exists(kept.path));
-      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-});
+          });
+          assert.strictEqual(removed?.outcome, "removed");
+          const fileSystem = yield* FileSystem.FileSystem;
+          assert.isFalse(yield* fileSystem.exists(clean.path));
+          assert.isTrue(yield* fileSystem.exists(kept.path));
+        }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+  });
 
-describe("the worker side of the named operations (T3O-64)", () => {
-  it.effect("refuses a path that is not one of the project's worktrees", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("guard");
-      const ws = remoteOver(makeInProcessWorker(yield* workspacesOver(env.checkout)));
-      for (const worktreePath of [env.checkout, env.root, "/etc"]) {
-        const refused = yield* Effect.flip(ws.pinGhDefault({ projectId, worktreePath }));
-        assert.strictEqual(refused._tag, "BoardWorkerGitError");
-        assert.include(detailOf(refused), "not one of this project's worktrees");
-      }
-      // A folder under the worktrees directory that this project never
-      // registered (another project's checkout, the per-repo container) is
-      // not this project's either.
-      const config = yield* ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const foreign = NodePath.join(config.worktreesDir, "other-repo", "board-x");
-      yield* fileSystem.makeDirectory(foreign, { recursive: true });
-      for (const worktreePath of [foreign, NodePath.dirname(foreign)]) {
-        const refused = yield* Effect.flip(
-          ws.retireWorktree({ projectId, worktreePath, kind: "forced", verifiedClean: false }),
-        );
-        assert.strictEqual(refused._tag, "BoardWorkerGitError");
-        assert.include(detailOf(refused), "not one of this project's worktrees");
-      }
-      assert.isTrue(yield* fileSystem.exists(foreign));
-      // A checkout already gone from disk and git may still be named on retry.
-      const gone = yield* ws.goneWorktreePath({
-        projectId,
-        worktreePath: NodePath.join(config.worktreesDir, "repo", "board-gone"),
-        branch: "board/gone",
-      });
-      assert.isNotNull(gone);
-      // A registered worktree outside the worktrees directory is still the
-      // project's own.
-      const elsewhere = NodePath.join(env.root, "elsewhere");
-      yield* git(env.checkout, ["worktree", "add", "-b", "board/by-hand", elsewhere]);
-      const heartbeat = yield* ws.branchHeartbeat({
-        projectId,
-        worktreePath: elsewhere,
-        baseRefName: "main",
-      });
-      assert.isNull(heartbeat.committedAt);
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect("refuses to change or remove a worktree the central board did not make", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("owned");
-      const workspaces = yield* workspacesOver(env.checkout);
-      const central = remoteOver(makeInProcessWorker(workspaces));
-      const fileSystem = yield* FileSystem.FileSystem;
-      // The worker's own board's checkout, and a user's thread worktree: both
-      // registered with the project's repository, neither the central board's.
-      const own = yield* workspaces.local.provisionWorktree({
-        projectId,
-        branch: "board/own-w",
-        baseRefName: "main",
-      });
-      const thread = NodePath.join(env.root, "thread-worktree");
-      yield* git(env.checkout, ["worktree", "add", "-b", "feature/thread", thread]);
-      for (const worktreePath of [own.path, thread]) {
-        for (const write of [
-          central.retireWorktree({ projectId, worktreePath, kind: "forced", verifiedClean: false }),
-          central.pruneWorktree({ projectId, worktreePath }),
-          central.pinGhDefault({ projectId, worktreePath }),
-        ]) {
-          const refused = yield* Effect.flip(write);
+  describe("the worker side of the named operations (T3O-64)", () => {
+    it.effect("refuses a path that is not one of the project's worktrees", () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("guard");
+        const ws = remoteOver(makeInProcessWorker(yield* workspacesOver(env.checkout)));
+        for (const worktreePath of [env.checkout, env.root, "/etc"]) {
+          const refused = yield* Effect.flip(ws.pinGhDefault({ projectId, worktreePath }));
           assert.strictEqual(refused._tag, "BoardWorkerGitError");
-          assert.include(detailOf(refused), "that the board made");
+          assert.include(detailOf(refused), "not one of this project's worktrees");
         }
-        assert.isTrue(yield* fileSystem.exists(worktreePath));
-        // Reading it is still fine.
-        const heartbeat = yield* central.branchHeartbeat({
+        // A folder under the worktrees directory that this project never
+        // registered (another project's checkout, the per-repo container) is
+        // not this project's either.
+        const config = yield* ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const foreign = NodePath.join(config.worktreesDir, "other-repo", "board-x");
+        yield* fileSystem.makeDirectory(foreign, { recursive: true });
+        for (const worktreePath of [foreign, NodePath.dirname(foreign)]) {
+          const refused = yield* Effect.flip(
+            ws.retireWorktree({ projectId, worktreePath, kind: "forced", verifiedClean: false }),
+          );
+          assert.strictEqual(refused._tag, "BoardWorkerGitError");
+          assert.include(detailOf(refused), "not one of this project's worktrees");
+        }
+        assert.isTrue(yield* fileSystem.exists(foreign));
+        // A checkout already gone from disk and git may still be named on retry.
+        const gone = yield* ws.goneWorktreePath({
           projectId,
-          worktreePath,
+          worktreePath: NodePath.join(config.worktreesDir, "repo", "board-gone"),
+          branch: "board/gone",
+        });
+        assert.isNotNull(gone);
+        // A registered worktree outside the worktrees directory is still the
+        // project's own.
+        const elsewhere = NodePath.join(env.root, "elsewhere");
+        yield* git(env.checkout, ["worktree", "add", "-b", "board/by-hand", elsewhere]);
+        const heartbeat = yield* ws.branchHeartbeat({
+          projectId,
+          worktreePath: elsewhere,
           baseRefName: "main",
         });
         assert.isNull(heartbeat.committedAt);
-      }
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
 
-      // The central board's own checkout is removed, and once its folder is
-      // gone, a retry may still drop the registration.
-      const placed = yield* central.provisionWorktree({
-        projectId,
-        branch: "board/central-w",
-        baseRefName: "main",
-      });
-      yield* central.pinGhDefault({ projectId, worktreePath: placed.path });
-      yield* fileSystem.remove(placed.path, { recursive: true });
-      yield* central.pruneWorktree({ projectId, worktreePath: placed.path });
-      const listed = yield* git(env.checkout, ["worktree", "list", "--porcelain"]);
-      assert.notInclude(listed, placed.path);
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect(
-    "refuses to delete a branch of the worker's own board or a checkout it didn't make",
-    () =>
+    it.effect("refuses to change or remove a worktree the central board did not make", () =>
       Effect.gen(function* () {
-        const env = yield* makeEnv("branches");
-        const workspaces = yield* workspacesOver(env.checkout, undefined, true, ["board/own-card"]);
+        const env = yield* makeEnv("owned");
+        const workspaces = yield* workspacesOver(env.checkout);
         const central = remoteOver(makeInProcessWorker(workspaces));
-        // The worker's own board's checkout, a user's thread worktree on a
-        // board-shaped branch, and a branch on the worker board's own card that
-        // no checkout holds right now but the remote does.
-        yield* workspaces.local.provisionWorktree({
+        const fileSystem = yield* FileSystem.FileSystem;
+        // The worker's own board's checkout, and a user's thread worktree: both
+        // registered with the project's repository, neither the central board's.
+        const own = yield* workspaces.local.provisionWorktree({
           projectId,
           branch: "board/own-w",
           baseRefName: "main",
         });
         const thread = NodePath.join(env.root, "thread-worktree");
-        yield* git(env.checkout, ["worktree", "add", "-b", "board/by-hand", thread]);
-        yield* git(env.checkout, ["branch", "board/own-card", "main"]);
-        yield* git(env.checkout, ["push", "origin", "board/own-card"]);
-        for (const branch of ["board/own-w", "board/by-hand", "board/own-card"]) {
-          const refused = yield* Effect.flip(central.deleteCardBranch({ projectId, branch }));
-          assert.strictEqual(refused._tag, "BoardWorkerGitError");
-          assert.include(detailOf(refused), "own board");
-          assert.strictEqual(
-            yield* git(env.checkout, ["branch", "--list", branch]).pipe(
-              Effect.map((out) => out !== ""),
-            ),
-            true,
-          );
+        yield* git(env.checkout, ["worktree", "add", "-b", "feature/thread", thread]);
+        for (const worktreePath of [own.path, thread]) {
+          for (const write of [
+            central.retireWorktree({
+              projectId,
+              worktreePath,
+              kind: "forced",
+              verifiedClean: false,
+            }),
+            central.pruneWorktree({ projectId, worktreePath }),
+            central.pinGhDefault({ projectId, worktreePath }),
+          ]) {
+            const refused = yield* Effect.flip(write);
+            assert.strictEqual(refused._tag, "BoardWorkerGitError");
+            assert.include(detailOf(refused), "that the board made");
+          }
+          assert.isTrue(yield* fileSystem.exists(worktreePath));
+          // Reading it is still fine.
+          const heartbeat = yield* central.branchHeartbeat({
+            projectId,
+            worktreePath,
+            baseRefName: "main",
+          });
+          assert.isNull(heartbeat.committedAt);
         }
-        // A bare repository needs `--git-dir` since upstream sets `safe.bareRepository=explicit`.
-        assert.notStrictEqual(
-          yield* git(env.remote, ["--git-dir=.", "branch", "--list", "board/own-card"]),
-          "",
-        );
 
-        // The central board's own branch, its checkout retired, is deleted.
+        // The central board's own checkout is removed, and once its folder is
+        // gone, a retry may still drop the registration.
         const placed = yield* central.provisionWorktree({
           projectId,
-          branch: "board/central-b",
+          branch: "board/central-w",
           baseRefName: "main",
         });
-        yield* central.retireWorktree({
-          projectId,
-          worktreePath: placed.path,
-          kind: "forced",
-          verifiedClean: false,
-        });
-        const deleted = yield* central.deleteCardBranch({ projectId, branch: "board/central-b" });
-        assert.isTrue(deleted.localDeleted);
+        yield* central.pinGhDefault({ projectId, worktreePath: placed.path });
+        yield* fileSystem.remove(placed.path, { recursive: true });
+        yield* central.pruneWorktree({ projectId, worktreePath: placed.path });
+        const listed = yield* git(env.checkout, ["worktree", "list", "--porcelain"]);
+        assert.notInclude(listed, placed.path);
       }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
+    );
 
-  it.effect("refuses to build a central card on a branch of the worker's own board", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("own-branch");
-      const workspaces = yield* workspacesOver(env.checkout, undefined, true, ["board/K-1"]);
-      const central = remoteOver(makeInProcessWorker(workspaces));
-      // Both boards name branches `board/<key>`. The worker board's card has
-      // commits on its branch and no checkout holds it right now.
-      yield* git(env.checkout, ["branch", "board/K-1", "main"]);
-      yield* git(env.checkout, ["push", "origin", "board/K-1"]);
-      const tip = yield* git(env.checkout, ["rev-parse", "board/K-1"]);
-      for (const provision of [
-        central.provisionWorktree({ projectId, branch: "board/K-1", baseRefName: "main" }),
-        central.provisionWorktreeFromRemoteBranch({
-          projectId,
-          branch: "board/K-1",
-          baseRefName: "main",
-        }),
-        // A central split parent of the same key would adopt the worker
-        // board's integration branch as its own.
-        central.createIntegrationBranch({ projectId, branch: "board/K-1", base: "main" }),
-      ] as ReadonlyArray<Effect.Effect<object, BoardWorkspaceFailure>>) {
-        const refused = yield* Effect.flip(provision);
-        assert.strictEqual(refused._tag, "BoardWorkerGitError");
-        assert.include(detailOf(refused), "own board");
-      }
-      assert.strictEqual(yield* git(env.checkout, ["rev-parse", "board/K-1"]), tip);
-      const listed = yield* central.listBoardWorktrees({ projectId });
-      assert.deepStrictEqual(listed.worktrees, []);
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
+    it.effect(
+      "refuses to delete a branch of the worker's own board or a checkout it didn't make",
+      () =>
+        Effect.gen(function* () {
+          const env = yield* makeEnv("branches");
+          const workspaces = yield* workspacesOver(env.checkout, undefined, true, [
+            "board/own-card",
+          ]);
+          const central = remoteOver(makeInProcessWorker(workspaces));
+          // The worker's own board's checkout, a user's thread worktree on a
+          // board-shaped branch, and a branch on the worker board's own card that
+          // no checkout holds right now but the remote does.
+          yield* workspaces.local.provisionWorktree({
+            projectId,
+            branch: "board/own-w",
+            baseRefName: "main",
+          });
+          const thread = NodePath.join(env.root, "thread-worktree");
+          yield* git(env.checkout, ["worktree", "add", "-b", "board/by-hand", thread]);
+          yield* git(env.checkout, ["branch", "board/own-card", "main"]);
+          yield* git(env.checkout, ["push", "origin", "board/own-card"]);
+          for (const branch of ["board/own-w", "board/by-hand", "board/own-card"]) {
+            const refused = yield* Effect.flip(central.deleteCardBranch({ projectId, branch }));
+            assert.strictEqual(refused._tag, "BoardWorkerGitError");
+            assert.include(detailOf(refused), "own board");
+            assert.strictEqual(
+              yield* git(env.checkout, ["branch", "--list", branch]).pipe(
+                Effect.map((out) => out !== ""),
+              ),
+              true,
+            );
+          }
+          // A bare repository needs `--git-dir` since upstream sets `safe.bareRepository=explicit`.
+          assert.notStrictEqual(
+            yield* git(env.remote, ["--git-dir=.", "branch", "--list", "board/own-card"]),
+            "",
+          );
 
-  it.effect("a worker's own board and the central board each sweep only their own checkouts", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("owners");
-      const workspaces = yield* workspacesOver(env.checkout);
-      const central = remoteOver(makeInProcessWorker(workspaces));
-      // The worker runs a board of its own on the same repository, so both
-      // boards' checkouts share its worktrees directory.
-      const own = yield* workspaces.local.provisionWorktree({
-        projectId,
-        branch: "board/own-1",
-        baseRefName: "main",
-      });
-      const placed = yield* central.provisionWorktree({
-        projectId,
-        branch: "board/central-1",
-        baseRefName: "main",
-      });
-      const ownList = yield* workspaces.local.listBoardWorktrees({ projectId });
-      const centralList = yield* central.listBoardWorktrees({ projectId });
-      assert.deepStrictEqual(
-        ownList.worktrees.map((worktree) => worktree.branch),
-        ["board/own-1"],
-      );
-      assert.deepStrictEqual(
-        centralList.worktrees.map((worktree) => worktree.branch),
-        ["board/central-1"],
-      );
-      // The marker sits in git's private dir: the checkout stays clean.
-      const status = yield* git(placed.path, ["status", "--porcelain"]);
-      assert.strictEqual(status.trim(), "");
-      assert.notStrictEqual(own.path, placed.path);
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
+          // The central board's own branch, its checkout retired, is deleted.
+          const placed = yield* central.provisionWorktree({
+            projectId,
+            branch: "board/central-b",
+            baseRefName: "main",
+          });
+          yield* central.retireWorktree({
+            projectId,
+            worktreePath: placed.path,
+            kind: "forced",
+            verifiedClean: false,
+          });
+          const deleted = yield* central.deleteCardBranch({ projectId, branch: "board/central-b" });
+          assert.isTrue(deleted.localDeleted);
+        }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
 
-  it.effect("a checkout whose owner cannot be read is in neither board's sweep", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("owner-unknown");
-      const workspaces = yield* workspacesOver(env.checkout);
-      const central = remoteOver(makeInProcessWorker(workspaces));
-      const placed = yield* central.provisionWorktree({
-        projectId,
-        branch: "board/central-2",
-        baseRefName: "main",
-      });
-      // git can no longer resolve the checkout's private dir, so its marker
-      // is unreadable; it is still registered, so git lists it.
-      const fileSystem = yield* FileSystem.FileSystem;
-      yield* fileSystem.writeFileString(NodePath.join(placed.path, ".git"), "not a gitfile\n");
-      const ownList = yield* workspaces.local.listBoardWorktrees({ projectId });
-      const centralList = yield* central.listBoardWorktrees({ projectId });
-      assert.deepStrictEqual(ownList.worktrees, []);
-      assert.deepStrictEqual(centralList.worktrees, []);
-      // Nor will either board adopt it, and the refusal says why.
-      const refused = yield* Effect.flip(
-        workspaces.local.provisionWorktree({
+    it.effect("refuses to build a central card on a branch of the worker's own board", () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("own-branch");
+        const workspaces = yield* workspacesOver(env.checkout, undefined, true, ["board/K-1"]);
+        const central = remoteOver(makeInProcessWorker(workspaces));
+        // Both boards name branches `board/<key>`. The worker board's card has
+        // commits on its branch and no checkout holds it right now.
+        yield* git(env.checkout, ["branch", "board/K-1", "main"]);
+        yield* git(env.checkout, ["push", "origin", "board/K-1"]);
+        const tip = yield* git(env.checkout, ["rev-parse", "board/K-1"]);
+        for (const provision of [
+          central.provisionWorktree({ projectId, branch: "board/K-1", baseRefName: "main" }),
+          central.provisionWorktreeFromRemoteBranch({
+            projectId,
+            branch: "board/K-1",
+            baseRefName: "main",
+          }),
+          // A central split parent of the same key would adopt the worker
+          // board's integration branch as its own.
+          central.createIntegrationBranch({ projectId, branch: "board/K-1", base: "main" }),
+        ] as ReadonlyArray<Effect.Effect<object, BoardWorkspaceFailure>>) {
+          const refused = yield* Effect.flip(provision);
+          assert.strictEqual(refused._tag, "BoardWorkerGitError");
+          assert.include(detailOf(refused), "own board");
+        }
+        assert.strictEqual(yield* git(env.checkout, ["rev-parse", "board/K-1"]), tip);
+        const listed = yield* central.listBoardWorktrees({ projectId });
+        assert.deepStrictEqual(listed.worktrees, []);
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect(
+      "a worker's own board and the central board each sweep only their own checkouts",
+      () =>
+        Effect.gen(function* () {
+          const env = yield* makeEnv("owners");
+          const workspaces = yield* workspacesOver(env.checkout);
+          const central = remoteOver(makeInProcessWorker(workspaces));
+          // The worker runs a board of its own on the same repository, so both
+          // boards' checkouts share its worktrees directory.
+          const own = yield* workspaces.local.provisionWorktree({
+            projectId,
+            branch: "board/own-1",
+            baseRefName: "main",
+          });
+          const placed = yield* central.provisionWorktree({
+            projectId,
+            branch: "board/central-1",
+            baseRefName: "main",
+          });
+          const ownList = yield* workspaces.local.listBoardWorktrees({ projectId });
+          const centralList = yield* central.listBoardWorktrees({ projectId });
+          assert.deepStrictEqual(
+            ownList.worktrees.map((worktree) => worktree.branch),
+            ["board/own-1"],
+          );
+          assert.deepStrictEqual(
+            centralList.worktrees.map((worktree) => worktree.branch),
+            ["board/central-1"],
+          );
+          // The marker sits in git's private dir: the checkout stays clean.
+          const status = yield* git(placed.path, ["status", "--porcelain"]);
+          assert.strictEqual(status.trim(), "");
+          assert.notStrictEqual(own.path, placed.path);
+        }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect("a checkout whose owner cannot be read is in neither board's sweep", () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("owner-unknown");
+        const workspaces = yield* workspacesOver(env.checkout);
+        const central = remoteOver(makeInProcessWorker(workspaces));
+        const placed = yield* central.provisionWorktree({
           projectId,
           branch: "board/central-2",
           baseRefName: "main",
-        }),
-      );
-      assert.include(detailOf(refused), "cannot say which board owns it");
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
+        });
+        // git can no longer resolve the checkout's private dir, so its marker
+        // is unreadable; it is still registered, so git lists it.
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.writeFileString(NodePath.join(placed.path, ".git"), "not a gitfile\n");
+        const ownList = yield* workspaces.local.listBoardWorktrees({ projectId });
+        const centralList = yield* central.listBoardWorktrees({ projectId });
+        assert.deepStrictEqual(ownList.worktrees, []);
+        assert.deepStrictEqual(centralList.worktrees, []);
+        // Nor will either board adopt it, and the refusal says why.
+        const refused = yield* Effect.flip(
+          workspaces.local.provisionWorktree({
+            projectId,
+            branch: "board/central-2",
+            baseRefName: "main",
+          }),
+        );
+        assert.include(detailOf(refused), "cannot say which board owns it");
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
 
-  it.effect("neither board adopts the other's checkout of the same branch", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("adopt");
-      const workspaces = yield* workspacesOver(env.checkout);
-      const central = remoteOver(makeInProcessWorker(workspaces));
-      yield* workspaces.local.provisionWorktree({
-        projectId,
-        branch: "board/same-1",
-        baseRefName: "main",
-      });
-      const byCentral = yield* Effect.flip(
-        central.provisionWorktree({ projectId, branch: "board/same-1", baseRefName: "main" }),
-      );
-      assert.strictEqual(byCentral._tag, "BoardWorkerGitError");
-      assert.include(detailOf(byCentral), "another board on this server");
+    it.effect("neither board adopts the other's checkout of the same branch", () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("adopt");
+        const workspaces = yield* workspacesOver(env.checkout);
+        const central = remoteOver(makeInProcessWorker(workspaces));
+        yield* workspaces.local.provisionWorktree({
+          projectId,
+          branch: "board/same-1",
+          baseRefName: "main",
+        });
+        const byCentral = yield* Effect.flip(
+          central.provisionWorktree({ projectId, branch: "board/same-1", baseRefName: "main" }),
+        );
+        assert.strictEqual(byCentral._tag, "BoardWorkerGitError");
+        assert.include(detailOf(byCentral), "another board on this server");
 
-      yield* central.provisionWorktree({ projectId, branch: "board/same-2", baseRefName: "main" });
-      const bySelf = yield* Effect.flip(
-        workspaces.local.provisionWorktree({
+        yield* central.provisionWorktree({
           projectId,
           branch: "board/same-2",
           baseRefName: "main",
-        }),
-      );
-      assert.include(detailOf(bySelf), "another board on this server");
-      // A board's own retry still reuses its checkout.
-      const again = yield* central.provisionWorktree({
-        projectId,
-        branch: "board/same-2",
-        baseRefName: "main",
-      });
-      const centralList = yield* central.listBoardWorktrees({ projectId });
-      assert.deepStrictEqual(
-        centralList.worktrees.map((worktree) => worktree.path),
-        [again.path],
-      );
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect("a checkout whose folder is gone is re-provisioned, not refused", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("gone-reprovision");
-      const workspaces = yield* workspacesOver(env.checkout);
-      const first = yield* workspaces.local.provisionWorktree({
-        projectId,
-        branch: "board/gone-1",
-        baseRefName: "main",
-      });
-      // The folder vanishes; git still lists it, as prunable.
-      const fileSystem = yield* FileSystem.FileSystem;
-      yield* fileSystem.remove(first.path, { recursive: true });
-      const again = yield* workspaces.local.provisionWorktree({
-        projectId,
-        branch: "board/gone-1",
-        baseRefName: "main",
-      });
-      assert.isTrue(yield* fileSystem.exists(again.path));
-      assert.strictEqual(again.branch, "board/gone-1");
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect("refuses an operation the session has no scope for", () =>
-    Effect.gen(function* () {
-      const env = yield* makeEnv("scope");
-      const worker = makeInProcessWorker(
-        yield* workspacesOver(env.checkout),
-        boardSession([AuthOrchestrationReadScope]),
-      );
-      const ws = remoteOver(worker);
-      // A read is fine...
-      const resolved = yield* ws.resolveDefaultBranch({ projectId });
-      assert.strictEqual(resolved.defaultBranch, "main");
-      // ...a write is not.
-      const refused = yield* Effect.flip(
-        ws.provisionWorktree({ projectId, branch: "board/t-1", baseRefName: "main" }),
-      );
-      assert.strictEqual(refused._tag, "BoardWorkerGitError");
-      assert.include(detailOf(refused), "refused the board's session");
-    }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect(
-    "an unreachable worker is WorkerUnavailable, and a forge call reads as unavailable",
-    () =>
-      Effect.gen(function* () {
-        const env = yield* makeEnv("offline");
-        const worker = makeInProcessWorker(yield* workspacesOver(env.checkout));
-        worker.reachable = false;
-        const ws = remoteOver(worker);
-        const unavailable = yield* Effect.flip(ws.resolveDefaultBranch({ projectId }));
-        assert.strictEqual(unavailable._tag, "WorkerUnavailable");
-
-        const card = bindBoardWorkspace({ workspace: ws, projectId, checkoutPath: env.checkout });
-        const merge = yield* Effect.flip(card.mergePullRequest({ number: 7, method: "squash" }));
-        assert.strictEqual(merge._tag, "BoardWorkerGitError");
-        assert.strictEqual(merge.refusal, "unavailable");
-        assert.deepStrictEqual(worker.calls, []);
-      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
-  );
-
-  it.effect("a worker without the operations says it needs updating, not that it is offline", () =>
-    Effect.gen(function* () {
-      const ws = makeRemoteBoardWorkspace(EnvironmentId.make("env-old"), {
-        get: () =>
-          Effect.succeed({
-            git: () => Effect.fail(new WorkerRpcError({ message: "unknown", unsupported: true })),
-          } as never),
-      });
-      const refused = yield* Effect.flip(ws.resolveDefaultBranch({ projectId }));
-      assert.strictEqual(refused._tag, "BoardWorkerGitError");
-      assert.include(detailOf(refused), "too old");
-    }),
-  );
-
-  it.effect("a call that will not decode is a git error, a dropped socket is an outage", () =>
-    Effect.gen(function* () {
-      const failingWith = (cause: unknown) =>
-        makeRemoteBoardWorkspace(EnvironmentId.make("env-skewed"), {
-          get: () =>
-            Effect.succeed({
-              git: () => Effect.fail(new WorkerRpcError({ message: "call failed", cause })),
-            } as never),
         });
-      const undecodable = yield* Effect.flip(
-        failingWith(
-          new RpcClientError.RpcClientError({
-            reason: new RpcClientError.RpcClientDefect({
-              message: "Expected a string, got undefined",
-              cause: null,
-            }),
+        const bySelf = yield* Effect.flip(
+          workspaces.local.provisionWorktree({
+            projectId,
+            branch: "board/same-2",
+            baseRefName: "main",
           }),
-        ).resolveDefaultBranch({ projectId }),
-      );
-      assert.strictEqual(undecodable._tag, "BoardWorkerGitError");
-      assert.include(detailOf(undecodable), "could not be used");
+        );
+        assert.include(detailOf(bySelf), "another board on this server");
+        // A board's own retry still reuses its checkout.
+        const again = yield* central.provisionWorktree({
+          projectId,
+          branch: "board/same-2",
+          baseRefName: "main",
+        });
+        const centralList = yield* central.listBoardWorktrees({ projectId });
+        assert.deepStrictEqual(
+          centralList.worktrees.map((worktree) => worktree.path),
+          [again.path],
+        );
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
 
-      const dropped = yield* Effect.flip(
-        failingWith({
-          _tag: "RpcClientError",
-          reason: { _tag: "SocketCloseError" },
-        }).resolveDefaultBranch({ projectId }),
-      );
-      assert.strictEqual(dropped._tag, "WorkerUnavailable");
-    }),
-  );
+    it.effect("a checkout whose folder is gone is re-provisioned, not refused", () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("gone-reprovision");
+        const workspaces = yield* workspacesOver(env.checkout);
+        const first = yield* workspaces.local.provisionWorktree({
+          projectId,
+          branch: "board/gone-1",
+          baseRefName: "main",
+        });
+        // The folder vanishes; git still lists it, as prunable.
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.remove(first.path, { recursive: true });
+        const again = yield* workspaces.local.provisionWorktree({
+          projectId,
+          branch: "board/gone-1",
+          baseRefName: "main",
+        });
+        assert.isTrue(yield* fileSystem.exists(again.path));
+        assert.strictEqual(again.branch, "board/gone-1");
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect("refuses an operation the session has no scope for", () =>
+      Effect.gen(function* () {
+        const env = yield* makeEnv("scope");
+        const worker = makeInProcessWorker(
+          yield* workspacesOver(env.checkout),
+          boardSession([AuthOrchestrationReadScope]),
+        );
+        const ws = remoteOver(worker);
+        // A read is fine...
+        const resolved = yield* ws.resolveDefaultBranch({ projectId });
+        assert.strictEqual(resolved.defaultBranch, "main");
+        // ...a write is not.
+        const refused = yield* Effect.flip(
+          ws.provisionWorktree({ projectId, branch: "board/t-1", baseRefName: "main" }),
+        );
+        assert.strictEqual(refused._tag, "BoardWorkerGitError");
+        assert.include(detailOf(refused), "refused the board's session");
+      }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect(
+      "an unreachable worker is WorkerUnavailable, and a forge call reads as unavailable",
+      () =>
+        Effect.gen(function* () {
+          const env = yield* makeEnv("offline");
+          const worker = makeInProcessWorker(yield* workspacesOver(env.checkout));
+          worker.reachable = false;
+          const ws = remoteOver(worker);
+          const unavailable = yield* Effect.flip(ws.resolveDefaultBranch({ projectId }));
+          assert.strictEqual(unavailable._tag, "WorkerUnavailable");
+
+          const card = bindBoardWorkspace({ workspace: ws, projectId, checkoutPath: env.checkout });
+          const merge = yield* Effect.flip(card.mergePullRequest({ number: 7, method: "squash" }));
+          assert.strictEqual(merge._tag, "BoardWorkerGitError");
+          assert.strictEqual(merge.refusal, "unavailable");
+          assert.deepStrictEqual(worker.calls, []);
+        }).pipe(Effect.scoped, Effect.provide(TestLayer)),
+    );
+
+    it.effect(
+      "a worker without the operations says it needs updating, not that it is offline",
+      () =>
+        Effect.gen(function* () {
+          const ws = makeRemoteBoardWorkspace(EnvironmentId.make("env-old"), {
+            get: () =>
+              Effect.succeed({
+                git: () =>
+                  Effect.fail(new WorkerRpcError({ message: "unknown", unsupported: true })),
+              } as never),
+          });
+          const refused = yield* Effect.flip(ws.resolveDefaultBranch({ projectId }));
+          assert.strictEqual(refused._tag, "BoardWorkerGitError");
+          assert.include(detailOf(refused), "too old");
+        }),
+    );
+
+    it.effect("a call that will not decode is a git error, a dropped socket is an outage", () =>
+      Effect.gen(function* () {
+        const failingWith = (cause: unknown) =>
+          makeRemoteBoardWorkspace(EnvironmentId.make("env-skewed"), {
+            get: () =>
+              Effect.succeed({
+                git: () => Effect.fail(new WorkerRpcError({ message: "call failed", cause })),
+              } as never),
+          });
+        const undecodable = yield* Effect.flip(
+          failingWith(
+            new RpcClientError.RpcClientError({
+              reason: new RpcClientError.RpcClientDefect({
+                message: "Expected a string, got undefined",
+                cause: null,
+              }),
+            }),
+          ).resolveDefaultBranch({ projectId }),
+        );
+        assert.strictEqual(undecodable._tag, "BoardWorkerGitError");
+        assert.include(detailOf(undecodable), "could not be used");
+
+        const dropped = yield* Effect.flip(
+          failingWith({
+            _tag: "RpcClientError",
+            reason: { _tag: "SocketCloseError" },
+          }).resolveDefaultBranch({ projectId }),
+        );
+        assert.strictEqual(dropped._tag, "WorkerUnavailable");
+      }),
+    );
+  });
 });
