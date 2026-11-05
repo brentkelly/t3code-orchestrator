@@ -6,6 +6,7 @@
 import {
   BOARD_SEED_STAGE_IDS,
   boardCardCiSteps,
+  boardCiShellFinding,
   isBoardCiStepFailure,
   type BoardCard,
   type BoardCardCi,
@@ -179,7 +180,8 @@ export function decideBoardCiRecord(
             kind: "sent-back",
             ...(failed === null ? {} : { stepName: failed }),
             fixAttemptsUsed,
-            finding: action.finding,
+            finding: boardCiShellFinding(action.finding),
+            round: action.round,
           },
         },
         {

@@ -266,6 +266,7 @@ it.effect("a fix agent's return-to-review sends the card back for a fresh round"
           stepName: "Lint",
           fixAttemptsUsed: 1,
           finding: "The migration is wrong.",
+          round: 1,
         });
         // A fresh round: the review-overrides path floors the budget at it.
         assert.strictEqual(sent.reviewOverrides?.runThroughRound, 1);
@@ -300,6 +301,7 @@ it.effect("with no fixes left, a failure goes straight back to review and buys a
         assert.strictEqual(sent.ciLastOutcome?.fixAttemptsUsed, 0);
         assert.include(sent.ciLastOutcome?.finding ?? "", 'CI step "Test"');
         assert.strictEqual(sent.reviewOverrides?.runThroughRound, 4);
+        assert.strictEqual(sent.ciLastOutcome?.round, 4);
         const spawned = (yield* h.commands).filter((command) => command.type === "thread.spawn");
         assert.lengthOf(spawned, 0);
       }),

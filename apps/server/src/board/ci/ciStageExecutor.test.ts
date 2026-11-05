@@ -4,6 +4,7 @@
  * card and its pass rows.
  */
 import {
+  BOARD_CI_SHELL_FINDING_MAX,
   BoardCardId,
   BoardStageId,
   DEFAULT_BOARD_CI_STAGE_EXECUTION,
@@ -223,6 +224,7 @@ describe("decideBoardCiRecord", () => {
       runId: "run-1",
       stepName: null,
       finding: "Broken.",
+      round: 2,
       fixThreadId: null,
     });
     expect(sent.ok && sent.payload.card.ciLastOutcome).toEqual({
@@ -230,8 +232,20 @@ describe("decideBoardCiRecord", () => {
       stepName: "Test",
       fixAttemptsUsed: 1,
       finding: "Broken.",
+      round: 2,
     });
     expect(sent.ok && sent.payload.card.ci).toBeNull();
+
+    const long = record(cardInCi(ci()), {
+      kind: "send-back",
+      runId: "run-1",
+      stepName: null,
+      finding: "x".repeat(BOARD_CI_SHELL_FINDING_MAX * 10),
+      round: 2,
+      fixThreadId: null,
+    });
+    const shellFinding = long.ok ? (long.payload.card.ciLastOutcome?.finding ?? "") : "";
+    expect(shellFinding.length).toBe(BOARD_CI_SHELL_FINDING_MAX);
 
     const skipped = record(cardInCi(ci()), { kind: "skip", actor: "Brent" });
     expect(skipped.ok && skipped.payload.card.ciLastOutcome).toEqual({

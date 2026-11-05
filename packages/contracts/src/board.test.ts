@@ -13,6 +13,7 @@ import {
   BoardCardStepState,
   BOARD_CARD_LABELS_MAX,
   BOARD_CI_MAX_STEPS,
+  BOARD_CI_SHELL_FINDING_MAX,
   BOARD_CI_SHELL_STEP_NAME_MAX,
   BOARD_THREAD_TODO_CURRENT_MAX_BYTES,
   BOARD_THREAD_TODO_ITEMS_MAX,
@@ -292,6 +293,23 @@ describe("BoardCardShell payload discipline", () => {
     expect(JSON.stringify(encodeShell(inCi))).not.toContain(
       "x".repeat(BOARD_CI_SHELL_STEP_NAME_MAX + 1),
     );
+  });
+
+  it("a CI send-back's finding rides the shell capped (T3O-44)", () => {
+    const base = typicalCard(1);
+    const sentBack = boardCardShellFromCard({
+      ...base,
+      ciLastOutcome: {
+        kind: "sent-back",
+        stepName: "Test",
+        fixAttemptsUsed: 2,
+        finding: "x".repeat(200_000),
+        round: 3,
+      },
+    });
+    const extra =
+      utf8Bytes(encodeShell(sentBack)) - utf8Bytes(encodeShell(boardCardShellFromCard(base)));
+    expect(extra).toBeLessThanOrEqual(BOARD_CI_SHELL_FINDING_MAX + 256);
   });
 
   it("stays under the fixed serialized byte budget at full population", () => {

@@ -1535,9 +1535,11 @@ export const BoardCardCiLastOutcome = Schema.Struct({
   fixAttemptsUsed: Schema.optionalKey(NonNegativeInt),
   /** Who skipped it. */
   actor: Schema.optionalKey(TrimmedNonEmptyString),
-  /** Why it was sent back: the fix agent's finding, or the failure itself.
-      The review round that follows carries it as a must-fix finding. */
+  /** Why it was sent back: the fix agent's finding, or the failure itself,
+      cut to `BOARD_CI_SHELL_FINDING_MAX`. The round it opened (`round`) carries
+      it as a must-fix finding; later rounds do not. */
   finding: Schema.optionalKey(Schema.String),
+  round: Schema.optionalKey(PositiveInt),
 });
 export type BoardCardCiLastOutcome = typeof BoardCardCiLastOutcome.Type;
 
@@ -1593,6 +1595,16 @@ export const BOARD_CI_MAX_STEPS = 12;
 
 /** How much of a step's name the card shell carries. */
 export const BOARD_CI_SHELL_STEP_NAME_MAX = 60;
+
+/** How much of a send-back finding the card shell carries; the failing step's
+    full tail stays on the pass row and in its log. */
+export const BOARD_CI_SHELL_FINDING_MAX = 2000;
+
+export function boardCiShellFinding(finding: string): string {
+  return finding.length <= BOARD_CI_SHELL_FINDING_MAX
+    ? finding
+    : `${finding.slice(0, BOARD_CI_SHELL_FINDING_MAX - 1)}…`;
+}
 
 /** The compact shell steps of a pass. */
 export function boardCardCiSteps(
@@ -5893,6 +5905,8 @@ export const BoardCardCiAction = Schema.Union([
     runId: Schema.NullOr(TrimmedNonEmptyString),
     stepName: Schema.NullOr(TrimmedNonEmptyString),
     finding: Schema.String,
+    /** The review round the send-back opens, the one that carries the finding. */
+    round: PositiveInt,
     fixThreadId: Schema.NullOr(ThreadId),
   }),
   Schema.Struct({ kind: Schema.Literal("skip"), actor: TrimmedNonEmptyString }),
@@ -8125,7 +8139,10 @@ export function boardCardShellFromCard(
     workerMove: card.workerMove,
     placementOrphaned: card.placementOrphaned,
     ci: card.ci,
-    ciLastOutcome: card.ciLastOutcome,
+    ciLastOutcome:
+      card.ciLastOutcome?.finding === undefined
+        ? card.ciLastOutcome
+        : { ...card.ciLastOutcome, finding: boardCiShellFinding(card.ciLastOutcome.finding) },
     activeThreadId: activeBoardCardThreadId(card.threadLinks),
     thread,
     ...(bodyDerived?.briefHasImage === undefined

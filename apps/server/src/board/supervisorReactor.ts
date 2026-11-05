@@ -3408,6 +3408,13 @@ const make = Effect.gen(function* () {
   ) {
     const board = yield* readBoard;
     const reviewStage = boardStageWithRole(board, "review");
+    // A fresh round, through the same override "Another review round" writes:
+    // it floors the budget, so a card that used every round gets one more.
+    const round =
+      boardReviewRoundsStarted({
+        completions: boardCardStepCompletions(board, card.id),
+        liveStepId: null,
+      }) + 1;
     const landed = yield* dispatchLanded({
       type: "board.card.record-ci",
       commandId: yield* commandId("ci-send-back"),
@@ -3417,18 +3424,12 @@ const make = Effect.gen(function* () {
         runId: card.ci?.runId ?? null,
         stepName: input.stepName,
         finding: input.finding,
+        round,
         fixThreadId: input.fixThreadId,
       },
       createdAt: yield* nowIso,
     });
     if (!landed || reviewStage === null) return;
-    // A fresh round, through the same override "Another review round" writes:
-    // it floors the budget, so a card that used every round gets one more.
-    const round =
-      boardReviewRoundsStarted({
-        completions: boardCardStepCompletions(board, card.id),
-        liveStepId: null,
-      }) + 1;
     yield* dispatch({
       type: "board.card.update",
       commandId: yield* commandId("ci-send-back-round"),
