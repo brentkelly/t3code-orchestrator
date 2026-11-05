@@ -14,6 +14,7 @@ import * as Fiber from "effect/Fiber";
 
 import {
   BoardCiTail,
+  BOARD_CI_TAIL_LINE_CHARS,
   runBoardCiPass,
   type BoardCiStepProgress,
   type BoardCiRunRequest,
@@ -142,6 +143,33 @@ it("keeps only the last lines of output", () => {
   tail.push("one\ntwo\nthr");
   tail.push("ee\nfour\nfive");
   assert.strictEqual(tail.text(), "three\nfour\nfive");
+});
+
+it("bounds the tail's size when output is one 10 MB line", () => {
+  const tail = new BoardCiTail();
+  const chunk = "x".repeat(64 * 1024);
+  for (let pushed = 0; pushed < 10 * 1024 * 1024; pushed += chunk.length) tail.push(chunk);
+  assert.isAtMost(tail.text().length, BOARD_CI_TAIL_LINE_CHARS + 40);
+  tail.push("\nnext\n");
+  const lines = tail.text().split("\n");
+  assert.strictEqual(lines.length, 2);
+  assert.match(lines[0]!, /\[line truncated\]$/);
+  assert.strictEqual(lines[1], "next");
+});
+
+it("treats a bare carriage return as a line break, and \\r\\n split across chunks as one", () => {
+  const tail = new BoardCiTail(3);
+  tail.push("10%\r20%\r30%\r");
+  tail.push("\ndone");
+  assert.strictEqual(tail.text(), "20%\n30%\ndone");
+});
+
+it("caps the whole tail in size on a line boundary", () => {
+  const tail = new BoardCiTail(200, 500, 1_000);
+  for (let line = 0; line < 200; line += 1) tail.push(`${"y".repeat(99)}\n`);
+  const text = tail.text();
+  assert.isAtMost(text.length, 1_000);
+  assert.isTrue(text.split("\n").every((line) => line.length === 99));
 });
 
 it.live("keeps its logs out of git status in a repo that does not ignore .t3/", () =>

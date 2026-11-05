@@ -2333,7 +2333,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       const crossesDone =
         doneStageId !== null && (card.stage === doneStageId) !== (command.toStage === doneStageId);
       // A card leaving CI settles its unfinished pass here, the last place that
-      // knows its run id: while a fix agent works there is no pass fiber to.
+      // knows its run id: while a fix agent works there is no pass fiber to settle it.
       const leftCi: ReadonlyArray<PlannedBoardEvent> =
         card.stage === BOARD_SEED_STAGE_IDS.ci &&
         command.toStage !== BOARD_SEED_STAGE_IDS.ci &&

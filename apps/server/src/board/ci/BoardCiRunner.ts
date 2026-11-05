@@ -100,26 +100,64 @@ export const ensureCiLogsExcluded = (cwd: string): Effect.Effect<void> =>
 /** How long a killed step's process group gets to exit before SIGKILL. */
 const KILL_GRACE_MS = 5_000;
 
-/** A rolling buffer of the last `max` output lines. */
+/** Longest line the tail keeps; the rest of a longer line is dropped. */
+export const BOARD_CI_TAIL_LINE_CHARS = 500;
+/** Most characters the tail keeps in all. It reaches the event log, the pass
+    row, every card-detail frame and the fix agent's prompt. */
+const BOARD_CI_TAIL_CHARS = 16_000;
+
+// A bare `\r` (progress bars) ends a line too; one at the very end of a chunk
+// waits for the next, which may carry the `\n` of a `\r\n`.
+const LINE_BREAK = /\r?\n|\r(?!$)/;
+
+const clipLine = (line: string, clipped: boolean, maxChars: number): string =>
+  clipped || line.length > maxChars ? `${line.slice(0, maxChars)} … [line truncated]` : line;
+
+/** A rolling buffer of the last `maxLines` output lines, bounded in size. */
 export class BoardCiTail {
   private lines: string[] = [];
   private partial = "";
-  private readonly max: number;
-  constructor(max: number = BOARD_CI_TAIL_LINES) {
-    this.max = max;
+  private partialClipped = false;
+  private readonly maxLines: number;
+  private readonly maxLineChars: number;
+  private readonly maxChars: number;
+  constructor(
+    maxLines: number = BOARD_CI_TAIL_LINES,
+    maxLineChars: number = BOARD_CI_TAIL_LINE_CHARS,
+    maxChars: number = BOARD_CI_TAIL_CHARS,
+  ) {
+    this.maxLines = maxLines;
+    this.maxLineChars = maxLineChars;
+    this.maxChars = maxChars;
   }
 
   push(chunk: string): void {
-    const parts = (this.partial + chunk).split(/\r?\n/);
-    this.partial = parts.pop() ?? "";
-    if (parts.length === 0) return;
-    this.lines.push(...parts);
-    if (this.lines.length > this.max) this.lines = this.lines.slice(-this.max);
+    const parts = (this.partial + chunk).split(LINE_BREAK);
+    const rest = parts.pop() ?? "";
+    parts.forEach((line, index) => {
+      this.lines.push(clipLine(line, index === 0 && this.partialClipped, this.maxLineChars));
+    });
+    if (parts.length > 0) this.partialClipped = false;
+    if (rest.length > this.maxLineChars) {
+      this.partial = rest.slice(0, this.maxLineChars);
+      this.partialClipped = true;
+    } else {
+      this.partial = rest;
+    }
+    if (this.lines.length > this.maxLines) this.lines = this.lines.slice(-this.maxLines);
   }
 
   text(): string {
-    const all = this.partial.length > 0 ? [...this.lines, this.partial] : this.lines;
-    return all.slice(-this.max).join("\n");
+    const partial = this.partial.replace(/\r$/, "");
+    const all =
+      partial.length > 0 || this.partialClipped
+        ? [...this.lines, clipLine(partial, this.partialClipped, this.maxLineChars)]
+        : this.lines;
+    const text = all.slice(-this.maxLines).join("\n");
+    if (text.length <= this.maxChars) return text;
+    const cut = text.slice(-this.maxChars);
+    const lineStart = cut.indexOf("\n");
+    return lineStart === -1 ? cut : cut.slice(lineStart + 1);
   }
 }
 

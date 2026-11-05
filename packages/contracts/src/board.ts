@@ -1565,7 +1565,8 @@ export const BoardCiPassStep = Schema.Struct({
   startedAt: Schema.NullOr(IsoDateTime),
   finishedAt: Schema.NullOr(IsoDateTime),
   exitCode: Schema.NullOr(Schema.Int),
-  /** The last `BOARD_CI_TAIL_LINES` lines of merged stdout and stderr. */
+  /** The last `BOARD_CI_TAIL_LINES` lines of merged stdout and stderr, with
+      long lines clipped and the whole capped in size by the runner. */
   tail: Schema.String,
 });
 export type BoardCiPassStep = typeof BoardCiPassStep.Type;
