@@ -10,7 +10,10 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boardProjectPipelineSummary, formatBoardSettingValue } from "./boardProjectPipelines.logic";
+import {
+  boardProjectPipelineSummary,
+  formatBoardSettingValue,
+} from "./boardProjectPipelines.logic";
 
 const projectId = ProjectId.make("web");
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -59,7 +62,9 @@ describe("boardProjectPipelineSummary", () => {
     });
     expect(summary.followsGlobal).toBe(false);
     expect(summary.chips).toEqual(["+1 stage", "−1 stage", "3 overrides", "1 ignored entry"]);
-    expect(summary.sequence.map((step) => `${step.label}${step.change ? `(${step.change})` : ""}`)).toEqual([
+    expect(
+      summary.sequence.map((step) => `${step.label}${step.change ? `(${step.change})` : ""}`),
+    ).toEqual([
       "Backlog",
       "Sprint(removed)",
       "Planning",
@@ -78,7 +83,11 @@ describe("boardProjectPipelineSummary", () => {
           field: "phases.triage.prompt",
           projectValue: "Targeted tests",
         }),
-        expect.objectContaining({ stageLabel: "Building", field: "prompt", projectValue: "Build it" }),
+        expect.objectContaining({
+          stageLabel: "Building",
+          field: "prompt",
+          projectValue: "Build it",
+        }),
       ]),
     );
     expect(summary.commitSha).toBe("0123456789abcdef");

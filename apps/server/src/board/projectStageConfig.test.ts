@@ -143,9 +143,7 @@ it.layer(makeBoardStackTestLayer("t3o-project-stage-config-test-"))(
         // Into the project's own stage, then drop it from the file while
         // occupied: it stays, retired, and nothing new may enter it.
         yield* engine.dispatch(move(cardA, security, true));
-        yield* engine.dispatch(
-          setConfig(yield* board(), { stages: { remove: ["sprint"] } }),
-        );
+        yield* engine.dispatch(setConfig(yield* board(), { stages: { remove: ["sprint"] } }));
         const retired = yield* board();
         const retiredEntry = boardProjectStagesInOrder(retired, projectA).find(
           (stage) => stage.stageId === security,
@@ -162,9 +160,7 @@ it.layer(makeBoardStackTestLayer("t3o-project-stage-config-test-"))(
         assert.deepStrictEqual(shell.projectStageConfigs?.[projectA]?.removedStageIds, ["sprint"]);
 
         const rehydrated = yield* snapshots.getCommandReadModel();
-        const events: BoardEvent[] = Array.from(
-          yield* Stream.runCollect(engine.readBoardEvents()),
-        );
+        const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
         assert.strictEqual(
           events.filter((event) => event.type === "board.project-stage-config-set").length,
           3,

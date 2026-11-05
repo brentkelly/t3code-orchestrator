@@ -10,7 +10,12 @@ import { useMemo } from "react";
 import { Button } from "../components/ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import { cn } from "../lib/utils";
-import { boardPipelinesGrid, type BoardPipelineCell, type BoardPipelineProject } from "./boardProjectPipelines";
+import { BoardHint } from "./BoardHint";
+import {
+  boardPipelinesGrid,
+  type BoardPipelineCell,
+  type BoardPipelineProject,
+} from "./boardProjectPipelines";
 import { projectAccent } from "./projectAccent";
 
 const CELL_CLASS: Readonly<Record<BoardPipelineCell, string>> = {
@@ -36,9 +41,7 @@ export function BoardPipelinesButton(props: {
   );
   return (
     <Popover>
-      <PopoverTrigger
-        render={<Button size="xs" title="Which stages each project uses" variant="outline" />}
-      >
+      <PopoverTrigger render={<Button size="xs" variant="outline" />}>
         <Columns3Icon />
         Pipelines
       </PopoverTrigger>
@@ -47,21 +50,19 @@ export function BoardPipelinesButton(props: {
           <div className="flex flex-col gap-0.5">
             <span className="text-[12.5px] font-semibold text-foreground">Stages by project</span>
             <span className="text-[11.5px] leading-snug text-muted-foreground">
-              The board shows every stage a project in view uses, in pipeline order. Each
-              project's stages come from the t3o.json in its repo.
+              The board shows every stage a project in view uses, in pipeline order. Each project's
+              stages come from the t3o.json in its repo.
             </span>
           </div>
           <div className="grid grid-cols-[132px_minmax(0,1fr)] items-center gap-x-2.5 gap-y-1.5">
             <span />
             <div className="flex gap-[3px]">
               {grid.stages.map((stage) => (
-                <span
-                  className="min-w-0 flex-1 truncate text-center text-[9.5px] font-medium text-muted-foreground"
-                  key={stage.stageId}
-                  title={stage.label}
-                >
-                  {stage.label}
-                </span>
+                <BoardHint key={stage.stageId} label={stage.label}>
+                  <span className="min-w-0 flex-1 truncate text-center text-[9.5px] font-medium text-muted-foreground">
+                    {stage.label}
+                  </span>
+                </BoardHint>
               ))}
             </div>
             {grid.rows.map((row) => (
@@ -106,11 +107,12 @@ function PipelineRow(props: {
       </span>
       <div className="flex gap-[3px]">
         {props.cells.map((cell, index) => (
-          <span
-            className={cn("h-[18px] min-w-0 flex-1 rounded-[5px]", CELL_CLASS[cell])}
+          <BoardHint
             key={props.stages[index]?.stageId ?? index}
-            title={`${props.stages[index]?.label ?? ""}${CELL_TIP[cell]}`}
-          />
+            label={`${props.stages[index]?.label ?? ""}${CELL_TIP[cell]}`}
+          >
+            <span className={cn("h-[18px] min-w-0 flex-1 rounded-[5px]", CELL_CLASS[cell])} />
+          </BoardHint>
         ))}
       </div>
     </>

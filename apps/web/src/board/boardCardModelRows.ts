@@ -70,7 +70,11 @@ export function boardCardModelRows(input: {
     // null role — still reports its holder.
     const stage = input.stages.find((candidate) => effectiveBoardStageRole(candidate) === role);
     if (stage === undefined) continue;
-    const exec = resolveBoardStageExecution(input.boardSettings, stage.stageId, input.projectConfig);
+    const exec = resolveBoardStageExecution(
+      input.boardSettings,
+      stage.stageId,
+      input.projectConfig,
+    );
     const review = isBoardReviewStageExecution(exec) ? exec : null;
     const workspaceModel =
       review === null ? exec.model : (review.phases.review.model ?? review.model);

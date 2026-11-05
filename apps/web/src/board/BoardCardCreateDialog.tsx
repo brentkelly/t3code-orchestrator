@@ -140,9 +140,7 @@ export function BoardCardCreateDialog({
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
   const allStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   // T3O-43: the picker offers the chosen project's own pipeline.
-  const projectStageConfigs = useAtomValue(
-    boardEnvironment.projectStageConfigsAtom(environmentId),
-  );
+  const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const boardSettings = useBoardSettings((settings) => settings.board);
   const updateSettings = useUpdateBoardSettings();
@@ -180,7 +178,10 @@ export function BoardCardCreateDialog({
     () =>
       projectId === null
         ? allStages
-        : boardCardPipelineStages({ stages: allStages, projectStageConfigs }, { stage: "", projectId }),
+        : boardCardPipelineStages(
+            { stages: allStages, projectStageConfigs },
+            { stage: "", projectId },
+          ),
     [allStages, projectId, projectStageConfigs],
   );
   const projectExecutionConfig =

@@ -30,7 +30,9 @@ Stage names cannot be changed per project. Settings layer in order: the built-in
       }
     ],
     "settings": {
-      "review": { "phases": { "triage": { "prompt": "Run only the tests for the areas you touched." } } },
+      "review": {
+        "phases": { "triage": { "prompt": "Run only the tests for the areas you touched." } }
+      },
       "building": { "timeoutMs": 3600000 },
       "security": { "timeoutMs": 1200000 }
     }

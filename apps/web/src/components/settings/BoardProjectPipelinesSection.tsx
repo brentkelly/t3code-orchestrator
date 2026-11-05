@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import { ChevronDownIcon, ChevronRightIcon, FileCodeIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { BoardHint } from "../../board/BoardHint";
 import { useBoardSettings } from "../../board/useBoardEnvironmentId";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
 import { cn } from "../../lib/utils";
@@ -19,16 +20,17 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { boardProjectPipelineSummary, type BoardProjectPipelineSummary } from "./boardProjectPipelines.logic";
+import {
+  boardProjectPipelineSummary,
+  type BoardProjectPipelineSummary,
+} from "./boardProjectPipelines.logic";
 
 export function BoardProjectPipelinesSection({ environmentId }: { environmentId: EnvironmentId }) {
   const board = useBoardSettings((settings) => settings.board);
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const projects = Option.getOrNull(shellState.snapshot)?.projects ?? [];
   const stages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
-  const projectStageConfigs = useAtomValue(
-    boardEnvironment.projectStageConfigsAtom(environmentId),
-  );
+  const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
   const summaries = useMemo(() => {
     const view = { stages, projectStageConfigs, cards: [] };
     return projects.map((project) => ({
@@ -136,16 +138,10 @@ function ProjectPipelineDetail(props: {
                 <span
                   className={cn(
                     "rounded-md border border-border px-1.5 py-px",
-                    step.change === "added" && "border-foreground/30 bg-foreground/8 text-foreground",
+                    step.change === "added" &&
+                      "border-foreground/30 bg-foreground/8 text-foreground",
                     step.change === "removed" && "text-muted-foreground line-through",
                   )}
-                  title={
-                    step.change === "added"
-                      ? "Added in t3o.json"
-                      : step.change === "removed"
-                        ? "Removed in t3o.json"
-                        : undefined
-                  }
                 >
                   {step.label}
                 </span>
@@ -200,15 +196,17 @@ function OverrideCells(props: {
 }) {
   return (
     <>
-      <span className="min-w-0 truncate text-foreground" title={`${props.stageLabel} · ${props.field}`}>
-        {props.stageLabel} · <span className="font-mono text-[11.5px]">{props.field}</span>
-      </span>
-      <span className="min-w-0 truncate text-foreground" title={props.projectValue}>
-        {props.projectValue}
-      </span>
-      <span className="min-w-0 truncate text-muted-foreground" title={props.globalValue}>
-        {props.globalValue}
-      </span>
+      <BoardHint label={`${props.stageLabel} · ${props.field}`}>
+        <span className="min-w-0 truncate text-foreground">
+          {props.stageLabel} · <span className="font-mono text-[11.5px]">{props.field}</span>
+        </span>
+      </BoardHint>
+      <BoardHint label={props.projectValue}>
+        <span className="min-w-0 truncate text-foreground">{props.projectValue}</span>
+      </BoardHint>
+      <BoardHint label={props.globalValue}>
+        <span className="min-w-0 truncate text-muted-foreground">{props.globalValue}</span>
+      </BoardHint>
     </>
   );
 }

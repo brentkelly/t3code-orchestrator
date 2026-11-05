@@ -198,9 +198,7 @@ export function BoardCardDetail({
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
   const allStages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
   // T3O-43: the card's own project's pipeline, from its t3o.json.
-  const projectStageConfigs = useAtomValue(
-    boardEnvironment.projectStageConfigsAtom(environmentId),
-  );
+  const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
   const pipelineCardProjectId = detail?.card.projectId ?? null;
   const pipelineCardStage = detail?.card.stage ?? null;
   const stages = useMemo(
@@ -816,7 +814,11 @@ export function BoardCardDetail({
   const humanInLoop =
     buildStageId !== null && card.stage === buildStageId
       ? (() => {
-          const exec = resolveBoardStageExecution(boardSettings, buildStageId, projectExecutionConfig);
+          const exec = resolveBoardStageExecution(
+            boardSettings,
+            buildStageId,
+            projectExecutionConfig,
+          );
           const fallback = boardBuildHumanInLoopDefault(exec, detail.hasPlan);
           return {
             value: card.humanInLoop ?? fallback,
@@ -846,14 +848,20 @@ export function BoardCardDetail({
   // The review loop's round budget, for the Review pane's R1..Rn bar. Resolved
   // from the same settings the executor reads, so the bar and the real loop can
   // never disagree on the cap.
-  const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review, projectExecutionConfig);
+  const reviewExecution = resolveBoardStageExecution(
+    boardSettings,
+    BOARD_SEED_STAGE_IDS.review,
+    projectExecutionConfig,
+  );
   // The board-wide auto-merge default (T3O-38, D2/D3). Resolved off the
   // MERGE-ROLE stage, not off a stage literally named "Ready for merge": the
   // role is what the server reads, and keying on the name would silently
   // disagree with it on a renamed pipeline.
   const mergeStageId = boardStageWithRole(stageState, "merge")?.stageId ?? null;
   const mergeExecution =
-    mergeStageId === null ? null : resolveBoardStageExecution(boardSettings, mergeStageId, projectExecutionConfig);
+    mergeStageId === null
+      ? null
+      : resolveBoardStageExecution(boardSettings, mergeStageId, projectExecutionConfig);
   const boardWideAutoMerge =
     mergeExecution !== null && isBoardMergeStageExecution(mergeExecution)
       ? mergeExecution.autoMerge
@@ -900,7 +908,8 @@ export function BoardCardDetail({
     isBoardStageAtOrAfterBuild(stageState, card.stage) &&
     unmetDependencyKeys.length > 0;
   const stageRestart = resolveBoardThreadStageRestart({
-    autoExecute: resolveBoardStageExecution(boardSettings, card.stage, projectExecutionConfig).autoExecute,
+    autoExecute: resolveBoardStageExecution(boardSettings, card.stage, projectExecutionConfig)
+      .autoExecute,
     stageLabel: boardStageLabel(stages, card.stage),
     runInFlight: isBoardCardRunInFlight(cardShell),
     stalled: stepStalled,
@@ -1212,7 +1221,8 @@ export function BoardCardDetail({
         ),
         names: projectNames,
         stopsAgent: isBoardCardRunInFlight(cardShell),
-        restartsStage: resolveBoardStageExecution(boardSettings, card.stage, projectExecutionConfig).autoExecute,
+        restartsStage: resolveBoardStageExecution(boardSettings, card.stage, projectExecutionConfig)
+          .autoExecute,
       }}
       onSetProject={
         canSetProject

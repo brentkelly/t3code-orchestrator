@@ -120,7 +120,11 @@ describe("boardCardStageGoneNote", () => {
   it("notes a card whose project no longer uses its stage, and nothing otherwise", () => {
     const view = makeView([{ stage: BOARD_SEED_STAGE_IDS.ready, projectId: web.id }]);
     expect(
-      boardCardStageGoneNote(view, { stage: BOARD_SEED_STAGE_IDS.ready, projectId: web.id }, "mesh.web"),
+      boardCardStageGoneNote(
+        view,
+        { stage: BOARD_SEED_STAGE_IDS.ready, projectId: web.id },
+        "mesh.web",
+      ),
     ).toBe("Ready is no longer in mesh.web's pipeline");
     expect(
       boardCardStageGoneNote(view, { stage: BOARD_SEED_STAGE_IDS.ready, projectId: relay.id }, "x"),

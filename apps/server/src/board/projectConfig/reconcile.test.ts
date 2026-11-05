@@ -50,24 +50,27 @@ const apply = (board: BoardState, read: BoardProjectFileRead) =>
   Effect.gen(function* () {
     const update = boardProjectStageConfigUpdate({ board, projectId, read, now: NOW });
     if (update === null) return { board, emitted: false };
-    const model = yield* projectBoardEvent({ board } as BoardReadModel, {
-      sequence: 1,
-      eventId: "event-1",
-      aggregateKind: "project",
-      aggregateId: projectId,
-      occurredAt: NOW,
-      commandId: null,
-      causationEventId: null,
-      correlationId: null,
-      metadata: {},
-      type: "board.project-stage-config-set",
-      payload: {
-        projectId,
-        config: update.config,
-        upserts: update.stages,
-        deletedStageIds: [],
-      },
-    } as never);
+    const model = yield* projectBoardEvent(
+      { board } as BoardReadModel,
+      {
+        sequence: 1,
+        eventId: "event-1",
+        aggregateKind: "project",
+        aggregateId: projectId,
+        occurredAt: NOW,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "board.project-stage-config-set",
+        payload: {
+          projectId,
+          config: update.config,
+          upserts: update.stages,
+          deletedStageIds: [],
+        },
+      } as never,
+    );
     return { board: model.board!, emitted: true };
   });
 

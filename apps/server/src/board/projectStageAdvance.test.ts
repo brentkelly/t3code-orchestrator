@@ -31,7 +31,15 @@ import {
 const QA = BoardStageId.make("qa");
 const stages = [
   ...BOARD_SEED_STAGES,
-  { stageId: QA, label: "QA", role: null, orderKey: "k", createdAt: NOW, updatedAt: NOW, projectId: null },
+  {
+    stageId: QA,
+    label: "QA",
+    role: null,
+    orderKey: "k",
+    createdAt: NOW,
+    updatedAt: NOW,
+    projectId: null,
+  },
 ];
 const FILE = { stages: { remove: ["qa"] } };
 const source = { path: "/tmp/project-1/t3o.json", commitSha: null };

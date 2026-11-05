@@ -1,11 +1,6 @@
-/**
- * T3o: a project's committed `t3o.json` (T3O-43) — per-project board stage
- * settings. A T3o-owned file and schema, never a key in upstream's `t3.json`.
- *
- * Decoding is forgiving by design: one bad entry is dropped with a warning
- * and the rest of the file still applies, so a typo in one stage's prompt
- * never switches a whole project back to the global pipeline.
- */
+// T3o: a project's committed `t3o.json` (T3O-43), never a key in upstream's
+// `t3.json`. Decoding is forgiving: a bad entry is dropped with a warning and
+// the rest of the file applies, so one typo never resets a whole project.
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -243,7 +238,6 @@ export function resolveT3oProjectFile(input: {
   const globalStages = boardStagesInOrder(input.board);
   const globalById = new Map(globalStages.map((stage) => [String(stage.stageId), stage]));
 
-  // ── remove ──
   const removedStageIds: BoardStageId[] = [];
   const removeBlock = stagesBlock.remove;
   if (removeBlock !== undefined && !Array.isArray(removeBlock)) {
@@ -270,7 +264,6 @@ export function resolveT3oProjectFile(input: {
     }
   }
 
-  // ── add ──
   const pending: PendingAdd[] = [];
   const addBlock = stagesBlock.add;
   if (addBlock !== undefined && !Array.isArray(addBlock)) {
@@ -325,7 +318,7 @@ export function resolveT3oProjectFile(input: {
   const placed = new Map<string, BoardStageDefinition>();
   const combined: BoardStageDefinition[] = [...globalStages];
   let remaining = [...pending].reverse();
-  for (let progress = true; progress && remaining.length > 0; ) {
+  for (let progress = true; progress && remaining.length > 0;) {
     progress = false;
     const next: PendingAdd[] = [];
     for (const add of remaining) {
@@ -387,7 +380,6 @@ export function resolveT3oProjectFile(input: {
     if (Object.keys(add.patch).length > 0) overrides[stage.stageId] = add.patch;
   }
 
-  // ── settings ──
   const settingsBlock = stagesBlock.settings;
   if (settingsBlock !== undefined && !isRecord(settingsBlock)) {
     warnings.push("stages.settings: expected an object keyed by stage id; ignored.");
@@ -417,11 +409,16 @@ export function resolveT3oProjectFile(input: {
 /** Parse a `t3o.json` body to JSON, or a warning saying why it could not be. */
 export function parseT3oProjectFile(
   text: string,
-): { readonly raw: unknown; readonly warning: null } | { readonly raw: null; readonly warning: string } {
+):
+  | { readonly raw: unknown; readonly warning: null }
+  | { readonly raw: null; readonly warning: string } {
   try {
     return { raw: JSON.parse(text) as unknown, warning: null };
   } catch (cause) {
     const detail = cause instanceof Error ? cause.message : String(cause);
-    return { raw: null, warning: `${T3O_PROJECT_FILE_NAME} is not valid JSON (${detail}); ignored.` };
+    return {
+      raw: null,
+      warning: `${T3O_PROJECT_FILE_NAME} is not valid JSON (${detail}); ignored.`,
+    };
   }
 }

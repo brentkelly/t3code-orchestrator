@@ -38,7 +38,10 @@ export function resolveCardPlanReview(input: {
   readonly card: BoardCard;
   readonly settings: BoardSettings;
 }): BoardCardPlanReview {
-  return resolveBoardCardPlanReview(input.card, planStageExecution(input.board, input.settings, input.card));
+  return resolveBoardCardPlanReview(
+    input.card,
+    planStageExecution(input.board, input.settings, input.card),
+  );
 }
 
 /** The card's live plan step while a plan review is running on it, or null.

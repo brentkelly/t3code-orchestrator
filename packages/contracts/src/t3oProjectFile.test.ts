@@ -31,7 +31,10 @@ const resolve = (raw: unknown, board: BoardState = EMPTY_BOARD_STATE) =>
   resolveT3oProjectFile({ raw, board, projectId: projectA, source, now: NOW });
 
 /** The board after a project's file is applied, as the projector would. */
-const withFile = (raw: unknown, cards: ReadonlyArray<Pick<BoardCard, "stage" | "projectId">> = []) => {
+const withFile = (
+  raw: unknown,
+  cards: ReadonlyArray<Pick<BoardCard, "stage" | "projectId">> = [],
+) => {
   const resolved = resolve(raw);
   return {
     ...EMPTY_BOARD_STATE,
@@ -77,7 +80,11 @@ describe("resolveT3oProjectFile", () => {
     expect(config.removedStageIds).toEqual(["sprint"]);
     expect(config.addedStageIds).toEqual([security]);
     expect(stages).toHaveLength(1);
-    expect(stages[0]).toMatchObject({ stageId: security, label: "Security review", projectId: projectA });
+    expect(stages[0]).toMatchObject({
+      stageId: security,
+      label: "Security review",
+      projectId: projectA,
+    });
     expect(stages[0]!.orderKey > "l" && stages[0]!.orderKey < "n").toBe(true);
     expect(config.overrides).toEqual({
       review: { phases: { triage: { prompt: "Only touched areas" } } },
@@ -257,10 +264,9 @@ describe("boardCardMoveRefusal", () => {
   });
 
   it("refuses a retired stage, and a skip without override", () => {
-    const occupied = withFile(
-      { stages: { remove: ["sprint"] } },
-      [{ stage: BOARD_SEED_STAGE_IDS.sprint, projectId: projectA }],
-    );
+    const occupied = withFile({ stages: { remove: ["sprint"] } }, [
+      { stage: BOARD_SEED_STAGE_IDS.sprint, projectId: projectA },
+    ]);
     const card = { stage: BOARD_SEED_STAGE_IDS.backlog, projectId: projectA };
     expect(
       boardCardMoveRefusal(occupied, card, BOARD_SEED_STAGE_IDS.sprint, { override: true }),
@@ -310,8 +316,9 @@ describe("resolveBoardStageExecution with a project config", () => {
     expect(building.prompt).toBe("Project build");
     expect(building.kind === "build" && building.submit.prompt).toBe("Project submit");
     // Without the project config, nothing changes.
-    expect(resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building))
-      .not.toHaveProperty("prompt", "Project build");
+    expect(
+      resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, BOARD_SEED_STAGE_IDS.building),
+    ).not.toHaveProperty("prompt", "Project build");
   });
 
   it("re-applies the forced invariants over the project's values", () => {
@@ -329,13 +336,19 @@ describe("resolveBoardStageExecution with a project config", () => {
     const merge = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, "merge" as never, config);
     expect([merge.autoExecute, merge.mode]).toEqual([false, "build"]);
     expect(merge.kind === "merge" && merge.strategy).toBe("rebase");
-    const planning = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, "planning" as never, config);
+    const planning = resolveBoardStageExecution(
+      DEFAULT_BOARD_SETTINGS,
+      "planning" as never,
+      config,
+    );
     expect([planning.mode, planning.humanInLoop]).toEqual(["plan", true]);
   });
 
   it("resolves a project-added stage from the simple defaults plus its file fields", () => {
     const { config, stages } = resolve({
-      stages: { add: [{ id: "qa", label: "QA", after: "building", autoExecute: true, prompt: "QA it" }] },
+      stages: {
+        add: [{ id: "qa", label: "QA", after: "building", autoExecute: true, prompt: "QA it" }],
+      },
     });
     const exec = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, stages[0]!.stageId, config);
     expect(exec).toMatchObject({ kind: "simple", autoExecute: true, prompt: "QA it" });

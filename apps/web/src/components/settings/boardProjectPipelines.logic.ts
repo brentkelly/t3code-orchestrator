@@ -19,8 +19,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 
-const plural = (count: number, one: string, many: string) =>
-  `${count} ${count === 1 ? one : many}`;
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
 export interface BoardProjectPipelineOverride {
   readonly stageLabel: string;
@@ -49,7 +48,7 @@ export interface BoardProjectPipelineSummary {
 
 /** A setting's value, short enough for one table cell. */
 export function formatBoardSettingValue(value: unknown): string {
-  if (value === undefined) return "—";
+  if (value === undefined) return "(unset)";
   if (value === null) return "default";
   if (typeof value === "string") {
     const flat = value.replace(/\s+/g, " ").trim();
@@ -68,7 +67,8 @@ function patchLeaves(patch: BoardStageExecutionPatch): Array<readonly [string, u
   const walk = (prefix: string, value: object) => {
     for (const [key, leaf] of Object.entries(value)) {
       const path = prefix === "" ? key : `${prefix}.${key}`;
-      const nested = key === "phases" || key === "submit" || key === "planReview" || prefix === "phases";
+      const nested =
+        key === "phases" || key === "submit" || key === "planReview" || prefix === "phases";
       if (nested && typeof leaf === "object" && leaf !== null && !("instanceId" in leaf)) {
         walk(path, leaf);
       } else {
@@ -94,11 +94,17 @@ export function boardProjectPipelineSummary(input: {
   readonly projectId: ProjectId;
   readonly settings: BoardSettings;
 }): BoardProjectPipelineSummary {
-  const config: BoardProjectStageConfig | null = boardProjectStageConfig(input.view, input.projectId);
+  const config: BoardProjectStageConfig | null = boardProjectStageConfig(
+    input.view,
+    input.projectId,
+  );
   if (config === null || config.source === null) {
     return {
       followsGlobal: config === null || (config.warnings.length === 0 && config.source === null),
-      chips: config === null || config.warnings.length === 0 ? [] : [plural(config.warnings.length, "ignored entry", "ignored entries")],
+      chips:
+        config === null || config.warnings.length === 0
+          ? []
+          : [plural(config.warnings.length, "ignored entry", "ignored entries")],
       warnings: config?.warnings ?? [],
       sequence: [],
       overrides: [],
@@ -117,13 +123,11 @@ export function boardProjectPipelineSummary(input: {
         (stage.projectId === null && (used.has(stage.stageId) || removed.has(stage.stageId))) ||
         config.addedStageIds.includes(stage.stageId),
     )
-    .map(
-      (stage): BoardProjectPipelineStep => ({
-        stageId: stage.stageId,
-        label: stage.label,
-        change: stage.projectId !== null ? "added" : removed.has(stage.stageId) ? "removed" : null,
-      }),
-    );
+    .map((stage): BoardProjectPipelineStep => ({
+      stageId: stage.stageId,
+      label: stage.label,
+      change: stage.projectId !== null ? "added" : removed.has(stage.stageId) ? "removed" : null,
+    }));
 
   const overrides: Array<BoardProjectPipelineOverride> = [];
   for (const [stageId, patch] of Object.entries(config.overrides)) {

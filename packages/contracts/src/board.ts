@@ -2920,7 +2920,9 @@ export function boardAllStages(
     compiled seeds when absent (a board that has never touched a stage). The
     single reader every global decider/projector/UI path goes through, so
     "absent" and "the eight seeds" are always the same list. */
-export function boardStages(board: Pick<BoardState, "stages">): ReadonlyArray<BoardStageDefinition> {
+export function boardStages(
+  board: Pick<BoardState, "stages">,
+): ReadonlyArray<BoardStageDefinition> {
   const all = boardAllStages(board);
   return all.some((stage) => stage.projectId !== null)
     ? all.filter((stage) => stage.projectId === null)
@@ -2998,7 +3000,10 @@ export function boardProjectStagesInOrder(
 ): ReadonlyArray<BoardProjectStage> {
   const config = projectId === null ? null : boardProjectStageConfig(board, projectId);
   const all = boardAllStages(board);
-  if (config === null && !all.some((stage) => stage.projectId !== null && stage.projectId === projectId)) {
+  if (
+    config === null &&
+    !all.some((stage) => stage.projectId !== null && stage.projectId === projectId)
+  ) {
     return boardStagesInOrder(board).map((stage) => ({ ...stage, retired: false }));
   }
   const removed = new Set<string>(config?.removedStageIds ?? []);
@@ -3087,10 +3092,7 @@ export function boardCardMoveRefusal(
       : `${target.label} belongs to another project's pipeline.`;
   }
   if (entry.retired) return `This card's project no longer uses the ${target.label} stage.`;
-  if (
-    !options.override &&
-    !areBoardStagesAdjacent(board, card.stage, toStage, card.projectId)
-  ) {
+  if (!options.override && !areBoardStagesAdjacent(board, card.stage, toStage, card.projectId)) {
     return `Stage move '${card.stage}' -> '${toStage}' is not adjacent; a drag sends override to force it.`;
   }
   return null;
@@ -11405,7 +11407,10 @@ export function resolveBoardStageExecution(
       runtimeMode: effectiveBoardRuntimeMode(base.runtimeMode, "plan"),
     };
   }
-  const resolved = applyBoardStageExecutionPatch(configured ?? DEFAULT_BOARD_STAGE_EXECUTION, patch);
+  const resolved = applyBoardStageExecutionPatch(
+    configured ?? DEFAULT_BOARD_STAGE_EXECUTION,
+    patch,
+  );
   return {
     ...resolved,
     runtimeMode: effectiveBoardRuntimeMode(resolved.runtimeMode, resolved.mode),

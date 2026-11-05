@@ -111,7 +111,8 @@ export function boardPipelineColumns(input: {
       stage,
       kind: "partial",
       usedBy,
-      hint: usedBy.length <= others.length ? `Only ${nameList(usedBy)}` : `Not in ${nameList(others)}`,
+      hint:
+        usedBy.length <= others.length ? `Only ${nameList(usedBy)}` : `Not in ${nameList(others)}`,
     });
   }
   return columns;

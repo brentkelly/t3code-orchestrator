@@ -315,9 +315,7 @@ function EnvironmentBoard({
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
   const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   // Each project's t3o.json (T3O-43): which stages its cards use.
-  const projectStageConfigs = useAtomValue(
-    boardEnvironment.projectStageConfigsAtom(environmentId),
-  );
+  const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
   const stageState = useMemo(
     () => stageStateOf(orderedStages, projectStageConfigs),
     [orderedStages, projectStageConfigs],
@@ -853,7 +851,11 @@ function EnvironmentBoard({
   );
   const stageGoneFor = useCallback(
     (card: BoardCardShell) =>
-      boardCardStageGoneNote(pipelineView, card, projectTitleById.get(card.projectId) ?? "its project"),
+      boardCardStageGoneNote(
+        pipelineView,
+        card,
+        projectTitleById.get(card.projectId) ?? "its project",
+      ),
     [pipelineView, projectTitleById],
   );
 

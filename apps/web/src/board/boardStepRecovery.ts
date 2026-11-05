@@ -49,11 +49,7 @@ export function resolveBoardStepRecovery(input: {
 }): BoardStepRecovery | null {
   if (!input.stalled || input.archived) return null;
   const stage = boardStageLabelMidSentence(boardStageLabel(input.stages, input.stage));
-  const nextStage = boardNextStageId(
-    { cards: [], stages: input.stages },
-    input.stage,
-    null,
-  );
+  const nextStage = boardNextStageId({ cards: [], stages: input.stages }, input.stage, null);
   return {
     continueLabel: `Continue ${stage}`,
     restartLabel: `Restart ${stage}`,
