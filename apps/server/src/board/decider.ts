@@ -2332,9 +2332,41 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // — exactly the staleness the archive/unarchive paths already re-flag.
       const crossesDone =
         doneStageId !== null && (card.stage === doneStageId) !== (command.toStage === doneStageId);
-      return crossesDone
-        ? [moved, ...(yield* boardDependentBlockedEvents({ board, command, changed: nextCard }))]
-        : moved;
+      // A card leaving CI settles its unfinished pass here, the last place that
+      // knows its run id: while a fix agent works there is no pass fiber to.
+      const leftCi: ReadonlyArray<PlannedBoardEvent> =
+        card.stage === BOARD_SEED_STAGE_IDS.ci &&
+        command.toStage !== BOARD_SEED_STAGE_IDS.ci &&
+        card.ci !== null &&
+        card.ci.phase !== "passed"
+          ? [
+              {
+                ...(yield* makeBoardEventBase({
+                  cardId: command.cardId,
+                  occurredAt: command.createdAt,
+                  commandId: command.commandId,
+                })),
+                type: "board.card-ci-recorded",
+                payload: {
+                  cardId: command.cardId,
+                  action: { kind: "finish-pass", runId: card.ci.runId, result: "cancelled" },
+                  card: nextCard,
+                  started: null,
+                  settled: [
+                    { runId: card.ci.runId, outcome: "cancelled", finishedAt: command.createdAt },
+                  ],
+                  activity: null,
+                },
+              },
+            ]
+          : [];
+      return [
+        moved,
+        ...leftCi,
+        ...(crossesDone
+          ? yield* boardDependentBlockedEvents({ board, command, changed: nextCard })
+          : []),
+      ];
     }
 
     // T3O-27: the one regrouping primitive. Grouping alone never touches git;

@@ -3308,7 +3308,7 @@ const make = Effect.gen(function* () {
       type: "board.card.record-note",
       commandId: yield* commandId("ci-held"),
       cardId: card.id,
-      kind: "card-merge-refused",
+      kind: "card-ci-held",
       detail,
       createdAt: yield* nowIso,
     });
@@ -3633,17 +3633,10 @@ const make = Effect.gen(function* () {
     });
   });
 
-  /** A card left CI (any move): stop its pass and record why. */
+  /** A card left CI (any move): stop its pass. The move itself settled the
+      pass row as cancelled. */
   const stopCiOnLeave = Effect.fn("board-supervisor-stopCiOnLeave")(function* (card: BoardCard) {
-    const runId = yield* ciPasses.cancel(card.id);
-    if (runId === null) return;
-    yield* dispatch({
-      type: "board.card.record-ci",
-      commandId: yield* commandId("ci-cancel"),
-      cardId: card.id,
-      action: { kind: "finish-pass", runId, result: "cancelled" },
-      createdAt: yield* nowIso,
-    });
+    if ((yield* ciPasses.cancel(card.id)) === null) return;
     yield* schedule();
   });
 

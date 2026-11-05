@@ -2580,6 +2580,8 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
   "card-ci-pass-finished",
   "card-ci-sent-back",
   "card-ci-skipped",
+  /** CI is holding the card until a human acts (Skip CI, or a fix). */
+  "card-ci-held",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -5844,6 +5846,8 @@ export const BoardCardNoteKind = Schema.Literals([
   "card-pull-request-ready",
   /** What auto-planning did with a card's plan, or why it could not (T3O-32). */
   "card-auto-planned",
+  /** CI is holding the card, with the reason (T3O-44). */
+  "card-ci-held",
 ]);
 export type BoardCardNoteKind = typeof BoardCardNoteKind.Type;
 

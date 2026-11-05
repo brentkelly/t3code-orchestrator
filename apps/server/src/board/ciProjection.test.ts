@@ -153,3 +153,81 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-"))("a CI pass", (it) => {
     }),
   );
 });
+
+it.layer(makeBoardStackTestLayer("t3o-board-ci-leave-"))("a card leaving CI", (it) => {
+  it.effect("while its fix agent runs settles the failed pass as cancelled", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      let n = 0;
+      const id = () => CommandId.make(`cmd-ci-leave-${n++}`);
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: id(),
+        projectId,
+        title: "CI project",
+        workspaceRoot: `/tmp/${projectId}`,
+        defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt" },
+        createdAt: at,
+      });
+      yield* engine.dispatch({
+        type: "board.project.set-stage-config",
+        commandId: id(),
+        projectId,
+        config: { ...EMPTY_BOARD_PROJECT_STAGE_CONFIG, ci: { steps, active: true } },
+        stages: [],
+        createdAt: at,
+      });
+      yield* engine.dispatch({
+        type: "board.card.create",
+        commandId: id(),
+        cardId,
+        projectId,
+        title: "Dragged out mid-fix",
+        keyPrefix: "CI",
+        stage: BoardStageId.make("review"),
+        createdAt: at,
+      });
+      yield* engine.dispatch({
+        type: "board.card.pipeline-move",
+        commandId: id(),
+        cardId,
+        toStage: BOARD_SEED_STAGE_IDS.ci,
+        createdAt: at,
+      });
+      const record = (action: BoardCardRecordCiCommand["action"]) =>
+        engine.dispatch({
+          type: "board.card.record-ci",
+          commandId: id(),
+          cardId,
+          action,
+          createdAt: at,
+        });
+      yield* record({
+        kind: "start-pass",
+        runId: "run-a",
+        entry: 1,
+        ordinal: 1,
+        steps,
+        maxFixAttempts: 2,
+        logDir: "/wt/.t3/ci/run-a",
+        queued: false,
+        fixThreadId: null,
+      });
+      yield* record({ kind: "finish-pass", runId: "run-a", result: "failed" });
+      yield* record({ kind: "begin-fix", runId: "run-a" });
+
+      yield* engine.dispatch({
+        type: "board.card.move",
+        commandId: id(),
+        cardId,
+        toStage: BoardStageId.make("review"),
+        override: true,
+        createdAt: at,
+      });
+
+      const detail = yield* (yield* BoardQueries).boardCardDetail(cardId);
+      assert.strictEqual(detail!.ciPasses[0]!.outcome, "cancelled");
+      assert.isNull(detail!.card.ci);
+    }),
+  );
+});

@@ -25,6 +25,7 @@ import {
   type BoardCiRunnerShape,
   type BoardCiRunResult,
 } from "./ci/BoardCiRunner.ts";
+import { BOARD_CI_SLOT_INSTANCE } from "./ci/ciPasses.ts";
 import { BoardProjectConfig } from "./projectConfig/BoardProjectConfig.ts";
 import {
   NOW,
@@ -468,8 +469,11 @@ it.effect("dragging a card back out of CI cancels its pass", () =>
         yield* h.pumpDomain(
           cardMoved({ ...subject, stage: BoardStageId.make(review) }, ci, review, 2),
         );
-        const settled = ciRecords(yield* h.decided).flatMap((record) => record.payload.settled);
-        assert.isTrue(settled.some((entry) => entry.outcome === "cancelled"));
+        // The pass fiber is stopped and its slot freed; the move's own decision
+        // settles the row (ciProjection.test.ts).
+        yield* h.reactor.drainCi;
+        assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 0);
+        assert.isNull((yield* live(h, subject.id)).ci);
       }),
     ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
   }),

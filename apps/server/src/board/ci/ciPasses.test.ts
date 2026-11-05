@@ -5,7 +5,7 @@
 import {
   BOARD_LOCAL_WORKER_ID,
   BoardCardId,
-  BoardWorkerId,
+  EnvironmentId,
   CommandId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -59,10 +59,10 @@ it.effect("admitting queued passes skips one whose worker is full and starts the
       nowIso: Effect.succeed("2026-01-01T00:00:00.000Z"),
       onFinished: () => Effect.void,
     });
-    const workerA = BoardWorkerId.make("worker-a");
-    const workerB = BoardWorkerId.make("worker-b");
+    const workerA = EnvironmentId.make("worker-a");
+    const workerB = EnvironmentId.make("worker-b");
     const limits = { global: 2, worker: 1, perInstance: null };
-    const request = (card: string, workerId: BoardWorkerId) => ({
+    const request = (card: string, workerId: EnvironmentId) => ({
       cardId: BoardCardId.make(card),
       runId: `run-${card}`,
       worktreePath: "/tmp/nowhere",
@@ -72,7 +72,7 @@ it.effect("admitting queued passes skips one whose worker is full and starts the
     });
     // An agent step on a third worker holds the board's other slot.
     const other = {
-      workerId: BoardWorkerId.make("worker-c"),
+      workerId: EnvironmentId.make("worker-c"),
       providerInstanceId: ProviderInstanceId.make("codex"),
     };
     assert.isTrue((yield* slots.acquire(other, limits)).admitted);

@@ -202,6 +202,8 @@ function ActivityIcon({
       return <Undo2Icon className={cn(className, "text-warning-foreground")} />;
     case "card-ci-skipped":
       return <ChevronsRightIcon className={className} />;
+    case "card-ci-held":
+      return <TriangleAlertIcon className={cn(className, "text-warning-foreground")} />;
     // T3O-39: plan review rows claim nothing about the work — neutral.
     case "plan-review-started":
     case "plan-review-stopped":
@@ -233,6 +235,7 @@ const CI_ACTIVITY_KINDS: ReadonlySet<BoardCardActivityEntry["kind"]> = new Set([
   "card-ci-pass-finished",
   "card-ci-sent-back",
   "card-ci-skipped",
+  "card-ci-held",
 ]);
 
 function roundsPhrase(rounds: number): string {
@@ -446,6 +449,8 @@ function activitySentence(
     }
     case "card-ci-skipped":
       return <>skipped CI</>;
+    case "card-ci-held":
+      return payload.detail === undefined ? <>held the card in CI</> : <>{payload.detail}</>;
     case "card-review-round-requested":
       return payload.detail === undefined ? (
         <>asked for another review round</>
