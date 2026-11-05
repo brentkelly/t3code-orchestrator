@@ -1967,6 +1967,11 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
             command,
             `Card '${card.key}' has already been built — it has a worktree, a pull request, or has reached the build stage — so its project is pinned.`,
           );
+        case "project-stage":
+          return yield* invariant(
+            command,
+            `Card '${card.key}' is in ${lock.stageLabel}, a stage only its project's t3o.json defines; move it to a shared stage first.`,
+          );
         case undefined:
           break;
       }

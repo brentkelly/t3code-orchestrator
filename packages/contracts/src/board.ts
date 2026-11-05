@@ -3612,7 +3612,10 @@ export function isBoardStageAtOrAfterSubBoardFloor(
 export type BoardCardProjectLock =
   | { readonly kind: "child"; readonly parentCardId: BoardCardId }
   | { readonly kind: "parent"; readonly childCount: number }
-  | { readonly kind: "built" };
+  | { readonly kind: "built" }
+  /** The card sits in a stage its project's `t3o.json` added (T3O-43): no other
+      project's pipeline holds it, so the card would be in no stage at all. */
+  | { readonly kind: "project-stage"; readonly stageLabel: string };
 
 export function boardCardProjectLock(input: {
   readonly board: BoardState;
@@ -3636,6 +3639,10 @@ export function boardCardProjectLock(input: {
     card.pullRequestHistory.length > 0
   ) {
     return { kind: "built" };
+  }
+  const stage = boardStageById(input.board, card.stage);
+  if (stage !== null && stage.projectId !== null) {
+    return { kind: "project-stage", stageLabel: stage.label };
   }
   return null;
 }

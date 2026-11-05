@@ -172,3 +172,52 @@ it.layer(makeBoardStackTestLayer("t3o-project-stage-config-test-"))(
     );
   },
 );
+
+it.layer(makeBoardStackTestLayer("t3o-project-stage-set-project-test-"))(
+  "per-project stage config: changing a card's project",
+  (it) => {
+    it.effect(
+      "refuses moving a card out of its project while it sits in a project-owned stage",
+      () =>
+        Effect.gen(function* () {
+          const engine = yield* boardStackEngine;
+          const snapshots = yield* boardStackSnapshotQuery;
+          const intake = boardProjectStageId(projectA, "intake");
+
+          yield* engine.dispatch(createProject(projectA, "a"));
+          yield* engine.dispatch(createProject(projectB, "b"));
+          yield* engine.dispatch({
+            type: "board.card.create",
+            commandId: nextCommandId("create"),
+            cardId: cardA,
+            projectId: projectA,
+            title: "Card A",
+            createdAt: t0,
+          });
+          const model = yield* snapshots.getCommandReadModel();
+          yield* engine.dispatch(
+            setConfig(model.board!, {
+              stages: { add: [{ id: "intake", label: "Intake", after: "backlog" }] },
+            }),
+          );
+          yield* engine.dispatch(move(cardA, intake));
+
+          const setProject = () =>
+            engine.dispatch({
+              type: "board.card.set-project",
+              commandId: nextCommandId("set-project"),
+              cardId: cardA,
+              projectId: projectB,
+              createdAt: t0,
+            });
+          const refused = yield* Effect.exit(setProject());
+          assert.isTrue(Exit.isFailure(refused));
+          assert.include(String(refused), "a stage only its project's t3o.json defines");
+
+          // Back in a shared stage, the move is allowed.
+          yield* engine.dispatch(move(cardA, "backlog"));
+          yield* setProject();
+        }),
+    );
+  },
+);
