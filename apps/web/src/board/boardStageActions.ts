@@ -206,7 +206,6 @@ export function boardStagePrimaryAction(
   stageId: BoardStageId,
   context?: BoardStagePrimaryActionContext,
 ): BoardStagePrimaryAction | null {
-  const board = stateOf(stages);
   const current = stages.find((stage) => stage.stageId === stageId) ?? null;
   // Effective, not raw: a `board_stages` row seeded before a role existed
   // carries it as NULL, and the button must not change behaviour based on how

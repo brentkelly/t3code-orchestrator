@@ -117,6 +117,13 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   card's thread last finished a turn. Only those two: a pending question is answerable the moment it
   is asked, a stall has already exhausted recovery, and a pause is the human's own instruction —
   none of them is guessing about a beat that has not finished.
+- **CI reads the same way (T3O-44).** On the card face's step segments, the card view's CI tab
+  and the step badge Code review shares with it: a running step and a step a fix agent is working
+  on are blue, a passed step is green, a step that failed and will not be fixed in place is amber,
+  and a cancelled step is a grey dash. The Queued chip is neutral, like the build queue's. A card
+  CI sent back to review wears an amber note and banner — it is held until a fresh review round
+  clears it — and "CI skipped by …" is neutral: a human chose it, so there is nothing to claim.
+  Nothing on the card face animates; the running step's name shimmers only in the open card view.
 - **The Summary pane's Heads-up tags and check tiles follow it too.** Plan change is violet (it
   waits on a human's read), Not done is amber, and Shortcut is neutral, never blue, because blue
   means running. A failing check tile is amber, not red.
