@@ -26,6 +26,7 @@ import {
   type BoardState,
 } from "./index.ts";
 import { resolveT3oProjectFile } from "./t3oProjectFile.ts";
+import { composeBoardReviewPhasePrompt } from "./boardEnvelope.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const withCi = ProjectId.make("project-ci");
@@ -236,5 +237,22 @@ describe("CI move refusals", () => {
   it("changes nothing for a project without CI", () => {
     expect(refuse(review, merge, withoutCi)).toBeNull();
     expect(refuse(review, ci, withoutCi)).toContain("doesn't use");
+  });
+});
+
+describe("a CI send-back in the next review round", () => {
+  it("is a must-fix finding for review and triage, not for adjudication", () => {
+    const compose = (phase: "review" | "triage" | "adjudicate") =>
+      composeBoardReviewPhasePrompt({
+        phase,
+        round: 4,
+        rounds: 4,
+        prompt: "Review it.",
+        ciFinding: { stepName: "Test", finding: "vp test exited with code 1." },
+      });
+    expect(compose("review")).toContain('after its "Test" step failed');
+    expect(compose("review")).toContain("report it as a critical finding");
+    expect(compose("triage")).toContain("vp test exited with code 1.");
+    expect(compose("adjudicate")).not.toContain("CI sent this card back");
   });
 });
