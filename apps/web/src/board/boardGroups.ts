@@ -246,6 +246,15 @@ const CHILD_STATE_NAME: Record<BoardGroupChildState, string> = {
   idle: "not started",
 };
 
+// Pips read as a progress bar: finished work fills from the left, untouched work trails.
+const PIP_ORDER: Record<BoardGroupChildState, number> = {
+  done: 0,
+  running: 1,
+  waiting: 2,
+  blocked: 3,
+  idle: 4,
+};
+
 export interface BoardGroupCardVm {
   readonly pips: ReadonlyArray<{
     readonly state: BoardGroupChildState;
@@ -272,10 +281,12 @@ export function boardGroupCardVm(
   if (group === null) return null;
   const stats = boardGroupStats(input, String(card.cardId));
   return {
-    pips: stats.active.map((child, index) => ({
-      state: stats.states[index]!,
-      tooltip: `${child.key} · ${child.title} — ${CHILD_STATE_NAME[stats.states[index]!]}`,
-    })),
+    pips: stats.active
+      .map((child, index) => ({
+        state: stats.states[index]!,
+        tooltip: `${child.key} · ${child.title} — ${CHILD_STATE_NAME[stats.states[index]!]}`,
+      }))
+      .toSorted((a, b) => PIP_ORDER[a.state] - PIP_ORDER[b.state]),
     doneLabel: stats.active.length > 0 ? `${stats.done}/${stats.active.length}` : "0",
     needs: stats.waiting > 0 ? `${stats.waiting} need${stats.waiting === 1 ? "s" : ""} you` : null,
     blocked: stats.blocked > 0 ? `${stats.blocked} blocked` : null,
