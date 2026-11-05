@@ -21,7 +21,6 @@
  * it; it never advances a card on its own.
  */
 import {
-  areBoardStagesAdjacent,
   BOARD_DECISIONS_PER_CALL_MAX,
   isBoardCardAutoPlanPending,
   BOARD_CARD_BRIEF_BODY_KIND,
@@ -87,6 +86,9 @@ import {
   boardGroupRevertStage,
   boardGroupTargetLockReason,
   boardNextStageId,
+  boardCardMoveRefusal,
+  boardProjectStagesInOrder,
+  planBoardProjectStageConfig,
   defaultBoardCardGroup,
   boardSplitRecommendationFallback,
   boardSplitRecommendationOf,
@@ -174,11 +176,18 @@ function isBoardWorkerCommand(command: BoardCommand): command is BoardWorkerComm
   return command.type.startsWith("board.worker.");
 }
 
-/** Card-aggregate commands — every board command except the label, stage and
-    worker ones; the only commands that carry a `cardId`. */
+/** Project commands (T3O-43) aggregate on the project: a project's
+    `t3o.json` stage config. Keyed on the `board.project.` prefix. */
+type BoardProjectCommand = Extract<BoardCommand, { type: `board.project.${string}` }>;
+function isBoardProjectCommand(command: BoardCommand): command is BoardProjectCommand {
+  return command.type.startsWith("board.project.");
+}
+
+/** Card-aggregate commands — every board command except the label, stage,
+    worker and project ones; the only commands that carry a `cardId`. */
 type BoardCardCommand = Exclude<
   BoardCommand,
-  BoardLabelCommand | BoardStageCommand | BoardWorkerCommand
+  BoardLabelCommand | BoardStageCommand | BoardWorkerCommand | BoardProjectCommand
 >;
 
 export { isBoardCommand };
@@ -211,9 +220,12 @@ export function boardDecidedEvents(decided: BoardDecision): ReadonlyArray<Planne
  * behind the `isBoardCommand` predicate.
  */
 export function boardCommandAggregateRef(command: BoardCommand): {
-  readonly aggregateKind: "card" | "label" | "stage" | "worker";
-  readonly aggregateId: BoardCardId | BoardLabelId | BoardStageId | BoardWorkerId;
+  readonly aggregateKind: "card" | "label" | "stage" | "worker" | "project";
+  readonly aggregateId: BoardCardId | BoardLabelId | BoardStageId | BoardWorkerId | ProjectId;
 } {
+  if (isBoardProjectCommand(command)) {
+    return { aggregateKind: "project", aggregateId: command.projectId };
+  }
   if (isBoardWorkerCommand(command)) {
     return {
       aggregateKind: "worker",
@@ -1569,7 +1581,8 @@ const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
 
   const doneStageId = boardStageWithRole(board, "done")?.stageId ?? null;
   const build = boardStageWithRole(board, "build");
-  const lane = build === null ? null : boardNextStageId(board, build.stageId);
+  const laneFor = (card: BoardCard) =>
+    build === null ? null : boardNextStageId(board, build.stageId, card.projectId);
   // A child moved into build by a human or the group cascade begins its parent
   // group (T3O-38); a child's own Auto-build start does not, so it never
   // starts its siblings.
@@ -1593,6 +1606,7 @@ const deriveGroupEvents = Effect.fn("deriveGroupEvents")(function* (input: {
       next = { ...card, group: null, stage: boardGroupRevertStage(board, card) };
     } else {
       const derived = deriveBoardGroupStage(board, card);
+      const lane = laneFor(card);
       const laneIndex = lane === null ? -1 : boardStageIndex(board, lane);
       const reopened =
         group.integrated &&
@@ -1701,7 +1715,8 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
               board,
               createParent !== undefined && boardCardGroupOf(board, createParent)?.target === "own",
             )
-          : boardStagesInOrder(board)[0]!.stageId);
+          : (boardProjectStagesInOrder(board, command.projectId).find((entry) => !entry.retired)
+              ?.stageId ?? boardStagesInOrder(board)[0]!.stageId));
       // Deferred (T3O-27) is a system stage outside the stage list, open only
       // inside a group.
       if (isBoardDeferredStage(stage)) {
@@ -1713,6 +1728,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         }
       } else if (boardStageById(board, stage) === null) {
         return yield* invariant(command, `Stage '${stage}' does not exist.`);
+      } else {
+        // T3O-43: only into a stage the card's project uses.
+        const refusal = boardCardMoveRefusal(
+          board,
+          { stage, projectId: command.projectId },
+          stage,
+          { override: true },
+        );
+        if (refusal !== null) return yield* invariant(command, refusal);
       }
 
       const labels = yield* validateCardLabels({
@@ -1995,6 +2019,12 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (!toDeferred && boardStageById(board, command.toStage) === null) {
         return yield* invariant(command, `Stage '${command.toStage}' does not exist.`);
       }
+      // A stage this card's project does not use (T3O-43) is refused even with
+      // override; the shared predicate is the drag layer's tooltip too.
+      const projectRefusal = boardCardMoveRefusal(board, card, command.toStage, {
+        override: true,
+      });
+      if (projectRefusal !== null) return yield* invariant(command, projectRefusal);
       // Deferred (T3O-27): a parking lot inside a group, just before the
       // first stage. Cards enter it from anywhere unstarted, and leave it for
       // any stage before build; further needs override, like any other skip.
@@ -2030,17 +2060,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         (buildStageForDeferred === null ||
           boardStageIndex(board, command.toStage) <
             boardStageIndex(board, buildStageForDeferred.stageId));
-      if (
-        !toDeferred &&
-        !leavesDeferredBeforeBuild &&
-        command.override !== true &&
-        !areBoardStagesAdjacent(board, card.stage, command.toStage)
-      ) {
-        return yield* invariant(
-          command,
-          `Stage move '${card.stage}' -> '${command.toStage}' is not adjacent; a drag sends override to force it.`,
-        );
-      }
+      const adjacencyRefusal = boardCardMoveRefusal(board, card, command.toStage, {
+        override: toDeferred || leavesDeferredBeforeBuild || command.override === true,
+      });
+      if (adjacencyRefusal !== null) return yield* invariant(command, adjacencyRefusal);
       // Sub-board plan cards (t3o-23, D3) are materialised work, restricted
       // to the materialisation floor and beyond — draggable back out of
       // Building to the floor (reverse states), but no override reopens the
@@ -3698,6 +3721,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         orderKey: command.orderKey,
         createdAt: command.createdAt,
         updatedAt: command.createdAt,
+        projectId: null,
       };
       // A new role-holder would break "exactly one stage per role"; the four
       // roles are seeded and never created.
@@ -5850,6 +5874,67 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     // ── Worker registry (T3O-62, D19) ────────────────────────────────
     // Keyed on the worker, never a card. What happens to cards placed on a
     // removed worker belongs to the removal fallback (D22), not here.
+    case "board.project.set-stage-config": {
+      // A project's committed t3o.json (T3O-43). The reconciler resolved it;
+      // the decider checks every row is this project's own and works out which
+      // old rows go, from the board it holds now.
+      const prefix = `${command.projectId}:`;
+      for (const stage of command.stages) {
+        if (
+          stage.projectId !== command.projectId ||
+          !stage.stageId.startsWith(prefix) ||
+          stage.role !== null
+        ) {
+          return yield* invariant(
+            command,
+            `Stage '${stage.stageId}' is not a role-less stage owned by project '${command.projectId}'.`,
+          );
+        }
+        const clash = boardStageById(board, stage.stageId);
+        if (clash !== null && clash.projectId !== command.projectId) {
+          return yield* invariant(command, `Stage '${stage.stageId}' already exists.`);
+        }
+      }
+      const declared = new Set<string>(command.stages.map((stage) => stage.stageId));
+      if (
+        declared.size !== command.config.addedStageIds.length ||
+        command.config.addedStageIds.some((stageId) => !declared.has(stageId))
+      ) {
+        return yield* invariant(
+          command,
+          "A project stage config must declare exactly the stages it carries.",
+        );
+      }
+      const plan = planBoardProjectStageConfig({
+        board,
+        projectId: command.projectId,
+        config: command.config,
+        stages: command.stages.map((stage) => ({
+          ...stage,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        })),
+      });
+      const crypto = yield* Crypto.Crypto;
+      return {
+        eventId: EventId.make(yield* crypto.randomUUIDv4()),
+        aggregateKind: "project" as const,
+        aggregateId: command.projectId,
+        occurredAt: command.createdAt,
+        commandId: command.commandId,
+        causationEventId: null,
+        correlationId: command.commandId,
+        metadata: {},
+        type: "board.project-stage-config-set",
+        payload: {
+          projectId: command.projectId,
+          config: command.config,
+          upserts: plan.upserts,
+          deletedStageIds: plan.deletedStageIds,
+        },
+      };
+    }
+
     case "board.worker.register": {
       if (command.worker.id === BOARD_LOCAL_WORKER_ID) {
         return yield* invariant(command, "The server hosting the board is already a worker.");

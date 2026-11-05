@@ -22,6 +22,7 @@ import {
   defaultBoardCardGroup,
   BoardClientCommand,
   EMPTY_BOARD_STATE,
+  EMPTY_BOARD_PROJECT_STAGE_CONFIG,
   resolveBoardCardForThread,
   type BoardCard,
   type BoardCardStepState,
@@ -2605,6 +2606,14 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           commandId: CommandId.make("cmd-move-worker"),
           cardId: BoardCardId.make("card-worktree"),
           step: { phase: "start", toWorkerId: EnvironmentId.make("env-worker-a"), sha: null },
+          createdAt: NOW,
+        },
+        "board.project.set-stage-config": {
+          type: "board.project.set-stage-config",
+          commandId: CommandId.make("cmd-project-stage-config"),
+          projectId: ProjectId.make("project-1"),
+          config: EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+          stages: [],
           createdAt: NOW,
         },
       };

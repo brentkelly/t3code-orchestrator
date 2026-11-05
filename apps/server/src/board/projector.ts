@@ -77,9 +77,11 @@ import {
   BoardPlanWrittenPayload,
   BoardStageCreatedPayload,
   BoardStageDeletedPayload,
+  BoardProjectStageConfigSetPayload,
+  type BoardProjectStageConfig,
   BoardStageRenamedPayload,
   BoardStageReorderedPayload,
-  boardStages,
+  boardAllStages,
   boardStepParkedReason,
   compareBoardLabels,
   compareBoardStages,
@@ -183,6 +185,9 @@ const decodeBoardStageCreatedPayload = Schema.decodeUnknownEffect(BoardStageCrea
 const decodeBoardStageRenamedPayload = Schema.decodeUnknownEffect(BoardStageRenamedPayload);
 const decodeBoardStageReorderedPayload = Schema.decodeUnknownEffect(BoardStageReorderedPayload);
 const decodeBoardStageDeletedPayload = Schema.decodeUnknownEffect(BoardStageDeletedPayload);
+const decodeBoardProjectStageConfigSetPayload = Schema.decodeUnknownEffect(
+  BoardProjectStageConfigSetPayload,
+);
 const decodeBoardCardStageThreadRequestedPayload = Schema.decodeUnknownEffect(
   BoardCardStageThreadRequestedPayload,
 );
@@ -383,7 +388,7 @@ function upsertLabel<M extends BoardReadModel>(model: M, label: BoardLabel): M {
     slice in canonical `compareBoardStages` order so replay equals rehydration. */
 function upsertStage<M extends BoardReadModel>(model: M, stage: BoardStageDefinition): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
-  const current = boardStages(board);
+  const current = boardAllStages(board);
   const stages = (
     current.some((existing) => existing.stageId === stage.stageId)
       ? current.map((existing) => (existing.stageId === stage.stageId ? stage : existing))
@@ -398,8 +403,28 @@ function removeStage<M extends BoardReadModel>(
   stageId: BoardStageDefinition["stageId"],
 ): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
-  const stages = boardStages(board).filter((stage) => stage.stageId !== stageId);
+  const stages = boardAllStages(board).filter((stage) => stage.stageId !== stageId);
   return { ...model, board: { ...board, stages } };
+}
+
+/** Record a project's `t3o.json` stage config (T3O-43): the config itself,
+    in project-id order so replay equals rehydration, and the project-owned
+    stage rows it wrote and dropped. */
+function setProjectStageConfig<M extends BoardReadModel>(
+  model: M,
+  payload: BoardProjectStageConfigSetPayload,
+): M {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const configs = { ...board.projectStageConfigs, [payload.projectId]: payload.config };
+  const projectStageConfigs = Object.fromEntries(
+    Object.entries(configs).toSorted(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    ),
+  ) as Record<ProjectId, BoardProjectStageConfig>;
+  let next: M = { ...model, board: { ...board, projectStageConfigs } };
+  for (const stage of payload.upserts) next = upsertStage(next, stage);
+  for (const stageId of payload.deletedStageIds) next = removeStage(next, stageId);
+  return next;
 }
 
 /** Counter bump: monotonic max, so replaying a legacy event (cardNumber 0)
@@ -985,6 +1010,12 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => setDefaultWorker(model, payload.workerId)),
       );
 
+    case "board.project-stage-config-set":
+      return decodeBoardProjectStageConfigSetPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => setProjectStageConfig(model, payload)),
+      );
+
     default: {
       event satisfies never;
       // Runtime backstop for an undecoded event: leave the model unchanged.
@@ -1294,6 +1325,16 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     case "board.worker-removed":
     case "board.default-worker-set":
       return Option.none();
+
+    case "board.project-stage-config-set":
+      return Option.some({
+        kind: "project-stage-config",
+        sequence: event.sequence,
+        projectId: event.payload.projectId,
+        config: event.payload.config,
+        upserts: event.payload.upserts,
+        deletedStageIds: event.payload.deletedStageIds,
+      });
 
     case "board.card-step-paused":
       // A human stopped the step (T3O-23) — the fourth step transition that is

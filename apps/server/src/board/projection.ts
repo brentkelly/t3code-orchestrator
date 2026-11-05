@@ -82,6 +82,7 @@ import {
   type BoardCardShell,
   type BoardShellSnapshot,
   IsoDateTime,
+  BoardProjectStageConfig,
   ProjectId,
   ThreadId,
   RuntimeMode,
@@ -256,8 +257,17 @@ const BoardStageDbRow = Schema.Struct({
   orderKey: BoardStageDefinition.fields.orderKey,
   createdAt: BoardStageDefinition.fields.createdAt,
   updatedAt: BoardStageDefinition.fields.updatedAt,
+  // NULL for a global stage; the owning project for a `t3o.json` stage (057).
+  projectId: Schema.NullOr(ProjectId),
 });
 type BoardStageDbRow = typeof BoardStageDbRow.Type;
+
+/** The `board_project_stage_configs` row (T3O-43, 058). */
+const BoardProjectStageConfigDbRow = Schema.Struct({
+  projectId: ProjectId,
+  config: Schema.fromJsonString(BoardProjectStageConfig),
+  updatedAt: IsoDateTime,
+});
 
 // Card↔label join row (905_BoardCardLabels). `ordinal` preserves the card's
 // label order so rehydration reproduces the array the decider computed.
@@ -1720,10 +1730,11 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   const upsertBoardStageRow = SqlSchema.void({
     Request: BoardStageDbRow,
     execute: (row) => sql`
-      INSERT INTO board_stages (stage_id, label, role, order_key, created_at, updated_at)
-      VALUES (${row.stageId}, ${row.label}, ${row.role}, ${row.orderKey}, ${row.createdAt}, ${row.updatedAt})
+      INSERT INTO board_stages (stage_id, label, role, order_key, created_at, updated_at, project_id)
+      VALUES (${row.stageId}, ${row.label}, ${row.role}, ${row.orderKey}, ${row.createdAt}, ${row.updatedAt}, ${row.projectId})
       ON CONFLICT (stage_id)
       DO UPDATE SET
+        project_id = excluded.project_id,
         label = excluded.label,
         role = excluded.role,
         order_key = excluded.order_key,
@@ -1752,8 +1763,33 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         role,
         order_key AS "orderKey",
         created_at AS "createdAt",
-        updated_at AS "updatedAt"
+        updated_at AS "updatedAt",
+        project_id AS "projectId"
       FROM board_stages
+    `,
+  });
+
+  // ── Project stage configs (T3O-43) ───────────────────────────────────
+
+  const upsertBoardProjectStageConfigRow = SqlSchema.void({
+    Request: BoardProjectStageConfigDbRow,
+    execute: (row) => sql`
+      INSERT INTO board_project_stage_configs (project_id, config_json, updated_at)
+      VALUES (${row.projectId}, ${row.config}, ${row.updatedAt})
+      ON CONFLICT (project_id)
+      DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at
+    `,
+  });
+
+  const listBoardProjectStageConfigRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: BoardProjectStageConfigDbRow,
+    execute: () => sql`
+      SELECT
+        project_id AS "projectId",
+        config_json AS "config",
+        updated_at AS "updatedAt"
+      FROM board_project_stage_configs
     `,
   });
 
@@ -2477,6 +2513,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     upsertBoardWorkerRow,
     deleteBoardWorkerRow,
     listBoardWorkerRows,
+    upsertBoardProjectStageConfigRow,
+    listBoardProjectStageConfigRows,
     writeBoardDefaultWorkerRow,
     findBoardDefaultWorkerRow,
     findBoardCardStepErrorRow,
@@ -2832,6 +2870,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         orderKey: stage.orderKey,
         createdAt: stage.createdAt,
         updatedAt: stage.updatedAt,
+        projectId: stage.projectId,
       })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.stage:query")));
 
@@ -3517,6 +3556,21 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         yield* writeDefaultWorker(event.payload.workerId);
         return;
 
+      case "board.project-stage-config-set":
+        // Config row (058) plus the project-owned stage rows (057) it moved.
+        yield* queries
+          .upsertBoardProjectStageConfigRow({
+            projectId: event.payload.projectId,
+            config: event.payload.config,
+            updatedAt: event.occurredAt,
+          })
+          .pipe(
+            Effect.mapError(toPersistenceSqlError("BoardCardsProjection.projectStageConfig:query")),
+          );
+        for (const stage of event.payload.upserts) yield* upsertStage(stage);
+        for (const stageId of event.payload.deletedStageIds) yield* removeStage(stageId);
+        return;
+
       default: {
         event satisfies never;
         return;
@@ -3553,6 +3607,7 @@ export function loadBoardState(
     queries.listBoardPlanRows(),
     queries.listBoardWorkerRows(),
     queries.findBoardDefaultWorkerRow(),
+    queries.listBoardProjectStageConfigRows(),
   ]).pipe(
     Effect.map(
       ([
@@ -3568,6 +3623,7 @@ export function loadBoardState(
         planRows,
         workerRows,
         defaultWorkerRow,
+        projectStageConfigRows,
       ]) => {
         // Canonical ordering comes from the shared JS comparators — the same
         // ones the replay path uses — never from SQL collation.
@@ -3589,6 +3645,7 @@ export function loadBoardState(
             orderKey: row.orderKey,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
+            projectId: row.projectId,
           }))
           .sort(compareBoardStages);
         // A migrated-but-unused board (no cards, catalogue AND stage list still
@@ -3602,7 +3659,9 @@ export function loadBoardState(
           boardStagesAreSeedOnly(stages) &&
           // T3O-62: a board with only workers registered is not unused.
           workerRows.length === 0 &&
-          Option.isNone(defaultWorkerRow)
+          Option.isNone(defaultWorkerRow) &&
+          // T3O-43: nor is one with only a project's t3o.json reconciled.
+          projectStageConfigRows.length === 0
         ) {
           return null;
         }
@@ -3709,6 +3768,9 @@ export function loadBoardState(
           ...(stepStates.length > 0 ? { stepStates } : {}),
           ...(plans.length > 0 ? { plans } : {}),
           ...(workers.length > 0 ? { workers } : {}),
+          ...(projectStageConfigRows.length > 0
+            ? { projectStageConfigs: projectStageConfigsFromRows(projectStageConfigRows) }
+            : {}),
           ...(defaultWorkerId !== null && defaultWorkerId !== BOARD_LOCAL_WORKER_ID
             ? { defaultWorkerId }
             : {}),
@@ -4012,6 +4074,30 @@ function boardShellLabels(
   );
 }
 
+/** Project id → resolved config, in project-id order so rehydration and a
+    from-empty replay build the same record. */
+function projectStageConfigsFromRows(
+  rows: ReadonlyArray<{ readonly projectId: ProjectId; readonly config: BoardProjectStageConfig }>,
+): Record<ProjectId, BoardProjectStageConfig> {
+  return Object.fromEntries(
+    [...rows]
+      .sort((left, right) =>
+        left.projectId < right.projectId ? -1 : left.projectId > right.projectId ? 1 : 0,
+      )
+      .map((row) => [row.projectId, row.config]),
+  );
+}
+
+/** Per-project stage configs for the shell (T3O-43); absent when none. */
+function boardShellProjectStageConfigs(
+  queries: BoardCardQueries,
+): Effect.Effect<Record<ProjectId, BoardProjectStageConfig> | null, ProjectionRepositoryError> {
+  return queries.listBoardProjectStageConfigRows().pipe(
+    Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellProjectStageConfigs:query")),
+    Effect.map((rows) => (rows.length === 0 ? null : projectStageConfigsFromRows(rows))),
+  );
+}
+
 /** The user-defined stage list (t3o-15), so the board reads column order and
     labels from it (D13). */
 function boardShellStages(
@@ -4028,6 +4114,7 @@ function boardShellStages(
           orderKey: row.orderKey,
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
+          projectId: row.projectId,
         }))
         .sort(compareBoardStages),
     ),
@@ -4048,13 +4135,21 @@ export function loadBoardShellSnapshot(
 ): Effect.Effect<BoardShellSnapshot, ProjectionRepositoryError> {
   return Effect.gen(function* () {
     const snapshotSequence = yield* latestSequence;
-    const [cards, labels, stages, cardThreads] = yield* Effect.all([
+    const [cards, labels, stages, cardThreads, projectStageConfigs] = yield* Effect.all([
       boardShellCards(queries),
       boardShellLabels(queries),
       boardShellStages(queries),
       boardShellCardThreads(queries),
+      boardShellProjectStageConfigs(queries),
     ]);
-    return { snapshotSequence, cards, labels, stages, cardThreads };
+    return {
+      snapshotSequence,
+      cards,
+      labels,
+      stages,
+      cardThreads,
+      ...(projectStageConfigs === null ? {} : { projectStageConfigs }),
+    };
   });
 }
 
