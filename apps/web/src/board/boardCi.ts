@@ -193,7 +193,7 @@ export function boardCiSentBackBanner(input: {
   };
 }
 
-export const BOARD_CI_PASS_OUTCOME_LABEL: Record<BoardCiPassOutcome, string> = {
+const BOARD_CI_PASS_OUTCOME_LABEL: Record<BoardCiPassOutcome, string> = {
   passed: "Passed",
   "fixed-in-place": "Fixed in place",
   "sent-back": "Sent back to review",

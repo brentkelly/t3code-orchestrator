@@ -1475,7 +1475,7 @@ export const BoardCiStepDefinition = Schema.Struct({
 });
 export type BoardCiStepDefinition = typeof BoardCiStepDefinition.Type;
 
-export const BOARD_CI_STEP_STATUSES = [
+const BOARD_CI_STEP_STATUSES = [
   "pending",
   "running",
   "passed",
@@ -1485,11 +1485,6 @@ export const BOARD_CI_STEP_STATUSES = [
 ] as const;
 export const BoardCiStepStatus = Schema.Literals(BOARD_CI_STEP_STATUSES);
 export type BoardCiStepStatus = typeof BoardCiStepStatus.Type;
-
-/** A step status that will not change again within its pass. */
-export function isBoardCiStepSettled(status: BoardCiStepStatus): boolean {
-  return status !== "pending" && status !== "running";
-}
 
 /** A step status that ends its pass as a failure. */
 export function isBoardCiStepFailure(status: BoardCiStepStatus): boolean {
@@ -1548,7 +1543,7 @@ export type BoardCardCiLastOutcome = typeof BoardCardCiLastOutcome.Type;
 
 /** How a CI pass ended. `fixed-in-place` failed and a fix agent fixed it;
     `cancelled` was stopped because the card left CI. */
-export const BOARD_CI_PASS_OUTCOMES = [
+const BOARD_CI_PASS_OUTCOMES = [
   "passed",
   "fixed-in-place",
   "sent-back",
@@ -3309,7 +3304,7 @@ export function isBoardCiActive(
  * forward only by passing or by Skip CI, and never jump over it. Override
  * does not lift these; moving back out of CI to an earlier stage is free.
  */
-export function boardCiMoveRefusal(
+function boardCiMoveRefusal(
   board: BoardStageView,
   card: Pick<BoardCard, "stage" | "projectId">,
   toStage: BoardStageId,

@@ -9,7 +9,6 @@
  * back through the reactor's serial worker via `onFinished`.
  */
 import {
-  BOARD_SEED_STAGE_IDS,
   ProviderInstanceId,
   type BoardCardId,
   type BoardCiStepDefinition,
@@ -197,6 +196,3 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
     busy: () => running.size > 0,
   } satisfies BoardCiPasses;
 });
-
-/** The CI stage's id, re-exported for the reactor's few CI checks. */
-export const BOARD_CI_STAGE_ID = BOARD_SEED_STAGE_IDS.ci;

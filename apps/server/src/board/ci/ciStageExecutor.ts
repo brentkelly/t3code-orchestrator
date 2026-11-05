@@ -29,7 +29,7 @@ import type {
 /** How much of a failing step's output a send-back finding quotes. */
 const FINDING_TAIL_LINES = 40;
 
-export function boardCiFailureFinding(failure: BoardCiFailure): string {
+function boardCiFailureFinding(failure: BoardCiFailure): string {
   const ended =
     failure.status === "timed-out"
       ? "timed out"
