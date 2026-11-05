@@ -182,7 +182,7 @@ describe("decideBoardCiRecord", () => {
     }) as BoardCardRecordCiCommand["action"];
 
   it("starts a pass, settling a fixed one as fixed in place", () => {
-    const result = record(cardInCi(ci({ phase: "fixing", fixAttempts: 1 })), start());
+    const result = record(cardInCi(ci({ phase: "fixing", fixAttempts: 1 })), start("thread-fix"));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.payload.card.ci).toMatchObject({
@@ -191,7 +191,7 @@ describe("decideBoardCiRecord", () => {
       phase: "running",
     });
     expect(result.payload.settled).toEqual([
-      { runId: "run-1", outcome: "fixed-in-place", finishedAt: NOW },
+      { runId: "run-1", outcome: "fixed-in-place", finishedAt: NOW, fixThreadId: "thread-fix" },
     ]);
     expect(result.payload.started?.steps.map((step) => step.status)).toEqual([
       "pending",
@@ -208,6 +208,39 @@ describe("decideBoardCiRecord", () => {
     expect(result.ok && result.payload.settled).toEqual([
       { runId: "run-1", outcome: "interrupted", finishedAt: NOW },
     ]);
+  });
+
+  it("settles a pass a human restarted while fixing as interrupted, not fixed", () => {
+    const result = record(cardInCi(ci({ phase: "fixing", fixAttempts: 2 })), start());
+    expect(result.ok && result.payload.settled).toEqual([
+      { runId: "run-1", outcome: "interrupted", finishedAt: NOW },
+    ]);
+    expect(result.ok && result.payload.activity).toBeNull();
+  });
+
+  it("holds a live pass that could not run, its unfinished steps cancelled", () => {
+    const running = ci({
+      phase: "running",
+      steps: [
+        { name: "Lint", status: "passed", startedAt: NOW, finishedAt: NOW },
+        { name: "Test", status: "running", startedAt: NOW, finishedAt: null },
+        { name: "Build", status: "pending", startedAt: null, finishedAt: null },
+      ],
+    });
+    const result = record(cardInCi(running), {
+      kind: "finish-pass",
+      runId: "run-1",
+      result: "interrupted",
+    });
+    expect(result.ok && result.payload.card.ci?.phase).toBe("held");
+    expect(result.ok && result.payload.card.ci?.steps.map((step) => step.status)).toEqual([
+      "passed",
+      "cancelled",
+      "cancelled",
+    ]);
+    // A restart from held does not settle the already-settled row again.
+    const held = result.ok ? result.payload.card : cardInCi(null);
+    expect(record(held, start())).toMatchObject({ ok: true, payload: { settled: [] } });
   });
 
   it("refuses a pass for a card outside CI, and a fix past the cap", () => {

@@ -4,7 +4,7 @@
  * shell's compact `ci` entry and the detail's pass records.
  *
  * Colours follow `docs/t3o/status-colours.md`: running and fixing are blue, a
- * passed step green, a terminal failure amber, cancelled grey.
+ * passed step green, a terminal failure or a stopped pass amber, cancelled grey.
  */
 import {
   BOARD_CI_TAIL_LINES,
@@ -58,7 +58,7 @@ export function boardCiSegments(ci: BoardCardCi): ReadonlyArray<BoardCiSegment> 
   });
 }
 
-export type BoardCiChipTone = "info" | "success" | "neutral";
+export type BoardCiChipTone = "info" | "success" | "neutral" | "warning";
 
 export interface BoardCiFace {
   readonly chip: { readonly label: string; readonly tone: BoardCiChipTone };
@@ -103,6 +103,14 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
         count,
         detail: "Every step passed",
         tooltip: "CI passed; the card moves on",
+      };
+    case "held":
+      return {
+        chip: { label: "Stopped", tone: "warning" },
+        segments,
+        count,
+        detail: "CI stopped before it finished",
+        tooltip: "Restart the stage to run CI again, or Skip CI",
       };
     case "fixing": {
       const attempt = `fix ${fixAttemptNumber(ci)} of ${ci.maxFixAttempts}`;
@@ -243,6 +251,7 @@ export function boardCiPaneStatus(input: {
     }
     if (ci.phase === "queued") return { label: "Queued", tone: "neutral" };
     if (ci.phase === "passed") return { label: "Passed", tone: "success" };
+    if (ci.phase === "held") return { label: "Stopped", tone: "warning" };
     const index = ci.steps.findIndex((step) => step.status === "running");
     return {
       label: index < 0 ? "Running" : `Step ${index + 1} of ${ci.steps.length}`,

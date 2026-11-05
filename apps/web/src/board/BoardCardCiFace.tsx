@@ -30,6 +30,7 @@ export const BOARD_CI_CHIP_CLASS: Record<BoardCiChipTone, string> = {
   info: "bg-info/13 text-info-foreground",
   success: "bg-success/15 text-success-foreground",
   neutral: "bg-muted text-muted-foreground",
+  warning: "bg-warning/12 text-warning-foreground",
 };
 
 function BoardCardCiProgress({ ci }: { readonly ci: BoardCardCi }) {

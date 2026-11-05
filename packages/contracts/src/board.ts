@@ -1468,10 +1468,16 @@ export function sortBoardCardDecisions<T extends Pick<BoardCardDecision, "flag">
 
 /** One CI step a project defines in its `t3o.json`: a named shell command the
     board runs in the card's worktree, killed after `timeoutMinutes`. */
+/** A day. Node clamps a timer past 2^31-1 ms (about 24.8 days) to 1 ms, so an
+    unbounded value would time a step out at once. */
+export const BOARD_CI_MAX_TIMEOUT_MINUTES = 1_440;
+
 export const BoardCiStepDefinition = Schema.Struct({
   name: TrimmedNonEmptyString,
   command: TrimmedNonEmptyString,
-  timeoutMinutes: PositiveInt.pipe(Schema.withDecodingDefault(Effect.succeed(30))),
+  timeoutMinutes: PositiveInt.check(Schema.isLessThanOrEqualTo(BOARD_CI_MAX_TIMEOUT_MINUTES)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(30)),
+  ),
 });
 export type BoardCiStepDefinition = typeof BoardCiStepDefinition.Type;
 

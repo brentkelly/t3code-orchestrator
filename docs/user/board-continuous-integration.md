@@ -23,7 +23,7 @@ Add the steps under `stages.settings.ci` in the project's `t3o.json`:
 ```
 
 Steps run in order and stop at the first failure. A step that runs longer than `timeoutMinutes`
-(30 if left out) is stopped and counts as failed. A project can list at most 12 steps; the rest are
+(30 if left out, at most 1440, a day) is stopped and counts as failed. A project can list at most 12 steps; the rest are
 ignored. `"enabled": false` pauses CI without deleting the steps. The CI stage itself cannot be
 removed or renamed: a project has CI exactly while its file lists steps.
 

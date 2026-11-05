@@ -195,6 +195,23 @@ describe("resolveT3oProjectFile", () => {
     ]);
   });
 
+  it("ignores CI steps whose timeout is past a day, with a warning", () => {
+    const resolved = resolve({
+      stages: {
+        settings: { ci: { steps: [{ name: "Check", command: "x", timeoutMinutes: 40_000 }] } },
+      },
+    });
+    expect(resolved.config.ci).toBeNull();
+    expect(resolved.config.warnings.join("\n")).toContain("stages.settings.ci");
+    expect(
+      resolve({
+        stages: {
+          settings: { ci: { steps: [{ name: "Check", command: "x", timeoutMinutes: 1_440 }] } },
+        },
+      }).config.ci?.steps[0]?.timeoutMinutes,
+    ).toBe(1_440);
+  });
+
   it("treats a non-object file or block as empty with a warning", () => {
     expect(resolve([1]).config.warnings[0]).toContain("must be a JSON object");
     expect(resolve({ stages: 3 }).config.warnings[0]).toContain("stages: expected an object");
