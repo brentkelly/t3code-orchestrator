@@ -61,7 +61,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -996,7 +996,7 @@ export function withGovernor(
 
     const setupStub = {
       runForThread: () => Effect.void,
-    } as unknown as ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
+    } as unknown as BoardSetupScriptRunner["Service"];
 
     // Every merge attempt the reactor makes, so a test can assert that a
     // refusal did NOT silently retry and that a conflict fix did.
@@ -1127,7 +1127,7 @@ export function withGovernor(
       input.placement === undefined ? Layer.empty : Layer.succeed(BoardPlacement, input.placement),
       Layer.succeed(ServerSettingsService, settingsStub),
       gitLayer,
-      Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),
+      Layer.succeed(BoardSetupScriptRunner, setupStub),
       Layer.succeed(BoardPullRequestGateway, pullRequestStub),
       BoardStepSlotsLive,
       input.serverConfig ?? Layer.empty,

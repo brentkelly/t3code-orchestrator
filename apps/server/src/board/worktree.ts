@@ -31,7 +31,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import { WorktreeRetirer } from "./worktreeRetire.ts";
 
 /**
@@ -305,7 +305,7 @@ export const runBoardCardWorktreeSetup = Effect.fn("runBoardCardWorktreeSetup")(
   readonly projectId: string;
   readonly worktreePath: string;
 }) {
-  const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const runner = yield* BoardSetupScriptRunner;
   return yield* runner.runForThread({
     threadId: input.threadId,
     projectId: input.projectId,

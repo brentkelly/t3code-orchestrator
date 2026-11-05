@@ -14,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { ServerSettingsService } from "../serverSettings.ts";
-import * as TerminalManager from "../terminal/Manager.ts";
+import { BoardTerminals } from "./ports/BoardTerminals.ts";
 import {
   makeWorktreeRetirer,
   WorktreeRetirer,
@@ -50,7 +50,7 @@ export const worktreeRetirerTestLayer = (input: WorktreeRetirerTestInput = {}) =
   const terminals = {
     close: (request: { readonly threadId: string }) =>
       Effect.sync(() => void events.push(`close-terminals:${request.threadId}`)),
-  } as unknown as TerminalManager.TerminalManager["Service"];
+  } as unknown as BoardTerminals["Service"];
   const threads = inertThreadGateway({
     stopSession: (request) =>
       Effect.sync(() => void events.push(`stop-session:${request.threadId}`)),
@@ -90,7 +90,7 @@ export const worktreeRetirerTestLayer = (input: WorktreeRetirerTestInput = {}) =
   ).pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(TerminalManager.TerminalManager, terminals),
+        Layer.succeed(BoardTerminals, terminals),
         Layer.succeed(ThreadGateway, threads),
         Layer.succeed(ServerSettingsService, settings),
       ),
