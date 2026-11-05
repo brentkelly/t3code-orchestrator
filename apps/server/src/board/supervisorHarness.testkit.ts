@@ -23,6 +23,7 @@ import {
   BoardStageId,
   DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
+  DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
   DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
@@ -192,6 +193,8 @@ export const makeBoardCard = (input: {
   readonly placedWorkerId?: BoardCard["placedWorkerId"];
   readonly workerMove?: BoardCard["workerMove"];
   readonly placementOrphaned?: BoardCard["placementOrphaned"];
+  /** The card's own merge strategy (T3O-80). Absent follows the default. */
+  readonly mergeStrategy?: BoardCard["mergeStrategy"];
   /** The cards this one waits on (t3o-13). Absent is nothing. */
   readonly dependsOn?: ReadonlyArray<string>;
   /** The sub-board parent this card is a child of (t3o-23). Absent is
@@ -220,6 +223,7 @@ export const makeBoardCard = (input: {
   humanInLoop: input.humanInLoop ?? null,
   reviewOverrides: null,
   modelOverrides: null,
+  mergeStrategy: input.mergeStrategy ?? null,
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: (input.scheduledStartAt ?? null) as BoardCard["scheduledStartAt"],
@@ -417,6 +421,7 @@ export const settingsWith = (input: {
     autoArchiveDone: input.autoArchiveDone ?? DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
     autoArchiveAfterDays: input.autoArchiveAfterDays ?? DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   },
+  display: { autoCollapseEmptyStages: DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES },
 });
 
 export type Harness = {
@@ -443,6 +448,8 @@ export type Harness = {
   readonly decided: Effect.Effect<ReadonlyArray<HarnessEvent>>;
   /** Every merge the reactor asked the forge for, in order. */
   readonly mergeAttempts: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
+  /** The merge method of each attempt, in the same order (T3O-80). */
+  readonly mergeMethods: Effect.Effect<ReadonlyArray<string>>;
   /** Every structured refusal probe the reactor made (T3O-38, D6). */
   readonly mergeStateProbes: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** Every mark-ready request the reactor made (T3O-12), in order. */
@@ -994,6 +1001,7 @@ export function withGovernor(
     // Every merge attempt the reactor makes, so a test can assert that a
     // refusal did NOT silently retry and that a conflict fix did.
     const mergeAttempts = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
+    const mergeMethods = yield* Ref.make<ReadonlyArray<string>>([]);
     // Every refusal probe, so a test can assert the happy path costs ONE forge
     // call and that a hard hold is never re-probed.
     const mergeStateProbes = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
@@ -1073,10 +1081,13 @@ export function withGovernor(
           }),
         ),
       merge: (request) =>
-        Ref.updateAndGet(mergeAttempts, (attempts) => [
-          ...attempts,
-          { number: request.number },
-        ]).pipe(
+        Ref.update(mergeMethods, (methods) => [...methods, request.method]).pipe(
+          Effect.andThen(
+            Ref.updateAndGet(mergeAttempts, (attempts) => [
+              ...attempts,
+              { number: request.number },
+            ]),
+          ),
           Effect.andThen((attempts) => {
             const scripted = input.mergeOutcomes?.[attempts.length - 1];
             const detail = scripted === undefined ? input.mergeFailure : (scripted ?? undefined);
@@ -1210,6 +1221,7 @@ export function withGovernor(
           commands: Ref.get(commands),
           decided: Ref.get(decided),
           mergeAttempts: Ref.get(mergeAttempts),
+          mergeMethods: Ref.get(mergeMethods),
           mergeStateProbes: Ref.get(mergeStateProbes),
           markReadyCalls: Ref.get(markReadyCalls),
           closePullRequestCalls: Ref.get(closePullRequestCalls),

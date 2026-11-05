@@ -84,6 +84,7 @@ const expectedCard = {
   autoBuildSetting: null,
   autoMergeSetting: null,
   autoMergeHold: null,
+  mergeStrategy: null,
   pinnedWorkerId: null,
   placedWorkerId: null,
   workerMove: null,

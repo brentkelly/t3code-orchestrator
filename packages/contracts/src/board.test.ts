@@ -34,6 +34,7 @@ import {
   isBoardCardScheduleDue,
   isEmptyBoardCardModelOverrides,
   resolveBoardCardEffectiveBase,
+  resolveBoardCardMergeStrategy,
   resolveBoardCardStageModelOverride,
   BoardCardId,
   boardCardArchiveNeedsConfirmation,
@@ -220,6 +221,7 @@ const typicalCard = (index: number): BoardCard => ({
   autoBuildSetting: null,
   autoMergeSetting: null,
   autoMergeHold: null,
+  mergeStrategy: null,
   pinnedWorkerId: null,
   placedWorkerId: null,
   workerMove: null,
@@ -1306,6 +1308,52 @@ describe("sub-boards (t3o-23)", () => {
         ),
       ).toBe(false);
     });
+  });
+});
+
+describe("per-card merge strategy (T3O-80)", () => {
+  it("the card's own strategy wins over its parent's and the stage's", () => {
+    expect(
+      resolveBoardCardMergeStrategy({
+        card: { mergeStrategy: "rebase" },
+        ancestors: [{ mergeStrategy: "merge" }],
+        stageStrategy: "squash",
+      }),
+    ).toEqual({ strategy: "rebase", source: "card" });
+  });
+
+  it("a child with none of its own inherits its nearest ancestor's", () => {
+    expect(
+      resolveBoardCardMergeStrategy({
+        card: { mergeStrategy: null },
+        ancestors: [{ mergeStrategy: "merge" }, { mergeStrategy: "rebase" }],
+        stageStrategy: "squash",
+      }),
+    ).toEqual({ strategy: "merge", source: "parent" });
+    expect(
+      resolveBoardCardMergeStrategy({
+        card: { mergeStrategy: null },
+        ancestors: [{ mergeStrategy: null }, { mergeStrategy: "rebase" }],
+        stageStrategy: "squash",
+      }),
+    ).toEqual({ strategy: "rebase", source: "parent" });
+  });
+
+  it("falls back to the merge stage's strategy, then squash", () => {
+    expect(
+      resolveBoardCardMergeStrategy({
+        card: { mergeStrategy: null },
+        ancestors: [{ mergeStrategy: null }],
+        stageStrategy: "rebase",
+      }),
+    ).toEqual({ strategy: "rebase", source: "board" });
+    expect(
+      resolveBoardCardMergeStrategy({
+        card: { mergeStrategy: null },
+        ancestors: [],
+        stageStrategy: null,
+      }),
+    ).toEqual({ strategy: "squash", source: "board" });
   });
 });
 

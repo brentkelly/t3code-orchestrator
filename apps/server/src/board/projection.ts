@@ -153,6 +153,9 @@ const BoardCardDbRow = Schema.Struct({
       has never set a per-stage model override — indistinguishable on purpose,
       exactly as `reviewOverrides` is, so replay equals rehydration (t3o-29). */
   modelOverrides: Schema.NullOr(Schema.fromJsonString(BoardCardModelOverrides)),
+  /** NULL before migration 057 and for every card that follows the default
+      merge strategy (T3O-80) — indistinguishable on purpose. */
+  mergeStrategy: BoardCard.fields.mergeStrategy,
   /** NULL for every row written before migration 035, and for every card whose
       latest plan proposal was a single plan — indistinguishable on purpose, so
       replay equals rehydration (t3o card 11). Plain text, not JSON: one prose
@@ -683,6 +686,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     autoBuildSetting: settingToInt(card.autoBuildSetting),
     autoMergeSetting: settingToInt(card.autoMergeSetting),
     autoMergeHold: card.autoMergeHold,
+    mergeStrategy: card.mergeStrategy,
     pinnedWorkerId: card.pinnedWorkerId,
     placedWorkerId: card.placedWorkerId,
     workerMove: card.workerMove,
@@ -780,6 +784,7 @@ function rowToBoardCard(
     autoBuildSetting: settingFromInt(row.autoBuildSetting),
     autoMergeSetting: settingFromInt(row.autoMergeSetting),
     autoMergeHold: row.autoMergeHold,
+    mergeStrategy: row.mergeStrategy,
     pinnedWorkerId: row.pinnedWorkerId,
     placedWorkerId: row.placedWorkerId,
     workerMove: row.workerMove,
@@ -852,6 +857,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_build_setting,
         auto_merge_setting,
         auto_merge_hold,
+        merge_strategy,
         pinned_worker_id,
         placed_worker_id,
         worker_move,
@@ -900,6 +906,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.autoBuildSetting},
         ${row.autoMergeSetting},
         ${row.autoMergeHold},
+        ${row.mergeStrategy},
         ${row.pinnedWorkerId},
         ${row.placedWorkerId},
         ${row.workerMove},
@@ -948,6 +955,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_build_setting = excluded.auto_build_setting,
         auto_merge_setting = excluded.auto_merge_setting,
         auto_merge_hold = excluded.auto_merge_hold,
+        merge_strategy = excluded.merge_strategy,
         pinned_worker_id = excluded.pinned_worker_id,
         placed_worker_id = excluded.placed_worker_id,
         worker_move = excluded.worker_move,
@@ -1006,6 +1014,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_build_setting AS "autoBuildSetting",
         auto_merge_setting AS "autoMergeSetting",
         auto_merge_hold AS "autoMergeHold",
+        merge_strategy AS "mergeStrategy",
         pinned_worker_id AS "pinnedWorkerId",
         placed_worker_id AS "placedWorkerId",
         worker_move AS "workerMove",
@@ -1406,6 +1415,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         auto_build_setting AS "autoBuildSetting",
         auto_merge_setting AS "autoMergeSetting",
         auto_merge_hold AS "autoMergeHold",
+        merge_strategy AS "mergeStrategy",
         pinned_worker_id AS "pinnedWorkerId",
         placed_worker_id AS "placedWorkerId",
         worker_move AS "workerMove",
@@ -4178,6 +4188,7 @@ export function makeBoardCardDetailLoader(
             // Filled below for a sub-board child; a top-level card has no
             // parent to inherit from and keeps the null.
             parentModelOverrides: null,
+            parentMergeStrategy: null,
           };
         },
       ),
@@ -4195,6 +4206,9 @@ export function makeBoardCardDetailLoader(
                 parentModelOverrides: Option.isNone(parentRow)
                   ? null
                   : parentRow.value.modelOverrides,
+                parentMergeStrategy: Option.isNone(parentRow)
+                  ? null
+                  : parentRow.value.mergeStrategy,
               })),
             ),
       ),

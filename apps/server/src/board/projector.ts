@@ -282,6 +282,7 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // way: absent — every legacy event and every card that follows the
     // default — is null. Nothing has spawned, so nothing is placed or moving.
     pinnedWorkerId: payload.pinnedWorkerId ?? null,
+    mergeStrategy: payload.mergeStrategy ?? null,
     placedWorkerId: null,
     workerMove: null,
     placementOrphaned: null,

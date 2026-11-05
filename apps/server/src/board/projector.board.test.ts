@@ -78,6 +78,7 @@ function makeCard(overrides: Partial<BoardCard>): BoardCard {
     autoBuildSetting: null,
     autoMergeSetting: null,
     autoMergeHold: null,
+    mergeStrategy: null,
     pinnedWorkerId: null,
     placedWorkerId: null,
     workerMove: null,
