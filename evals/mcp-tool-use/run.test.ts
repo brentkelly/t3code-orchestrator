@@ -3321,3 +3321,17 @@ it("fills a case's {{NAME}} references with the current T3 text, and refuses unk
   expect(expanded.setup.context).toContain("regroup");
   expect(() => expandCaseText({ ...base, prompt: "{{NOT_A_THING}}" })).toThrow("NOT_A_THING");
 });
+
+it("loads every case file, since the runner reads only .ndjson cases", () => {
+  const dir = new URL("./cases/", import.meta.url);
+  const files = NodeFS.readdirSync(dir);
+  assert.deepEqual(
+    files.filter((name) => !name.endsWith(".ndjson")),
+    [],
+  );
+  const decode = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
+  for (const name of files) {
+    const lines = NodeFS.readFileSync(new URL(name, dir), "utf8").trim().split("\n");
+    for (const line of lines) assert.doesNotThrow(() => expandCaseText(decode(line)), name);
+  }
+});
