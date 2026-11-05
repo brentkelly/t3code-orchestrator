@@ -312,3 +312,12 @@ describe("the worktree-kept notice (T3O-52)", () => {
     ).toEqual({ kind: "attention", attention: providerMissing });
   });
 });
+
+describe("the stage-gone notice (T3O-43)", () => {
+  it("shows when the card's project dropped its stage, below the gate and above a kept worktree", () => {
+    const note = "Ready is no longer in mesh.web's pipeline";
+    expect(notice({ stageGone: note })).toEqual({ kind: "stage-gone", note });
+    expect(notice({ stageGone: note, blocked: true, dependencyCount: 1 })?.kind).toBe("blocked");
+    expect(notice({ stageGone: note, worktreeKeptReason: "kept" })?.kind).toBe("stage-gone");
+  });
+});
