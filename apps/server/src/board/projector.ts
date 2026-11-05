@@ -36,6 +36,7 @@ import {
   BoardCardWorktreeReadyPayload,
   BoardCardWorktreeReclaimedPayload,
   BoardCardAutoMergeHoldRecordedPayload,
+  BoardCardCiRecordedPayload,
   BoardCardPullRequestRecordedPayload,
   BoardCardStepSelectedPayload,
   BoardCardStepAdmittedPayload,
@@ -178,6 +179,7 @@ const decodeBoardCardWorktreeReclaimedPayload = Schema.decodeUnknownEffect(
 const decodeBoardCardPullRequestRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardPullRequestRecordedPayload,
 );
+const decodeBoardCardCiRecordedPayload = Schema.decodeUnknownEffect(BoardCardCiRecordedPayload);
 const decodeBoardCardAutoMergeHoldRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardAutoMergeHoldRecordedPayload,
 );
@@ -877,6 +879,14 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    // CI (T3O-44): the card's compact CI state is on the aggregate; pass rows
+    // with their tails are table-only.
+    case "board.card-ci-recorded":
+      return decodeBoardCardCiRecordedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     // Reporting only — it changes no card field, so the read model is
     // unchanged and a replay that includes it lands exactly where a replay
     // without it would.
@@ -1104,6 +1114,8 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     // the card aggregate, so this delta carries the real values like any
     // other card field.
     case "board.card-auto-merge-hold-recorded":
+    // CI progress (T3O-44) is a shell field on the card aggregate.
+    case "board.card-ci-recorded":
     // Placement (T3O-65): the bound worker and the move are shell fields on
     // the card aggregate.
     case "board.card-worker-pinned":
