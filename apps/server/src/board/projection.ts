@@ -224,6 +224,8 @@ const BoardCardDbRow = Schema.Struct({
   /** NULL before migration 060 and for every card outside CI (T3O-44). */
   ci: Schema.NullOr(Schema.fromJsonString(BoardCardCi)),
   ciLastOutcome: Schema.NullOr(Schema.fromJsonString(BoardCardCiLastOutcome)),
+  // T3O-49 (061): CI failure round trips without a human.
+  ciRoundTrips: Schema.Int,
   /** Migration 051 (T3O-27): NULL `groupTarget` is a leaf. */
   groupTarget: Schema.NullOr(BoardCardGroupTarget),
   groupAutoBuild: Schema.Int,
@@ -734,6 +736,7 @@ function boardCardToRow(card: BoardCard): BoardCardDbRow {
     placementOrphaned: card.placementOrphaned,
     ci: card.ci,
     ciLastOutcome: card.ciLastOutcome,
+    ciRoundTrips: card.ciRoundTrips,
     groupTarget: card.group?.target ?? null,
     groupAutoBuild: card.group?.autoBuild === true ? 1 : 0,
     groupAutoMerge: card.group?.autoMerge === true ? 1 : 0,
@@ -834,6 +837,7 @@ function rowToBoardCard(
     placementOrphaned: row.placementOrphaned,
     ci: row.ci,
     ciLastOutcome: row.ciLastOutcome,
+    ciRoundTrips: row.ciRoundTrips,
     group: boardCardGroupFromRow(row),
     blocked: row.blocked !== 0,
     threadLinks,
@@ -909,6 +913,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         placement_orphaned,
         ci,
         ci_last_outcome,
+        ci_round_trips,
         group_target,
         group_auto_build,
         group_auto_merge,
@@ -960,6 +965,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         ${row.placementOrphaned},
         ${row.ci},
         ${row.ciLastOutcome},
+        ${row.ciRoundTrips},
         ${row.groupTarget},
         ${row.groupAutoBuild},
         ${row.groupAutoMerge},
@@ -1011,6 +1017,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         placement_orphaned = excluded.placement_orphaned,
         ci = excluded.ci,
         ci_last_outcome = excluded.ci_last_outcome,
+        ci_round_trips = excluded.ci_round_trips,
         group_target = excluded.group_target,
         group_auto_build = excluded.group_auto_build,
         group_auto_merge = excluded.group_auto_merge,
@@ -1072,6 +1079,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         placement_orphaned AS "placementOrphaned",
         ci,
         ci_last_outcome AS "ciLastOutcome",
+        ci_round_trips AS "ciRoundTrips",
         group_target AS "groupTarget",
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
@@ -1479,6 +1487,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         placement_orphaned AS "placementOrphaned",
         ci,
         ci_last_outcome AS "ciLastOutcome",
+        ci_round_trips AS "ciRoundTrips",
         group_target AS "groupTarget",
         group_auto_build AS "groupAutoBuild",
         group_auto_merge AS "groupAutoMerge",
@@ -4315,7 +4324,9 @@ function boardShellProjectStageConfigs(
 function boardStageRowDefault(row: {
   readonly defaultForProjects: number | null;
 }): Pick<BoardStageDefinition, "defaultForProjects"> {
-  return row.defaultForProjects === null ? {} : { defaultForProjects: row.defaultForProjects === 1 };
+  return row.defaultForProjects === null
+    ? {}
+    : { defaultForProjects: row.defaultForProjects === 1 };
 }
 
 /** The user-defined stage list (t3o-15), so the board reads column order and

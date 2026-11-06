@@ -23,6 +23,10 @@ import {
   areBoardStagesAdjacent,
   isBoardCiActive,
   isBoardCiSwitchedOn,
+  DEFAULT_BOARD_CI_MAX_ROUND_TRIPS,
+  isBoardCiStepFailure,
+  type BoardCiActionResult,
+  isBoardCiPassSettledPhase,
   boardCiScriptDefinitions,
   isBoardCiStageExecution,
   type BoardSkipCiResult,
@@ -457,6 +461,10 @@ export interface SupervisorReactorShape {
   readonly requestReviewRound: (
     cardId: BoardCardId,
   ) => Effect.Effect<BoardRequestReviewRoundResult>;
+  /** Retry CI and "Send back to review anyway" (T3O-49): a human's way out
+      of a stopped or held CI pass. */
+  readonly retryCi: (cardId: BoardCardId) => Effect.Effect<BoardCiActionResult>;
+  readonly ciSendBack: (cardId: BoardCardId) => Effect.Effect<BoardCiActionResult>;
 }
 
 /** A string cut to `max` characters, ending in an ellipsis when cut. */
@@ -3391,7 +3399,7 @@ const make = Effect.gen(function* () {
   /** Start a pass at the first step (entry, a fix, or a restart). */
   const startCiPass = Effect.fn("board-supervisor-startCiPass")(function* (
     cardId: BoardCardId,
-    options: { readonly fixThreadId: ThreadId | null },
+    options: { readonly fixThreadId: ThreadId | null; readonly fresh?: boolean },
   ) {
     const board = yield* readBoard;
     const card = board.cards.find((candidate) => candidate.id === cardId);
@@ -3434,8 +3442,12 @@ const make = Effect.gen(function* () {
       .boardCardDetail(card.id)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
     const passes = detail?.ciPasses ?? [];
+    const latestEntry = passes.reduce((highest, pass) => Math.max(highest, pass.entry), 0);
+    // A human's fresh retry is a new entry, so the passes group by it.
     const entry =
-      card.ci?.entry ?? passes.reduce((highest, pass) => Math.max(highest, pass.entry), 0) + 1;
+      options.fresh === true
+        ? Math.max(latestEntry, card.ci?.entry ?? 0) + 1
+        : (card.ci?.entry ?? latestEntry + 1);
     const ordinal = passes.filter((pass) => pass.entry === entry).length + 1;
     const settings = yield* boardSettings;
     const exec = resolveBoardStageExecution(
@@ -3462,6 +3474,7 @@ const make = Effect.gen(function* () {
         // Until a slot admits it; its first step report says running.
         queued: true,
         fixThreadId: options.fixThreadId,
+        ...(options.fresh === true ? { fresh: true } : {}),
       },
       createdAt: yield* nowIso,
     });
@@ -3485,10 +3498,44 @@ const make = Effect.gen(function* () {
       readonly stepName: string | null;
       readonly finding: string;
       readonly fixThreadId: ThreadId | null;
+      /** A human's "Send back to review anyway": past the limit, and the
+          round-trip count starts again. */
+      readonly byHuman?: boolean;
     },
   ) {
     const board = yield* readBoard;
     const reviewStage = boardStageWithRole(board, "review");
+    // T3O-49: past the project's round-trip limit, CI stops for a human
+    // rather than bouncing the card back to review again.
+    if (input.byHuman !== true) {
+      const exec = resolveBoardStageExecution(
+        yield* boardSettings,
+        BOARD_SEED_STAGE_IDS.ci,
+        boardProjectStageConfig(board, card.projectId),
+      );
+      const maxRoundTrips = isBoardCiStageExecution(exec)
+        ? exec.maxRoundTrips
+        : DEFAULT_BOARD_CI_MAX_ROUND_TRIPS;
+      const roundTrips = card.ciRoundTrips;
+      if (roundTrips >= maxRoundTrips) {
+        yield* dispatchLanded({
+          type: "board.card.record-ci",
+          commandId: yield* commandId("ci-stop"),
+          cardId: card.id,
+          action: {
+            kind: "stop",
+            runId: card.ci?.runId ?? null,
+            reason:
+              maxRoundTrips === 0
+                ? `CI failed${input.stepName === null ? "" : ` at ${input.stepName}`}, and this project doesn't send cards back to review.`
+                : `CI failed${input.stepName === null ? "" : ` at ${input.stepName}`} after ${roundTrips} ${roundTrips === 1 ? "round trip" : "round trips"} to review.`,
+            finding: input.finding,
+          },
+          createdAt: yield* nowIso,
+        });
+        return;
+      }
+    }
     // A fresh round, through the same override "Another review round" writes:
     // it floors the budget, so a card that used every round gets one more.
     const round =
@@ -3507,6 +3554,7 @@ const make = Effect.gen(function* () {
         finding: input.finding,
         round,
         fixThreadId: input.fixThreadId,
+        ...(input.byHuman === true ? { byHuman: true } : {}),
       },
       createdAt: yield* nowIso,
     });
@@ -3729,7 +3777,7 @@ const make = Effect.gen(function* () {
   ) {
     const stopped = yield* ciPasses.cancel(card.id);
     const ci = card.ci;
-    if (ci !== null && ci.phase !== "passed" && ci.phase !== "held") {
+    if (ci !== null && !isBoardCiPassSettledPhase(ci.phase)) {
       yield* dispatch({
         type: "board.card.record-ci",
         commandId: yield* commandId("ci-archived"),
@@ -3783,6 +3831,43 @@ const make = Effect.gen(function* () {
     return { outcome: "skipped", toStage: next } as const;
   });
 
+  /**
+   * Retry CI (T3O-49): a human's restart of a stopped or held card. From
+   * stopped it is a fresh start — new fix attempts, no round trips; from held
+   * the count is kept. Refused while the project's CI is off.
+   */
+  const retryCi = Effect.fn("board-supervisor-retryCi")(function* (cardId: BoardCardId) {
+    const board = yield* readBoard;
+    const card = board.cards.find((candidate) => candidate.id === cardId);
+    if (card === undefined || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
+    if (card.stage !== BOARD_SEED_STAGE_IDS.ci) return { outcome: "not-in-ci" } as const;
+    if (!isBoardCiSwitchedOn(board, card.projectId)) return { outcome: "ci-off" } as const;
+    if (card.ci !== null && !isBoardCiPassSettledPhase(card.ci.phase)) {
+      return { outcome: "running" } as const;
+    }
+    yield* startCiPass(card.id, { fixThreadId: null, fresh: card.ci?.phase === "stopped" });
+    return { outcome: "retried" } as const;
+  });
+
+  /** "Send back to review anyway" (T3O-49), from a stopped card. */
+  const ciSendBack = Effect.fn("board-supervisor-ciSendBack")(function* (cardId: BoardCardId) {
+    const card = yield* readCard(cardId);
+    if (card === null || card.archivedAt !== null) return { outcome: "unknown-card" } as const;
+    if (card.stage !== BOARD_SEED_STAGE_IDS.ci) return { outcome: "not-in-ci" } as const;
+    if (card.ci === null || !isBoardCiPassSettledPhase(card.ci.phase)) {
+      return { outcome: "running" } as const;
+    }
+    yield* ciPasses.cancel(card.id);
+    const failed = card.ci.steps.find((step) => isBoardCiStepFailure(step.status));
+    yield* sendBackFromCi(card, {
+      stepName: failed?.name ?? null,
+      finding: card.ci.stopReason ?? "A human sent the card back from CI.",
+      fixThreadId: null,
+      byHuman: true,
+    });
+    return { outcome: "sent-back" } as const;
+  });
+
   /** Boot (T3O-44): a pass the restart cut off is marked interrupted and runs
       again from the top; one that passed but never moved the card moves it.
       A held pass stays held. */
@@ -3800,7 +3885,13 @@ const make = Effect.gen(function* () {
       // A fix agent's step that ended without a verdict is the ordinary
       // failed step's business (retry, then amber), not a restart's; a held
       // pass waits for a human to restart or skip it.
-      if (card.ci?.phase === "fixing" || card.ci?.phase === "held") continue;
+      if (
+        card.ci?.phase === "fixing" ||
+        card.ci?.phase === "held" ||
+        card.ci?.phase === "stopped"
+      ) {
+        continue;
+      }
       yield* startCiPass(card.id, { fixThreadId: null });
     }
   });
@@ -11029,6 +11120,24 @@ const make = Effect.gen(function* () {
         Effect.andThen(Effect.suspend(() => (ciPasses.busy() ? drainCi() : Effect.void))),
       );
     }),
+    retryCi: (cardId) =>
+      retryCi(cardId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: retry CI failed", {
+            cardId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ outcome: "failed" } as const)),
+        ),
+      ),
+    ciSendBack: (cardId) =>
+      ciSendBack(cardId).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("board supervisor: CI send-back failed", {
+            cardId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.as({ outcome: "failed" } as const)),
+        ),
+      ),
     skipCi: (cardId, stamp) =>
       skipCi(cardId, stamp).pipe(
         Effect.catchCause((cause) =>

@@ -233,6 +233,8 @@ const ATTENTION_ICON: Record<BoardCardAttentionReason, ReactNode> = {
   stalled: <TriangleAlertIcon className="size-3" />,
   approval: <LayersIcon className="size-3" />,
   "review-held": <TriangleAlertIcon className="size-3" />,
+  // T3O-49: CI stopped for a human — the same mark as a held step.
+  "ci-stopped": <PauseIcon className="size-3" />,
   held: <PauseIcon className="size-3" />,
   // Same mark as `held` (t3o-34, D4): both say "the pipeline is finished with
   // this card and only a human moves it on", one settled and one not.

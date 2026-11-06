@@ -241,6 +241,47 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-leave-"))("a card leaving CI", (i
       const detail = yield* (yield* BoardQueries).boardCardDetail(cardId);
       assert.strictEqual(detail!.ciPasses[0]!.outcome, "cancelled");
       assert.isNull(detail!.card.ci);
+
+      // T3O-49: a send-back counts a round trip; the board's own move keeps
+      // the count, and a human's move starts it again.
+      const queries = yield* BoardQueries;
+      const roundTrips = () =>
+        queries.boardCardDetail(cardId).pipe(Effect.map((found) => found!.card.ciRoundTrips));
+      yield* engine.dispatch({
+        type: "board.card.pipeline-move",
+        commandId: id(),
+        cardId,
+        toStage: BOARD_SEED_STAGE_IDS.ci,
+        createdAt: at,
+      });
+      yield* record({
+        kind: "send-back",
+        runId: null,
+        stepName: "Test",
+        finding: "broken",
+        round: 2,
+        fixThreadId: null,
+      });
+      assert.strictEqual(yield* roundTrips(), 1);
+      yield* engine.dispatch({
+        type: "board.card.pipeline-move",
+        commandId: id(),
+        cardId,
+        toStage: BOARD_SEED_STAGE_IDS.review,
+        override: true,
+        createdAt: at,
+      });
+      assert.strictEqual(yield* roundTrips(), 1);
+      yield* engine.dispatch({
+        type: "board.card.move",
+        commandId: id(),
+        cardId,
+        toStage: BOARD_SEED_STAGE_IDS.building,
+        override: true,
+        cause: "human",
+        createdAt: at,
+      });
+      assert.strictEqual(yield* roundTrips(), 0);
     }),
   );
 });

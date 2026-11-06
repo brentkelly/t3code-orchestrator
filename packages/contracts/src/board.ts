@@ -1702,9 +1702,7 @@ export const BOARD_CI_PROGRESS_MARKER = "::t3o-progress::";
 
 /** Parse one `::t3o-progress::<json>` output line, or null when the line is
     not one (or its JSON is unreadable: then it's only log output). */
-export function parseBoardCiProgressLine(
-  line: string,
-): {
+export function parseBoardCiProgressLine(line: string): {
   readonly message: string | null;
   readonly done: number | null;
   readonly total: number | null;
@@ -1779,6 +1777,12 @@ const BOARD_CI_STEP_STATUSES = [
 export const BoardCiStepStatus = Schema.Literals(BOARD_CI_STEP_STATUSES);
 export type BoardCiStepStatus = typeof BoardCiStepStatus.Type;
 
+/** Whether a card's CI phase has settled its pass (T3O-49): passed, held for
+    a human, or stopped. Nothing is running and no fix agent works on it. */
+export function isBoardCiPassSettledPhase(phase: BoardCardCiPhase): boolean {
+  return phase === "passed" || phase === "held" || phase === "stopped";
+}
+
 /** A step status that ends its pass as a failure. */
 export function isBoardCiStepFailure(status: BoardCiStepStatus): boolean {
   return status === "failed" || status === "timed-out";
@@ -1801,7 +1805,16 @@ export type BoardCardCiStep = typeof BoardCardCiStep.Type;
     `running` runs its steps, `fixing` has a fix agent on a failed step and
     `passed` is about to move on. `held` stopped without a verdict (the runner
     was unavailable) and waits for a human to restart the stage or Skip CI. */
-export const BoardCardCiPhase = Schema.Literals(["queued", "running", "fixing", "passed", "held"]);
+export const BoardCardCiPhase = Schema.Literals([
+  "queued",
+  "running",
+  "fixing",
+  "passed",
+  "held",
+  // T3O-49: stopped for a human — the round-trip limit, or an unresolved
+  // conflict. Violet; Retry CI, Send back anyway or Skip CI.
+  "stopped",
+]);
 export type BoardCardCiPhase = typeof BoardCardCiPhase.Type;
 
 /**
@@ -1817,6 +1830,11 @@ export const BoardCardCi = Schema.Struct({
   maxFixAttempts: NonNegativeInt,
   phase: BoardCardCiPhase,
   steps: Schema.Array(BoardCardCiStep),
+  /** CI failure round trips this card has made without a human (T3O-49);
+      absent is none. */
+  roundTrips: Schema.optionalKey(NonNegativeInt),
+  /** Why CI stopped, while `phase` is `stopped`. */
+  stopReason: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type BoardCardCi = typeof BoardCardCi.Type;
 
@@ -1846,6 +1864,8 @@ const BOARD_CI_PASS_OUTCOMES = [
   "skipped",
   "interrupted",
   "cancelled",
+  // T3O-49: stopped for a human at the round-trip limit.
+  "stopped",
 ] as const;
 export const BoardCiPassOutcome = Schema.Literals(BOARD_CI_PASS_OUTCOMES);
 export type BoardCiPassOutcome = typeof BoardCiPassOutcome.Type;
@@ -2192,6 +2212,10 @@ export const BoardCard = Schema.Struct({
   ciLastOutcome: Schema.NullOr(BoardCardCiLastOutcome).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** CI failure round trips without a human (T3O-49): send-backs to review,
+      and returns from Ready for merge for conflicts or failing checks. A
+      human's move, Retry CI or Send back anyway starts it again. */
+  ciRoundTrips: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   /** Derived from unmet dependencies at Ready and beyond (D18), recorded by
       the decider at each move / dependency edit / unarchive. */
   blocked: Schema.Boolean,
@@ -2897,6 +2921,8 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
   "card-ci-skipped",
   /** CI is holding the card until a human acts (Skip CI, or a fix). */
   "card-ci-held",
+  /** CI stopped for a human at the round-trip limit (T3O-49). */
+  "card-ci-stopped",
 ] as const;
 export const BoardCardActivityKind = Schema.Literals(BOARD_CARD_ACTIVITY_KINDS);
 export type BoardCardActivityKind = typeof BoardCardActivityKind.Type;
@@ -4621,6 +4647,9 @@ export const BOARD_CARD_ATTENTION_REASONS = [
   /** The review loop stopped without a clean pass (t3o-22): `round-cap` or
       `stopped`. More specific than `held`, so it outranks it. */
   "review-held",
+  /** CI stopped for a human (T3O-49): the failure round-trip limit was
+      reached, or a conflict CI couldn't resolve. Violet: a decision waits. */
+  "ci-stopped",
   /** The step settled and left the card where it stands: a human-in-the-loop
       build that finished, a failed step, a merge the forge refused. */
   "held",
@@ -4778,6 +4807,7 @@ const ATTENTION_TONES: Record<BoardCardAttentionReason, BoardCardAttentionTone> 
   // approval, which `docs/t3o/status-colours.md` gives to violet.
   approval: "attention",
   "review-held": "warning",
+  "ci-stopped": "attention",
   held: "warning",
   stopped: "warning",
   input: "attention",
@@ -4805,6 +4835,7 @@ export function boardCardAttention(input: {
   readonly card: Pick<
     BoardCardShell,
     | "stage"
+    | "ci"
     | "stalled"
     | "held"
     | "awaitingInput"
@@ -4866,6 +4897,14 @@ export function boardCardAttention(input: {
       tone: ATTENTION_TONES.paused,
       label: "Paused",
       detail: "Paused — you stopped this; resume it when you want it to carry on",
+    };
+  }
+  if (card.ci?.phase === "stopped") {
+    return {
+      reason: "ci-stopped",
+      tone: ATTENTION_TONES["ci-stopped"],
+      label: "Needs you",
+      detail: card.ci.stopReason ?? "CI stopped for a human: retry it, send it back, or skip it",
     };
   }
   if (card.stalled) {
@@ -5482,8 +5521,10 @@ export const BoardCardMoveCommand = Schema.Struct({
       board still has to let you drag a card backwards. */
   override: Schema.optional(Schema.Boolean),
   /** `auto-build`: the card's own Auto-build started it (T3O-38). Such a
-      move does not begin its parent group, so it never starts its siblings. */
-  cause: Schema.optional(Schema.Literal("auto-build")),
+      move does not begin its parent group, so it never starts its siblings.
+      `human`: stamped by the RPC layer on a person's move (T3O-49), whatever
+      the client sent; it resets the card's CI round trips. */
+  cause: Schema.optional(Schema.Literals(["auto-build", "human"])),
   createdAt: IsoDateTime,
 });
 export type BoardCardMoveCommand = typeof BoardCardMoveCommand.Type;
@@ -6574,6 +6615,8 @@ export const BoardCardCiAction = Schema.Union([
     queued: Schema.Boolean,
     /** The fix agent whose fix this pass re-checks. */
     fixThreadId: Schema.NullOr(ThreadId),
+    /** A human's Retry CI (T3O-49): fresh fix attempts and no round trips. */
+    fresh: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({
     kind: Schema.Literal("step"),
@@ -6595,6 +6638,16 @@ export const BoardCardCiAction = Schema.Union([
     /** The review round the send-back opens, the one that carries the finding. */
     round: PositiveInt,
     fixThreadId: Schema.NullOr(ThreadId),
+    /** A human's "Send back to review anyway" (T3O-49): the round-trip count
+        starts again instead of growing. */
+    byHuman: Schema.optionalKey(Schema.Boolean),
+  }),
+  /** CI stopped for a human (T3O-49), instead of a send-back past the limit. */
+  Schema.Struct({
+    kind: Schema.Literal("stop"),
+    runId: Schema.NullOr(TrimmedNonEmptyString),
+    reason: TrimmedNonEmptyString,
+    finding: Schema.String,
   }),
   Schema.Struct({ kind: Schema.Literal("skip"), actor: TrimmedNonEmptyString }),
 ]);
@@ -7686,7 +7739,12 @@ export const BoardCardCiRecordedPayload = Schema.Struct({
   /** The activity row this record writes, if any. */
   activity: Schema.NullOr(
     Schema.Struct({
-      kind: Schema.Literals(["card-ci-pass-finished", "card-ci-sent-back", "card-ci-skipped"]),
+      kind: Schema.Literals([
+        "card-ci-pass-finished",
+        "card-ci-sent-back",
+        "card-ci-skipped",
+        "card-ci-stopped",
+      ]),
       ciOutcome: Schema.optionalKey(BoardCiPassOutcome),
       ciStepName: Schema.optionalKey(TrimmedNonEmptyString),
       ciFixAttempts: Schema.optionalKey(NonNegativeInt),
@@ -9836,6 +9894,10 @@ export const BOARD_WS_METHODS = {
       human waiting on an answer: the forge has to confirm the pull request
       exists, and a refusal (not found, another repository) is read inline. */
   linkCardPullRequest: "board.linkCardPullRequest",
+  /** Retry CI and "Send back to review anyway" (T3O-49): a human's way out of
+      a stopped or held CI pass, like Skip CI. */
+  retryCi: "board.retryCi",
+  ciSendBack: "board.ciSendBack",
   // T3O-49: stage and project config, at the settings-write tier.
   dispatchSettingsCommand: "board.dispatchSettingsCommand",
   getProjectConfig: "board.projectConfig.get",
@@ -10141,6 +10203,21 @@ export const BoardSkipCiResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("failed") }),
 ]);
 export type BoardSkipCiResult = typeof BoardSkipCiResult.Type;
+
+/** What Retry CI or "Send back to review anyway" did (T3O-49). */
+export const BoardCiActionResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("retried") }),
+  Schema.Struct({ outcome: Schema.Literal("sent-back") }),
+  /** The card is not in the CI stage — a stale client. */
+  Schema.Struct({ outcome: Schema.Literal("not-in-ci") }),
+  /** A pass is still running or a fix agent works on it. */
+  Schema.Struct({ outcome: Schema.Literal("running") }),
+  /** The project's CI is switched off: nothing to retry. */
+  Schema.Struct({ outcome: Schema.Literal("ci-off") }),
+  Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+  Schema.Struct({ outcome: Schema.Literal("failed") }),
+]);
+export type BoardCiActionResult = typeof BoardCiActionResult.Type;
 
 /** What "Remove worktree" did (T3O-52, D5). */
 export const BoardRemoveCardWorktreeResult = Schema.Union([
@@ -10628,6 +10705,16 @@ export const BOARD_RPCS = [
     success: BoardLinkCardPullRequestResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.retryCi, {
+    payload: BoardCardPullRequestActionInput,
+    success: BoardCiActionResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WS_METHODS.ciSendBack, {
+    payload: BoardCardPullRequestActionInput,
+    success: BoardCiActionResult,
+    error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(BOARD_WS_METHODS.dispatchSettingsCommand, {
     payload: BoardSettingsClientCommand,
     success: Schema.Struct({ sequence: NonNegativeInt }),
@@ -10688,6 +10775,8 @@ export const BOARD_RPC_SCOPES = {
   [BOARD_WS_METHODS.submitCardForMerge]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.requestReviewRound]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.skipCi]: AuthOrchestrationOperateScope,
+  [BOARD_WS_METHODS.retryCi]: AuthOrchestrationOperateScope,
+  [BOARD_WS_METHODS.ciSendBack]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.removeCardWorktree]: AuthOrchestrationOperateScope,
   [BOARD_WS_METHODS.checkCardWorktree]: AuthOrchestrationOperateScope,
   // T3O-65: the move reads the source worker's git and then changes where the

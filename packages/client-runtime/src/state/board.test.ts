@@ -83,6 +83,7 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   placementOrphaned: null,
   ci: null,
   ciLastOutcome: null,
+  ciRoundTrips: 0,
   worktree: null,
   blocked: false,
   archivedAt: null,

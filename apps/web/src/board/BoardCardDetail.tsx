@@ -277,6 +277,8 @@ export function BoardCardDetail({
   });
   // "Skip CI" (T3O-44). A refusal is an answer, toasted below.
   const skipCi = useAtomCommand(boardEnvironment.skipCi, { reportFailure: false });
+  const retryCi = useAtomCommand(boardEnvironment.retryCi, { reportFailure: false });
+  const sendBackCi = useAtomCommand(boardEnvironment.sendBackCi, { reportFailure: false });
   const [skippingCi, setSkippingCi] = useState(false);
   const createCard = useAtomCommand(boardEnvironment.createCard);
   // "Remove worktree" (T3O-52). Same reason again: a refusal is an answer.
@@ -1011,6 +1013,38 @@ export function BoardCardDetail({
     });
   };
 
+  /** Retry CI and "Send back to review anyway" (T3O-49). */
+  const onCiAction = (action: "retry" | "send-back") => {
+    const run = action === "retry" ? retryCi : sendBackCi;
+    void run({ environmentId, input: { cardId: card.id } }).then((result) => {
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          boardToast({
+            title:
+              action === "retry" ? "CI could not be retried" : "The card could not be sent back",
+            description: describeBoardCommandFailure(result),
+            tone: "error",
+          });
+        }
+        return;
+      }
+      const outcome = result.value.outcome;
+      if (outcome === "retried" || outcome === "sent-back") return;
+      boardToast({
+        title: action === "retry" ? "CI was not retried" : "The card was not sent back",
+        description:
+          outcome === "ci-off"
+            ? "CI is switched off for this project."
+            : outcome === "running"
+              ? "CI is still running on this card."
+              : outcome === "not-in-ci"
+                ? "The card is no longer in CI."
+                : "Try again in a moment.",
+        tone: "error",
+      });
+    });
+  };
+
   const onSkipCi = () => {
     setSkippingCi(true);
     void skipCi({ environmentId, input: { cardId: card.id } }).then((result) => {
@@ -1506,6 +1540,8 @@ export function BoardCardDetail({
       }}
       onRequestReviewRound={onRequestReviewRound}
       onSkipCi={onSkipCi}
+      onRetryCi={() => onCiAction("retry")}
+      onCiSendBack={() => onCiAction("send-back")}
       skipCiPending={skippingCi}
       onCreateFollowUp={onCreateFollowUp}
       stepLive={stepLive}

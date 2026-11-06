@@ -162,6 +162,13 @@ export const requestBoardReviewRound = (input: { readonly cardId: BoardCardId })
 export const skipBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.skipCi, input);
 
+/** Retry CI and "Send back to review anyway" (T3O-49). */
+export const retryBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.retryCi, input);
+
+export const sendBackBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.ciSendBack, input);
+
 /** "Remove worktree" on a finished card that kept one (T3O-52): removes it
     past the safety rule. The branch is kept. */
 export const removeBoardCardWorktree = (input: { readonly cardId: BoardCardId }) =>

@@ -9,6 +9,7 @@
 // - A role-less stage between CI and the merge stage could change code after
 //   CI passed: it moves to just before CI.
 // - `board_ci_passes.snapshot`: the CI steps a pass froze at its start.
+// - `board_cards.ci_round_trips`: CI failure round trips without a human.
 import { boardOrderKeyBetween } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -27,6 +28,10 @@ export default Effect.gen(function* () {
   const stageColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(board_stages)`;
   if (!stageColumns.some((column) => column.name === "default_for_projects")) {
     yield* sql`ALTER TABLE board_stages ADD COLUMN default_for_projects INTEGER`;
+  }
+  const cardColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(board_cards)`;
+  if (!cardColumns.some((column) => column.name === "ci_round_trips")) {
+    yield* sql`ALTER TABLE board_cards ADD COLUMN ci_round_trips INTEGER NOT NULL DEFAULT 0`;
   }
   const passColumns = yield* sql<{ readonly name: string }>`PRAGMA table_info(board_ci_passes)`;
   if (!passColumns.some((column) => column.name === "snapshot")) {

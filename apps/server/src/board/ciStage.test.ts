@@ -641,3 +641,60 @@ it.effect("switching CI off moves the project's cards on from CI, auto-merge dis
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
+
+it.effect("a send-back counts a round trip, and at the limit CI stops for a human", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([
+      { result: "failed", failedIndex: 1 },
+      { result: "failed", failedIndex: 1 },
+      { result: "passed", failedIndex: null },
+    ]);
+    const below = card("below", review);
+    const atLimit = { ...card("limit", review), ciRoundTrips: 1 };
+    const board = boardWith([below, atLimit], ciConfig({ maxFixAttempts: 0, maxRoundTrips: 1 }));
+    yield* withGovernor({ board, settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, below, 1);
+        const sent = yield* live(h, below.id);
+        assert.strictEqual(sent.stage, review);
+        assert.strictEqual(sent.ciRoundTrips, 1);
+
+        yield* enterCiAndRun(h, atLimit, 2);
+        const stopped = yield* live(h, atLimit.id);
+        assert.strictEqual(stopped.stage, ci);
+        assert.strictEqual(stopped.ci?.phase, "stopped");
+        assert.include(stopped.ci?.stopReason ?? "", "after 1 round trip");
+        assert.strictEqual(
+          ciRecords(yield* h.decided).at(-1)?.payload.activity?.kind,
+          "card-ci-stopped",
+        );
+
+        // Retry CI starts afresh (no round trips), and this time it passes.
+        assert.deepStrictEqual(yield* h.reactor.retryCi(atLimit.id), { outcome: "retried" });
+        yield* h.reactor.drainCi;
+        const retried = yield* live(h, atLimit.id);
+        assert.strictEqual(retried.ciRoundTrips, 0);
+        assert.strictEqual(retried.stage, merge);
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("send back to review anyway starts the round trips again", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "failed", failedIndex: 1 }]);
+    const subject = { ...card("anyway", review), ciRoundTrips: 2 };
+    const board = boardWith([subject], ciConfig({ maxFixAttempts: 0, maxRoundTrips: 2 }));
+    yield* withGovernor({ board, settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "stopped");
+        assert.deepStrictEqual(yield* h.reactor.ciSendBack(subject.id), { outcome: "sent-back" });
+        const sent = yield* live(h, subject.id);
+        assert.strictEqual(sent.stage, review);
+        assert.strictEqual(sent.ciRoundTrips, 0);
+        assert.strictEqual(sent.ciLastOutcome?.kind, "sent-back");
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);

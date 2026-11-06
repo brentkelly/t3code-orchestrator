@@ -106,6 +106,8 @@ import {
   startBoardStageThread,
   requestBoardReviewRound,
   skipBoardCardCi,
+  retryBoardCardCi,
+  sendBackBoardCardCi,
   removeBoardCardWorktree,
   checkBoardCardWorktree,
   submitBoardCardForMerge,
@@ -794,6 +796,14 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }),
     /** Skip CI for a card in the CI stage (T3O-44). Resolves to where the
         card went, or why it could not. */
+    retryCi: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:retry-ci",
+      execute: (input: { readonly cardId: BoardCardId }) => retryBoardCardCi(input),
+    }),
+    sendBackCi: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:send-back-ci",
+      execute: (input: { readonly cardId: BoardCardId }) => sendBackBoardCardCi(input),
+    }),
     skipCi: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:skip-ci",
       execute: (input: { readonly cardId: BoardCardId }) => skipBoardCardCi(input),

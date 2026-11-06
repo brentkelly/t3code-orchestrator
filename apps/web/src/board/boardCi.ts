@@ -58,7 +58,7 @@ export function boardCiSegments(ci: BoardCardCi): ReadonlyArray<BoardCiSegment> 
   });
 }
 
-export type BoardCiChipTone = "info" | "success" | "neutral" | "warning";
+export type BoardCiChipTone = "info" | "success" | "neutral" | "warning" | "attention";
 
 export interface BoardCiFace {
   readonly chip: { readonly label: string; readonly tone: BoardCiChipTone };
@@ -106,11 +106,20 @@ export function boardCiFace(ci: BoardCardCi, nowMs: number): BoardCiFace {
       };
     case "held":
       return {
-        chip: { label: "Stopped", tone: "warning" },
+        chip: { label: "Can't run", tone: "warning" },
         segments,
         count,
-        detail: "CI stopped before it finished",
-        tooltip: "Restart the stage to run CI again, or Skip CI",
+        detail: "CI couldn't finish this pass",
+        tooltip: "Retry CI to run it again, or Skip CI",
+      };
+    // T3O-49: the round-trip limit, or a conflict CI couldn't resolve.
+    case "stopped":
+      return {
+        chip: { label: "Needs you", tone: "attention" },
+        segments,
+        count,
+        detail: ci.stopReason ?? "CI stopped for a human",
+        tooltip: "Retry CI, send the card back to review anyway, or Skip CI",
       };
     case "fixing": {
       const attempt = `fix ${fixAttemptNumber(ci)} of ${ci.maxFixAttempts}`;
@@ -208,6 +217,7 @@ const BOARD_CI_PASS_OUTCOME_LABEL: Record<BoardCiPassOutcome, string> = {
   skipped: "Skipped",
   interrupted: "Interrupted",
   cancelled: "Cancelled",
+  stopped: "Stopped for you",
 };
 
 /** A pass's outcome chip. A pass with no outcome is the live one. */
@@ -251,7 +261,8 @@ export function boardCiPaneStatus(input: {
     }
     if (ci.phase === "queued") return { label: "Queued", tone: "neutral" };
     if (ci.phase === "passed") return { label: "Passed", tone: "success" };
-    if (ci.phase === "held") return { label: "Stopped", tone: "warning" };
+    if (ci.phase === "held") return { label: "Can't run", tone: "warning" };
+    if (ci.phase === "stopped") return { label: "Needs you", tone: "attention" };
     const index = ci.steps.findIndex((step) => step.status === "running");
     return {
       label: index < 0 ? "Running" : `Step ${index + 1} of ${ci.steps.length}`,

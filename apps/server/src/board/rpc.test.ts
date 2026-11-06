@@ -171,6 +171,8 @@ const supervisorStub: SupervisorReactorShape = {
       return { outcome: "started", round: 2 } as const;
     }),
   skipCi: () => Effect.succeed({ outcome: "not-in-ci" } as const),
+  retryCi: () => Effect.succeed({ outcome: "not-in-ci" } as const),
+  ciSendBack: () => Effect.succeed({ outcome: "not-in-ci" } as const),
   drainCi: Effect.void,
 };
 

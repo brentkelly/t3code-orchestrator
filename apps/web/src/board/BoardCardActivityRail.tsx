@@ -45,6 +45,7 @@ import {
   PlusCircleIcon,
   RotateCcwIcon,
   ScissorsIcon,
+  PauseIcon,
   TriangleAlertIcon,
   XIcon,
   ArrowRightLeftIcon,
@@ -204,6 +205,8 @@ function ActivityIcon({
       return <ChevronsRightIcon className={className} />;
     case "card-ci-held":
       return <TriangleAlertIcon className={cn(className, "text-warning-foreground")} />;
+    case "card-ci-stopped":
+      return <PauseIcon className={cn(className, "text-attention-foreground")} />;
     // T3O-39: plan review rows claim nothing about the work — neutral.
     case "plan-review-started":
     case "plan-review-stopped":
@@ -227,6 +230,8 @@ function ciPassSentence(outcome: BoardCiPassOutcome | undefined): string {
       return "finished a CI pass that was interrupted";
     case "cancelled":
       return "finished a CI pass that was cancelled";
+    case "stopped":
+      return "stopped a CI pass for a human";
     case undefined:
       return "finished a CI pass";
   }
@@ -237,6 +242,7 @@ const CI_ACTIVITY_KINDS: ReadonlySet<BoardCardActivityEntry["kind"]> = new Set([
   "card-ci-sent-back",
   "card-ci-skipped",
   "card-ci-held",
+  "card-ci-stopped",
 ]);
 
 function roundsPhrase(rounds: number): string {
@@ -452,6 +458,8 @@ function activitySentence(
       return <>skipped CI</>;
     case "card-ci-held":
       return payload.detail === undefined ? <>held the card in CI</> : <>{payload.detail}</>;
+    case "card-ci-stopped":
+      return <>stopped CI for a human: the card has failed CI too many times</>;
     case "card-review-round-requested":
       return payload.detail === undefined ? (
         <>asked for another review round</>

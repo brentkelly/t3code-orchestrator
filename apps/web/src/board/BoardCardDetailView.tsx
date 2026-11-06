@@ -590,6 +590,9 @@ export interface BoardCardDetailViewProps {
   readonly onRequestReviewRound?: (() => void) | undefined;
   /** "Skip CI and move to Ready for merge" (T3O-44). */
   readonly onSkipCi?: (() => void) | undefined;
+  /** T3O-49: Retry CI and "Send back to review anyway" on a stopped pass. */
+  readonly onRetryCi?: (() => void) | undefined;
+  readonly onCiSendBack?: (() => void) | undefined;
   /** A Skip CI request is in flight. */
   readonly skipCiPending?: boolean | undefined;
   /** Create a follow-up card from the decision log (T3O-32). */
@@ -3268,6 +3271,8 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   setPane("thread");
                 }}
                 onSkipCi={props.onSkipCi}
+                onRetryCi={props.onRetryCi}
+                onSendBack={props.onCiSendBack}
                 passes={props.detail.ciPasses}
                 skipPending={props.skipCiPending}
                 skipToLabel={(() => {

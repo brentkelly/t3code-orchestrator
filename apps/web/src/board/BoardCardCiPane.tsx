@@ -284,8 +284,14 @@ export function BoardCardCiPane({
   skipToLabel = "Ready for merge",
   onBackToThread,
   projectId,
+  onRetryCi,
+  onSendBack,
 }: {
   readonly cardKey: string;
+  /** T3O-49: Retry CI on a stopped or held pass, and "Send back to review
+      anyway" on a stopped one. Human-only. */
+  readonly onRetryCi?: (() => void) | undefined;
+  readonly onSendBack?: (() => void) | undefined;
   /** T3O-49: the card's project, for the "CI settings" link. */
   readonly projectId?: ProjectId | undefined;
   /** The card sits in the CI stage: Skip CI and the fix box apply. */
@@ -365,6 +371,54 @@ export function BoardCardCiPane({
                 with the card
               </span>
             ) : null}
+          </div>
+        ) : null}
+        {inCi && ci != null && (ci.phase === "stopped" || ci.phase === "held") ? (
+          <div
+            className={cn(
+              "flex shrink-0 flex-col gap-2 rounded-xl border px-3.5 py-3",
+              ci.phase === "stopped"
+                ? "border-attention/40 bg-attention/6"
+                : "border-warning/40 bg-warning/5",
+            )}
+          >
+            <span className="text-[12.5px] font-semibold text-foreground">
+              {ci.phase === "stopped" ? "Stopped for you" : "CI can't run this pass"}
+            </span>
+            <span className="text-[11.5px]/[1.55] text-pretty text-muted-foreground">
+              {ci.phase === "stopped"
+                ? (ci.stopReason ?? "CI stopped for a human.")
+                : "The pass couldn't finish (the runner or the worktree wasn't available). Fix what's in the way, then retry."}
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {onRetryCi === undefined ? null : (
+                <button
+                  className={cn(BUTTON_CLASS, "h-[30px] px-3 text-[12.5px]")}
+                  onClick={onRetryCi}
+                  type="button"
+                >
+                  Retry CI
+                </button>
+              )}
+              {ci.phase === "stopped" && onSendBack !== undefined ? (
+                <button
+                  className={cn(BUTTON_CLASS, "h-[30px] px-3 text-[12.5px]")}
+                  onClick={onSendBack}
+                  type="button"
+                >
+                  Send back to review anyway
+                </button>
+              ) : null}
+              {projectId === undefined ? null : (
+                <Link
+                  className="text-[11.5px] text-muted-foreground hover:text-foreground"
+                  params={{ projectId, tab: "ci" }}
+                  to="/settings/board/projects/$projectId/$tab"
+                >
+                  ⚙ CI settings
+                </Link>
+              )}
+            </div>
           </div>
         ) : null}
         {fixing ? (

@@ -229,8 +229,12 @@ function makeBoardRpcHandlers(
      * A client board command (T3O-57). The human actor is stamped first: this
      * RPC is the transport that knows a person is on the other end (t3o-18).
      */
-    [BOARD_WS_METHODS.dispatchCommand]: (command: BoardClientCommand) =>
-      authorized(
+    [BOARD_WS_METHODS.dispatchCommand]: (input: BoardClientCommand) => {
+      // T3O-49: a person's move, whatever the client said; it resets the
+      // card's CI round trips.
+      const command: BoardClientCommand =
+        input.type === "board.card.move" ? { ...input, cause: "human" } : input;
+      return authorized(
         BOARD_WS_METHODS.dispatchCommand,
         services.stampActor(command).pipe(
           Effect.andThen(
@@ -243,7 +247,8 @@ function makeBoardRpcHandlers(
             (cause) => new BoardDispatchCommandError({ message: cause.message, cause }),
           ),
         ),
-      ),
+      );
+    },
 
     /**
      * Stage and project config commands (T3O-49), at the settings-write tier.
@@ -393,6 +398,13 @@ function makeBoardRpcHandlers(
         BOARD_WS_METHODS.skipCi,
         deps.boardSupervisor.skipCi(input.cardId, services.stampActor),
       ),
+
+    /** Retry CI and "Send back to review anyway" (T3O-49): human-only, like
+        Skip CI; no agent tool reaches them. */
+    [BOARD_WS_METHODS.retryCi]: (input: BoardCardPullRequestActionInput) =>
+      authorized(BOARD_WS_METHODS.retryCi, deps.boardSupervisor.retryCi(input.cardId)),
+    [BOARD_WS_METHODS.ciSendBack]: (input: BoardCardPullRequestActionInput) =>
+      authorized(BOARD_WS_METHODS.ciSendBack, deps.boardSupervisor.ciSendBack(input.cardId)),
 
     /**
      * "Remove worktree" on a finished card that kept one (T3O-52, D5). The
