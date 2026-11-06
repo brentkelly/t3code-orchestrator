@@ -119,6 +119,44 @@ describe("boardStagePrimaryAction", () => {
     ).toBeNull();
   });
 
+  it("offers Skip CI while the card sits in CI before a pass exists", () => {
+    const withCi = BOARD_SEED_STAGES;
+    const skip = {
+      label: "Skip CI",
+      confirmLabel: "Skip CI and move to Ready for merge",
+      toStage: BOARD_SEED_STAGE_IDS.merge,
+      toLabel: "Ready for merge",
+    };
+    // holdInCi: the project's CI is on, the card is in the stage, no pass yet.
+    expect(
+      boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.ci, {
+        ciEntryLive: false,
+        ciActive: true,
+      }),
+    ).toBeNull();
+    expect(
+      boardSkipCiAction(withCi, {
+        stageId: BOARD_SEED_STAGE_IDS.ci,
+        ciEntryLive: false,
+        ciActive: true,
+      }),
+    ).toEqual(skip);
+    // Paused CI with no entry still moves on like any held card.
+    expect(
+      boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.ci, {
+        ciEntryLive: false,
+        ciActive: false,
+      }),
+    ).toMatchObject({ kind: "move", toStage: BOARD_SEED_STAGE_IDS.merge });
+    expect(
+      boardSkipCiAction(withCi, {
+        stageId: BOARD_SEED_STAGE_IDS.ci,
+        ciEntryLive: false,
+        ciActive: false,
+      }),
+    ).toBeNull();
+  });
+
   it("walks CI as the next stage, never past a live entry (boardCiAwareNextStageId)", () => {
     const withCi = BOARD_SEED_STAGES;
     const withoutCi = BOARD_SEED_STAGES.filter(
