@@ -16,7 +16,7 @@ import {
   type BoardStageId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigation, useRoute } from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as Linking from "expo-linking";
 import { useMemo, useState, type ReactNode } from "react";
 import { View } from "react-native";
@@ -33,11 +33,14 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceState } from "../../state/workspace";
 import { boardActivityLabel } from "./boardActivityLabel";
 
-export function BoardCardScreen() {
+type BoardCardScreenProps = StaticScreenProps<{
+  readonly environmentId: string;
+  readonly cardId: string;
+}>;
+
+export function BoardCardScreen({ route }: BoardCardScreenProps) {
   const navigation = useNavigation();
-  const route = useRoute();
-  const params = route.params as { readonly environmentId?: string; readonly cardId?: string };
-  const parsed = parseBoardCardRoute(params.environmentId, params.cardId);
+  const parsed = parseBoardCardRoute(route.params.environmentId, route.params.cardId);
   const environmentId = parsed?.environmentId ?? EnvironmentId.make("pending");
   const cardId = parsed?.cardId ?? BoardCardId.make("pending");
   const detail = useAtomValue(boardEnvironment.cardDetailValueAtom({ environmentId, cardId }));
@@ -306,8 +309,7 @@ export function BoardCardScreen() {
         {detail.activity.length > 0 ? (
           <Section title="Activity">
             {detail.activity
-              .slice()
-              .reverse()
+              .toReversed()
               .slice(0, 40)
               .map((entry) => (
                 <View key={entry.activityId} className="border-b border-border py-2">
