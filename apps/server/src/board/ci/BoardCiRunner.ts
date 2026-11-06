@@ -339,7 +339,7 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
   },
 );
 
-/** A Reference, like `BoardProjectConfig`, so every board layer gets the real
+/** A Reference, like `BoardProjectFile`, so every board layer gets the real
     runner and a test swaps in a scripted one. */
 export class BoardCiRunner extends Context.Reference<BoardCiRunnerShape>("t3/board/BoardCiRunner", {
   defaultValue: () => ({ run: runBoardCiPass }),

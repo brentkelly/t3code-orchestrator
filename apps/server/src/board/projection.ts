@@ -22,6 +22,7 @@ import {
   BoardCardCi,
   BoardCardCiLastOutcome,
   BoardCiPass,
+  BoardCiStepList,
   BoardCiPassSettle,
   BoardCiPassStep,
   type BoardStepQueuedBy,
@@ -88,6 +89,8 @@ import {
   type BoardShellSnapshot,
   IsoDateTime,
   BoardProjectStageConfig,
+  boardProjectStageConfigShell,
+  type BoardProjectStageConfigShell,
   ProjectId,
   ThreadId,
   RuntimeMode,
@@ -134,7 +137,12 @@ const encodeBoardCiPassStepsJson = Schema.encodeSync(
 const BoardCiPassDbRow = Schema.Struct({
   ...BoardCiPass.fields,
   steps: Schema.fromJsonString(BoardCiPass.fields.steps),
+  // T3O-49 (061): the frozen steps as JSON; NULL before it.
+  snapshot: Schema.NullOr(Schema.fromJsonString(BoardCiStepList)),
+  configVersion: Schema.NullOr(Schema.String),
 });
+// The insert's request is already encoded, so the snapshot is plain JSON data.
+const encodeBoardCiSnapshotJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const BoardCardDbRow = Schema.Struct({
   cardId: BoardCard.fields.id,
@@ -279,8 +287,10 @@ const BoardStageDbRow = Schema.Struct({
   orderKey: BoardStageDefinition.fields.orderKey,
   createdAt: BoardStageDefinition.fields.createdAt,
   updatedAt: BoardStageDefinition.fields.updatedAt,
-  // NULL for a global stage; the owning project for a `t3o.json` stage (057).
+  // NULL for a global stage; the project a stage was made for (057, T3O-49).
   projectId: Schema.NullOr(ProjectId),
+  // T3O-49 (061): 1 / 0, or NULL on a row written before it.
+  defaultForProjects: Schema.NullOr(Schema.Number),
 });
 type BoardStageDbRow = typeof BoardStageDbRow.Type;
 
@@ -1779,11 +1789,12 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
   const upsertBoardStageRow = SqlSchema.void({
     Request: BoardStageDbRow,
     execute: (row) => sql`
-      INSERT INTO board_stages (stage_id, label, role, order_key, created_at, updated_at, project_id)
-      VALUES (${row.stageId}, ${row.label}, ${row.role}, ${row.orderKey}, ${row.createdAt}, ${row.updatedAt}, ${row.projectId})
+      INSERT INTO board_stages (stage_id, label, role, order_key, created_at, updated_at, project_id, default_for_projects)
+      VALUES (${row.stageId}, ${row.label}, ${row.role}, ${row.orderKey}, ${row.createdAt}, ${row.updatedAt}, ${row.projectId}, ${row.defaultForProjects})
       ON CONFLICT (stage_id)
       DO UPDATE SET
         project_id = excluded.project_id,
+        default_for_projects = excluded.default_for_projects,
         label = excluded.label,
         role = excluded.role,
         order_key = excluded.order_key,
@@ -1813,7 +1824,8 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         order_key AS "orderKey",
         created_at AS "createdAt",
         updated_at AS "updatedAt",
-        project_id AS "projectId"
+        project_id AS "projectId",
+        default_for_projects AS "defaultForProjects"
       FROM board_stages
     `,
   });
@@ -2389,11 +2401,13 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
     execute: (pass) => sql`
       INSERT OR IGNORE INTO board_ci_passes (
         run_id, card_id, entry, ordinal, started_at, finished_at, outcome, steps,
-        log_dir, fix_thread_id
+        log_dir, fix_thread_id, snapshot, config_version
       ) VALUES (
         ${pass.runId}, ${pass.cardId}, ${pass.entry}, ${pass.ordinal}, ${pass.startedAt},
         ${pass.finishedAt}, ${pass.outcome}, ${encodeBoardCiPassStepsJson(pass.steps)}, ${pass.logDir},
-        ${pass.fixThreadId}
+        ${pass.fixThreadId},
+        ${pass.snapshot === null ? null : encodeBoardCiSnapshotJson(pass.snapshot)},
+        ${pass.configVersion}
       )
     `,
   });
@@ -2437,7 +2451,9 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         outcome,
         steps,
         log_dir AS "logDir",
-        fix_thread_id AS "fixThreadId"
+        fix_thread_id AS "fixThreadId",
+        snapshot,
+        config_version AS "configVersion"
       FROM board_ci_passes
       WHERE card_id = ${cardId}
       ORDER BY entry, ordinal, rowid
@@ -2996,6 +3012,8 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         createdAt: stage.createdAt,
         updatedAt: stage.updatedAt,
         projectId: stage.projectId,
+        defaultForProjects:
+          stage.defaultForProjects === undefined ? null : stage.defaultForProjects ? 1 : 0,
       })
       .pipe(Effect.mapError(toPersistenceSqlError("BoardCardsProjection.stage:query")));
 
@@ -3344,6 +3362,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
 
       case "board.stage-created":
       case "board.stage-renamed":
+      case "board.stage-updated":
       case "board.stage-reordered":
         // Stage rows (014); the payload carries the whole post-change stage.
         yield* upsertStage(event.payload.stage);
@@ -3733,7 +3752,7 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         return;
 
       case "board.project-stage-config-set":
-        // Config row (058) plus the project-owned stage rows (057) it moved.
+        // Config row (059) plus any stage rows a T3O-43 payload moved.
         yield* queries
           .upsertBoardProjectStageConfigRow({
             projectId: event.payload.projectId,
@@ -3822,6 +3841,7 @@ export function loadBoardState(
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             projectId: row.projectId,
+            ...boardStageRowDefault(row),
           }))
           .sort(compareBoardStages);
         // A migrated-but-unused board (no cards, catalogue AND stage list still
@@ -4268,14 +4288,34 @@ function projectStageConfigsFromRows(
   );
 }
 
-/** Per-project stage configs for the shell (T3O-43); absent when none. */
+/** Per-project deltas for the shell (T3O-49), shell-sized; absent when none. */
 function boardShellProjectStageConfigs(
   queries: BoardCardQueries,
-): Effect.Effect<Record<ProjectId, BoardProjectStageConfig> | null, ProjectionRepositoryError> {
+): Effect.Effect<
+  Record<ProjectId, BoardProjectStageConfigShell> | null,
+  ProjectionRepositoryError
+> {
   return queries.listBoardProjectStageConfigRows().pipe(
     Effect.mapError(toPersistenceSqlError("BoardCardsProjection.shellProjectStageConfigs:query")),
-    Effect.map((rows) => (rows.length === 0 ? null : projectStageConfigsFromRows(rows))),
+    Effect.map((rows) =>
+      rows.length === 0
+        ? null
+        : Object.fromEntries(
+            Object.entries(projectStageConfigsFromRows(rows)).map(([projectId, config]) => [
+              projectId,
+              boardProjectStageConfigShell(config),
+            ]),
+          ),
+    ),
   );
+}
+
+/** A stage row's `defaultForProjects`: absent when the column is NULL, so a
+    row written before T3O-49 rehydrates exactly as its replayed payload. */
+function boardStageRowDefault(row: {
+  readonly defaultForProjects: number | null;
+}): Pick<BoardStageDefinition, "defaultForProjects"> {
+  return row.defaultForProjects === null ? {} : { defaultForProjects: row.defaultForProjects === 1 };
 }
 
 /** The user-defined stage list (t3o-15), so the board reads column order and
@@ -4295,6 +4335,7 @@ function boardShellStages(
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
           projectId: row.projectId,
+          ...boardStageRowDefault(row),
         }))
         .sort(compareBoardStages),
     ),

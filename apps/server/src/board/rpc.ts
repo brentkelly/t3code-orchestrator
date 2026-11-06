@@ -41,6 +41,11 @@ import {
   type BoardClientCommand,
   type BoardSubscribeBoardInput,
   type BoardSubscribeCardInput,
+  // T3o (T3O-49): project config RPCs.
+  type BoardProjectConfigInput,
+  type BoardProjectImportCandidatesInput,
+  type BoardProjectImportInput,
+  type BoardSettingsClientCommand,
   OrchestrationClientOrigin,
   type ProjectId,
 } from "@t3tools/contracts";
@@ -66,6 +71,10 @@ import {
   stampBoardActivityActor,
 } from "./activityActors.ts";
 import { BoardEngine, type BoardEngineShape } from "./BoardEngine.ts";
+import {
+  make as makeBoardProjectConfigService,
+  type BoardProjectConfigServiceShape,
+} from "./projectConfig/BoardProjectConfigService.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import type { BoardQueriesShape } from "./projection.ts";
 import { subscribeBoard } from "./boardSubscription.ts";
@@ -114,11 +123,9 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
     const boardQueries = yield* BoardQueries;
     // Built once per connection, so the actor-name caches live as long as it does.
     const workspaces = yield* BoardWorkspaces;
-    const stampActor = boardActorStamp({
-      threads: yield* ThreadGateway,
-      boardQueries,
-      workspaces,
-    });
+    const threads = yield* ThreadGateway;
+    const stampActor = boardActorStamp({ threads, boardQueries, workspaces });
+    const projectActorName = boardProjectActorName({ threads, workspaces });
     // The subscription's services, provided here so the handler's stream needs
     // only the RPC scope.
     const subscriptionContext = yield* Effect.context<
@@ -129,6 +136,8 @@ export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
         boardEngine,
         boardQueries,
         stampActor,
+        projectActorName,
+        projectConfig: yield* makeBoardProjectConfigService,
         mover: yield* BoardCardMover,
         subscriptionContext,
       }),
@@ -148,6 +157,8 @@ function makeBoardRpcHandlers(
     readonly boardEngine: BoardEngineShape;
     readonly boardQueries: BoardQueriesShape;
     readonly stampActor: (command: BoardCommand) => Effect.Effect<void>;
+    readonly projectActorName: (projectId: ProjectId) => Effect.Effect<string>;
+    readonly projectConfig: BoardProjectConfigServiceShape;
     readonly mover: BoardCardMoverShape;
     readonly subscriptionContext: Context.Context<
       BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
@@ -232,6 +243,52 @@ function makeBoardRpcHandlers(
             (cause) => new BoardDispatchCommandError({ message: cause.message, cause }),
           ),
         ),
+      ),
+
+    /**
+     * Stage and project config commands (T3O-49), at the settings-write tier.
+     * The actor is always this human, whatever the client sent.
+     */
+    [BOARD_WS_METHODS.dispatchSettingsCommand]: (command: BoardSettingsClientCommand) =>
+      authorized(
+        BOARD_WS_METHODS.dispatchSettingsCommand,
+        Effect.gen(function* () {
+          const name =
+            "projectId" in command
+              ? yield* services.projectActorName(command.projectId)
+              : BOARD_HUMAN_ACTOR_FALLBACK_NAME;
+          return yield* services.projectConfig.dispatch(command, boardHumanActor(name));
+        }),
+      ),
+
+    [BOARD_WS_METHODS.getProjectConfig]: (input: BoardProjectConfigInput) =>
+      authorized(
+        BOARD_WS_METHODS.getProjectConfig,
+        services.projectConfig.getConfig(input.projectId),
+      ),
+
+    [BOARD_WS_METHODS.projectImportCandidates]: (input: BoardProjectImportCandidatesInput) =>
+      authorized(
+        BOARD_WS_METHODS.projectImportCandidates,
+        services.projectConfig.importCandidates(input),
+      ),
+
+    [BOARD_WS_METHODS.importProjectFile]: (input: BoardProjectImportInput) =>
+      authorized(
+        BOARD_WS_METHODS.importProjectFile,
+        Effect.gen(function* () {
+          const actor = boardHumanActor(yield* services.projectActorName(input.projectId));
+          return yield* services.projectConfig.importFile(input, actor);
+        }),
+      ),
+
+    [BOARD_WS_METHODS.exportProjectFile]: (input: BoardProjectConfigInput) =>
+      authorized(
+        BOARD_WS_METHODS.exportProjectFile,
+        Effect.gen(function* () {
+          const actor = boardHumanActor(yield* services.projectActorName(input.projectId));
+          return yield* services.projectConfig.exportFile(input.projectId, actor);
+        }),
       ),
 
     /** The archive page's cards (t3o-13), read when the page opens. */
@@ -619,7 +676,7 @@ export function boardActorStamp(deps: {
   readonly workspaces: Pick<BoardWorkspacesShape, "localProject" | "forCard">;
 }): (command: BoardCommand) => Effect.Effect<void> {
   const projectByCard = new Map<string, ProjectId>();
-  const nameByProject = new Map<string, string>();
+  const projectName = boardProjectActorName(deps);
 
   const resolveName = Effect.fn("board-activity-actor-name")(function* (cardId: BoardCardId) {
     let projectId = projectByCard.get(String(cardId));
@@ -634,23 +691,7 @@ export function boardActorStamp(deps: {
       projectId = detail.card.projectId;
       projectByCard.set(String(cardId), projectId);
     }
-    const cached = nameByProject.get(String(projectId));
-    if (cached !== undefined) return cached;
-    const project = yield* deps.threads
-      .project(projectId)
-      .pipe(Effect.catchCause(() => Effect.succeed(null)));
-    const workspaceRoot = project?.workspaceRoot;
-    const workspace =
-      workspaceRoot === undefined || workspaceRoot.length === 0
-        ? yield* deps.workspaces.forCard({ id: cardId, projectId })
-        : yield* deps.workspaces.localProject(projectId);
-    const resolved = yield* workspace.gitUserName({}).pipe(
-      Effect.map((result) => result.name),
-      Effect.catchCause(() => Effect.succeed("")),
-    );
-    const name = resolved.length > 0 ? resolved : BOARD_HUMAN_ACTOR_FALLBACK_NAME;
-    nameByProject.set(String(projectId), name);
-    return name;
+    return yield* projectName(projectId, cardId);
   });
 
   return (command) =>
@@ -666,4 +707,37 @@ export function boardActorStamp(deps: {
       // the next command on the card resolves against the new one.
       if (command.type === "board.card.set-project") projectByCard.delete(String(cardId));
     }).pipe(Effect.catchCause(() => Effect.void));
+}
+
+/**
+ * A human's name for a project (T3O-49, extracted from `boardActorStamp`):
+ * the project's git `user.name`, cached per project, falling back to "You".
+ * Read from this server's checkout when it has one, else from `cardId`'s
+ * worker; with neither, the fallback.
+ */
+export function boardProjectActorName(deps: {
+  readonly threads: Pick<ThreadGatewayShape, "project">;
+  readonly workspaces: Pick<BoardWorkspacesShape, "localProject" | "forCard">;
+}): (projectId: ProjectId, cardId?: BoardCardId) => Effect.Effect<string> {
+  const nameByProject = new Map<string, string>();
+  return Effect.fn("board-project-actor-name")(function* (projectId, cardId) {
+    const cached = nameByProject.get(String(projectId));
+    if (cached !== undefined) return cached;
+    const project = yield* deps.threads
+      .project(projectId)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    const workspaceRoot = project?.workspaceRoot;
+    const local = workspaceRoot !== undefined && workspaceRoot.length > 0;
+    if (!local && cardId === undefined) return BOARD_HUMAN_ACTOR_FALLBACK_NAME;
+    const workspace = local
+      ? yield* deps.workspaces.localProject(projectId)
+      : yield* deps.workspaces.forCard({ id: cardId!, projectId });
+    const resolved = yield* workspace.gitUserName({}).pipe(
+      Effect.map((result) => result.name),
+      Effect.catchCause(() => Effect.succeed("")),
+    );
+    const name = resolved.length > 0 ? resolved : BOARD_HUMAN_ACTOR_FALLBACK_NAME;
+    nameByProject.set(String(projectId), name);
+    return name;
+  });
 }

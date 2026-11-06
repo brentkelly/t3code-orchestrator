@@ -11,6 +11,7 @@ import {
   BoardStageId,
   boardCiFixStepId,
   resolveT3oProjectFile,
+  withBoardProjectConfigVersion,
   type BoardCard,
   type BoardCiStepDefinition,
   type BoardEvent,
@@ -26,7 +27,6 @@ import {
   type BoardCiRunResult,
 } from "./ci/BoardCiRunner.ts";
 import { BOARD_CI_SLOT_INSTANCE } from "./ci/ciPasses.ts";
-import { BoardProjectConfig } from "./projectConfig/BoardProjectConfig.ts";
 import {
   NOW,
   buildingCard,
@@ -58,25 +58,24 @@ const ciFile = (extra: Record<string, unknown> = {}) => ({
   stages: { settings: { ci: { steps: STEPS, ...extra } } },
 });
 
-const ciConfig = (extra: Record<string, unknown> = {}) =>
-  resolveT3oProjectFile({
-    raw: ciFile(extra),
+const configFrom = (raw: unknown) => {
+  const resolved = resolveT3oProjectFile({
+    raw,
     board: { cards: [], stages: BOARD_SEED_STAGES, nextCardNumberByProject: {} },
     projectId,
-    source: { path: "/tmp/project-1/t3o.json", commitSha: null },
     now: NOW,
-  }).config;
-
-/** The project's committed t3o.json, as the boot reconcile reads it. */
-const withFile = (raw: unknown) =>
-  Effect.provideService(BoardProjectConfig, {
-    read: (root: string) =>
-      Effect.succeed(
-        root === "/tmp/project-1"
-          ? { raw, warnings: [], source: { path: "/tmp/project-1/t3o.json", commitSha: null } }
-          : { raw: null, warnings: [], source: null },
-      ),
   });
+  return {
+    resolved,
+    config: withBoardProjectConfigVersion({
+      ...resolved.delta,
+      dismissedImportSha: null,
+      lastChangedBy: null,
+    }),
+  };
+};
+
+const ciConfig = (extra: Record<string, unknown> = {}) => configFrom(ciFile(extra)).config;
 
 type Script = BoardCiRunResult | "hang";
 
@@ -200,7 +199,7 @@ it.effect("a pass runs no agent and moves the card to Ready for merge", () =>
         const spawned = (yield* h.commands).filter((command) => command.type === "thread.spawn");
         assert.lengthOf(spawned, 0);
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -242,7 +241,7 @@ it.effect("a failure gets a fix agent; its fix re-runs every step from the top",
         assert.isTrue(settled.some((entry) => entry.outcome === "fixed-in-place"));
         assert.isTrue(settled.some((entry) => entry.outcome === "passed"));
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -274,7 +273,7 @@ it.effect("a fix agent's return-to-review sends the card back for a fresh round"
         // A fresh round: the review-overrides path floors the budget at it.
         assert.strictEqual(sent.reviewOverrides?.runThroughRound, 1);
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -308,7 +307,7 @@ it.effect("with no fixes left, a failure goes straight back to review and buys a
         const spawned = (yield* h.commands).filter((command) => command.type === "thread.spawn");
         assert.lengthOf(spawned, 0);
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile({ maxFixAttempts: 0 })));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -333,22 +332,16 @@ it.effect("the board's own advance carries a card into CI", () =>
         settings: { ci: { steps: STEPS } },
       },
     };
-    const resolved = resolveT3oProjectFile({
-      raw,
-      board: { cards: [], stages: BOARD_SEED_STAGES, nextCardNumberByProject: {} },
-      projectId,
-      source: null,
-      now: NOW,
-    });
-    const qa = resolved.stages[0]!.stageId;
+    const { resolved, config } = configFrom(raw);
+    const qa = resolved.createStages[0]!.stageId;
     const subject = card("qa", qa);
     yield* withGovernor(
       {
         board: {
           cards: [subject],
-          stages: [...BOARD_SEED_STAGES, ...resolved.stages],
+          stages: [...BOARD_SEED_STAGES, ...resolved.createStages],
           nextCardNumberByProject: {},
-          projectStageConfigs: { [projectId]: resolved.config },
+          projectStageConfigs: { [projectId]: config },
         },
         settings,
       },
@@ -364,7 +357,7 @@ it.effect("the board's own advance carries a card into CI", () =>
           assert.isDefined(move);
           assert.strictEqual(yield* calls, 0);
         }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(raw));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -380,7 +373,7 @@ it.effect("a project without CI moves review → merge exactly as before", () =>
         assert.strictEqual(yield* calls, 0);
         assert.lengthOf(ciRecords(yield* h.decided), 0);
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -414,7 +407,7 @@ it.effect("a restart marks the cut-off pass interrupted and runs again from the 
         });
         assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -444,7 +437,7 @@ it.effect("a restart leaves a held pass held for a human", () =>
         assert.strictEqual(held.stage, ci);
         assert.strictEqual(held.ci?.phase, "held");
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -478,7 +471,7 @@ it.effect("Skip CI stops the pass, records who skipped it, and moves the card on
           outcome: "not-in-ci",
         });
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -507,7 +500,7 @@ it.effect("dragging a card back out of CI cancels its pass", () =>
         assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 0);
         assert.isNull((yield* live(h, subject.id)).ci);
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -530,7 +523,7 @@ it.effect("a queued pass starts when an agent step frees the slot", () =>
         assert.strictEqual(yield* calls, 1);
         assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -566,7 +559,7 @@ it.effect("archiving a card in CI stops its pass, frees the slot and settles the
         );
         assert.isNull((yield* live(h, subject.id)).ci);
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -588,7 +581,7 @@ it.effect("a queued pass of an archived card never starts", () =>
         yield* h.reactor.drainCi;
         assert.strictEqual(yield* calls, 0);
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
 
@@ -606,6 +599,6 @@ it.effect("deleting a card in CI stops its pass and frees the slot", () =>
         yield* h.reactor.drainCi;
         assert.strictEqual(yield* h.slots.heldFor(BOARD_CI_SLOT_INSTANCE), 0);
       }),
-    ).pipe(Effect.provideService(BoardCiRunner, runner), withFile(ciFile()));
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );

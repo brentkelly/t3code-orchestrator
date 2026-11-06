@@ -179,8 +179,8 @@ describe("settings commands", () => {
     expect(Schema.decodeUnknownOption(BoardClientCommand)(stageCreate)._tag).toBe("None");
   });
 
-  it("default the actor to the system", () => {
+  it("leave the actor for the server to stamp", () => {
     const decoded = Schema.decodeUnknownSync(BoardSettingsClientCommand)(command);
-    expect("actor" in decoded && decoded.actor.kind).toBe("system");
+    expect("actor" in decoded).toBe(false);
   });
 });

@@ -1,19 +1,22 @@
 /**
- * T3o per-project stage config (T3O-43) through the real board engine: a
- * project's resolved `t3o.json` lands in the read model, moves walk the
- * card's own project's pipeline, a stage that leaves the file is retired while
- * occupied and dropped once empty, and a from-empty replay still equals the
- * table rehydration.
+ * T3o per-project stage config (T3O-49) through the real board engine: a
+ * project's delta lands in the read model, moves walk the card's own
+ * project's pipeline, a stage made for one project is a global stage the
+ * other projects don't use, a stale edit is refused, a deleted stage is
+ * pruned from every delta, and a from-empty replay equals the table
+ * rehydration. T3O-43 payloads upcast on read.
  */
 import {
+  BOARD_CONFIG_VERSION_MISMATCH,
   BoardCardId,
   BoardStageId,
   CommandId,
+  EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+  EventId,
   ProjectId,
   ProviderInstanceId,
-  boardProjectStageId,
+  boardNewStageOrderKey,
   boardProjectStagesInOrder,
-  resolveT3oProjectFile,
   type BoardEvent,
   type BoardState,
 } from "@t3tools/contracts";
@@ -34,7 +37,7 @@ const projectA = ProjectId.make("project-a");
 const projectB = ProjectId.make("project-b");
 const cardA = BoardCardId.make("card-a");
 const cardB = BoardCardId.make("card-b");
-const security = boardProjectStageId(projectA, "security");
+const security = BoardStageId.make("security");
 
 let commandSeq = 0;
 const nextCommandId = (tag: string) => CommandId.make(`cmd-${tag}-${(commandSeq += 1)}`);
@@ -42,7 +45,7 @@ const nextCommandId = (tag: string) => CommandId.make(`cmd-${tag}-${(commandSeq 
 const createProject = (projectId: ProjectId, name: string) =>
   ({
     type: "project.create",
-    commandId: CommandId.make(`cmd-project-${name}`),
+    commandId: CommandId.make(`cmd-project-${name}-${(commandSeq += 1)}`),
     projectId,
     title: `Project ${name}`,
     workspaceRoot: `/tmp/${name}`,
@@ -50,23 +53,16 @@ const createProject = (projectId: ProjectId, name: string) =>
     createdAt: t0,
   }) as const;
 
-const setConfig = (board: BoardState, raw: unknown) => {
-  const resolved = resolveT3oProjectFile({
-    raw,
-    board,
-    projectId: projectA,
-    source: { path: "/tmp/a/t3o.json", commitSha: "abc123" },
-    now: t0,
-  });
-  return {
-    type: "board.project.set-stage-config",
-    commandId: nextCommandId("config"),
-    projectId: projectA,
-    config: resolved.config,
-    stages: resolved.stages,
+const createCard = (cardId: BoardCardId, projectId: ProjectId, stage?: string) =>
+  ({
+    type: "board.card.create",
+    commandId: nextCommandId("create"),
+    cardId,
+    projectId,
+    title: `Card ${cardId}`,
+    ...(stage === undefined ? {} : { stage: BoardStageId.make(stage) }),
     createdAt: t0,
-  } as const;
-};
+  }) as const;
 
 const move = (cardId: BoardCardId, toStage: string, override = false) =>
   ({
@@ -78,12 +74,16 @@ const move = (cardId: BoardCardId, toStage: string, override = false) =>
     createdAt: t0,
   }) as const;
 
-const FILE = {
-  stages: {
-    remove: ["sprint"],
-    add: [{ id: "security", label: "Security review", after: "review", autoExecute: true }],
-  },
-};
+const switchStage = (stageId: string, on: boolean | null, projectId = projectA) =>
+  ({
+    type: "board.project.set-stage-switch",
+    commandId: nextCommandId("switch"),
+    projectId,
+    stageId: BoardStageId.make(stageId),
+    on,
+    actor: { kind: "human", name: "Ada", providerInstanceId: null, threadId: null },
+    createdAt: t0,
+  }) as const;
 
 it.layer(makeBoardStackTestLayer("t3o-project-stage-config-test-"))(
   "per-project stage config",
@@ -99,74 +99,126 @@ it.layer(makeBoardStackTestLayer("t3o-project-stage-config-test-"))(
 
         yield* engine.dispatch(createProject(projectA, "a"));
         yield* engine.dispatch(createProject(projectB, "b"));
-        for (const [cardId, projectId] of [
-          [cardA, projectA],
-          [cardB, projectB],
-        ] as const) {
-          yield* engine.dispatch({
-            type: "board.card.create",
-            commandId: nextCommandId("create"),
-            cardId,
-            projectId,
-            title: `Card ${cardId}`,
-            createdAt: t0,
-          });
-        }
+        yield* engine.dispatch(createCard(cardA, projectA));
+        yield* engine.dispatch(createCard(cardB, projectB));
 
-        const modelBefore = yield* snapshots.getCommandReadModel();
-        yield* engine.dispatch(setConfig(modelBefore.board!, FILE));
+        // A stage made for project A: a global stage, off for B.
+        yield* engine.dispatch({
+          type: "board.stage.create",
+          commandId: nextCommandId("stage"),
+          stageId: security,
+          label: "Security review",
+          orderKey: boardNewStageOrderKey(yield* board())!,
+          forProjectId: projectA,
+          createdAt: t0,
+        });
+        yield* engine.dispatch(switchStage("sprint", false));
 
         const configured = yield* board();
         assert.deepStrictEqual(
-          boardProjectStagesInOrder(configured, projectA).map((stage) => stage.stageId),
-          ["backlog", "planning", "ready", "building", "review", security, "merge", "done"],
+          boardProjectStagesInOrder(configured, projectA).map((stage) => String(stage.stageId)),
+          ["backlog", "planning", "ready", "building", "review", "security", "merge", "done"],
         );
-        // Project B is untouched.
-        assert.include(
+        assert.notInclude(
           boardProjectStagesInOrder(configured, projectB).map((stage) => String(stage.stageId)),
-          "sprint",
+          "security",
         );
+        const configA = configured.projectStageConfigs?.[projectA];
+        assert.deepStrictEqual(configA?.stageSwitches, { security: true, sprint: false });
+        assert.strictEqual(configA?.lastChangedBy?.actor.name, "Ada");
 
-        // Backlog → Planning is adjacent for A (Sprint is gone), not for B.
+        // Backlog → Planning is adjacent for A (Sprint is off), not for B.
         yield* engine.dispatch(move(cardA, "planning"));
         const refusedB = yield* Effect.exit(engine.dispatch(move(cardB, "planning")));
         assert.isTrue(Exit.isFailure(refusedB));
 
-        // A removed stage is refused even with override; another project's
-        // stage likewise.
+        // A switched-off stage is refused even with override; so is a stage
+        // made for another project.
         const intoSprint = yield* Effect.exit(engine.dispatch(move(cardA, "sprint", true)));
-        assert.isTrue(Exit.isFailure(intoSprint));
-        assert.include(String(intoSprint), "doesn't use the Sprint stage");
+        assert.include(String(intoSprint), "Sprint is off for");
         const intoForeign = yield* Effect.exit(engine.dispatch(move(cardB, security, true)));
-        assert.isTrue(Exit.isFailure(intoForeign));
+        assert.include(String(intoForeign), "Security review is off for");
 
-        // Into the project's own stage, then drop it from the file while
-        // occupied: it stays, retired, and nothing new may enter it.
-        yield* engine.dispatch(move(cardA, security, true));
-        yield* engine.dispatch(setConfig(yield* board(), { stages: { remove: ["sprint"] } }));
-        const retired = yield* board();
-        const retiredEntry = boardProjectStagesInOrder(retired, projectA).find(
-          (stage) => stage.stageId === security,
+        // A role stage can't be switched; a stale version is refused.
+        const roleSwitch = yield* Effect.exit(engine.dispatch(switchStage("review", false)));
+        assert.include(String(roleSwitch), "can't be switched off");
+        const stale = yield* Effect.exit(
+          engine.dispatch({
+            type: "board.project.set-stage-override",
+            commandId: nextCommandId("override"),
+            projectId: projectA,
+            stageId: BoardStageId.make("building"),
+            patch: { prompt: "Build it" },
+            expectedConfigVersion: EMPTY_BOARD_PROJECT_STAGE_CONFIG.version,
+            createdAt: t0,
+          }),
         );
-        assert.strictEqual(retiredEntry?.retired, true);
+        assert.include(String(stale), BOARD_CONFIG_VERSION_MISMATCH);
+        yield* engine.dispatch({
+          type: "board.project.set-stage-override",
+          commandId: nextCommandId("override"),
+          projectId: projectA,
+          stageId: BoardStageId.make("building"),
+          patch: { prompt: "Build it" },
+          expectedConfigVersion: (yield* board()).projectStageConfigs![projectA]!.version,
+          createdAt: t0,
+        });
 
-        // Leave it; the next reconcile drops the empty row.
-        yield* engine.dispatch(move(cardA, "merge", true));
-        yield* engine.dispatch(setConfig(yield* board(), { stages: { remove: ["sprint"] } }));
+        // A made-for-project stage is renamed like any other, and its default
+        // can be turned on for every project.
+        yield* engine.dispatch({
+          type: "board.stage.rename",
+          commandId: nextCommandId("rename"),
+          stageId: security,
+          label: "Security",
+          createdAt: t0,
+        });
+        yield* engine.dispatch({
+          type: "board.stage.set-default-for-projects",
+          commandId: nextCommandId("default"),
+          stageId: security,
+          on: true,
+          createdAt: t0,
+        });
+        assert.include(
+          boardProjectStagesInOrder(yield* board(), projectB).map((stage) => String(stage.stageId)),
+          "security",
+        );
+        const ciDefault = yield* Effect.exit(
+          engine.dispatch({
+            type: "board.stage.set-default-for-projects",
+            commandId: nextCommandId("default"),
+            stageId: BoardStageId.make("ci"),
+            on: true,
+            createdAt: t0,
+          }),
+        );
+        assert.isTrue(Exit.isFailure(ciDefault));
+
+        // Deleting the empty stage prunes it from A's delta and re-versions it.
+        const versionBefore = (yield* board()).projectStageConfigs![projectA]!.version;
+        yield* engine.dispatch({
+          type: "board.stage.delete",
+          commandId: nextCommandId("delete"),
+          stageId: security,
+          createdAt: t0,
+        });
         const pruned = yield* board();
         assert.isUndefined(pruned.stages?.find((stage) => stage.stageId === security));
+        assert.deepStrictEqual(pruned.projectStageConfigs?.[projectA]?.stageSwitches, {
+          sprint: false,
+        });
+        assert.notStrictEqual(pruned.projectStageConfigs?.[projectA]?.version, versionBefore);
 
+        // The shell carries the delta less its prompts.
         const shell = yield* snapshots.getBoardSnapshot();
-        assert.deepStrictEqual(shell.projectStageConfigs?.[projectA]?.removedStageIds, [
-          BoardStageId.make("sprint"),
-        ]);
+        assert.deepStrictEqual(shell.projectStageConfigs?.[projectA]?.stageSwitches, {
+          sprint: false,
+        });
+        assert.deepStrictEqual(shell.projectStageConfigs?.[projectA]?.overrides, { building: {} });
 
         const rehydrated = yield* snapshots.getCommandReadModel();
         const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));
-        assert.strictEqual(
-          events.filter((event) => event.type === "board.project-stage-config-set").length,
-          3,
-        );
         let replayed = {} as BoardReadModel;
         for (const event of events) replayed = yield* projectBoardEvent(replayed, event);
         assert.deepStrictEqual(replayed.board, rehydrated.board);
@@ -175,87 +227,16 @@ it.layer(makeBoardStackTestLayer("t3o-project-stage-config-test-"))(
   },
 );
 
-it.layer(makeBoardStackTestLayer("t3o-project-stage-set-project-test-"))(
-  "per-project stage config: changing a card's project",
-  (it) => {
-    it.effect(
-      "refuses moving a card out of its project while it sits in a project-owned stage",
-      () =>
-        Effect.gen(function* () {
-          const engine = yield* boardStackEngine;
-          const snapshots = yield* boardStackSnapshotQuery;
-          const intake = boardProjectStageId(projectA, "intake");
-
-          yield* engine.dispatch(createProject(projectA, "a"));
-          yield* engine.dispatch(createProject(projectB, "b"));
-          yield* engine.dispatch({
-            type: "board.card.create",
-            commandId: nextCommandId("create"),
-            cardId: cardA,
-            projectId: projectA,
-            title: "Card A",
-            createdAt: t0,
-          });
-          const model = yield* snapshots.getCommandReadModel();
-          yield* engine.dispatch(
-            setConfig(model.board!, {
-              stages: { add: [{ id: "intake", label: "Intake", after: "backlog" }] },
-            }),
-          );
-          yield* engine.dispatch(move(cardA, intake));
-
-          // A project-owned row belongs to its file, not to the global stage commands.
-          const renamed = yield* Effect.exit(
-            engine.dispatch({
-              type: "board.stage.rename",
-              commandId: nextCommandId("rename"),
-              stageId: intake,
-              label: "Renamed",
-              createdAt: t0,
-            }),
-          );
-          assert.include(String(renamed), "comes from a project's t3o.json");
-
-          const setProject = () =>
-            engine.dispatch({
-              type: "board.card.set-project",
-              commandId: nextCommandId("set-project"),
-              cardId: cardA,
-              projectId: projectB,
-              createdAt: t0,
-            });
-          const refused = yield* Effect.exit(setProject());
-          assert.isTrue(Exit.isFailure(refused));
-          assert.include(String(refused), "a stage only its project's t3o.json defines");
-
-          // Back in a shared stage, the move is allowed.
-          yield* engine.dispatch(move(cardA, "backlog"));
-          yield* setProject();
-        }),
-    );
-  },
-);
-
 it.layer(makeBoardStackTestLayer("t3o-project-stage-set-project-removed-test-"))(
   "per-project stage config: changing a card's project into one without its stage",
   (it) => {
-    it.effect("refuses a project that removed the card's stage", () =>
+    it.effect("refuses a project that switched the card's stage off", () =>
       Effect.gen(function* () {
         const engine = yield* boardStackEngine;
-        const snapshots = yield* boardStackSnapshotQuery;
         yield* engine.dispatch(createProject(projectA, "a"));
         yield* engine.dispatch(createProject(projectB, "b"));
-        yield* engine.dispatch({
-          type: "board.card.create",
-          commandId: nextCommandId("create"),
-          cardId: cardB,
-          projectId: projectB,
-          title: "Card B",
-          stage: BoardStageId.make("sprint"),
-          createdAt: t0,
-        });
-        const model = yield* snapshots.getCommandReadModel();
-        yield* engine.dispatch(setConfig(model.board!, { stages: { remove: ["sprint"] } }));
+        yield* engine.dispatch(createCard(cardB, projectB, "sprint"));
+        yield* engine.dispatch(switchStage("sprint", false));
 
         const setProject = () =>
           engine.dispatch({
@@ -274,4 +255,61 @@ it.layer(makeBoardStackTestLayer("t3o-project-stage-set-project-removed-test-"))
       }),
     );
   },
+);
+
+it.effect("upcasts a T3O-43 config event on replay", () =>
+  Effect.gen(function* () {
+    const legacyStage = BoardStageId.make(`${projectA}:qa`);
+    const event = {
+      sequence: 1,
+      eventId: EventId.make("legacy-config"),
+      aggregateKind: "project",
+      aggregateId: projectA,
+      occurredAt: t0,
+      commandId: CommandId.make("legacy-config"),
+      causationEventId: null,
+      correlationId: CommandId.make("legacy-config"),
+      metadata: {},
+      type: "board.project-stage-config-set",
+      payload: {
+        projectId: projectA,
+        config: {
+          removedStageIds: ["sprint"],
+          addedStageIds: [legacyStage],
+          overrides: { ci: { steps: [], enabled: true, maxFixAttempts: 1 } },
+          warnings: [],
+          source: { path: "/tmp/a/t3o.json", commitSha: "abc" },
+          ci: { steps: [{ name: "Test", command: "vp test", timeoutMinutes: 30 }], active: true },
+        },
+        upserts: [
+          {
+            stageId: legacyStage,
+            label: "QA",
+            role: null,
+            orderKey: "k",
+            createdAt: t0,
+            updatedAt: t0,
+            projectId: projectA,
+          },
+        ],
+        deletedStageIds: [],
+      },
+    } as unknown as BoardEvent;
+    const model = yield* projectBoardEvent({} as BoardReadModel, event);
+    const config = model.board?.projectStageConfigs?.[projectA];
+    assert.deepStrictEqual(config?.stageSwitches, { sprint: false, [legacyStage]: true, ci: true });
+    assert.deepStrictEqual(config?.overrides, { ci: { maxFixAttempts: 1 } });
+    assert.deepStrictEqual(
+      config?.ci.steps.map((step) => [step.kind, step.id]),
+      [["script", "legacy-0"]],
+    );
+    assert.deepStrictEqual(
+      boardProjectStagesInOrder(model.board!, projectA).map((stage) => String(stage.stageId)),
+      ["backlog", "planning", "ready", "building", legacyStage, "review", "ci", "merge", "done"],
+    );
+    assert.notInclude(
+      boardProjectStagesInOrder(model.board!, projectB).map((stage) => String(stage.stageId)),
+      String(legacyStage),
+    );
+  }),
 );

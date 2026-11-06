@@ -22,6 +22,8 @@ import {
   DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS,
   areBoardStagesAdjacent,
   isBoardCiActive,
+  isBoardCiSwitchedOn,
+  boardCiScriptDefinitions,
   isBoardCiStageExecution,
   type BoardSkipCiResult,
   boardCardEffectiveWorkerId,
@@ -232,8 +234,6 @@ import {
 import type { BoardCiFailure, BoardStagePlan } from "./stageExecutor.ts";
 import { BoardWorkspaces, type BoardCardWorkspace } from "./workspace/BoardWorkspace.ts";
 import { planReviewInstructions, runningPlanReviewStep } from "./planReview.ts";
-import { BoardProjectConfig } from "./projectConfig/BoardProjectConfig.ts";
-import { boardProjectStageConfigUpdate } from "./projectConfig/reconcile.ts";
 import { keepsPlanningThreadOnExit, keptPlanningThreadId } from "./planningThreadKeep.ts";
 import { boardReleasedThreadIds } from "./threadRelease.ts";
 
@@ -613,7 +613,6 @@ const make = Effect.gen(function* () {
   // nothing.
   const serverActivation = yield* ServerActivation;
   // T3O-43: each project's committed t3o.json, read from its checkout here.
-  const projectConfig = yield* BoardProjectConfig;
   // T3O-44: CI steps run by the board itself, here or on a card's worker.
   const ciRunner = yield* BoardCiRunner;
   const workerConnections = yield* Effect.serviceOption(WorkerConnections);
@@ -3360,11 +3359,17 @@ const make = Effect.gen(function* () {
     // One pass at a time: a restart replaces the one in flight, which the new
     // pass's record settles as interrupted.
     yield* ciPasses.cancel(card.id);
-    const projectCi = boardProjectStageConfig(board, card.projectId)?.ci ?? null;
-    if (projectCi === null || !projectCi.active || projectCi.steps.length === 0) {
+    const projectConfig = boardProjectStageConfig(board, card.projectId);
+    if (!isBoardCiSwitchedOn(board, card.projectId) || projectConfig === null) {
       // CI was switched off for this project while the card sat in it: there
-      // is nothing to run, so it moves on like a card in a removed stage.
+      // is nothing to run, so it moves on like a card in a switched-off stage.
       yield* advanceFromCi(card);
+      return;
+    }
+    const steps = projectConfig.ci.steps;
+    if (boardCiScriptDefinitions(steps).length === 0) {
+      // T3O-49: emptying the step list doesn't turn CI off; the card waits.
+      yield* holdInCi(card, "This project's CI has no steps. Add one, or skip CI.");
       return;
     }
     const workerId = boardCardEffectiveWorkerId(card, board.defaultWorkerId);
@@ -3407,7 +3412,8 @@ const make = Effect.gen(function* () {
         runId,
         entry,
         ordinal,
-        steps: projectCi.steps,
+        steps,
+        configVersion: projectConfig.version,
         maxFixAttempts: isBoardCiStageExecution(exec)
           ? exec.maxFixAttempts
           : DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS,
@@ -3424,7 +3430,7 @@ const make = Effect.gen(function* () {
       runId,
       worktreePath: worktree.path,
       workerId,
-      steps: projectCi.steps,
+      steps: boardCiScriptDefinitions(steps),
       limits: resolveBoardConcurrencyLimit(settings.concurrency, BOARD_CI_SLOT_INSTANCE, workerId),
       ...(runner === undefined ? {} : { runner }),
     });
@@ -8542,54 +8548,6 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /**
-   * Reconcile every project's `t3o.json` into the read model (T3O-43): on
-   * boot, and on the 30s tick. The reader is mtime-cached, and a project whose
-   * resolved config did not change dispatches nothing. Total, like the other
-   * sweeps, and per project: one that fails costs only itself one tick.
-   */
-  const reconcileProjectStageConfig = Effect.fn("board-supervisor-reconcileProjectStageConfig")(
-    function* (project: { readonly id: ProjectId; readonly workspaceRoot: string }) {
-      const read = yield* projectConfig.read(project.workspaceRoot);
-      const update = boardProjectStageConfigUpdate({
-        board: yield* readBoard,
-        projectId: project.id,
-        read,
-        now: yield* nowIso,
-      });
-      if (update === null) return;
-      yield* dispatch({
-        type: "board.project.set-stage-config",
-        commandId: yield* commandId("project-stage-config"),
-        projectId: update.projectId,
-        config: update.config,
-        stages: update.stages,
-        createdAt: yield* nowIso,
-      });
-    },
-  );
-
-  const sweepProjectStageConfigs = Effect.gen(function* () {
-    const projects = yield* threads.projects();
-    for (const project of projects) {
-      if (project.deleted || project.workspaceRoot.length === 0) continue;
-      yield* reconcileProjectStageConfig(project).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("board supervisor: project stage config failed", {
-            projectId: project.id,
-            cause: Cause.pretty(cause),
-          }),
-        ),
-      );
-    }
-  }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("board supervisor: project stage config sweep failed", {
-        cause: Cause.pretty(cause),
-      }),
-    ),
-  );
-
   const sweepAutoMergeHolds = fireDueAutoMerges().pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: auto-merge sweep failed", {
@@ -10189,9 +10147,6 @@ const make = Effect.gen(function* () {
     // The item is still ENQUEUED first, so live events stay queued behind it
     // and the "serialised ahead of live events" guarantee is untouched.
     if (serverActivation !== undefined) yield* serverActivation;
-    // Project pipelines first (T3O-43): every pass below walks a card's own
-    // project's stage list.
-    yield* sweepProjectStageConfigs;
     // Sweep cached todo rows whose thread or link no longer exists (t3o-18,
     // AC 20). The cache is a projection with no event to un-apply, so a row can
     // outlive its link when a delete lands while the server is down; a single
@@ -10864,8 +10819,6 @@ const make = Effect.gen(function* () {
         // (T3O-66): nothing else would ask while its status stays the same.
         // And the auto-archive pass (T3O-77): idle Done cards age out on it.
         return syncWorkerReach.pipe(
-          // T3O-43: a project's t3o.json edit lands within one tick.
-          Effect.andThen(sweepProjectStageConfigs),
           Effect.andThen(sweepTimeouts),
           Effect.andThen(releaseFinishedThreads),
           Effect.andThen(sweepSchedules),

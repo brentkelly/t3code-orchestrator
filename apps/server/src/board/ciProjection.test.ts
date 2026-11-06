@@ -8,7 +8,7 @@ import {
   BoardCardId,
   BoardStageId,
   CommandId,
-  EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+  boardCiStepsFromLegacy,
   ProjectId,
   ProviderInstanceId,
   type BoardCardRecordCiCommand,
@@ -30,6 +30,7 @@ const steps = [
   { name: "Lint", command: "vp lint", timeoutMinutes: 30 },
   { name: "Test", command: "vp test", timeoutMinutes: 10 },
 ];
+const ciSteps = boardCiStepsFromLegacy(steps);
 const step = (index: number, status: "running" | "passed", tail = "") => ({
   ...steps[index]!,
   status,
@@ -55,11 +56,17 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-"))("a CI pass", (it) => {
         createdAt: at,
       });
       yield* engine.dispatch({
-        type: "board.project.set-stage-config",
+        type: "board.project.set-ci-steps",
         commandId: id(),
         projectId,
-        config: { ...EMPTY_BOARD_PROJECT_STAGE_CONFIG, ci: { steps, active: true } },
-        stages: [],
+        steps: ciSteps,
+        createdAt: at,
+      });
+      yield* engine.dispatch({
+        type: "board.project.set-ci-enabled",
+        commandId: id(),
+        projectId,
+        on: true,
         createdAt: at,
       });
       yield* engine.dispatch({
@@ -104,7 +111,7 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-"))("a CI pass", (it) => {
         runId: "run-a",
         entry: 1,
         ordinal: 1,
-        steps,
+        steps: ciSteps,
         maxFixAttempts: 2,
         logDir: "/wt/.t3/ci/run-a",
         queued: false,
@@ -170,11 +177,17 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-leave-"))("a card leaving CI", (i
         createdAt: at,
       });
       yield* engine.dispatch({
-        type: "board.project.set-stage-config",
+        type: "board.project.set-ci-steps",
         commandId: id(),
         projectId,
-        config: { ...EMPTY_BOARD_PROJECT_STAGE_CONFIG, ci: { steps, active: true } },
-        stages: [],
+        steps: ciSteps,
+        createdAt: at,
+      });
+      yield* engine.dispatch({
+        type: "board.project.set-ci-enabled",
+        commandId: id(),
+        projectId,
+        on: true,
         createdAt: at,
       });
       yield* engine.dispatch({
@@ -207,7 +220,7 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-leave-"))("a card leaving CI", (i
         runId: "run-a",
         entry: 1,
         ordinal: 1,
-        steps,
+        steps: ciSteps,
         maxFixAttempts: 2,
         logDir: "/wt/.t3/ci/run-a",
         queued: false,

@@ -89,7 +89,8 @@ import {
   boardGroupTargetLockReason,
   boardNextStageId,
   boardCardMoveRefusal,
-  planBoardProjectStageConfig,
+  boardStageOrderViolation,
+  isBoardStageSwitchable,
   defaultBoardCardGroup,
   boardSplitRecommendationFallback,
   boardSplitRecommendationOf,
@@ -143,6 +144,11 @@ import * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 
 import { BoardCommandInvariantError } from "./errors.ts";
+import {
+  decideProjectConfigCommand,
+  pruneDeletedStage,
+  switchOnForProject,
+} from "./projectConfig/decideProjectConfig.ts";
 import {
   appendToBrief,
   boardBriefVersion,
@@ -942,23 +948,6 @@ function liveBoardLabels(board: BoardState): ReadonlyArray<BoardLabel> {
   return boardLabelCatalogue(board).filter((label) => label.deletedAt === null);
 }
 
-/** Whether a proposed stage ordering keeps the D3 spine invariant: the `build`
-    stage precedes the `review` stage, and the `done` stage is last. Ordinary
-    stages may sit anywhere else. Returned as a human message when violated, or
-    null when the order is valid. */
-function boardStageOrderViolation(stages: ReadonlyArray<BoardStageDefinition>): string | null {
-  const ordered = [...stages].sort(compareBoardStages);
-  const buildIndex = ordered.findIndex((stage) => stage.role === "build");
-  const reviewIndex = ordered.findIndex((stage) => stage.role === "review");
-  const doneIndex = ordered.findIndex((stage) => stage.role === "done");
-  if (buildIndex >= 0 && reviewIndex >= 0 && buildIndex >= reviewIndex) {
-    return "the Build stage must come before the Code review stage";
-  }
-  if (doneIndex >= 0 && doneIndex !== ordered.length - 1) {
-    return "the Done stage must be last";
-  }
-  return null;
-}
 
 /**
  * Validate and normalise a card's label set (t3o-06a). Dedupes (a card holds
@@ -1169,26 +1158,15 @@ function requireBoardProject(input: {
   );
 }
 
-/** The global stage a stage command names, or the refusal: a project-owned
-    row (T3O-43) belongs to its `t3o.json`, and the next reconcile would undo
-    any rename, reorder or delete made here. */
-function requireGlobalBoardStage(
+/** The stage a stage command names, or the refusal. */
+function requireBoardStage(
   board: BoardState,
   command: Extract<BoardCommand, { readonly stageId: BoardStageId }>,
 ): Effect.Effect<BoardStageDefinition, BoardCommandInvariantError> {
   const stage = boardStageById(board, command.stageId);
-  if (stage === null) {
-    return Effect.fail(invariant(command, `Stage '${command.stageId}' does not exist.`));
-  }
-  if (stage.projectId !== null) {
-    return Effect.fail(
-      invariant(
-        command,
-        `Stage '${stage.label}' comes from a project's t3o.json; change it in that file.`,
-      ),
-    );
-  }
-  return Effect.succeed(stage);
+  return stage === null
+    ? Effect.fail(invariant(command, `Stage '${command.stageId}' does not exist.`))
+    : Effect.succeed(stage);
 }
 
 /** Whether a command needs `BoardDecisionContext` loaded before it is decided
@@ -2028,11 +2006,6 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           return yield* invariant(
             command,
             `Card '${card.key}' has already been built — it has a worktree, a pull request, or has reached the build stage — so its project is pinned.`,
-          );
-        case "project-stage":
-          return yield* invariant(
-            command,
-            `Card '${card.key}' is in ${lock.stageLabel}, a stage only its project's t3o.json defines; move it to a shared stage first.`,
           );
         case undefined:
           break;
@@ -3886,7 +3859,9 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         orderKey: command.orderKey,
         createdAt: command.createdAt,
         updatedAt: command.createdAt,
-        projectId: null,
+        // T3O-49: a stage made for one project is off for every other.
+        projectId: command.forProjectId ?? null,
+        defaultForProjects: command.forProjectId === undefined,
       };
       // A new role-holder would break "exactly one stage per role"; the four
       // roles are seeded and never created.
@@ -3900,19 +3875,45 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       if (violation !== null) {
         return yield* invariant(command, `Cannot create stage here: ${violation}.`);
       }
+      const created = {
+        ...(yield* makeBoardStageEventBase({
+          stageId: command.stageId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "board.stage-created" as const,
+        payload: { stageId: command.stageId, stage },
+      };
+      if (command.forProjectId === undefined) return created;
+      return [created, yield* switchOnForProject(board, command, command.forProjectId, stage)];
+    }
+
+    case "board.stage.set-default-for-projects": {
+      const stage = yield* requireBoardStage(board, command);
+      if (stage.stageId === BOARD_SEED_STAGE_IDS.ci || !isBoardStageSwitchable(board, stage)) {
+        return yield* invariant(
+          command,
+          stage.stageId === BOARD_SEED_STAGE_IDS.ci
+            ? "Continuous integration is on only for projects with CI steps; switch it per project."
+            : `${stage.label} is on for every project.`,
+        );
+      }
       return {
         ...(yield* makeBoardStageEventBase({
           stageId: command.stageId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
         })),
-        type: "board.stage-created",
-        payload: { stageId: command.stageId, stage },
+        type: "board.stage-updated",
+        payload: {
+          stageId: command.stageId,
+          stage: { ...stage, defaultForProjects: command.on, updatedAt: command.createdAt },
+        },
       };
     }
 
     case "board.stage.rename": {
-      const stage = yield* requireGlobalBoardStage(board, command);
+      const stage = yield* requireBoardStage(board, command);
       const nextStage: BoardStageDefinition = {
         ...stage,
         label: command.label,
@@ -3930,7 +3931,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.stage.reorder": {
-      const stage = yield* requireGlobalBoardStage(board, command);
+      const stage = yield* requireBoardStage(board, command);
       const nextStage: BoardStageDefinition = {
         ...stage,
         orderKey: command.orderKey,
@@ -3981,7 +3982,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     }
 
     case "board.stage.delete": {
-      const stage = yield* requireGlobalBoardStage(board, command);
+      const stage = yield* requireBoardStage(board, command);
       // Effective role (not the raw field): a legacy stage list carries
       // Planning with a null role, and the plan pipeline must not lose its
       // stage on such a board.
@@ -3992,11 +3993,10 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Stage '${stage.label}' holds the '${heldRole}' role and cannot be deleted.`,
         );
       }
-      // Projects switch CI on from t3o.json by its id (T3O-44).
       if (stage.stageId === BOARD_SEED_STAGE_IDS.ci) {
         return yield* invariant(
           command,
-          `Stage '${stage.label}' is the CI stage and cannot be deleted; projects turn it on from t3o.json.`,
+          "Continuous integration can't be removed; switch it off per project instead.",
         );
       }
       // Refused if the stage holds ANY card, archived included (D9). The error
@@ -4008,15 +4008,17 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           `Stage '${stage.label}' still holds ${held} card${held === 1 ? "" : "s"} (archived included); move them out first.`,
         );
       }
-      return {
+      const deleted = {
         ...(yield* makeBoardStageEventBase({
           stageId: command.stageId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
         })),
-        type: "board.stage-deleted",
+        type: "board.stage-deleted" as const,
         payload: { stageId: command.stageId },
       };
+      // T3O-49: no project's delta keeps a switch or override for it.
+      return [deleted, ...(yield* pruneDeletedStage(board, command, command.stageId))];
     }
 
     case "board.card.record-ci": {
@@ -6058,66 +6060,15 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
     // ── Worker registry (T3O-62, D19) ────────────────────────────────
     // Keyed on the worker, never a card. What happens to cards placed on a
     // removed worker belongs to the removal fallback (D22), not here.
-    case "board.project.set-stage-config": {
-      // A project's committed t3o.json (T3O-43). The reconciler resolved it;
-      // the decider checks every row is this project's own and works out which
-      // old rows go, from the board it holds now.
-      const prefix = `${command.projectId}:`;
-      for (const stage of command.stages) {
-        if (
-          stage.projectId !== command.projectId ||
-          !stage.stageId.startsWith(prefix) ||
-          stage.role !== null
-        ) {
-          return yield* invariant(
-            command,
-            `Stage '${stage.stageId}' is not a role-less stage owned by project '${command.projectId}'.`,
-          );
-        }
-        const clash = boardStageById(board, stage.stageId);
-        if (clash !== null && clash.projectId !== command.projectId) {
-          return yield* invariant(command, `Stage '${stage.stageId}' already exists.`);
-        }
-      }
-      const declared = new Set<string>(command.stages.map((stage) => stage.stageId));
-      if (
-        declared.size !== command.config.addedStageIds.length ||
-        command.config.addedStageIds.some((stageId) => !declared.has(stageId))
-      ) {
-        return yield* invariant(
-          command,
-          "A project stage config must declare exactly the stages it carries.",
-        );
-      }
-      const plan = planBoardProjectStageConfig({
-        board,
-        projectId: command.projectId,
-        config: command.config,
-        stages: command.stages.map((stage) => ({
-          ...stage,
-          createdAt: command.createdAt,
-          updatedAt: command.createdAt,
-        })),
-      });
-      const crypto = yield* Crypto.Crypto;
-      return {
-        eventId: EventId.make(yield* crypto.randomUUIDv4()),
-        aggregateKind: "project" as const,
-        aggregateId: command.projectId,
-        occurredAt: command.createdAt,
-        commandId: command.commandId,
-        causationEventId: null,
-        correlationId: command.commandId,
-        metadata: {},
-        type: "board.project-stage-config-set",
-        payload: {
-          projectId: command.projectId,
-          config: command.config,
-          upserts: plan.upserts,
-          deletedStageIds: plan.deletedStageIds,
-        },
-      };
-    }
+    // T3O-49: a project's delta, edited in Settings or imported.
+    case "board.project.set-stage-switch":
+    case "board.project.set-stage-override":
+    case "board.project.set-ci-steps":
+    case "board.project.set-ci-enabled":
+    case "board.project.reset":
+    case "board.project.import-file":
+    case "board.project.dismiss-import":
+      return yield* decideProjectConfigCommand(board, command);
 
     case "board.worker.register": {
       if (command.worker.id === BOARD_LOCAL_WORKER_ID) {

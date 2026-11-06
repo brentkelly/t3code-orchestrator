@@ -1780,6 +1780,12 @@ export const BoardCiPass = Schema.Struct({
   logDir: Schema.NullOr(Schema.String),
   /** The fix agent that worked on this pass's failure. */
   fixThreadId: Schema.NullOr(ThreadId),
+  /** The CI steps this pass froze at its start, and the config version they
+      came from (T3O-49). Null on a pass recorded before T3O-49. */
+  snapshot: Schema.NullOr(BoardCiStepList).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  configVersion: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type BoardCiPass = typeof BoardCiPass.Type;
 
@@ -5864,9 +5870,8 @@ export type BoardStageDeleteCommand = typeof BoardStageDeleteCommand.Type;
 // carries `actor`, which the server always overwrites, and those with no card
 // record it as the project's `lastChangedBy`.
 
-const BoardSettingsActor = BoardActivityActor.pipe(
-  Schema.withDecodingDefault(Effect.succeed(BOARD_SYSTEM_ACTOR)),
-);
+/** Absent reads as the system actor. */
+const BoardSettingsActor = Schema.optionalKey(BoardActivityActor);
 
 /** A project config edit names the version it was made against; a mismatch
     is refused ("Changed elsewhere, reload") so no edit overwrites another. */
@@ -6456,7 +6461,10 @@ export const BoardCardCiAction = Schema.Union([
     runId: TrimmedNonEmptyString,
     entry: PositiveInt,
     ordinal: PositiveInt,
-    steps: Schema.Array(BoardCiStepDefinition),
+    /** The project's CI steps, frozen for this pass (T3O-49). */
+    steps: BoardCiStepList,
+    /** The project config version the steps came from. */
+    configVersion: Schema.optionalKey(Schema.String),
     maxFixAttempts: NonNegativeInt,
     logDir: Schema.NullOr(Schema.String),
     /** Starting the pass waits for a slot. */

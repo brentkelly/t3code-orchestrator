@@ -16,6 +16,7 @@ import {
   type BoardCardRecordCiCommand,
   type BoardStepCompletion,
   CommandId,
+  boardCiStepsFromLegacy,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -164,10 +165,10 @@ const record = (card: BoardCard, action: BoardCardRecordCiCommand["action"]) =>
   });
 
 describe("decideBoardCiRecord", () => {
-  const steps = [
+  const steps = boardCiStepsFromLegacy([
     { name: "Lint", command: "vp lint", timeoutMinutes: 30 },
     { name: "Test", command: "vp test", timeoutMinutes: 30 },
-  ];
+  ]);
   const start = (fixThreadId: string | null = null) =>
     ({
       kind: "start-pass",

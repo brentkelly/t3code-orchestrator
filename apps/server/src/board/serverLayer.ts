@@ -17,7 +17,7 @@ import * as Layer from "effect/Layer";
 
 import { layer as BoardPullRequestGatewayLive } from "./BoardPullRequestGateway.ts";
 import { BoardStepSlotsLive } from "./BoardStepSlots.ts";
-import { BoardProjectConfigLive } from "./projectConfig/BoardProjectConfig.ts";
+import { BoardProjectFileLive } from "./projectConfig/BoardProjectFile.ts";
 import { BoardRuntimeLive } from "./runtimeLayer.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
 import { BoardMcpRelayClientLive } from "../mcp/toolkits/board/relayClient.ts";
@@ -69,8 +69,9 @@ export const BoardServerLive = BoardMcpRelayClientLive.pipe(
   // T3O-65: moving a card to another worker (D20), for the Move dialog's RPCs.
   Layer.provideMerge(BoardCardMoverLive),
   Layer.provide(BoardStepSlotsLive),
-  // T3O-43: each project's committed t3o.json, read from this server's checkout.
-  Layer.provide(BoardProjectConfigLive),
+  // T3O-49: t3o.json import/export from this server's checkout, for the
+  // project config RPCs.
+  Layer.provideMerge(BoardProjectFileLive),
   // T3O-65: the workers' state placement gates a step on (D20).
   Layer.provideMerge(BoardPlacementLive),
   Layer.provideMerge(BoardWorkersLive),

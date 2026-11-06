@@ -6,6 +6,7 @@
 import {
   BOARD_SEED_STAGE_IDS,
   boardCardCiSteps,
+  boardCiScriptDefinitions,
   boardCiShellFinding,
   isBoardCiStepFailure,
   type BoardCard,
@@ -46,7 +47,9 @@ export function decideBoardCiRecord(
       if (card.stage !== BOARD_SEED_STAGE_IDS.ci) {
         return refuse(`Card '${card.key}' is not in CI, so no CI pass can start.`);
       }
-      if (action.steps.length === 0) return refuse("A CI pass needs at least one step.");
+      if (boardCiScriptDefinitions(action.steps).length === 0) {
+        return refuse("A CI pass needs at least one step it can run.");
+      }
       const settled: BoardCiPassSettle[] = [];
       let activity: BoardCardCiRecordedPayload["activity"] = null;
       if (current !== null && current.runId !== action.runId) {
@@ -64,7 +67,7 @@ export function decideBoardCiRecord(
           settled.push({ runId: current.runId, outcome: "interrupted", finishedAt: at });
         }
       }
-      const steps = action.steps.map((step) => ({
+      const steps = boardCiScriptDefinitions(action.steps).map((step) => ({
         name: step.name,
         command: step.command,
         timeoutMinutes: step.timeoutMinutes,
@@ -97,6 +100,8 @@ export function decideBoardCiRecord(
             steps,
             logDir: action.logDir,
             fixThreadId: null,
+            snapshot: action.steps,
+            configVersion: action.configVersion ?? null,
           },
           settled,
           activity,

@@ -84,6 +84,7 @@ import {
   BoardStageRenamedPayload,
   BoardStageReorderedPayload,
   boardAllStages,
+  boardProjectStageConfigShell,
   boardStepParkedReason,
   compareBoardLabels,
   compareBoardStages,
@@ -416,9 +417,8 @@ function removeStage<M extends BoardReadModel>(
   return { ...model, board: { ...board, stages } };
 }
 
-/** Record a project's `t3o.json` stage config (T3O-43): the config itself,
-    in project-id order so replay equals rehydration, and the project-owned
-    stage rows it wrote and dropped. */
+/** Record a project's delta (T3O-43/49), in project-id order so replay
+    equals rehydration, and any stage rows a T3O-43 payload wrote and dropped. */
 function setProjectStageConfig<M extends BoardReadModel>(
   model: M,
   payload: BoardProjectStageConfigSetPayload,
@@ -909,6 +909,7 @@ export function projectBoardEvent<M extends BoardReadModel>(
       );
 
     case "board.stage-renamed":
+    case "board.stage-updated":
       return decodeBoardStageRenamedPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertStage(model, payload.stage)),
@@ -1144,6 +1145,7 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
 
     case "board.stage-created":
     case "board.stage-renamed":
+    case "board.stage-updated":
     case "board.stage-reordered":
       // Stage aggregate delta (t3o-15): the full post-change stage rides once,
       // so the board reads column order and labels from the read model (D13).
@@ -1356,7 +1358,7 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
         kind: "project-stage-config",
         sequence: event.sequence,
         projectId: event.payload.projectId,
-        config: event.payload.config,
+        config: boardProjectStageConfigShell(event.payload.config),
         upserts: event.payload.upserts,
         deletedStageIds: event.payload.deletedStageIds,
       });
