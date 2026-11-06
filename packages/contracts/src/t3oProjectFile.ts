@@ -546,8 +546,14 @@ export function buildT3oProjectFile(input: {
       continue;
     }
     const before = ordered[index - 1];
+    // A T3O-43 stage's id carries its project as a prefix the file's id
+    // pattern refuses; import looks the bare id up under the project.
+    const prefix = stage.projectId === null ? null : `${stage.projectId}:`;
     add.push({
-      id: stage.stageId,
+      id:
+        prefix !== null && stage.stageId.startsWith(prefix)
+          ? stage.stageId.slice(prefix.length)
+          : stage.stageId,
       label: stage.label,
       ...(before === undefined ? {} : { after: before.stageId }),
     });

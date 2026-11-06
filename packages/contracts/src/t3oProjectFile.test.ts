@@ -363,6 +363,13 @@ describe("legacy configs", () => {
     const normalize = <D extends Parameters<typeof boardProjectDeltasEqual>[0]>(delta: D) =>
       normalizeBoardProjectDelta({ board, settings: DEFAULT_BOARD_SETTINGS, delta });
     expect(boardProjectDeltasEqual(normalize(reread.delta), normalize(config))).toBe(true);
+
+    // Its export names the stage by the bare id, which re-imports onto it.
+    const exported = JSON.parse(JSON.stringify(buildT3oProjectFile({ board, config })));
+    expect(exported.stages.add).toEqual([{ id: "qa", label: "QA", after: "building" }]);
+    const reimported = resolve(exported, board);
+    expect(reimported.createStages).toEqual([]);
+    expect(reimported.delta.stageSwitches[legacyQa]).toBe(true);
   });
 });
 
