@@ -488,7 +488,7 @@ a:hover{text-decoration:underline}
                       <div style="position:absolute;top:44px;left:18px;z-index:30;width:min(640px,calc(100% - 36px));padding:13px 14px 12px;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:var(--shadow-pop);display:flex;flex-direction:column;gap:10px">
                         <div style="display:flex;flex-direction:column;gap:3px">
                           <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Stages by project</span>
-                          <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">The board shows every stage a project in view uses, in pipeline order. Each project's stages come from the t3o.json in its repo.</span>
+                          <span style="font:400 11.5px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">The board shows every stage a project in view uses, in pipeline order. Each project runs the global defaults plus the stages it switched on or off in Settings.</span>
                         </div>
                         <div style="display:grid;grid-template-columns:132px minmax(0,1fr);gap:6px 10px;align-items:center">
                           <span></span>
@@ -498,7 +498,7 @@ a:hover{text-decoration:underline}
                             </sc-for>
                           </div>
                           <sc-for list="{{ b.pipes }}" as="pp" hint-placeholder-count="3">
-                            <span title="{{ pp.file }}" style="display:inline-flex;align-items:center;gap:6px;min-width:0;font:500 11.5px var(--font-sans);color:var(--fg)"><span style="{{ pp.dotStyle }}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ pp.name }}</span></span>
+                            <a href="{{ pp.href }}" title="{{ pp.file }}" style="display:inline-flex;align-items:center;gap:6px;min-width:0;font:500 11.5px var(--font-sans);color:var(--fg)"><span style="{{ pp.dotStyle }}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ pp.name }}</span></a>
                             <div style="display:flex;gap:3px">
                               <sc-for list="{{ pp.cells }}" as="pc" hint-placeholder-count="9">
                                 <span title="{{ pc.tip }}" style="{{ pc.style }}"></span>
@@ -507,16 +507,22 @@ a:hover{text-decoration:underline}
                           </sc-for>
                         </div>
                         <div style="display:flex;align-items:center;gap:12px;padding-top:9px;border-top:1px solid var(--border);font:400 11px var(--font-sans);color:var(--muted-fg)">
-                          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:14px;height:10px;border-radius:3px;background:color-mix(in srgb,var(--fg) 13%,transparent)"></span>Global stage</span>
-                          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:14px;height:10px;border-radius:3px;background:color-mix(in srgb,var(--fg) 34%,transparent)"></span>Added by the project, or CI</span>
+                          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:14px;height:10px;border-radius:3px;background:color-mix(in srgb,var(--fg) 13%,transparent)"></span>On by default</span>
+                          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:14px;height:10px;border-radius:3px;background:color-mix(in srgb,var(--fg) 34%,transparent)"></span>Switched on for the project</span>
                           <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:14px;height:10px;border-radius:3px;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 12%,transparent)"></span>Not used</span>
                           <span style="flex:1"></span>
-                          <span>Settings → Board</span>
+                          <a href="T3 Settings.dc.html#pipeline" style="font-weight:500">Pipeline settings</a>
                         </div>
                       </div>
                     </sc-if>
                   </div>
                 </div>
+              </sc-if>
+              <sc-if value="{{ b.importHint }}" hint-placeholder-val="{{ false }}">
+                <a href="{{ b.importHint.href }}" title="{{ b.importHint.tip }}" style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;flex:none;border-radius:7px;background:color-mix(in srgb,var(--primary) 9%,transparent);color:var(--primary);font:500 11.5px var(--font-sans);white-space:nowrap;text-decoration:none" style-hover="background:color-mix(in srgb,var(--primary) 15%,transparent);text-decoration:none">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>
+                  {{ b.importHint.label }}
+                </a>
               </sc-if>
               <sc-if value="{{ b.hasGraph }}" hint-placeholder-val="{{ false }}">
                 <div style="flex:1"></div>
@@ -609,6 +615,7 @@ a:hover{text-decoration:underline}
                   <sc-if value="{{ col.expanded }}" hint-placeholder-val="{{ true }}">
                   <div onDragOver="{{ col.onDragOver }}" onDrop="{{ col.onDrop }}" style="{{ col.style }}">
                     <div style="display:flex;align-items:center;gap:4px;padding:2px 4px 10px">
+                      <div style="display:flex;align-items:center;gap:4px;min-width:0">
                       <div onMouseEnter="{{ col.onHeaderEnter }}" onMouseLeave="{{ col.onHeaderLeave }}" style="display:flex;align-items:center;gap:4px;min-width:0">
                       <sc-if value="{{ col.showCollapse }}" hint-placeholder-val="{{ false }}">
                         <button type="button" onClick="{{ col.toggleCollapsed }}" title="Collapse column" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:-4px;border:none;border-radius:6px;background:transparent;color:var(--muted-fg);cursor:pointer;flex:none" style-hover="background:var(--accent);color:var(--fg)">
@@ -616,15 +623,14 @@ a:hover{text-decoration:underline}
                         </button>
                       </sc-if>
                       <span style="font:600 14px var(--font-sans);letter-spacing:.01em;color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ col.name }}</span>
+                      </div>
                       <sc-if value="{{ col.partial }}" hint-placeholder-val="{{ false }}">
-                        <span title="{{ col.ownersTip }}" style="display:inline-flex;align-items:center;gap:3px;margin-left:4px;flex:none">
-                          <sc-for list="{{ col.owners }}" as="ow" hint-placeholder-count="0">
-                            <span style="{{ ow.style }}"></span>
-                          </sc-for>
-                        </span>
+                        <button type="button" onClick="{{ col.togglePop }}" onMouseEnter="{{ col.onIconEnter }}" onMouseLeave="{{ col.onIconLeave }}" aria-label="{{ col.partialTip }}" style="{{ col.iconStyle }}" style-hover="background:var(--accent);color:var(--fg)">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor" stroke="none"></path></svg>
+                        </button>
                       </sc-if>
                       <sc-if value="{{ col.retired }}" hint-placeholder-val="{{ false }}">
-                        <span title="No project in view uses this stage any more" style="flex:none;margin-left:4px;padding:0 5px;border:1px solid var(--border);border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;color:var(--muted-fg)">Removed</span>
+                        <span title="Switched off for the project in view; shown because a card is still here" style="flex:none;margin-left:4px;padding:0 5px;border:1px dashed var(--input);border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;color:var(--muted-fg)">Off</span>
                       </sc-if>
                       </div>
                       <div style="flex:1"></div>
@@ -642,7 +648,39 @@ a:hover{text-decoration:underline}
                       </sc-if>
                     </div>
                     <sc-if value="{{ col.hint }}" hint-placeholder-val="{{ false }}">
-                      <div style="margin:-4px 4px 10px;font:400 11px/1.4 var(--font-sans);color:var(--muted-fg)">{{ col.hint }}</div>
+                      <div style="margin:-4px 4px 10px;font:400 11px/1.4 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ col.hint }}<sc-if value="{{ col.hasRetiredHref }}" hint-placeholder-val="{{ false }}"> <a href="{{ col.retiredHref }}" style="font-weight:500">Pipeline settings</a></sc-if></div>
+                    </sc-if>
+                    <sc-if value="{{ col.tipOpen }}" hint-placeholder-val="{{ false }}">
+                      <div role="tooltip" style="position:absolute;top:32px;left:10px;z-index:31;max-width:240px;padding:6px 9px;border-radius:7px;background:var(--fg);color:var(--bg);font:500 11.5px/1.4 var(--font-sans);box-shadow:var(--shadow-pop);pointer-events:none;text-wrap:pretty">{{ col.partialTip }}<div style="margin-top:2px;font-weight:400;opacity:.7">Click for the list</div></div>
+                    </sc-if>
+                    <sc-if value="{{ col.popOpen }}" hint-placeholder-val="{{ false }}">
+                      <div onClick="{{ col.closePop }}" style="position:fixed;inset:0;z-index:30"></div>
+                      <div role="dialog" style="position:absolute;top:32px;left:6px;z-index:31;width:256px;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:var(--shadow-pop);overflow:hidden;animation:t3pop .12s ease-out">
+                        <div style="display:flex;flex-direction:column;gap:2px;padding:11px 12px 9px">
+                          <span style="font:600 12.5px var(--font-sans);color:var(--fg)">{{ col.popTitle }}</span>
+                          <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ col.popSub }}</span>
+                        </div>
+                        <div style="padding:2px 12px 3px;font:600 10px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Included</div>
+                        <sc-for list="{{ col.popIn }}" as="pr" hint-placeholder-count="1">
+                          <a href="{{ pr.href }}" title="Open this project's pipeline" style="display:flex;align-items:center;gap:8px;padding:6px 12px;color:var(--fg);text-decoration:none" style-hover="background:var(--accent);text-decoration:none">
+                            <span style="{{ pr.dotStyle }}"></span><span style="{{ pr.nameStyle }}">{{ pr.name }}</span><span style="{{ pr.stateStyle }}">{{ pr.state }}</span>
+                          </a>
+                        </sc-for>
+                        <sc-if value="{{ col.hasPopOut }}" hint-placeholder-val="{{ true }}">
+                          <div style="padding:8px 12px 3px;font:600 10px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Not included</div>
+                          <sc-for list="{{ col.popOut }}" as="pr" hint-placeholder-count="1">
+                            <a href="{{ pr.href }}" title="Open this project's pipeline" style="display:flex;align-items:center;gap:8px;padding:6px 12px;color:var(--fg);text-decoration:none" style-hover="background:var(--accent);text-decoration:none">
+                              <span style="{{ pr.dotStyle }}"></span><span style="{{ pr.nameStyle }}">{{ pr.name }}</span><span style="{{ pr.stateStyle }}">{{ pr.state }}</span>
+                            </a>
+                          </sc-for>
+                        </sc-if>
+                        <a href="{{ col.stageHref }}" style="display:flex;align-items:center;gap:6px;margin-top:6px;padding:9px 12px;border-top:1px solid var(--border);font:500 12px var(--font-sans);color:var(--fg);text-decoration:none" style-hover="background:var(--accent);text-decoration:none">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                          Stage settings
+                          <span style="flex:1"></span>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"></path></svg>
+                        </a>
+                      </div>
                     </sc-if>
                     <div style="display:flex;flex-direction:column;gap:8px">
                       <sc-for list="{{ col.items }}" as="c" hint-placeholder-count="2">
@@ -654,7 +692,7 @@ a:hover{text-decoration:underline}
                           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
                             <span title="{{ c.projectName }}" style="{{ c.keyStyle }}">{{ c.key }}</span>
                             <sc-if value="{{ c.working }}" hint-placeholder-val="{{ false }}">
-                              <span title="Thread running" style="width:8px;height:8px;flex:none;border-radius:99px;background:var(--info-fg);animation:t3pulse 1.6s ease-in-out infinite"></span>
+                              <span title="Thread running" style="width:8px;height:8px;flex:none;border-radius:99px;background:var(--info-fg)"></span>
                             </sc-if>
                             <sc-if value="{{ c.awaiting }}" hint-placeholder-val="{{ false }}">
                               <span style="display:inline-flex;align-items:center;gap:3px;font:500 10.5px var(--font-sans);color:var(--attention-fg)">
@@ -737,25 +775,35 @@ a:hover{text-decoration:underline}
                           </sc-if>
                           <sc-if value="{{ c.ciFace }}" hint-placeholder-val="{{ false }}">
                             <div title="{{ c.ciFace.tip }}" style="display:flex;flex-direction:column;gap:6px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border)">
+                              <sc-if value="{{ c.ciFace.back }}" hint-placeholder-val="{{ false }}">
+                                <div title="{{ c.ciFace.backTip }}" style="display:flex;align-items:center;gap:5px;min-width:0;font:500 10.5px var(--font-sans);color:var(--muted-fg)">
+                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg>
+                                  <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.ciFace.back }}</span>
+                                </div>
+                              </sc-if>
                               <div style="display:flex;align-items:center;gap:6px">
                                 <span style="font:500 10.5px var(--font-sans);color:var(--fg)">{{ c.ciFace.head }}</span>
                                 <span style="flex:1"></span>
                                 <span style="{{ c.ciFace.chipStyle }}">{{ c.ciFace.chip }}</span>
                               </div>
-                              <div style="display:flex;gap:3px">
-                                <sc-for list="{{ c.ciFace.pips }}" as="cp" hint-placeholder-count="0">
-                                  <span title="{{ cp.tip }}" style="{{ cp.style }}"></span>
+                              <div style="display:flex;gap:3px;align-items:stretch">
+                                <sc-for list="{{ c.ciFace.segs }}" as="sg" hint-placeholder-count="0">
+                                  <span style="{{ sg.style }}">
+                                    <sc-for list="{{ sg.lanes }}" as="ln" hint-placeholder-count="1">
+                                      <span title="{{ ln.tip }}" style="{{ ln.style }}"></span>
+                                    </sc-for>
+                                  </span>
                                 </sc-for>
                               </div>
                               <div style="display:flex;align-items:center;gap:7px;min-width:0">
                                 <span style="font:500 10.5px var(--font-mono);color:var(--fg);flex:none">{{ c.ciFace.count }}</span>
-                                <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.ciFace.cur }}</span>
+                                <span style="{{ c.ciFace.curStyle }}">{{ c.ciFace.cur }}</span>
                               </div>
                             </div>
                           </sc-if>
                           <sc-if value="{{ c.ciBack }}" hint-placeholder-val="{{ false }}">
-                            <div title="{{ c.ciBack.tip }}" style="display:flex;align-items:flex-start;gap:7px;margin-top:9px;padding:7px 8px;border-radius:7px;background:color-mix(in srgb,var(--destructive) 7%,transparent)">
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--destructive-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg>
+                            <div title="{{ c.ciBack.tip }}" style="display:flex;align-items:flex-start;gap:7px;margin-top:9px;padding:7px 8px;border-radius:7px;background:color-mix(in srgb,var(--warning) 9%,transparent)">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--warning-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg>
                               <div style="min-width:0;display:flex;flex-direction:column;gap:1px">
                                 <span style="font:500 10.5px var(--font-sans);color:var(--fg)">Sent back by CI</span>
                                 <span style="font:400 10.5px/1.4 var(--font-sans);color:var(--muted-fg)">{{ c.ciBack.line }}</span>
@@ -1472,11 +1520,58 @@ a:hover{text-decoration:underline}
           <section style="display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid var(--border);background:color-mix(in srgb,var(--muted) 55%,var(--card))">
             <div style="display:flex;align-items:center;gap:9px;flex:none;height:44px;padding:0 12px 0 14px;border-bottom:1px solid var(--border)">
               <span style="font:600 12.5px var(--font-sans);color:var(--fg)">Continuous integration</span>
-              <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ ci.sub }}</span>
-              <span style="flex:1"></span>
-              <span style="{{ ci.statusStyle }}">{{ ci.status }}</span>
+              <sc-if value="{{ ciPaneFull }}" hint-placeholder-val="{{ true }}">
+                <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">{{ ci.sub }}</span>
+                <span style="flex:1"></span>
+                <span style="{{ ci.statusStyle }}">{{ ci.status }}</span>
+              </sc-if>
             </div>
             <div style="flex:1;min-height:0;overflow-y:auto;padding:14px 16px 20px;display:flex;flex-direction:column;gap:12px">
+
+              <sc-if value="{{ ciEmptyOpen }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:none;display:flex;flex-direction:column;gap:12px;padding:18px 18px 16px;border:1px dashed var(--input);border-radius:12px;background:var(--card)">
+                  <div style="display:flex;flex-direction:column;gap:4px">
+                    <span style="font:600 13px var(--font-sans);color:var(--fg)">{{ ciEmptyVm.title }}</span>
+                    <span style="font:400 12px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ciEmptyVm.note }}</span>
+                  </div>
+                  <sc-if value="{{ ciEmptyVm.added }}" hint-placeholder-val="{{ false }}">
+                    <div style="display:flex;gap:8px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--success) 35%,transparent);border-radius:10px;background:color-mix(in srgb,var(--success) 6%,var(--card));font:400 12px/1.5 var(--font-sans);color:var(--fg);text-wrap:pretty">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--success-fg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="M20 6 9 17l-5-5"></path></svg>
+                      {{ ciEmptyVm.addedNote }}
+                    </div>
+                  </sc-if>
+                  <button type="button" onClick="{{ ciEmptyVm.starter }}" disabled="{{ ciEmptyVm.added }}" style="display:flex;align-items:center;gap:11px;padding:12px 13px;border:1px solid color-mix(in srgb,var(--primary) 40%,var(--border));border-radius:10px;background:color-mix(in srgb,var(--primary) 5%,var(--card));color:var(--fg);text-align:left;cursor:pointer" style-hover="background:color-mix(in srgb,var(--primary) 9%,var(--card))">
+                    <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:none;border-radius:8px;background:var(--primary);color:var(--primary-fg)">
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg>
+                    </span>
+                    <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
+                      <span style="font:600 12.5px var(--font-sans)">Add an agent step that runs this project's checks per AGENTS.md</span>
+                      <span style="font:400 11.5px var(--font-sans);color:var(--muted-fg)">One click. Turns CI on for the project.</span>
+                    </span>
+                  </button>
+                  <a href="{{ ciEmptyVm.settingsHref }}" style="align-self:flex-start;font:500 12px var(--font-sans)">Set up CI steps in project settings</a>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ ciPaneFull }}" hint-placeholder-val="{{ true }}">
+              <sc-if value="{{ ci.blockedBox }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:none;display:flex;gap:10px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--warning) 45%,transparent);border-radius:12px;background:color-mix(in srgb,var(--warning) 7%,var(--card))">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--warning-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:1px"><path d="m21.7 18-8-14a2 2 0 0 0-3.5 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
+                  <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                    <span style="font:600 12.5px var(--font-sans);color:var(--fg)">{{ ci.blockedBox.title }}</span>
+                    <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ci.blockedBox.note }}</span>
+                  </div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ ci.backBox }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:none;display:flex;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card)">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;margin-top:2px"><path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path></svg>
+                  <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:3px">
+                    <span style="font:600 12.5px var(--font-sans);color:var(--fg)">{{ ci.backBox.title }}</span>
+                    <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ci.backBox.note }}</span>
+                  </div>
+                </div>
+              </sc-if>
               <sc-if value="{{ ci.outcomeBox }}" hint-placeholder-val="{{ false }}">
                 <div style="flex:none;display:flex;flex-direction:column;gap:5px;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:var(--card)">
                   <span style="font:600 12.5px var(--font-sans);color:var(--fg)">{{ ci.outcomeBox.title }}</span>
@@ -1497,104 +1592,178 @@ a:hover{text-decoration:underline}
                 </div>
               </sc-if>
 
-              <div style="flex:none;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden">
-                <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border)">
-                  <span style="font:600 12.5px var(--font-sans);color:var(--fg)">{{ ci.cur.title }}</span>
-                  <span style="{{ ci.cur.outcomeStyle }}">{{ ci.cur.outcome }}</span>
-                  <span style="flex:1"></span>
-                  <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ ci.cur.when }}</span>
-                </div>
-                <sc-for list="{{ ci.cur.steps }}" as="s" hint-placeholder-count="3">
-                  <div style="{{ s.rowStyle }}">
-                    <span style="position:relative;display:inline-flex;flex:none">
-                            <span style="{{ s.dotStyle }}">{{ s.index }}</span>
-                            <sc-if value="{{ s.markOk }}" hint-placeholder-val="{{ false }}">
-                              <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--success);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
-                            </sc-if>
-                            <sc-if value="{{ s.markFail }}" hint-placeholder-val="{{ false }}">
-                              <span style="{{ s.markFailStyle }}"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
-                            </sc-if>
-                            <sc-if value="{{ s.markSkip }}" hint-placeholder-val="{{ false }}">
-                              <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--muted-fg);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M6 12h12"></path></svg></span>
-                            </sc-if>
-                          </span>
-                    <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
-                      <span data-shine="{{ s.shine }}" style="{{ s.nameStyle }}">{{ s.name }}</span>
-                      <span style="font:400 11px var(--font-mono);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.run }}</span>
-                    </div>
-                    <sc-if value="{{ s.hasTail }}" hint-placeholder-val="{{ false }}">
-                      <button type="button" onClick="{{ s.toggleTail }}" style="height:22px;padding:0 7px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--popover);color:var(--muted-fg);font:500 11px var(--font-sans);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">{{ s.tailLabel }}</button>
+              <sc-for list="{{ ci.passes }}" as="p" hint-placeholder-count="1">
+                <sc-if value="{{ p.isFirstEarlier }}" hint-placeholder-val="{{ false }}">
+                  <span style="padding:4px 2px 0;font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Earlier passes</span>
+                </sc-if>
+                <div style="{{ p.style }}">
+                  <div onClick="{{ p.toggle }}" style="{{ p.headStyle }}" style-hover="background:color-mix(in srgb,var(--fg) 2%,transparent)">
+                    <span style="font:600 12.5px var(--font-sans);color:var(--fg);flex:none">{{ p.title }}</span>
+                    <span style="{{ p.outcomeStyle }}">{{ p.outcome }}</span>
+                    <span style="font:400 11px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.summary }}</span>
+                    <span style="flex:1"></span>
+                    <span style="font:400 11px var(--font-sans);color:var(--muted-fg);flex:none">{{ p.when }}</span>
+                    <sc-if value="{{ p.collapsible }}" hint-placeholder-val="{{ false }}">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;transform:{{ p.caret }};transition:transform .12s ease"><path d="m6 9 6 6 6-6"></path></svg>
                     </sc-if>
-                    <span style="{{ s.timeStyle }}">{{ s.time }}</span>
-                    <span data-shine="{{ s.shine }}" style="{{ s.labelStyle }}">{{ s.label }}</span>
                   </div>
-                  <sc-if value="{{ s.tailOpen }}" hint-placeholder-val="{{ false }}">
-                    <div style="display:flex;flex-direction:column;border-top:1px solid var(--border);background:var(--muted)">
-                      <div style="display:flex;align-items:center;gap:8px;padding:6px 12px 6px 42px">
-                        <span style="font:500 10.5px var(--font-sans);letter-spacing:.04em;text-transform:uppercase;color:var(--muted-fg)">{{ s.tailMeta }}</span>
+                  <sc-if value="{{ p.hasBack }}" hint-placeholder-val="{{ false }}">
+                    <div style="padding:0 12px 8px;font:500 11px var(--font-sans);color:var(--muted-fg)">{{ p.back }}</div>
+                  </sc-if>
+                  <sc-if value="{{ p.hasNote }}" hint-placeholder-val="{{ false }}">
+                    <div style="padding:0 12px 10px;font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ p.note }}</div>
+                  </sc-if>
+                  <sc-if value="{{ p.open }}" hint-placeholder-val="{{ true }}">
+                    <div style="display:flex;flex-direction:column">
+                      <sc-for list="{{ p.groups }}" as="g" hint-placeholder-count="3">
+                        <div style="{{ g.wrapStyle }}">
+                          <div style="{{ g.innerStyle }}">
+                            <sc-if value="{{ g.multi }}" hint-placeholder-val="{{ false }}">
+                              <div style="display:flex;align-items:center;gap:5px;padding:7px 12px 0 45px">
+                                <span style="font:500 10.5px var(--font-sans);color:var(--muted-fg)">{{ g.label }}</span>
+                              </div>
+                            </sc-if>
+                            <sc-for list="{{ g.steps }}" as="s" hint-placeholder-count="2">
+                              <div style="{{ s.wrapStyle }}">
+                                <div onClick="{{ s.toggle }}" style="{{ s.rowStyle }}">
+                                  <span style="position:relative;display:inline-flex;flex:none">
+                                    <span style="{{ s.dotStyle }}">{{ s.n }}</span>
+                                    <sc-if value="{{ s.markOk }}" hint-placeholder-val="{{ false }}">
+                                      <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--success);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+                                    </sc-if>
+                                    <sc-if value="{{ s.markFail }}" hint-placeholder-val="{{ false }}">
+                                      <span style="{{ s.markFailStyle }}"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+                                    </sc-if>
+                                    <sc-if value="{{ s.markSkip }}" hint-placeholder-val="{{ false }}">
+                                      <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--muted-fg);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M6 12h12"></path></svg></span>
+                                    </sc-if>
+                                  </span>
+                                  <span style="display:inline-flex;flex:none;color:var(--muted-fg)">
+                                    <sc-if value="{{ s.isScript }}" hint-placeholder-val="{{ true }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" x2="20" y1="19" y2="19"></line></svg></sc-if>
+                                    <sc-if value="{{ s.isAgent }}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"></path><rect width="16" height="12" x="4" y="8" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg></sc-if>
+                                    <sc-if value="{{ s.isForge }}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"></circle><circle cx="6" cy="6" r="3"></circle><path d="M13 6h3a2 2 0 0 1 2 2v7"></path><line x1="6" x2="6" y1="9" y2="21"></line></svg></sc-if>
+                                    <sc-if value="{{ s.isSync }}" hint-placeholder-val="{{ false }}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="3"></circle><path d="M12 6h5a2 2 0 0 1 2 2v7"></path><path d="m15 9-3-3 3-3"></path><circle cx="19" cy="18" r="3"></circle><path d="M12 18H7a2 2 0 0 1-2-2V9"></path><path d="m9 15 3 3-3 3"></path></svg></sc-if>
+                                  </span>
+                                  <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+                                    <span data-shine="{{ s.shine }}" style="{{ s.nameStyle }}">{{ s.name }}</span>
+                                    <span style="{{ s.subStyle }}">{{ s.sub }}</span>
+                                  </div>
+                                  <span style="{{ s.timeStyle }}">{{ s.time }}</span>
+                                  <span style="{{ s.labelStyle }}">{{ s.label }}</span>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="{{ s.caretStyle }};transform:{{ s.caret }};transition:transform .12s ease"><path d="m6 9 6 6 6-6"></path></svg>
+                                </div>
+                                <sc-if value="{{ s.detailOpen }}" hint-placeholder-val="{{ false }}">
+                                  <div style="display:flex;flex-direction:column;gap:9px;padding:2px 12px 12px 65px">
+                                    <sc-if value="{{ s.hasProg }}" hint-placeholder-val="{{ false }}">
+                                      <div style="display:flex;flex-direction:column;gap:5px">
+                                        <div style="display:flex;align-items:baseline;gap:8px">
+                                          <span style="flex:1;min-width:0;font:400 11.5px var(--font-sans);color:var(--fg)">{{ s.progMsg }}</span>
+                                          <span style="font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--fg)">{{ s.progFrac }}</span>
+                                        </div>
+                                        <div style="height:4px;border-radius:2px;background:color-mix(in srgb,var(--fg) 8%,transparent);overflow:hidden"><div style="{{ s.progBar }}"></div></div>
+                                      </div>
+                                    </sc-if>
+                                    <sc-if value="{{ s.isSync }}" hint-placeholder-val="{{ false }}">
+                                      <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ s.syncText }}</span>
+                                    </sc-if>
+                                    <sc-if value="{{ s.hasVerdict }}" hint-placeholder-val="{{ false }}">
+                                      <span style="{{ s.verdictStyle }}">{{ s.verdict }}</span>
+                                    </sc-if>
+                                    <sc-if value="{{ s.agentRunning }}" hint-placeholder-val="{{ false }}">
+                                      <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--muted-fg)">Working in its own thread. The verdict, summary and failures land here when it reports.</span>
+                                    </sc-if>
+                                    <sc-if value="{{ s.hasSummary }}" hint-placeholder-val="{{ false }}">
+                                      <span style="font:400 11.5px/1.5 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ s.summary }}</span>
+                                    </sc-if>
+                                    <sc-if value="{{ s.hasForgeNote }}" hint-placeholder-val="{{ false }}">
+                                      <div style="{{ s.forgeNoteStyle }}">{{ s.forgeNote }}</div>
+                                    </sc-if>
+                                    <sc-if value="{{ s.hasChecks }}" hint-placeholder-val="{{ false }}">
+                                      <div style="display:flex;flex-direction:column">
+                                        <sc-for list="{{ s.checks }}" as="k" hint-placeholder-count="4">
+                                          <div style="display:flex;align-items:center;gap:9px;padding:6px 0;border-top:1px solid color-mix(in srgb,var(--border) 70%,transparent)">
+                                            <span style="position:relative;display:inline-flex;flex:none">
+                                              <span style="{{ k.badge }}"></span>
+                                              <sc-if value="{{ k.markOk }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--success)"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span></sc-if>
+                                              <sc-if value="{{ k.markFail }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--warning)"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span></sc-if>
+                                              <sc-if value="{{ k.markSkip }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--muted-fg)"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M6 12h12"></path></svg></span></sc-if>
+                                            </span>
+                                            <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+                                              <div style="display:flex;align-items:center;gap:6px;min-width:0">
+                                                <span style="font:500 11.5px var(--font-mono);color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ k.name }}</span>
+                                                <sc-if value="{{ k.req }}" hint-placeholder-val="{{ false }}">
+                                                  <span style="flex:none;padding:0 5px;border:1px solid var(--border);border-radius:4px;font:500 9.5px var(--font-sans);letter-spacing:.04em;text-transform:uppercase;color:var(--muted-fg)">Required</span>
+                                                </sc-if>
+                                              </div>
+                                              <sc-if value="{{ k.hasWf }}" hint-placeholder-val="{{ false }}"><span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">{{ k.wf }}</span></sc-if>
+                                              <sc-if value="{{ k.hasDesc }}" hint-placeholder-val="{{ false }}"><span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">{{ k.desc }}</span></sc-if>
+                                            </div>
+                                            <span style="flex:none;width:52px;text-align:right;font:500 11px var(--font-mono);font-variant-numeric:tabular-nums;color:var(--muted-fg)">{{ k.time }}</span>
+                                            <span style="{{ k.labelStyle }}">{{ k.label }}</span>
+                                          </div>
+                                        </sc-for>
+                                      </div>
+                                      <sc-if value="{{ s.hasRichNote }}" hint-placeholder-val="{{ false }}">
+                                        <span style="font:400 10.5px var(--font-sans);color:var(--muted-fg)">Elapsed and required come from GitHub. Job steps and annotations come later.</span>
+                                      </sc-if>
+                                    </sc-if>
+                                    <sc-if value="{{ s.hasFailures }}" hint-placeholder-val="{{ false }}">
+                                      <div style="display:flex;flex-direction:column;gap:8px;padding-left:10px;border-left:2px solid var(--warning)">
+                                        <div style="font:500 10.5px var(--font-sans);color:var(--warning-fg)">{{ s.failHead }}</div>
+                                        <sc-for list="{{ s.failures }}" as="f" hint-placeholder-count="2">
+                                          <div style="display:flex;flex-direction:column;gap:2px">
+                                            <span style="font:500 12px/1.4 var(--font-sans);color:var(--fg);text-wrap:pretty">{{ f.title }}</span>
+                                            <sc-if value="{{ f.hasLoc }}" hint-placeholder-val="{{ true }}"><span style="font:400 11px var(--font-mono);color:var(--info-fg)">{{ f.loc }}</span></sc-if>
+                                            <sc-if value="{{ f.hasDetail }}" hint-placeholder-val="{{ true }}"><span style="font:400 11px/1.45 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ f.detail }}</span></sc-if>
+                                          </div>
+                                        </sc-for>
+                                      </div>
+                                    </sc-if>
+                                    <sc-if value="{{ s.tailNote }}" hint-placeholder-val="{{ false }}">
+                                      <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ s.tailNote }}</span>
+                                    </sc-if>
+                                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                                      <sc-if value="{{ s.hasLog }}" hint-placeholder-val="{{ false }}">
+                                        <button type="button" onClick="{{ s.openLog }}" style="display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--popover);color:var(--fg);font:500 11px var(--font-sans);cursor:pointer" style-hover="background:var(--accent)">
+                                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" x2="20" y1="19" y2="19"></line></svg>
+                                          {{ s.logLabel }}
+                                        </button>
+                                      </sc-if>
+                                      <sc-if value="{{ s.isAgent }}" hint-placeholder-val="{{ false }}">
+                                        <button type="button" onClick="{{ s.openThread }}" style="display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--popover);color:var(--fg);font:500 11px var(--font-sans);cursor:pointer" style-hover="background:var(--accent)">
+                                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                                          {{ s.threadLabel }}
+                                        </button>
+                                      </sc-if>
+                                      <sc-if value="{{ s.hasSyncThread }}" hint-placeholder-val="{{ false }}">
+                                        <button type="button" onClick="{{ s.openThread }}" style="display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--popover);color:var(--fg);font:500 11px var(--font-sans);cursor:pointer" style-hover="background:var(--accent)">Open conflict-fix thread</button>
+                                      </sc-if>
+                                      <sc-if value="{{ s.canOpenForge }}" hint-placeholder-val="{{ false }}">
+                                        <button type="button" onClick="{{ s.openForge }}" title="Opens the run in a popup window" style="display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--popover);color:var(--fg);font:500 11px var(--font-sans);cursor:pointer" style-hover="background:var(--accent)">
+                                          {{ s.forgeLabel }}
+                                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path></svg>
+                                        </button>
+                                      </sc-if>
+                                    </div>
+                                  </div>
+                                </sc-if>
+                              </div>
+                            </sc-for>
+                          </div>
+                        </div>
+                      </sc-for>
+                      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid var(--border)">
+                        <span style="flex:1;min-width:0;font:400 11px/1.4 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ ci.source }}</span>
                       </div>
-                      <pre style="margin:0;max-height:280px;overflow:auto;padding:4px 12px 12px 42px;font:400 11px/1.6 var(--font-mono);color:var(--fg);white-space:pre">{{ s.tail }}</pre>
                     </div>
                   </sc-if>
-                </sc-for>
-                <div style="padding:8px 12px;border-top:1px solid var(--border);font:400 11px var(--font-sans);color:var(--muted-fg)">{{ ci.source }}</div>
-              </div>
-
-              <sc-if value="{{ ci.hasEarlier }}" hint-placeholder-val="{{ false }}">
-                <div style="display:flex;flex-direction:column;gap:6px">
-                  <span style="padding:2px 2px 0;font:600 11px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)">Earlier passes</span>
-                  <sc-for list="{{ ci.earlier }}" as="p" hint-placeholder-count="1">
-                    <div style="flex:none;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden">
-                      <div onClick="{{ p.toggle }}" style="display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer" style-hover="background:color-mix(in srgb,var(--fg) 3%,transparent)">
-                        <span style="font:600 12.5px var(--font-sans);color:var(--fg);flex:none">{{ p.title }}</span>
-                        <span style="{{ p.outcomeStyle }}">{{ p.outcome }}</span>
-                        <span style="font:400 11px var(--font-sans);color:var(--muted-fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.summary }}</span>
-                        <span style="flex:1"></span>
-                        <span style="font:400 11px var(--font-sans);color:var(--muted-fg);flex:none">{{ p.when }}</span>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;transform:{{ p.caret }};transition:transform .12s ease"><path d="m6 9 6 6 6-6"></path></svg>
-                      </div>
-                      <sc-if value="{{ p.hasNote }}" hint-placeholder-val="{{ false }}">
-                        <div style="padding:0 12px 10px;font:400 11.5px/1.55 var(--font-sans);color:var(--muted-fg);text-wrap:pretty">{{ p.note }}</div>
-                      </sc-if>
-                      <sc-if value="{{ p.open }}" hint-placeholder-val="{{ false }}">
-                        <div style="display:flex;flex-direction:column;border-top:1px solid var(--border)">
-                          <sc-for list="{{ p.steps }}" as="s" hint-placeholder-count="2">
-                            <div style="{{ s.rowStyle }}">
-                              <span style="position:relative;display:inline-flex;flex:none">
-                            <span style="{{ s.dotStyle }}">{{ s.index }}</span>
-                            <sc-if value="{{ s.markOk }}" hint-placeholder-val="{{ false }}">
-                              <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--success);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg></span>
-                            </sc-if>
-                            <sc-if value="{{ s.markFail }}" hint-placeholder-val="{{ false }}">
-                              <span style="{{ s.markFailStyle }}"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
-                            </sc-if>
-                            <sc-if value="{{ s.markSkip }}" hint-placeholder-val="{{ false }}">
-                              <span style="position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;background:var(--muted-fg);box-shadow:0 0 0 1.5px var(--card)"><svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"><path d="M6 12h12"></path></svg></span>
-                            </sc-if>
-                          </span>
-                              <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
-                                <span style="font:500 12.5px var(--font-sans);color:var(--fg)">{{ s.name }}</span>
-                                <span style="font:400 11px var(--font-mono);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.run }}</span>
-                              </div>
-                              <sc-if value="{{ s.hasTail }}" hint-placeholder-val="{{ false }}">
-                                <button type="button" onClick="{{ s.toggleTail }}" style="height:22px;padding:0 7px;flex:none;border:1px solid var(--border);border-radius:6px;background:var(--popover);color:var(--muted-fg);font:500 11px var(--font-sans);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">{{ s.tailLabel }}</button>
-                              </sc-if>
-                              <span style="{{ s.timeStyle }}">{{ s.time }}</span>
-                              <span data-shine="{{ s.shine }}" style="{{ s.labelStyle }}">{{ s.label }}</span>
-                            </div>
-                            <sc-if value="{{ s.tailOpen }}" hint-placeholder-val="{{ false }}">
-                              <div style="display:flex;flex-direction:column;border-top:1px solid var(--border);background:var(--muted)">
-                                <div style="padding:6px 12px 6px 42px;font:500 10.5px var(--font-sans);letter-spacing:.04em;text-transform:uppercase;color:var(--muted-fg)">{{ s.tailMeta }}</div>
-                                <pre style="margin:0;max-height:240px;overflow:auto;padding:4px 12px 12px 42px;font:400 11px/1.6 var(--font-mono);color:var(--fg);white-space:pre">{{ s.tail }}</pre>
-                              </div>
-                            </sc-if>
-                          </sc-for>
-                        </div>
-                      </sc-if>
-                    </div>
-                  </sc-for>
                 </div>
-              </sc-if>
+              </sc-for>
+
+              <a href="{{ ci.settingsHref }}" style="align-self:flex-start;display:inline-flex;align-items:center;gap:6px;font:500 12px var(--font-sans)">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3"></path><path d="M12 19v3"></path><path d="m4.9 4.9 2.1 2.1"></path><path d="m17 17 2.1 2.1"></path><path d="M2 12h3"></path><path d="M19 12h3"></path><path d="m4.9 19.1 2.1-2.1"></path><path d="m17 7 2.1-2.1"></path></svg>
+                {{ ci.settingsLabel }}
+              </a>
 
               <sc-if value="{{ ci.canSkip }}" hint-placeholder-val="{{ false }}">
                 <div style="flex:none;display:flex;align-items:center;gap:12px;margin-top:4px;padding:12px 14px;border:1px dashed var(--input);border-radius:12px;background:color-mix(in srgb,var(--fg) 3%,transparent)">
@@ -1615,6 +1784,7 @@ a:hover{text-decoration:underline}
                     <button type="button" onClick="{{ ci.doSkip }}" style="height:30px;padding:0 12px;border:1px solid transparent;border-radius:8px;background:var(--destructive);color:#fff;font:500 12.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-xs)" style-hover="filter:brightness(0.95)">Skip CI and move to Ready for merge</button>
                   </div>
                 </div>
+              </sc-if>
               </sc-if>
             </div>
           </section>
@@ -3014,8 +3184,53 @@ a:hover{text-decoration:underline}
     </div>
   </sc-if>
 
+  <sc-if value="{{ ciLog }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:28px;background:color-mix(in srgb,#0b0b0c 46%,transparent);animation:t3fade .12s ease-out">
+      <div onClick="{{ ciLog.close }}" style="position:absolute;inset:0"></div>
+      <div role="dialog" aria-modal="true" aria-label="Step log" style="position:relative;width:min(960px,100%);height:min(680px,100%);display:flex;flex-direction:column;border:1px solid var(--border);border-radius:14px;background:var(--card);box-shadow:var(--shadow-pop);overflow:hidden;animation:t3pop .14s ease-out">
+        <div style="display:flex;align-items:center;gap:10px;flex:none;padding:12px 14px;border-bottom:1px solid var(--border)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" x2="20" y1="19" y2="19"></line></svg>
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+            <div style="display:flex;align-items:center;gap:8px;min-width:0">
+              <span style="font:600 13px var(--font-sans);color:var(--fg)">{{ ciLog.title }}</span>
+              <span style="font:400 11.5px var(--font-mono);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ ciLog.cmd }}</span>
+            </div>
+            <span style="font:400 11px var(--font-sans);color:var(--muted-fg)">{{ ciLog.meta }}</span>
+          </div>
+          <sc-if value="{{ ciLog.live }}" hint-placeholder-val="{{ false }}">
+            <button type="button" onClick="{{ ciLog.toggleFollow }}" title="Keep the newest output in view" style="{{ ciLog.followStyle }}">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"></path><path d="m19 12-7 7-7-7"></path></svg>
+              {{ ciLog.followLabel }}
+            </button>
+          </sc-if>
+          <button type="button" onClick="{{ ciLog.copy }}" style="display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;border:1px solid var(--border);border-radius:7px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer" style-hover="background:var(--accent)">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>
+            {{ ciLog.copyLabel }}
+          </button>
+          <button type="button" onClick="{{ ciLog.close }}" aria-label="Close" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:7px;background:transparent;color:var(--muted-fg);cursor:pointer" style-hover="background:var(--accent);color:var(--fg)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>
+          </button>
+        </div>
+        <div style="position:relative;flex:1;min-height:0;display:flex;flex-direction:column;background:var(--muted)">
+          <pre ref="{{ ciLog.logRef }}" onScroll="{{ ciLog.onScroll }}" style="flex:1;min-height:0;margin:0;overflow:auto;padding:12px 16px 28px;font:400 11.5px/1.65 var(--font-mono);color:var(--fg);white-space:pre">{{ ciLog.text }}</pre>
+          <sc-if value="{{ ciLog.paused }}" hint-placeholder-val="{{ false }}">
+            <button type="button" onClick="{{ ciLog.jump }}" style="position:absolute;left:50%;bottom:14px;transform:translateX(-50%);display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border:1px solid var(--input);border-radius:99px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);cursor:pointer;box-shadow:var(--shadow-pop)" style-hover="background:var(--accent)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"></path><path d="m19 12-7 7-7-7"></path></svg>
+              New output · jump to latest
+            </button>
+          </sc-if>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex:none;padding:7px 14px;border-top:1px solid var(--border);font:400 11px var(--font-sans);color:var(--muted-fg)">
+          <span>{{ ciLog.lineCount }}</span>
+          <sc-if value="{{ ciLog.live }}" hint-placeholder-val="{{ false }}"><span>· scroll up to pause following</span></sc-if>
+          <sc-if value="{{ ciLog.done }}" hint-placeholder-val="{{ false }}"><span>· full log</span></sc-if>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;defaultMode&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;threads&quot;,&quot;board&quot;],&quot;default&quot;:&quot;board&quot;,&quot;tsType&quot;:&quot;\&quot;threads\&quot; | \&quot;board\&quot;&quot;},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;\&quot;light\&quot; | \&quot;dark\&quot;&quot;},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;comfortable&quot;,&quot;compact&quot;],&quot;default&quot;:&quot;comfortable&quot;,&quot;tsType&quot;:&quot;\&quot;comfortable\&quot; | \&quot;compact\&quot;&quot;},&quot;showKeys&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;boardAutoMerge&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Board defaults&quot;},&quot;defaultScope&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;advisor&quot;,&quot;web&quot;,&quot;relay&quot;,&quot;all&quot;],&quot;default&quot;:&quot;all&quot;,&quot;tsType&quot;:&quot;string&quot;}}">
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;defaultMode&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;threads&quot;,&quot;board&quot;],&quot;default&quot;:&quot;board&quot;,&quot;tsType&quot;:&quot;\&quot;threads\&quot; | \&quot;board\&quot;&quot;},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light&quot;,&quot;tsType&quot;:&quot;\&quot;light\&quot; | \&quot;dark\&quot;&quot;},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;comfortable&quot;,&quot;compact&quot;],&quot;default&quot;:&quot;comfortable&quot;,&quot;tsType&quot;:&quot;\&quot;comfortable\&quot; | \&quot;compact\&quot;&quot;},&quot;showKeys&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;boardAutoMerge&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Board defaults&quot;},&quot;defaultScope&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;advisor&quot;,&quot;web&quot;,&quot;relay&quot;,&quot;all&quot;],&quot;default&quot;:&quot;all&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;ciScenario&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;seeded&quot;,&quot;sync-conflict&quot;,&quot;checks-appearing&quot;,&quot;head-unpushed&quot;,&quot;checks-none&quot;,&quot;forge-unreadable&quot;],&quot;default&quot;:&quot;seeded&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;CI demo states&quot;}}">
 const STAGES = [
   { id: "backlog", name: "Backlog", dot: "#a1a1aa", action: "Add to sprint" },
   { id: "sprint", name: "Sprint", dot: "#a1a1aa", action: "Begin planning" },
@@ -3029,37 +3244,56 @@ const STAGES = [
   { id: "soak", name: "Staging soak", dot: "#a1a1aa", action: "Mark soaked", custom: true },
   { id: "done", name: "Done", dot: "#a1a1aa", action: null },
 ];
-// Each project's t3o.json, as the board resolved it. Custom stages live in the
-// master STAGES order with `custom: true`; a project only gets the ones it adds.
-// CI exists for a project only when its file lists ci.steps.
+// One global list of stages. Each non-role stage has a default; a project stores
+// only the stages it switched on or off (`on`), so stages added later still reach it.
+// Settings live on the board (Settings › Projects); t3o.json is import/export only.
 const ROLE_STAGES = ["backlog", "planning", "building", "review", "merge", "done"];
+const STAGE_DEFAULT = { sprint: true, ready: true, qa: false, ci: false, soak: false };
+const SETTINGS_PAGE = "T3 Settings.dc.html";
+// Repos with a t3o.json the board hasn't imported, or that changed since the last import.
+const IMPORT_PENDING = { relay: "changed" };
+// CI steps per project. `par` = parallel with the previous step; consecutive parallel
+// steps form a group, groups run in order. Sync with base is built in and always first.
+const SYNC = { id: "sync", type: "sync", name: "Sync with base" };
 const PIPELINES = {
-  advisor: { file: "core.agent.advisor/t3o.json", remove: [], add: [], fixCap: 2,
+  advisor: { on: { ci: true }, fixCap: 2, forge: "GitHub", forgeRun: "https://github.com/brentkelly/advisor/pull/312/checks",
     ci: [
-      { name: "Typecheck", run: "bun run typecheck" },
-      { name: "Lint", run: "bun run lint" },
-      { name: "Test", run: "bun run test --reporter=dot" },
+      SYNC,
+      { id: "tc", type: "script", name: "Typecheck", run: "bun run typecheck" },
+      { id: "lint", type: "script", name: "Lint", run: "bun run lint", par: true },
+      { id: "test", type: "script", name: "Test", run: "bun run test --reporter=dot" },
+      { id: "mig", type: "agent", name: "Migration review", par: true },
+      { id: "gh", type: "forge", name: "GitHub checks", only: ["ci/build", "ci/e2e", "ci/lint", "codeql", "deploy-preview"] },
     ] },
-  web: { file: "mesh.web/t3o.json", remove: ["sprint", "ready"], add: ["qa"], ci: null },
-  relay: { file: "mesh.relay/t3o.json", remove: ["sprint"], add: ["soak"], fixCap: 2,
+  web: { on: { sprint: false, ready: false, qa: true }, ci: null, forge: "GitHub" },
+  relay: { on: { sprint: false, soak: true, ci: true }, fixCap: 2, forge: "Forgejo", forgeRun: "https://git.mesh.dev/infra/relay/actions/runs/1184",
     ci: [
-      { name: "Check", run: "cargo xtask check" },
-      { name: "Test", run: "cargo nextest run --workspace" },
+      SYNC,
+      { id: "check", type: "script", name: "Check", run: "cargo xtask check" },
+      { id: "test", type: "script", name: "Test", run: "cargo nextest run --workspace" },
+      { id: "fj", type: "forge", name: "Forgejo checks", par: true, only: [] },
     ] },
 };
-const pipeOf = (pid) => PIPELINES[pid] || { remove: [], add: [], ci: null };
+const pipeOf = (pid) => PIPELINES[pid] || { on: {}, ci: null };
 const inPipeline = (pid, sid) => {
   const p = pipeOf(pid);
   const s = STAGES.find((x) => x.id === sid);
   if (!s) return sid === "deferred";
-  if (s.custom) return p.add.indexOf(sid) >= 0;
-  if (sid === "ci") return !!(p.ci && p.ci.length);
-  return p.remove.indexOf(sid) < 0;
+  if (ROLE_STAGES.indexOf(sid) >= 0) return true;
+  const on = p.on[sid] != null ? p.on[sid] : STAGE_DEFAULT[sid] != null ? STAGE_DEFAULT[sid] : true;
+  if (sid === "ci") return on && !!(p.ci && p.ci.length > 1);
+  return on;
 };
+const switchedFor = (pid, sid) => pipeOf(pid).on[sid] != null;
 const pipelineOf = (pid) => STAGES.filter((s) => inPipeline(pid, s.id));
-// CI passes per card. Step results line up with the project's ci steps by index.
-// s: pending | running | passed | failed | timedout | cancelled. d = seconds.
-// outcome: running | fixing | fixed | returned | passed | skipped.
+const groupsOf = (steps) => {
+  const out = [];
+  steps.forEach((x, i) => { if (i > 1 && x.par && out.length > 1) out[out.length - 1].push(i); else out.push([i]); });
+  return out;
+};
+// CI passes per card, keyed by step id. d = seconds.
+// s: pending | running | passed | failed | timedout | cancelled | blocked.
+// outcome: running | fixing | fixed | returned | passed | skipped | blocked.
 const TAIL_TS = [
   "   Compiling relay-fanout v0.9.2 (/work/infra/relay/fanout)",
   "    Checking relay-session v0.9.2 (/work/infra/relay/session)",
@@ -3114,28 +3348,99 @@ const TAIL_TIMEOUT = [
   "",
   "t3o: step `Test` exceeded its 15 min timeout. Process tree killed (SIGTERM, then SIGKILL after 10s).",
 ];
+const LOG_TEST_LIVE = [
+  "$ bun run test --reporter=dot",
+  "bun test v1.2.19 (b1f3c0a2)",
+  "::t3o-progress::{\"message\":\"Running unit tests\",\"done\":0,\"total\":212}",
+  " ✓ board/columns.test.ts (18 tests) 412ms",
+  " ✓ board/drag.test.ts (24 tests) 1.2s",
+  " ✓ board/widths.test.ts (11 tests) 238ms",
+  " ✓ state/collapse.test.ts (9 tests) 96ms",
+  " ✓ state/persist.test.ts (14 tests) 302ms",
+  "::t3o-progress::{\"message\":\"Running unit tests\",\"done\":76,\"total\":212}",
+  " ✓ server/events/log.test.ts (22 tests) 1.8s",
+  " ✓ server/worktrees.test.ts (16 tests) 2.4s",
+  " ✓ runtime/replay.test.ts (14 tests) 640ms",
+  "::t3o-progress::{\"message\":\"Running unit tests\",\"done\":128,\"total\":212}",
+];
+const LOG_TEST_MORE = [
+  " ✓ runtime/compaction.test.ts (12 tests) 520ms",
+  " ✓ web/BoardView.test.tsx (19 tests) 2.1s",
+  " ✓ web/ColumnHeader.test.tsx (8 tests) 410ms",
+  "::t3o-progress::{\"message\":\"Running unit tests\",\"done\":167,\"total\":212}",
+  " ✓ web/CardModal.test.tsx (21 tests) 2.6s",
+  " ✓ web/BranchPicker.test.tsx (13 tests) 980ms",
+  " ✓ contracts/task.test.ts (11 tests) 88ms",
+  "::t3o-progress::{\"message\":\"Running unit tests\",\"done\":212,\"total\":212}",
+];
+const FAIL_TS = [
+  { title: "mismatched types: expected usize, found Instant", file: "infra/relay/src/fanout.rs", line: 142, detail: "queue.push_back(frame, Instant::now()) passes a timestamp where push_back takes a weight (usize)." },
+  { title: "unused import: std::sync::atomic::AtomicUsize", file: "infra/relay/src/fanout.rs", line: 7, detail: "Denied by clippy -D warnings." },
+];
+const FAIL_TEST = [
+  { title: "slow_consumer_drops_oldest", file: "infra/relay/src/fanout.rs", line: 311, detail: "assertion left == right failed: dropped frames (0 vs 12)" },
+  { title: "metric_counts_drops", file: "infra/relay/src/fanout.rs", line: 344, detail: "expected 12 drops recorded, found 0" },
+  { title: "fast_consumers_unaffected", file: "infra/relay/src/fanout.rs", line: 372, detail: "fast consumer lagged 2.0s behind" },
+];
+const FAIL_TIMEOUT = [
+  { title: "state/watcher.test.ts › waits for the fsevents flush", file: "apps/server/test/watcher.test.ts", line: 88, detail: "Still running when the 15 min timeout hit." },
+];
+const GH_CHECKS = (done) => [
+  { name: "ci/build", wf: "CI", s: "success", d: 212, req: true },
+  { name: "ci/lint", wf: "CI", s: "success", d: 48, req: false },
+  { name: "codeql", wf: "CodeQL", s: "success", d: 301, req: false },
+  { name: "ci/e2e", wf: "CI", s: done ? "success" : "running", ago: 260, d: done ? 344 : null, req: true },
+  { name: "deploy-preview", wf: "Preview", s: done ? "success" : "pending", d: done ? 96 : null, req: false },
+];
+const FJ_CHECKS = (fail) => [
+  { name: "relay / build", s: "success", desc: "Successful in 3m 4s" },
+  { name: "relay / integration", s: fail ? "failure" : "success", desc: fail ? "Failing after 6m 12s" : "Successful in 5m 40s" },
+];
+const META_LOG = { passed: "passed", failed: "failed", timedout: "timed out", cancelled: "cancelled" };
 const CI_RUNS = {
   "T3-185": [
-    { steps: [{ s: "passed", d: 48 }, { s: "passed", d: 21 }, { s: "running", ago: 72 }], outcome: "running", when: "3m ago" },
+    { when: "3m ago", outcome: "running", steps: {
+      sync: { s: "passed", d: 2, sync: "uptodate" },
+      tc: { s: "passed", d: 48 }, lint: { s: "passed", d: 21 },
+      test: { s: "running", ago: 72, prog: { message: "Running unit tests", done: 128, total: 212 }, log: LOG_TEST_LIVE },
+      mig: { s: "running", ago: 95, thread: "Migration review" },
+      gh: { s: "pending" } } },
   ],
   "T3-187": [
-    { steps: [{ s: "passed", d: 51 }, { s: "passed", d: 19 }, { s: "timedout", d: 900, tail: TAIL_TIMEOUT }], outcome: "fixed", when: "34m ago",
-      note: "The watcher test waited on an fsevents flush that never comes in the CI sandbox. The fix agent switched it to the polling backend under CI and committed 2f9c1e0." },
-    { steps: [{ s: "passed", d: 46 }, { s: "running", ago: 14 }, { s: "pending" }], outcome: "running", when: "1m ago" },
+    { when: "1h 52m ago", outcome: "fixed", note: "The watcher test waited on an fsevents flush that never comes in the CI sandbox. The fix agent switched it to the polling backend under CI and committed 2f9c1e0.",
+      steps: { sync: { s: "passed", d: 1, sync: "uptodate" }, tc: { s: "passed", d: 51 }, lint: { s: "passed", d: 19 },
+        test: { s: "timedout", d: 900, tail: TAIL_TIMEOUT, result: { summary: "Timed out at 15 min with 1 test still running.", failures: FAIL_TIMEOUT } },
+        mig: { s: "passed", d: 140, verdict: "passed", summary: "No migrations changed on this branch.", thread: "Migration review" },
+        gh: { s: "pending" } } },
+    { when: "1h 21m ago", outcome: "passed",
+      steps: { sync: { s: "passed", d: 1, sync: "uptodate" }, tc: { s: "passed", d: 50 }, lint: { s: "passed", d: 20 },
+        test: { s: "passed", d: 132, prog: { message: "Running unit tests", done: 212, total: 212 }, result: { summary: "212 passed, 4 skipped", failures: [] } },
+        mig: { s: "passed", d: 122, verdict: "passed", summary: "No migrations changed on this branch.", thread: "Migration review" },
+        gh: { s: "passed", d: 410, checks: GH_CHECKS(true) } } },
+    { when: "6m ago", outcome: "running", back: { reason: "base", detail: "main moved 3 commits after CI passed" },
+      steps: { sync: { s: "passed", d: 9, sync: "rebased", detail: "Rebased onto main @ 9f2c0a1 · 3 new commits, no conflicts" },
+        tc: { s: "passed", d: 49 }, lint: { s: "passed", d: 20 },
+        test: { s: "passed", d: 129, prog: { message: "Running unit tests", done: 212, total: 212 }, result: { summary: "212 passed, 4 skipped", failures: [] } },
+        mig: { s: "passed", d: 118, verdict: "passed", summary: "No migrations changed on this branch.", thread: "Migration review" },
+        gh: { s: "running", ago: 312, checks: GH_CHECKS(false), forgeState: "checks" } } },
   ],
   "RL-16": [
-    { steps: [{ s: "failed", d: 124, tail: TAIL_TS }, { s: "pending" }], outcome: "fixing", when: "6m ago", attempt: 1 },
+    { when: "6m ago", outcome: "fixing", attempt: 1,
+      steps: { sync: { s: "passed", d: 3, sync: "uptodate" },
+        check: { s: "failed", d: 124, tail: TAIL_TS, result: { summary: "1 error, 1 warning in relay-fanout", failures: FAIL_TS } },
+        test: { s: "pending" }, fj: { s: "pending" } } },
   ],
   "RL-15": [
-    { steps: [{ s: "passed", d: 131 }, { s: "failed", d: 15, tail: TAIL_TEST }], outcome: "fixed", when: "58m ago",
-      note: "Fix agent moved the drop counter ahead of the queue trim and committed 8a41d2c." },
-    { steps: [{ s: "passed", d: 128 }, { s: "failed", d: 15, tail: TAIL_TEST }], outcome: "fixed", when: "41m ago",
-      note: "Fix agent rewrote the slow-consumer fixture. The same 3 tests still fail." },
-    { steps: [{ s: "passed", d: 129 }, { s: "failed", d: 15, tail: TAIL_TEST }], outcome: "returned", when: "18m ago",
-      note: "Both fix attempts used. 3 tests in fanout::backpressure still fail, which points at the bounded-queue design rather than a slip in the code." },
+    { when: "58m ago", outcome: "fixed", note: "Fix agent moved the drop counter ahead of the queue trim and committed 8a41d2c.",
+      steps: { sync: { s: "passed", d: 2, sync: "uptodate" }, check: { s: "passed", d: 131 }, test: { s: "failed", d: 15, tail: TAIL_TEST, result: { summary: "3 of 212 tests failed", failures: FAIL_TEST } }, fj: { s: "failed", d: 372, checks: FJ_CHECKS(true) } } },
+    { when: "41m ago", outcome: "fixed", note: "Fix agent rewrote the slow-consumer fixture. The same 3 tests still fail.",
+      steps: { sync: { s: "passed", d: 2, sync: "uptodate" }, check: { s: "passed", d: 128 }, test: { s: "failed", d: 15, tail: TAIL_TEST, result: { summary: "3 of 212 tests failed", failures: FAIL_TEST } }, fj: { s: "failed", d: 368, checks: FJ_CHECKS(true) } } },
+    { when: "18m ago", outcome: "returned", note: "Both fix attempts used. 3 tests in fanout::backpressure still fail, which points at the bounded-queue design rather than a slip in the code.",
+      steps: { sync: { s: "passed", d: 2, sync: "uptodate" }, check: { s: "passed", d: 129 }, test: { s: "failed", d: 15, tail: TAIL_TEST, result: { summary: "3 of 212 tests failed", failures: FAIL_TEST } }, fj: { s: "failed", d: 371, checks: FJ_CHECKS(true) } } },
   ],
   "T3-173": [
-    { steps: [{ s: "passed", d: 44 }, { s: "passed", d: 20 }, { s: "cancelled", d: 95 }], outcome: "skipped", when: "25m ago", by: "brent" },
+    { when: "25m ago", outcome: "skipped", by: "brent",
+      steps: { sync: { s: "passed", d: 1, sync: "uptodate" }, tc: { s: "passed", d: 44 }, lint: { s: "passed", d: 20 }, test: { s: "cancelled", d: 95 }, mig: { s: "cancelled", d: 60 }, gh: { s: "pending" } } },
   ],
 };
 const PRIMARY_ACTIONS = { backlog: true, sprint: true, ready: true, merge: true };
@@ -4170,6 +4475,7 @@ class Component extends DCLogic {
     document.addEventListener("keydown", this.onListKey);
   }
   componentWillUnmount() {
+    clearInterval(this._logTimer);
     if (this.onCardKey) document.removeEventListener("keydown", this.onCardKey);
     if (this.onListKey) document.removeEventListener("keydown", this.onListKey);
     if (this._retryTimer) clearInterval(this._retryTimer);
@@ -4475,32 +4781,54 @@ class Component extends DCLogic {
     if (!c || c.status !== "merge" || !c.conflict) return null;
     return c.conflict;
   }
+  // Demo lever: puts a seeded card into one of the rarer CI states.
+  ciScenarioRuns(c, runs) {
+    const sc = this.props.ciScenario || "seeded";
+    if (sc === "seeded") return runs;
+    const last = runs[runs.length - 1];
+    const edit = (patch, steps) => runs.slice(0, -1).concat([{ ...last, ...patch, steps: { ...last.steps, ...steps } }]);
+    if (c.key === "T3-185" && sc === "sync-conflict")
+      return edit({ outcome: "running" }, { sync: { s: "running", ago: 80, sync: "conflict", files: 3, resolved: 1, thread: "Conflict fix" },
+        tc: { s: "pending" }, lint: { s: "pending" }, test: { s: "pending" }, mig: { s: "pending" }, gh: { s: "pending" } });
+    if (c.key !== "T3-187") return runs;
+    if (sc === "checks-appearing") return edit({}, { gh: { s: "running", ago: 140, forgeState: "appearing", limit: 10 } });
+    if (sc === "head-unpushed") return edit({}, { gh: { s: "running", ago: 20, forgeState: "unpushed", sha: "3a9e1f2" } });
+    if (sc === "checks-none") return edit({ outcome: "fixing", attempt: 1 }, { gh: { s: "failed", d: 600, forgeState: "none", limit: 10 } });
+    if (sc === "forge-unreadable") return edit({ outcome: "blocked" }, { gh: { s: "blocked", forgeState: "unreadable", forgeName: "Azure DevOps" } });
+    return runs;
+  }
   // CI passes for a card, resolved against its project's ci steps.
   ciFor(c) {
     if (!c || !c.ciRuns || !c.ciRuns.length) return null;
     const pp = pipeOf(c.project);
     const steps = pp.ci || [];
-    const runs = c.ciRuns;
+    const runs = this.ciScenarioRuns(c, c.ciRuns);
     const cur = runs[runs.length - 1];
-    const isFail = (s) => s.s === "failed" || s.s === "timedout";
+    const res = (r, x) => (r.steps && r.steps[x.id]) || { s: "pending" };
+    const isFail = (r) => r.s === "failed" || r.s === "timedout" || r.s === "blocked";
+    const curRes = steps.map((x) => res(cur, x));
+    const runIxs = curRes.map((r, i) => (r.s === "running" ? i : -1)).filter((i) => i >= 0);
     const fixesDone = runs.filter((r) => r.outcome === "fixed").length;
     return {
-      steps, runs, cur, pass: runs.length, cap: pp.fixCap || 2, file: pp.file,
+      steps, groups: groupsOf(steps), runs, cur, res, curRes,
+      pass: runs.length, cap: pp.fixCap || 2, forge: pp.forge || "forge", forgeRun: pp.forgeRun || "",
       fixesDone,
       attempt: cur.outcome === "fixing" ? fixesDone + 1 : fixesDone,
-      runIx: cur.steps.findIndex((s) => s.s === "running"),
-      failIx: cur.steps.findIndex(isFail),
-      passed: cur.steps.filter((s) => s.s === "passed").length,
+      runIxs, runIx: runIxs.length ? runIxs[0] : -1,
+      failIx: curRes.findIndex(isFail),
+      passed: curRes.filter((r) => r.s === "passed").length,
       total: steps.length,
-      live: c.status === "ci" && (cur.outcome === "running" || cur.outcome === "fixing"),
+      live: c.status === "ci" && ["running", "fixing", "blocked"].indexOf(cur.outcome) >= 0,
       running: cur.outcome === "running",
       fixing: cur.outcome === "fixing",
+      blocked: cur.outcome === "blocked",
       returned: cur.outcome === "returned",
       skipped: cur.outcome === "skipped",
       isFail,
     };
   }
   // The thread's live-tool shine: a 4.5rem band swept across the text in 30 steps.
+  // Only ever applied inside the open card, never on a board card face.
   shineStyle(base, band) {
     return ";color:transparent;background-image:linear-gradient(to right,transparent," + band + ",transparent),linear-gradient(" + base + "," + base +
       ");background-size:4.5rem 100%,100% 100%;background-repeat:no-repeat;-webkit-background-clip:text;background-clip:text;animation:t3shine 2.2s steps(30) infinite";
@@ -4510,148 +4838,380 @@ class Component extends DCLogic {
     if (s < 60) return s + "s";
     return Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s";
   }
-  // Live elapsed for the running step, ticking once a second only while the
-  // card is open. Faces on the board show whole minutes and never tick.
-  ciElapsed(c, step) {
+  // Live elapsed for running steps, ticking once a second only while the card is
+  // open. Faces on the board show whole minutes and never tick.
+  ciElapsed(c, key, ago) {
     this._ciStart = this._ciStart || {};
-    if (!this._ciStart[c.id]) this._ciStart[c.id] = Date.now() - (step.ago || 0) * 1000;
+    const k = c.id + ":" + key;
+    if (!this._ciStart[k]) this._ciStart[k] = Date.now() - (ago || 0) * 1000;
     if (!this._ciTimer) {
       this._ciTimer = setInterval(() => {
         const a = this.state.cards.find((x) => x.id === this.state.activeId);
         const ci = a && this.ciFor(a);
-        if (ci && ci.running && ci.runIx >= 0) this.forceUpdate();
-        else { clearInterval(this._ciTimer); this._ciTimer = null; }
+        if (ci && ci.live && ci.runIxs.length && !document.hidden) this.forceUpdate();
+        else if (!ci || !ci.live) { clearInterval(this._ciTimer); this._ciTimer = null; }
       }, 1000);
     }
-    const s = Math.round((Date.now() - this._ciStart[c.id]) / 1000);
+    const s = Math.round((Date.now() - this._ciStart[k]) / 1000);
     return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  }
+  ciForgeName(ci, r) { return (r && r.forgeName) || ci.forge; }
+  ciForgeCount(r) {
+    const cs = r.checks || [];
+    return { done: cs.filter((x) => ["success", "skipped", "neutral"].indexOf(x.s) >= 0).length, total: cs.length };
+  }
+  // One status line for a running step, as short as a card face needs.
+  ciStepLine(ci, x, r, face) {
+    const mins = Math.floor((r.ago || 0) / 60);
+    const t = mins < 1 ? "under 1m" : mins + "m";
+    if (x.type === "sync") {
+      if (r.sync === "conflict") return "Resolving conflicts with main · " + (r.resolved || 0) + "/" + (r.files || 0) + " files";
+      return "Syncing with main";
+    }
+    if (x.type === "forge") {
+      const fg = this.ciForgeName(ci, r);
+      if (r.forgeState === "appearing") return "Waiting for " + fg + " checks to appear";
+      if (r.forgeState === "unpushed") return "Waiting for the PR head to be pushed";
+      const n = this.ciForgeCount(r);
+      return "Waiting on " + fg + " checks " + n.done + "/" + n.total;
+    }
+    if (x.type === "script" && r.prog) return x.name + " · " + r.prog.done + "/" + r.prog.total;
+    if (x.type === "agent") return x.name + (face ? " · agent" : "") + " · " + t;
+    return x.name + " · " + t;
+  }
+  ciSegColor(r, fixing) {
+    if (r.s === "passed") return "var(--success)";
+    if (r.s === "running") return "var(--info)";
+    if (r.s === "failed" || r.s === "timedout" || r.s === "blocked") return "var(--warning)";
+    if (r.s === "cancelled") return "color-mix(in srgb,var(--fg) 22%,transparent)";
+    return "transparent";
+  }
+  ciFaceVm(c, ci) {
+    const cur = ci.cur;
+    const fail = ci.failIx >= 0 ? ci.steps[ci.failIx] : null;
+    const failRes = fail ? ci.curRes[ci.failIx] : null;
+    const failWord = !failRes ? "" : failRes.s === "timedout" ? " timed out" : failRes.forgeState === "none" ? ": no checks appeared" : " failed";
+    const run = ci.runIxs.map((i) => ({ x: ci.steps[i], r: ci.curRes[i] }));
+    const rank = (o) => (o.x.type === "sync" ? 0 : o.x.type === "script" && o.r.prog ? 1 : o.x.type === "forge" ? 2 : o.x.type === "script" ? 3 : 4);
+    run.sort((a, b) => rank(a) - rank(b));
+    const conflict = run.some((o) => o.x.type === "sync" && o.r.sync === "conflict");
+    let chip = "Running", tone = "info", line = "Starting";
+    if (ci.blocked) {
+      chip = "Blocked"; tone = "warn";
+      line = "Can't read " + this.ciForgeName(ci, failRes) + " checks";
+    } else if (ci.fixing) {
+      chip = "Fixing";
+      line = (fail ? fail.name : "Step") + failWord + " · fix " + ci.attempt + " of " + ci.cap;
+    } else if (run.length) {
+      if (conflict) chip = "Fixing";
+      line = this.ciStepLine(ci, run[0].x, run[0].r, true) + (run.length > 1 ? " +" + (run.length - 1) : "");
+    }
+    const chipStyle = "display:inline-flex;align-items:center;height:16px;padding:0 6px;flex:none;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;" +
+      (tone === "warn" ? "background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning-fg)" : "background:color-mix(in srgb,var(--info) 13%,transparent);color:var(--info-fg)");
+    return {
+      head: "CI" + (ci.pass > 1 ? " · pass " + ci.pass : ""),
+      chip, chipStyle,
+      count: ci.passed + "/" + ci.total,
+      cur: line,
+      curStyle: "font:400 10.5px var(--font-sans);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:" + (ci.blocked ? "var(--warning-fg)" : "var(--muted-fg)"),
+      back: cur.back ? "Back from Ready for merge: " + (cur.back.reason === "base" ? "base moved" : cur.back.reason === "conflict" ? "conflicts" : "checks failing") : "",
+      backTip: cur.back ? cur.back.detail + ". CI re-runs from Sync with base." : "",
+      tip: ci.blocked ? "The forge's checks can't be read, so CI can't finish. Open the card to skip CI or change the step."
+        : ci.fixing ? "A fix agent is working on the failed step. Every step re-runs from the top after the fix."
+        : "Sync with base, then " + (ci.groups.length - 1) + " groups in order; stacked bars run in parallel",
+      segs: ci.groups.map((g, gi) => ({
+        style: "display:flex;flex-direction:column;gap:1px;height:5px;min-width:0;flex:" + (gi === 0 ? "0 0 10px" : g.length + " 1 0"),
+        lanes: g.map((i) => {
+          const r = ci.curRes[i];
+          const bg = this.ciSegColor(r);
+          return {
+            tip: ci.steps[i].name + " · " + (r.s === "running" ? "running" : r.s === "timedout" ? "timed out" : r.s),
+            style: "flex:1;min-height:0;border-radius:2px;background:" + bg + (bg === "transparent" ? ";box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 14%,transparent)" : ""),
+          };
+        }),
+      })),
+    };
+  }
+  openForgePopup(url) {
+    try { window.open(url || "about:blank", "t3o-forge", "popup=yes,width=1120,height=820"); } catch (e) {}
   }
   ciPaneVm(c, ci, setPane) {
     const st = this.state;
     const open = st.ciOpen || {};
     const flip = (k, cur) => () => this.setState((s) => ({ ciOpen: { ...(s.ciOpen || {}), [k]: !cur } }));
+    const project = projectOf(c.project);
+    // Shared numbered badge: green tick done, solid blue running, amber ✕ failed, grey dash cancelled.
     const META = {
-      passed: ["Passed", "var(--success-fg)", "✓", "background:color-mix(in srgb,var(--success) 15%,transparent);color:var(--success-fg)"],
-      running: ["Running", "var(--info-fg)", "•", "background:color-mix(in srgb,var(--info) 15%,transparent);color:var(--info-fg)"],
-      failed: ["Failed", "var(--destructive-fg)", "✕", "background:color-mix(in srgb,var(--destructive) 12%,transparent);color:var(--destructive-fg)"],
-      timedout: ["Timed out", "var(--destructive-fg)", "✕", "background:color-mix(in srgb,var(--destructive) 12%,transparent);color:var(--destructive-fg)"],
-      cancelled: ["Cancelled", "var(--muted-fg)", "–", "background:var(--accent);color:var(--muted-fg)"],
-      pending: ["Pending", "var(--muted-fg)", "", "box-shadow:inset 0 0 0 1px var(--input);color:var(--muted-fg)"],
+      passed: ["Passed", "var(--success-fg)"],
+      running: ["Running", "var(--info-fg)"],
+      failed: ["Failed", "var(--warning-fg)"],
+      timedout: ["Timed out", "var(--warning-fg)"],
+      blocked: ["Blocked", "var(--warning-fg)"],
+      cancelled: ["Cancelled", "var(--muted-fg)"],
+      pending: ["Not started", "var(--muted-fg)"],
     };
     const OUT = {
-      running: ["Running", "info"], fixing: ["Fixing", "info"], fixed: ["Fixed in place", "plain"],
-      returned: ["Sent back to review", "plain"], skipped: ["Skipped", "plain"], passed: ["Passed", "success"],
+      running: ["Running", "info"], fixing: ["Fixing", "info"], fixed: ["Fixed in place", "plain"], blocked: ["Blocked", "warn"],
+      returned: ["Sent back to review", "warn"], skipped: ["Skipped", "plain"], passed: ["Passed", "success"],
     };
     const chip = (tone) =>
       "display:inline-flex;align-items:center;height:18px;padding:0 7px;flex:none;border-radius:5px;font:500 10.5px var(--font-sans);white-space:nowrap;" +
       (tone === "info" ? "background:color-mix(in srgb,var(--info) 13%,transparent);color:var(--info-fg)"
         : tone === "success" ? "background:color-mix(in srgb,var(--success) 15%,transparent);color:var(--success-fg)"
+        : tone === "warn" ? "background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning-fg)"
         : "background:var(--accent);color:var(--fg)");
-    const shineOf = (base, band) => this.shineStyle(base, band);
+    const CHECK = {
+      success: ["Passed", "passed"], failure: ["Failed", "failed"], running: ["Running", "running"], pending: ["Queued", "pending"],
+      cancelled: ["Cancelled", "cancelled"], skipped: ["Skipped", "cancelled"], neutral: ["Neutral", "cancelled"], action: ["Action required", "failed"],
+    };
+    const badge = (state, size) => {
+      const sz = size || 20;
+      return "width:" + sz + "px;height:" + sz + "px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;font:600 " + (sz < 20 ? "9px" : "10px") + " var(--font-sans);" +
+        (state === "running" ? "background:var(--info);color:#fff"
+          : state === "pending" ? "box-shadow:inset 0 0 0 1px var(--border);color:color-mix(in srgb,var(--muted-fg) 70%,transparent)"
+          : "background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)");
+    };
+    const corner = (state) => ({
+      markOk: state === "passed",
+      markFail: state === "failed" || state === "timedout" || state === "blocked",
+      markSkip: state === "cancelled",
+    });
+    const failVm = (f) => ({ title: f.title, loc: f.file ? f.file + (f.line ? ":" + f.line : "") : "", hasLoc: !!f.file, detail: f.detail || "", hasDetail: !!f.detail });
+    const stepVm = (r, pi, isCur, i) => {
+      const x = ci.steps[i];
+      const s = ci.res(r, x);
+      const fail = ci.isFail(s);
+      const fixing = fail && r.outcome === "fixing" && isCur;
+      const live = s.s === "running" && isCur && c.status === "ci" && ci.live;
+      const m = META[s.s] || META.pending;
+      const key = c.id + ":" + pi + ":" + x.id;
+      const detailOpen = open[key] != null ? !!open[key] : isCur && (fail || s.s === "running" || x.type === "forge" || (x.type === "sync" && s.sync !== "uptodate"));
+      const hasDetail = x.type !== "sync" || s.sync !== "uptodate" || s.s === "running";
+      const result = s.result || null;
+      const failures = (result && result.failures) || (s.failures || []);
+      const checks = (s.checks || []).map((k) => {
+        const cm = CHECK[k.s] || CHECK.pending;
+        const runningCheck = k.s === "running";
+        return {
+          name: k.name, wf: k.wf || "", hasWf: !!k.wf, req: !!k.req,
+          desc: k.desc || "", hasDesc: !!k.desc,
+          label: cm[0],
+          labelStyle: "flex:none;width:88px;text-align:right;font:500 11px var(--font-sans);color:" + (META[cm[1]] || META.pending)[1],
+          time: k.d != null ? this.fmtSecs(k.d) : runningCheck && live ? this.ciElapsed(c, x.id + ":" + k.name, k.ago) : "",
+          badge: badge(cm[1], 16), ...corner(cm[1]),
+        };
+      });
+      const fg = this.ciForgeName(ci, s);
+      let forgeNote = "", forgeTone = "";
+      if (x.type === "forge") {
+        if (s.forgeState === "appearing") { forgeNote = "No checks on the PR head yet. Waiting up to " + (s.limit || 10) + " min for " + fg + " to start them."; forgeTone = "info"; }
+        else if (s.forgeState === "unpushed") { forgeNote = "The PR head isn't pushed yet (" + (s.sha || "local commit") + "). Checks start once the push lands."; forgeTone = "info"; }
+        else if (s.forgeState === "none") { forgeNote = "No checks appeared within " + (s.limit || 10) + " min. The PR's workflows may not trigger on this branch."; forgeTone = "warn"; }
+        else if (s.forgeState === "unreadable") { forgeNote = fg + " doesn't expose check results, so the board can't tell when they pass. CI is blocked here; skip CI or replace this step."; forgeTone = "warn"; }
+        else if (s.s === "pending") forgeNote = "Starts when the group above passes.";
+      }
+      const fc = this.ciForgeCount(s);
+      const syncText = x.type !== "sync" ? ""
+        : s.sync === "conflict" ? "Conflicts with main in " + (s.files || 0) + " files. A fix agent is resolving them inside CI (" + (s.resolved || 0) + " of " + (s.files || 0) + " done)."
+        : s.sync === "rebased" ? (s.detail || "Rebased onto main")
+        : s.s === "running" ? "Fetching main…" : "Already up to date with main, passed at once.";
+      const hasLog = x.type === "script" && (s.s === "running" || !!s.tail || !!s.log || s.s === "passed" || ci.isFail(s));
+      const verdict = s.verdict || (s.s === "running" ? "" : s.s === "passed" ? "passed" : fail ? "failed" : "");
+      return {
+        n: i + 1, index: i, name: x.name,
+        isScript: x.type === "script", isAgent: x.type === "agent", isForge: x.type === "forge", isSync: x.type === "sync",
+        sub: x.type === "script" ? x.run : x.type === "agent" ? "Agent · own thread" : x.type === "forge" ? ((x.only && x.only.length ? x.only.length + " named checks" : "Every check on the PR head") + " · " + fg) : "Built in · always first, alone",
+        subStyle: "font:400 11px " + (x.type === "script" ? "var(--font-mono)" : "var(--font-sans)") + ";color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap",
+        dotStyle: badge(s.s === "timedout" || s.s === "blocked" ? "failed" : s.s),
+        ...corner(s.s),
+        markFailStyle:
+          "position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;box-shadow:0 0 0 1.5px var(--card);background:" +
+          (fixing ? "var(--info)" : "var(--warning)"),
+        label: fixing ? "Failed · fixing" : x.type === "sync" && s.sync === "conflict" && s.s === "running" ? "Fixing conflicts" : x.type === "forge" && s.s === "running" && s.checks ? fc.done + "/" + fc.total + " passed" : m[0],
+        nameStyle: "font:500 12.5px var(--font-sans);color:var(--fg);justify-self:start;width:fit-content" + (live ? this.shineStyle("var(--muted-fg)", "var(--fg)") : ""),
+        shine: live,
+        labelStyle: "flex:none;min-width:84px;text-align:right;font:500 11.5px var(--font-sans);white-space:nowrap;color:" + (fixing ? "var(--info-fg)" : m[1]),
+        time: s.s === "running" ? (live ? this.ciElapsed(c, x.id, s.ago) : "") : s.d != null ? this.fmtSecs(s.d) : "",
+        timeStyle: "flex:none;width:58px;text-align:right;font:500 11.5px var(--font-mono);font-variant-numeric:tabular-nums;color:" + (s.s === "running" ? "var(--fg)" : "var(--muted-fg)"),
+        rowStyle: "display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:" + (hasDetail ? "pointer" : "default") + ";" +
+          (s.s === "running" || fixing ? "background:color-mix(in srgb,var(--info) 5%,transparent)" : s.s === "blocked" ? "background:color-mix(in srgb,var(--warning) 6%,transparent)" : ""),
+        hasDetail, detailOpen: hasDetail && detailOpen, toggle: hasDetail ? flip(key, detailOpen) : () => {},
+        caret: hasDetail ? (detailOpen ? "rotate(180deg)" : "none") : "none",
+        caretStyle: "flex:none;opacity:" + (hasDetail ? 1 : 0),
+        // script
+        hasProg: x.type === "script" && !!s.prog && s.s === "running",
+        progMsg: s.prog ? s.prog.message : "", progFrac: s.prog ? s.prog.done + " / " + s.prog.total : "",
+        progBar: s.prog ? "height:100%;border-radius:2px;background:var(--info);width:" + Math.round((s.prog.done / Math.max(1, s.prog.total)) * 100) + "%" : "",
+        hasSummary: !!(result && result.summary) || (x.type === "agent" && !!s.summary),
+        summary: (result && result.summary) || s.summary || "",
+        hasFailures: failures.length > 0, failures: failures.map(failVm),
+        failHead: failures.length + (failures.length === 1 ? " failure" : " failures"),
+        hasLog, logLabel: s.s === "running" ? "View live log" : "View log",
+        openLog: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.openCiLog(c, pi, x.id); },
+        tailNote: x.type === "script" && fail && !result ? "No result file, so the fix agent gets the output tail." : "",
+        // agent
+        hasVerdict: x.type === "agent" && !!verdict,
+        verdict: verdict === "passed" ? "Verdict · passed" : verdict === "failed" ? "Verdict · failed" : "",
+        verdictStyle: chip(verdict === "passed" ? "success" : "warn"),
+        agentRunning: x.type === "agent" && s.s === "running",
+        openThread: (e) => { if (e && e.stopPropagation) e.stopPropagation(); setPane("thread")(); },
+        threadLabel: s.thread ? "Open " + s.thread + " thread" : "Open thread",
+        // forge
+        hasChecks: checks.length > 0, checks,
+        hasForgeNote: !!forgeNote, forgeNote,
+        forgeNoteStyle: "display:flex;gap:8px;padding:9px 11px;border-radius:8px;font:400 11.5px/1.5 var(--font-sans);text-wrap:pretty;" +
+          (forgeTone === "warn" ? "border:1px solid color-mix(in srgb,var(--warning) 40%,transparent);background:color-mix(in srgb,var(--warning) 7%,var(--card));color:var(--fg)"
+            : forgeTone === "info" ? "border:1px solid color-mix(in srgb,var(--info) 30%,transparent);background:color-mix(in srgb,var(--info) 5%,var(--card));color:var(--fg)"
+            : "color:var(--muted-fg)"),
+        canOpenForge: x.type === "forge" && s.forgeState !== "unreadable" && s.forgeState !== "unpushed" && s.s !== "pending",
+        forgeLabel: "Open on " + fg,
+        openForge: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.openForgePopup(ci.forgeRun); },
+        hasRichNote: x.type === "forge" && checks.length > 0 && fg === "GitHub",
+        // sync
+        syncText, hasSyncThread: x.type === "sync" && s.sync === "conflict",
+      };
+    };
     const passVm = (r, pi, isCur) => {
       const pk = c.id + ":p" + pi;
       const isOpen = isCur || !!open[pk];
-      const fi = r.steps.findIndex(ci.isFail);
+      const ix = ci.steps.findIndex((x) => ci.isFail(ci.res(r, x)));
       const out = OUT[r.outcome] || OUT.running;
       return {
-        title: "Pass " + (pi + 1),
-        when: r.when,
-        outcome: out[0],
-        outcomeStyle: chip(out[1]),
-        summary: fi >= 0 ? ci.steps[fi].name + (r.steps[fi].s === "timedout" ? " timed out" : " failed") : r.outcome === "skipped" ? "Skipped by " + (r.by || "brent") : "",
-        note: isCur ? "" : r.note || "",
-        hasNote: !isCur && !!r.note && isOpen,
-        open: isOpen,
-        collapsible: !isCur,
+        title: "Pass " + (pi + 1), when: r.when, isCur,
+        outcome: out[0], outcomeStyle: chip(out[1]),
+        summary: !isCur ? (ix >= 0 ? ci.steps[ix].name + (ci.res(r, ci.steps[ix]).s === "timedout" ? " timed out" : " failed") : r.outcome === "skipped" ? "Skipped by " + (r.by || "brent") : r.outcome === "passed" ? "All steps passed" : "") : "",
+        note: r.note || "", hasNote: !isCur && !!r.note && isOpen,
+        back: r.back ? "Back from Ready for merge · " + r.back.detail : "", hasBack: !isCur && !!r.back,
+        open: isOpen, collapsible: !isCur,
         toggle: isCur ? () => {} : flip(pk, isOpen),
         caret: isOpen ? "rotate(180deg)" : "none",
-        steps: !isOpen ? [] : ci.steps.map((x, i) => {
-          const s = r.steps[i] || { s: "pending" };
-          const fail = ci.isFail(s);
-          const fixing = fail && r.outcome === "fixing";
-          const m = META[s.s] || META.pending;
-          const tk = c.id + ":" + pi + ":" + i;
-          const tailOpen = fail && !!s.tail && (open[tk] != null ? !!open[tk] : isCur);
-          const lines = (s.tail || []).length;
-          const live = s.s === "running" && isCur && ci.running;
-          return {
-            n: i + 1,
-            name: x.name,
-            run: x.run,
-            index: i + 1,
-            markOk: s.s === "passed",
-            markFail: fail,
-            markSkip: s.s === "cancelled",
-            markFailStyle:
-              "position:absolute;left:-3px;bottom:-3px;width:11px;height:11px;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;box-shadow:0 0 0 1.5px var(--card);background:" +
-              (fixing ? "var(--info)" : "var(--destructive)"),
-            dotStyle:
-              "width:20px;height:20px;flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:99px;font:600 10px var(--font-sans);" +
-              (s.s === "running"
-                ? "background:var(--info);color:#fff"
-                : s.s === "passed" || fail || s.s === "cancelled"
-                  ? "background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)"
-                  : "box-shadow:inset 0 0 0 1px var(--border);color:color-mix(in srgb,var(--muted-fg) 70%,transparent)"),
-            label: fixing ? "Failed · fixing" : m[0],
-            shine: live,
-            nameStyle: "font:500 12.5px var(--font-sans);color:var(--fg);justify-self:start;width:fit-content" + (live ? shineOf("var(--muted-fg)", "var(--fg)") : ""),
-            labelStyle: "flex:none;width:92px;text-align:right;font:500 11.5px var(--font-sans);color:" + (fixing ? "var(--info-fg)" : m[1]) +
-              (live ? shineOf("var(--info-fg)", "color-mix(in srgb,var(--info-fg) 30%,var(--card))") : ""),
-            time:
-              s.s === "running"
-                ? isCur && ci.running ? this.ciElapsed(c, s) : ""
-                : s.d != null ? this.fmtSecs(s.d) : "",
-            timeStyle:
-              "flex:none;width:64px;text-align:right;font:500 11.5px var(--font-mono);font-variant-numeric:tabular-nums;color:" +
-              (s.s === "running" ? "var(--fg)" : "var(--muted-fg)"),
-            hasTail: fail && !!s.tail,
-            tailOpen,
-            toggleTail: flip(tk, tailOpen),
-            tailLabel: tailOpen ? "Hide output" : "Show output",
-            tail: (s.tail || []).join("\n"),
-            tailMeta: "Output tail · last 200 lines" + (lines < 200 ? " (" + lines + " captured)" : ""),
-            rowStyle:
-              "display:flex;align-items:center;gap:10px;padding:9px 12px;" +
-              (i ? "border-top:1px solid var(--border);" : "") +
-              (s.s === "running" || fixing ? "background:color-mix(in srgb,var(--info) 5%,transparent)" : ""),
-          };
-        }),
+        headStyle: "display:flex;align-items:center;gap:8px;padding:10px 12px;" + (isCur ? "border-bottom:1px solid var(--border)" : "cursor:pointer"),
+        groups: !isOpen ? [] : ci.groups.map((g, gi) => ({
+          multi: g.length > 1,
+          label: "In parallel · " + g.length + " steps",
+          wrapStyle: gi ? "border-top:1px solid var(--border)" : "",
+          innerStyle: g.length > 1 ? "display:flex;flex-direction:column;box-shadow:inset 3px 0 0 color-mix(in srgb,var(--info) 55%,var(--border))" : "display:flex;flex-direction:column",
+          steps: g.map((i, k) => ({ ...stepVm(r, pi, isCur, i), wrapStyle: k ? "border-top:1px solid var(--border)" : "" })),
+        })),
       };
     };
-    const cur = passVm(ci.cur, ci.runs.length - 1, true);
-    const failName = ci.failIx >= 0 ? ci.steps[ci.failIx].name : "";
+    const passes = ci.runs.map((r, i) => passVm(r, i, i === ci.runs.length - 1)).reverse();
+    passes.forEach((p, i) => { p.isFirstEarlier = i === 1; p.style = "flex:none;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--card);overflow:hidden"; });
+    const failX = ci.failIx >= 0 ? ci.steps[ci.failIx] : null;
     const confirming = st.ciSkipConfirm === c.id;
-    const headTone = ci.fixing || ci.running ? "info" : "plain";
+    const runX = ci.runIx >= 0 ? ci.steps[ci.runIx] : null;
+    const status = ci.blocked ? "Blocked" : ci.fixing ? "Fixing " + (failX ? failX.name : "")
+      : ci.running ? (runX ? this.ciStepLine(ci, runX, ci.curRes[ci.runIx], false) : "Starting")
+      : ci.returned ? "Sent back to review" : ci.skipped ? "Skipped" : "Passed";
+    const blockedRes = ci.blocked && failX ? ci.curRes[ci.failIx] : null;
     return {
       sub: "Pass " + ci.pass + " · fix attempts " + ci.attempt + " of " + ci.cap,
-      status: ci.fixing ? "Fixing " + failName : ci.running ? "Step " + (ci.runIx + 1) + " of " + ci.total : ci.returned ? "Sent back to review" : ci.skipped ? "Skipped" : "Passed",
-      statusStyle: chip(headTone),
-      source: ci.total + " steps from " + (ci.file || "t3o.json") + " · run in order, stop at the first failure",
-      cur,
-      earlier: ci.runs.slice(0, -1).map((r, i) => passVm(r, i, false)).reverse(),
-      hasEarlier: ci.runs.length > 1,
+      status, statusStyle: chip(ci.blocked ? "warn" : ci.fixing || ci.running ? "info" : ci.returned ? "warn" : "plain"),
+      settingsHref: SETTINGS_PAGE + "#projects/" + c.project + "/ci",
+      settingsLabel: "CI settings for " + project.name,
+      source: ci.total + " steps · Sync with base, then " + (ci.groups.length - 1) + " groups in order · a failure stops later groups once its own group finishes",
+      passes,
+      backBox: ci.cur.back && c.status === "ci"
+        ? { title: "Back from Ready for merge: " + (ci.cur.back.reason === "base" ? "base moved" : ci.cur.back.reason), note: ci.cur.back.detail.charAt(0).toUpperCase() + ci.cur.back.detail.slice(1) + ". Ready for merge sent the card back so CI runs against the new base, starting with Sync with base." }
+        : null,
+      blockedBox: ci.blocked
+        ? { title: "Blocked: can't read " + this.ciForgeName(ci, blockedRes) + " checks", note: "CI can't pass while this step waits on checks the board can't see. Skip CI for this card, or change the step in CI settings." }
+        : null,
       fixBox: ci.fixing && c.status === "ci"
         ? {
-            title: "Fix agent is working on " + failName,
-            note: "Attempt " + ci.attempt + " of " + ci.cap + ". When it commits, every step re-runs from the top." +
-              (ci.attempt >= ci.cap ? " This is the last attempt; if the step still fails, the card goes back to Code review." : ""),
+            title: "Fix agent is working on " + (failX ? failX.name : "the failed step"),
+            note: "Attempt " + ci.attempt + " of " + ci.cap + ". It has the step's structured failures and output. When it commits, every step re-runs from Sync with base." +
+              (ci.attempt >= ci.cap ? " This is the last attempt; if the step still fails, the card goes back to Code review with a finding." : ""),
             openThread: setPane("thread"),
           }
         : null,
       outcomeBox: ci.returned
-        ? { title: "Sent back to Code review", note: ci.cur.note || "", meta: ci.cur.when + " · the failing output went with the card" }
+        ? { title: "Sent back to Code review", note: ci.cur.note || "", meta: ci.cur.when + " · the failures went to the review as a finding" }
         : ci.skipped
-          ? { title: "Skipped by " + (ci.cur.by || "brent"), note: "Moved to Ready for merge without a passing run. Steps still running were cancelled.", meta: ci.cur.when }
+          ? { title: "CI skipped by " + (ci.cur.by || "brent"), note: "Moved to Ready for merge without a passing run. Steps still running were cancelled.", meta: ci.cur.when }
           : null,
       canSkip: c.status === "ci" && !confirming,
       confirming: c.status === "ci" && confirming,
       skipNote: "Moves the card to Ready for merge without a passing CI run. The skip is recorded on the card under your name.",
       confirmTitle: "Skip CI for " + c.key + "?",
-      confirmNote: (ci.fixing ? "The fix agent stops and " : ci.running ? "The running step is cancelled and " : "") +
+      confirmNote: (ci.fixing ? "The fix agent stops and " : ci.running ? "Running steps are cancelled and " : "") +
         "the card moves to Ready for merge. Anyone opening it will see that you skipped CI.",
       askSkip: () => this.setState({ ciSkipConfirm: c.id }),
       cancelSkip: () => this.setState({ ciSkipConfirm: null }),
       doSkip: () => this.skipCi(c),
+    };
+  }
+  // A project without CI: what the CI tab says, and a one-click starter.
+  ciEmptyVm(c) {
+    const p = projectOf(c.project);
+    const added = !!(this.state.ciStarter || {})[c.project];
+    return {
+      title: p.name + " has no CI",
+      note: "Cards go from Code review straight to Ready for merge. Add steps in this project's CI settings and the next card out of Code review runs them.",
+      added,
+      addedNote: "Added “Project checks”, an agent step that runs what AGENTS.md lists. CI is on for " + p.name + "; this card isn't affected, the next one out of Code review is.",
+      starter: () => {
+        this.setState((s) => ({ ciStarter: { ...(s.ciStarter || {}), [c.project]: true } }));
+        this.toast("Added an agent step to " + p.name + "'s CI. Edit it in CI settings.");
+      },
+      settingsHref: SETTINGS_PAGE + "#projects/" + c.project + "/ci",
+    };
+  }
+  openCiLog(c, pi, stepId) {
+    clearInterval(this._logTimer);
+    this.setState({ ciLog: { cid: c.id, pi, sid: stepId, extra: 0, follow: true }, ciLogCopied: false }, () => this.scrollLog());
+    this._logTimer = setInterval(() => {
+      const L = this.state.ciLog;
+      if (!L) { clearInterval(this._logTimer); return; }
+      const vm = this.ciLogData();
+      if (!vm || !vm.live || L.extra >= LOG_TEST_MORE.length) return;
+      this.setState((s) => ({ ciLog: s.ciLog ? { ...s.ciLog, extra: s.ciLog.extra + 1 } : null }), () => { if (this.state.ciLog && this.state.ciLog.follow) this.scrollLog(); });
+    }, 1100);
+  }
+  scrollLog() {
+    const el = this._logEl;
+    if (el) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+  }
+  ciLogData() {
+    const L = this.state.ciLog;
+    if (!L) return null;
+    const c = this.state.cards.find((x) => x.id === L.cid);
+    const ci = c && this.ciFor(c);
+    if (!ci) return null;
+    const x = ci.steps.find((y) => y.id === L.sid);
+    const r = ci.runs[L.pi];
+    const s = ci.res(r, x);
+    const live = s.s === "running" && L.pi === ci.runs.length - 1 && c.status === "ci";
+    let lines = s.log ? s.log.slice() : s.tail ? ["$ " + x.run].concat(s.tail) : ["$ " + x.run, "… " + this.fmtSecs(s.d || 0) + " of output, exit 0"];
+    if (live) lines = lines.concat(LOG_TEST_MORE.slice(0, L.extra));
+    return { c, x, s, live, lines, pass: L.pi + 1 };
+  }
+  ciLogVm() {
+    const d = this.ciLogData();
+    if (!d) return null;
+    const L = this.state.ciLog;
+    const txt = d.lines.join("\n");
+    return {
+      title: d.x.name, cmd: d.x.run, meta: d.c.key + " · pass " + d.pass + " · " + (d.live ? "live, following output" : (META_LOG[d.s.s] || d.s.s) + " · " + this.fmtSecs(d.s.d || 0)),
+      live: d.live, done: !d.live,
+      text: txt,
+      lineCount: d.lines.length + " lines",
+      follow: L.follow, paused: d.live && !L.follow,
+      followLabel: L.follow ? "Following" : "Paused",
+      followStyle: "display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:7px;font:500 11.5px var(--font-sans);cursor:pointer;border:1px solid " +
+        (L.follow ? "color-mix(in srgb,var(--info) 40%,transparent);background:color-mix(in srgb,var(--info) 8%,transparent);color:var(--info-fg)" : "var(--border);background:var(--popover);color:var(--muted-fg)"),
+      toggleFollow: () => this.setState((s) => ({ ciLog: { ...s.ciLog, follow: !s.ciLog.follow } }), () => { if (this.state.ciLog.follow) this.scrollLog(); }),
+      jump: () => this.setState((s) => ({ ciLog: { ...s.ciLog, follow: true } }), () => this.scrollLog()),
+      onScroll: (e) => {
+        const el = e.currentTarget;
+        const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+        const f = this.state.ciLog && this.state.ciLog.follow;
+        if (f && !atEnd) this.setState((s) => ({ ciLog: { ...s.ciLog, follow: false } }));
+      },
+      logRef: this._logRefFn || (this._logRefFn = (el) => { this._logEl = el; }),
+      copyLabel: this.state.ciLogCopied ? "Copied" : "Copy",
+      copy: () => { try { navigator.clipboard.writeText(txt); } catch (e) {} this.setState({ ciLogCopied: true }); setTimeout(() => this.setState({ ciLogCopied: false }), 1500); },
+      close: () => { clearInterval(this._logTimer); this.setState({ ciLog: null }); },
     };
   }
   skipCi(card) {
@@ -4662,10 +5222,12 @@ class Component extends DCLogic {
         if (c.id !== card.id) return c;
         const runs = c.ciRuns.slice();
         const last = runs[runs.length - 1];
-        runs[runs.length - 1] = {
-          ...last, outcome: "skipped", when: "just now", by: "brent",
-          steps: last.steps.map((x) => (x.s === "running" || x.s === "pending" ? { s: "cancelled", d: x.ago } : x)),
-        };
+        const steps = {};
+        Object.keys(last.steps).forEach((k) => {
+          const x = last.steps[k];
+          steps[k] = x.s === "running" ? { s: "cancelled", d: x.ago } : x;
+        });
+        runs[runs.length - 1] = { ...last, outcome: "skipped", when: "just now", by: "brent", steps };
         return { ...c, ciRuns: runs, status: "merge" };
       }),
     }));
@@ -5108,7 +5670,7 @@ class Component extends DCLogic {
             : i === q.answered
               ? waiting
                 ? "color-mix(in srgb,var(--attention) 45%,transparent)"
-                : "color-mix(in srgb,var(--info) 70%,transparent);animation:t3pulse 1.6s ease-in-out infinite"
+                : "color-mix(in srgb,var(--info) 70%,transparent)"
               : i < softFrom
                 ? "color-mix(in srgb,var(--fg) 12%,transparent)"
                 : "color-mix(in srgb,var(--fg) 6%,transparent)"),
@@ -5801,8 +6363,8 @@ class Component extends DCLogic {
           if (c.id !== id) return c;
           // Entering CI starts a fresh pass from the first step.
           if (status === "ci" && c.status !== "ci") {
-            const n = (pipeOf(c.project).ci || []).length;
-            const steps = Array.apply(null, { length: n }).map((x, i) => (i === 0 ? { s: "running", ago: 0 } : { s: "pending" }));
+            const steps = {};
+            (pipeOf(c.project).ci || []).forEach((x, i) => { steps[x.id] = i === 0 ? { s: "running", ago: 0 } : { s: "pending" }; });
             return { ...c, status, ciRuns: [{ steps, outcome: "running", when: "just now" }], ciPrev: c.ciRuns || null };
           }
           return { ...c, status };
@@ -7299,45 +7861,15 @@ class Component extends DCLogic {
         : null;
       const armed = blocked && (this.autoBuildsFor(c) || !!this.state.autoStart[c.id]);
       const ciS = isGrp ? null : this.ciFor(c);
-      const ciFace = ciS && ciS.live
-        ? (() => {
-            const runStep = ciS.runIx >= 0 ? ciS.steps[ciS.runIx] : null;
-            const failStep = ciS.failIx >= 0 ? ciS.steps[ciS.failIx] : null;
-            const failWord = ciS.failIx >= 0 && ciS.cur.steps[ciS.failIx].s === "timedout" ? " timed out" : " failed";
-            const mins = runStep ? Math.floor((ciS.cur.steps[ciS.runIx].ago || 0) / 60) : 0;
-            return {
-              head: "CI" + (ciS.pass > 1 ? " · pass " + ciS.pass : ""),
-              chip: ciS.fixing ? "Fixing" : "Running",
-              chipStyle:
-                "display:inline-flex;align-items:center;height:16px;padding:0 6px;flex:none;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;background:color-mix(in srgb,var(--info) 13%,transparent);color:var(--info-fg)",
-              count: ciS.passed + "/" + ciS.total,
-              cur: ciS.fixing
-                ? (failStep ? failStep.name : "Step") + failWord + " · fix " + ciS.attempt + " of " + ciS.cap
-                : runStep ? runStep.name + " · " + (mins < 1 ? "under 1m" : mins + "m") : "Starting",
-              tip: ciS.fixing
-                ? "A fix agent is working on the failed step. Every step re-runs from the top after the fix."
-                : "Step " + (ciS.runIx + 1) + " of " + ciS.total + " running",
-              pips: ciS.steps.map((x, i) => {
-                const r = ciS.cur.steps[i] || { s: "pending" };
-                const bg =
-                  r.s === "passed" ? "var(--success)"
-                  : r.s === "running" ? "var(--info)"
-                  : ciS.isFail(r) ? "color-mix(in srgb,var(--info) 45%,transparent)"
-                  : "transparent";
-                return {
-                  tip: x.name + " · " + (ciS.isFail(r) ? "being fixed" : r.s),
-                  style: "flex:1;height:5px;border-radius:2px;background:" + bg + (bg === "transparent" ? ";box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 14%,transparent)" : ""),
-                };
-              }),
-            };
-          })()
-        : null;
+      const ciFace = ciS && ciS.live ? this.ciFaceVm(c, ciS) : null;
       const ciBack = ciS && ciS.returned && c.status === "review"
         ? (() => {
             const st = ciS.failIx >= 0 ? ciS.steps[ciS.failIx] : { name: "A step" };
+            const fr = ciS.failIx >= 0 ? ciS.curRes[ciS.failIx] : null;
+            const nf = fr && fr.result && fr.result.failures ? fr.result.failures.length : 0;
             return {
-              line: st.name + " still failing after " + ciS.fixesDone + " fix attempts",
-              tip: "CI sent this card back to Code review " + ciS.cur.when + ". The failing output is attached to the review.",
+              line: st.name + (nf ? " · " + nf + (nf === 1 ? " failure" : " failures") : "") + " still failing after " + ciS.fixesDone + " fix attempts",
+              tip: "CI sent this card back to Code review " + ciS.cur.when + ". The failures are attached to the review as a finding.",
             };
           })()
         : null;
@@ -7353,7 +7885,7 @@ class Component extends DCLogic {
         ciBack,
         ciSkip,
         stageGone: stageGone
-          ? { label: this.stage(c.status).name + " is no longer in " + projName(c.project) + "'s pipeline", tip: "Removed in " + (pipeOf(c.project).file || "t3o.json") + ". Move the card on; the column goes once it's empty." }
+          ? { label: this.stage(c.status).name + " is switched off for " + projName(c.project), tip: "Switched off in " + projName(c.project) + "'s pipeline settings. Move the card on; the column goes once it's empty." }
           : null,
         armed,
         blockedOnly: blocked && !armed,
@@ -7624,12 +8156,13 @@ class Component extends DCLogic {
         pipes: projs.map((x) => ({
           name: x.name,
           dotStyle: "width:7px;height:7px;border-radius:99px;flex:none;background:" + x.dot,
-          file: pipeOf(x.id).file || "no t3o.json",
+          file: "Open " + x.name + "'s pipeline settings",
+          href: SETTINGS_PAGE + "#projects/" + x.id + "/pipeline",
           cells: stages.map((s) => {
             const on = inPipeline(x.id, s.id);
-            const own = !!s.custom || s.id === "ci";
+            const own = switchedFor(x.id, s.id);
             return {
-              tip: s.name + (on ? (own && s.custom ? " · added in t3o.json" : "") : " · not in this pipeline"),
+              tip: s.name + (own ? (on ? " · switched on for this project" : " · switched off for this project") : on ? " · on by default" : " · off by default"),
               style:
                 "flex:1;min-width:0;height:18px;border-radius:5px;" +
                 (on
@@ -7639,6 +8172,17 @@ class Component extends DCLogic {
           }),
         })),
         pipeHeads: stages.map((s) => ({ name: s.name })),
+        // Repos whose t3o.json hasn't been imported (or changed since): one quiet hint, never a banner.
+        importHint: !opts.drill && projs.some((x) => IMPORT_PENDING[x.id])
+          ? (() => {
+              const pend = projs.filter((x) => IMPORT_PENDING[x.id]);
+              return {
+                label: pend.length === 1 ? pend[0].name + "'s t3o.json " + (IMPORT_PENDING[pend[0].id] === "changed" ? "changed" : "can be imported") : pend.length + " t3o.json files to import",
+                tip: "Review and import in Settings › Board",
+                href: SETTINGS_PAGE + "#board",
+              };
+            })()
+          : null,
         dotStyle:
           "width:7px;height:7px;border-radius:99px;flex:none;background:" +
           (isAll ? "#a1a1aa" : projs[0].dot),
@@ -7689,13 +8233,27 @@ class Component extends DCLogic {
           const goneFor = projs.filter((x) => !inPipeline(x.id, stage.id) && scoped.some((c) => c.project === x.id && c.status === stage.id));
           let pipeHint = "";
           if (retired)
-            pipeHint = "Removed from " + nameList(goneFor) + "'s pipeline. Stays until " + (all.length === 1 ? "its last card moves" : "its cards move") + " on.";
-          else if (partial)
-            pipeHint = owners.length <= others.length ? "Only " + nameList(owners) : "Not in " + nameList(others);
-          else if (!isAll && !opts.drill && stage.custom)
-            pipeHint = "Added in this project's t3o.json";
-          else if (!isAll && !opts.drill && stage.id === "ci")
-            pipeHint = (pipeOf(projs[0].id).ci || []).map((x) => x.name).join(" → ");
+            pipeHint = "Switched off for " + nameList(goneFor) + ". Shown until " + (all.length === 1 ? "its last card moves" : "its cards move") + " on.";
+          else if (!isAll && !opts.drill && switchedFor(projs[0].id, stage.id) && stage.id !== "ci")
+            pipeHint = "Switched on for this project";
+          else if (!isAll && !opts.drill && stage.id === "ci") {
+            const cs = pipeOf(projs[0].id).ci || [];
+            pipeHint = groupsOf(cs).slice(1).map((g) => g.map((i) => cs[i].name).join(" ∥ ")).join(" → ");
+          }
+          const popOpen = st.stagePop === colKey;
+          const popRows = projs.map((x) => {
+            const on = inPipeline(x.id, stage.id);
+            const sw = switchedFor(x.id, stage.id);
+            return {
+              name: x.name, on, off: !on,
+              state: on ? (sw ? "Switched on" : "On by default") : (sw ? "Switched off" : "Off by default"),
+              stateStyle: "flex:none;font:400 11px var(--font-sans);color:" + (sw ? "var(--fg)" : "var(--muted-fg)"),
+              nameStyle: "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 12px var(--font-sans);color:" + (on ? "var(--fg)" : "var(--muted-fg)"),
+              dotStyle: "width:7px;height:7px;flex:none;border-radius:99px;background:" + x.dot + (on ? "" : ";opacity:.35"),
+              href: SETTINGS_PAGE + "#projects/" + x.id + "/pipeline",
+            };
+          });
+          const inN = popRows.filter((r) => r.on).length;
           return {
             items,
             canAdd,
@@ -7726,12 +8284,26 @@ class Component extends DCLogic {
             hint: stage.id === "deferred" ? "Not this round. Doesn't count toward done." : pipeHint,
             partial,
             retired,
-            owners: partial ? owners.map((x) => ({ name: x.name, style: "width:6px;height:6px;border-radius:99px;flex:none;background:" + x.dot })) : [],
-            ownersTip: partial ? "Used by " + nameList(owners) : "",
+            partialTip: partial ? owners.length + " of " + projs.length + " projects · " + (owners.length <= others.length ? "only " + nameList(owners) : "not " + nameList(others)) : "",
+            tipOpen: partial && st.stageTip === colKey && !popOpen,
+            popOpen,
+            onIconEnter: () => { if (this.state.stageTip !== colKey) this.setState({ stageTip: colKey }); },
+            onIconLeave: () => { if (this.state.stageTip === colKey) this.setState({ stageTip: null }); },
+            togglePop: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.setState((s2) => ({ stagePop: s2.stagePop === colKey ? null : colKey, stageTip: null })); },
+            closePop: () => this.setState({ stagePop: null }),
+            popTitle: stage.name,
+            popSub: inN + " of " + projs.length + " projects in view run this stage",
+            popIn: popRows.filter((r) => r.on),
+            popOut: popRows.filter((r) => !r.on),
+            hasPopOut: popRows.some((r) => !r.on),
+            stageHref: SETTINGS_PAGE + "#pipeline/" + stage.id,
+            iconStyle: "display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:2px;flex:none;border:none;border-radius:6px;cursor:pointer;color:var(--muted-fg);background:" + (popOpen ? "var(--accent)" : "transparent"),
+            retiredHref: retired && goneFor.length ? SETTINGS_PAGE + "#projects/" + goneFor[0].id + "/pipeline" : "",
+            hasRetiredHref: retired && goneFor.length > 0,
             collapsedStyle:
               "flex:none;width:44px;align-self:stretch;min-height:104px;display:flex;flex-direction:column;align-items:center;gap:10px;border:none;border-radius:12px;background:var(--column-bg);padding:10px 0;cursor:pointer;transition:background-color 120ms ease",
             style:
-              "flex:none;width:268px;border:none;border-radius:12px;background:" +
+              "position:relative;flex:none;width:268px;border:none;border-radius:12px;background:" +
               (isOver ? "var(--column-bg-over)" : retired ? "transparent" : "var(--column-bg)") +
               ";padding:10px;min-height:104px;transition:background-color 120ms ease" +
               (retired ? ";outline:1.5px dashed color-mix(in srgb,var(--fg) 16%,transparent);outline-offset:-1.5px" : "") +
@@ -8121,16 +8693,22 @@ class Component extends DCLogic {
             };
             rows.push({ who: "Claude Opus 4.8", what: "approved the review", when: ciA.runs[0].when });
             ciA.runs.forEach((r, i) => {
-              const fi = r.steps.findIndex(ciA.isFail);
+              const fi = ciA.steps.findIndex((x) => ciA.isFail(ciA.res(r, x)));
               const nm = fi >= 0 ? ciA.steps[fi].name : "";
-              const word = fi >= 0 && r.steps[fi].s === "timedout" ? " timed out" : " failed";
+              const word = fi >= 0 && ciA.res(r, ciA.steps[fi]).s === "timedout" ? " timed out" : " failed";
               const pass = "CI pass " + (i + 1) + ": ";
+              if (r.back)
+                rows.push({ who: "Ready for merge", what: "sent the card back to CI: " + r.back.detail, when: r.when, isLink: true, open: openCi });
               if (r.outcome === "fixed")
                 rows.push({ who: "CI", what: pass + nm + word + ". The fix agent fixed it in place and re-ran every step", when: r.when, isLink: true, open: openCi });
               else if (r.outcome === "fixing")
                 rows.push({ who: "CI", what: pass + nm + word + ". Fix agent working, attempt " + ciA.attempt + " of " + ciA.cap, when: r.when, isLink: true, open: openCi });
               else if (r.outcome === "returned")
                 rows.push({ who: "CI", what: "sent the card back to code review: " + nm + " still failing after " + ciA.fixesDone + " fix attempts", when: r.when, isLink: true, open: openCi });
+              else if (r.outcome === "blocked")
+                rows.push({ who: "CI", what: pass + "blocked, the forge's checks can't be read", when: r.when, isLink: true, open: openCi });
+              else if (r.outcome === "passed")
+                rows.push({ who: "CI", what: pass + "every step passed", when: r.when, isLink: true, open: openCi });
               else if (r.outcome === "skipped")
                 rows.push({ who: r.by || "brent", what: "skipped CI on pass " + (i + 1) + " and moved the card to ready for merge", when: r.when, isLink: true, open: openCi });
               else rows.push({ who: "CI", what: "started pass " + (i + 1), when: r.when });
@@ -8332,10 +8910,13 @@ class Component extends DCLogic {
     const isReview = !!reviewData;
     const ciData = active ? this.ciFor(active) : null;
     const hasCi = !!ciData && hasThreadPane && !isParent;
+    // A project without CI still gets the tab once a card reaches Code review, to say so and offer a starter.
+    const ciEmpty = !!active && !ciData && hasThreadPane && !isParent && !(pipeOf(active.project).ci || []).length &&
+      this.stageIndex(active.status) >= this.stageIndex("review");
     let pane =
       (active && st.pane[active.id]) ||
       (isReview ? "review" : hasCi && active.status === "ci" ? "ci" : threadLocked ? "plans" : active && this.stageIndex(active.status) >= 6 && hasThreadPane ? "summary" : "thread");
-    if (pane === "ci" && !hasCi) pane = "thread";
+    if (pane === "ci" && !hasCi && !ciEmpty) pane = "thread";
     if (pane === "plans" && !isParent) pane = isReview ? "review" : "thread";
     if (pane === "review" && !isReview) pane = "thread";
     if (pane === "thread" && threadLocked && !isReview) pane = "plans";
@@ -8972,19 +9553,23 @@ class Component extends DCLogic {
         : "Thread",
       selectThread: threadLocked ? () => {} : setPane("thread"),
       hasReviewTab: isReview,
-      hasCiTab: hasCi,
+      hasCiTab: hasCi || ciEmpty,
       ciTabStyle: paneBtn(pane === "ci", false),
       selectCi: setPane("ci"),
       ciTabLive: hasCi && ciData.live,
-      ciPaneOpen: hasCi && pane === "ci",
-      ci: hasCi ? this.ciPaneVm(active, ciData, setPane) : null,
+      ciPaneOpen: (hasCi || ciEmpty) && pane === "ci",
+      ciPaneFull: hasCi && pane === "ci",
+      ciEmptyOpen: ciEmpty && pane === "ci",
+      ci: hasCi ? this.ciPaneVm(active, ciData, setPane) : { passes: [] },
+      ciEmptyVm: ciEmpty ? this.ciEmptyVm(active) : {},
+      ciLog: this.ciLogVm(),
       ciBanner: (() => {
         if (!ciData || !ciData.returned || !active || active.status !== "review") return null;
         const fs = ciData.steps[ciData.failIx] || { name: "A step" };
         return {
           title: "Sent back from CI · " + fs.name + " still failing",
           reason: ciData.cur.note || "",
-          meta: ciData.fixesDone + " of " + ciData.cap + " fix attempts used · " + ciData.cur.when + " · the failing output is attached to this review round",
+          meta: ciData.fixesDone + " of " + ciData.cap + " fix attempts used · " + ciData.cur.when + " · the failures are attached to this review round as a finding",
           open: setPane("ci"),
         };
       })(),
