@@ -1,0 +1,171 @@
+name: Mobile T3o Android
+
+# T3o-owned (T3O-18). Publishes a sideloadable APK of APP_VARIANT=t3o
+# (com.brentkelly.t3o) from GitHub Releases. Debug/prerelease needs no
+# keystore; signed-release is fail-closed without secrets.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Build mode
+        required: true
+        type: choice
+        options:
+          - debug-release
+          - signed-release
+          - dev-client
+        default: debug-release
+
+concurrency:
+  group: mobile-t3o-android-${{ github.event.inputs.mode }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ github.event.inputs.mode }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: ${{ github.event.inputs.mode == 'dev-client' && 'read' || 'write' }}
+    env:
+      APP_VARIANT: t3o
+      EXPO_NO_GIT_STATUS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Require signed-release secrets
+        if: github.event.inputs.mode == 'signed-release'
+        env:
+          T3O_ANDROID_KEYSTORE_BASE64: ${{ secrets.T3O_ANDROID_KEYSTORE_BASE64 }}
+          T3O_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.T3O_ANDROID_KEYSTORE_PASSWORD }}
+          T3O_ANDROID_KEY_ALIAS: ${{ secrets.T3O_ANDROID_KEY_ALIAS }}
+          T3O_ANDROID_KEY_PASSWORD: ${{ secrets.T3O_ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=0
+          for name in T3O_ANDROID_KEYSTORE_BASE64 T3O_ANDROID_KEYSTORE_PASSWORD T3O_ANDROID_KEY_ALIAS T3O_ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "$name is not set" >&2
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "signed-release is fail-closed without keystore secrets." >&2
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/t3o-upload.jks"
+          printf '%s' "$T3O_ANDROID_KEYSTORE_BASE64" | base64 -d > "$keystore"
+          echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=$T3O_ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=$T3O_ANDROID_KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=$T3O_ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Version
+        id: version
+        run: |
+          pkg="$(node --print "require('./apps/mobile/package.json').version")"
+          echo "versionName=${pkg}-t3o.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "versionCode=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Prebuild Android
+        working-directory: apps/mobile
+        run: npx expo prebuild --clean --platform android --non-interactive
+
+      - name: Assert package id
+        working-directory: apps/mobile
+        run: |
+          if ! grep -E 'applicationId[[:space:]]+"com\.brentkelly\.t3o"' android/app/build.gradle; then
+            echo "applicationId is not com.brentkelly.t3o" >&2
+            grep -n 'applicationId' android/app/build.gradle >&2 || true
+            exit 1
+          fi
+          if ! grep -E 'namespace[[:space:]]+"com\.brentkelly\.t3o"' android/app/build.gradle; then
+            echo "namespace is not com.brentkelly.t3o" >&2
+            exit 1
+          fi
+
+      - name: Stamp version
+        working-directory: apps/mobile
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          path = Path("android/app/build.gradle")
+          text = path.read_text()
+          code = os.environ["VERSION_CODE"]
+          name = os.environ["VERSION_NAME"]
+          text = text.replace("versionCode 1", f"versionCode {code}", 1)
+          text = text.replace('versionName "1.0.0"', f'versionName "{name}"', 1)
+          text = text.replace('versionName "2.0.0"', f'versionName "{name}"', 1)
+          path.write_text(text)
+          PY
+        env:
+          VERSION_CODE: ${{ steps.version.outputs.versionCode }}
+          VERSION_NAME: ${{ steps.version.outputs.versionName }}
+
+      - name: Assemble debug
+        if: github.event.inputs.mode != 'signed-release'
+        working-directory: apps/mobile/android
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      - name: Assemble signed release
+        if: github.event.inputs.mode == 'signed-release'
+        working-directory: apps/mobile/android
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Locate APK
+        id: apk
+        run: |
+          if [ "${{ github.event.inputs.mode }}" = "signed-release" ]; then
+            apk="$(find apps/mobile/android/app/build/outputs/apk/release -name '*.apk' | head -n 1)"
+            asset="t3o-${{ steps.version.outputs.versionName }}.apk"
+          else
+            apk="$(find apps/mobile/android/app/build/outputs/apk/debug -name '*.apk' | head -n 1)"
+            asset="t3o-${{ steps.version.outputs.versionName }}-debug.apk"
+          fi
+          test -n "$apk"
+          echo "path=$apk" >> "$GITHUB_OUTPUT"
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        if: github.event.inputs.mode == 'dev-client'
+        uses: actions/upload-artifact@v4
+        with:
+          name: t3o-dev-client
+          path: ${{ steps.apk.outputs.path }}
+
+      - name: Publish GitHub Release
+        if: github.event.inputs.mode != 'dev-client'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="mobile-v${{ github.run_number }}"
+          prerelease_flag=""
+          if [ "${{ github.event.inputs.mode }}" = "debug-release" ]; then
+            prerelease_flag="--prerelease"
+          fi
+          cp "${{ steps.apk.outputs.path }}" "${{ steps.apk.outputs.asset }}"
+          gh release create "$tag" \
+            $prerelease_flag \
+            --title "T3o Android $tag" \
+            --notes "T3o Android APK (${{ github.event.inputs.mode }}). Package com.brentkelly.t3o, versionName ${{ steps.version.outputs.versionName }}." \
+            "${{ steps.apk.outputs.asset }}"

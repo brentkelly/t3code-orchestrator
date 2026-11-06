@@ -2,6 +2,7 @@ import type { ExpoConfig } from "expo/config";
 
 import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { applyT3oMobileConfig } from "./t3o/applyT3oMobileConfig.ts";
 
 type AppVariant = "development" | "preview" | "production";
 
@@ -499,4 +500,5 @@ const config: ExpoConfig = {
   owner: "pingdotgg",
 };
 
-export default config;
+// T3o: apply the t3o identity overlay last (T3O-18, D17).
+export default applyT3oMobileConfig(config, repoEnv);

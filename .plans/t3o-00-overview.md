@@ -262,14 +262,24 @@ in the log. Archived cards remain searchable and restorable through a settings r
 - Reserve migration numbers from **`900_`** upward. Colliding with an upstream migration number
   corrupts the applied-migration ledger — that is data loss, not a merge conflict.
 
-### D17 — Mobile is out of scope, but the seam stays honest
+### D17 — Additive `APP_VARIANT=t3o` Android app plus mobile Board monitor-and-act
 
-A board UI on `apps/mobile` (React Native, separate navigation) is not in scope. But D13 already
-delivers the thing that matters on a phone: answering the board's questions to keep cards moving.
+T3o ships an **additive** mobile flavour, not a rebrand of upstream's `com.t3tools.*` apps.
 
-**Decision:** board client state lives in `packages/client-runtime` (where T3 puts shared client
-concerns) rather than in the web package, so a future mobile board is a UI project rather than a
-rewrite. Costs nothing now.
+**Decision:** `APP_VARIANT=t3o` produces package `com.brentkelly.t3o` (name T3o, scheme `t3o`) via
+an overlay (`applyT3oMobileConfig`) that runs last in `apps/mobile/app.config.ts`. Upstream
+development/preview/production flavours stay untouched. Android APKs publish from GitHub Releases
+(`mobile-t3o-android.yml`): a debug/prerelease APK without a keystore, and a signed upgradeable
+release when keystore secrets exist. iOS is compile-ready under the same identity; IPA / TestFlight
+/ other-phone GitHub download, push, Clerk, relay, and OTA are deferred.
+
+The mobile Board is **monitor-and-act**: kanban list/detail, plan approve, stage actions
+(move/merge/submit-no-review), open a linked thread (cross-env connect-first), archive/unarchive,
+and create a card. Model/review override editors, attachments, and sub-board drill-in are follow-ups.
+
+Board client state stays in `packages/client-runtime`. Every T3o `ServerEnvironment` advertises
+`capabilities.board: true`; upstream servers omit it. Mobile ids (`com.brentkelly.t3o`) may differ
+from desktop (`io.github.brentkelly.t3o`); see `docs/t3o/mobile.md`.
 
 ### D18 — Stage advancement is human-gated; work inside a stage is automatic
 

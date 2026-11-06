@@ -98,7 +98,7 @@ import {
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
 import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
-import { boardMoveLeavesPlanningUnwritten } from "./boardStageActions";
+import { boardMoveLeavesPlanningUnwritten } from "@t3tools/client-runtime/board";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
 import { boardCardProjectOptions } from "./BoardCardProjectSelect";

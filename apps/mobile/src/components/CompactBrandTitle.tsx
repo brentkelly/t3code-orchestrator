@@ -34,36 +34,53 @@ export function CompactBrandTitle(
   return (
     <View
       aria-level={1}
-      accessibilityLabel={props.accessibilityLabel ?? "T3 Code, Threads"}
+      accessibilityLabel={
+        props.accessibilityLabel ?? (stageLabel === "T3o" ? "T3o, Threads" : "T3 Code, Threads")
+      }
       accessible
       role="heading"
       className="flex-row items-center gap-1.5"
       style={[{ marginLeft: titleOffset }, Platform.OS === "android" && { gap: 5.25 * scale }]}
     >
-      <T3Wordmark colorClassName="accent-icon" height={Math.round(15 * scale)} />
-      <Text
-        allowFontScaling={props.allowFontScaling}
-        className="font-t3-medium text-foreground-muted"
-        style={{ fontSize: 21 * scale, letterSpacing: -0.5 * scale }}
-      >
-        Code
-      </Text>
-      <View
-        className="rounded-full bg-subtle px-1.5 py-0.5"
-        style={
-          Platform.OS === "android"
-            ? { paddingHorizontal: 5.25 * scale, paddingVertical: 1.75 * scale }
-            : undefined
-        }
-      >
+      {/* T3o: wordmark is the product name (T3O-18). */}
+      {stageLabel === "T3o" ? (
         <Text
           allowFontScaling={props.allowFontScaling}
-          className="font-t3-bold text-foreground-muted uppercase"
-          style={{ fontSize: 9 * scale, letterSpacing: 0.9 * scale }}
+          className="font-t3-bold text-foreground"
+          style={{ fontSize: 21 * scale, letterSpacing: -0.5 * scale }}
         >
-          {stageLabel}
+          T3o
         </Text>
-      </View>
+      ) : (
+        <>
+          <T3Wordmark colorClassName="accent-icon" height={Math.round(15 * scale)} />
+          <Text
+            allowFontScaling={props.allowFontScaling}
+            className="font-t3-medium text-foreground-muted"
+            style={{ fontSize: 21 * scale, letterSpacing: -0.5 * scale }}
+          >
+            Code
+          </Text>
+        </>
+      )}
+      {stageLabel === "T3o" ? null : (
+        <View
+          className="rounded-full bg-subtle px-1.5 py-0.5"
+          style={
+            Platform.OS === "android"
+              ? { paddingHorizontal: 5.25 * scale, paddingVertical: 1.75 * scale }
+              : undefined
+          }
+        >
+          <Text
+            allowFontScaling={props.allowFontScaling}
+            className="font-t3-bold text-foreground-muted uppercase"
+            style={{ fontSize: 9 * scale, letterSpacing: 0.9 * scale }}
+          >
+            {stageLabel}
+          </Text>
+        </View>
+      )}
     </View>
   );
 }

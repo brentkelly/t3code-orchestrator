@@ -415,6 +415,10 @@
       "types": "./src/state/queryPersistence.ts",
       "default": "./src/state/queryPersistence.ts"
     },
+    "./board": {
+      "types": "./src/board/index.ts",
+      "default": "./src/board/index.ts"
+    },
     "./pull-request-markdown": {
       "types": "./src/pullRequestMarkdown.ts",
       "default": "./src/pullRequestMarkdown.ts"

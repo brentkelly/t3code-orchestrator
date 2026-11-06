@@ -72,7 +72,7 @@ import { deriveProviderInstanceEntries } from "../providerInstances";
 import { BoardArchivedCardsSheet, refreshBoardArchivedCards } from "./BoardArchivedCardsSheet";
 import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
 import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
-import { boardMoveLeavesPlanningUnwritten } from "./boardStageActions";
+import { boardMoveLeavesPlanningUnwritten } from "@t3tools/client-runtime/board";
 import { boardStageLabel } from "./boardStages";
 import { countBoardColumnCards, filterBoardColumnsByQuery } from "./boardCardFilter";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";

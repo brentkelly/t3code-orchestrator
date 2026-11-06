@@ -232,6 +232,8 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.serverResolvedCommandContext).toBe(true);
       expect(second.capabilities.projectProviderInstanceOverrides).toBe(true);
       expect(second.capabilities.agentActivityPublishing).toBe(false);
+      // T3o: every T3o server advertises the board (T3O-18).
+      expect(second.capabilities.board).toBe(true);
     }),
   );
 
