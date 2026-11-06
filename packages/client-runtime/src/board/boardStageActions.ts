@@ -202,6 +202,30 @@ export function boardCiAwareNextStageId(
   return fromIndex < ciIndex && nextIndex > ciIndex ? ci : next;
 }
 
+/** Skip CI while a live entry has no forward move (T3O-44). The phone has no CI pane. */
+export function boardSkipCiAction(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  input: { readonly stageId: BoardStageId; readonly ciEntryLive: boolean },
+): {
+  readonly label: string;
+  readonly confirmLabel: string;
+  readonly toStage: BoardStageId | null;
+  readonly toLabel: string;
+} | null {
+  if (input.stageId !== BOARD_SEED_STAGE_IDS.ci || !input.ciEntryLive) return null;
+  const toStage = boardCiAwareNextStageId(stages, BOARD_SEED_STAGE_IDS.ci, false);
+  const toLabel =
+    toStage === null
+      ? "the next stage"
+      : (stages.find((stage) => stage.stageId === toStage)?.label ?? toStage);
+  return {
+    label: "Skip CI",
+    confirmLabel: `Skip CI and move to ${toLabel}`,
+    toStage,
+    toLabel,
+  };
+}
+
 export function boardStagePrimaryAction(
   stages: ReadonlyArray<BoardStageDefinition>,
   stageId: BoardStageId,

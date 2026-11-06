@@ -6,6 +6,7 @@ import {
   BOARD_SEED_STAGES,
   BOARD_SEED_STAGE_IDS,
   ProjectId,
+  boardProjectStageId,
   resolveT3oProjectFile,
   type BoardStageView,
 } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { boardStagePrimaryAction } from "./boardStageActions.ts";
 import {
+  boardCardDisplayStages,
   boardCardPipelineStages,
   boardCardStageGoneNotes,
   boardPipelineColumns,
@@ -245,5 +247,44 @@ describe("boardCardPipelineStages", () => {
     expect(boardStagePrimaryAction(BOARD_SEED_STAGES, BOARD_SEED_STAGE_IDS.review)).toMatchObject({
       toStage: BOARD_SEED_STAGE_IDS.ci,
     });
+  });
+});
+
+describe("boardCardDisplayStages", () => {
+  it("includes a child's inactive CI that the parent pipeline dropped", () => {
+    const projectId = ProjectId.make("phone");
+    const view = { stages: BOARD_SEED_STAGES, projectStageConfigs: {}, cards: [] };
+    const parent = boardCardPipelineStages(view, {
+      stage: BOARD_SEED_STAGE_IDS.planning,
+      projectId,
+    });
+    expect(parent.map((stage) => stage.stageId)).not.toContain(BOARD_SEED_STAGE_IDS.ci);
+    const child = boardCardDisplayStages(view, {
+      stage: BOARD_SEED_STAGE_IDS.ci,
+      projectId,
+    });
+    expect(child.find((stage) => stage.stageId === BOARD_SEED_STAGE_IDS.ci)?.label).toBe(
+      "Continuous integration",
+    );
+  });
+
+  it("includes another project's stage the parent pipeline dropped", () => {
+    const view = makeView();
+    const qa = boardProjectStageId(web.id, "qa");
+    const parent = boardCardPipelineStages(view, {
+      stage: BOARD_SEED_STAGE_IDS.planning,
+      projectId: relay.id,
+    });
+    expect(parent.map((stage) => stage.label)).not.toContain("QA");
+    const childOnWeb = boardCardDisplayStages(view, {
+      stage: qa,
+      projectId: web.id,
+    });
+    expect(childOnWeb.find((stage) => stage.stageId === qa)?.label).toBe("QA");
+    const childLeftOnRelay = boardCardDisplayStages(view, {
+      stage: qa,
+      projectId: relay.id,
+    });
+    expect(childLeftOnRelay.find((stage) => stage.stageId === qa)?.label).toBe("QA");
   });
 });

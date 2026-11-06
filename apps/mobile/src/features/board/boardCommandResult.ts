@@ -23,6 +23,7 @@ const APPLIED_OUTCOMES = new Set([
   "conflict",
   "checks-fix",
   "stale-base",
+  "skipped",
 ]);
 
 export function describeBoardCommandFailure(result: {
@@ -58,9 +59,12 @@ function describeSuccessOutcome(value: unknown): string | null {
     case "none":
     case "removed":
     case "no-worktree":
+    case "skipped":
       return null;
     case "refused":
       return detail ?? "The server refused this action.";
+    case "not-in-ci":
+      return "This card is no longer in CI.";
     case "conflict":
       return "The branch conflicts with its base. Resolving the conflicts, then merging.";
     case "checks-fix":

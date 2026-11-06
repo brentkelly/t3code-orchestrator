@@ -82,6 +82,20 @@ describe("boardCommandDidApply", () => {
       ),
     ).toBe(false);
   });
+
+  it("treats Skip CI skipped as applied and not-in-ci as a refusal", () => {
+    expect(
+      boardCommandDidApply(AsyncResult.success({ outcome: "skipped", toStage: "merge" })),
+    ).toBe(true);
+    expect(
+      describeBoardCommandResult(AsyncResult.success({ outcome: "skipped", toStage: "merge" })),
+    ).toBeNull();
+    expect(boardCommandDidApply(AsyncResult.success({ outcome: "not-in-ci" }))).toBe(false);
+    expect(boardCommandAlert(AsyncResult.success({ outcome: "not-in-ci" }))).toEqual({
+      title: "Could not complete",
+      message: "This card is no longer in CI.",
+    });
+  });
 });
 
 describe("describeBoardCommandResult", () => {
