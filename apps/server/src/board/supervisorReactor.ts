@@ -1994,6 +1994,9 @@ const make = Effect.gen(function* () {
   const handlePlanReviewStartedLate = Effect.fn("board-supervisor-handlePlanReviewStartedLate")(
     function* (event: Extract<BoardEvent, { type: "board.plan-review-started" }>) {
       if (event.payload.turnedOnLate !== true) return;
+      // Putting the step to work overtakes a schedule, as the
+      // `board.card-step-recovered` arm does for every other resume (T3O-19, D6).
+      yield* clearScheduleForCard(event.payload.cardId);
       const board = yield* readBoard;
       const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
       const state = boardCardStepState(board, event.payload.cardId);

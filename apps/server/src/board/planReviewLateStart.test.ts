@@ -22,6 +22,7 @@ import * as Effect from "effect/Effect";
 import {
   NOW,
   cardMoved,
+  cardScheduleUpdated,
   codexStep,
   makeBoardCard,
   settingsWith,
@@ -31,6 +32,9 @@ import {
   type HarnessCommand,
   type HarnessEvent,
 } from "./supervisorHarness.testkit.ts";
+
+/** One hour after the TestClock epoch: not yet due. */
+const FUTURE = "1970-01-01T01:00:00.000Z";
 
 const settings = settingsWith({
   building: [codexStep],
@@ -134,6 +138,25 @@ it.effect("a paused step the toggle resumed is told", () =>
       assert.strictEqual(after.length, before + 1);
       assert.isTrue(after.at(-1)?.text.startsWith(BOARD_PLAN_REVIEW_LATE_START_LEAD));
       assert.strictEqual(boardCardStepState(yield* board, id)?.status, "running");
+    }),
+  ),
+);
+
+it.effect("a paused step the toggle resumed drops its scheduled start, as a resume does", () =>
+  withGovernor(fixture("scheduled"), ({ pumpDomain, board }) =>
+    Effect.gen(function* () {
+      const id = BoardCardId.make("scheduled");
+      yield* pumpDomain(cardMoved(planningCard("scheduled"), "sprint", "planning", 1));
+      const state = boardCardStepState(yield* board, id);
+      yield* pumpDomain(turnInterruptRequested(state!.threadId!, 2));
+      yield* pumpDomain(cardScheduleUpdated(planningCard("scheduled"), FUTURE, 3));
+      const paused = boardCardStepState(yield* board, id);
+      assert.strictEqual(paused?.status, "paused");
+
+      yield* pumpDomain(reviewStarted({ ...paused!, status: "running" }, 4, true));
+
+      const card = (yield* board).cards.find((candidate) => candidate.id === id);
+      assert.isNull(card?.scheduledStartAt ?? null);
     }),
   ),
 );
