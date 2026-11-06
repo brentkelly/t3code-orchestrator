@@ -42,6 +42,14 @@ import {
   reviewStepId,
   reviewStepLabel,
   boardStagesInOrder,
+  boardNewStageOrderKey,
+  boardStageDefaultForProjects,
+  boardStageOrderViolation,
+  boardStageProjectCoverage,
+  isBoardProjectHidden,
+  AuthSettingsWriteScope,
+  type BoardStageProjectCoverage,
+  type ProjectId,
   boardStepPostamble,
   boardStepPreamble,
   effectiveBoardRuntimeMode,
@@ -79,9 +87,11 @@ import { CSS } from "@dnd-kit/utilities";
 import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
+import { Link } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
   GripVerticalIcon,
+  LockIcon,
   MinusIcon,
   PencilIcon,
   PlusIcon,
@@ -93,6 +103,9 @@ import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "reac
 import { boardEnvironment } from "../../state/board";
 import { environmentShell } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useEnvironmentScope } from "../../state/session";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { BOARD_ROLE_STAGE_NOTE } from "../../board/settings/boardProjectSettings.logic";
 import { boardWorkerOnlyProviders } from "../../board/workers/cardWorker";
 import { useBoardWorkersCardView } from "../../board/workers/BoardWorkersContext";
 import {
@@ -196,6 +209,7 @@ type NumberStepperCommon = {
   step?: number;
   unit?: string;
   ariaLabel: string;
+  disabled?: boolean;
 };
 type NumberStepperProps = NumberStepperCommon &
   (
@@ -238,6 +252,7 @@ export function NumberStepper(props: NumberStepperProps) {
         className="flex h-full w-8 items-center justify-center border-r border-border text-muted-foreground hover:bg-accent hover:text-foreground"
         // Keep focus (and its blur-commit) where it is: blur fires before
         // click, so letting the button steal focus would race the two handlers.
+        disabled={props.disabled}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => nudge(-step)}
       >
@@ -249,6 +264,7 @@ export function NumberStepper(props: NumberStepperProps) {
         value={draft ?? (props.value === null ? "" : String(props.value))}
         placeholder={props.nullable ? props.placeholder : undefined}
         aria-label={props.ariaLabel}
+        disabled={props.disabled}
         className="h-full w-14 [appearance:textfield] bg-transparent text-center text-sm font-medium text-foreground outline-none placeholder:font-normal placeholder:text-muted-foreground [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         onChange={(event) => setDraft(event.target.value)}
         onBlur={(event) => apply(resolve(event.target.value))}
@@ -261,6 +277,7 @@ export function NumberStepper(props: NumberStepperProps) {
         type="button"
         aria-label={`Increase ${props.ariaLabel}`}
         className="flex h-full w-8 items-center justify-center border-l border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+        disabled={props.disabled}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => nudge(step)}
       >
@@ -641,15 +658,10 @@ function stageBoardState(stages: ReadonlyArray<BoardStageDefinition>): BoardStat
   return { cards: [], stages, nextCardNumberByProject: {} };
 }
 
-/** Client mirror of the decider's spine invariant (build before review, done
-    last): an order that violates it is refused server-side, so don't offer it. */
+/** Client mirror of the decider's order rules (D3, T3O-49): an order that
+    breaks them is refused server-side, so don't offer it. */
 function orderKeepsSpine(stages: ReadonlyArray<BoardStageDefinition>): boolean {
-  const buildIndex = stages.findIndex((stage) => effectiveBoardStageRole(stage) === "build");
-  const reviewIndex = stages.findIndex((stage) => effectiveBoardStageRole(stage) === "review");
-  const doneIndex = stages.findIndex((stage) => effectiveBoardStageRole(stage) === "done");
-  if (buildIndex >= 0 && reviewIndex >= 0 && buildIndex >= reviewIndex) return false;
-  if (doneIndex >= 0 && doneIndex !== stages.length - 1) return false;
-  return true;
+  return boardStageOrderViolation(stages) === null;
 }
 
 export function BoardPipelineSection() {
@@ -662,7 +674,7 @@ export function BoardPipelineSection() {
   );
   const stages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
   const ordered = boardStagesInOrder(stageBoardState(stages));
-  // CI (T3O-44): which projects define steps, for the CI card's locked list.
+  // T3O-49: which projects use each stage, and which run CI.
   const projectStageConfigs = useAtomValue(
     boardEnvironment.projectStageConfigsAtom(environmentId ?? ("" as EnvironmentId)),
   );
@@ -670,16 +682,38 @@ export function BoardPipelineSection() {
     environmentShell.stateValueAtom(environmentId ?? ("" as EnvironmentId)),
   );
   const shellProjects = Option.getOrNull(shellState.snapshot)?.projects;
+  const projects = useMemo(
+    () =>
+      (shellProjects ?? [])
+        .filter((project) => !isBoardProjectHidden(board, project.id))
+        .map((project) => ({ id: project.id, title: project.title })),
+    [board, shellProjects],
+  );
+  const stageView = useMemo(
+    () => ({ stages, projectStageConfigs, cards: [] }),
+    [projectStageConfigs, stages],
+  );
   const ciProjects = useMemo(
     () =>
-      (shellProjects ?? []).flatMap((project) => {
-        const ci = projectStageConfigs?.[project.id]?.ci ?? null;
-        return ci === null
-          ? []
-          : [{ title: project.title, steps: ci.steps.length, active: ci.active }];
+      projects.flatMap((project) => {
+        const config = projectStageConfigs?.[project.id];
+        if (config === undefined || config.ciSteps.length === 0) return [];
+        return [
+          {
+            id: project.id,
+            title: project.title,
+            steps: config.ciSteps.length,
+            active: config.stageSwitches[BOARD_SEED_STAGE_IDS.ci] === true,
+          },
+        ];
       }),
-    [projectStageConfigs, shellProjects],
+    [projectStageConfigs, projects],
   );
+  const canWrite = useEnvironmentScope(
+    environmentId ?? ("" as EnvironmentId),
+    AuthSettingsWriteScope,
+  );
+  const setStageDefault = useAtomCommand(boardEnvironment.setStageDefault);
 
   const createStage = useAtomCommand(boardEnvironment.createStage);
   const renameStage = useAtomCommand(boardEnvironment.renameStage);
@@ -708,7 +742,7 @@ export function BoardPipelineSection() {
   const getModelOptions = (active: ActiveModel) =>
     getCustomModelOptionsByInstance(settings, serverProviders, active.instanceId, active.model);
 
-  const crudEnabled = environmentId !== null;
+  const crudEnabled = environmentId !== null && canWrite;
 
   const updateStage = (stageId: BoardStageId, patch: Partial<BoardStageExecution>) => {
     update({ board: { pipeline: setBoardStageExecution(board, stageId, patch) } });
@@ -760,19 +794,31 @@ export function BoardPipelineSection() {
     void deleteStage({ environmentId, input: { stageId: stage.stageId } });
   };
 
-  // A new stage lands immediately before the done-role stage (the prototype's
-  // "Add stage" behavior); with no done holder it appends.
-  const onAddStage = () => {
+  const onSetDefault = (stage: BoardStageDefinition, on: boolean) => {
     if (environmentId === null) return;
-    const doneIndex = ordered.findIndex((stage) => effectiveBoardStageRole(stage) === "done");
-    const before = doneIndex === -1 ? ordered[ordered.length - 1] : ordered[doneIndex - 1];
-    const after = doneIndex === -1 ? undefined : ordered[doneIndex];
-    const orderKey = pinOrderKeyBetween(before?.orderKey ?? null, after?.orderKey ?? null);
+    void setStageDefault({ environmentId, input: { stageId: stage.stageId, on } });
+  };
+
+  // T3O-49: a new stage lands just before CI, never between CI and merge.
+  // "For one project" makes it off by default and on for that project.
+  const onAddStage = (forProjectId: ProjectId | null) => {
+    if (environmentId === null) return;
+    const orderKey = boardNewStageOrderKey(stageBoardState(stages));
     if (orderKey === null) return;
     const stageId = BoardStageId.make(randomUUID());
     setOpenStageId(stageId);
-    void createStage({ environmentId, input: { stageId, label: "New stage", orderKey } });
+    setAddingFor(null);
+    void createStage({
+      environmentId,
+      input: {
+        stageId,
+        label: "New stage",
+        orderKey,
+        ...(forProjectId === null ? {} : { forProjectId }),
+      },
+    });
   };
+  const [addingFor, setAddingFor] = useState<"choose" | null>(null);
 
   return (
     <SettingsSection id="board-pipeline" title={anchor.title} variant="plain">
@@ -840,6 +886,13 @@ export function BoardPipelineSection() {
                 index={index}
                 exec={resolveBoardStageExecution(board, stage.stageId)}
                 ciProjects={ciProjects}
+                coverage={boardStageProjectCoverage(
+                  stageView,
+                  stage,
+                  projects.map((p) => p.id),
+                )}
+                projects={projects}
+                onSetDefault={(on) => onSetDefault(stage, on)}
                 expanded={openStageId === stage.stageId}
                 crudEnabled={crudEnabled}
                 instanceEntries={instanceEntries}
@@ -855,15 +908,23 @@ export function BoardPipelineSection() {
             ))}
           </SortableContext>
         </DndContext>
-        <button
-          type="button"
-          disabled={!crudEnabled}
-          className="flex w-full items-center gap-2 px-5 py-3 text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-          onClick={onAddStage}
-        >
-          <PlusIcon className="size-3.5" />
-          Add stage
-        </button>
+        {addingFor === null ? (
+          <button
+            type="button"
+            disabled={!crudEnabled}
+            className="flex w-full items-center gap-2 px-5 py-3 text-left text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+            onClick={() => setAddingFor("choose")}
+          >
+            <PlusIcon className="size-3.5" />
+            Add stage
+          </button>
+        ) : (
+          <AddStageChooser
+            onCancel={() => setAddingFor(null)}
+            onAdd={onAddStage}
+            projects={projects}
+          />
+        )}
       </div>
     </SettingsSection>
   );
@@ -887,8 +948,12 @@ function StageAccordionRow(props: {
   stage: BoardStageDefinition;
   index: number;
   exec: BoardStageExecution;
-  /** The projects whose t3o.json defines CI steps (T3O-44). */
+  /** The projects with CI steps (T3O-49). */
   ciProjects: ReadonlyArray<BoardCiProject>;
+  /** Which visible projects use the stage (T3O-49). */
+  coverage: BoardStageProjectCoverage;
+  projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
+  onSetDefault: (on: boolean) => void;
   expanded: boolean;
   crudEnabled: boolean;
   instanceEntries: InstanceEntries;
@@ -916,7 +981,29 @@ function StageAccordionRow(props: {
   // renamed, reordered or removed here (T3O-44).
   const isCi = isBoardCiStageExecution(exec);
   const fixed = isCi || stage.stageId === BOARD_SEED_STAGE_IDS.ci;
-  const chips: ReadonlyArray<{ text: string; tone: "auto" | "quiet" }> = expanded
+  const switchable = role === null && !fixed;
+  const coverageChips: ReadonlyArray<{ text: string; tone: "auto" | "quiet" }> =
+    expanded || !switchable
+      ? []
+      : [
+          {
+            text: boardStageDefaultForProjects(stage)
+              ? "Default on"
+              : stage.projectId !== null && props.coverage.included.length <= 1
+                ? `Only ${props.projects.find((project) => project.id === stage.projectId)?.title ?? "one project"}`
+                : "Opt-in",
+            tone: "quiet" as const,
+          },
+          ...(props.coverage.excluded.length > 0 && props.coverage.included.length > 0
+            ? [
+                {
+                  text: `${props.coverage.included.length} of ${props.coverage.included.length + props.coverage.excluded.length} projects`,
+                  tone: "quiet" as const,
+                },
+              ]
+            : []),
+        ];
+  const baseChips: ReadonlyArray<{ text: string; tone: "auto" | "quiet" }> = expanded
     ? []
     : isCi
       ? [
@@ -949,6 +1036,7 @@ function StageAccordionRow(props: {
               ? [{ text: `${msToMinutes(exec.timeoutMs)} min idle`, tone: "quiet" as const }]
               : []),
           ];
+  const chips = [...coverageChips, ...baseChips];
 
   return (
     <div
@@ -1016,6 +1104,20 @@ function StageAccordionRow(props: {
 
       {expanded ? (
         <div className="flex flex-col px-4 pb-4 pt-0.5 sm:pl-[52px] sm:pr-5">
+          {switchable ? (
+            <StageProjectsRow
+              coverage={props.coverage}
+              defaultOn={boardStageDefaultForProjects(stage)}
+              editable={props.crudEnabled}
+              onSetDefault={props.onSetDefault}
+              stage={stage}
+            />
+          ) : role !== null ? (
+            <p className="pb-2 text-xs leading-[1.5] text-muted-foreground">
+              <LockIcon className="mr-1 inline size-3" />
+              {BOARD_ROLE_STAGE_NOTE}
+            </p>
+          ) : null}
           {isCi ? (
             <CiStageBody
               stage={stage}
@@ -1056,18 +1158,7 @@ function StageAccordionRow(props: {
             />
           )}
           {role === null && !fixed ? (
-            <div className="flex items-center pt-3">
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={!props.crudEnabled}
-                className="gap-1.5 text-destructive-foreground hover:bg-destructive/10"
-                onClick={props.onDelete}
-              >
-                <Trash2Icon className="size-3.5" />
-                Remove stage
-              </Button>
-            </div>
+            <RemoveStageButton disabled={!props.crudEnabled} onDelete={props.onDelete} />
           ) : null}
         </div>
       ) : null}
@@ -1076,9 +1167,171 @@ function StageAccordionRow(props: {
 }
 
 interface BoardCiProject {
+  readonly id: ProjectId;
   readonly title: string;
   readonly steps: number;
   readonly active: boolean;
+}
+
+/** T3O-49: a stage's default for projects, and the projects it applies to.
+    Each chip opens that project's Pipeline tab. */
+function StageProjectsRow(props: {
+  stage: BoardStageDefinition;
+  defaultOn: boolean;
+  coverage: BoardStageProjectCoverage;
+  editable: boolean;
+  onSetDefault: (on: boolean) => void;
+}) {
+  const included = new Set<string>(props.coverage.included);
+  const all = [...props.coverage.included, ...props.coverage.excluded];
+  const shell = useBoardSettingsProjectTitles();
+  return (
+    <div className="flex flex-col gap-2 pb-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col">
+          <span className="text-[13.5px] text-foreground">Default for projects</span>
+          <span className="text-xs text-muted-foreground">
+            {props.defaultOn
+              ? "Every project runs it unless it switches it off."
+              : "Off unless a project switches it on."}
+          </span>
+        </div>
+        <ToggleGroup
+          aria-label={`${props.stage.label} default for projects`}
+          disabled={!props.editable}
+          onValueChange={(value) => {
+            const next = value[0];
+            if (next === "on" || next === "off") props.onSetDefault(next === "on");
+          }}
+          size="xs"
+          value={[props.defaultOn ? "on" : "off"]}
+          variant="outline"
+        >
+          <Toggle value="on">On</Toggle>
+          <Toggle value="off">Off</Toggle>
+        </ToggleGroup>
+      </div>
+      {all.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <span className="text-xs text-muted-foreground">
+            Applies to {props.coverage.included.length} of {all.length} projects
+          </span>
+          <div className="flex flex-wrap gap-1">
+            {all.map((projectId) => (
+              <Link
+                className={cn(
+                  "rounded-md border px-1.5 py-px text-[11.5px]",
+                  included.has(projectId)
+                    ? "border-border text-foreground"
+                    : "border-dashed border-border text-muted-foreground",
+                )}
+                key={projectId}
+                params={{ projectId, tab: "pipeline" }}
+                to="/settings/board/projects/$projectId/$tab"
+              >
+                {shell.get(projectId) ?? projectId}
+              </Link>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function useBoardSettingsProjectTitles(): ReadonlyMap<string, string> {
+  const environmentId = useBoardEnvironmentId();
+  const shellState = useAtomValue(
+    environmentShell.stateValueAtom(environmentId ?? ("" as EnvironmentId)),
+  );
+  const projects = Option.getOrNull(shellState.snapshot)?.projects;
+  return useMemo(
+    () => new Map((projects ?? []).map((project) => [String(project.id), project.title])),
+    [projects],
+  );
+}
+
+/** Removing a stage asks first; cards already in it stay as a retired column
+    until they move on, but the decider refuses while any card sits there. */
+function RemoveStageButton(props: { disabled: boolean; onDelete: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div className="flex items-center gap-2 pt-3">
+      {confirming ? (
+        <>
+          <span className="text-xs text-muted-foreground">
+            Remove this stage for every project?
+          </span>
+          <Button size="xs" variant="destructive" onClick={props.onDelete}>
+            Remove
+          </Button>
+          <Button size="xs" variant="ghost" onClick={() => setConfirming(false)}>
+            Cancel
+          </Button>
+        </>
+      ) : (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={props.disabled}
+          className="gap-1.5 text-destructive-foreground hover:bg-destructive/10"
+          onClick={() => setConfirming(true)}
+        >
+          <Trash2Icon className="size-3.5" />
+          Remove stage
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** T3O-49: a new stage for every project, or made for one (off for the rest). */
+function AddStageChooser(props: {
+  projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
+  onAdd: (forProjectId: ProjectId | null) => void;
+  onCancel: () => void;
+}) {
+  const [projectId, setProjectId] = useState<ProjectId | null>(props.projects[0]?.id ?? null);
+  return (
+    <div className="flex flex-col gap-2 px-5 py-3">
+      <span className="text-[13px] font-medium text-foreground">New stage</span>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="xs" variant="outline" onClick={() => props.onAdd(null)}>
+          For every project
+        </Button>
+        <span className="text-xs text-muted-foreground">or</span>
+        <select
+          aria-label="Project the stage is for"
+          className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+          disabled={props.projects.length === 0}
+          onChange={(event) => setProjectId(event.target.value as ProjectId)}
+          value={projectId ?? ""}
+        >
+          {props.projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.title}
+            </option>
+          ))}
+        </select>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={projectId === null}
+          onClick={() => props.onAdd(projectId)}
+        >
+          For this project only
+        </Button>
+        <span className="flex-1" />
+        <Button size="xs" variant="ghost" onClick={props.onCancel}>
+          Cancel
+        </Button>
+      </div>
+      <span className="text-xs text-muted-foreground">
+        New stages go just before Continuous integration. A stage for one project is off by default;
+        other projects can switch it on later.
+      </span>
+    </div>
+  );
 }
 
 /**
@@ -1100,7 +1353,7 @@ function CiStageBody(props: {
   return (
     <>
       <p className="pb-1 text-xs leading-[1.5] text-muted-foreground">
-        Runs the project&apos;s CI steps in the card&apos;s worktree after code review. When a step
+        Runs each project&apos;s CI steps in the card&apos;s worktree after code review. When a step
         fails, a fix agent fixes small mechanical failures and every step re-runs from the top;
         anything bigger goes back to Code review as a must-fix finding.
       </p>
@@ -1108,28 +1361,32 @@ function CiStageBody(props: {
         <div className="flex items-center gap-2">
           <span className="text-[13.5px] text-foreground">Steps</span>
           <span className="rounded-md bg-accent px-1.5 py-px text-[11px] font-medium text-muted-foreground">
-            Defined per project
+            Set per project
           </span>
         </div>
         {props.ciProjects.length === 0 ? (
           <span className="text-xs text-muted-foreground">
-            No project defines CI steps yet. Add them under stages.settings.ci in a project&apos;s
-            t3o.json.
+            No project has CI steps yet. Add them on a project&apos;s CI tab.
           </span>
         ) : (
           <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">
             {props.ciProjects.map((project) => (
-              <li key={project.title}>
-                <span className="text-foreground">{project.title}</span> · {project.steps}{" "}
-                {project.steps === 1 ? "step" : "steps"}
-                {project.active ? "" : " · paused"}
+              <li key={project.id}>
+                <Link
+                  className="text-foreground underline-offset-2 hover:underline"
+                  params={{ projectId: project.id, tab: "ci" }}
+                  to="/settings/board/projects/$projectId/$tab"
+                >
+                  {project.title}
+                </Link>{" "}
+                · {project.steps} {project.steps === 1 ? "step" : "steps"}
+                {project.active ? "" : " · off"}
               </li>
             ))}
           </ul>
         )}
         <span className="text-xs leading-[1.5] text-muted-foreground/80">
-          CI can&apos;t be removed or renamed here: a project has it only while its t3o.json lists
-          steps, and &quot;enabled&quot;: false pauses it.
+          On for projects with CI steps. CI can&apos;t be removed or renamed; switch it per project.
         </span>
       </div>
       <NumberRow
@@ -1142,6 +1399,19 @@ function CiStageBody(props: {
             max={10}
             ariaLabel="CI fix attempts"
             onChange={(maxFixAttempts) => set({ maxFixAttempts })}
+          />
+        }
+      />
+      <NumberRow
+        label="Max round trips"
+        hint="Times CI may send a card back (to review, or from Ready for merge for conflicts or failing checks) before it stops for a human."
+        stepper={
+          <NumberStepper
+            value={exec.maxRoundTrips}
+            min={0}
+            max={10}
+            ariaLabel="CI max round trips"
+            onChange={(maxRoundTrips) => set({ maxRoundTrips })}
           />
         }
       />

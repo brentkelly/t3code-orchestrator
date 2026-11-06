@@ -14,8 +14,10 @@ import {
   boardCiFixStepId,
   boardModelSelectionOfOverride,
   composeBoardCiFixPrompt,
+  decodeBoardCiAgentStepPayload,
   decodeBoardCiFixPayload,
   isBoardCiStageExecution,
+  parseBoardCiAgentStepId,
   parseBoardCiFixStepId,
 } from "@t3tools/contracts";
 
@@ -44,6 +46,22 @@ function boardCiFailureFinding(failure: BoardCiFailure): string {
 export const CiStageExecutor: BoardStageExecutor = {
   planNext(input: BoardStagePlanInput): BoardStagePlan {
     const { card, config, runState } = input;
+    const agentStep =
+      runState.settledStepId === null ? null : parseBoardCiAgentStepId(runState.settledStepId);
+    if (agentStep !== null) {
+      const completion = input.completions.findLast(
+        (candidate) => candidate.stepId === runState.settledStepId,
+      );
+      return {
+        kind: "ci-agent-done",
+        runId: agentStep.runId,
+        index: agentStep.index,
+        verdict:
+          completion?.outcome === "succeeded"
+            ? decodeBoardCiAgentStepPayload(completion.payload)
+            : null,
+      };
+    }
     const settled =
       runState.settledStepId === null ? null : parseBoardCiFixStepId(runState.settledStepId);
     if (settled !== null) {

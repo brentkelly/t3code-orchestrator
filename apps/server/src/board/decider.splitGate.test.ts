@@ -68,6 +68,7 @@ function makeCard(
     placementOrphaned: null,
     ci: null,
     ciLastOutcome: null,
+    ciRoundTrips: 0,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],

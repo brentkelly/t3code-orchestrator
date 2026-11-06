@@ -149,6 +149,14 @@ export const BoardWorkspaceMergeState = Schema.Struct({
     failed: NonNegativeInt,
     failing: Schema.Array(Schema.String),
     running: Schema.Array(Schema.String),
+    verdicts: Schema.optionalKey(
+      Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          verdict: Schema.Literals(["passed", "pending", "failed"]),
+        }),
+      ),
+    ),
   }),
   headSha: Schema.NullOr(Schema.String),
   checksUnread: Schema.Boolean,

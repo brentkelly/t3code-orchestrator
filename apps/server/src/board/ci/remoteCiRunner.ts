@@ -40,7 +40,12 @@ export const remoteCiRunner = (
       const result = yield* Ref.make<BoardCiRunResult | null>(null);
       const rpc = yield* connections.get(workerId);
       yield* rpc.gateway
-        .runCi({ runId: request.runId, worktreePath: request.cwd, steps: request.steps })
+        .runCi({
+          runId: request.runId,
+          worktreePath: request.cwd,
+          steps: request.steps,
+          ...(request.indexOffset === undefined ? {} : { indexOffset: request.indexOffset }),
+        })
         .pipe(
           Stream.runForEach((progress) =>
             progress._tag === "step"

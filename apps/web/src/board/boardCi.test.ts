@@ -88,6 +88,21 @@ describe("boardCiFace", () => {
     expect(face.detail).toBe("Check failed · fix 1 of 2");
   });
 
+  it("is a violet Needs you chip when CI stopped for a human, and amber when it can't run", () => {
+    const stopped = boardCiFace(
+      ci({
+        phase: "stopped",
+        stopReason: "CI failed at Test after 3 round trips to review.",
+        steps: [step("Test", "failed")],
+      }),
+      NOW_MS,
+    );
+    expect(stopped.chip).toEqual({ label: "Needs you", tone: "attention" });
+    expect(stopped.detail).toBe("CI failed at Test after 3 round trips to review.");
+    const held = boardCiFace(ci({ phase: "held", steps: [step("Test", "cancelled")] }), NOW_MS);
+    expect(held.chip).toEqual({ label: "Can't run", tone: "warning" });
+  });
+
   it("is a neutral Queued chip while waiting for a slot", () => {
     const face = boardCiFace(ci({ phase: "queued", steps: [step("Check", "pending")] }), NOW_MS);
     expect(face.chip).toEqual({ label: "Queued", tone: "neutral" });

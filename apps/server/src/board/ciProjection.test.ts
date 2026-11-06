@@ -8,7 +8,7 @@ import {
   BoardCardId,
   BoardStageId,
   CommandId,
-  EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+  boardCiStepsFromLegacy,
   ProjectId,
   ProviderInstanceId,
   type BoardCardRecordCiCommand,
@@ -30,6 +30,7 @@ const steps = [
   { name: "Lint", command: "vp lint", timeoutMinutes: 30 },
   { name: "Test", command: "vp test", timeoutMinutes: 10 },
 ];
+const ciSteps = boardCiStepsFromLegacy(steps);
 const step = (index: number, status: "running" | "passed", tail = "") => ({
   ...steps[index]!,
   status,
@@ -55,11 +56,17 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-"))("a CI pass", (it) => {
         createdAt: at,
       });
       yield* engine.dispatch({
-        type: "board.project.set-stage-config",
+        type: "board.project.set-ci-steps",
         commandId: id(),
         projectId,
-        config: { ...EMPTY_BOARD_PROJECT_STAGE_CONFIG, ci: { steps, active: true } },
-        stages: [],
+        steps: ciSteps,
+        createdAt: at,
+      });
+      yield* engine.dispatch({
+        type: "board.project.set-ci-enabled",
+        commandId: id(),
+        projectId,
+        on: true,
         createdAt: at,
       });
       yield* engine.dispatch({
@@ -104,7 +111,7 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-"))("a CI pass", (it) => {
         runId: "run-a",
         entry: 1,
         ordinal: 1,
-        steps,
+        steps: ciSteps,
         maxFixAttempts: 2,
         logDir: "/wt/.t3/ci/run-a",
         queued: false,
@@ -170,11 +177,17 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-leave-"))("a card leaving CI", (i
         createdAt: at,
       });
       yield* engine.dispatch({
-        type: "board.project.set-stage-config",
+        type: "board.project.set-ci-steps",
         commandId: id(),
         projectId,
-        config: { ...EMPTY_BOARD_PROJECT_STAGE_CONFIG, ci: { steps, active: true } },
-        stages: [],
+        steps: ciSteps,
+        createdAt: at,
+      });
+      yield* engine.dispatch({
+        type: "board.project.set-ci-enabled",
+        commandId: id(),
+        projectId,
+        on: true,
         createdAt: at,
       });
       yield* engine.dispatch({
@@ -207,7 +220,7 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-leave-"))("a card leaving CI", (i
         runId: "run-a",
         entry: 1,
         ordinal: 1,
-        steps,
+        steps: ciSteps,
         maxFixAttempts: 2,
         logDir: "/wt/.t3/ci/run-a",
         queued: false,
@@ -228,6 +241,47 @@ it.layer(makeBoardStackTestLayer("t3o-board-ci-leave-"))("a card leaving CI", (i
       const detail = yield* (yield* BoardQueries).boardCardDetail(cardId);
       assert.strictEqual(detail!.ciPasses[0]!.outcome, "cancelled");
       assert.isNull(detail!.card.ci);
+
+      // T3O-49: a send-back counts a round trip; the board's own move keeps
+      // the count, and a human's move starts it again.
+      const queries = yield* BoardQueries;
+      const roundTrips = () =>
+        queries.boardCardDetail(cardId).pipe(Effect.map((found) => found!.card.ciRoundTrips));
+      yield* engine.dispatch({
+        type: "board.card.pipeline-move",
+        commandId: id(),
+        cardId,
+        toStage: BOARD_SEED_STAGE_IDS.ci,
+        createdAt: at,
+      });
+      yield* record({
+        kind: "send-back",
+        runId: null,
+        stepName: "Test",
+        finding: "broken",
+        round: 2,
+        fixThreadId: null,
+      });
+      assert.strictEqual(yield* roundTrips(), 1);
+      yield* engine.dispatch({
+        type: "board.card.pipeline-move",
+        commandId: id(),
+        cardId,
+        toStage: BOARD_SEED_STAGE_IDS.review,
+        override: true,
+        createdAt: at,
+      });
+      assert.strictEqual(yield* roundTrips(), 1);
+      yield* engine.dispatch({
+        type: "board.card.move",
+        commandId: id(),
+        cardId,
+        toStage: BOARD_SEED_STAGE_IDS.building,
+        override: true,
+        cause: "human",
+        createdAt: at,
+      });
+      assert.strictEqual(yield* roundTrips(), 0);
     }),
   );
 });

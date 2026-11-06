@@ -45,6 +45,7 @@ function card(id: string, overrides: Partial<BoardCard> = {}): BoardCard {
     placementOrphaned: null,
     ci: null,
     ciLastOutcome: null,
+    ciRoundTrips: 0,
     orderKey: "m",
     title: `Card ${id}`,
     briefRef: null,

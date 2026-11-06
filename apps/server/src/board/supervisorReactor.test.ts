@@ -96,6 +96,7 @@ const card: BoardCard = {
   placementOrphaned: null,
   ci: null,
   ciLastOutcome: null,
+  ciRoundTrips: 0,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",

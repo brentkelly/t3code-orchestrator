@@ -1,12 +1,15 @@
 /**
- * T3o per-project pipelines on the board (T3O-43): which columns a view draws,
- * what each header says about who uses it, and the Pipelines grid.
+ * T3o per-project pipelines on the board (T3O-43/49): which columns a view
+ * draws, which projects each covers, and the Pipelines grid.
  */
 import {
   BOARD_SEED_STAGES,
   BOARD_SEED_STAGE_IDS,
+  EMPTY_BOARD_PROJECT_STAGE_CONFIG,
   ProjectId,
+  boardProjectStageConfigShell,
   resolveT3oProjectFile,
+  withBoardProjectConfigVersion,
   type BoardStageView,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -14,6 +17,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   boardCardPipelineStages,
   boardCardStageGoneNotes,
+  boardCiStepShapeLine,
   boardPipelineColumns,
   boardPipelinesGrid,
 } from "./boardProjectPipelines";
@@ -23,39 +27,45 @@ const advisor = { id: ProjectId.make("advisor"), title: "core.agent.advisor" };
 const web = { id: ProjectId.make("web"), title: "mesh.web" };
 const relay = { id: ProjectId.make("relay"), title: "mesh.relay" };
 
-/** A view where `web` removes Sprint and adds QA after Building, and `relay`
-    keeps the global pipeline. (Sprint is the one seed stage a project may
-    remove: the rest hold a role or are where cards wait to build.) */
-function makeView(cards: BoardStageView["cards"] = []): BoardStageView {
+const shellFrom = (raw: unknown, projectId: ProjectId) => {
   const base = { cards: [], stages: BOARD_SEED_STAGES, nextCardNumberByProject: {} };
-  const webFile = resolveT3oProjectFile({
-    raw: {
-      stages: { remove: ["sprint"], add: [{ id: "qa", label: "QA", after: "building" }] },
-    },
-    board: base,
-    projectId: web.id,
-    source: null,
-    now: NOW,
-  });
-  const relayFile = resolveT3oProjectFile({
-    raw: {},
-    board: base,
-    projectId: relay.id,
-    source: null,
-    now: NOW,
-  });
+  const resolved = resolveT3oProjectFile({ raw, board: base, projectId, now: NOW });
+  return {
+    stages: resolved.createStages,
+    shell: boardProjectStageConfigShell(
+      withBoardProjectConfigVersion({
+        ...resolved.delta,
+        dismissedImportSha: null,
+        lastChangedBy: null,
+      }),
+    ),
+  };
+};
+
+/** `web` switches Sprint off and has QA made for it after Building; `relay`
+    follows the defaults. The client holds shell configs. */
+function makeView(cards: BoardStageView["cards"] = []): BoardStageView {
+  const webFile = shellFrom(
+    { stages: { remove: ["sprint"], add: [{ id: "qa", label: "QA", after: "building" }] } },
+    web.id,
+  );
   return {
     stages: [...BOARD_SEED_STAGES, ...webFile.stages],
-    projectStageConfigs: { [web.id]: webFile.config, [relay.id]: relayFile.config },
+    projectStageConfigs: {
+      [web.id]: webFile.shell,
+      [relay.id]: boardProjectStageConfigShell(EMPTY_BOARD_PROJECT_STAGE_CONFIG),
+    },
     cards,
   };
 }
 
 const summary = (columns: ReturnType<typeof boardPipelineColumns>) =>
-  columns.map((column) => `${column.stage.label}:${column.kind}:${column.hint ?? ""}`);
+  columns.map(
+    (column) => `${column.stage.label}:${column.kind}:${column.partialTitle ?? column.hint ?? ""}`,
+  );
 
 describe("boardPipelineColumns", () => {
-  it("draws the union of the projects' pipelines in global order, annotating partial stages", () => {
+  it("draws the union of the projects' pipelines in board order, flagging partial stages", () => {
     const columns = boardPipelineColumns({
       view: makeView(),
       projects: [advisor, web, relay],
@@ -63,48 +73,47 @@ describe("boardPipelineColumns", () => {
     });
     expect(summary(columns)).toEqual([
       "Backlog:shared:",
-      "Sprint:partial:Not in mesh.web",
+      "Sprint:partial:2 of 3 projects · not mesh.web",
       "Planning:shared:",
       "Ready:shared:",
       "Building:shared:",
-      "QA:project-added:Only mesh.web",
+      "QA:partial:1 of 3 projects · only mesh.web",
       "Code review:shared:",
       "Ready for merge:shared:",
       "Done:shared:",
     ]);
-    expect(columns[1]!.usedBy).toEqual([advisor, relay]);
+    expect(columns[5]!.coverage.included).toEqual([{ project: web, how: "switched" }]);
+    expect(columns[5]!.coverage.excluded.map((entry) => entry.how)).toEqual(["default", "default"]);
   });
 
   it("drops a stage no project in view uses, unless a card still holds it", () => {
-    const projects = [web];
     const empty = boardPipelineColumns({
       view: makeView(),
-      projects,
+      projects: [web],
       occupiedStageIds: new Set(),
     });
     expect(empty.map((column) => column.stage.stageId)).not.toContain("sprint");
 
     const occupied = boardPipelineColumns({
       view: makeView([{ stage: BOARD_SEED_STAGE_IDS.sprint, projectId: web.id }]),
-      projects,
+      projects: [web],
       occupiedStageIds: new Set(["sprint"]),
     });
     const sprint = occupied.find((column) => column.stage.stageId === "sprint");
-    expect(sprint?.kind).toBe("removed");
-    expect(sprint?.hint).toContain("Removed from this project's pipeline");
+    expect(sprint?.kind).toBe("retired");
+    expect(sprint?.hint).toBe("Switched off for mesh.web. Shown until its last card moves on.");
   });
 
-  it("says a single project's own stage came from its t3o.json", () => {
+  it("notes a stage a single project switched on against its default", () => {
     const columns = boardPipelineColumns({
       view: makeView(),
       projects: [web],
       occupiedStageIds: new Set(),
     });
-    expect(summary(columns)).toContain("QA:project-added:Added in this project's t3o.json");
-    expect(columns.map((column) => column.stage.stageId)).not.toContain("sprint");
+    expect(summary(columns)).toContain("QA:shared:Switched on for this project");
   });
 
-  it("is the global pipeline with no project in view", () => {
+  it("is the default pipeline with no project in view", () => {
     const columns = boardPipelineColumns({
       view: makeView(),
       projects: [],
@@ -117,39 +126,31 @@ describe("boardPipelineColumns", () => {
     );
   });
 
-  it("draws CI only for a project with CI on, listing its steps on a single-project board", () => {
-    const base = { cards: [], stages: BOARD_SEED_STAGES, nextCardNumberByProject: {} };
-    const ciFile = (enabled: boolean) =>
-      resolveT3oProjectFile({
-        raw: {
-          stages: {
-            settings: {
-              ci: {
-                enabled,
-                steps: [
-                  { name: "Typecheck", command: "bun run typecheck" },
-                  { name: "Test", command: "bun run test" },
-                ],
-              },
-            },
-          },
-        },
-        board: base,
-        projectId: advisor.id,
-        source: null,
-        now: NOW,
-      }).config;
+  it("draws CI only for a project with CI on, with its step shape on a single-project board", () => {
     const view = (enabled: boolean): BoardStageView => ({
       stages: BOARD_SEED_STAGES,
-      projectStageConfigs: { [advisor.id]: ciFile(enabled) },
+      projectStageConfigs: {
+        [advisor.id]: shellFrom(
+          {
+            ci: {
+              enabled,
+              steps: [
+                { id: "types", name: "Typecheck", command: "bun run typecheck" },
+                { id: "lint", name: "Lint", command: "bun run lint", parallel: true },
+                { id: "test", name: "Test", command: "bun run test" },
+              ],
+            },
+          },
+          advisor.id,
+        ).shell,
+      },
       cards: [],
     });
     const single = summary(
       boardPipelineColumns({ view: view(true), projects: [advisor], occupiedStageIds: new Set() }),
     );
-    expect(single).toContain("Continuous integration:shared:Typecheck · Test");
-    expect(single.indexOf("Continuous integration:shared:Typecheck · Test")).toBe(
-      single.indexOf("Code review:shared:") + 1,
+    expect(single).toContain(
+      "Continuous integration:shared:Sync with base → Typecheck ∥ Lint → Test",
     );
     expect(
       summary(
@@ -159,7 +160,7 @@ describe("boardPipelineColumns", () => {
           occupiedStageIds: new Set(),
         }),
       ),
-    ).toContain("Continuous integration:partial:Only core.agent.advisor");
+    ).toContain("Continuous integration:partial:1 of 2 projects · only core.agent.advisor");
     expect(
       boardPipelineColumns({
         view: view(false),
@@ -170,21 +171,33 @@ describe("boardPipelineColumns", () => {
   });
 });
 
+describe("boardCiStepShapeLine", () => {
+  it("joins parallel scripts with ∥ and groups with →", () => {
+    expect(
+      boardCiStepShapeLine([
+        { id: "a", name: "A", kind: "script", parallel: false },
+        { id: "b", name: "B", kind: "script", parallel: true },
+        { id: "c", name: "C", kind: "agent", parallel: false },
+      ]),
+    ).toBe("A ∥ B → C");
+  });
+});
+
 describe("boardCardStageGoneNotes", () => {
-  it("notes a card whose project no longer uses its stage, and nothing otherwise", () => {
+  it("notes a card whose project switched its stage off, and nothing otherwise", () => {
     const view = makeView([{ stage: BOARD_SEED_STAGE_IDS.sprint, projectId: web.id }]);
     const noteFor = boardCardStageGoneNotes(view, (projectId) =>
       projectId === web.id ? "mesh.web" : "x",
     );
     expect(noteFor({ stage: BOARD_SEED_STAGE_IDS.sprint, projectId: web.id })).toBe(
-      "Sprint is no longer in mesh.web's pipeline",
+      "Sprint is switched off for mesh.web",
     );
     expect(noteFor({ stage: BOARD_SEED_STAGE_IDS.sprint, projectId: relay.id })).toBeNull();
   });
 });
 
 describe("boardPipelinesGrid", () => {
-  it("marks global, project-added and unused stages per project", () => {
+  it("marks default, switched-on and unused stages per project", () => {
     const grid = boardPipelinesGrid(makeView(), [advisor, web]);
     expect(grid.stages.map((stage) => stage.label)).toEqual([
       "Backlog",
@@ -200,18 +213,17 @@ describe("boardPipelinesGrid", () => {
     expect(grid.rows[0]!.cells[5]).toBe("unused");
     expect(grid.rows[1]!.cells.slice(1, 6)).toEqual([
       "unused",
-      "global",
-      "global",
-      "global",
-      "added",
+      "default",
+      "default",
+      "default",
+      "switched",
     ]);
   });
 });
 
 describe("boardCardPipelineStages", () => {
   it("lists the card's own project's stages, keeping its retired stage", () => {
-    const view = makeView();
-    const stages = boardCardPipelineStages(view, {
+    const stages = boardCardPipelineStages(makeView(), {
       stage: BOARD_SEED_STAGE_IDS.sprint,
       projectId: web.id,
     });
@@ -226,6 +238,5 @@ describe("boardCardPipelineStages", () => {
       "Ready for merge",
       "Done",
     ]);
-    expect(stages.every((stage) => stage.projectId === null)).toBe(true);
   });
 });

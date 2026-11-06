@@ -1,71 +1,87 @@
-# Per-project pipeline (t3o.json)
+# Per-project pipeline
 
-Every project follows the board's global pipeline, set in **Settings** → **Board** → **Pipeline**.
-A project can change its own copy by committing a `t3o.json` at its repository root, so everyone
-working on that project gets the same board.
+The board has one list of stages, set in **Settings** → **Board** → **Pipeline**. Each project
+follows it, except for the differences you give that project on its own page: **Settings** →
+**Board** → the project → **Pipeline**. Only the differences are stored, so a stage added to the
+board later reaches every project unless a project switched it off.
 
-A project's file can:
+## Stage defaults and switches
 
-- **add stages** of its own, placed after any stage except Done and the stage just before
-  Building,
-- **remove stages** it does not use (stages with a role, such as Planning, Building, Code review,
-  Ready for merge and Done, cannot be removed, and neither can Ready, the stage just before
-  Building where approved cards wait for Auto-build),
-- **override any stage setting** the global pipeline has, such as a prompt, model, timeout or the
-  review loop's rounds.
+Every stage has a **default for projects**: on (every project runs it unless it switches it off) or
+off (only projects that switch it on run it). Role stages (Planning, Building, Code review, Ready
+for merge, Done) and Ready, where approved cards wait for Auto-build, are always on.
 
-A project can also turn on a **Continuous integration** stage that runs its checks after Code
-review; see [Continuous integration](./board-continuous-integration.md).
+On a project's **Pipeline** tab, flip a stage's switch to turn it on or off for that project. It
+saves at once. A stage switched against its default reads **On here** or **Off here**.
 
-Stage names cannot be changed per project. Settings layer in order: the built-in defaults, then
-**Settings** → **Board**, then the project's `t3o.json`.
+## Overrides
+
+Expand a stage on the project's Pipeline tab to override its settings for that project: whether it
+runs on its own, its prompt, the review loop's rounds, auto-merge, and CI's fix attempts and
+round trips. An overridden setting shows the global value beside it, and **Reset to global** clears
+it. Setting a value back to the global one clears it too, except a prompt, which stays pinned until
+you reset it. **Reset everything to global…** in the page header clears every switch, override and
+CI step.
+
+The page header also says how many differences the project has, and who changed it last.
+
+## Stages made for one project
+
+**Add stage** on the Pipeline page can make a stage **for every project** or **for one project**. A
+stage for one project is off by default and switched on for that project; other projects can switch
+it on later. New stages go just before Continuous integration: nothing can sit between CI and Ready
+for merge, since it could change code after CI passed.
+
+Rename, reorder and remove any stage that isn't a role stage on the Pipeline page. A stage can't be
+removed while any card, archived included, sits in it.
+
+## On the board
+
+The board shows a column for every stage a project in view uses. In the All projects view, a stage
+only some projects use carries a half-filled circle: hover it for who uses it, or click it for the
+list, each project linking to its pipeline settings. **Pipelines** shows every project against every
+stage.
+
+A stage switched off for a project while its cards sit in it stays, as a dashed **Off** column, until
+they move on. Nothing new enters it, and cards skip it when they advance.
+
+## Importing and exporting t3o.json
+
+A project's pipeline can travel with its repository as a `t3o.json` at the repository root, but the
+board never reads it on its own. On the project's **Import & export** tab:
+
+- **Import…** reads the `t3o.json` committed on the default branch and replaces the project's
+  differences with it. The confirmation lists what changes, any entries the board ignored, the
+  stages it creates, and the full text of every command and prompt it would install. Read those
+  before importing a file someone else committed.
+- **Export** writes the project's differences to `t3o.json` in its checkout, uncommitted. Commit and
+  push it yourself. If the checkout's `t3o.json` already has uncommitted edits, Export downloads the
+  file instead of overwriting them.
+
+When a project's committed `t3o.json` differs from its pipeline, **Settings** → **Board** offers to
+import it. **No thanks** hides the offer until the file changes again. Import and export need the
+project's checkout on the board's own server.
 
 ```json
 {
+  "version": 2,
   "stages": {
     "remove": ["sprint"],
     "add": [
-      {
-        "id": "security",
-        "label": "Security review",
-        "after": "review",
-        "autoExecute": true,
-        "autoAdvance": true,
-        "prompt": "Review this card's changes for security problems."
-      }
+      { "id": "security", "label": "Security review", "after": "review", "autoExecute": true }
     ],
-    "settings": {
-      "review": {
-        "phases": { "triage": { "prompt": "Run only the tests for the areas you touched." } }
-      },
-      "building": { "timeoutMs": 3600000 },
-      "security": { "timeoutMs": 1200000 }
-    }
+    "settings": { "review": { "rounds": 3 } }
+  },
+  "ci": {
+    "enabled": true,
+    "steps": [{ "kind": "script", "id": "test", "name": "Test", "command": "bun run test" }]
   }
 }
 ```
 
-`settings` is keyed by stage id: a global stage's id, or the `id` of a stage the file adds. An
-entry the board cannot use, such as an unknown stage, a misspelt setting or a role stage in
-`remove`, is ignored and the rest of the file still applies.
+A file written for the earlier, read-on-every-change format still imports.
 
-## Where the board reads it
+## Permissions
 
-The board reads `t3o.json` from the board server's own checkout of the project, for every stage,
-and picks up a change within about 30 seconds. A branch's edits to the file take effect once the
-branch is merged and that checkout has it.
-
-## Seeing what a project changed
-
-**Settings** → **Board** → **Project pipelines** has a row per project. It shows what the file
-adds, removes and overrides, each overridden setting beside the global value, any entries the
-board ignored and why, and the commit the file was read from. **Open t3o.json** opens the file.
-
-On the board, a column only some projects use names them under its header. In the All projects
-view, **Pipelines** shows every project against every stage.
-
-## Removing a stage that still has cards
-
-Cards already in a stage that a project's file removes stay where they are, and the column stays
-until they leave. Nothing new can enter it, and cards do not advance into it. Move the cards on and
-the column goes.
+Changing stages, a project's pipeline or its CI needs permission to change settings, because CI
+steps are commands the board runs on your machines. Without it, these pages are read-only.

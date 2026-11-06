@@ -29,6 +29,7 @@ import {
   CommandId,
   EnvironmentId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -370,10 +371,27 @@ export const BoardWorkerRunCiInput = Schema.Struct({
       name: TrimmedNonEmptyString,
       command: TrimmedNonEmptyString,
       timeoutMinutes: Schema.Number,
+      parallel: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
+  /** The pass index of `steps[0]`, so a later segment's log files don't
+      overwrite an earlier one's (T3O-49). */
+  indexOffset: Schema.optionalKey(NonNegativeInt),
+});
+export type BoardWorkerRunCiInput = typeof BoardWorkerRunCiInput.Type;
+
+/** `BoardCiStepResult`: what a step's result file reported. */
+const WireCiStepResult = Schema.Struct({
+  summary: Schema.NullOr(Schema.String),
+  failures: Schema.Array(
+    Schema.Struct({
+      title: TrimmedNonEmptyString,
+      detail: Schema.optionalKey(Schema.String),
+      file: Schema.optionalKey(TrimmedNonEmptyString),
+      line: Schema.optionalKey(PositiveInt),
     }),
   ),
 });
-export type BoardWorkerRunCiInput = typeof BoardWorkerRunCiInput.Type;
 
 /** One step's progress, then the pass's result. */
 export const BoardWorkerCiProgress = Schema.Union([
@@ -388,6 +406,8 @@ export const BoardWorkerCiProgress = Schema.Union([
       finishedAt: Schema.NullOr(Schema.String),
       exitCode: Schema.NullOr(Schema.Int),
       tail: Schema.String,
+      parallel: Schema.optionalKey(Schema.Boolean),
+      result: Schema.optionalKey(WireCiStepResult),
     }),
   }),
   Schema.TaggedStruct("done", {

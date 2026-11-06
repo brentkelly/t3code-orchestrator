@@ -19,7 +19,11 @@
  * Not a contract. Nothing here crosses the wire — the gateway hands it to the
  * classifier, and what the card persists is the classifier's verdict.
  */
-import type { PullRequestCheckStatus, PullRequestDetail } from "@t3tools/contracts";
+import {
+  boardCheckNameMatches,
+  type PullRequestCheckStatus,
+  type PullRequestDetail,
+} from "@t3tools/contracts";
 
 /**
  * Whether the forge will take this merge. Tri-state because "we do not know
@@ -54,6 +58,14 @@ export interface BoardMergeChecks {
   readonly failing: ReadonlyArray<string>;
   /** The names of the checks counted in `pending`, same contract. */
   readonly running: ReadonlyArray<string>;
+  /** Every check's verdict, up to `BOARD_MERGE_STATE_MAX_LISTED_CHECKS`, so a
+      CI forge step can filter by name (T3O-49). Absent from older workers. */
+  readonly verdicts?: ReadonlyArray<BoardCheckVerdict>;
+}
+
+export interface BoardCheckVerdict {
+  readonly name: string;
+  readonly verdict: "passed" | "pending" | "failed";
 }
 
 export interface BoardMergeState {
@@ -76,6 +88,10 @@ export interface BoardMergeState {
     because this text is persisted on the card and rendered in a banner, and a
     repository with 200 checks must not put 200 names there. */
 export const BOARD_MERGE_STATE_MAX_NAMED_CHECKS = 4;
+
+/** How many checks `verdicts` lists: enough for any real repository, bounded
+    because it crosses the worker wire on every forge poll. */
+const BOARD_MERGE_STATE_MAX_LISTED_CHECKS = 500;
 
 /** How much of the forge's own refusal text a card will show (T3O-67). Bounded
     for the same reason as the check names: it is persisted on the card and
@@ -111,8 +127,13 @@ function checksOf(detail: PullRequestDetail): BoardMergeChecks {
   let failed = 0;
   const failing: string[] = [];
   const running: string[] = [];
+  const verdicts: BoardCheckVerdict[] = [];
   for (const check of detail.checks) {
-    switch (verdictOf(check.status)) {
+    const verdict = verdictOf(check.status);
+    if (verdicts.length < BOARD_MERGE_STATE_MAX_LISTED_CHECKS) {
+      verdicts.push({ name: check.name, verdict });
+    }
+    switch (verdict) {
       case "passed":
         passed += 1;
         break;
@@ -126,7 +147,50 @@ function checksOf(detail: PullRequestDetail): BoardMergeChecks {
         break;
     }
   }
-  return { total: passed + pending + failed, passed, pending, failed, failing, running };
+  return {
+    total: passed + pending + failed,
+    passed,
+    pending,
+    failed,
+    failing,
+    running,
+    verdicts,
+  };
+}
+
+/**
+ * The checks a CI forge step's `only` patterns select (T3O-49), counted and
+ * named from the full verdict list. A worker that sends no list leaves only
+ * the bounded name lists to filter, so its counts are a best effort.
+ */
+export function boardFilteredMergeChecks(
+  checks: BoardMergeChecks,
+  only: ReadonlyArray<string>,
+): BoardMergeChecks {
+  if (only.length === 0) return checks;
+  const matches = (name: string) => only.some((pattern) => boardCheckNameMatches(pattern, name));
+  if (checks.verdicts === undefined) {
+    const failing = checks.failing.filter(matches);
+    const running = checks.running.filter(matches);
+    return { ...checks, failing, running, failed: failing.length, pending: running.length };
+  }
+  const selected = checks.verdicts.filter((check) => matches(check.name));
+  const named = (verdict: BoardCheckVerdict["verdict"]) =>
+    selected
+      .filter((check) => check.verdict === verdict)
+      .map((check) => check.name)
+      .slice(0, BOARD_MERGE_STATE_MAX_NAMED_CHECKS);
+  const count = (verdict: BoardCheckVerdict["verdict"]) =>
+    selected.filter((check) => check.verdict === verdict).length;
+  return {
+    total: selected.length,
+    passed: count("passed"),
+    pending: count("pending"),
+    failed: count("failed"),
+    failing: named("failed"),
+    running: named("pending"),
+    verdicts: selected,
+  };
 }
 
 /**

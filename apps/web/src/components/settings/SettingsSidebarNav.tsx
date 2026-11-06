@@ -106,6 +106,8 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/connections": ServerIcon,
   // T3o: Board settings page icon.
   "/settings/board": LayoutGridIcon,
+  // T3o: the board's global stage list (T3O-49).
+  "/settings/board/pipeline": LayoutGridIcon,
   "/settings/access": ShieldCheckIcon,
   "/settings/secrets": KeyRoundIcon,
   "/settings/maintenance": WrenchIcon,

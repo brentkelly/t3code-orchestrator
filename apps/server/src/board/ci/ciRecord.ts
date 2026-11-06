@@ -6,8 +6,10 @@
 import {
   BOARD_SEED_STAGE_IDS,
   boardCardCiSteps,
+  boardCiPassStepsFromSnapshot,
   boardCiShellFinding,
   isBoardCiStepFailure,
+  isBoardCiPassSettledPhase,
   type BoardCard,
   type BoardCardCi,
   type BoardCardCiRecordedPayload,
@@ -29,7 +31,7 @@ export function decideBoardCiRecord(
   const action = command.action;
   const current = card.ci;
   const done = (
-    next: Pick<BoardCard, "ci" | "ciLastOutcome">,
+    next: Pick<BoardCard, "ci" | "ciLastOutcome"> & Partial<Pick<BoardCard, "ciRoundTrips">>,
     rest: Partial<Omit<BoardCardCiRecordedPayload, "cardId" | "action" | "card">> = {},
   ): BoardCiRecordResult => ({
     ok: true,
@@ -60,31 +62,26 @@ export function decideBoardCiRecord(
             fixThreadId: action.fixThreadId,
           });
           activity = { kind: "card-ci-pass-finished", ciOutcome: "fixed-in-place" };
-        } else if (current.phase !== "passed" && current.phase !== "held") {
+        } else if (!isBoardCiPassSettledPhase(current.phase)) {
           settled.push({ runId: current.runId, outcome: "interrupted", finishedAt: at });
         }
       }
-      const steps = action.steps.map((step) => ({
-        name: step.name,
-        command: step.command,
-        timeoutMinutes: step.timeoutMinutes,
-        status: "pending" as const,
-        startedAt: null,
-        finishedAt: null,
-        exitCode: null,
-        tail: "",
-      }));
+      const steps = boardCiPassStepsFromSnapshot(action.steps);
       const sameEntry = current !== null && current.entry === action.entry;
+      // Round trips survive a send-back on the last outcome, and a human's
+      // Retry CI starts them again.
+      const roundTrips = action.fresh === true ? 0 : card.ciRoundTrips;
       const ci: BoardCardCi = {
         runId: action.runId,
         entry: action.entry,
-        fixAttempts: sameEntry ? current.fixAttempts : 0,
+        fixAttempts: sameEntry && action.fresh !== true ? current.fixAttempts : 0,
         maxFixAttempts: action.maxFixAttempts,
         phase: action.queued ? "queued" : "running",
         steps: boardCardCiSteps(steps),
+        ...(roundTrips === 0 ? {} : { roundTrips }),
       };
       return done(
-        { ci, ciLastOutcome: null },
+        { ci, ciLastOutcome: null, ciRoundTrips: roundTrips },
         {
           started: {
             runId: action.runId,
@@ -97,6 +94,8 @@ export function decideBoardCiRecord(
             steps,
             logDir: action.logDir,
             fixThreadId: null,
+            snapshot: action.steps,
+            configVersion: action.configVersion ?? null,
           },
           settled,
           activity,
@@ -185,6 +184,7 @@ export function decideBoardCiRecord(
         current?.steps.find((step) => isBoardCiStepFailure(step.status))?.name ??
         null;
       const fixAttemptsUsed = current?.fixAttempts ?? 0;
+      const roundTrips = action.byHuman === true ? 0 : card.ciRoundTrips + 1;
       return done(
         {
           ci: null,
@@ -195,6 +195,7 @@ export function decideBoardCiRecord(
             finding: boardCiShellFinding(action.finding),
             round: action.round,
           },
+          ciRoundTrips: roundTrips,
         },
         {
           settled:
@@ -217,6 +218,25 @@ export function decideBoardCiRecord(
       );
     }
 
+    case "stop": {
+      if (current === null || card.stage !== BOARD_SEED_STAGE_IDS.ci) {
+        return refuse(`Card '${card.key}' has no CI pass to stop.`);
+      }
+      return done(
+        {
+          ci: { ...current, phase: "stopped", stopReason: action.reason },
+          ciLastOutcome: card.ciLastOutcome,
+        },
+        {
+          settled:
+            action.runId === null
+              ? []
+              : [{ runId: action.runId, outcome: "stopped", finishedAt: at }],
+          activity: { kind: "card-ci-stopped" },
+        },
+      );
+    }
+
     case "skip": {
       if (card.stage !== BOARD_SEED_STAGE_IDS.ci) {
         return refuse(`Card '${card.key}' is not in CI, so there is nothing to skip.`);
@@ -225,7 +245,7 @@ export function decideBoardCiRecord(
         { ci: null, ciLastOutcome: { kind: "skipped", actor: action.actor } },
         {
           settled:
-            current === null || current.phase === "passed" || current.phase === "held"
+            current === null || isBoardCiPassSettledPhase(current.phase)
               ? []
               : [{ runId: current.runId, outcome: "skipped", finishedAt: at }],
           activity: { kind: "card-ci-skipped" },

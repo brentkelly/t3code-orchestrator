@@ -17,6 +17,8 @@ const pass: BoardCiPass = {
   startedAt: "2026-01-01T00:00:00.000Z",
   finishedAt: null,
   outcome: null,
+  snapshot: null,
+  configVersion: null,
   steps: [
     {
       name: "Typecheck",

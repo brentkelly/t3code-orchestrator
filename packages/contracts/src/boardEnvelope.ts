@@ -29,6 +29,7 @@
 import type { BoardCardPullRequest, BoardReviewPhaseId, BoardStageRole } from "./board.ts";
 import {
   BOARD_CI_FIX_PAYLOAD_SHAPE,
+  BOARD_CI_AGENT_PAYLOAD_SHAPE,
   BOARD_BUILD_SUMMARY_PAYLOAD_SHAPE,
   BOARD_REVIEW_PHASE_LABELS,
   DEFAULT_BOARD_SYNC_PHASE_PROMPT,
@@ -590,6 +591,60 @@ function boardSyncPhaseMechanics(): string {
 }
 
 /**
+ * A CI agent step's body (T3O-49): the board's prefix — where the card is in
+ * CI and what ran before — then the project's own prompt, then how to report.
+ * Nothing is forbidden: the prompt decides whether the agent may change code.
+ */
+export function composeBoardCiAgentStepPrompt(input: {
+  readonly cardKey: string;
+  readonly cardTitle: string;
+  readonly briefExcerpt: string | null;
+  readonly branch: string | null;
+  readonly baseBranch: string | null;
+  readonly pullRequestUrl: string | null;
+  readonly stepName: string;
+  readonly pass: number;
+  readonly fixAttempt: number;
+  readonly maxFixAttempts: number;
+  readonly roundTrip: number;
+  readonly maxRoundTrips: number;
+  readonly earlier: ReadonlyArray<{ readonly name: string; readonly status: string }>;
+  readonly remaining: ReadonlyArray<string>;
+  readonly prompt: string;
+}): string {
+  const where = [
+    `Card ${input.cardKey} · ${input.cardTitle}`,
+    `CI step "${input.stepName}" · pass ${input.pass} · fix ${input.fixAttempt} of ${input.maxFixAttempts} · round trip ${input.roundTrip} of ${input.maxRoundTrips}`,
+    ...(input.branch === null
+      ? []
+      : [
+          `Branch \`${input.branch}\`${input.baseBranch === null ? "" : `, based on \`${input.baseBranch}\``}.`,
+        ]),
+    ...(input.pullRequestUrl === null ? [] : [`Pull request: ${input.pullRequestUrl}`]),
+    ...(input.earlier.length === 0
+      ? []
+      : [
+          `Earlier steps this pass: ${input.earlier.map((step) => `${step.name} (${step.status})`).join(", ")}.`,
+        ]),
+    ...(input.remaining.length === 0
+      ? []
+      : [`Steps after this one: ${input.remaining.join(", ")}.`]),
+    ...(input.briefExcerpt === null || input.briefExcerpt.trim().length === 0
+      ? []
+      : ["", "The card's brief, in short:", input.briefExcerpt.trim()]),
+  ];
+  return [
+    "You are a CI step on a board card. Work in the card's worktree.",
+    ...where,
+    "",
+    input.prompt,
+    "",
+    "This step checks the branch; it does not change it. Leave the code as it is: if you find problems, report them, and the board hands them to a fix agent.",
+    `When you're done, complete the step with outcome "succeeded" and a payload shaped ${BOARD_CI_AGENT_PAYLOAD_SHAPE}, whatever your verdict: "passed" when the check holds, "failed" with the failures you found (file and line where you can). Use outcome "failed" only when you could not do the check at all.`,
+  ].join("\n");
+}
+
+/**
  * The CI fix agent's step body (T3O-44): the stage's fix prompt, the failure
  * it is looking at, and the completion contract. The board runs the steps; the
  * agent only fixes, so it is told what failed rather than asked to find out.
@@ -605,9 +660,20 @@ export function composeBoardCiFixPrompt(input: {
     readonly exitCode: number | null;
     readonly tail: string;
     readonly logPath: string | null;
+    /** What the step reported in its result file (T3O-49). */
+    readonly result?: {
+      readonly summary: string | null;
+      readonly failures: ReadonlyArray<{
+        readonly title: string;
+        readonly detail?: string;
+        readonly file?: string;
+        readonly line?: number;
+      }>;
+    } | null;
   };
 }): string {
   const { failure } = input;
+  const reported = failure.result ?? null;
   const ended =
     failure.status === "timed-out"
       ? "timed out and was killed"
@@ -617,6 +683,20 @@ export function composeBoardCiFixPrompt(input: {
     "",
     `CI step "${failure.stepName}" failed: \`${failure.command}\` ${ended}. This is fix attempt ${input.attempt} of ${input.maxAttempts}.`,
     ...(failure.logPath === null ? [] : [`The full log is at \`${failure.logPath}\`.`]),
+    ...(reported === null
+      ? []
+      : [
+          ...(reported.summary === null ? [] : [`The step reported: ${reported.summary}`]),
+          ...(reported.failures.length === 0
+            ? []
+            : [
+                "Its reported failures:",
+                ...reported.failures.map(
+                  (entry) =>
+                    `- ${entry.title}${entry.file === undefined ? "" : ` (${entry.file}${entry.line === undefined ? "" : `:${entry.line}`})`}${entry.detail === undefined ? "" : `: ${entry.detail}`}`,
+                ),
+              ]),
+        ]),
     "The last lines of its output:",
     "```",
     failure.tail.length > 0 ? failure.tail : "(no output)",

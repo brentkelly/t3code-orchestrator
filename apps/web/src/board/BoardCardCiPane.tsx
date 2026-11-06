@@ -6,6 +6,7 @@
  * Lazy, like the review pane — a card that never reaches CI pays nothing. The
  * only per-second element is the running step's timer, its own component.
  */
+import { Link } from "@tanstack/react-router";
 import {
   isBoardCiStepFailure,
   type BoardCardCi,
@@ -13,6 +14,7 @@ import {
   type BoardCiPass,
   type BoardCiPassStep,
   type ThreadId,
+  type ProjectId,
 } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -84,8 +86,10 @@ function StepRow({
   fixing,
   tailOpen,
   onToggleTail,
+  onOpenThread,
 }: {
   readonly step: BoardCiPassStep;
+  readonly onOpenThread?: ((threadId: ThreadId) => void) | undefined;
   readonly index: number;
   /** The pass is the one running now, so a running step ticks and shimmers. */
   readonly live: boolean;
@@ -116,9 +120,33 @@ function StepRow({
             className="w-fit text-[12.5px] font-medium text-foreground"
             text={step.name}
           />
-          <span className="truncate font-mono text-[11px] text-muted-foreground">
-            {step.command}
+          <span
+            className={cn(
+              "truncate text-[11px] text-muted-foreground",
+              (step.kind ?? "script") === "script" && "font-mono",
+            )}
+          >
+            {step.kind === "agent"
+              ? "Agent · own thread"
+              : step.kind === "forge-checks"
+                ? step.checks === undefined
+                  ? "Forge checks"
+                  : `Forge checks · ${step.checks.passed}/${step.checks.total} passed`
+                : step.command}
+            {step.parallel === true ? " · in parallel" : ""}
           </span>
+          {step.note === undefined ? null : (
+            <span className="text-[11px] text-muted-foreground">{step.note}</span>
+          )}
+          {step.threadId === undefined || onOpenThread === undefined ? null : (
+            <button
+              className="w-fit text-[11px] text-info-foreground hover:underline"
+              onClick={() => onOpenThread(step.threadId!)}
+              type="button"
+            >
+              Open {step.name} thread
+            </button>
+          )}
         </div>
         {hasTail ? (
           <button
@@ -154,6 +182,31 @@ function StepRow({
           ) : null}
         </span>
       </div>
+      {step.result !== undefined &&
+      (step.result.summary !== null || step.result.failures.length > 0) ? (
+        <div className="flex flex-col gap-1 border-t border-border py-1.5 pr-3 pl-[42px] text-[11.5px]">
+          {step.result.summary === null ? null : (
+            <span className="text-muted-foreground">{step.result.summary}</span>
+          )}
+          {step.result.failures.map((failure, index) => (
+            <div
+              className="flex flex-col border-l-2 border-warning pl-2"
+              key={`${failure.title}:${index}`}
+            >
+              <span className="text-foreground">{failure.title}</span>
+              {failure.file === undefined ? null : (
+                <span className="font-mono text-[10.5px] text-muted-foreground">
+                  {failure.file}
+                  {failure.line === undefined ? "" : `:${failure.line}`}
+                </span>
+              )}
+              {failure.detail === undefined ? null : (
+                <span className="text-muted-foreground">{failure.detail}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {hasTail && tailOpen ? (
         <div className="flex flex-col border-t border-border bg-muted">
           <span className="py-1.5 pr-3 pl-[42px] text-[10.5px] font-medium tracking-[.04em] text-muted-foreground uppercase">
@@ -176,11 +229,13 @@ function PassSteps({
   live,
   fixing,
   defaultTailOpen,
+  onOpenThread,
 }: {
   readonly pass: BoardCiPass;
   readonly live: boolean;
   readonly fixing: boolean;
   readonly defaultTailOpen: boolean;
+  readonly onOpenThread?: ((threadId: ThreadId) => void) | undefined;
 }) {
   // Null follows the default: open on the current pass, closed on earlier ones.
   const [tailOpen, setTailOpen] = useState<Readonly<Record<number, boolean>>>({});
@@ -194,6 +249,7 @@ function PassSteps({
             index={index}
             key={`${index}:${step.name}`}
             live={live}
+            onOpenThread={onOpenThread}
             onToggleTail={() => setTailOpen((current) => ({ ...current, [index]: !open }))}
             step={step}
             tailOpen={open}
@@ -256,8 +312,17 @@ export function BoardCardCiPane({
   skipPending = false,
   skipToLabel = "Ready for merge",
   onBackToThread,
+  projectId,
+  onRetryCi,
+  onSendBack,
 }: {
   readonly cardKey: string;
+  /** T3O-49: Retry CI on a stopped or held pass, and "Send back to review
+      anyway" on a stopped one. Human-only. */
+  readonly onRetryCi?: (() => void) | undefined;
+  readonly onSendBack?: (() => void) | undefined;
+  /** T3O-49: the card's project, for the "CI settings" link. */
+  readonly projectId?: ProjectId | undefined;
   /** The card sits in the CI stage: Skip CI and the fix box apply. */
   readonly inCi: boolean;
   readonly ci: BoardCardCi | null | undefined;
@@ -337,6 +402,54 @@ export function BoardCardCiPane({
             ) : null}
           </div>
         ) : null}
+        {inCi && ci != null && (ci.phase === "stopped" || ci.phase === "held") ? (
+          <div
+            className={cn(
+              "flex shrink-0 flex-col gap-2 rounded-xl border px-3.5 py-3",
+              ci.phase === "stopped"
+                ? "border-attention/40 bg-attention/6"
+                : "border-warning/40 bg-warning/5",
+            )}
+          >
+            <span className="text-[12.5px] font-semibold text-foreground">
+              {ci.phase === "stopped" ? "Stopped for you" : "CI can't run this pass"}
+            </span>
+            <span className="text-[11.5px]/[1.55] text-pretty text-muted-foreground">
+              {ci.phase === "stopped"
+                ? (ci.stopReason ?? "CI stopped for a human.")
+                : "The pass couldn't finish (the runner or the worktree wasn't available). Fix what's in the way, then retry."}
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {onRetryCi === undefined ? null : (
+                <button
+                  className={cn(BUTTON_CLASS, "h-[30px] px-3 text-[12.5px]")}
+                  onClick={onRetryCi}
+                  type="button"
+                >
+                  Retry CI
+                </button>
+              )}
+              {ci.phase === "stopped" && onSendBack !== undefined ? (
+                <button
+                  className={cn(BUTTON_CLASS, "h-[30px] px-3 text-[12.5px]")}
+                  onClick={onSendBack}
+                  type="button"
+                >
+                  Send back to review anyway
+                </button>
+              ) : null}
+              {projectId === undefined ? null : (
+                <Link
+                  className="text-[11.5px] text-muted-foreground hover:text-foreground"
+                  params={{ projectId, tab: "ci" }}
+                  to="/settings/board/projects/$projectId/$tab"
+                >
+                  ⚙ CI settings
+                </Link>
+              )}
+            </div>
+          </div>
+        ) : null}
         {fixing ? (
           <div className="flex shrink-0 items-center gap-3 rounded-xl border border-info/35 bg-info/6 py-[11px] pr-3 pl-3.5">
             <div className="flex min-w-0 flex-1 flex-col gap-[3px]">
@@ -388,13 +501,23 @@ export function BoardCardCiPane({
               defaultTailOpen
               fixing={fixing}
               live={live}
+              onOpenThread={onOpenThread}
               pass={current}
             />
             <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
-              {current.steps.length} {current.steps.length === 1 ? "step" : "steps"} from t3o.json ·
-              run in order, stop at the first failure
+              {current.steps.length} {current.steps.length === 1 ? "step" : "steps"} from the
+              project&apos;s CI settings · run in order, stop at the first failure
               {current.logDir === null ? "" : ` · full logs in ${current.logDir}`}
             </div>
+            {projectId === undefined ? null : (
+              <Link
+                className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground hover:text-foreground"
+                params={{ projectId, tab: "ci" }}
+                to="/settings/board/projects/$projectId/$tab"
+              >
+                ⚙ CI settings for this project
+              </Link>
+            )}
           </div>
         )}
         {earlier.length === 0 ? null : (

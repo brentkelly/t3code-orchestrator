@@ -10,6 +10,7 @@ import {
   BOARD_SEED_STAGES,
   BoardLabelId,
   EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+  boardProjectStageConfigShell,
   BoardStageId,
   ProjectId,
   ThreadId,
@@ -82,6 +83,7 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   placementOrphaned: null,
   ci: null,
   ciLastOutcome: null,
+  ciRoundTrips: 0,
   worktree: null,
   blocked: false,
   archivedAt: null,
@@ -111,8 +113,10 @@ const snapshot = (input?: Partial<BoardShellSnapshot>): BoardShellSnapshot => ({
   ...input,
 });
 
+const EMPTY_SHELL = boardProjectStageConfigShell(EMPTY_BOARD_PROJECT_STAGE_CONFIG);
+
 describe("board shell reducer", () => {
-  it("project-stage-config replaces the project's config and its own stage rows (T3O-43)", () => {
+  it("project-stage-config replaces the project's delta and any stage rows it carries", () => {
     const own = (id: string, label: string, orderKey: string) => ({
       stageId: BoardStageId.make(`${projectId}:${id}`),
       label,
@@ -126,13 +130,13 @@ describe("board shell reducer", () => {
     const before = snapshot({
       stages: [own("old", "Old", "c"), own("kept", "Kept", "z"), backlog],
       projectStageConfigs: {
-        [projectId]: EMPTY_BOARD_PROJECT_STAGE_CONFIG,
-        [ProjectId.make("other")]: EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+        [projectId]: EMPTY_SHELL,
+        [ProjectId.make("other")]: EMPTY_SHELL,
       },
     });
     const config = {
-      ...EMPTY_BOARD_PROJECT_STAGE_CONFIG,
-      removedStageIds: [BOARD_SEED_STAGE_IDS.sprint],
+      ...EMPTY_SHELL,
+      stageSwitches: { [BOARD_SEED_STAGE_IDS.sprint]: false },
     };
     const next = applyBoardShellStreamEvent(before, {
       kind: "project-stage-config",
@@ -149,9 +153,7 @@ describe("board shell reducer", () => {
       [`${projectId}:new`, "New"],
     ]);
     expect(next.projectStageConfigs?.[projectId]).toEqual(config);
-    expect(next.projectStageConfigs?.[ProjectId.make("other")]).toEqual(
-      EMPTY_BOARD_PROJECT_STAGE_CONFIG,
-    );
+    expect(next.projectStageConfigs?.[ProjectId.make("other")]).toEqual(EMPTY_SHELL);
   });
 
   it("appends a card to an empty board", () => {

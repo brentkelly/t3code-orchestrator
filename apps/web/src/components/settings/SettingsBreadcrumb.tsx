@@ -4,6 +4,8 @@ import {
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
+// T3o: Settings → Board page labels (T3O-49).
+import { boardSettingsBreadcrumbLabel } from "../../board/boardSettingsSearch";
 
 const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
   ...SETTINGS_SECTION_LABELS,
@@ -13,7 +15,11 @@ const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
 
 function settingsBreadcrumbLabel(pathname: string): string | null {
   const normalizedPathname = pathname.replace(/\/+$/, "") || "/";
-  return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;
+  return (
+    SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ??
+    // T3o: Settings → Board's own pages (T3O-49).
+    boardSettingsBreadcrumbLabel(normalizedPathname)
+  );
 }
 
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {

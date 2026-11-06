@@ -57,8 +57,6 @@ export function boardCardProjectLockHint(lock: BoardCardProjectLock): string {
       return "Pinned — lands on a group's integration branch in this project";
     case "parent":
       return "Pinned — its own integration branch lives in this project";
-    case "project-stage":
-      return `Pinned — ${lock.stageLabel} is a stage only this project's t3o.json defines`;
   }
 }
 

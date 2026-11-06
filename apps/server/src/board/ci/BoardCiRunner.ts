@@ -1,10 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalTimersInEffect:off
 /**
- * Runs a CI pass's steps in a card's worktree (T3O-44).
+ * Runs a CI pass's steps in a card's worktree (T3O-44/49).
  *
  * Each step is a shell command run with the worktree as its cwd, stdout and
- * stderr merged into one log. Steps run in order and the pass stops at the
- * first non-zero exit or timeout. Every step change is reported through
+ * stderr merged into one log. Steps run in groups (a step marked `parallel`
+ * joins the one before it); groups run in order, and a failure stops later
+ * groups once its own group finishes. The exit code alone decides a step; a
+ * result file at `$T3O_CI_RESULT` adds detail. A group that leaves tracked
+ * changes in the worktree fails. Every step change is reported through
  * `emit`, with the last `BOARD_CI_TAIL_LINES` lines of output; the full log
  * goes to `<logDir>/<index>.log`.
  *
@@ -12,14 +15,18 @@
  * pass (Skip CI, the card leaving CI) kills the whole tree, not just the
  * shell.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import {
   BOARD_CI_TAIL_LINES,
+  boardCiStepGroups,
+  parseBoardCiResultFile,
   type BoardCiPassStep,
   type BoardCiStepDefinition,
+  type BoardCiStepResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -32,6 +39,9 @@ export interface BoardCiRunRequest {
   readonly steps: ReadonlyArray<BoardCiStepDefinition>;
   /** Where each step's full log is written; created if missing. */
   readonly logDir: string;
+  /** The pass index of `steps[0]`, so a later segment's logs don't overwrite
+      an earlier one's (T3O-49). */
+  readonly indexOffset?: number;
 }
 
 export interface BoardCiStepProgress {
@@ -190,6 +200,7 @@ const runStep = (input: {
   readonly timeoutMs: number;
   readonly tail: BoardCiTail;
   readonly logPath: string;
+  readonly resultPath: string;
 }): Effect.Effect<StepExit> =>
   Effect.callback<StepExit>((resume) => {
     const log = NodeFS.createWriteStream(input.logPath, { flags: "w" });
@@ -209,7 +220,7 @@ const runStep = (input: {
       shell: true,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, CI: process.env.CI ?? "1" },
+      env: { ...process.env, CI: process.env.CI ?? "1", T3O_CI_RESULT: input.resultPath },
     });
     // Per-stream decoders keep a multi-byte character split across chunks whole.
     child.stdout?.setEncoding("utf8");
@@ -286,6 +297,54 @@ const runStep = (input: {
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
+/** The step's `$T3O_CI_RESULT` file, if it wrote one. A malformed file is a
+    line in the tail, never a failure. */
+const readStepResult = (resultPath: string, tail: BoardCiTail): BoardCiStepResult | null => {
+  let text: string;
+  try {
+    text = NodeFS.readFileSync(resultPath, "utf8");
+  } catch {
+    return null;
+  }
+  const parsed = parseBoardCiResultFile(text);
+  if (parsed.warning !== null) tail.push(`\n[board] ${parsed.warning}\n`);
+  return parsed.result;
+};
+
+const changedLines = (status: string | null): ReadonlyArray<string> =>
+  status === null ? [] : status.split("\n").filter((line) => line.trim().length > 0);
+
+/** Each changed line keyed with its file's content hash, since a re-edit to an
+    already-dirty file prints the same porcelain line. */
+const changedSnapshot = (cwd: string, status: string | null): ReadonlyMap<string, string> => {
+  const snapshot = new Map<string, string>();
+  for (const line of changedLines(status)) {
+    const path = line.slice(3).split(" -> ").at(-1)!;
+    let digest = "absent";
+    try {
+      digest = NodeCrypto.createHash("sha1")
+        .update(NodeFS.readFileSync(NodePath.join(cwd, path)))
+        .digest("hex");
+    } catch {
+      // Deleted, or a quoted path: the porcelain line alone decides.
+    }
+    snapshot.set(`${line}\0${digest}`, line);
+  }
+  return snapshot;
+};
+
+/** Tracked files the group changed (`git status`, untracked ignored), or
+    null when git can't say. A CI step must not edit the branch it checks. */
+const trackedChanges = (cwd: string): Effect.Effect<string | null> =>
+  Effect.callback<string | null>((resume) => {
+    NodeChildProcess.execFile(
+      "git",
+      ["status", "--porcelain", "--untracked-files=no"],
+      { cwd },
+      (error, stdout) => resume(Effect.succeed(error === null ? stdout.trimEnd() : null)),
+    );
+  });
+
 export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunner.run")(
   function* (request, emit) {
     yield* ensureCiLogsExcluded(request.cwd);
@@ -303,43 +362,91 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
         detail: `CI could not create its log directory: ${logDirError}.`,
       } as const;
     }
-    for (const [index, definition] of request.steps.entries()) {
-      const tail = new BoardCiTail();
-      const startedAt = yield* nowIso;
-      const base = {
-        name: definition.name,
-        command: definition.command,
-        timeoutMinutes: definition.timeoutMinutes,
-      };
-      yield* emit({
-        index,
-        step: { ...base, status: "running", startedAt, finishedAt: null, exitCode: null, tail: "" },
-      });
-      const exit = yield* runStep({
-        command: definition.command,
-        cwd: request.cwd,
-        timeoutMs: definition.timeoutMinutes * 60_000,
-        tail,
-        logPath: NodePath.join(request.logDir, `${index}.log`),
-      });
-      yield* emit({
-        index,
-        step: {
-          ...base,
-          status: exit.status,
-          startedAt,
-          finishedAt: yield* nowIso,
-          exitCode: exit.exitCode,
-          tail: tail.text(),
-        },
-      });
-      if (exit.status !== "passed") return { result: "failed", failedIndex: index } as const;
+    const indexed = request.steps.map((definition, index) => ({
+      definition,
+      index,
+      kind: "script" as const,
+      parallel: definition.parallel === true,
+    }));
+    for (const group of boardCiStepGroups(indexed)) {
+      // What was already changed is not this group's doing.
+      const before = changedSnapshot(request.cwd, yield* trackedChanges(request.cwd));
+      const settled = yield* Effect.forEach(
+        group,
+        ({ definition, index }) =>
+          Effect.gen(function* () {
+            const tail = new BoardCiTail();
+            const startedAt = yield* nowIso;
+            const base = {
+              name: definition.name,
+              command: definition.command,
+              timeoutMinutes: definition.timeoutMinutes,
+              ...(definition.parallel === true ? { parallel: true } : {}),
+            };
+            yield* emit({
+              index,
+              step: {
+                ...base,
+                status: "running",
+                startedAt,
+                finishedAt: null,
+                exitCode: null,
+                tail: "",
+              },
+            });
+            const fileIndex = index + (request.indexOffset ?? 0);
+            const resultPath = NodePath.join(request.logDir, `${fileIndex}.result.json`);
+            const exit = yield* runStep({
+              command: definition.command,
+              cwd: request.cwd,
+              timeoutMs: definition.timeoutMinutes * 60_000,
+              tail,
+              logPath: NodePath.join(request.logDir, `${fileIndex}.log`),
+              resultPath,
+            });
+            const result = readStepResult(resultPath, tail);
+            return { index, base, startedAt, exit, tail, result };
+          }),
+        { concurrency: "unbounded" },
+      );
+      // A group that edited tracked files fails as a whole: CI checks the
+      // branch, it never changes it.
+      const after = yield* trackedChanges(request.cwd);
+      const dirty = [...changedSnapshot(request.cwd, after)]
+        .filter(([key]) => !before.has(key))
+        .map(([, line]) => line)
+        .join("\n");
+      const finishedAt = yield* nowIso;
+      let failedIndex: number | null = null;
+      for (const step of settled) {
+        const status =
+          step.exit.status === "passed" && dirty.length > 0 ? "failed" : step.exit.status;
+        if (status === "failed" && step.exit.status === "passed") {
+          step.tail.push(
+            `\n[board] The step group left tracked changes in the worktree:\n${dirty}\n`,
+          );
+        }
+        yield* emit({
+          index: step.index,
+          step: {
+            ...step.base,
+            status,
+            startedAt: step.startedAt,
+            finishedAt,
+            exitCode: step.exit.exitCode,
+            tail: step.tail.text(),
+            ...(step.result === null ? {} : { result: step.result }),
+          },
+        });
+        if (status !== "passed" && failedIndex === null) failedIndex = step.index;
+      }
+      if (failedIndex !== null) return { result: "failed", failedIndex } as const;
     }
     return { result: "passed", failedIndex: null } as const;
   },
 );
 
-/** A Reference, like `BoardProjectConfig`, so every board layer gets the real
+/** A Reference, like `BoardProjectFile`, so every board layer gets the real
     runner and a test swaps in a scripted one. */
 export class BoardCiRunner extends Context.Reference<BoardCiRunnerShape>("t3/board/BoardCiRunner", {
   defaultValue: () => ({ run: runBoardCiPass }),

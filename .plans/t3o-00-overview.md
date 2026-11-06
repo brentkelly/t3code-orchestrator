@@ -237,6 +237,14 @@ Recipes keep naming **provider instance ids**, and an id resolves on the **place
 whose instance the worker does not have stalls amber ("Provider not on worker") rather than
 silently running elsewhere or on another provider.
 
+**Amendment (T3O-49):** there is one global stage list, and each stage has a default for projects.
+A project stores only its **differences** — stage switches, execution overrides and its CI steps —
+in the board's own state (not a committed file), edited in Settings → Board → the project, so a
+stage added to the board later reaches every project unless that project switched it off.
+`t3o.json` is only an import/export format. Stage and project config changes are settings-tier
+writes (`board.dispatchSettingsCommand`), never `board.dispatchCommand`. CI is snapshotted at each
+pass start, the same freeze rule as stage entry.
+
 ### D11 — Concurrency is a board limit, a worker limit, and per-worker provider caps
 
 There is no concurrency limit anywhere in the T3 server today; a human's typing speed is the

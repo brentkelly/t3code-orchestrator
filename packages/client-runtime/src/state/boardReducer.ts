@@ -434,8 +434,8 @@ export function applyBoardShellStreamEvent(
       };
     }
     case "project-stage-config": {
-      // A project's t3o.json (T3O-43): its config replaced, and the
-      // project-owned stage rows it wrote and dropped, in one delta.
+      // A project's delta replaced (T3O-49), plus any stage rows a T3O-43
+      // payload wrote and dropped, in one delta.
       const dropped = new Set<string>(event.deletedStageIds);
       const upserted = new Map<string, (typeof event.upserts)[number]>(
         event.upserts.map((stage) => [stage.stageId, stage]),

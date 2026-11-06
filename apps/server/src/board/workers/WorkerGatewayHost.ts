@@ -249,6 +249,7 @@ export const makeWorkerGatewayHost = Effect.gen(function* () {
               cwd: input.worktreePath,
               steps: input.steps,
               logDir: boardCiLogDir(input.worktreePath, input.runId),
+              ...(input.indexOffset === undefined ? {} : { indexOffset: input.indexOffset }),
             },
             (progress) =>
               Queue.offer(queue, { _tag: "step", ...progress } as const).pipe(Effect.asVoid),
