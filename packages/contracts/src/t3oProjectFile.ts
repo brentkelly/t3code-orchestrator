@@ -215,7 +215,12 @@ function decodeCiSteps(value: unknown, where: string, legacy: boolean, warnings:
     const raw = {
       kind: "script",
       ...entry,
-      id: typeof entry.id === "string" ? entry.id : legacy ? boardLegacyCiStepId(index) : `step-${index + 1}`,
+      id:
+        typeof entry.id === "string"
+          ? entry.id
+          : legacy
+            ? boardLegacyCiStepId(index)
+            : `step-${index + 1}`,
     };
     const decoded = Option.getOrNull(decodeStep(raw));
     if (decoded === null) {
@@ -259,13 +264,9 @@ function stageIdList(value: unknown, where: string, warnings: string[]): string[
 }
 
 /**
- * Resolve a parsed `t3o.json` (v1 or v2) into the delta importing it would
- * set (T3O-49). Never fails: every problem becomes a warning and the entry is
- * dropped. `raw` is the parsed JSON, or null for a missing file.
- *
- * A stage the file adds is reused when one with its id (or the T3O-43
- * `<projectId>:<id>` form) has the same label, ignored when the label differs,
- * and otherwise created: default off, on for this project, before CI.
+ * The delta importing a parsed `t3o.json` (v1 or v2) would set. Never fails:
+ * a bad entry becomes a warning. An added stage reuses one with its id (or the
+ * T3O-43 `<projectId>:<id>`) and label, else is created off by default.
  */
 export function resolveT3oProjectFile(input: {
   readonly raw: unknown;
@@ -346,7 +347,9 @@ export function resolveT3oProjectFile(input: {
       }
       const { id, label, after } = entry;
       if (typeof id !== "string" || !STAGE_FILE_ID_PATTERN.test(id)) {
-        warnings.push(`${where}.id: needs letters, digits, "-" or "_" (at most 64); stage ignored.`);
+        warnings.push(
+          `${where}.id: needs letters, digits, "-" or "_" (at most 64); stage ignored.`,
+        );
         return;
       }
       if (addedIds.has(id)) {
@@ -368,7 +371,10 @@ export function resolveT3oProjectFile(input: {
           );
           return;
         }
-        if (!isBoardStageSwitchable(input.board, existing) || existing.stageId === BOARD_SEED_STAGE_IDS.ci) {
+        if (
+          !isBoardStageSwitchable(input.board, existing) ||
+          existing.stageId === BOARD_SEED_STAGE_IDS.ci
+        ) {
           warnings.push(`${where}: "${id}" is a built-in stage; stage ignored.`);
           return;
         }
@@ -393,7 +399,13 @@ export function resolveT3oProjectFile(input: {
       }
       addedIds.set(id, stageId);
       stageSwitches[stageId] = true;
-      const patch = decodeStagePatch(entry, "simple", where, warnings, new Set(["id", "label", "after"]));
+      const patch = decodeStagePatch(
+        entry,
+        "simple",
+        where,
+        warnings,
+        new Set(["id", "label", "after"]),
+      );
       if (Object.keys(patch).length > 0) overrides[stageId] = patch;
     });
   }
@@ -437,7 +449,8 @@ export function resolveT3oProjectFile(input: {
       for (const key of Object.keys(ciBlock)) {
         if (key !== "enabled" && key !== "steps") warnings.push(`ci.${key}: unknown key; ignored.`);
       }
-      if (ciBlock.steps !== undefined) steps = decodeCiSteps(ciBlock.steps, "ci.steps", false, warnings);
+      if (ciBlock.steps !== undefined)
+        steps = decodeCiSteps(ciBlock.steps, "ci.steps", false, warnings);
       ciEnabled = ciBlock.enabled;
     }
   } else if (legacyCi !== null) {

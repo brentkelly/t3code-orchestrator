@@ -6,6 +6,7 @@
  * Lazy, like the review pane — a card that never reaches CI pays nothing. The
  * only per-second element is the running step's timer, its own component.
  */
+import { Link } from "@tanstack/react-router";
 import {
   isBoardCiStepFailure,
   type BoardCardCi,
@@ -13,6 +14,7 @@ import {
   type BoardCiPass,
   type BoardCiPassStep,
   type ThreadId,
+  type ProjectId,
 } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -256,8 +258,11 @@ export function BoardCardCiPane({
   skipPending = false,
   skipToLabel = "Ready for merge",
   onBackToThread,
+  projectId,
 }: {
   readonly cardKey: string;
+  /** T3O-49: the card's project, for the "CI settings" link. */
+  readonly projectId?: ProjectId | undefined;
   /** The card sits in the CI stage: Skip CI and the fix box apply. */
   readonly inCi: boolean;
   readonly ci: BoardCardCi | null | undefined;
@@ -391,10 +396,19 @@ export function BoardCardCiPane({
               pass={current}
             />
             <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
-              {current.steps.length} {current.steps.length === 1 ? "step" : "steps"} from t3o.json ·
-              run in order, stop at the first failure
+              {current.steps.length} {current.steps.length === 1 ? "step" : "steps"} from the
+              project&apos;s CI settings · run in order, stop at the first failure
               {current.logDir === null ? "" : ` · full logs in ${current.logDir}`}
             </div>
+            {projectId === undefined ? null : (
+              <Link
+                className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground hover:text-foreground"
+                params={{ projectId, tab: "ci" }}
+                to="/settings/board/projects/$projectId/$tab"
+              >
+                ⚙ CI settings for this project
+              </Link>
+            )}
           </div>
         )}
         {earlier.length === 0 ? null : (

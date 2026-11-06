@@ -40,18 +40,26 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/board",
     targetId: "board-projects",
   },
-  { id: "board-pipeline", title: "Pipeline", to: "/settings/board" },
-  // T3O-43: each project's t3o.json, read-only.
+  // T3O-49: the global stage list has its own page.
+  {
+    id: "board-pipeline",
+    title: "Pipeline",
+    to: "/settings/board/pipeline",
+    searchTerms: ["stages default for projects continuous integration ci round trips"],
+  },
+  // T3O-49: each project's pipeline, CI and t3o.json live on its own page,
+  // reached from the project list.
   {
     id: "board-project-pipelines",
-    title: "Project pipelines",
+    title: "Project pipelines and CI",
     to: "/settings/board",
-    searchTerms: ["t3o.json per project stages override"],
+    targetId: "board-projects",
+    searchTerms: ["t3o.json import export per project stages override ci steps"],
   },
   {
     id: "board-default-model",
     title: "Board default model",
-    to: "/settings/board",
+    to: "/settings/board/pipeline",
     targetId: "board-pipeline",
   },
   { id: "board-concurrency", title: "Board concurrency", to: "/settings/board" },
@@ -77,3 +85,9 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     targetId: "board-lifecycle",
   },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
+
+/** Breadcrumb labels for Settings → Board's own pages (T3O-49). */
+export function boardSettingsBreadcrumbLabel(pathname: string): string | null {
+  if (pathname.startsWith("/settings/board/projects/")) return "Board project";
+  return null;
+}

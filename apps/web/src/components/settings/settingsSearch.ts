@@ -41,7 +41,9 @@ export type SettingsPath =
   | "/settings/about"
   | "/settings/archived"
   // T3o: Board settings page (D1 — the board is a single settings page).
-  | "/settings/board";
+  | "/settings/board"
+  // T3o: the board's global stage list (T3O-49).
+  | "/settings/board/pipeline";
 
 export type SettingsSearchScope =
   | "environment"
@@ -114,6 +116,8 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/archived": "Archive",
   // T3o: Board settings nav label.
   "/settings/board": "Board",
+  // T3o: the board's global stage list (T3O-49).
+  "/settings/board/pipeline": "Board pipeline",
 };
 
 /** Sidebar order. A group without a heading is set apart by space alone. */
@@ -1214,6 +1218,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/archived": "project-defaults",
   // T3o: the board page reads the primary environment's settings at any selection.
   "/settings/board": null,
+  "/settings/board/pipeline": null,
 };
 
 const RENAMED_SETTINGS_PATHS: Readonly<Record<string, SettingsPath>> = {

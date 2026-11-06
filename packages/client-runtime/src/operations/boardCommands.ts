@@ -19,6 +19,10 @@ import {
   type BoardDetachCardFileInput,
   type BoardClientCommand,
   type BoardCardWorkerMoveRequest,
+  type BoardProjectImportCandidatesInput,
+  type BoardProjectImportInput,
+  type BoardSettingsClientCommand,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -64,10 +68,29 @@ export type CreateBoardLabelInput = CommandInput<"board.label.create">;
 export type UpdateBoardLabelInput = CommandInput<"board.label.update">;
 export type DeleteBoardLabelInput = CommandInput<"board.label.delete">;
 export type UndeleteBoardLabelInput = CommandInput<"board.label.undelete">;
-export type CreateBoardStageInput = CommandInput<"board.stage.create">;
-export type RenameBoardStageInput = CommandInput<"board.stage.rename">;
-export type ReorderBoardStageInput = CommandInput<"board.stage.reorder">;
-export type DeleteBoardStageInput = CommandInput<"board.stage.delete">;
+type SettingsCommandType = BoardSettingsClientCommand["type"];
+type SettingsCommandInput<T extends SettingsCommandType> = Omit<
+  Extract<BoardSettingsClientCommand, { readonly type: T }>,
+  "type" | "commandId" | "createdAt" | "actor"
+> & {
+  readonly commandId?: CommandId;
+  readonly createdAt?: string;
+};
+
+export type CreateBoardStageInput = SettingsCommandInput<"board.stage.create">;
+export type RenameBoardStageInput = SettingsCommandInput<"board.stage.rename">;
+export type ReorderBoardStageInput = SettingsCommandInput<"board.stage.reorder">;
+export type DeleteBoardStageInput = SettingsCommandInput<"board.stage.delete">;
+export type SetBoardStageDefaultInput =
+  SettingsCommandInput<"board.stage.set-default-for-projects">;
+export type SetBoardProjectStageSwitchInput =
+  SettingsCommandInput<"board.project.set-stage-switch">;
+export type SetBoardProjectStageOverrideInput =
+  SettingsCommandInput<"board.project.set-stage-override">;
+export type SetBoardProjectCiStepsInput = SettingsCommandInput<"board.project.set-ci-steps">;
+export type SetBoardProjectCiEnabledInput = SettingsCommandInput<"board.project.set-ci-enabled">;
+export type ResetBoardProjectInput = SettingsCommandInput<"board.project.reset">;
+export type DismissBoardProjectImportInput = SettingsCommandInput<"board.project.dismiss-import">;
 export type StartBoardStageThreadInput = CommandInput<"board.card.start-stage-thread">;
 export type ApproveBoardPlansInput = CommandInput<"board.plans.approve">;
 
@@ -457,53 +480,63 @@ export const undeleteBoardLabel: (input: UndeleteBoardLabelInput) => CommandEffe
   });
 });
 
-export const createBoardStage: (input: CreateBoardStageInput) => CommandEffect = Effect.fn(
-  "BoardCommands.createBoardStage",
-)(function* (input) {
-  const metadata = yield* commandMetadata(input);
-  return yield* dispatch({
-    ...input,
-    type: "board.stage.create",
-    commandId: metadata.commandId,
-    createdAt: metadata.createdAt,
+/**
+ * T3O-49: stage and project config commands ride their own settings-tier RPC,
+ * never `board.dispatchCommand`. The server stamps the actor.
+ */
+const dispatchSettings = <T extends SettingsCommandType>(type: T, name: string) =>
+  Effect.fn(`BoardCommands.${name}`)(function* (input: SettingsCommandInput<T>) {
+    const metadata = yield* commandMetadata(input);
+    return yield* request(BOARD_WS_METHODS.dispatchSettingsCommand, {
+      ...input,
+      type,
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    } as unknown as BoardSettingsClientCommand);
   });
-});
 
-export const renameBoardStage: (input: RenameBoardStageInput) => CommandEffect = Effect.fn(
-  "BoardCommands.renameBoardStage",
-)(function* (input) {
-  const metadata = yield* commandMetadata(input);
-  return yield* dispatch({
-    ...input,
-    type: "board.stage.rename",
-    commandId: metadata.commandId,
-    createdAt: metadata.createdAt,
-  });
-});
+export const createBoardStage = dispatchSettings("board.stage.create", "createBoardStage");
+export const renameBoardStage = dispatchSettings("board.stage.rename", "renameBoardStage");
+export const reorderBoardStage = dispatchSettings("board.stage.reorder", "reorderBoardStage");
+export const deleteBoardStage = dispatchSettings("board.stage.delete", "deleteBoardStage");
+export const setBoardStageDefault = dispatchSettings(
+  "board.stage.set-default-for-projects",
+  "setBoardStageDefault",
+);
+export const setBoardProjectStageSwitch = dispatchSettings(
+  "board.project.set-stage-switch",
+  "setBoardProjectStageSwitch",
+);
+export const setBoardProjectStageOverride = dispatchSettings(
+  "board.project.set-stage-override",
+  "setBoardProjectStageOverride",
+);
+export const setBoardProjectCiSteps = dispatchSettings(
+  "board.project.set-ci-steps",
+  "setBoardProjectCiSteps",
+);
+export const setBoardProjectCiEnabled = dispatchSettings(
+  "board.project.set-ci-enabled",
+  "setBoardProjectCiEnabled",
+);
+export const resetBoardProject = dispatchSettings("board.project.reset", "resetBoardProject");
+export const dismissBoardProjectImport = dispatchSettings(
+  "board.project.dismiss-import",
+  "dismissBoardProjectImport",
+);
 
-export const reorderBoardStage: (input: ReorderBoardStageInput) => CommandEffect = Effect.fn(
-  "BoardCommands.reorderBoardStage",
-)(function* (input) {
-  const metadata = yield* commandMetadata(input);
-  return yield* dispatch({
-    ...input,
-    type: "board.stage.reorder",
-    commandId: metadata.commandId,
-    createdAt: metadata.createdAt,
-  });
-});
+/** A project's full delta, with the prompts the shell leaves out. */
+export const getBoardProjectConfig = (input: { readonly projectId: ProjectId }) =>
+  request(BOARD_WS_METHODS.getProjectConfig, input);
 
-export const deleteBoardStage: (input: DeleteBoardStageInput) => CommandEffect = Effect.fn(
-  "BoardCommands.deleteBoardStage",
-)(function* (input) {
-  const metadata = yield* commandMetadata(input);
-  return yield* dispatch({
-    ...input,
-    type: "board.stage.delete",
-    commandId: metadata.commandId,
-    createdAt: metadata.createdAt,
-  });
-});
+export const getBoardProjectImportCandidates = (input: BoardProjectImportCandidatesInput) =>
+  request(BOARD_WS_METHODS.projectImportCandidates, input);
+
+export const importBoardProjectFile = (input: BoardProjectImportInput) =>
+  request(BOARD_WS_METHODS.importProjectFile, input);
+
+export const exportBoardProjectFile = (input: { readonly projectId: ProjectId }) =>
+  request(BOARD_WS_METHODS.exportProjectFile, input);
 
 export const startBoardStageThread: (input: StartBoardStageThreadInput) => CommandEffect =
   Effect.fn("BoardCommands.startBoardStageThread")(function* (input) {

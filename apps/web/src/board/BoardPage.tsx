@@ -34,6 +34,7 @@ import {
   type BoardStageDefinition,
   type BoardStageId,
   type BoardState,
+  type BoardProjectStageConfigShell,
   type EnvironmentId,
   type ProjectId,
   type ThreadId,
@@ -143,13 +144,19 @@ const EMPTY_CARD_THREADS: ReadonlyArray<BoardCardThreadShell> = [];
     helpers (`areBoardStagesAdjacent`, `boardStageWithRole`, …) apply. */
 function stageStateOf(
   stages: ReadonlyArray<BoardStageDefinition>,
-  projectStageConfigs?: BoardState["projectStageConfigs"],
+  projectStageConfigs?: Readonly<Record<string, BoardProjectStageConfigShell>>,
 ): BoardState {
   return {
     cards: [],
     stages,
     nextCardNumberByProject: {},
-    ...(projectStageConfigs === undefined ? {} : { projectStageConfigs }),
+    // The stage helpers read a project's switches and overrides, which the
+    // shell carries; prompts and step bodies they never read (T3O-49).
+    ...(projectStageConfigs === undefined
+      ? {}
+      : {
+          projectStageConfigs: projectStageConfigs as unknown as BoardState["projectStageConfigs"],
+        }),
   };
 }
 
@@ -314,7 +321,7 @@ function EnvironmentBoard({
   // back to the compiled seeds until the first shell snapshot arrives.
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
   const orderedStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
-  // Each project's t3o.json (T3O-43): which stages its cards use.
+  // Each project's delta (T3O-49): which stages its cards use.
   const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
   const stageState = useMemo(
     () => stageStateOf(orderedStages, projectStageConfigs),
@@ -1806,8 +1813,10 @@ function EnvironmentBoard({
                       ? "Not this round. Doesn't count toward done."
                       : (pipelineColumnById.get(stage.stageId)?.hint ?? undefined)
                   }
-                  usedBy={pipelineColumnById.get(stage.stageId)?.usedBy}
-                  removed={pipelineColumnById.get(stage.stageId)?.kind === "removed"}
+                  coverage={pipelineColumnById.get(stage.stageId)?.coverage}
+                  partialTitle={pipelineColumnById.get(stage.stageId)?.partialTitle ?? null}
+                  removed={pipelineColumnById.get(stage.stageId)?.kind === "retired"}
+                  settingsProjectId={pipelineProjects.length === 1 ? pipelineProjects[0]!.id : null}
                   stageGoneFor={stageGoneFor}
                   headerAction={
                     deferredColumn && deferredCards.length > 0 ? (

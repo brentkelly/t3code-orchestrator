@@ -66,7 +66,6 @@ import {
   boardStages,
   boardCardMergesIntoIntegrationBranch,
   boardStageWithRole,
-  compareBoardStages,
   DEFAULT_BOARD_KEY_PREFIX,
   deriveBoardCardBlocked,
   effectiveBoardStageRole,
@@ -947,7 +946,6 @@ const makeBoardStageEventBase = Effect.fn("makeBoardStageEventBase")(function* (
 function liveBoardLabels(board: BoardState): ReadonlyArray<BoardLabel> {
   return boardLabelCatalogue(board).filter((label) => label.deletedAt === null);
 }
-
 
 /**
  * Validate and normalise a card's label set (t3o-06a). Dedupes (a card holds

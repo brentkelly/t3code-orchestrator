@@ -39,7 +39,9 @@ import {
   type BoardCardShell,
   type BoardCardThreadShell,
   type BoardLabel,
-  type BoardProjectStageConfig,
+  type BoardProjectImportCandidatesInput,
+  type BoardProjectImportInput,
+  type BoardProjectStageConfigShell,
   type BoardStageDefinition,
   type BoardStageId,
   isBoardCardScheduleDue,
@@ -73,6 +75,17 @@ import {
   deleteBoardCard,
   deleteBoardLabel,
   deleteBoardStage,
+  dismissBoardProjectImport,
+  exportBoardProjectFile,
+  getBoardProjectConfig,
+  getBoardProjectImportCandidates,
+  importBoardProjectFile,
+  resetBoardProject,
+  setBoardProjectCiEnabled,
+  setBoardProjectCiSteps,
+  setBoardProjectStageOverride,
+  setBoardProjectStageSwitch,
+  setBoardStageDefault,
   linkBoardCardThread,
   attachBoardCardFile,
   detachBoardCardFile,
@@ -113,6 +126,13 @@ import {
   type DeleteBoardCardInput,
   type DeleteBoardLabelInput,
   type DeleteBoardStageInput,
+  type DismissBoardProjectImportInput,
+  type ResetBoardProjectInput,
+  type SetBoardProjectCiEnabledInput,
+  type SetBoardProjectCiStepsInput,
+  type SetBoardProjectStageOverrideInput,
+  type SetBoardProjectStageSwitchInput,
+  type SetBoardStageDefaultInput,
   type LinkBoardCardThreadInput,
   type MoveBoardCardInput,
   type MoveBoardCardsInput,
@@ -146,6 +166,13 @@ export * from "./boardReducer.ts";
 export * from "./boardSubscription.ts";
 
 export type {
+  DismissBoardProjectImportInput,
+  ResetBoardProjectInput,
+  SetBoardProjectCiEnabledInput,
+  SetBoardProjectCiStepsInput,
+  SetBoardProjectStageOverrideInput,
+  SetBoardProjectStageSwitchInput,
+  SetBoardStageDefaultInput,
   MoveBoardCardsInput,
   SetBoardCardGroupSettingsInput,
   SetBoardCardAutomationInput,
@@ -645,9 +672,9 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }).pipe(Atom.withLabel(`environment-board-stages:${environmentId}`)),
   );
 
-  /** Each project's `t3o.json` stage config (T3O-43). Empty when no project
-      has one — every project then follows the global pipeline. */
-  const EMPTY_PROJECT_STAGE_CONFIGS: Readonly<Record<string, BoardProjectStageConfig>> = {};
+  /** Each project's delta from the global pipeline (T3O-49), shell-sized.
+      Empty when no project has one. */
+  const EMPTY_PROJECT_STAGE_CONFIGS: Readonly<Record<string, BoardProjectStageConfigShell>> = {};
   const projectStageConfigsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make(
       (get) =>
@@ -938,6 +965,51 @@ export function createBoardEnvironmentAtoms<R, ER>(
     deleteStage: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:delete-stage",
       execute: (input: DeleteBoardStageInput) => deleteBoardStage(input),
+    }),
+    // T3O-49: stage defaults and per-project config, at the settings tier.
+    setStageDefault: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-stage-default",
+      execute: (input: SetBoardStageDefaultInput) => setBoardStageDefault(input),
+    }),
+    setProjectStageSwitch: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-project-stage-switch",
+      execute: (input: SetBoardProjectStageSwitchInput) => setBoardProjectStageSwitch(input),
+    }),
+    setProjectStageOverride: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-project-stage-override",
+      execute: (input: SetBoardProjectStageOverrideInput) => setBoardProjectStageOverride(input),
+    }),
+    setProjectCiSteps: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-project-ci-steps",
+      execute: (input: SetBoardProjectCiStepsInput) => setBoardProjectCiSteps(input),
+    }),
+    setProjectCiEnabled: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-project-ci-enabled",
+      execute: (input: SetBoardProjectCiEnabledInput) => setBoardProjectCiEnabled(input),
+    }),
+    resetProject: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:reset-project",
+      execute: (input: ResetBoardProjectInput) => resetBoardProject(input),
+    }),
+    dismissProjectImport: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:dismiss-project-import",
+      execute: (input: DismissBoardProjectImportInput) => dismissBoardProjectImport(input),
+    }),
+    getProjectConfig: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:get-project-config",
+      execute: (input: { readonly projectId: ProjectId }) => getBoardProjectConfig(input),
+    }),
+    projectImportCandidates: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:project-import-candidates",
+      execute: (input: BoardProjectImportCandidatesInput) => getBoardProjectImportCandidates(input),
+    }),
+    importProjectFile: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:import-project-file",
+      execute: (input: BoardProjectImportInput) => importBoardProjectFile(input),
+    }),
+    exportProjectFile: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:export-project-file",
+      execute: (input: { readonly projectId: ProjectId }) => exportBoardProjectFile(input),
     }),
     startStageThread: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:start-stage-thread",

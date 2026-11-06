@@ -666,7 +666,7 @@ export interface BoardCardDetailViewProps {
   /** The workspace pipeline config (t3o-29), for resolving what each override
       row falls back to when this card sets nothing. */
   readonly boardSettings: BoardSettings;
-  /** The card's project's `t3o.json` overrides (T3O-43). */
+  /** The card's project's overrides (T3O-43/49). */
   readonly projectExecutionConfig?: BoardProjectExecutionConfig | null | undefined;
   /** Write this card's per-stage model overrides; null clears them. */
   readonly onSetModelOverrides: (next: BoardCardModelOverrides | null) => void;
@@ -3258,6 +3258,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               <BoardCardCiPane
                 activeThreadId={activeThreadId}
                 cardKey={card.key}
+                projectId={card.projectId}
                 ci={card.ci}
                 inCi={inCi}
                 lastOutcome={card.ciLastOutcome}

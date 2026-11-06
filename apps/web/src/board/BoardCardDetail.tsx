@@ -199,7 +199,7 @@ export function BoardCardDetail({
   const detail = useAtomValue(boardEnvironment.cardDetailValueAtom({ environmentId, cardId }));
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
   const allStages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
-  // T3O-43: the card's own project's pipeline, from its t3o.json.
+  // T3O-43/49: the card's own project's pipeline.
   const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
   const pipelineCardProjectId = detail?.card.projectId ?? null;
   const pipelineCardStage = detail?.card.stage ?? null;

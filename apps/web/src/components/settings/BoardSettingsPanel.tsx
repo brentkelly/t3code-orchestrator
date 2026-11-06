@@ -1,7 +1,7 @@
 /**
- * Settings → Board (t3o-15, redesigned after `.plans/prototype/T3
- * Settings.dc.html`). Per-project card identity, the pipeline accordion
- * (`BoardPipelineSection`), concurrency ceilings and lifecycle windows — all
+ * Settings → Board → General (t3o-15, redesigned after `.plans/prototype/T3
+ * Settings.dc.html`; split into pages by T3O-49). Per-project card identity,
+ * the import notices, concurrency ceilings and lifecycle windows — all
  * sharing the prototype's bordered-card aesthetic. Execution config and
  * project edits reach the decider / reactor, so the panel reads and writes
  * through `useBoardSettings` / `useUpdateBoardSettings` — the board server's
@@ -45,16 +45,16 @@ import {
   setBoardInstanceConcurrency,
   setBoardProjectSetting,
 } from "./BoardSettingsPanel.logic";
-import { BoardPipelineSection, NumberStepper } from "./BoardPipelineSection";
-import { BoardProjectPipelinesSection } from "./BoardProjectPipelinesSection";
+import { NumberStepper } from "./BoardPipelineSection";
+import { BoardImportNotices } from "../../board/settings/BoardImportNotice";
 import { BoardWorkerSettings } from "../../board/workers/BoardWorkerSettings";
 import { useBoardWorkers } from "../../board/workers/boardWorkersState";
 import { boardShowsWorkers } from "../../board/workers/cardWorker";
 import { WorkerConcurrencySection } from "../../board/workers/WorkerConcurrencySection";
 import { boardLocalConcurrencyDiverges } from "../../board/workers/workerConcurrency";
 import { searchableSetting } from "./settingsSearch";
-import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
-import { BoardServerSection, BoardServerStatusNotice } from "../../board/BoardServerSettings";
+import { SettingsSection } from "./settingsLayout";
+import { BoardServerSection } from "../../board/BoardServerSettings";
 import {
   useBoardEnvironment,
   useBoardServerProviders,
@@ -79,23 +79,20 @@ function useProviderInstanceIds(): ReadonlyArray<string> {
   );
 }
 
+/** Settings → Board → General (T3O-49): the board server, display, the
+    project list with its import notices, concurrency, workers and lifecycle.
+    The layout resolves the board server first. */
 export function BoardSettingsPanel() {
   const resolution = useBoardEnvironment();
   return (
-    <SettingsPageContainer>
-      {/* T3O-71: which server's board this device shows, and whether it is reachable. */}
-      <BoardServerStatusNotice className="mx-3 sm:mx-4" />
+    <>
       <BoardServerSection />
       {/* Without a reachable board server there are no settings to show or save; the sections
           would only read defaults and drop every edit. */}
       {resolution.kind === "ready" ? (
         <BoardSettingsSections environmentId={resolution.environmentId} />
-      ) : resolution.kind === "none" ? (
-        <p className="px-3 text-sm text-muted-foreground sm:px-4">
-          Connect an environment to configure its board.
-        </p>
       ) : null}
-    </SettingsPageContainer>
+    </>
   );
 }
 
@@ -108,10 +105,9 @@ function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId
   return (
     <>
       <DisplaySection board={board} update={update} />
+      {/* T3O-49: committed t3o.json files waiting to import. */}
+      <BoardImportNotices />
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
-      <BoardPipelineSection />
-      {/* T3O-43: what each project's committed t3o.json changes. */}
-      <BoardProjectPipelinesSection environmentId={environmentId} />
       <BoardConcurrencySettings
         board={board}
         environmentId={environmentId}
@@ -255,6 +251,19 @@ function ProjectRows({
               }}
             />
             <div className="flex shrink-0 items-center gap-0.5">
+              {/* T3O-49: the project's pipeline, CI and t3o.json. */}
+              <Button
+                variant="outline"
+                size="xs"
+                render={
+                  <Link
+                    to="/settings/board/projects/$projectId/$tab"
+                    params={{ projectId: project.id, tab: "pipeline" }}
+                  />
+                }
+              >
+                Pipeline & CI
+              </Button>
               <Button
                 variant="ghost"
                 size="icon-sm"

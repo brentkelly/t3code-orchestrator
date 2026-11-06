@@ -69,6 +69,7 @@ const ids = (board: BoardState, projectId: ProjectId | null) =>
   );
 
 const security = BoardStageId.make("security");
+const decodeConfig = Schema.decodeSync(BoardProjectStageConfig);
 
 describe("resolveT3oProjectFile", () => {
   it("decodes removals, additions and settings into a delta", () => {
@@ -172,7 +173,9 @@ describe("resolveT3oProjectFile", () => {
   });
 
   it("reuses a stage with the same id and label, and ignores one whose label differs", () => {
-    const board = withFile({ stages: { add: [{ id: "security", label: "Security", after: "review" }] } });
+    const board = withFile({
+      stages: { add: [{ id: "security", label: "Security", after: "review" }] },
+    });
     const again = resolve(
       {
         stages: {
@@ -195,10 +198,21 @@ describe("resolveT3oProjectFile", () => {
       ...EMPTY_BOARD_STATE,
       stages: [
         ...BOARD_SEED_STAGES,
-        { stageId: legacy, label: "QA", role: null, orderKey: "k", createdAt: NOW, updatedAt: NOW, projectId: projectA },
+        {
+          stageId: legacy,
+          label: "QA",
+          role: null,
+          orderKey: "k",
+          createdAt: NOW,
+          updatedAt: NOW,
+          projectId: projectA,
+        },
       ],
     };
-    const { delta, createStages } = resolve({ stages: { add: [{ id: "qa", label: "QA", after: "building" }] } }, board);
+    const { delta, createStages } = resolve(
+      { stages: { add: [{ id: "qa", label: "QA", after: "building" }] } },
+      board,
+    );
     expect(createStages).toEqual([]);
     expect(delta.stageSwitches).toEqual({ [legacy]: true });
   });
@@ -224,7 +238,14 @@ describe("resolveT3oProjectFile", () => {
       stages: { settings: { ci: { steps: [{ name: "Check", command: "x" }], maxFixAttempts: 1 } } },
     });
     expect(v1.delta.ci.steps).toEqual([
-      { kind: "script", id: "legacy-0", name: "Check", parallel: false, command: "x", timeoutMinutes: 30 },
+      {
+        kind: "script",
+        id: "legacy-0",
+        name: "Check",
+        parallel: false,
+        command: "x",
+        timeoutMinutes: 30,
+      },
     ]);
     expect(v1.delta.stageSwitches.ci).toBe(true);
     expect(v1.delta.overrides.ci).toEqual({ maxFixAttempts: 1 });
@@ -286,7 +307,11 @@ describe("export", () => {
     });
     const config = board.projectStageConfigs[projectA]!;
     const file = buildT3oProjectFile({ board, config });
-    expect(file).toMatchObject({ version: 2, stages: { remove: ["sprint"] }, ci: { enabled: true } });
+    expect(file).toMatchObject({
+      version: 2,
+      stages: { remove: ["sprint"] },
+      ci: { enabled: true },
+    });
     const back = resolve(JSON.parse(JSON.stringify(file)), board);
     expect(back.createStages).toEqual([]);
     expect(boardProjectDeltasEqual(back.delta, config)).toBe(true);
@@ -304,7 +329,7 @@ describe("legacy configs", () => {
       source: { path: "/repo/t3o.json", commitSha: "abc" },
       ci: { steps: [{ name: "Check", command: "x", timeoutMinutes: 30 }], active: true },
     };
-    const config = Schema.decodeSync(BoardProjectStageConfig)(legacy as never);
+    const config = decodeConfig(legacy as never);
     expect(config.stageSwitches).toEqual({ sprint: false, [legacyQa]: true, ci: true });
     expect(config.overrides).toEqual({ ci: { maxFixAttempts: 1 } });
     expect(config.ci.steps.map((step) => step.id)).toEqual(["legacy-0"]);
@@ -314,7 +339,15 @@ describe("legacy configs", () => {
       ...EMPTY_BOARD_STATE,
       stages: [
         ...BOARD_SEED_STAGES,
-        { stageId: legacyQa, label: "QA", role: null, orderKey: "k", createdAt: NOW, updatedAt: NOW, projectId: projectA },
+        {
+          stageId: legacyQa,
+          label: "QA",
+          role: null,
+          orderKey: "k",
+          createdAt: NOW,
+          updatedAt: NOW,
+          projectId: projectA,
+        },
       ],
       projectStageConfigs: { [projectA]: config },
     };
@@ -543,7 +576,11 @@ describe("resolveBoardStageExecution with a project config", () => {
         add: [{ id: "qa", label: "QA", after: "building", autoExecute: true, prompt: "QA it" }],
       },
     });
-    const exec = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, createStages[0]!.stageId, delta);
+    const exec = resolveBoardStageExecution(
+      DEFAULT_BOARD_SETTINGS,
+      createStages[0]!.stageId,
+      delta,
+    );
     expect(exec).toMatchObject({ kind: "simple", autoExecute: true, prompt: "QA it" });
   });
 });

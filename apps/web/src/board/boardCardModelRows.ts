@@ -60,7 +60,7 @@ export function boardCardModelRows(input: {
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly boardSettings: BoardSettings;
   readonly parentCard: Pick<BoardCard, "key" | "modelOverrides"> | null;
-  /** The card's project's `t3o.json` overrides (T3O-43). */
+  /** The card's project's overrides (T3O-43/49). */
   readonly projectConfig?: BoardProjectExecutionConfig | null | undefined;
 }): ReadonlyArray<BoardCardModelRowSpec> {
   const rows: BoardCardModelRowSpec[] = [];

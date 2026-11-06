@@ -1,9 +1,11 @@
 /**
- * T3o: the All projects view's Pipelines button (T3O-43) — a grid of the
- * projects in view against every stage any of them uses, marking global
- * stages, stages a project's `t3o.json` added, and stages it does not use.
+ * T3o: the All projects view's Pipelines button (T3O-43/49) — a grid of the
+ * projects in view against every stage any of them uses, marking stages on by
+ * default, stages a project switched on, and stages it does not use. Project
+ * names link to their pipeline settings.
  */
 import type { BoardStageView, ProjectIconColor, ProjectId } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import { Columns3Icon } from "lucide-react";
 import { useMemo } from "react";
 
@@ -19,14 +21,14 @@ import {
 import { projectAccent } from "./projectAccent";
 
 const CELL_CLASS: Readonly<Record<BoardPipelineCell, string>> = {
-  global: "bg-foreground/13",
-  added: "bg-foreground/34",
+  default: "bg-foreground/13",
+  switched: "bg-foreground/34",
   unused: "shadow-[inset_0_0_0_1px] shadow-foreground/12",
 };
 
 const CELL_TIP: Readonly<Record<BoardPipelineCell, string>> = {
-  global: "",
-  added: " · added in t3o.json",
+  default: "",
+  switched: " · switched on for this project",
   unused: " · not in this pipeline",
 };
 
@@ -50,8 +52,8 @@ export function BoardPipelinesButton(props: {
           <div className="flex flex-col gap-0.5">
             <span className="text-[12.5px] font-semibold text-foreground">Stages by project</span>
             <span className="text-[11.5px] leading-snug text-muted-foreground">
-              The board shows every stage a project in view uses, in pipeline order. Each project's
-              stages come from the t3o.json in its repo.
+              The board shows every stage a project in view uses, in pipeline order. Each stage has
+              a default for projects, and each project can switch it on or off in its settings.
             </span>
           </div>
           <div className="grid grid-cols-[132px_minmax(0,1fr)] items-center gap-x-2.5 gap-y-1.5">
@@ -76,11 +78,13 @@ export function BoardPipelinesButton(props: {
             ))}
           </div>
           <div className="flex items-center gap-3 border-t border-border pt-2 text-[11px] text-muted-foreground">
-            <Legend cell="global" label="Global stage" />
-            <Legend cell="added" label="Added by the project" />
+            <Legend cell="default" label="On by default" />
+            <Legend cell="switched" label="Switched on for the project" />
             <Legend cell="unused" label="Not used" />
             <span className="flex-1" />
-            <span>Settings → Board</span>
+            <Link className="underline-offset-2 hover:underline" to="/settings/board/pipeline">
+              Pipeline settings
+            </Link>
           </div>
         </div>
       </PopoverPopup>
@@ -103,7 +107,13 @@ function PipelineRow(props: {
             projectAccent(props.project.id, props.accentName).dot,
           )}
         />
-        <span className="truncate">{props.project.title}</span>
+        <Link
+          className="truncate underline-offset-2 hover:underline"
+          params={{ projectId: props.project.id, tab: "pipeline" }}
+          to="/settings/board/projects/$projectId/$tab"
+        >
+          {props.project.title}
+        </Link>
       </span>
       <div className="flex gap-[3px]">
         {props.cells.map((cell, index) => (

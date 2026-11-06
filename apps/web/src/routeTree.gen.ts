@@ -53,6 +53,9 @@ import { Route as ChatSettingsAccessRouteImport } from './routes/_chat.settings.
 import { Route as ChatSettingsAboutRouteImport } from './routes/_chat.settings.about'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as ChatSettingsBoardIndexRouteImport } from './routes/_chat.settings.board.index'
+import { Route as ChatSettingsBoardPipelineRouteImport } from './routes/_chat.settings.board.pipeline'
+import { Route as ChatSettingsBoardProjectsProjectIdTabRouteImport } from './routes/_chat.settings.board.projects.$projectId.$tab'
 
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
@@ -278,6 +281,23 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const ChatSettingsBoardIndexRoute = ChatSettingsBoardIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ChatSettingsBoardRoute,
+} as any)
+const ChatSettingsBoardPipelineRoute =
+  ChatSettingsBoardPipelineRouteImport.update({
+    id: '/pipeline',
+    path: '/pipeline',
+    getParentRoute: () => ChatSettingsBoardRoute,
+  } as any)
+const ChatSettingsBoardProjectsProjectIdTabRoute =
+  ChatSettingsBoardProjectsProjectIdTabRouteImport.update({
+    id: '/projects/$projectId/$tab',
+    path: '/projects/$projectId/$tab',
+    getParentRoute: () => ChatSettingsBoardRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
@@ -301,7 +321,7 @@ export interface FileRoutesByFullPath {
   '/settings/appearance': typeof ChatSettingsAppearanceRoute
   '/settings/archived': typeof ChatSettingsArchivedRoute
   '/settings/beta': typeof ChatSettingsBetaRoute
-  '/settings/board': typeof ChatSettingsBoardRoute
+  '/settings/board': typeof ChatSettingsBoardRouteWithChildren
   '/settings/browser': typeof ChatSettingsBrowserRoute
   '/settings/chat': typeof ChatSettingsChatRoute
   '/settings/connections': typeof ChatSettingsConnectionsRoute
@@ -323,6 +343,9 @@ export interface FileRoutesByFullPath {
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/settings/board/pipeline': typeof ChatSettingsBoardPipelineRoute
+  '/settings/board/': typeof ChatSettingsBoardIndexRoute
+  '/settings/board/projects/$projectId/$tab': typeof ChatSettingsBoardProjectsProjectIdTabRoute
 }
 export interface FileRoutesByTo {
   '/board': typeof BoardRoute
@@ -346,7 +369,6 @@ export interface FileRoutesByTo {
   '/settings/appearance': typeof ChatSettingsAppearanceRoute
   '/settings/archived': typeof ChatSettingsArchivedRoute
   '/settings/beta': typeof ChatSettingsBetaRoute
-  '/settings/board': typeof ChatSettingsBoardRoute
   '/settings/browser': typeof ChatSettingsBrowserRoute
   '/settings/chat': typeof ChatSettingsChatRoute
   '/settings/connections': typeof ChatSettingsConnectionsRoute
@@ -368,6 +390,9 @@ export interface FileRoutesByTo {
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/settings/board/pipeline': typeof ChatSettingsBoardPipelineRoute
+  '/settings/board': typeof ChatSettingsBoardIndexRoute
+  '/settings/board/projects/$projectId/$tab': typeof ChatSettingsBoardProjectsProjectIdTabRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -393,7 +418,7 @@ export interface FileRoutesById {
   '/_chat/settings/appearance': typeof ChatSettingsAppearanceRoute
   '/_chat/settings/archived': typeof ChatSettingsArchivedRoute
   '/_chat/settings/beta': typeof ChatSettingsBetaRoute
-  '/_chat/settings/board': typeof ChatSettingsBoardRoute
+  '/_chat/settings/board': typeof ChatSettingsBoardRouteWithChildren
   '/_chat/settings/browser': typeof ChatSettingsBrowserRoute
   '/_chat/settings/chat': typeof ChatSettingsChatRoute
   '/_chat/settings/connections': typeof ChatSettingsConnectionsRoute
@@ -415,6 +440,9 @@ export interface FileRoutesById {
   '/_chat/settings/storage': typeof ChatSettingsStorageRoute
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/_chat/settings/board/pipeline': typeof ChatSettingsBoardPipelineRoute
+  '/_chat/settings/board/': typeof ChatSettingsBoardIndexRoute
+  '/_chat/settings/board/projects/$projectId/$tab': typeof ChatSettingsBoardProjectsProjectIdTabRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -462,6 +490,9 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/settings/threads'
     | '/settings/worktrees'
+    | '/settings/board/pipeline'
+    | '/settings/board/'
+    | '/settings/board/projects/$projectId/$tab'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/board'
@@ -485,7 +516,6 @@ export interface FileRouteTypes {
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/beta'
-    | '/settings/board'
     | '/settings/browser'
     | '/settings/chat'
     | '/settings/connections'
@@ -507,6 +537,9 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/settings/threads'
     | '/settings/worktrees'
+    | '/settings/board/pipeline'
+    | '/settings/board'
+    | '/settings/board/projects/$projectId/$tab'
   id:
     | '__root__'
     | '/_chat'
@@ -553,6 +586,9 @@ export interface FileRouteTypes {
     | '/_chat/settings/storage'
     | '/_chat/settings/threads'
     | '/_chat/settings/worktrees'
+    | '/_chat/settings/board/pipeline'
+    | '/_chat/settings/board/'
+    | '/_chat/settings/board/projects/$projectId/$tab'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -878,8 +914,45 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/settings/board/': {
+      id: '/_chat/settings/board/'
+      path: '/'
+      fullPath: '/settings/board/'
+      preLoaderRoute: typeof ChatSettingsBoardIndexRouteImport
+      parentRoute: typeof ChatSettingsBoardRoute
+    }
+    '/_chat/settings/board/pipeline': {
+      id: '/_chat/settings/board/pipeline'
+      path: '/pipeline'
+      fullPath: '/settings/board/pipeline'
+      preLoaderRoute: typeof ChatSettingsBoardPipelineRouteImport
+      parentRoute: typeof ChatSettingsBoardRoute
+    }
+    '/_chat/settings/board/projects/$projectId/$tab': {
+      id: '/_chat/settings/board/projects/$projectId/$tab'
+      path: '/projects/$projectId/$tab'
+      fullPath: '/settings/board/projects/$projectId/$tab'
+      preLoaderRoute: typeof ChatSettingsBoardProjectsProjectIdTabRouteImport
+      parentRoute: typeof ChatSettingsBoardRoute
+    }
   }
 }
+
+interface ChatSettingsBoardRouteChildren {
+  ChatSettingsBoardPipelineRoute: typeof ChatSettingsBoardPipelineRoute
+  ChatSettingsBoardIndexRoute: typeof ChatSettingsBoardIndexRoute
+  ChatSettingsBoardProjectsProjectIdTabRoute: typeof ChatSettingsBoardProjectsProjectIdTabRoute
+}
+
+const ChatSettingsBoardRouteChildren: ChatSettingsBoardRouteChildren = {
+  ChatSettingsBoardPipelineRoute: ChatSettingsBoardPipelineRoute,
+  ChatSettingsBoardIndexRoute: ChatSettingsBoardIndexRoute,
+  ChatSettingsBoardProjectsProjectIdTabRoute:
+    ChatSettingsBoardProjectsProjectIdTabRoute,
+}
+
+const ChatSettingsBoardRouteWithChildren =
+  ChatSettingsBoardRoute._addFileChildren(ChatSettingsBoardRouteChildren)
 
 interface ChatSettingsRouteChildren {
   ChatSettingsAboutRoute: typeof ChatSettingsAboutRoute
@@ -887,7 +960,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsAppearanceRoute: typeof ChatSettingsAppearanceRoute
   ChatSettingsArchivedRoute: typeof ChatSettingsArchivedRoute
   ChatSettingsBetaRoute: typeof ChatSettingsBetaRoute
-  ChatSettingsBoardRoute: typeof ChatSettingsBoardRoute
+  ChatSettingsBoardRoute: typeof ChatSettingsBoardRouteWithChildren
   ChatSettingsBrowserRoute: typeof ChatSettingsBrowserRoute
   ChatSettingsChatRoute: typeof ChatSettingsChatRoute
   ChatSettingsConnectionsRoute: typeof ChatSettingsConnectionsRoute
@@ -917,7 +990,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsAppearanceRoute: ChatSettingsAppearanceRoute,
   ChatSettingsArchivedRoute: ChatSettingsArchivedRoute,
   ChatSettingsBetaRoute: ChatSettingsBetaRoute,
-  ChatSettingsBoardRoute: ChatSettingsBoardRoute,
+  ChatSettingsBoardRoute: ChatSettingsBoardRouteWithChildren,
   ChatSettingsBrowserRoute: ChatSettingsBrowserRoute,
   ChatSettingsChatRoute: ChatSettingsChatRoute,
   ChatSettingsConnectionsRoute: ChatSettingsConnectionsRoute,
