@@ -5,13 +5,8 @@ import { findHomeProjectScope, type HomeProjectScope } from "../home/homeThreadL
 import { getProjectScopeSelectionTarget } from "../threads/new-task-project-selection";
 
 /**
- * Home's selected project key is a scope key from `buildHomeProjectScopes`
- * (repository grouping, or `environmentId:` plus a workspace path). Board
- * cards are keyed by `project.id`. Map the Home filter onto the project ids
- * that belong to this environment in that scope.
- *
- * `null` selected key → unscoped (`null`). A key that matches no scope →
- * empty list, so the board does not fall through to every project.
+ * Map Home's scope key to this environment's project ids.
+ * Null key is unscoped; an unmatched key is empty, never every project.
  */
 export function boardProjectIdsForHomeScope(input: {
   readonly scopes: ReadonlyArray<HomeProjectScope>;
@@ -27,10 +22,8 @@ export function boardProjectIdsForHomeScope(input: {
 }
 
 /**
- * The project a new Board card is created on. Unscoped Home uses the first
- * project on this environment. A selected scope uses Home's picker target
- * (`getProjectScopeSelectionTarget`) so a repository group with several
- * checkouts matches the filter chip, not `props.projects` order.
+ * New-card project: unscoped Home uses this environment's first project;
+ * a selected scope uses Home's picker target on this connected environment.
  */
 export function boardCreateProjectForHomeScope(input: {
   readonly scopes: ReadonlyArray<HomeProjectScope>;
@@ -43,7 +36,11 @@ export function boardCreateProjectForHomeScope(input: {
   }
   const scope = findHomeProjectScope(input.scopes, input.selectedProjectKey);
   if (scope === null) return null;
-  const target = getProjectScopeSelectionTarget(scope, input.environmentId);
+  const target = getProjectScopeSelectionTarget(
+    scope,
+    input.environmentId,
+    new Set([input.environmentId]),
+  );
   return target.environmentId === input.environmentId ? target : null;
 }
 
