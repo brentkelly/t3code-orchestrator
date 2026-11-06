@@ -320,7 +320,11 @@ export function HomeRouteScreen() {
             <EmptyState
               variant="plain"
               title="No board on this server"
-              detail="Pair a T3o server to see the Board."
+              detail={
+                selectedEnvironmentId !== null && !boardCapableIds.has(selectedEnvironmentId)
+                  ? "The Home filter is a server without a board."
+                  : "Pair a T3o server to see the Board."
+              }
             />
           ) : (
             <BoardHomeScreen
@@ -334,10 +338,12 @@ export function HomeRouteScreen() {
               onEnvironmentChange={(environmentId: EnvironmentId) =>
                 setSelectedEnvironmentId(environmentId)
               }
+              selectedEnvironmentId={selectedEnvironmentId}
               projects={projects}
               selectedProjectKey={selectedProjectKey}
               projectGroupingMode={listOptions.projectGroupingMode}
               onProjectChange={setSelectedProjectKey}
+              searchQuery={searchQuery}
               createRequested={createRequested}
               onCreateHandled={() => setCreateRequested(false)}
             />

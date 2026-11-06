@@ -8,8 +8,12 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardPagerIndexForStageKey,
   boardPagerScrollIndex,
+  boardPagerShouldScroll,
+  boardPagerStageKey,
   cardsInStage,
+  cardsMatchingBoardQuery,
   liveTopLevelBoardCards,
   liveTopLevelBoardCardsWithPlanProgress,
 } from "./boardStageColumns";
@@ -165,6 +169,90 @@ describe("boardPagerScrollIndex", () => {
         stages,
       }),
     ).toBe(stages.findIndex((stage) => stage.stageId === ids.building));
+  });
+
+  it("keeps the same stage key when the list is a new array of the same ids", () => {
+    const copy = stages.map((stage) => ({ stageId: stage.stageId }));
+    expect(boardPagerStageKey(copy)).toBe(boardPagerStageKey(stages));
+  });
+
+  it("resolves the same index from the stage key as from the stage list", () => {
+    const fromList = boardPagerScrollIndex({
+      boardReady: true,
+      width: 390,
+      resolvedStageId: ids.building,
+      stages,
+    });
+    const fromKey = boardPagerIndexForStageKey({
+      boardReady: true,
+      width: 390,
+      resolvedStageId: ids.building,
+      stageKey: boardPagerStageKey(stages),
+    });
+    expect(fromKey).toBe(fromList);
+  });
+
+  it("does not resync when the page index and width are unchanged", () => {
+    expect(
+      boardPagerShouldScroll({
+        index: 3,
+        lastIndex: 3,
+        width: 390,
+        lastWidth: 390,
+      }),
+    ).toBe(false);
+  });
+
+  it("resyncs when the page width changes", () => {
+    expect(
+      boardPagerShouldScroll({
+        index: 3,
+        lastIndex: 3,
+        width: 844,
+        lastWidth: 390,
+      }),
+    ).toBe(true);
+  });
+
+  it("resyncs when the resolved stage moves", () => {
+    expect(
+      boardPagerShouldScroll({
+        index: 4,
+        lastIndex: 3,
+        width: 390,
+        lastWidth: 390,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not scroll while the pager is not ready", () => {
+    expect(
+      boardPagerShouldScroll({
+        index: null,
+        lastIndex: null,
+        width: 390,
+        lastWidth: 0,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("cardsMatchingBoardQuery", () => {
+  it("returns the same list for an empty query", () => {
+    const cards = [
+      shell({ cardId: "a" as BoardCardId, stage: ids.backlog, title: "Nav", key: "T3O-1" }),
+    ];
+    expect(cardsMatchingBoardQuery(cards, "   ")).toBe(cards);
+  });
+
+  it("matches title and key case-insensitively", () => {
+    const cards = [
+      shell({ cardId: "a" as BoardCardId, stage: ids.backlog, title: "Nav bar", key: "T3O-1" }),
+      shell({ cardId: "b" as BoardCardId, stage: ids.sprint, title: "Signing", key: "T3O-18" }),
+      shell({ cardId: "c" as BoardCardId, stage: ids.done, title: "Other", key: "T3O-2" }),
+    ];
+    expect(cardsMatchingBoardQuery(cards, "NAV").map((card) => card.cardId)).toEqual(["a"]);
+    expect(cardsMatchingBoardQuery(cards, "t3o-18").map((card) => card.cardId)).toEqual(["b"]);
   });
 });
 

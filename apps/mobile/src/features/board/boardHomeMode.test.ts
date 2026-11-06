@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCapableEnvironmentIds,
+  boardShouldShowEnvironmentLabel,
   pickBoardEnvironmentId,
   resolveHomeMode,
   sanitizeHomeMode,
@@ -60,7 +61,7 @@ describe("pickBoardEnvironmentId", () => {
     ).toBe("b");
   });
 
-  it("falls back to the first capable environment when the filter is all or upstream", () => {
+  it("falls back to the first capable environment when the filter is all servers", () => {
     expect(
       pickBoardEnvironmentId({
         selectedEnvironmentId: null,
@@ -68,13 +69,16 @@ describe("pickBoardEnvironmentId", () => {
         boardCapableIds: new Set(["b", "c"]),
       }),
     ).toBe("b");
+  });
+
+  it("does not substitute another server when the filter is a non-board environment", () => {
     expect(
       pickBoardEnvironmentId({
         selectedEnvironmentId: "a",
         environments,
         boardCapableIds: new Set(["c"]),
       }),
-    ).toBe("c");
+    ).toBeNull();
   });
 
   it("returns null when no environment advertises a board", () => {
@@ -85,5 +89,25 @@ describe("pickBoardEnvironmentId", () => {
         boardCapableIds: new Set(),
       }),
     ).toBeNull();
+  });
+});
+
+describe("boardShouldShowEnvironmentLabel", () => {
+  it("hides the host name when the Home filter is that same server", () => {
+    expect(
+      boardShouldShowEnvironmentLabel({
+        boardEnvironmentId: "t3o",
+        selectedEnvironmentId: "t3o",
+      }),
+    ).toBe(false);
+  });
+
+  it("shows the host name when the Home filter is all servers", () => {
+    expect(
+      boardShouldShowEnvironmentLabel({
+        boardEnvironmentId: "t3o",
+        selectedEnvironmentId: null,
+      }),
+    ).toBe(true);
   });
 });
