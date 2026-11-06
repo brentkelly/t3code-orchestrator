@@ -12,10 +12,7 @@ export type BoardMergeHold = {
 };
 
 export function boardMergeHold(
-  card:
-    | (Pick<BoardCardShell, "stepConflictFix"> & Partial<Pick<BoardCardShell, "stepChecksFix">>)
-    | null
-    | undefined,
+  card: Partial<Pick<BoardCardShell, "stepConflictFix" | "stepChecksFix">> | null | undefined,
 ): BoardMergeHold | null {
   if (card?.stepChecksFix === true) {
     return { label: "Fixing CI", mergeDisabledReason: "Fixing CI…" };

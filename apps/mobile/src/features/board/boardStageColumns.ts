@@ -36,6 +36,13 @@ export function liveTopLevelBoardCards(
   );
 }
 
+/** Live children on a parent's detail — archived ones stay off the phone list. */
+export function boardLiveChildren<T extends { readonly archivedAt: string | null }>(
+  children: ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  return children.filter((child) => child.archivedAt === null);
+}
+
 /** Live top-level cards after folding children into each parent's plan pips. */
 export function liveTopLevelBoardCardsWithPlanProgress(
   cards: ReadonlyArray<BoardCardShell>,

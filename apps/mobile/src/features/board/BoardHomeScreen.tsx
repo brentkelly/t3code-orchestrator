@@ -4,6 +4,9 @@ import {
   BOARD_SEED_STAGES,
   BoardCardId,
   EnvironmentId,
+  deriveBoardCardChildAttention,
+  deriveBoardCardChildRunning,
+  type BoardCardChildAttention,
   type BoardCardShell,
   type BoardStageDefinition,
   type BoardStageId,
@@ -93,6 +96,11 @@ export function BoardHomeScreen(props: {
     () => liveTopLevelBoardCardsWithPlanProgress(cards, projectIds, stages),
     [cards, projectIds, stages],
   );
+  const childAttentionByParent = useMemo(
+    () => deriveBoardCardChildAttention({ cards, stages }),
+    [cards, stages],
+  );
+  const childRunningByParent = useMemo(() => deriveBoardCardChildRunning({ cards }), [cards]);
   const visibleCards = useMemo(
     () => cardsMatchingBoardQuery(liveCards, props.searchQuery),
     [liveCards, props.searchQuery],
@@ -286,6 +294,8 @@ export function BoardHomeScreen(props: {
             <StageCardList
               cards={cardsInStage(visibleCards, stage.stageId)}
               stages={stages}
+              childAttentionByParent={childAttentionByParent}
+              childRunningByParent={childRunningByParent}
               emptyLabel={stage.label}
               searchQuery={props.searchQuery}
               onOpen={(cardId) =>
@@ -314,6 +324,8 @@ export function BoardHomeScreen(props: {
 function StageCardList(props: {
   readonly cards: ReadonlyArray<BoardCardShell>;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
+  readonly childAttentionByParent: ReadonlyMap<BoardCardId, BoardCardChildAttention>;
+  readonly childRunningByParent: ReadonlyMap<BoardCardId, number>;
   readonly emptyLabel: string;
   readonly searchQuery: string;
   readonly onOpen: (cardId: BoardCardId) => void;
@@ -339,7 +351,12 @@ function StageCardList(props: {
       data={props.cards}
       keyExtractor={(card) => card.cardId}
       renderItem={({ item }) => {
-        const tone = boardCardStatus({ card: item, stages: props.stages });
+        const tone = boardCardStatus({
+          card: item,
+          stages: props.stages,
+          childAttention: props.childAttentionByParent.get(item.cardId),
+          childRunning: props.childRunningByParent.get(item.cardId),
+        });
         return (
           <RowPressable
             accessibilityRole="button"
