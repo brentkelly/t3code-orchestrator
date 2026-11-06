@@ -36,16 +36,23 @@ function normalizePatch(
     if (value === undefined || !allowed.has(key)) continue;
     const base = global[key];
     if (typeof value === "object" && value !== null && !Array.isArray(value) && key !== "model") {
-      const nested = typeof base === "object" && base !== null ? (base as Record<string, unknown>) : {};
+      const nested =
+        typeof base === "object" && base !== null ? (base as Record<string, unknown>) : {};
       const inner: Record<string, unknown> = {};
       for (const [innerKey, innerValue] of Object.entries(value as Record<string, unknown>)) {
         if (innerValue === undefined) continue;
-        if (typeof innerValue === "object" && innerValue !== null && !Array.isArray(innerValue) && innerKey !== "model") {
+        if (
+          typeof innerValue === "object" &&
+          innerValue !== null &&
+          !Array.isArray(innerValue) &&
+          innerKey !== "model"
+        ) {
           const deeper = (nested[innerKey] ?? {}) as Record<string, unknown>;
           const kept = Object.fromEntries(
             Object.entries(innerValue as Record<string, unknown>).filter(
               ([leaf, leafValue]) =>
-                leafValue !== undefined && (leaf === PROMPT_KEY || !sameValue(leafValue, deeper[leaf])),
+                leafValue !== undefined &&
+                (leaf === PROMPT_KEY || !sameValue(leafValue, deeper[leaf])),
             ),
           );
           if (Object.keys(kept).length > 0) inner[innerKey] = kept;
@@ -93,7 +100,11 @@ export function normalizeBoardProjectDelta<D extends BoardProjectStageDelta>(inp
       string,
       unknown
     >;
-    const normalized = normalizePatch(patch, global, new Set(BOARD_STAGE_EXECUTION_PATCH_KEYS[kind]));
+    const normalized = normalizePatch(
+      patch,
+      global,
+      new Set(BOARD_STAGE_EXECUTION_PATCH_KEYS[kind]),
+    );
     if (Object.keys(normalized).length > 0) overrides[stageId] = normalized;
   }
   return { ...input.delta, stageSwitches, overrides };
@@ -127,7 +138,11 @@ export function boardProjectDeltasEqual(
 export function boardProjectDeltaNewTexts(
   current: BoardProjectStageDelta,
   next: BoardProjectStageDelta,
-): ReadonlyArray<{ readonly where: string; readonly kind: "command" | "prompt"; readonly text: string }> {
+): ReadonlyArray<{
+  readonly where: string;
+  readonly kind: "command" | "prompt";
+  readonly text: string;
+}> {
   const out: Array<{ where: string; kind: "command" | "prompt"; text: string }> = [];
   const known = new Set<string>();
   for (const step of current.ci.steps) {

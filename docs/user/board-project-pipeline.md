@@ -66,7 +66,9 @@ project's checkout on the board's own server.
   "version": 2,
   "stages": {
     "remove": ["sprint"],
-    "add": [{ "id": "security", "label": "Security review", "after": "review", "autoExecute": true }],
+    "add": [
+      { "id": "security", "label": "Security review", "after": "review", "autoExecute": true }
+    ],
     "settings": { "review": { "rounds": 3 } }
   },
   "ci": {

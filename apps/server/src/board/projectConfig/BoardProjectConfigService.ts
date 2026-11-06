@@ -60,10 +60,8 @@ export interface BoardProjectConfigServiceShape {
   ) => Effect.Effect<BoardProjectExportResult, BoardSettingsCommandError>;
 }
 
-
 /** A committed file people read and diff, so it is indented. */
-const encodePrettyJson = (value: unknown) =>
-  JSON.stringify(value, null, 2);
+const encodePrettyJson = (value: unknown) => JSON.stringify(value, null, 2);
 
 const toSettingsError = (cause: { readonly message: string }) =>
   new BoardSettingsCommandError({
@@ -72,8 +70,7 @@ const toSettingsError = (cause: { readonly message: string }) =>
       : "detail" in cause
         ? "refused"
         : "internal",
-    message:
-      "detail" in cause && typeof cause.detail === "string" ? cause.detail : cause.message,
+    message: "detail" in cause && typeof cause.detail === "string" ? cause.detail : cause.message,
     cause,
   });
 
@@ -104,9 +101,17 @@ export const make = Effect.gen(function* () {
         const normalized = normalizeBoardProjectDelta({
           board,
           settings: yield* settings,
-          delta: { stageSwitches: {}, overrides: { [command.stageId]: command.patch }, ci: { steps: [] } },
+          delta: {
+            stageSwitches: {},
+            overrides: { [command.stageId]: command.patch },
+            ci: { steps: [] },
+          },
         });
-        return yield* send({ ...command, actor, patch: normalized.overrides[command.stageId] ?? null });
+        return yield* send({
+          ...command,
+          actor,
+          patch: normalized.overrides[command.stageId] ?? null,
+        });
       }
       return yield* send({ ...command, actor } as BoardCommand);
     });
@@ -219,7 +224,9 @@ export const make = Effect.gen(function* () {
       const next = resolveRead(board, yield* settings, input.projectId, read, now);
       const result = yield* send({
         type: "board.project.import-file",
-        commandId: CommandId.make(`project-import:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`),
+        commandId: CommandId.make(
+          `project-import:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`,
+        ),
         projectId: input.projectId,
         blobSha: read.blobSha,
         delta: next.delta,
@@ -245,7 +252,9 @@ export const make = Effect.gen(function* () {
       if (written.blobSha !== null) {
         yield* send({
           type: "board.project.dismiss-import",
-          commandId: CommandId.make(`project-export:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`),
+          commandId: CommandId.make(
+            `project-export:${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`,
+          ),
           projectId,
           blobSha: written.blobSha,
           actor,

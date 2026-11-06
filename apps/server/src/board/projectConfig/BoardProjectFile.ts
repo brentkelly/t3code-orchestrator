@@ -111,7 +111,12 @@ export const make = Effect.gen(function* () {
         asOfLastFetch = false;
       }
     }
-    const blobSha = yield* run(root, ["rev-parse", "--verify", "--quiet", `${ref}:${T3O_PROJECT_FILE_NAME}`]);
+    const blobSha = yield* run(root, [
+      "rev-parse",
+      "--verify",
+      "--quiet",
+      `${ref}:${T3O_PROJECT_FILE_NAME}`,
+    ]);
     if (blobSha === null) return { kind: "none", asOfLastFetch } as const;
     const text = yield* git
       .execute({
@@ -126,7 +131,10 @@ export const make = Effect.gen(function* () {
         Effect.catchCause(() => Effect.succeed(null)),
       );
     if (text === null) {
-      return { kind: "unavailable", reason: `${T3O_PROJECT_FILE_NAME} could not be read.` } as const;
+      return {
+        kind: "unavailable",
+        reason: `${T3O_PROJECT_FILE_NAME} could not be read.`,
+      } as const;
     }
     const parsed = parseT3oProjectFile(text);
     return {

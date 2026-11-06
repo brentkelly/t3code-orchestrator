@@ -111,7 +111,8 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
   BoardCommandInvariantError | PlatformError.PlatformError,
   Crypto.Crypto
 > {
-  const current = boardProjectStageConfig(board, command.projectId) ?? EMPTY_BOARD_PROJECT_STAGE_CONFIG;
+  const current =
+    boardProjectStageConfig(board, command.projectId) ?? EMPTY_BOARD_PROJECT_STAGE_CONFIG;
   const expected = "expectedConfigVersion" in command ? command.expectedConfigVersion : undefined;
   if (expected !== undefined && expected !== current.version) {
     return yield* refuse(command, BOARD_CONFIG_VERSION_MISMATCH);
@@ -125,18 +126,27 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
   switch (command.type) {
     case "board.project.set-stage-switch": {
       const stage = boardStageById(board, command.stageId);
-      if (stage === null) return yield* refuse(command, `Stage '${command.stageId}' does not exist.`);
+      if (stage === null)
+        return yield* refuse(command, `Stage '${command.stageId}' does not exist.`);
       if (!isBoardStageSwitchable(board, stage)) {
-        return yield* refuse(command, `${stage.label} is on for every project and can't be switched off.`);
+        return yield* refuse(
+          command,
+          `${stage.label} is on for every project and can't be switched off.`,
+        );
       }
       return yield* emit(
-        nextConfig(current, { stageSwitches: setSwitch(current.stageSwitches, stage, command.on) }, changedBy),
+        nextConfig(
+          current,
+          { stageSwitches: setSwitch(current.stageSwitches, stage, command.on) },
+          changedBy,
+        ),
         stage.stageId === BOARD_SEED_STAGE_IDS.ci ? "ci-enabled" : "switch",
       );
     }
     case "board.project.set-stage-override": {
       const stage = boardStageById(board, command.stageId);
-      if (stage === null) return yield* refuse(command, `Stage '${command.stageId}' does not exist.`);
+      if (stage === null)
+        return yield* refuse(command, `Stage '${command.stageId}' does not exist.`);
       const overrides =
         command.patch === null || Object.keys(command.patch).length === 0
           ? withoutKey(current.overrides, stage.stageId)
@@ -148,13 +158,20 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
         scriptOnly: !BOARD_CI_RUNNABLE_STEP_KINDS.has("agent"),
       });
       if (refusal !== null) return yield* refuse(command, refusal);
-      return yield* emit(nextConfig(current, { ci: { steps: command.steps } }, changedBy), "ci-steps");
+      return yield* emit(
+        nextConfig(current, { ci: { steps: command.steps } }, changedBy),
+        "ci-steps",
+      );
     }
     case "board.project.set-ci-enabled": {
       const ci = boardStageById(board, BOARD_SEED_STAGE_IDS.ci);
       if (ci === null) return yield* refuse(command, "This board has no CI stage.");
       return yield* emit(
-        nextConfig(current, { stageSwitches: setSwitch(current.stageSwitches, ci, command.on) }, changedBy),
+        nextConfig(
+          current,
+          { stageSwitches: setSwitch(current.stageSwitches, ci, command.on) },
+          changedBy,
+        ),
         "ci-enabled",
       );
     }
@@ -181,7 +198,8 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
         if (boardStageById(board, stage.stageId) !== null) {
           return yield* refuse(command, `Stage '${stage.stageId}' already exists; check again.`);
         }
-        if (stage.role !== null) return yield* refuse(command, "An import can't create a role stage.");
+        if (stage.role !== null)
+          return yield* refuse(command, "An import can't create a role stage.");
       }
       const violation = boardStageOrderViolation([...boardStages(board), ...command.createStages]);
       if (violation !== null) return yield* refuse(command, `Can't import: ${violation}.`);
@@ -199,11 +217,17 @@ export const decideProjectConfigCommand = Effect.fn("decideProjectConfigCommand"
           payload: { stageId: stage.stageId, stage },
         });
       }
-      const nextBoard: BoardState = { ...board, stages: [...boardStages(board), ...command.createStages] };
+      const nextBoard: BoardState = {
+        ...board,
+        stages: [...boardStages(board), ...command.createStages],
+      };
       for (const stageId of Object.keys(command.delta.stageSwitches)) {
         const stage = boardStageById(nextBoard, stageId as BoardStageDefinition["stageId"]);
         if (stage === null || !isBoardStageSwitchable(nextBoard, stage)) {
-          return yield* refuse(command, `The import switches '${stageId}', which can't be switched.`);
+          return yield* refuse(
+            command,
+            `The import switches '${stageId}', which can't be switched.`,
+          );
         }
       }
       const refusal = boardCiStepsRefusal(command.delta.ci.steps, {
@@ -263,7 +287,9 @@ export const pruneDeletedStage = Effect.fn("pruneDeletedStage")(function* (
 /** The config a stage made for one project starts with there: switched on. */
 export const switchOnForProject = Effect.fn("switchOnForProject")(function* (
   board: BoardState,
-  command: Pick<BoardCommand, "commandId" | "createdAt"> & { readonly actor?: BoardActivityActor | undefined },
+  command: Pick<BoardCommand, "commandId" | "createdAt"> & {
+    readonly actor?: BoardActivityActor | undefined;
+  },
   projectId: ProjectId,
   stage: BoardStageDefinition,
 ) {

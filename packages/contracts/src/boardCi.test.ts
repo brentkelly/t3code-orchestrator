@@ -104,8 +104,22 @@ describe("CI activeness", () => {
     expect(isBoardCiActive(board, null)).toBe(false);
     expect(configFrom(ciFile).stageSwitches).toEqual({ ci: true });
     expect(configFrom(ciFile).ci.steps).toEqual([
-      { kind: "script", id: "legacy-0", name: "Lint", parallel: false, command: "vp lint", timeoutMinutes: 30 },
-      { kind: "script", id: "legacy-1", name: "Test", parallel: false, command: "vp test run", timeoutMinutes: 10 },
+      {
+        kind: "script",
+        id: "legacy-0",
+        name: "Lint",
+        parallel: false,
+        command: "vp lint",
+        timeoutMinutes: 30,
+      },
+      {
+        kind: "script",
+        id: "legacy-1",
+        name: "Test",
+        parallel: false,
+        command: "vp test run",
+        timeoutMinutes: 10,
+      },
     ]);
   });
 
