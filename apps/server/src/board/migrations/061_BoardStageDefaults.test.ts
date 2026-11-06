@@ -24,13 +24,14 @@ it.effect("adds the columns and puts every stage in one valid order", () =>
       yield* step;
     }
     const at = "2026-01-01T00:00:00.000Z";
-    // Two T3O-43 project stages added after review share a key, and one was
+    // Three T3O-43 project stages added after review share a key, and one was
     // added after CI.
     yield* sql`
       INSERT INTO board_stages (stage_id, label, role, order_key, created_at, updated_at, project_id)
       VALUES
         ('p1:qa', 'QA', NULL, 'lm', ${at}, ${at}, 'p1'),
         ('p2:qa', 'QA', NULL, 'lm', ${at}, ${at}, 'p2'),
+        ('p3:qa', 'QA', NULL, 'lm', ${at}, ${at}, 'p3'),
         ('p1:late', 'Late', NULL, 'mm', ${at}, ${at}, 'p1')
     `;
 
@@ -51,6 +52,7 @@ it.effect("adds the columns and puts every stage in one valid order", () =>
         "review",
         "p1:qa",
         "p2:qa",
+        "p3:qa",
         "p1:late",
         "ci",
         "merge",

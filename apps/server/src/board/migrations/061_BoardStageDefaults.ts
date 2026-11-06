@@ -49,12 +49,15 @@ export default Effect.gen(function* () {
   const rekey = (stageId: string, orderKey: string) =>
     sql`UPDATE board_stages SET order_key = ${orderKey} WHERE stage_id = ${stageId}`;
 
-  // Duplicate keys: every row after the first takes a key just above it.
+  // Duplicate keys: every row after the first takes a key just above the one
+  // before it (already re-keyed in a run of three or more), below the next
+  // distinct key.
   for (let index = 1; index < rows.length; index++) {
     const previous = rows[index - 1]!;
     const row = rows[index]!;
-    if (row.orderKey !== previous.orderKey) continue;
-    const key = boardOrderKeyBetween(previous.orderKey, rows[index + 1]?.orderKey ?? null);
+    if (row.orderKey > previous.orderKey) continue;
+    const upper = rows.slice(index + 1).find((next) => next.orderKey > previous.orderKey);
+    const key = boardOrderKeyBetween(previous.orderKey, upper?.orderKey ?? null);
     if (key === null) continue;
     yield* rekey(row.stageId, key);
     rows[index] = { ...row, orderKey: key };
