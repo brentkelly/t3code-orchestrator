@@ -38,7 +38,12 @@ import {
   boardProjectIdsForHomeScope,
   encodeBoardArchiveProjectIds,
 } from "./boardHomeProjectScope";
-import { boardStageLiveCounts, cardsInStage, liveTopLevelBoardCards } from "./boardStageColumns";
+import {
+  boardPagerScrollIndex,
+  boardStageLiveCounts,
+  cardsInStage,
+  liveTopLevelBoardCardsWithPlanProgress,
+} from "./boardStageColumns";
 
 export function BoardHomeScreen(props: {
   readonly environmentId: EnvironmentId;
@@ -78,7 +83,10 @@ export function BoardHomeScreen(props: {
       }),
     [props.environmentId, props.selectedProjectKey, scopes],
   );
-  const liveCards = useMemo(() => liveTopLevelBoardCards(cards, projectIds), [cards, projectIds]);
+  const liveCards = useMemo(
+    () => liveTopLevelBoardCardsWithPlanProgress(cards, projectIds, stages),
+    [cards, projectIds, stages],
+  );
   const counts = useMemo(() => boardStageLiveCounts(stages, liveCards), [liveCards, stages]);
   const [stageId, setStageId] = useState<BoardStageId | null>(null);
   const resolvedStageId =
@@ -87,6 +95,7 @@ export function BoardHomeScreen(props: {
       : defaultBoardStageId({ stages, cards: liveCards });
   const { width } = useWindowDimensions();
   const pagerRef = useRef<FlatList<BoardStageDefinition>>(null);
+  const boardReady = board !== null;
   const createProject = useMemo(
     () =>
       boardCreateProjectForHomeScope({
@@ -114,13 +123,23 @@ export function BoardHomeScreen(props: {
     );
   }, [createProject, props.createRequested, props.onCreateHandled, props.selectedProjectKey]);
 
+  const scrollPagerToResolvedStage = useCallback(
+    (animated: boolean) => {
+      const index = boardPagerScrollIndex({
+        boardReady,
+        width,
+        resolvedStageId,
+        stages,
+      });
+      if (index === null) return;
+      pagerRef.current?.scrollToIndex({ index, animated });
+    },
+    [boardReady, resolvedStageId, stages, width],
+  );
+
   useEffect(() => {
-    if (resolvedStageId === null) return;
-    const index = stages.findIndex((stage) => stage.stageId === resolvedStageId);
-    if (index >= 0) {
-      pagerRef.current?.scrollToIndex({ index, animated: false });
-    }
-  }, [props.environmentId, resolvedStageId, stages]);
+    scrollPagerToResolvedStage(false);
+  }, [scrollPagerToResolvedStage]);
 
   const onPagerScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -226,7 +245,12 @@ export function BoardHomeScreen(props: {
         keyExtractor={(stage) => stage.stageId}
         onMomentumScrollEnd={onPagerScroll}
         getItemLayout={(_data, index) => ({ length: width, offset: width * index, index })}
-        onScrollToIndexFailed={() => undefined}
+        onScrollToIndexFailed={(info) => {
+          if (width <= 0) return;
+          requestAnimationFrame(() => {
+            pagerRef.current?.scrollToIndex({ index: info.index, animated: false });
+          });
+        }}
         showsHorizontalScrollIndicator={false}
         renderItem={({ item: stage }) => (
           <View style={{ width }} className="flex-1">

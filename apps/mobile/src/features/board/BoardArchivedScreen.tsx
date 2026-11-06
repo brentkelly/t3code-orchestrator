@@ -19,7 +19,7 @@ import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { boardCommandDidApply, describeBoardCommandResult } from "./boardCommandResult";
+import { boardCommandAlert, boardCommandDidApply } from "./boardCommandResult";
 import { parseBoardArchiveProjectIds } from "./boardHomeProjectScope";
 
 function archivedCardsAtom(environmentId: EnvironmentId) {
@@ -54,9 +54,9 @@ export function BoardArchivedScreen({ route }: BoardArchivedScreenProps) {
 
   const run = (work: () => Promise<AtomCommandResult<unknown, unknown>>) => {
     void work().then((commandResult) => {
-      const feedback = describeBoardCommandResult(commandResult);
-      if (feedback !== null) {
-        Alert.alert("Could not complete", feedback);
+      const alert = boardCommandAlert(commandResult);
+      if (alert !== null) {
+        Alert.alert(alert.title, alert.message);
       }
       if (boardCommandDidApply(commandResult)) {
         appAtomRegistry.refresh(archivedCardsAtom(environmentId));
