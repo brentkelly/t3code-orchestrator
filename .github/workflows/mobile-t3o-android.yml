@@ -106,13 +106,15 @@ jobs:
       - name: Assert package id
         working-directory: apps/mobile
         run: |
-          if ! grep -E 'applicationId[[:space:]]+"com\.brentkelly\.t3o"' android/app/build.gradle; then
+          # Expo prebuild quotes Groovy strings with ' or " depending on SDK.
+          if ! grep -E "applicationId[[:space:]]+['\"]com\\.brentkelly\\.t3o['\"]" android/app/build.gradle; then
             echo "applicationId is not com.brentkelly.t3o" >&2
             grep -n 'applicationId' android/app/build.gradle >&2 || true
             exit 1
           fi
-          if ! grep -E 'namespace[[:space:]]+"com\.brentkelly\.t3o"' android/app/build.gradle; then
+          if ! grep -E "namespace[[:space:]]+['\"]com\\.brentkelly\\.t3o['\"]" android/app/build.gradle; then
             echo "namespace is not com.brentkelly.t3o" >&2
+            grep -n 'namespace' android/app/build.gradle >&2 || true
             exit 1
           fi
 
@@ -122,13 +124,20 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import os
+          import re
           path = Path("android/app/build.gradle")
           text = path.read_text()
           code = os.environ["VERSION_CODE"]
           name = os.environ["VERSION_NAME"]
-          text = text.replace("versionCode 1", f"versionCode {code}", 1)
-          text = text.replace('versionName "1.0.0"', f'versionName "{name}"', 1)
-          text = text.replace('versionName "2.0.0"', f'versionName "{name}"', 1)
+          text, n_code = re.subn(r"versionCode\s+\d+", f"versionCode {code}", text, count=1)
+          text, n_name = re.subn(
+              r'versionName\s+["\'][^"\']+["\']',
+              f'versionName "{name}"',
+              text,
+              count=1,
+          )
+          if n_code != 1 or n_name != 1:
+              raise SystemExit(f"failed to stamp version (code={n_code} name={n_name})")
           path.write_text(text)
           PY
         env:

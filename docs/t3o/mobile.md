@@ -23,11 +23,11 @@ do not advertise `capabilities.board` (upstream T3 Code).
 
 ## Debug vs signed release
 
-| Mode | How | Upgradeable | Where it lands |
-| ---- | --- | ----------- | -------------- |
-| `debug-release` | `assembleDebug`, no keystore | Only onto other debug installs | GitHub prerelease `mobile-v<run_number>`, asset `t3o-<version>-debug.apk` |
-| `signed-release` | `assembleRelease` with keystore secrets | Yes, across later signed runs | GitHub release, asset `t3o-<version>.apk` |
-| `dev-client` | debug APK as a workflow artifact | Metro loop | Actions artifact only |
+| Mode             | How                                     | Upgradeable                    | Where it lands                                                            |
+| ---------------- | --------------------------------------- | ------------------------------ | ------------------------------------------------------------------------- |
+| `debug-release`  | `assembleDebug`, no keystore            | Only onto other debug installs | GitHub prerelease `mobile-v<run_number>`, asset `t3o-<version>-debug.apk` |
+| `signed-release` | `assembleRelease` with keystore secrets | Yes, across later signed runs  | GitHub release, asset `t3o-<version>.apk`                                 |
+| `dev-client`     | debug APK as a workflow artifact        | Metro loop                     | Actions artifact only                                                     |
 
 `versionCode` is `github.run_number`. `versionName` is
 `${apps/mobile package version}-t3o.${run_number}`. Never reuse an older
@@ -80,4 +80,5 @@ APP_VARIANT=t3o pnpm android:t3o
 # or: APP_VARIANT=t3o expo prebuild --clean --platform android
 ```
 
-`android/app/build.gradle` must then contain `applicationId "com.brentkelly.t3o"`.
+`android/app/build.gradle` must then contain `applicationId "com.brentkelly.t3o"`
+or `applicationId 'com.brentkelly.t3o'` (Expo's Groovy quoting varies by SDK).
