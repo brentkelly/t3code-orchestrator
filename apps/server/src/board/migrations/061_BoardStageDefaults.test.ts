@@ -35,7 +35,12 @@ it.effect("adds the columns and puts every stage in one valid order", () =>
         ('p1:late', 'Late', NULL, 'mm', ${at}, ${at}, 'p1')
     `;
 
+    const distinctKeys = sql<{ readonly keys: number; readonly rows: number }>`
+      SELECT COUNT(DISTINCT order_key) AS keys, COUNT(*) AS rows FROM board_stages
+    `;
     yield* migration(61);
+    const [once] = yield* distinctKeys;
+    assert.strictEqual(once!.keys, once!.rows);
     yield* migration(61);
 
     const stages = yield* sql<{ readonly stageId: string; readonly orderKey: string }>`
