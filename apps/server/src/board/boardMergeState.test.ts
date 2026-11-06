@@ -16,6 +16,7 @@ import {
 import {
   BOARD_MERGE_FORGE_TEXT_MAX_LENGTH,
   BOARD_MERGE_STATE_MAX_NAMED_CHECKS,
+  boardFilteredMergeChecks,
   boardHostMergeRefusalReason,
   boardMergeRefusalReason,
   boardMergeStateOf,
@@ -74,6 +75,7 @@ describe("boardMergeStateOf: checks", () => {
       failed: 0,
       failing: [],
       running: ["ci/build"],
+      verdicts: [{ name: "ci/build", verdict: "pending" }],
     });
     assert.strictEqual(state.mergeable, "mergeable");
   });
@@ -106,6 +108,29 @@ describe("boardMergeStateOf: checks", () => {
 
     assert.strictEqual(state.checks.failed, 9);
     assert.strictEqual(state.checks.failing.length, BOARD_MERGE_STATE_MAX_NAMED_CHECKS);
+  });
+});
+
+describe("boardFilteredMergeChecks (T3O-49)", () => {
+  it("filters every check by name, not just the few a detail line names", () => {
+    const { checks } = boardMergeStateOf(
+      detail({
+        checks: [
+          ...Array.from({ length: 6 }, (_, index) => check(`lint/${index}`, "failure")),
+          check("e2e/chrome", "failure"),
+          check("deploy/preview", "pending"),
+          check("e2e/firefox", "success"),
+        ],
+      }),
+    );
+    const e2e = boardFilteredMergeChecks(checks, ["e2e/*"]);
+
+    assert.deepStrictEqual(
+      [e2e.total, e2e.passed, e2e.pending, e2e.failed, e2e.failing, e2e.running],
+      [2, 1, 0, 1, ["e2e/chrome"], []],
+    );
+    assert.strictEqual(boardFilteredMergeChecks(checks, ["nothing/*"]).total, 0);
+    assert.strictEqual(boardFilteredMergeChecks(checks, []), checks);
   });
 });
 

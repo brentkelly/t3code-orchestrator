@@ -209,6 +209,7 @@ type NumberStepperCommon = {
   step?: number;
   unit?: string;
   ariaLabel: string;
+  disabled?: boolean;
 };
 type NumberStepperProps = NumberStepperCommon &
   (
@@ -251,6 +252,7 @@ export function NumberStepper(props: NumberStepperProps) {
         className="flex h-full w-8 items-center justify-center border-r border-border text-muted-foreground hover:bg-accent hover:text-foreground"
         // Keep focus (and its blur-commit) where it is: blur fires before
         // click, so letting the button steal focus would race the two handlers.
+        disabled={props.disabled}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => nudge(-step)}
       >
@@ -262,6 +264,7 @@ export function NumberStepper(props: NumberStepperProps) {
         value={draft ?? (props.value === null ? "" : String(props.value))}
         placeholder={props.nullable ? props.placeholder : undefined}
         aria-label={props.ariaLabel}
+        disabled={props.disabled}
         className="h-full w-14 [appearance:textfield] bg-transparent text-center text-sm font-medium text-foreground outline-none placeholder:font-normal placeholder:text-muted-foreground [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         onChange={(event) => setDraft(event.target.value)}
         onBlur={(event) => apply(resolve(event.target.value))}
@@ -274,6 +277,7 @@ export function NumberStepper(props: NumberStepperProps) {
         type="button"
         aria-label={`Increase ${props.ariaLabel}`}
         className="flex h-full w-8 items-center justify-center border-l border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+        disabled={props.disabled}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => nudge(step)}
       >

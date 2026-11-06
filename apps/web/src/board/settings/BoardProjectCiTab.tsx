@@ -59,11 +59,16 @@ export function BoardProjectCiTab(props: {
   const setSteps = useAtomCommand(boardEnvironment.setProjectCiSteps, { reportFailure: false });
   const ciOn = shell.stageSwitches[BOARD_SEED_STAGE_IDS.ci] === true;
   const [confirmOff, setConfirmOff] = useState(false);
-  const [draft, setDraft] = useState<ReadonlyArray<BoardCiStep> | null>(null);
+  // A draft saves against the version it was started from, so another
+  // client's newer edit is a conflict rather than silently overwritten.
+  const [draft, setDraft] = useState<{
+    readonly steps: ReadonlyArray<BoardCiStep>;
+    readonly baseVersion: string;
+  } | null>(null);
   const [conflict, setConflict] = useState(false);
   const [askTurnOn, setAskTurnOn] = useState(false);
   const saved = full?.ci.steps ?? null;
-  const steps = draft ?? saved ?? [];
+  const steps = draft?.steps ?? saved ?? [];
 
   const report = (title: string) => (result: { readonly _tag: string }) => {
     if (result._tag !== "Failure") return true;
@@ -83,10 +88,14 @@ export function BoardProjectCiTab(props: {
 
   const save = (turnOn: boolean) => {
     if (draft === null) return;
-    const next = normalizeBoardCiParallel(draft);
+    const next = normalizeBoardCiParallel(draft.steps);
     void setSteps({
       environmentId,
-      input: { projectId: props.projectId, steps: next, expectedConfigVersion: shell.version },
+      input: {
+        projectId: props.projectId,
+        steps: next,
+        expectedConfigVersion: draft.baseVersion,
+      },
     }).then((result) => {
       if (!report("Couldn't save the CI steps")(result)) return;
       setDraft(null);
@@ -96,7 +105,12 @@ export function BoardProjectCiTab(props: {
     });
   };
 
-  const edit = (next: ReadonlyArray<BoardCiStep>) => setDraft(next);
+  const edit = (next: ReadonlyArray<BoardCiStep>) => {
+    const baseVersion = draft?.baseVersion ?? full?.version;
+    // Until the steps load there is nothing to edit from.
+    if (baseVersion === undefined) return;
+    setDraft({ steps: next, baseVersion });
+  };
   const update = (index: number, patch: Partial<BoardCiStep>) =>
     edit(
       steps.map((step, position) =>
@@ -253,7 +267,7 @@ export function BoardProjectCiTab(props: {
                 <Button size="xs" variant="ghost" onClick={() => setDraft(null)}>
                   Discard
                 </Button>
-                <Button size="xs" onClick={() => save(!ciOn && draft.length > 0)}>
+                <Button size="xs" onClick={() => save(!ciOn && draft.steps.length > 0)}>
                   Save steps
                 </Button>
               </>

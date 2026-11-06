@@ -29,7 +29,11 @@ import { describeBoardCommandFailure } from "../boardCommandFeedback";
 import { BoardHint } from "../BoardHint";
 import { boardToast } from "../boardToast";
 import { useBoardSettings } from "../useBoardEnvironmentId";
-import { boardProjectStageState, isBoardCiStage } from "./boardProjectSettings.logic";
+import {
+  boardProjectOverrideEdit,
+  boardProjectStageState,
+  isBoardCiStage,
+} from "./boardProjectSettings.logic";
 import { useBoardSettingsContext } from "./BoardSettingsLayout";
 import type { BoardProjectConfigState } from "./useBoardProjectConfig";
 
@@ -100,18 +104,11 @@ export function BoardProjectPipelineTab(props: {
     }).then(report("Couldn't switch the stage"));
 
   const onOverride = (stage: BoardStageDefinition, key: string, value: unknown) => {
-    const current = (full ?? shell).overrides[stage.stageId] ?? {};
-    const next: Record<string, unknown> = { ...current };
-    if (value === undefined) delete next[key];
-    else next[key] = value;
+    const edit = boardProjectOverrideEdit(full, stage.stageId, key, value);
+    if (edit === null) return;
     void setOverride({
       environmentId,
-      input: {
-        projectId: props.projectId,
-        stageId: stage.stageId,
-        patch: Object.keys(next).length === 0 ? null : (next as BoardStageExecutionPatch),
-        expectedConfigVersion: shell.version,
-      },
+      input: { projectId: props.projectId, stageId: stage.stageId, ...edit },
     }).then(report("Couldn't save the override"));
   };
 
@@ -235,7 +232,7 @@ function StageRow(props: {
           ) : null}
           {fields.map((field) => (
             <OverrideRow
-              canWrite={props.canWrite}
+              canWrite={props.canWrite && props.promptsLoaded}
               field={field}
               global={global[field.key]}
               key={field.key}
@@ -296,6 +293,7 @@ function OverrideRow(props: {
         ) : field.kind === "number" ? (
           <NumberStepper
             ariaLabel={field.label}
+            disabled={!props.canWrite}
             max={field.max}
             min={field.min}
             onChange={(value) => props.onChange(value)}

@@ -1,10 +1,17 @@
-import { BOARD_SEED_STAGES, EMPTY_BOARD_STATE, type BoardCiStep } from "@t3tools/contracts";
+import {
+  BOARD_SEED_STAGES,
+  EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+  EMPTY_BOARD_STATE,
+  withBoardProjectConfigVersion,
+  type BoardCiStep,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCiParallelBlock,
   boardCiSharedWorktreeWarnings,
   boardImportSummaryChips,
+  boardProjectOverrideEdit,
   boardProjectStageState,
   moveBoardCiStep,
   removeBoardCiStep,
@@ -78,6 +85,31 @@ describe("the Pipeline tab", () => {
       on: false,
       switched: false,
     });
+  });
+});
+
+describe("a stage override edit", () => {
+  it("keeps the stage's prompt override and waits for the full delta to load", () => {
+    const full = withBoardProjectConfigVersion({
+      ...EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+      overrides: { building: { autoExecute: true, prompt: "Ours." } },
+    });
+    expect(boardProjectOverrideEdit(null, "building", "autoExecute", false)).toBeNull();
+    expect(boardProjectOverrideEdit(full, "building", "autoExecute", false)).toEqual({
+      patch: { autoExecute: false, prompt: "Ours." },
+      expectedConfigVersion: full.version,
+    });
+    expect(
+      boardProjectOverrideEdit(
+        withBoardProjectConfigVersion({
+          ...EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+          overrides: { building: { autoExecute: true } },
+        }),
+        "building",
+        "autoExecute",
+        undefined,
+      )?.patch,
+    ).toBeNull();
   });
 });
 

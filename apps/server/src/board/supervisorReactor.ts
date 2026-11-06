@@ -25,7 +25,6 @@ import {
   isBoardCiSwitchedOn,
   boardCiNextSegment,
   boardCiPassStepsFromSnapshot,
-  boardCheckNameMatches,
   type BoardCiForgeChecksReading,
   boardCiAgentStepId,
   composeBoardCiAgentStepPrompt,
@@ -228,6 +227,7 @@ import {
   type BoardAutoMergeVerdict,
 } from "./autoMergeClassification.ts";
 import {
+  boardFilteredMergeChecks,
   boardHostMergeRefusalReason,
   LOCAL_CONFLICT_MERGE_STATE,
   type BoardMergeState,
@@ -3840,12 +3840,13 @@ const make = Effect.gen(function* () {
         );
         return;
       }
-      const matches = (name: string) =>
-        step.only.length === 0 || step.only.some((pattern) => boardCheckNameMatches(pattern, name));
-      const failing = state.checks.failing.filter(matches);
-      const running = state.checks.running.filter(matches);
+      const checks = boardFilteredMergeChecks(state.checks, step.only);
+      const { failing, running } = checks;
       const reading: BoardCiForgeChecksReading = {
-        ...state.checks,
+        total: checks.total,
+        passed: checks.passed,
+        pending: checks.pending,
+        failed: checks.failed,
         failing,
         running,
         headSha: state.headSha,
@@ -3898,11 +3899,14 @@ const make = Effect.gen(function* () {
             }),
           ),
         );
-      if (failing.length > 0) {
-        yield* settle("failed", `Failing checks: ${failing.join(", ")}.`);
+      if (checks.failed > 0) {
+        yield* settle(
+          "failed",
+          `Failing checks: ${failing.join(", ")}${checks.failed > failing.length ? ` and ${checks.failed - failing.length} more` : ""}.`,
+        );
         return;
       }
-      if (state.checks.total === 0) {
+      if (checks.total === 0) {
         if (elapsedMs < step.appearTimeoutMinutes * 60_000) {
           yield* noteCiForgeStep(card, entry, row, reading, "Waiting for checks to appear");
           return;
@@ -3913,7 +3917,7 @@ const make = Effect.gen(function* () {
         );
         return;
       }
-      if (running.length > 0 || state.checks.pending > 0) {
+      if (checks.pending > 0) {
         if (elapsedMs >= step.timeoutMinutes * 60_000) {
           yield* settle(
             "timed-out",
@@ -3926,11 +3930,11 @@ const make = Effect.gen(function* () {
           entry,
           row,
           reading,
-          `Waiting on checks ${state.checks.passed}/${state.checks.total}`,
+          `Waiting on checks ${checks.passed}/${checks.total}`,
         );
         return;
       }
-      yield* settle("passed", `${state.checks.passed}/${state.checks.total} checks passed.`);
+      yield* settle("passed", `${checks.passed}/${checks.total} checks passed.`);
     },
     Effect.catchCause((cause) =>
       Effect.logWarning("board supervisor: forge check poll failed", {

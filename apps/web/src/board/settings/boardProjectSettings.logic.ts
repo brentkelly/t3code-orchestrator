@@ -14,7 +14,9 @@ import {
   isBoardStageSwitchable,
   type BoardCiStep,
   type BoardProjectImportCandidate,
+  type BoardProjectStageConfig,
   type BoardStageDefinition,
+  type BoardStageExecutionPatch,
   type BoardState,
 } from "@t3tools/contracts";
 
@@ -182,6 +184,30 @@ export function boardProjectStageState(
     on: switched ?? defaultOn,
     defaultOn,
     switched: switched !== undefined && switched !== defaultOn,
+  };
+}
+
+/**
+ * The set-stage-override input for one field's edit. The patch replaces the
+ * stage's whole override, so it is built from the full delta (the shell has
+ * no prompts) and checked against that delta's version; null until it loads.
+ */
+export function boardProjectOverrideEdit(
+  full: BoardProjectStageConfig | null,
+  stageId: string,
+  key: string,
+  value: unknown,
+): {
+  readonly patch: BoardStageExecutionPatch | null;
+  readonly expectedConfigVersion: string;
+} | null {
+  if (full === null) return null;
+  const next: Record<string, unknown> = { ...full.overrides[stageId] };
+  if (value === undefined) delete next[key];
+  else next[key] = value;
+  return {
+    patch: Object.keys(next).length === 0 ? null : (next as BoardStageExecutionPatch),
+    expectedConfigVersion: full.version,
   };
 }
 
