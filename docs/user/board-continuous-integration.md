@@ -12,7 +12,8 @@ Turn on **Run CI for this project**, then add steps. They run in order:
   stopped and fails after its timeout (30 minutes unless you set it, at most a day).
 - **Agent**: a prompt an agent runs in its own thread, for checks a command can't make. The board
   adds what the agent needs (the card, its branch and pull request, earlier results) and how to
-  report. Your prompt decides whether it may change code.
+  report. Like every CI step it checks the branch without changing it: what it finds goes to the fix
+  agent.
 - **Forge checks**: waits for the pull request's checks on GitHub, GitLab, Bitbucket or Forgejo. A
   draft pull request is marked ready first. You can wait on named checks only (`*` matches anything),
   and choose whether a pull request where no checks appear passes or fails. Without an open pull
@@ -56,7 +57,7 @@ caps how many times CI may send a card back to review (3 by default). Past it, C
 waits for you, marked **Needs you**: **Retry CI** starts over with fresh attempts, **Send back to
 review anyway** sends it back, and **Skip CI…** moves it on. Moving a card yourself starts its round
 trips again. Defaults are in **Settings** → **Board** → **Pipeline** → **Continuous integration**;
-each project can override them on its CI tab.
+each project can override them on its **Pipeline** tab, under **Continuous integration**.
 
 ## Following a run
 

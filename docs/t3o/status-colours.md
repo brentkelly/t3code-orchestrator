@@ -126,7 +126,9 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   Nothing on the card face animates; the running step's name shimmers only in the open card view.
   T3O-49 adds two CI chips. `Can't run` is amber: the pass is blocked on something outside it (no
   worktree, a worker out of reach, no pull request for a forge step). `Needs you` is violet: CI
-  stopped at the round-trip limit and a human decides — retry, send back, or skip.
+  stopped at the round-trip limit and a human decides — retry, send back, or skip. In Settings, a
+  `t3o.json` waiting to import is violet (a human decides whether to take it), and the override
+  and parallel-step markers are neutral: they describe a setting, not work.
 - **The Summary pane's Heads-up tags and check tiles follow it too.** Plan change is violet (it
   waits on a human's read), Not done is amber, and Shortcut is neutral, never blue, because blue
   means running. A failing check tile is amber, not red.

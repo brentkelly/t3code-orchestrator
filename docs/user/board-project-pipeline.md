@@ -55,7 +55,8 @@ board never reads it on its own. On the project's **Import & export** tab:
   stages it creates, and the full text of every command and prompt it would install. Read those
   before importing a file someone else committed.
 - **Export** writes the project's differences to `t3o.json` in its checkout, uncommitted. Commit and
-  push it yourself.
+  push it yourself. If the checkout's `t3o.json` already has uncommitted edits, Export downloads the
+  file instead of overwriting them.
 
 When a project's committed `t3o.json` differs from its pipeline, **Settings** → **Board** offers to
 import it. **No thanks** hides the offer until the file changes again. Import and export need the

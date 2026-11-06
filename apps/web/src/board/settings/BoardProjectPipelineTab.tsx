@@ -183,7 +183,7 @@ function StageRow(props: {
           </span>
         ) : null}
         {overridden > 0 ? (
-          <span className="rounded-md border border-info/40 px-1.5 py-px text-[11px] text-info">
+          <span className="rounded-md border border-border px-1.5 py-px text-[11px] text-muted-foreground">
             {overridden} {overridden === 1 ? "override" : "overrides"}
           </span>
         ) : null}
@@ -263,7 +263,7 @@ function OverrideRow(props: {
     <div
       className={cn(
         "flex flex-col gap-1 border-l-2 py-1.5 pl-2.5",
-        overridden ? "border-info" : "border-transparent",
+        overridden ? "border-foreground/40" : "border-transparent",
       )}
     >
       <div className="flex items-center gap-2">

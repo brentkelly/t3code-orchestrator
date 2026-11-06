@@ -63,7 +63,7 @@ export function BoardImportNotices() {
   const titleOf = (projectId: string) =>
     projects.find((project) => project.id === projectId)?.title ?? projectId;
   return (
-    <div className="mx-3 flex flex-col gap-1 rounded-xl border border-info/40 bg-info/6 px-4 py-3 sm:mx-4">
+    <div className="mx-3 flex flex-col gap-1 rounded-xl border border-attention/40 bg-attention/6 px-4 py-3 sm:mx-4">
       {waiting.length > 1 ? (
         <span className="text-[13px] font-medium text-foreground">
           {waiting.length} projects have a t3o.json to import
@@ -91,7 +91,7 @@ export function BoardImportNoticeForProject(props: {
   const candidate = candidates?.[0];
   if (candidate === undefined || candidate.status !== "differs" || candidate.dismissed) return null;
   return (
-    <div className="mx-3 rounded-xl border border-info/40 bg-info/6 px-4 py-2 sm:mx-4">
+    <div className="mx-3 rounded-xl border border-attention/40 bg-attention/6 px-4 py-2 sm:mx-4">
       <ImportNoticeRow candidate={candidate} onDone={refresh} title={props.title} />
     </div>
   );
@@ -109,7 +109,7 @@ function ImportNoticeRow(props: {
   const chips = candidate.preview === null ? [] : boardImportSummaryChips(candidate.preview);
   return (
     <div className="flex flex-wrap items-center gap-2 py-1">
-      <FileJsonIcon className="size-4 text-info" />
+      <FileJsonIcon className="size-4 text-attention-foreground" />
       <div className="flex min-w-0 flex-col">
         <span className="text-[13px] text-foreground">
           {props.title} has a t3o.json. Import its pipeline and CI settings?

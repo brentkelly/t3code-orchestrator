@@ -142,7 +142,7 @@ export function BoardProjectCiTab(props: {
         />
       </div>
       {askTurnOn && !ciOn ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-info/40 bg-info/8 px-3 py-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-attention/40 bg-attention/8 px-3 py-2 text-xs">
           <span className="text-foreground">Turn CI on for this project?</span>
           <span className="flex-1" />
           <Button
@@ -295,7 +295,7 @@ function StepRow(props: {
     <div
       className={cn(
         "flex flex-col gap-2 border-b border-border px-4 py-2.5 last:border-b-0",
-        step.parallel && "border-l-2 border-l-info",
+        step.parallel && "border-l-2 border-l-border",
       )}
     >
       <div className="flex items-center gap-2">

@@ -129,7 +129,7 @@ function BoardSettingsNav(props: {
             <BoardHint label="A t3o.json is waiting to import">
               <span
                 aria-label="A t3o.json is waiting to import"
-                className="size-1.5 shrink-0 rounded-full bg-info"
+                className="size-1.5 shrink-0 rounded-full bg-attention"
               />
             </BoardHint>
           ) : null}
