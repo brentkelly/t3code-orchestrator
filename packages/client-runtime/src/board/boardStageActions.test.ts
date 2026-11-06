@@ -118,6 +118,44 @@ describe("boardStagePrimaryAction", () => {
     ).toBeNull();
   });
 
+  it("offers Skip CI while the card sits in CI before a pass exists", () => {
+    const withCi = BOARD_SEED_STAGES;
+    const skip = {
+      label: "Skip CI",
+      confirmLabel: "Skip CI and move to Ready for merge",
+      toStage: BOARD_SEED_STAGE_IDS.merge,
+      toLabel: "Ready for merge",
+    };
+    // holdInCi: the project's CI is on, the card is in the stage, no pass yet.
+    expect(
+      boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.ci, {
+        ciEntryLive: false,
+        ciActive: true,
+      }),
+    ).toBeNull();
+    expect(
+      boardSkipCiAction(withCi, {
+        stageId: BOARD_SEED_STAGE_IDS.ci,
+        ciEntryLive: false,
+        ciActive: true,
+      }),
+    ).toEqual(skip);
+    // Paused CI with no entry still moves on like any held card.
+    expect(
+      boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.ci, {
+        ciEntryLive: false,
+        ciActive: false,
+      }),
+    ).toMatchObject({ kind: "move", toStage: BOARD_SEED_STAGE_IDS.merge });
+    expect(
+      boardSkipCiAction(withCi, {
+        stageId: BOARD_SEED_STAGE_IDS.ci,
+        ciEntryLive: false,
+        ciActive: false,
+      }),
+    ).toBeNull();
+  });
+
   it("offers Merge in the merge role only while the pull request is still open", () => {
     // The blue button in the merge stage merges the PR; the card advancing to
     // Done is a consequence of the merge, not a separate gate the user clicks.

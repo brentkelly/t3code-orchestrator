@@ -17,6 +17,7 @@ import {
   boardCardArchiveNeedsConfirmation,
   boardCardDisplayPullRequest,
   effectiveBoardStageRole,
+  isBoardCiActive,
   type BoardStageId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -113,7 +114,10 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
     { stage: card.stage, projectId: card.projectId },
   );
   const mergeHold = boardMergeHold(shell);
+  const ciActive = isBoardCiActive({ projectStageConfigs }, card.projectId);
   const primary = boardStagePrimaryAction(stages, card.stage, {
+    ciEntryLive: card.ci != null,
+    ciActive,
     pullRequestState: card.pullRequest?.state ?? null,
     pullRequestNumber: card.pullRequest?.number ?? null,
     conflictFixLive: mergeHold !== null,
@@ -129,6 +133,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
   const skipCiAction = boardSkipCiAction(stages, {
     stageId: card.stage,
     ciEntryLive: card.ci != null,
+    ciActive,
   });
   const pullRequest = boardCardDisplayPullRequest(card);
   const threadOpen = boardThreadOpenForCard({
