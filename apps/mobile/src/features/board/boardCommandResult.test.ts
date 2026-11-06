@@ -1,3 +1,4 @@
+import { BOARD_SEED_STAGE_IDS, BOARD_SEED_STAGES } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
 import { describe, expect, it } from "vite-plus/test";
@@ -8,27 +9,63 @@ import {
   describeBoardCommandResult,
 } from "./boardCommandResult";
 
+const liveTopLevel = {
+  planCount: 2,
+  children: [{ archivedAt: "2026-01-01T00:00:00.000Z" as const }],
+  parentCardId: null,
+  archivedAt: null,
+  stages: BOARD_SEED_STAGES,
+};
+
 describe("boardCanShowApprovePlans", () => {
   it("hides Approve for a single plan", () => {
     expect(
       boardCanShowApprovePlans({
+        ...liveTopLevel,
         planCount: 1,
         children: [],
-        parentCardId: null,
-        archivedAt: null,
+        stage: BOARD_SEED_STAGE_IDS.planning,
       }),
     ).toBe(false);
   });
 
-  it("shows Approve for two or more plans on a live top-level card", () => {
+  it("shows Approve for two or more plans on a live top-level card before Building", () => {
     expect(
       boardCanShowApprovePlans({
-        planCount: 2,
-        children: [{ archivedAt: "2026-01-01T00:00:00.000Z" }],
-        parentCardId: null,
-        archivedAt: null,
+        ...liveTopLevel,
+        stage: BOARD_SEED_STAGE_IDS.planning,
       }),
     ).toBe(true);
+  });
+
+  it("shows Approve while the card is still in Building", () => {
+    expect(
+      boardCanShowApprovePlans({
+        ...liveTopLevel,
+        stage: BOARD_SEED_STAGE_IDS.building,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides Approve once the card is past Building", () => {
+    expect(
+      boardCanShowApprovePlans({
+        ...liveTopLevel,
+        stage: BOARD_SEED_STAGE_IDS.review,
+      }),
+    ).toBe(false);
+    expect(
+      boardCanShowApprovePlans({
+        ...liveTopLevel,
+        stage: BOARD_SEED_STAGE_IDS.merge,
+      }),
+    ).toBe(false);
+    expect(
+      boardCanShowApprovePlans({
+        ...liveTopLevel,
+        stage: BOARD_SEED_STAGE_IDS.done,
+      }),
+    ).toBe(false);
   });
 });
 

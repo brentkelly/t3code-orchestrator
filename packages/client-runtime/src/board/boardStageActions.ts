@@ -15,6 +15,7 @@
  */
 import {
   BOARD_SEED_STAGE_IDS,
+  areBoardStagesAdjacent,
   effectiveBoardStageRole,
   boardStageById,
   boardStageIndex,
@@ -265,4 +266,16 @@ export function boardMoveLeavesPlanningUnwritten(input: {
   const from = boardStageById(board, card.stage);
   if (from === null || effectiveBoardStageRole(from) !== "plan") return false;
   return boardStageIndex(board, toStage) > boardStageIndex(board, card.stage);
+}
+
+/**
+ * Non-adjacent stage jumps need `override: true` on `board.card.move`. Adjacent
+ * moves (the primary forward button) do not. Matches the web detail pane.
+ */
+export function boardMoveNeedsOverride(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  from: BoardStageId,
+  to: BoardStageId,
+): boolean {
+  return !areBoardStagesAdjacent(stateOf(stages), from, to);
 }

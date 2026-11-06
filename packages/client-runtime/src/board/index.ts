@@ -3,6 +3,7 @@
  */
 export {
   boardMoveLeavesPlanningUnwritten,
+  boardMoveNeedsOverride,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
   isBoardStageManuallySelectable,
@@ -12,5 +13,9 @@ export {
   type BoardStageSecondaryActionContext,
 } from "./boardStageActions.ts";
 export { defaultBoardStageId, type DefaultBoardStageCard } from "./defaultBoardStageId.ts";
-export { boardThreadOpen, type BoardThreadOpenAction, type BoardThreadOpenInput } from "./boardThreadOpen.ts";
+export {
+  boardThreadOpen,
+  type BoardThreadOpenAction,
+  type BoardThreadOpenInput,
+} from "./boardThreadOpen.ts";
 export { boardArchivedCardsInScope } from "./boardArchivedCards.ts";
