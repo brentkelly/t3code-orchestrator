@@ -156,6 +156,31 @@ function StepRow({
           ) : null}
         </span>
       </div>
+      {step.result !== undefined &&
+      (step.result.summary !== null || step.result.failures.length > 0) ? (
+        <div className="flex flex-col gap-1 border-t border-border py-1.5 pr-3 pl-[42px] text-[11.5px]">
+          {step.result.summary === null ? null : (
+            <span className="text-muted-foreground">{step.result.summary}</span>
+          )}
+          {step.result.failures.map((failure, index) => (
+            <div
+              className="flex flex-col border-l-2 border-warning pl-2"
+              key={`${failure.title}:${index}`}
+            >
+              <span className="text-foreground">{failure.title}</span>
+              {failure.file === undefined ? null : (
+                <span className="font-mono text-[10.5px] text-muted-foreground">
+                  {failure.file}
+                  {failure.line === undefined ? "" : `:${failure.line}`}
+                </span>
+              )}
+              {failure.detail === undefined ? null : (
+                <span className="text-muted-foreground">{failure.detail}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {hasTail && tailOpen ? (
         <div className="flex flex-col border-t border-border bg-muted">
           <span className="py-1.5 pr-3 pl-[42px] text-[10.5px] font-medium tracking-[.04em] text-muted-foreground uppercase">

@@ -309,3 +309,77 @@ it.live("a log directory it cannot create makes the pass unavailable, not a cras
     assert.lengthOf(events, 0);
   }),
 );
+
+it.live("runs a parallel group together and stops later groups once it finishes", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { events, emit } = collect();
+    // Each waits for the other's marker, so they only pass when run together.
+    const result = yield* runBoardCiPass(
+      request(cwd, [
+        {
+          name: "A",
+          command: "touch a; for i in $(seq 50); do [ -f b ] && exit 0; sleep 0.1; done; exit 1",
+          timeoutMinutes: 1,
+        },
+        {
+          name: "B",
+          command: "touch b; for i in $(seq 50); do [ -f a ] && exit 7; sleep 0.1; done; exit 1",
+          timeoutMinutes: 1,
+          parallel: true,
+        },
+        { name: "Never runs", command: "touch ran", timeoutMinutes: 1 },
+      ]),
+      emit,
+    );
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 1 });
+    const finals = events.filter((event) => event.step.status !== "running");
+    assert.deepStrictEqual(
+      finals.map((event) => [event.index, event.step.status, event.step.exitCode]),
+      [
+        [0, "passed", 0],
+        [1, "failed", 7],
+      ],
+    );
+    assert.isTrue(events.every((event) => event.index !== 2));
+    assert.isFalse(NodeFS.existsSync(NodePath.join(cwd, "ran")));
+  }),
+);
+
+it.live("reads the step's result file, which adds detail and never overrides the exit code", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const { events, emit } = collect();
+    const write = `printf '%s' '{"summary":"1 of 3 failed","failures":[{"title":"boom","file":"src/a.ts","line":4},{"nope":1}]}' > "$T3O_CI_RESULT"`;
+    const result = yield* runBoardCiPass(
+      request(cwd, [{ name: "Reports", command: `${write}; exit 0`, timeoutMinutes: 1 }]),
+      emit,
+    );
+    assert.deepStrictEqual(result, { result: "passed", failedIndex: null });
+    const final = events.at(-1)!.step;
+    assert.deepStrictEqual(final.result, {
+      summary: "1 of 3 failed",
+      failures: [{ title: "boom", file: "src/a.ts", line: 4 }],
+    });
+    assert.include(final.tail, "weren't { title, detail?, file?, line? }");
+  }),
+);
+
+it.live("fails a group that leaves tracked changes in the worktree", () =>
+  Effect.gen(function* () {
+    const cwd = workdir();
+    const git = (args: ReadonlyArray<string>) =>
+      NodeChildProcess.execFileSync("git", [...args], { cwd, stdio: "ignore" });
+    git(["init", "-q"]);
+    NodeFS.writeFileSync(NodePath.join(cwd, "tracked.txt"), "one\n");
+    git(["add", "tracked.txt"]);
+    git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]);
+    const { events, emit } = collect();
+    const result = yield* runBoardCiPass(
+      request(cwd, [{ name: "Formats", command: "echo two > tracked.txt", timeoutMinutes: 1 }]),
+      emit,
+    );
+    assert.deepStrictEqual(result, { result: "failed", failedIndex: 0 });
+    assert.include(events.at(-1)!.step.tail, "left tracked changes");
+  }),
+);

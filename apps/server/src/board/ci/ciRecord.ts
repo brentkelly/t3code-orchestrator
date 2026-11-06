@@ -71,6 +71,7 @@ export function decideBoardCiRecord(
         name: step.name,
         command: step.command,
         timeoutMinutes: step.timeoutMinutes,
+        ...(step.parallel === true ? { parallel: true } : {}),
         status: "pending" as const,
         startedAt: null,
         finishedAt: null,

@@ -28,6 +28,7 @@
  * card (which panel to render) and this registry (which executor to run).
  */
 import type {
+  BoardCiStepResult,
   BoardCard,
   BoardCardStageModelOverride,
   BoardModelSelection,
@@ -156,6 +157,8 @@ export interface BoardCiFailure {
   readonly exitCode: number | null;
   readonly tail: string;
   readonly logPath: string | null;
+  /** What the step reported in its result file (T3O-49). */
+  readonly result?: BoardCiStepResult | null;
 }
 
 /** What the executor decides the reactor should do next. */

@@ -605,9 +605,20 @@ export function composeBoardCiFixPrompt(input: {
     readonly exitCode: number | null;
     readonly tail: string;
     readonly logPath: string | null;
+    /** What the step reported in its result file (T3O-49). */
+    readonly result?: {
+      readonly summary: string | null;
+      readonly failures: ReadonlyArray<{
+        readonly title: string;
+        readonly detail?: string;
+        readonly file?: string;
+        readonly line?: number;
+      }>;
+    } | null;
   };
 }): string {
   const { failure } = input;
+  const reported = failure.result ?? null;
   const ended =
     failure.status === "timed-out"
       ? "timed out and was killed"
@@ -617,6 +628,20 @@ export function composeBoardCiFixPrompt(input: {
     "",
     `CI step "${failure.stepName}" failed: \`${failure.command}\` ${ended}. This is fix attempt ${input.attempt} of ${input.maxAttempts}.`,
     ...(failure.logPath === null ? [] : [`The full log is at \`${failure.logPath}\`.`]),
+    ...(reported === null
+      ? []
+      : [
+          ...(reported.summary === null ? [] : [`The step reported: ${reported.summary}`]),
+          ...(reported.failures.length === 0
+            ? []
+            : [
+                "Its reported failures:",
+                ...reported.failures.map(
+                  (entry) =>
+                    `- ${entry.title}${entry.file === undefined ? "" : ` (${entry.file}${entry.line === undefined ? "" : `:${entry.line}`})`}${entry.detail === undefined ? "" : `: ${entry.detail}`}`,
+                ),
+              ]),
+        ]),
     "The last lines of its output:",
     "```",
     failure.tail.length > 0 ? failure.tail : "(no output)",

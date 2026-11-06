@@ -17,6 +17,8 @@ import {
   boardProjectStageConfigShell,
   boardStageOrderViolation,
   normalizeBoardProjectDelta,
+  parseBoardCiProgressLine,
+  parseBoardCiResultFile,
   type BoardCiStep,
   type BoardStageDefinition,
 } from "./index.ts";
@@ -182,5 +184,27 @@ describe("settings commands", () => {
   it("leave the actor for the server to stamp", () => {
     const decoded = Schema.decodeUnknownSync(BoardSettingsClientCommand)(command);
     expect("actor" in decoded).toBe(false);
+  });
+});
+
+describe("script reporting", () => {
+  it("parses progress lines, and treats anything else as log output", () => {
+    expect(
+      parseBoardCiProgressLine('::t3o-progress::{"message":"Running","done":3,"total":9}'),
+    ).toEqual({ message: "Running", done: 3, total: 9 });
+    expect(parseBoardCiProgressLine("::t3o-progress::{nope")).toBeNull();
+    expect(parseBoardCiProgressLine("plain output")).toBeNull();
+  });
+
+  it("keeps valid failures of a result file, capped, and warns about the rest", () => {
+    const many = Array.from({ length: 60 }, (_, index) => ({ title: `f${index}` }));
+    const parsed = parseBoardCiResultFile(
+      JSON.stringify({ summary: " 2 failed ", failures: [...many, { detail: "no title" }] }),
+    );
+    expect(parsed.result?.summary).toBe("2 failed");
+    expect(parsed.result?.failures).toHaveLength(50);
+    expect(parsed.warning).toContain("1 of the step's reported failures");
+    expect(parseBoardCiResultFile("[]").result).toBeNull();
+    expect(parseBoardCiResultFile("{").warning).toContain("isn't valid JSON");
   });
 });

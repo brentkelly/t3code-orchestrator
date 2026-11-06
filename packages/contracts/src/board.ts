@@ -1499,6 +1499,9 @@ export const BoardCiStepDefinition = Schema.Struct({
   timeoutMinutes: PositiveInt.check(Schema.isLessThanOrEqualTo(BOARD_CI_MAX_TIMEOUT_MINUTES)).pipe(
     Schema.withDecodingDefault(Effect.succeed(30)),
   ),
+  /** Runs alongside the step before it (T3O-49). A runner that predates it
+      ignores the key and runs every step in order. */
+  parallel: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardCiStepDefinition = typeof BoardCiStepDefinition.Type;
 
@@ -1621,9 +1624,107 @@ export function boardCiScriptDefinitions(
 ): ReadonlyArray<BoardCiStepDefinition> {
   return steps.flatMap((step) =>
     step.kind === "script"
-      ? [{ name: step.name, command: step.command, timeoutMinutes: step.timeoutMinutes }]
+      ? [
+          {
+            name: step.name,
+            command: step.command,
+            timeoutMinutes: step.timeoutMinutes,
+            ...(step.parallel ? { parallel: true } : {}),
+          },
+        ]
       : [],
   );
+}
+
+/** The most failures a step's result keeps. */
+export const BOARD_CI_MAX_FAILURES = 50;
+
+/** One failure a script reported in its result file, or an agent step in its
+    payload (T3O-49): a title, and where it is when known. */
+export const BoardCiFailureDetail = Schema.Struct({
+  title: TrimmedNonEmptyString.check(Schema.isMaxLength(500)),
+  detail: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_000))),
+  file: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(500))),
+  line: Schema.optionalKey(PositiveInt),
+});
+export type BoardCiFailureDetail = typeof BoardCiFailureDetail.Type;
+
+/** What a step reported beyond its exit code (T3O-49). Adds detail only: it
+    never overrides the exit code. */
+export const BoardCiStepResult = Schema.Struct({
+  summary: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1_000))),
+  failures: Schema.Array(BoardCiFailureDetail),
+});
+export type BoardCiStepResult = typeof BoardCiStepResult.Type;
+
+const decodeFailureDetail = Schema.decodeUnknownOption(BoardCiFailureDetail);
+
+/**
+ * Parse a script's `$T3O_CI_RESULT` file: `{ summary?, failures?: [{ title,
+ * detail?, file?, line? }] }`. Invalid failures are dropped and at most
+ * `BOARD_CI_MAX_FAILURES` kept; a file that isn't that shape is a warning.
+ */
+export function parseBoardCiResultFile(text: string): {
+  readonly result: BoardCiStepResult | null;
+  readonly warning: string | null;
+} {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { result: null, warning: "The step's result file isn't valid JSON; ignored." };
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { result: null, warning: "The step's result file isn't a JSON object; ignored." };
+  }
+  const record = raw as Record<string, unknown>;
+  const summary =
+    typeof record.summary === "string" && record.summary.trim().length > 0
+      ? record.summary.trim().slice(0, 1_000)
+      : null;
+  const listed = Array.isArray(record.failures) ? record.failures : [];
+  const failures = listed.flatMap((entry) => {
+    const decoded = decodeFailureDetail(entry);
+    return decoded._tag === "Some" ? [decoded.value] : [];
+  });
+  const dropped = listed.length - failures.length;
+  return {
+    result: { summary, failures: failures.slice(0, BOARD_CI_MAX_FAILURES) },
+    warning:
+      dropped > 0
+        ? `${dropped} of the step's reported failures weren't { title, detail?, file?, line? }; ignored.`
+        : null,
+  };
+}
+
+/** The marker a script prints to report progress (T3O-49). */
+export const BOARD_CI_PROGRESS_MARKER = "::t3o-progress::";
+
+/** Parse one `::t3o-progress::<json>` output line, or null when the line is
+    not one (or its JSON is unreadable: then it's only log output). */
+export function parseBoardCiProgressLine(
+  line: string,
+): {
+  readonly message: string | null;
+  readonly done: number | null;
+  readonly total: number | null;
+} | null {
+  const at = line.indexOf(BOARD_CI_PROGRESS_MARKER);
+  if (at < 0) return null;
+  try {
+    const raw = JSON.parse(line.slice(at + BOARD_CI_PROGRESS_MARKER.length)) as unknown;
+    if (typeof raw !== "object" || raw === null) return null;
+    const record = raw as Record<string, unknown>;
+    const count = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+    return {
+      message: typeof record.message === "string" ? record.message.slice(0, 200) : null,
+      done: count(record.done),
+      total: count(record.total),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1761,6 +1862,10 @@ export const BoardCiPassStep = Schema.Struct({
   /** The last `BOARD_CI_TAIL_LINES` lines of merged stdout and stderr, with
       long lines clipped and the whole capped in size by the runner. */
   tail: Schema.String,
+  /** What the step reported in its `$T3O_CI_RESULT` file (T3O-49). */
+  result: Schema.optionalKey(BoardCiStepResult),
+  /** Runs alongside the step before it (T3O-49). */
+  parallel: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardCiPassStep = typeof BoardCiPassStep.Type;
 
@@ -3857,9 +3962,7 @@ export function boardStageOrderViolation(
     the merge stage on a board without CI; null when there is no room. */
 export function boardNewStageOrderKey(board: Pick<BoardState, "stages">): string | null {
   const ordered = boardStagesInOrder(board);
-  const anchorIndex = ordered.findIndex(
-    (stage) => stage.stageId === BOARD_SEED_STAGE_IDS.ci,
-  );
+  const anchorIndex = ordered.findIndex((stage) => stage.stageId === BOARD_SEED_STAGE_IDS.ci);
   const index =
     anchorIndex >= 0
       ? anchorIndex
@@ -7445,9 +7548,7 @@ export const BoardProjectStageConfigSetPayload = Schema.Struct({
   projectId: ProjectId,
   config: BoardProjectStageConfig,
   upserts: Schema.Array(BoardStageDefinition).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
-  deletedStageIds: Schema.Array(BoardStageId).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
+  deletedStageIds: Schema.Array(BoardStageId).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Why it changed, for the activity rail and the CI-off reactor. */
   cause: Schema.optionalKey(
     Schema.Literals([

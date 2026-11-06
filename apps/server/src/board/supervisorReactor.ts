@@ -3664,6 +3664,7 @@ const make = Effect.gen(function* () {
             exitCode: step.exitCode,
             tail: step.tail,
             logPath: pass?.logDir == null ? null : `${pass.logDir}/${index}.log`,
+            result: step.result ?? null,
           };
     yield* continueCi({
       cardId: card.id,
