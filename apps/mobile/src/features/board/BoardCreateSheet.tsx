@@ -1,10 +1,12 @@
 import {
   BOARD_SEED_STAGES,
   BoardCardId,
+  DEFAULT_BOARD_SETTINGS,
   type BoardStageDefinition,
   type EnvironmentId,
   type ProjectId,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
 import { Alert, TextInput, View } from "react-native";
@@ -16,7 +18,9 @@ import { ScreenScrollView } from "../../components/ScreenScrollView";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { boardEnvironment } from "../../state/board";
+import { serverEnvironment } from "../../state/server";
 import { boardCommandAlert, boardCommandDidApply } from "./boardCommandResult";
+import { boardCreateKeyPrefix, boardKeyPrefixPersistPatch } from "./boardCreateKeyPrefix";
 
 export function BoardCreateSheet(props: {
   readonly environmentId: EnvironmentId;
@@ -27,6 +31,8 @@ export function BoardCreateSheet(props: {
 }) {
   const navigation = useNavigation();
   const createCard = useAtomCommand(boardEnvironment.createCard);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings);
+  const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -65,29 +71,54 @@ export function BoardCreateSheet(props: {
             const trimmedTitle = title.trim();
             const trimmedBrief = brief.trim();
             const cardId = BoardCardId.make(uuidv4());
-            setSubmitting(true);
-            void createCard({
-              environmentId: props.environmentId,
-              input: {
-                cardId,
-                projectId: props.projectId,
-                title: trimmedTitle,
-                stage,
-                ...(trimmedBrief.length === 0 ? {} : { brief: trimmedBrief }),
-              },
-            }).then((result) => {
-              setSubmitting(false);
-              const alert = boardCommandAlert(result);
-              if (alert !== null) {
-                Alert.alert(alert.title, alert.message);
-              }
-              if (!boardCommandDidApply(result)) return;
-              props.onClose();
-              navigation.navigate("BoardCard", {
-                environmentId: String(props.environmentId),
-                cardId,
-              });
+            const board = settings?.board ?? DEFAULT_BOARD_SETTINGS;
+            const { prefix, assigned } = boardCreateKeyPrefix({
+              board,
+              projectId: props.projectId,
+              projectTitle: props.projectTitle,
             });
+            setSubmitting(true);
+            const persistPrefix = assigned
+              ? updateSettings({
+                  environmentId: props.environmentId,
+                  input: {
+                    patch: {
+                      board: boardKeyPrefixPersistPatch({
+                        board,
+                        projectId: props.projectId,
+                        prefix,
+                      }),
+                    },
+                  },
+                }).catch(() => undefined)
+              : Promise.resolve();
+            void persistPrefix
+              .then(() =>
+                createCard({
+                  environmentId: props.environmentId,
+                  input: {
+                    cardId,
+                    projectId: props.projectId,
+                    title: trimmedTitle,
+                    stage,
+                    keyPrefix: prefix,
+                    ...(trimmedBrief.length === 0 ? {} : { brief: trimmedBrief }),
+                  },
+                }),
+              )
+              .then((result) => {
+                setSubmitting(false);
+                const alert = boardCommandAlert(result);
+                if (alert !== null) {
+                  Alert.alert(alert.title, alert.message);
+                }
+                if (!boardCommandDidApply(result)) return;
+                props.onClose();
+                navigation.navigate("BoardCard", {
+                  environmentId: String(props.environmentId),
+                  cardId,
+                });
+              });
           }}
         />
       </ScreenScrollView>
