@@ -91,7 +91,7 @@ export const BOARD_MERGE_STATE_MAX_NAMED_CHECKS = 4;
 
 /** How many checks `verdicts` lists: enough for any real repository, bounded
     because it crosses the worker wire on every forge poll. */
-export const BOARD_MERGE_STATE_MAX_LISTED_CHECKS = 500;
+const BOARD_MERGE_STATE_MAX_LISTED_CHECKS = 500;
 
 /** How much of the forge's own refusal text a card will show (T3O-67). Bounded
     for the same reason as the check names: it is persisted on the card and
