@@ -3,9 +3,10 @@
  * worker's gateway is reported as the local runner reports it, and a worker
  * out of reach is "unavailable" rather than a CI failure.
  */
-import { EnvironmentId, type BoardWorkerCiProgress } from "@t3tools/contracts";
+import { BoardWorkerCiProgress, BoardWorkerRunCiInput, EnvironmentId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { WorkerUnavailable, type WorkerConnectionsShape } from "../workers/WorkerConnections.ts";
@@ -86,5 +87,47 @@ it.effect("a pass the worker could not run arrives as unavailable, with its reas
       failedIndex: null,
       detail: "CI couldn't write its logs.",
     });
+  }),
+);
+
+it.effect("a later segment's parallel steps, offset and result detail cross the wire intact", () =>
+  Effect.gen(function* () {
+    const sent: BoardWorkerRunCiInput[] = [];
+    const reported = {
+      ...step,
+      parallel: true,
+      result: { summary: "1 failed", failures: [{ title: "boom", file: "a.ts", line: 3 }] },
+    };
+    const wire = {
+      get: () =>
+        Effect.succeed({
+          gateway: {
+            runCi: (input: unknown) => {
+              sent.push(Schema.decodeUnknownSync(BoardWorkerRunCiInput)(input));
+              return Stream.fromIterable(
+                [
+                  { _tag: "step", index: 0, step: reported },
+                  { _tag: "done", result: "failed", failedIndex: 0 },
+                ].map((progress) => Schema.decodeUnknownSync(BoardWorkerCiProgress)(progress)),
+              );
+            },
+          },
+        } as unknown as WorkerRpc),
+    } satisfies Pick<WorkerConnectionsShape, "get">;
+    const seen: BoardCiStepProgress[] = [];
+    yield* remoteCiRunner(wire, worker).run(
+      {
+        ...request,
+        steps: [
+          { name: "Lint", command: "vp lint", timeoutMinutes: 5 },
+          { name: "Test", command: "vp test", timeoutMinutes: 5, parallel: true },
+        ],
+        indexOffset: 2,
+      },
+      (progress) => Effect.sync(() => seen.push(progress)),
+    );
+    assert.strictEqual(sent[0]?.indexOffset, 2);
+    assert.strictEqual(sent[0]?.steps[1]?.parallel, true);
+    assert.deepStrictEqual(seen, [{ index: 0, step: reported }]);
   }),
 );
