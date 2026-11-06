@@ -278,6 +278,8 @@ export const make = Effect.gen(function* () {
       peerLinks: true,
       mcpModeLimitHeader: true,
       linkFence: true,
+      // T3o: every T3o server mounts the board engine (T3O-18).
+      board: true,
     },
   };
 

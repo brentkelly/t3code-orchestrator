@@ -4,10 +4,13 @@ import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contract
 
 import type { RecentThreadShortcut } from "../../persistence/imperative";
 
-const MAX_RECENT_THREAD_SHORTCUTS = 3;
+// Launchers cap visible shortcuts around 4: New task, Board, then recents.
+export const MAX_RECENT_THREAD_SHORTCUTS = 2;
 
 const NEW_TASK_SHORTCUT_ID = "new-task";
 const NEW_TASK_SHORTCUT_HREF = "/new";
+export const BOARD_SHORTCUT_ID = "board";
+export const BOARD_SHORTCUT_HREF = "/board";
 
 const SHORTCUT_ICON = "shortcut_icon";
 
@@ -66,7 +69,11 @@ export function shortcutHref(action: Action): string | null {
     return null;
   }
 
-  return href === NEW_TASK_SHORTCUT_HREF || THREAD_SHORTCUT_HREF_PATTERN.test(href) ? href : null;
+  return href === NEW_TASK_SHORTCUT_HREF ||
+    href === BOARD_SHORTCUT_HREF ||
+    THREAD_SHORTCUT_HREF_PATTERN.test(href)
+    ? href
+    : null;
 }
 
 export function withRecentThreadShortcut(
@@ -88,6 +95,7 @@ export function withRecentThreadShortcut(
   ].slice(0, MAX_RECENT_THREAD_SHORTCUTS);
 }
 
+/** Full launcher shortcut list: static "New task" and "Board", then recents. */
 export function buildShortcutActions(recents: ReadonlyArray<RecentThreadShortcut>): Action[] {
   return [
     {
@@ -95,6 +103,12 @@ export function buildShortcutActions(recents: ReadonlyArray<RecentThreadShortcut
       title: "New task",
       icon: SHORTCUT_ICON,
       params: { href: NEW_TASK_SHORTCUT_HREF },
+    },
+    {
+      id: BOARD_SHORTCUT_ID,
+      title: "Board",
+      icon: SHORTCUT_ICON,
+      params: { href: BOARD_SHORTCUT_HREF },
     },
     ...recents.slice(0, MAX_RECENT_THREAD_SHORTCUTS).map((thread): Action => ({
       // URI-encoded hrefs avoid env/thread id collisions that plain hyphen joins allow.

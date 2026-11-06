@@ -5,26 +5,31 @@ import { use } from "react";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
-import { useMemo, useState } from "react";
-import { Platform, useWindowDimensions } from "react-native";
+import { AsyncResult } from "effect/reactivity";
+import { useCallback, useMemo, useState } from "react";
+import { Alert, Platform, useWindowDimensions } from "react-native";
 
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   pickableProjectGroups,
   resolveScratchProjectScopeKey,
 } from "@t3tools/client-runtime/state/project-grouping";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { useProjects } from "../../state/entities";
+import { useProjects, useServerConfigs } from "../../state/entities";
 import { environmentThreadShells } from "../../state/threads";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useDeviceType, useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { WorkspaceEmptyDetail } from "../layout/WorkspaceEmptyDetail";
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
@@ -38,6 +43,18 @@ import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceTab } from "../workspace/useSelectWorkspaceTab";
 import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { BoardHomeScreen } from "../board/BoardHomeScreen";
+import { HomeModeBar } from "../board/HomeModeBar";
+import {
+  boardCapableEnvironmentIds,
+  boardComposeAction,
+  boardCreateHostKey,
+  boardCreateRequestForHost,
+  boardEmptyStateCopy,
+  pickBoardEnvironmentId,
+  resolveHomeMode,
+  type HomeMode,
+} from "../board/boardHomeMode";
 
 export function HomeRouteScreen() {
   const { width: windowWidth } = useWindowDimensions();
@@ -61,6 +78,10 @@ export function HomeRouteScreen() {
   const selectTab = useSelectWorkspaceTab();
   const workspace = useWorkspaceTabs();
   const [localSearchQuery, setLocalSearchQuery] = useState("");
+  const [createForHost, setCreateForHost] = useState<string | null>(null);
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const serverConfigs = useServerConfigs();
   const searchQuery =
     Platform.OS === "android"
       ? primarySidebarSearchQuery
@@ -158,6 +179,57 @@ export function HomeRouteScreen() {
   )
     ? resolvedProjectKey
     : null;
+  const boardCapableIds = useMemo(
+    () =>
+      boardCapableEnvironmentIds(
+        [...serverConfigs.entries()].map(([environmentId, config]) => ({
+          environmentId,
+          environment: config.environment,
+        })),
+      ),
+    [serverConfigs],
+  );
+  const boardAvailable = boardCapableIds.size > 0;
+  const savedHomeMode = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.homeMode
+    : undefined;
+  const homeMode = resolveHomeMode({ saved: savedHomeMode, boardAvailable });
+  const setHomeMode = useCallback(
+    (mode: HomeMode) => {
+      savePreferences({ homeMode: mode });
+    },
+    [savePreferences],
+  );
+  const boardEnvironments = useMemo(
+    () => environments.filter((environment) => boardCapableIds.has(environment.environmentId)),
+    [boardCapableIds, environments],
+  );
+  const boardEnvironmentId = pickBoardEnvironmentId({
+    selectedEnvironmentId,
+    environments: boardEnvironments,
+    boardCapableIds,
+  });
+  const emptyBoardCopy = boardEmptyStateCopy({
+    selectedEnvironmentId,
+    boardCapableIds,
+  });
+  const createHostKey = boardCreateHostKey({ homeMode, boardEnvironmentId });
+  const nextCreateForHost = boardCreateRequestForHost({ createForHost, createHostKey });
+  if (nextCreateForHost !== createForHost) {
+    setCreateForHost(nextCreateForHost);
+  }
+  const onCompose = useCallback(() => {
+    const action = boardComposeAction({ homeMode, boardEnvironmentId });
+    if (action === "create") {
+      setCreateForHost(boardEnvironmentId);
+      return;
+    }
+    if (action === "empty-board") {
+      Alert.alert(emptyBoardCopy.title, emptyBoardCopy.detail);
+      return;
+    }
+    startNewTask();
+  }, [boardEnvironmentId, emptyBoardCopy, homeMode, startNewTask]);
 
   if (layout.usesSplitView && !nativePrimaryColumn) {
     return (
@@ -203,7 +275,8 @@ export function HomeRouteScreen() {
   return (
     <AndroidHomeFabLayout
       disabled={workspace !== null && Platform.OS !== "android"}
-      onStartNewTask={startNewTask}
+      composeLabel={homeMode === "board" ? "New card" : undefined}
+      onStartNewTask={onCompose}
     >
       <>
         {/* Screen options merge shallowly; restore the header after split view. */}
@@ -231,54 +304,88 @@ export function HomeRouteScreen() {
           onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
           onOpenSettings={() => selectTab("settings")}
           onSearchQueryChange={setSearchQuery}
-          onStartNewTask={startNewTask}
+          onStartNewTask={onCompose}
+          composeAccessibilityLabel={homeMode === "board" ? "New card" : "New task"}
         />
 
-        <HomeScreen
-          catalogState={catalogState}
-          environments={environments}
-          onAddConnection={() => openSettings(navigation, "SettingsEnvironmentNew")}
-          onArchiveThread={archiveThread}
-          onDeleteThread={confirmDeleteThread}
-          onSettleThread={settleThread}
-          onSnoozeThread={snoozeThread}
-          onUnsnoozeThread={unsnoozeThread}
-          onUnsettleThread={unsettleThread}
-          onPinThread={pinThread}
-          onUnpinThread={unpinThread}
-          onSetThreadAutoSettle={setThreadAutoSettle}
-          onMoveThread={moveThread}
-          onRenameThread={renameThread}
-          onRegenerateThreadTitle={regenerateThreadTitle}
-          onEnvironmentChange={setSelectedEnvironmentId}
-          onProjectChange={setSelectedProjectKey}
-          onOpenSettings={() => selectTab("settings")}
-          onSearchQueryChange={setSearchQuery}
-          onSelectThread={handleSelectThread}
-          onSelectPendingTask={openPendingTask}
-          onDeletePendingTask={confirmDeletePendingTask}
-          onNewThreadOnBranch={handleNewThreadOnBranch}
-          onNewThreadInProject={(project) => {
-            selectThreadRoute({
-              draft: {
-                requestId: uuidv4(),
-                environmentId: String(project.environmentId),
-                projectId: String(project.id),
-                title: project.title,
-              },
-            });
-          }}
-          onStartNewTask={startNewTask}
-          pendingTasks={pendingTasks}
-          projectGroupingMode={listOptions.projectGroupingMode}
-          projects={projects}
-          projectSortOrder={listOptions.projectSortOrder}
-          savedConnectionsById={savedConnectionsById}
-          searchQuery={searchQuery}
-          selectedEnvironmentId={selectedEnvironmentId}
-          selectedProjectKey={selectedProjectKey}
-          threads={threads}
-        />
+        {boardAvailable ? <HomeModeBar mode={homeMode} onChange={setHomeMode} /> : null}
+
+        {homeMode === "board" ? (
+          boardEnvironmentId === null ? (
+            <EmptyState
+              variant="plain"
+              title={emptyBoardCopy.title}
+              detail={emptyBoardCopy.detail}
+            />
+          ) : (
+            <BoardHomeScreen
+              environmentId={boardEnvironmentId}
+              environmentLabel={
+                boardEnvironments.find(
+                  (environment) => environment.environmentId === boardEnvironmentId,
+                )?.label ?? boardEnvironmentId
+              }
+              environments={boardEnvironments}
+              onEnvironmentChange={(environmentId: EnvironmentId) =>
+                setSelectedEnvironmentId(environmentId)
+              }
+              selectedEnvironmentId={selectedEnvironmentId}
+              projects={projects}
+              selectedProjectKey={selectedProjectKey}
+              projectGroupingMode={listOptions.projectGroupingMode}
+              onProjectChange={setSelectedProjectKey}
+              searchQuery={searchQuery}
+              createRequested={nextCreateForHost !== null}
+              onCreateHandled={() => setCreateForHost(null)}
+            />
+          )
+        ) : (
+          <HomeScreen
+            catalogState={catalogState}
+            environments={environments}
+            onAddConnection={() => openSettings(navigation, "SettingsEnvironmentNew")}
+            onArchiveThread={archiveThread}
+            onDeleteThread={confirmDeleteThread}
+            onSettleThread={settleThread}
+            onSnoozeThread={snoozeThread}
+            onUnsnoozeThread={unsnoozeThread}
+            onUnsettleThread={unsettleThread}
+            onPinThread={pinThread}
+            onUnpinThread={unpinThread}
+            onSetThreadAutoSettle={setThreadAutoSettle}
+            onMoveThread={moveThread}
+            onRenameThread={renameThread}
+            onRegenerateThreadTitle={regenerateThreadTitle}
+            onEnvironmentChange={setSelectedEnvironmentId}
+            onProjectChange={setSelectedProjectKey}
+            onOpenSettings={() => selectTab("settings")}
+            onSearchQueryChange={setSearchQuery}
+            onSelectThread={handleSelectThread}
+            onSelectPendingTask={openPendingTask}
+            onDeletePendingTask={confirmDeletePendingTask}
+            onNewThreadOnBranch={handleNewThreadOnBranch}
+            onNewThreadInProject={(project) => {
+              selectThreadRoute({
+                draft: {
+                  requestId: uuidv4(),
+                  environmentId: String(project.environmentId),
+                  projectId: String(project.id),
+                  title: project.title,
+                },
+              });
+            }}
+            onStartNewTask={startNewTask}
+            pendingTasks={pendingTasks}
+            projectGroupingMode={listOptions.projectGroupingMode}
+            projects={projects}
+            projectSortOrder={listOptions.projectSortOrder}
+            savedConnectionsById={savedConnectionsById}
+            searchQuery={searchQuery}
+            selectedEnvironmentId={selectedEnvironmentId}
+            selectedProjectKey={selectedProjectKey}
+            threads={threads}
+          />
+        )}
         <ThreadUndoNotice visible={visible} />
       </>
     </AndroidHomeFabLayout>

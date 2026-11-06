@@ -9,11 +9,14 @@ import { BOARD_SEED_STAGE_IDS, BOARD_SEED_STAGES } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardCiAwareNextStageId,
   boardMoveLeavesPlanningUnwritten,
+  boardMoveNeedsOverride,
+  boardSkipCiAction,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
   isBoardStageManuallySelectable,
-} from "./boardStageActions";
+} from "./boardStageActions.ts";
 
 // The global pipeline: CI only joins a project's (T3O-44).
 const stages = BOARD_SEED_STAGES.filter((stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.ci);
@@ -84,6 +87,91 @@ describe("boardStagePrimaryAction", () => {
       kind: "move",
       toStage: BOARD_SEED_STAGE_IDS.merge,
     });
+  });
+
+  it("offers Skip CI while a live CI entry has no forward move", () => {
+    const withCi = BOARD_SEED_STAGES;
+    expect(
+      boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.ci, { ciEntryLive: true }),
+    ).toBeNull();
+    expect(
+      boardSkipCiAction(withCi, {
+        stageId: BOARD_SEED_STAGE_IDS.ci,
+        ciEntryLive: true,
+      }),
+    ).toEqual({
+      label: "Skip CI",
+      confirmLabel: "Skip CI and move to Ready for merge",
+      toStage: BOARD_SEED_STAGE_IDS.merge,
+      toLabel: "Ready for merge",
+    });
+    expect(
+      boardSkipCiAction(withCi, {
+        stageId: BOARD_SEED_STAGE_IDS.ci,
+        ciEntryLive: false,
+      }),
+    ).toBeNull();
+    expect(
+      boardSkipCiAction(withCi, {
+        stageId: BOARD_SEED_STAGE_IDS.review,
+        ciEntryLive: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("offers Skip CI while the card sits in CI before a pass exists", () => {
+    const withCi = BOARD_SEED_STAGES;
+    const skip = {
+      label: "Skip CI",
+      confirmLabel: "Skip CI and move to Ready for merge",
+      toStage: BOARD_SEED_STAGE_IDS.merge,
+      toLabel: "Ready for merge",
+    };
+    // holdInCi: the project's CI is on, the card is in the stage, no pass yet.
+    expect(
+      boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.ci, {
+        ciEntryLive: false,
+        ciActive: true,
+      }),
+    ).toBeNull();
+    expect(
+      boardSkipCiAction(withCi, {
+        stageId: BOARD_SEED_STAGE_IDS.ci,
+        ciEntryLive: false,
+        ciActive: true,
+      }),
+    ).toEqual(skip);
+    // Paused CI with no entry still moves on like any held card.
+    expect(
+      boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.ci, {
+        ciEntryLive: false,
+        ciActive: false,
+      }),
+    ).toMatchObject({ kind: "move", toStage: BOARD_SEED_STAGE_IDS.merge });
+    expect(
+      boardSkipCiAction(withCi, {
+        stageId: BOARD_SEED_STAGE_IDS.ci,
+        ciEntryLive: false,
+        ciActive: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("walks CI as the next stage, never past a live entry (boardCiAwareNextStageId)", () => {
+    const withCi = BOARD_SEED_STAGES;
+    const withoutCi = BOARD_SEED_STAGES.filter(
+      (stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.ci,
+    );
+    expect(boardCiAwareNextStageId(withCi, BOARD_SEED_STAGE_IDS.review, false)).toBe(
+      BOARD_SEED_STAGE_IDS.ci,
+    );
+    expect(boardCiAwareNextStageId(withCi, BOARD_SEED_STAGE_IDS.ci, true)).toBeNull();
+    expect(boardCiAwareNextStageId(withCi, BOARD_SEED_STAGE_IDS.ci, false)).toBe(
+      BOARD_SEED_STAGE_IDS.merge,
+    );
+    expect(boardCiAwareNextStageId(withoutCi, BOARD_SEED_STAGE_IDS.review, true)).toBe(
+      BOARD_SEED_STAGE_IDS.merge,
+    );
   });
 
   it("offers Merge in the merge role only while the pull request is still open", () => {
@@ -412,5 +500,19 @@ describe("boardMoveLeavesPlanningUnwritten", () => {
 
   it("a split child carries its own plan copy, so its plan count decides (T3O-27)", () => {
     expect(asks(ids.planning, ids.ready, 1)).toBe(false);
+  });
+});
+
+describe("boardMoveNeedsOverride", () => {
+  const ids = BOARD_SEED_STAGE_IDS;
+
+  it("does not override an adjacent move", () => {
+    expect(boardMoveNeedsOverride(stages, ids.backlog, ids.sprint)).toBe(false);
+    expect(boardMoveNeedsOverride(stages, ids.ready, ids.planning)).toBe(false);
+  });
+
+  it("overrides a jump that skips a stage", () => {
+    expect(boardMoveNeedsOverride(stages, ids.backlog, ids.ready)).toBe(true);
+    expect(boardMoveNeedsOverride(stages, ids.sprint, ids.ready)).toBe(true);
   });
 });

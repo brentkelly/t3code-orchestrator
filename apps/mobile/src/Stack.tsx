@@ -46,6 +46,9 @@ import {
   type RenderFailureProps,
 } from "./components/RenderErrorBoundary";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
+import { BoardLandingScreen } from "./features/board/BoardLandingScreen";
+import { BoardCardScreen } from "./features/board/BoardCardScreen";
+import { BoardArchivedScreen } from "./features/board/BoardArchivedScreen";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
@@ -1008,6 +1011,24 @@ const RootStackConfig = createWorkspaceStackNavigator({
         sheetGrabberVisible: true,
         sheetCornerRadius: Platform.OS === "android" ? 28 : undefined,
       },
+    }),
+    Board: createNativeStackScreen({
+      screen: BoardLandingScreen,
+      linking: "board",
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        headerShown: false,
+      },
+    }),
+    BoardArchived: createNativeStackScreen({
+      screen: BoardArchivedScreen,
+      linking: "board/archive",
+      options: DETAIL_HEADER_OPTIONS,
+    }),
+    BoardCard: createNativeStackScreen({
+      screen: BoardCardScreen,
+      linking: "board/:environmentId/:cardId",
+      options: DETAIL_HEADER_OPTIONS,
     }),
     NotFound: createNativeStackScreen({
       screen: NotFoundScreen,

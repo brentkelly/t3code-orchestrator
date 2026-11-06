@@ -192,7 +192,7 @@ import {
   boardStageSecondaryActions,
   isBoardStageManuallySelectable,
   type BoardStageSecondaryAction,
-} from "./boardStageActions";
+} from "@t3tools/client-runtime/board";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
 import { boardCardMoveBlocked } from "./boardCardMoveGate";

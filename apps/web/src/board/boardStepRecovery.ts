@@ -22,7 +22,7 @@ import type { BoardStageDefinition, BoardStageId } from "@t3tools/contracts";
 
 import type { BoardReviewPhaseStatus } from "./boardReviewLoop";
 import { boardStageLabelMidSentence } from "./boardCardThreadMenu";
-import { boardCiAwareNextStageId } from "./boardStageActions";
+import { boardCiAwareNextStageId } from "@t3tools/client-runtime/board";
 import { boardStageLabel } from "./boardStages";
 
 export interface BoardStepRecovery {

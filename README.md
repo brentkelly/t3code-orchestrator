@@ -19,9 +19,19 @@ This repository is **T3o**, a fork of [`pingdotgg/t3code`](https://github.com/pi
 Planning → Ready → Building → Code review → Ready for merge → Done), and the app spawns, supervises and
 restarts the agent threads that do the work.
 
-T3o is not published to any registry. `npx t3@latest`, the desktop installers and the package-manager
-recipes under [Installation](#installation) all give you **upstream**, without the board. To run T3o you
-build it from this checkout.
+T3o is not published to any registry. `npx t3@latest`, the desktop installers, the Play Store /
+App Store T3 Code apps, and the package-manager recipes under [Installation](#installation) all
+give you **upstream**, without the board. To run T3o you build it from this checkout.
+
+### Download
+
+| Surface             | Where                                                                                                                                                                                                                              |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Android APK         | [This repo's GitHub Releases](https://github.com/brentkelly/t3code-orchestrator/releases) — `t3o-*-debug.apk` prereleases (no keystore) and signed `t3o-*.apk` when secrets exist. See [docs/t3o/mobile.md](./docs/t3o/mobile.md). |
+| Web / Linux service | Build this checkout ([Install and build](#install-and-build)).                                                                                                                                                                     |
+| Desktop             | T3o desktop installers from this repo when published; upstream GitHub Releases are not T3o.                                                                                                                                        |
+
+The Play Store and App Store **T3 Code** apps are upstream. They will not show the Board.
 
 ### Requirements
 

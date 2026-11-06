@@ -122,7 +122,7 @@ import {
   boardShellIntegrationAncestor,
   isBoardGroupShell,
 } from "./boardGroups";
-import { boardMoveLeavesPlanningUnwritten } from "./boardStageActions";
+import { boardMoveLeavesPlanningUnwritten } from "@t3tools/client-runtime/board";
 import { boardCardPipelineStages } from "./boardProjectPipelines";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
