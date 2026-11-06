@@ -172,6 +172,20 @@ describe("normalization and version", () => {
       { where: "building.humanInLoop", kind: "setting", text: "false" },
     ]);
   });
+
+  it("lists the permission settings an import removes", () => {
+    const texts = boardProjectDeltaNewTexts(
+      {
+        stageSwitches: {},
+        overrides: { building: { autoExecute: false, humanInLoop: true } },
+        ci: { steps: [] },
+      },
+      { stageSwitches: {}, overrides: { building: { humanInLoop: true } }, ci: { steps: [] } },
+    );
+    expect(texts).toEqual([
+      { where: "building.autoExecute", kind: "setting", text: "removed (was false)" },
+    ]);
+  });
 });
 
 describe("settings commands", () => {

@@ -387,5 +387,11 @@ it.live("fails a group that leaves tracked changes in the worktree", () =>
       () => Effect.void,
     );
     assert.deepStrictEqual(again, { result: "passed", failedIndex: null });
+    // Re-editing an already-dirty file is still this group's doing.
+    const reedit = yield* runBoardCiPass(
+      request(cwd, [{ name: "Formats", command: "echo three > tracked.txt", timeoutMinutes: 1 }]),
+      () => Effect.void,
+    );
+    assert.deepStrictEqual(reedit, { result: "failed", failedIndex: 0 });
   }),
 );

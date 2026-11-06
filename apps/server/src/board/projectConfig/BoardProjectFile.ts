@@ -100,7 +100,8 @@ const make = Effect.gen(function* () {
         Effect.map((sha) => sha !== null),
       );
     // The default branch, never the checkout's current one: the remote's
-    // HEAD, else main or master, and the current branch only as a last resort.
+    // HEAD (local ref, else as the remote advertises it), else main or master,
+    // and the current branch only as a last resort.
     const firstExisting = Effect.fn("BoardProjectFile.firstExisting")(function* (
       candidates: ReadonlyArray<string | null>,
     ) {
@@ -122,8 +123,16 @@ const make = Effect.gen(function* () {
         "--short",
         `refs/remotes/${remote}/HEAD`,
       ]);
+      // No local origin/HEAD (older git, or `remote add` without a clone): ask the remote.
+      const advertised =
+        remoteHead === null
+          ? (yield* run(root, ["ls-remote", "--symref", remote, "HEAD"], 30_000))?.match(
+              /^ref: refs\/heads\/(\S+)\tHEAD$/m,
+            )?.[1]
+          : undefined;
       const candidate = yield* firstExisting([
         remoteHead,
+        advertised === undefined ? null : `${remote}/${advertised}`,
         `${remote}/main`,
         `${remote}/master`,
         `${remote}/${localDefault}`,

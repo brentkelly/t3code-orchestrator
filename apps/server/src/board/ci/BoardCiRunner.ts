@@ -15,6 +15,7 @@
  * pass (Skip CI, the card leaving CI) kills the whole tree, not just the
  * shell.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -313,6 +314,25 @@ const readStepResult = (resultPath: string, tail: BoardCiTail): BoardCiStepResul
 const changedLines = (status: string | null): ReadonlyArray<string> =>
   status === null ? [] : status.split("\n").filter((line) => line.trim().length > 0);
 
+/** Each changed line keyed with its file's content hash, since a re-edit to an
+    already-dirty file prints the same porcelain line. */
+const changedSnapshot = (cwd: string, status: string | null): ReadonlyMap<string, string> => {
+  const snapshot = new Map<string, string>();
+  for (const line of changedLines(status)) {
+    const path = line.slice(3).split(" -> ").at(-1)!;
+    let digest = "absent";
+    try {
+      digest = NodeCrypto.createHash("sha1")
+        .update(NodeFS.readFileSync(NodePath.join(cwd, path)))
+        .digest("hex");
+    } catch {
+      // Deleted, or a quoted path: the porcelain line alone decides.
+    }
+    snapshot.set(`${line}\0${digest}`, line);
+  }
+  return snapshot;
+};
+
 /** Tracked files the group changed (`git status`, untracked ignored), or
     null when git can't say. A CI step must not edit the branch it checks. */
 const trackedChanges = (cwd: string): Effect.Effect<string | null> =>
@@ -321,7 +341,7 @@ const trackedChanges = (cwd: string): Effect.Effect<string | null> =>
       "git",
       ["status", "--porcelain", "--untracked-files=no"],
       { cwd },
-      (error, stdout) => resume(Effect.succeed(error === null ? stdout.trim() : null)),
+      (error, stdout) => resume(Effect.succeed(error === null ? stdout.trimEnd() : null)),
     );
   });
 
@@ -350,7 +370,7 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
     }));
     for (const group of boardCiStepGroups(indexed)) {
       // What was already changed is not this group's doing.
-      const before = new Set(changedLines(yield* trackedChanges(request.cwd)));
+      const before = changedSnapshot(request.cwd, yield* trackedChanges(request.cwd));
       const settled = yield* Effect.forEach(
         group,
         ({ definition, index }) =>
@@ -392,8 +412,9 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
       // A group that edited tracked files fails as a whole: CI checks the
       // branch, it never changes it.
       const after = yield* trackedChanges(request.cwd);
-      const dirty = changedLines(after)
-        .filter((line) => !before.has(line))
+      const dirty = [...changedSnapshot(request.cwd, after)]
+        .filter(([key]) => !before.has(key))
+        .map(([, line]) => line)
         .join("\n");
       const finishedAt = yield* nowIso;
       let failedIndex: number | null = null;

@@ -143,7 +143,8 @@ export function boardProjectDeltasEqual(
 }
 
 /** Every command and prompt in `next` that `current` doesn't already hold,
-    in full, for the import confirmation. */
+    in full, plus every permission setting it adds, changes or removes, for
+    the import confirmation. */
 export function boardProjectDeltaNewTexts(
   current: BoardProjectStageDelta,
   next: BoardProjectStageDelta,
@@ -198,8 +199,13 @@ export function boardProjectDeltaNewTexts(
     return found;
   };
   const before = permissions(current.overrides);
-  for (const [where, value] of permissions(next.overrides)) {
+  const after = permissions(next.overrides);
+  for (const [where, value] of after) {
     if (before.get(where) !== value) out.push({ where, kind: "setting", text: value });
+  }
+  // A dropped override falls back to the global default, which may be looser.
+  for (const [where, value] of before) {
+    if (!after.has(where)) out.push({ where, kind: "setting", text: `removed (was ${value})` });
   }
   return out;
 }

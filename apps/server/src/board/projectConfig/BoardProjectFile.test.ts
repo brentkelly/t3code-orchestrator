@@ -56,6 +56,33 @@ it.live("reads the default branch's file, not the checkout's feature branch", ()
   }).pipe(Effect.provide(layerFor(root)));
 });
 
+it.live("without a remote HEAD, asks the remote for its default branch before main", () => {
+  const upstream = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-project-file-up-"));
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3o-project-file-"));
+  const git = (cwd: string, ...args: ReadonlyArray<string>) =>
+    NodeChildProcess.execFileSync("git", [...args], { cwd, stdio: "ignore" });
+  const commit = (cwd: string, message: string) =>
+    git(cwd, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", message);
+  git(upstream, "init", "-q", "-b", "trunk");
+  NodeFS.writeFileSync(NodePath.join(upstream, "t3o.json"), '{"version":2}\n');
+  git(upstream, "add", "t3o.json");
+  commit(upstream, "trunk");
+  git(upstream, "checkout", "-qb", "main");
+  NodeFS.writeFileSync(NodePath.join(upstream, "t3o.json"), '{"version":2,"ci":{"steps":[]}}\n');
+  git(upstream, "add", "t3o.json");
+  commit(upstream, "stale main");
+  git(upstream, "checkout", "-q", "trunk");
+  // `init` + `remote add` leaves no origin/HEAD; git before 2.48 never creates one on fetch.
+  git(root, "init", "-q", "-b", "work");
+  git(root, "remote", "add", "origin", upstream);
+  git(root, "config", "remote.origin.followRemoteHEAD", "never");
+  return Effect.gen(function* () {
+    const read = yield* (yield* BoardProjectFile).readCommitted(projectId);
+    assert.strictEqual(read.kind, "found");
+    assert.deepStrictEqual(read.kind === "found" ? read.raw : null, { version: 2 });
+  }).pipe(Effect.provide(layerFor(root)));
+});
+
 it.live("refuses to overwrite a t3o.json with uncommitted edits", () => {
   const root = repoOnFeatureBranch();
   NodeFS.writeFileSync(NodePath.join(root, "t3o.json"), "{}\n");
