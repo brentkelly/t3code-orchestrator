@@ -2,13 +2,13 @@ import type { BoardCardShell, BoardStageDefinition, ProjectId } from "@t3tools/c
 
 export function liveTopLevelBoardCards(
   cards: ReadonlyArray<BoardCardShell>,
-  projectId: ProjectId | null,
+  projectIds: ReadonlyArray<ProjectId> | null,
 ): ReadonlyArray<BoardCardShell> {
   return cards.filter(
     (card) =>
       card.archivedAt === null &&
       card.parentCardId === undefined &&
-      (projectId === null || card.projectId === projectId),
+      (projectIds === null || projectIds.includes(card.projectId)),
   );
 }
 
@@ -19,7 +19,9 @@ export function cardsInStage(
   return cards
     .filter((card) => card.stage === stageId)
     .slice()
-    .sort((left, right) => (left.orderKey < right.orderKey ? -1 : left.orderKey > right.orderKey ? 1 : 0));
+    .sort((left, right) =>
+      left.orderKey < right.orderKey ? -1 : left.orderKey > right.orderKey ? 1 : 0,
+    );
 }
 
 export function boardStageLiveCounts(

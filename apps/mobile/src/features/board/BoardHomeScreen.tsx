@@ -7,7 +7,7 @@ import {
   type BoardCardShell,
   type BoardStageDefinition,
   type BoardStageId,
-  type ProjectId,
+  type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
@@ -29,8 +29,10 @@ import { StatusPill } from "../../components/StatusPill";
 import { RowPressable } from "../../components/RowPressable";
 import { cn } from "../../lib/cn";
 import { boardEnvironment } from "../../state/board";
+import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { boardCardStatus } from "./boardCardStatus";
 import { BoardCreateSheet } from "./BoardCreateSheet";
+import { boardProjectIdsForHomeScope } from "./boardHomeProjectScope";
 import { boardStageLiveCounts, cardsInStage, liveTopLevelBoardCards } from "./boardStageColumns";
 
 export function BoardHomeScreen(props: {
@@ -43,6 +45,7 @@ export function BoardHomeScreen(props: {
   readonly onEnvironmentChange: (environmentId: EnvironmentId) => void;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly selectedProjectKey: string | null;
+  readonly projectGroupingMode: SidebarProjectGroupingMode;
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly createRequested: boolean;
   readonly onCreateHandled: () => void;
@@ -52,20 +55,25 @@ export function BoardHomeScreen(props: {
   const stagesFromAtom = useAtomValue(boardEnvironment.stageListAtom(props.environmentId));
   const stages = stagesFromAtom.length > 0 ? stagesFromAtom : BOARD_SEED_STAGES;
   const cards = board?.cards ?? [];
-  const projectId = useMemo((): ProjectId | null => {
-    if (props.selectedProjectKey === null) return null;
-    const match = props.projects.find(
-      (project) =>
-        project.environmentId === props.environmentId &&
-        (project.id === props.selectedProjectKey ||
-          `${project.environmentId}:${project.id}` === props.selectedProjectKey),
-    );
-    return match?.id ?? null;
-  }, [props.environmentId, props.projects, props.selectedProjectKey]);
-  const liveCards = useMemo(
-    () => liveTopLevelBoardCards(cards, projectId),
-    [cards, projectId],
+  const scopes = useMemo(
+    () =>
+      buildHomeProjectScopes({
+        projects: props.projects,
+        environmentId: null,
+        projectGroupingMode: props.projectGroupingMode,
+      }),
+    [props.projectGroupingMode, props.projects],
   );
+  const projectIds = useMemo(
+    () =>
+      boardProjectIdsForHomeScope({
+        scopes,
+        selectedProjectKey: props.selectedProjectKey,
+        environmentId: props.environmentId,
+      }),
+    [props.environmentId, props.selectedProjectKey, scopes],
+  );
+  const liveCards = useMemo(() => liveTopLevelBoardCards(cards, projectIds), [cards, projectIds]);
   const counts = useMemo(() => boardStageLiveCounts(stages, liveCards), [liveCards, stages]);
   const [stageId, setStageId] = useState<BoardStageId | null>(null);
   const resolvedStageId =
@@ -77,7 +85,7 @@ export function BoardHomeScreen(props: {
   const createProject = props.projects.find(
     (project) =>
       project.environmentId === props.environmentId &&
-      (projectId === null || project.id === projectId),
+      (projectIds === null || projectIds.includes(project.id)),
   );
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -180,7 +188,12 @@ export function BoardHomeScreen(props: {
           );
         })}
         <Pressable
-          onPress={() => navigation.navigate("BoardArchived", { environmentId: String(props.environmentId) })}
+          onPress={() =>
+            navigation.navigate("BoardArchived", {
+              environmentId: String(props.environmentId),
+              ...(projectIds === null ? {} : { projectIds: projectIds.join(",") }),
+            })
+          }
           className="rounded-full bg-grouped-card px-3 py-1.5"
         >
           <Text className="text-xs font-t3-medium text-foreground-muted">Archive</Text>
