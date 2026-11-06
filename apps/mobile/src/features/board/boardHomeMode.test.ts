@@ -2,6 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCapableEnvironmentIds,
+  boardComposeAction,
+  boardCreateHostKey,
+  boardCreateRequestForHost,
+  boardCreateRequestStaysArmed,
+  boardEmptyStateCopy,
   boardShouldShowEnvironmentLabel,
   pickBoardEnvironmentId,
   resolveHomeMode,
@@ -89,6 +94,90 @@ describe("pickBoardEnvironmentId", () => {
         boardCapableIds: new Set(),
       }),
     ).toBeNull();
+  });
+});
+
+describe("boardEmptyStateCopy", () => {
+  it("names a filtered non-board server", () => {
+    expect(
+      boardEmptyStateCopy({
+        selectedEnvironmentId: "cloud",
+        boardCapableIds: new Set(["t3o"]),
+      }),
+    ).toEqual({
+      title: "No board on this server",
+      detail: "The Home filter is a server without a board.",
+    });
+  });
+
+  it("asks to pair when no specific non-board filter is selected", () => {
+    expect(
+      boardEmptyStateCopy({
+        selectedEnvironmentId: null,
+        boardCapableIds: new Set(["t3o"]),
+      }),
+    ).toEqual({
+      title: "No board on this server",
+      detail: "Pair a T3o server to see the Board.",
+    });
+  });
+});
+
+describe("boardComposeAction", () => {
+  it("creates when Board is showing a board server", () => {
+    expect(boardComposeAction({ homeMode: "board", boardEnvironmentId: "t3o" })).toBe("create");
+  });
+
+  it("alerts instead of arming create when Board has no environment", () => {
+    expect(boardComposeAction({ homeMode: "board", boardEnvironmentId: null })).toBe("empty-board");
+  });
+
+  it("opens a new task in Threads mode", () => {
+    expect(boardComposeAction({ homeMode: "threads", boardEnvironmentId: "t3o" })).toBe("new-task");
+  });
+});
+
+describe("boardCreateRequestStaysArmed", () => {
+  it("stays armed only while BoardHomeScreen is mounted", () => {
+    expect(boardCreateRequestStaysArmed({ homeMode: "board", boardEnvironmentId: "t3o" })).toBe(
+      true,
+    );
+  });
+
+  it("disarms when the empty board unmounts the create sheet host", () => {
+    expect(boardCreateRequestStaysArmed({ homeMode: "board", boardEnvironmentId: null })).toBe(
+      false,
+    );
+  });
+
+  it("disarms when leaving Board mode", () => {
+    expect(boardCreateRequestStaysArmed({ homeMode: "threads", boardEnvironmentId: "t3o" })).toBe(
+      false,
+    );
+  });
+});
+
+describe("boardCreateHostKey", () => {
+  it("is the board environment while BoardHomeScreen is mounted", () => {
+    expect(boardCreateHostKey({ homeMode: "board", boardEnvironmentId: "t3o" })).toBe("t3o");
+  });
+
+  it("is null on the empty board", () => {
+    expect(boardCreateHostKey({ homeMode: "board", boardEnvironmentId: null })).toBeNull();
+  });
+});
+
+describe("boardCreateRequestForHost", () => {
+  it("keeps a press for the mounted board", () => {
+    expect(boardCreateRequestForHost({ createForHost: "t3o", createHostKey: "t3o" })).toBe("t3o");
+  });
+
+  it("drops a press when the empty board unmounts the create sheet host", () => {
+    expect(boardCreateRequestForHost({ createForHost: "t3o", createHostKey: null })).toBeNull();
+  });
+
+  it("drops a press when a later mount would otherwise open the sheet", () => {
+    expect(boardCreateRequestForHost({ createForHost: "t3o", createHostKey: "other" })).toBeNull();
   });
 });
 

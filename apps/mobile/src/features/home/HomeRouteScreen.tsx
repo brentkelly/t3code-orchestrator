@@ -6,7 +6,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Platform, useWindowDimensions } from "react-native";
+import { Alert, Platform, useWindowDimensions } from "react-native";
 
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
@@ -40,6 +40,10 @@ import { BoardHomeScreen } from "../board/BoardHomeScreen";
 import { HomeModeBar } from "../board/HomeModeBar";
 import {
   boardCapableEnvironmentIds,
+  boardComposeAction,
+  boardCreateHostKey,
+  boardCreateRequestForHost,
+  boardEmptyStateCopy,
   pickBoardEnvironmentId,
   resolveHomeMode,
   type HomeMode,
@@ -67,7 +71,7 @@ export function HomeRouteScreen() {
   const navigation = useNavigation();
   const workspace = useWorkspaceTabs();
   const [localSearchQuery, setLocalSearchQuery] = useState("");
-  const [createRequested, setCreateRequested] = useState(false);
+  const [createForHost, setCreateForHost] = useState<string | null>(null);
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const serverConfigs = useServerConfigs();
@@ -201,13 +205,27 @@ export function HomeRouteScreen() {
     environments: boardEnvironments,
     boardCapableIds,
   });
+  const emptyBoardCopy = boardEmptyStateCopy({
+    selectedEnvironmentId,
+    boardCapableIds,
+  });
+  const createHostKey = boardCreateHostKey({ homeMode, boardEnvironmentId });
+  const nextCreateForHost = boardCreateRequestForHost({ createForHost, createHostKey });
+  if (nextCreateForHost !== createForHost) {
+    setCreateForHost(nextCreateForHost);
+  }
   const onCompose = useCallback(() => {
-    if (homeMode === "board") {
-      setCreateRequested(true);
+    const action = boardComposeAction({ homeMode, boardEnvironmentId });
+    if (action === "create") {
+      setCreateForHost(boardEnvironmentId);
+      return;
+    }
+    if (action === "empty-board") {
+      Alert.alert(emptyBoardCopy.title, emptyBoardCopy.detail);
       return;
     }
     navigation.navigate("NewTaskSheet", { screen: "NewTask" });
-  }, [homeMode, navigation]);
+  }, [boardEnvironmentId, emptyBoardCopy, homeMode, navigation]);
 
   // In split layouts the persistent sidebar IS the thread list — Home becomes
   // an empty detail pane so selecting a thread never transitions layouts.
@@ -319,12 +337,8 @@ export function HomeRouteScreen() {
           boardEnvironmentId === null ? (
             <EmptyState
               variant="plain"
-              title="No board on this server"
-              detail={
-                selectedEnvironmentId !== null && !boardCapableIds.has(selectedEnvironmentId)
-                  ? "The Home filter is a server without a board."
-                  : "Pair a T3o server to see the Board."
-              }
+              title={emptyBoardCopy.title}
+              detail={emptyBoardCopy.detail}
             />
           ) : (
             <BoardHomeScreen
@@ -344,8 +358,8 @@ export function HomeRouteScreen() {
               projectGroupingMode={listOptions.projectGroupingMode}
               onProjectChange={setSelectedProjectKey}
               searchQuery={searchQuery}
-              createRequested={createRequested}
-              onCreateHandled={() => setCreateRequested(false)}
+              createRequested={nextCreateForHost !== null}
+              onCreateHandled={() => setCreateForHost(null)}
             />
           )
         ) : (
