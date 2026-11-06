@@ -1697,6 +1697,31 @@ export function parseBoardCiResultFile(text: string): {
   };
 }
 
+/** What a forge-checks step last read off the pull request (T3O-49): the
+    common tier every forge reports — counts, and the names failing or still
+    running. */
+export const BoardCiForgeChecksReading = Schema.Struct({
+  total: NonNegativeInt,
+  passed: NonNegativeInt,
+  pending: NonNegativeInt,
+  failed: NonNegativeInt,
+  failing: Schema.Array(Schema.String),
+  running: Schema.Array(Schema.String),
+  headSha: Schema.NullOr(Schema.String),
+});
+export type BoardCiForgeChecksReading = typeof BoardCiForgeChecksReading.Type;
+
+/** Whether a check name matches a forge-checks step's `only` pattern: `*`
+    matches any run of characters, case-insensitively. */
+export function boardCheckNameMatches(pattern: string, name: string): boolean {
+  const escaped = pattern
+    .trim()
+    .split("*")
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join(".*");
+  return new RegExp(`^${escaped}$`, "i").test(name.trim());
+}
+
 /** The marker a script prints to report progress (T3O-49). */
 export const BOARD_CI_PROGRESS_MARKER = "::t3o-progress::";
 
@@ -1795,6 +1820,10 @@ export const BOARD_CI_TAIL_LINES = 200;
 /** A CI step's compact state on the card shell: no command, no output. */
 export const BoardCardCiStep = Schema.Struct({
   name: TrimmedNonEmptyString,
+  /** Absent is a script (T3O-49). */
+  kind: Schema.optionalKey(Schema.Literals(["script", "agent", "forge-checks"])),
+  /** Runs alongside the step before it (T3O-49). */
+  parallel: Schema.optionalKey(Schema.Boolean),
   status: BoardCiStepStatus,
   startedAt: Schema.NullOr(IsoDateTime),
   finishedAt: Schema.NullOr(IsoDateTime),
@@ -1882,10 +1911,20 @@ export const BoardCiPassStep = Schema.Struct({
   /** The last `BOARD_CI_TAIL_LINES` lines of merged stdout and stderr, with
       long lines clipped and the whole capped in size by the runner. */
   tail: Schema.String,
-  /** What the step reported in its `$T3O_CI_RESULT` file (T3O-49). */
+  /** What the step reported in its `$T3O_CI_RESULT` file, or an agent step
+      in its payload (T3O-49). */
   result: Schema.optionalKey(BoardCiStepResult),
   /** Runs alongside the step before it (T3O-49). */
   parallel: Schema.optionalKey(Schema.Boolean),
+  /** The step's kind (T3O-49); absent is a script. A non-script step's
+      `command` is a label, never run. */
+  kind: Schema.optionalKey(Schema.Literals(["script", "agent", "forge-checks"])),
+  /** An agent step's thread. */
+  threadId: Schema.optionalKey(ThreadId),
+  /** A forge-checks step's last reading of the pull request's checks. */
+  checks: Schema.optionalKey(BoardCiForgeChecksReading),
+  /** A line the board adds: why a step is waiting, or how it passed. */
+  note: Schema.optionalKey(Schema.String),
 });
 export type BoardCiPassStep = typeof BoardCiPassStep.Type;
 
@@ -1914,6 +1953,43 @@ export const BoardCiPass = Schema.Struct({
 });
 export type BoardCiPass = typeof BoardCiPass.Type;
 
+/** A pass's step rows for a snapshot, every one pending (T3O-49). A
+    non-script step's `command` is only its label. */
+export function boardCiPassStepsFromSnapshot(
+  steps: ReadonlyArray<BoardCiStep>,
+): ReadonlyArray<BoardCiPassStep> {
+  return steps.map((step) => ({
+    name: step.name,
+    command:
+      step.kind === "script" ? step.command : step.kind === "agent" ? "Agent step" : "Forge checks",
+    timeoutMinutes: step.timeoutMinutes,
+    status: "pending" as const,
+    startedAt: null,
+    finishedAt: null,
+    exitCode: null,
+    tail: "",
+    ...(step.parallel ? { parallel: true } : {}),
+    ...(step.kind === "script" ? {} : { kind: step.kind }),
+  }));
+}
+
+/** Where a pass goes after `index`: the next run of script groups (up to,
+    not including, the next agent or forge step), or that step. */
+export function boardCiNextSegment(
+  steps: ReadonlyArray<Pick<BoardCiStep, "kind">>,
+  from: number,
+):
+  | { readonly kind: "done" }
+  | { readonly kind: "scripts"; readonly start: number; readonly end: number }
+  | { readonly kind: "agent" | "forge-checks"; readonly index: number } {
+  const step = steps[from];
+  if (step === undefined) return { kind: "done" };
+  if (step.kind !== "script") return { kind: step.kind, index: from };
+  let end = from;
+  while (end < steps.length && steps[end]!.kind === "script") end++;
+  return { kind: "scripts", start: from, end };
+}
+
 /** The most CI steps a project may define; the rest of a longer list is
     ignored with a warning, which keeps the card shell bounded. */
 export const BOARD_CI_MAX_STEPS = 12;
@@ -1933,13 +2009,17 @@ export function boardCiShellFinding(finding: string): string {
 
 /** The compact shell steps of a pass. */
 export function boardCardCiSteps(
-  steps: ReadonlyArray<Pick<BoardCiPassStep, "name" | "status" | "startedAt" | "finishedAt">>,
+  steps: ReadonlyArray<
+    Pick<BoardCiPassStep, "name" | "status" | "startedAt" | "finishedAt" | "kind" | "parallel">
+  >,
 ): ReadonlyArray<BoardCardCiStep> {
   return steps.map((step) => ({
     name:
       step.name.length > BOARD_CI_SHELL_STEP_NAME_MAX
         ? `${step.name.slice(0, BOARD_CI_SHELL_STEP_NAME_MAX - 1).trimEnd()}…`
         : step.name,
+    ...(step.kind === undefined || step.kind === "script" ? {} : { kind: step.kind }),
+    ...(step.parallel === true ? { parallel: true } : {}),
     status: step.status,
     startedAt: step.startedAt,
     finishedAt: step.finishedAt,
@@ -11252,6 +11332,42 @@ export function parseBoardCiFixStepId(
   return { entry: Number(match[1]), attempt: Number(match[2]) };
 }
 
+// ── CI agent steps (T3O-49) ─────────────────────────────────────────────
+
+/** A CI agent step's step id: unique per pass and step, because step
+    completions are keyed by step id and never cleared. */
+export function boardCiAgentStepId(runId: string, index: number): string {
+  return `ci@${runId}#${index}`;
+}
+
+export function parseBoardCiAgentStepId(
+  stepId: string,
+): { readonly runId: string; readonly index: number } | null {
+  const match = /^ci@(.+)#(\d+)$/.exec(stepId);
+  if (match === null) return null;
+  return { runId: match[1]!, index: Number(match[2]) };
+}
+
+/** What a CI agent step reports: whether its check passed, a summary, and
+    any failures (file and line where it can). */
+export const BoardCiAgentStepPayload = Schema.Struct({
+  verdict: Schema.Literals(["passed", "failed"]),
+  summary: Schema.String,
+  failures: Schema.Array(BoardCiFailureDetail).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type BoardCiAgentStepPayload = typeof BoardCiAgentStepPayload.Type;
+
+export const BOARD_CI_AGENT_PAYLOAD_SHAPE =
+  '{ "verdict": "passed" | "failed", "summary": string, "failures": [{ "title": string, "detail"?: string, "file"?: string, "line"?: number }] }';
+
+const decodeBoardCiAgentStepPayloadOption = Schema.decodeUnknownOption(BoardCiAgentStepPayload);
+
+export function decodeBoardCiAgentStepPayload(
+  payload: string | null,
+): BoardCiAgentStepPayload | null {
+  return Option.getOrNull(decodeBoardCiAgentStepPayloadOption(parseBoardStepPayloadJson(payload)));
+}
+
 /** What a CI fix agent reports: it fixed the failure (the board re-runs every
     step), or the card goes back to review with `finding`. */
 export const BoardCiFixPayload = Schema.Struct({
@@ -11332,6 +11448,15 @@ export function boardStepPayloadDefect(input: {
   readonly stepId: string;
   readonly payload: string | null;
 }): string | null {
+  if (parseBoardCiAgentStepId(input.stepId) !== null) {
+    const label = `The '${input.stepId}' step succeeds only with a payload shaped ${BOARD_CI_AGENT_PAYLOAD_SHAPE}`;
+    if (input.payload === null) {
+      return `${label}, and none was recorded. Send it as the tool's own \`payload\` argument and complete the step again.`;
+    }
+    return decodeBoardCiAgentStepPayload(input.payload) === null
+      ? `${label}, and the one recorded does not parse to it. Re-send a payload of that exact shape.`
+      : null;
+  }
   if (parseBoardCiFixStepId(input.stepId) !== null) {
     const label = `The '${input.stepId}' step succeeds only with a payload shaped ${BOARD_CI_FIX_PAYLOAD_SHAPE}`;
     if (input.payload === null) {

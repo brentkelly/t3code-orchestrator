@@ -38,6 +38,9 @@ export interface BoardCiRunRequest {
   readonly steps: ReadonlyArray<BoardCiStepDefinition>;
   /** Where each step's full log is written; created if missing. */
   readonly logDir: string;
+  /** The pass index of `steps[0]`, so a later segment's logs don't overwrite
+      an earlier one's (T3O-49). */
+  readonly indexOffset?: number;
 }
 
 export interface BoardCiStepProgress {
@@ -366,13 +369,14 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
                 tail: "",
               },
             });
-            const resultPath = NodePath.join(request.logDir, `${index}.result.json`);
+            const fileIndex = index + (request.indexOffset ?? 0);
+            const resultPath = NodePath.join(request.logDir, `${fileIndex}.result.json`);
             const exit = yield* runStep({
               command: definition.command,
               cwd: request.cwd,
               timeoutMs: definition.timeoutMinutes * 60_000,
               tail,
-              logPath: NodePath.join(request.logDir, `${index}.log`),
+              logPath: NodePath.join(request.logDir, `${fileIndex}.log`),
               resultPath,
             });
             const result = readStepResult(resultPath, tail);

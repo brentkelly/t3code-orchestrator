@@ -129,9 +129,6 @@ const settingFromInt = (value: number | null): boolean | null =>
   value === null ? null : value !== 0;
 
 const encodeBoardCiPassStepJson = Schema.encodeSync(Schema.fromJsonString(BoardCiPassStep));
-const encodeBoardCiPassStepsJson = Schema.encodeSync(
-  Schema.fromJsonString(Schema.Array(BoardCiPassStep)),
-);
 
 /** A CI pass row (T3O-44): its steps as JSON. */
 const BoardCiPassDbRow = Schema.Struct({
@@ -2413,7 +2410,7 @@ function makeBoardCardQueries(sql: SqlClient.SqlClient) {
         log_dir, fix_thread_id, snapshot, config_version
       ) VALUES (
         ${pass.runId}, ${pass.cardId}, ${pass.entry}, ${pass.ordinal}, ${pass.startedAt},
-        ${pass.finishedAt}, ${pass.outcome}, ${encodeBoardCiPassStepsJson(pass.steps)}, ${pass.logDir},
+        ${pass.finishedAt}, ${pass.outcome}, ${encodeBoardCiSnapshotJson(pass.steps)}, ${pass.logDir},
         ${pass.fixThreadId},
         ${pass.snapshot === null ? null : encodeBoardCiSnapshotJson(pass.snapshot)},
         ${pass.configVersion}

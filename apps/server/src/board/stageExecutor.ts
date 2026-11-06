@@ -28,6 +28,7 @@
  * card (which panel to render) and this registry (which executor to run).
  */
 import type {
+  BoardCiAgentStepPayload,
   BoardCiStepResult,
   BoardCard,
   BoardCardStageModelOverride,
@@ -208,6 +209,14 @@ export type BoardStagePlan =
   /** Run the stage's CI steps from the top (T3O-44): the board runs them
       itself, no agent. */
   | { readonly kind: "ci-pass" }
+  /** A CI agent step reported (T3O-49): record its verdict, then carry on
+      with the pass, or treat a failed verdict as the pass's failure. */
+  | {
+      readonly kind: "ci-agent-done";
+      readonly runId: string;
+      readonly index: number;
+      readonly verdict: BoardCiAgentStepPayload | null;
+    }
   /** Send the card back to the review-role stage with `finding` as a
       must-fix finding for a fresh round (T3O-44). */
   | {

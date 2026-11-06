@@ -6,7 +6,9 @@
  * auto-merge disarmed.
  */
 import {
+  BOARD_CI_AGENT_PAYLOAD_SHAPE,
   BOARD_CI_COMMAND_MAX,
+  BOARD_CI_PROMPT_MAX,
   BOARD_CONFIG_VERSION_MISMATCH,
   BOARD_SEED_STAGE_IDS,
   type BoardCiStep,
@@ -31,7 +33,10 @@ import {
   boardCiParallelBlock,
   boardCiSharedWorktreeWarnings,
   canAddBoardCiStep,
+  boardCiStarterStep,
   moveBoardCiStep,
+  newBoardCiAgentStep,
+  newBoardCiForgeStep,
   newBoardCiScriptStep,
   normalizeBoardCiParallel,
   removeBoardCiStep,
@@ -173,10 +178,22 @@ export function BoardProjectCiTab(props: {
         {saved === null ? (
           <p className="px-4 py-3 text-xs text-muted-foreground">Loading steps…</p>
         ) : steps.length === 0 ? (
-          <p className="px-4 py-3 text-xs text-muted-foreground">
-            {props.projectTitle} has no CI steps yet. Without CI, cards go from Code review straight
-            to Ready for merge. Add a step, then turn CI on.
-          </p>
+          <div className="flex flex-col gap-2 px-4 py-3 text-xs text-muted-foreground">
+            <p>
+              {props.projectTitle} has no CI steps yet. Without CI, cards go from Code review
+              straight to Ready for merge. Add a step, then turn CI on.
+            </p>
+            {canWrite ? (
+              <Button
+                className="self-start"
+                onClick={() => edit([boardCiStarterStep([])])}
+                size="xs"
+                variant="outline"
+              >
+                Add an agent step that runs this project&apos;s checks
+              </Button>
+            ) : null}
+          </div>
         ) : (
           steps.map((step, index) => (
             <StepRow
@@ -212,17 +229,17 @@ export function BoardProjectCiTab(props: {
               <PlusIcon className="size-3" /> Script
             </Button>
             <Button
-              disabled
+              disabled={saved === null || !canAddBoardCiStep(steps)}
+              onClick={() => edit([...steps, newBoardCiAgentStep(steps)])}
               size="xs"
-              title="Agent steps aren't available on this board yet"
               variant="outline"
             >
               <PlusIcon className="size-3" /> Agent
             </Button>
             <Button
-              disabled
+              disabled={saved === null || !canAddBoardCiStep(steps)}
+              onClick={() => edit([...steps, newBoardCiForgeStep(steps)])}
               size="xs"
-              title="Forge-check steps aren't available on this board yet"
               variant="outline"
             >
               <PlusIcon className="size-3" /> Forge checks
@@ -322,6 +339,94 @@ function StepRow(props: {
           </>
         ) : null}
       </div>
+      {step.kind === "agent" ? (
+        <div className="flex flex-col gap-1.5 pl-5 text-xs">
+          <span className="rounded-md bg-muted px-2 py-1 text-muted-foreground">
+            Added by the board: the card, its branch and pull request, where it is in CI and what
+            earlier steps found. Runs in its own thread.
+          </span>
+          <Textarea
+            aria-label="Agent prompt"
+            className="min-h-20 font-mono text-xs"
+            disabled={!props.canWrite}
+            maxLength={BOARD_CI_PROMPT_MAX}
+            onChange={(event) => props.onChange({ prompt: event.target.value })}
+            value={step.prompt}
+          />
+          <span className="rounded-md bg-muted px-2 py-1 text-muted-foreground">
+            Added by the board: report with board_complete_step and a payload shaped{" "}
+            <code>{BOARD_CI_AGENT_PAYLOAD_SHAPE}</code>.
+          </span>
+          <TimeoutField
+            canWrite={props.canWrite}
+            onChange={(timeoutMinutes) => props.onChange({ timeoutMinutes })}
+            value={step.timeoutMinutes}
+          />
+        </div>
+      ) : null}
+      {step.kind === "forge-checks" ? (
+        <div className="flex flex-col gap-1.5 pl-5 text-xs text-muted-foreground">
+          <span>
+            Waits for the pull request&apos;s checks on its forge (GitHub, GitLab, Bitbucket,
+            Forgejo). A draft pull request is marked ready first. Forges without a checks API (Azure
+            DevOps, GitCafe) hold the card instead.
+          </span>
+          <label className="flex items-center gap-2">
+            Only these checks
+            <Input
+              aria-label="Only these checks"
+              className="h-7 text-xs"
+              disabled={!props.canWrite}
+              onChange={(event) =>
+                props.onChange({
+                  only: event.target.value
+                    .split(",")
+                    .map((name) => name.trim())
+                    .filter((name) => name.length > 0),
+                })
+              }
+              placeholder="All checks, or names (comma-separated; * matches anything)"
+              value={step.only.join(", ")}
+            />
+          </label>
+          <label className="flex items-center gap-2">
+            If no checks appear within
+            <Input
+              aria-label="Minutes to wait for checks to appear"
+              className="h-7 w-16 text-xs"
+              disabled={!props.canWrite}
+              max={120}
+              min={1}
+              onChange={(event) => {
+                const minutes = Number.parseInt(event.target.value, 10);
+                if (Number.isFinite(minutes)) {
+                  props.onChange({ appearTimeoutMinutes: Math.max(1, Math.min(120, minutes)) });
+                }
+              }}
+              type="number"
+              value={step.appearTimeoutMinutes}
+            />
+            min,
+            <select
+              aria-label="When no checks appear"
+              className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+              disabled={!props.canWrite}
+              onChange={(event) =>
+                props.onChange({ whenNoChecks: event.target.value === "fail" ? "fail" : "pass" })
+              }
+              value={step.whenNoChecks}
+            >
+              <option value="pass">pass the step</option>
+              <option value="fail">fail the step</option>
+            </select>
+          </label>
+          <TimeoutField
+            canWrite={props.canWrite}
+            onChange={(timeoutMinutes) => props.onChange({ timeoutMinutes })}
+            value={step.timeoutMinutes}
+          />
+        </div>
+      ) : null}
       {step.kind === "script" ? (
         <div className="flex flex-col gap-1.5 pl-5">
           <Textarea
@@ -354,6 +459,32 @@ function StepRow(props: {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function TimeoutField(props: {
+  readonly value: number;
+  readonly canWrite: boolean;
+  readonly onChange: (minutes: number) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+      Timeout
+      <Input
+        aria-label="Timeout in minutes"
+        className="h-7 w-20 text-xs"
+        disabled={!props.canWrite}
+        max={1440}
+        min={1}
+        onChange={(event) => {
+          const minutes = Number.parseInt(event.target.value, 10);
+          if (Number.isFinite(minutes)) props.onChange(Math.max(1, Math.min(1440, minutes)));
+        }}
+        type="number"
+        value={props.value}
+      />
+      minutes
+    </label>
   );
 }
 

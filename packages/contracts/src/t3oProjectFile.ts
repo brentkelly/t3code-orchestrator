@@ -197,7 +197,11 @@ function mergePatches(
 const decodeStep = Schema.decodeUnknownOption(BoardCiStep);
 
 /** The step kinds this board can run; the rest are ignored on import. */
-export const BOARD_CI_RUNNABLE_STEP_KINDS: ReadonlySet<BoardCiStep["kind"]> = new Set(["script"]);
+export const BOARD_CI_RUNNABLE_STEP_KINDS: ReadonlySet<BoardCiStep["kind"]> = new Set([
+  "script",
+  "agent",
+  "forge-checks",
+]);
 
 function decodeCiSteps(value: unknown, where: string, legacy: boolean, warnings: string[]) {
   if (!Array.isArray(value)) {

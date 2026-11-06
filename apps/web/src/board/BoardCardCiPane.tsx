@@ -86,8 +86,10 @@ function StepRow({
   fixing,
   tailOpen,
   onToggleTail,
+  onOpenThread,
 }: {
   readonly step: BoardCiPassStep;
+  readonly onOpenThread?: ((threadId: ThreadId) => void) | undefined;
   readonly index: number;
   /** The pass is the one running now, so a running step ticks and shimmers. */
   readonly live: boolean;
@@ -118,9 +120,33 @@ function StepRow({
             className="w-fit text-[12.5px] font-medium text-foreground"
             text={step.name}
           />
-          <span className="truncate font-mono text-[11px] text-muted-foreground">
-            {step.command}
+          <span
+            className={cn(
+              "truncate text-[11px] text-muted-foreground",
+              (step.kind ?? "script") === "script" && "font-mono",
+            )}
+          >
+            {step.kind === "agent"
+              ? "Agent · own thread"
+              : step.kind === "forge-checks"
+                ? step.checks === undefined
+                  ? "Forge checks"
+                  : `Forge checks · ${step.checks.passed}/${step.checks.total} passed`
+                : step.command}
+            {step.parallel === true ? " · in parallel" : ""}
           </span>
+          {step.note === undefined ? null : (
+            <span className="text-[11px] text-muted-foreground">{step.note}</span>
+          )}
+          {step.threadId === undefined || onOpenThread === undefined ? null : (
+            <button
+              className="w-fit text-[11px] text-info-foreground hover:underline"
+              onClick={() => onOpenThread(step.threadId!)}
+              type="button"
+            >
+              Open {step.name} thread
+            </button>
+          )}
         </div>
         {hasTail ? (
           <button
@@ -203,11 +229,13 @@ function PassSteps({
   live,
   fixing,
   defaultTailOpen,
+  onOpenThread,
 }: {
   readonly pass: BoardCiPass;
   readonly live: boolean;
   readonly fixing: boolean;
   readonly defaultTailOpen: boolean;
+  readonly onOpenThread?: ((threadId: ThreadId) => void) | undefined;
 }) {
   // Null follows the default: open on the current pass, closed on earlier ones.
   const [tailOpen, setTailOpen] = useState<Readonly<Record<number, boolean>>>({});
@@ -221,6 +249,7 @@ function PassSteps({
             index={index}
             key={`${index}:${step.name}`}
             live={live}
+            onOpenThread={onOpenThread}
             onToggleTail={() => setTailOpen((current) => ({ ...current, [index]: !open }))}
             step={step}
             tailOpen={open}
@@ -472,6 +501,7 @@ export function BoardCardCiPane({
               defaultTailOpen
               fixing={fixing}
               live={live}
+              onOpenThread={onOpenThread}
               pass={current}
             />
             <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">

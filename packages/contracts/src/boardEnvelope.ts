@@ -29,6 +29,7 @@
 import type { BoardCardPullRequest, BoardReviewPhaseId, BoardStageRole } from "./board.ts";
 import {
   BOARD_CI_FIX_PAYLOAD_SHAPE,
+  BOARD_CI_AGENT_PAYLOAD_SHAPE,
   BOARD_BUILD_SUMMARY_PAYLOAD_SHAPE,
   BOARD_REVIEW_PHASE_LABELS,
   DEFAULT_BOARD_SYNC_PHASE_PROMPT,
@@ -587,6 +588,59 @@ function boardSyncPhaseMechanics(): string {
   const marker = "Fetch the base branch";
   const at = DEFAULT_BOARD_SYNC_PHASE_PROMPT.indexOf(marker);
   return at < 0 ? DEFAULT_BOARD_SYNC_PHASE_PROMPT : DEFAULT_BOARD_SYNC_PHASE_PROMPT.slice(at);
+}
+
+/**
+ * A CI agent step's body (T3O-49): the board's prefix — where the card is in
+ * CI and what ran before — then the project's own prompt, then how to report.
+ * Nothing is forbidden: the prompt decides whether the agent may change code.
+ */
+export function composeBoardCiAgentStepPrompt(input: {
+  readonly cardKey: string;
+  readonly cardTitle: string;
+  readonly briefExcerpt: string | null;
+  readonly branch: string | null;
+  readonly baseBranch: string | null;
+  readonly pullRequestUrl: string | null;
+  readonly stepName: string;
+  readonly pass: number;
+  readonly fixAttempt: number;
+  readonly maxFixAttempts: number;
+  readonly roundTrip: number;
+  readonly maxRoundTrips: number;
+  readonly earlier: ReadonlyArray<{ readonly name: string; readonly status: string }>;
+  readonly remaining: ReadonlyArray<string>;
+  readonly prompt: string;
+}): string {
+  const where = [
+    `Card ${input.cardKey} · ${input.cardTitle}`,
+    `CI step "${input.stepName}" · pass ${input.pass} · fix ${input.fixAttempt} of ${input.maxFixAttempts} · round trip ${input.roundTrip} of ${input.maxRoundTrips}`,
+    ...(input.branch === null
+      ? []
+      : [
+          `Branch \`${input.branch}\`${input.baseBranch === null ? "" : `, based on \`${input.baseBranch}\``}.`,
+        ]),
+    ...(input.pullRequestUrl === null ? [] : [`Pull request: ${input.pullRequestUrl}`]),
+    ...(input.earlier.length === 0
+      ? []
+      : [
+          `Earlier steps this pass: ${input.earlier.map((step) => `${step.name} (${step.status})`).join(", ")}.`,
+        ]),
+    ...(input.remaining.length === 0
+      ? []
+      : [`Steps after this one: ${input.remaining.join(", ")}.`]),
+    ...(input.briefExcerpt === null || input.briefExcerpt.trim().length === 0
+      ? []
+      : ["", "The card's brief, in short:", input.briefExcerpt.trim()]),
+  ];
+  return [
+    "You are a CI step on a board card. Work in the card's worktree.",
+    ...where,
+    "",
+    input.prompt,
+    "",
+    `When you're done, complete the step with a payload shaped ${BOARD_CI_AGENT_PAYLOAD_SHAPE}: "passed" when the check holds, "failed" with the failures you found (file and line where you can). If you change code, commit and push it; the board then runs CI again from the top.`,
+  ].join("\n");
 }
 
 /**

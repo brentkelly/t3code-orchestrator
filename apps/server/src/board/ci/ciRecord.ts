@@ -6,7 +6,7 @@
 import {
   BOARD_SEED_STAGE_IDS,
   boardCardCiSteps,
-  boardCiScriptDefinitions,
+  boardCiPassStepsFromSnapshot,
   boardCiShellFinding,
   isBoardCiStepFailure,
   isBoardCiPassSettledPhase,
@@ -48,9 +48,7 @@ export function decideBoardCiRecord(
       if (card.stage !== BOARD_SEED_STAGE_IDS.ci) {
         return refuse(`Card '${card.key}' is not in CI, so no CI pass can start.`);
       }
-      if (boardCiScriptDefinitions(action.steps).length === 0) {
-        return refuse("A CI pass needs at least one step it can run.");
-      }
+      if (action.steps.length === 0) return refuse("A CI pass needs at least one step.");
       const settled: BoardCiPassSettle[] = [];
       let activity: BoardCardCiRecordedPayload["activity"] = null;
       if (current !== null && current.runId !== action.runId) {
@@ -68,17 +66,7 @@ export function decideBoardCiRecord(
           settled.push({ runId: current.runId, outcome: "interrupted", finishedAt: at });
         }
       }
-      const steps = boardCiScriptDefinitions(action.steps).map((step) => ({
-        name: step.name,
-        command: step.command,
-        timeoutMinutes: step.timeoutMinutes,
-        ...(step.parallel === true ? { parallel: true } : {}),
-        status: "pending" as const,
-        startedAt: null,
-        finishedAt: null,
-        exitCode: null,
-        tail: "",
-      }));
+      const steps = boardCiPassStepsFromSnapshot(action.steps);
       const sameEntry = current !== null && current.entry === action.entry;
       // Round trips survive a send-back on the last outcome, and a human's
       // Retry CI starts them again.

@@ -6,6 +6,8 @@
 import {
   BOARD_CI_MAX_STEPS,
   BOARD_SEED_STAGE_IDS,
+  DEFAULT_BOARD_CI_FORGE_APPEAR_TIMEOUT_MINUTES,
+  DEFAULT_BOARD_CI_FORGE_TIMEOUT_MINUTES,
   DEFAULT_BOARD_CI_STEP_TIMEOUT_MINUTES,
   boardStageDefaultForProjects,
   effectiveBoardStageRole,
@@ -83,6 +85,44 @@ export function newBoardCiScriptStep(steps: ReadonlyArray<BoardCiStep>): BoardCi
     parallel: false,
     command: "echo 'replace me' && exit 1",
     timeoutMinutes: DEFAULT_BOARD_CI_STEP_TIMEOUT_MINUTES,
+  };
+}
+
+export function newBoardCiAgentStep(
+  steps: ReadonlyArray<BoardCiStep>,
+  prompt = "Describe what this step checks, and when it should fail.",
+  name = "Agent check",
+): BoardCiStep {
+  return {
+    kind: "agent",
+    id: nextBoardCiStepId(steps),
+    name,
+    parallel: false,
+    prompt,
+    model: null,
+    timeoutMinutes: DEFAULT_BOARD_CI_STEP_TIMEOUT_MINUTES,
+  };
+}
+
+/** The one-click starter: an agent step that runs what AGENTS.md lists. */
+export function boardCiStarterStep(steps: ReadonlyArray<BoardCiStep>): BoardCiStep {
+  return newBoardCiAgentStep(
+    steps,
+    "Read the project's AGENTS.md (or README) and run the checks it lists for changes like this branch's: typecheck, lint and the relevant tests. Report passed when they all pass; otherwise failed, with each failure.",
+    "Project checks",
+  );
+}
+
+export function newBoardCiForgeStep(steps: ReadonlyArray<BoardCiStep>): BoardCiStep {
+  return {
+    kind: "forge-checks",
+    id: nextBoardCiStepId(steps),
+    name: "Forge checks",
+    parallel: false,
+    only: [],
+    appearTimeoutMinutes: DEFAULT_BOARD_CI_FORGE_APPEAR_TIMEOUT_MINUTES,
+    whenNoChecks: "pass",
+    timeoutMinutes: DEFAULT_BOARD_CI_FORGE_TIMEOUT_MINUTES,
   };
 }
 

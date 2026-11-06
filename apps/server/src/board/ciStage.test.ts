@@ -12,6 +12,8 @@ import {
   boardCiFixStepId,
   resolveT3oProjectFile,
   withBoardProjectConfigVersion,
+  boardCiAgentStepId,
+  type BoardCiStep,
   type BoardCard,
   type BoardCiStepDefinition,
   type BoardEvent,
@@ -695,6 +697,228 @@ it.effect("send back to review anyway starts the round trips again", () =>
         assert.strictEqual(sent.ciRoundTrips, 0);
         assert.strictEqual(sent.ciLastOutcome?.kind, "sent-back");
       }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+const mixedConfig = (steps: ReadonlyArray<BoardCiStep>) =>
+  withBoardProjectConfigVersion({
+    ...ciConfig(),
+    ci: { steps },
+  });
+
+const SCRIPT_A: BoardCiStep = {
+  kind: "script",
+  id: "lint",
+  name: "Lint",
+  parallel: false,
+  command: "vp lint",
+  timeoutMinutes: 30,
+};
+const SCRIPT_B: BoardCiStep = { ...SCRIPT_A, id: "test", name: "Test", command: "vp test" };
+
+it.effect("an agent step runs as a card step between script segments, then the pass goes on", () =>
+  Effect.gen(function* () {
+    const { runner, calls } = yield* scriptedRunner([
+      { result: "passed", failedIndex: null },
+      { result: "passed", failedIndex: null },
+    ]);
+    const subject = card("agent", review);
+    const agentStep: BoardCiStep = {
+      kind: "agent",
+      id: "audit",
+      name: "Migration review",
+      parallel: false,
+      prompt: "Check every migration is reversible.",
+      model: null,
+      timeoutMinutes: 20,
+    };
+    const board = boardWith([subject], mixedConfig([SCRIPT_A, agentStep, SCRIPT_B]));
+    yield* withGovernor({ board, settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        assert.strictEqual(yield* calls, 1);
+        const selected = (yield* h.commands).find(
+          (command) =>
+            command.type === "board.card.select-step" &&
+            (command as { stepId: string }).stepId.startsWith("ci@"),
+        ) as { stepId: string; prompt: string; timeoutMs: number } | undefined;
+        assert.isDefined(selected);
+        assert.include(selected!.prompt, "Check every migration is reversible.");
+        assert.include(selected!.prompt, "Steps after this one: Test.");
+        assert.strictEqual(selected!.timeoutMs, 20 * 60_000);
+        yield* h.pumpDomain(
+          fixCompleted(subject.id, selected!.stepId, { verdict: "passed", summary: "All good" }, 2),
+        );
+        yield* h.reactor.drainCi;
+        assert.strictEqual(yield* calls, 2);
+        assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("a failed agent verdict is the pass's failure: a fix agent gets it", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const subject = card("agent-fail", review);
+    const agentStep: BoardCiStep = {
+      kind: "agent",
+      id: "audit",
+      name: "Audit",
+      parallel: false,
+      prompt: "Audit it.",
+      model: null,
+      timeoutMinutes: 30,
+    };
+    const board = boardWith([subject], mixedConfig([SCRIPT_A, agentStep]));
+    yield* withGovernor({ board, settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCiAndRun(h, subject, 1);
+        const stepId = boardCiAgentStepId((yield* live(h, subject.id)).ci!.runId, 1);
+        yield* h.pumpDomain(
+          fixCompleted(
+            subject.id,
+            stepId,
+            {
+              verdict: "failed",
+              summary: "One migration drops a column",
+              failures: [{ title: "Irreversible", file: "db/007.sql", line: 3 }],
+            },
+            2,
+          ),
+        );
+        const fix = (yield* h.commands).find(
+          (command) =>
+            command.type === "board.card.select-step" &&
+            (command as { stepId: string }).stepId.startsWith("ci-fix@"),
+        ) as { prompt: string } | undefined;
+        assert.isDefined(fix);
+        assert.include(fix!.prompt, "Irreversible (db/007.sql:3)");
+        assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "fixing");
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+const FORGE: BoardCiStep = {
+  kind: "forge-checks",
+  id: "gh",
+  name: "GitHub checks",
+  parallel: false,
+  only: [],
+  appearTimeoutMinutes: 10,
+  whenNoChecks: "pass",
+  timeoutMinutes: 60,
+};
+
+const prOpen = {
+  number: 7,
+  url: "https://example.test/pull/7",
+  state: "open" as const,
+  title: "Feature",
+  headBranch: "board/forge",
+  baseRef: "main",
+  checkedAt: NOW,
+};
+/** What the forge lookup answers, so the link a refresh reads stays put. */
+const foundPr = {
+  number: 7,
+  title: "Feature",
+  url: "https://example.test/pull/7",
+  baseRef: "main",
+  headRef: "board/forge",
+  state: "open" as const,
+};
+const mergeStateWith = (checks: { passed: number; pending: number; failed: number }) => ({
+  mergeable: "unknown" as const,
+  blockedReason: null,
+  checks: {
+    total: checks.passed + checks.pending + checks.failed,
+    ...checks,
+    failing: checks.failed > 0 ? ["ci/e2e"] : [],
+    running: checks.pending > 0 ? ["ci/build"] : [],
+  },
+  headSha: "sha-1",
+  checksUnread: false,
+});
+
+it.effect("a forge-checks step waits on the pull request's checks, then passes", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const subject = card("forge", review, { pullRequest: prOpen as never });
+    const forge: BoardCiStep = {
+      kind: "forge-checks",
+      id: "gh",
+      name: "GitHub checks",
+      parallel: false,
+      only: [],
+      appearTimeoutMinutes: 10,
+      whenNoChecks: "pass",
+      timeoutMinutes: 60,
+    };
+    let state = mergeStateWith({ passed: 1, pending: 1, failed: 0 });
+    yield* withGovernor(
+      {
+        board: boardWith([subject], mixedConfig([SCRIPT_A, forge])),
+        settings,
+        pullRequest: foundPr,
+        mergeStateOf: () => state,
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* enterCiAndRun(h, subject, 1);
+          assert.strictEqual(cardStage(yield* h.board, subject.id), ci);
+          assert.isAbove((yield* h.mergeStateProbes).length, 0);
+          state = mergeStateWith({ passed: 2, pending: 0, failed: 0 });
+          yield* h.reactor.sweep;
+          assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
+        }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("a failing forge check (matched by its filter) fails the pass", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const failing = card("forge-fail", review, { pullRequest: prOpen as never });
+    yield* withGovernor(
+      {
+        board: boardWith(
+          [failing],
+          withBoardProjectConfigVersion({
+            ...mixedConfig([SCRIPT_A, { ...FORGE, only: ["ci/*"] }]),
+            overrides: { ci: { maxFixAttempts: 0, maxRoundTrips: 3 } },
+          }),
+        ),
+        settings,
+        pullRequest: foundPr,
+        mergeState: mergeStateWith({ passed: 1, pending: 0, failed: 1 }),
+      },
+      (h) =>
+        Effect.gen(function* () {
+          yield* enterCiAndRun(h, failing, 1);
+          const sent = yield* live(h, failing.id);
+          assert.strictEqual(sent.stage, review);
+          assert.include(sent.ciLastOutcome?.finding ?? "", "ci/e2e");
+        }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
+
+it.effect("a forge-checks step with no pull request holds the card for a human", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+    const noPr = card("forge-nopr", review);
+    yield* withGovernor(
+      { board: boardWith([noPr], mixedConfig([SCRIPT_A, FORGE])), settings },
+      (h) =>
+        Effect.gen(function* () {
+          yield* enterCiAndRun(h, noPr, 1);
+          const held = yield* live(h, noPr.id);
+          assert.strictEqual(held.stage, ci);
+          assert.strictEqual(held.ci?.phase, "held");
+        }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );

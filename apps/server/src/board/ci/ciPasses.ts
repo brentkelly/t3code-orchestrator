@@ -37,6 +37,9 @@ export interface BoardCiPassRequest {
   readonly worktreePath: string;
   readonly workerId: BoardWorkerId;
   readonly steps: ReadonlyArray<BoardCiStepDefinition>;
+  /** The pass index of `steps[0]` (T3O-49): a pass runs its script groups
+      in segments between agent and forge steps. */
+  readonly indexOffset?: number;
   readonly limits: BoardConcurrencyLimit;
   /** Where the steps run; this server's runner when absent. */
   readonly runner?: BoardCiRunnerShape;
@@ -45,7 +48,10 @@ export interface BoardCiPassRequest {
 export interface BoardCiPassFinished {
   readonly cardId: BoardCardId;
   readonly runId: string;
+  /** `failedIndex` is a pass index (the segment's offset applied). */
   readonly outcome: BoardCiRunResult;
+  /** The pass index after the segment's last step. */
+  readonly segmentEnd: number;
 }
 
 export interface BoardCiPassesDeps {
@@ -98,7 +104,7 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
         action: {
           kind: "step",
           runId: request.runId,
-          index,
+          index: index + (request.indexOffset ?? 0),
           step: step as Extract<
             Extract<BoardCommand, { type: "board.card.record-ci" }>["action"],
             { kind: "step" }
@@ -118,6 +124,7 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
             cwd: request.worktreePath,
             steps: request.steps,
             logDir: boardCiLogDir(request.worktreePath, request.runId),
+            ...(request.indexOffset === undefined ? {} : { indexOffset: request.indexOffset }),
           },
           (progress) => record(request, progress.index, progress.step),
         )
@@ -146,7 +153,15 @@ export const makeBoardCiPasses = Effect.fn("makeBoardCiPasses")(function* (
                 ),
           ),
           Effect.flatMap((outcome) =>
-            deps.onFinished({ cardId: request.cardId, runId: request.runId, outcome }),
+            deps.onFinished({
+              cardId: request.cardId,
+              runId: request.runId,
+              outcome:
+                outcome.failedIndex === null
+                  ? outcome
+                  : { ...outcome, failedIndex: outcome.failedIndex + (request.indexOffset ?? 0) },
+              segmentEnd: (request.indexOffset ?? 0) + request.steps.length,
+            }),
           ),
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)
