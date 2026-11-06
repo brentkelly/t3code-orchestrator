@@ -2,7 +2,8 @@
  * Plan review in the decider (T3O-39): the review starts on the first
  * proposal or on the first succeeded completion of the live planning step,
  * the completion that ran it records how it finished, and the card's toggle
- * locks its rounds and stops a running review.
+ * stops a running review or changes its rounds. Turned on late, it reopens a
+ * finished planning step or resumes a paused one (T3O-50).
  */
 import {
   BoardCardId,
@@ -353,14 +354,39 @@ it.effect("a card update can carry plan review alone, and null resets it", () =>
   }),
 );
 
-it.effect("rounds are locked while a review runs, and turning it off stops the review", () =>
+it.effect("a rounds change while a review runs is recorded, and turning it off stops it", () =>
   Effect.gen(function* () {
     const running = readModel({
       card: makeCard({ planReview: { enabled: true, rounds: 3 } }),
       state: stepState(started),
     });
-    const refusal = yield* decideFail(update({ enabled: true, rounds: 5 }), running);
-    assert.include(String(refusal), "rounds cannot change");
+    const changed = yield* decide(update({ enabled: true, rounds: 5 }), running);
+    assert.deepStrictEqual(types(changed), [
+      "board.card-updated",
+      "board.plan-review-rounds-changed",
+    ]);
+    const change = changed[1]!;
+    assert.ok(change.type === "board.plan-review-rounds-changed");
+    assert.deepStrictEqual(change.payload, {
+      cardId,
+      state: stepState({ ...started, planReviewRounds: 5, updatedAt: LATER }),
+    });
+    const card = changed[0]!;
+    assert.ok(card.type === "board.card-updated");
+    assert.deepStrictEqual(card.payload.card.planReview, { enabled: true, rounds: 5 });
+
+    // A paused review records the new count too; the reactor does not wake it.
+    const paused = yield* decide(
+      update({ enabled: true, rounds: 1 }),
+      readModel({
+        card: makeCard({ planReview: { enabled: true, rounds: 3 } }),
+        state: stepState({ ...started, status: "paused" }),
+      }),
+    );
+    const pausedChange = paused[1]!;
+    assert.ok(pausedChange.type === "board.plan-review-rounds-changed");
+    assert.strictEqual(pausedChange.payload.state.status, "paused");
+    assert.strictEqual(pausedChange.payload.state.planReviewRounds, 1);
 
     // The same rounds are fine.
     assert.deepStrictEqual(types(yield* decide(update({ enabled: true, rounds: 3 }), running)), [
@@ -405,7 +431,7 @@ it.effect("turning review off with none running, or when already off, stops noth
       types(yield* decide(update({ enabled: false, rounds: 3 }), alreadyOff)),
       ["board.card-updated"],
     );
-    // A review left on a settled step is not running.
+    // A review left on a settled step is not running, and is not run twice.
     const settled = readModel({ state: stepState({ ...started, status: "succeeded" }) });
     assert.deepStrictEqual(types(yield* decide(update({ enabled: true, rounds: 9 }), settled)), [
       "board.card-updated",
@@ -476,5 +502,137 @@ it.effect("turning review on starts nothing with no plan posted, or on a card al
       types(yield* decide(update({ enabled: true, rounds: 2 }), readModel({ state: null }))),
       ["board.card-updated"],
     );
+  }),
+);
+
+const succeededCompletion: BoardStepCompletion = {
+  cardId,
+  stepId: "planning",
+  outcome: "succeeded",
+  summary: "Planned.",
+  payload: null,
+  threadId,
+  completedAt: NOW,
+};
+
+it.effect("turned on after planning finished, the settled step reopens with the review", () =>
+  Effect.gen(function* () {
+    const events = yield* decide(
+      update({ enabled: true, rounds: 2 }),
+      readModel({
+        state: stepState({ status: "succeeded", stallCount: 2, lastError: "old" }),
+        completions: [succeededCompletion],
+      }),
+    );
+    assert.deepStrictEqual(types(events), ["board.card-updated", "board.plan-review-started"]);
+    const startedEvent = events[1]!;
+    assert.ok(startedEvent.type === "board.plan-review-started");
+    assert.strictEqual(startedEvent.payload.turnedOnLate, true);
+    assert.deepStrictEqual(
+      startedEvent.payload.state,
+      stepState({
+        status: "running",
+        stallCount: 0,
+        lastError: null,
+        slotHeld: false,
+        lastNudgeAt: LATER,
+        planReviewStartedAt: LATER,
+        planReviewRounds: 2,
+        updatedAt: LATER,
+      }),
+    );
+  }),
+);
+
+it.effect("a late turn-on reopens only a succeeded plan step on a card still in Planning", () =>
+  Effect.gen(function* () {
+    const on = update({ enabled: true, rounds: 2 });
+    for (const status of ["failed", "abandoned"] as const) {
+      assert.deepStrictEqual(
+        types(yield* decide(on, readModel({ state: stepState({ status }) }))),
+        ["board.card-updated"],
+      );
+    }
+    assert.deepStrictEqual(
+      types(
+        yield* decide(on, readModel({ state: stepState({ status: "succeeded" }), plans: [] })),
+      ),
+      ["board.card-updated"],
+    );
+    // The card moved on, leaving its settled planning step behind.
+    assert.deepStrictEqual(
+      types(
+        yield* decide(
+          on,
+          readModel({
+            card: makeCard({ stage: BoardStageId.make("ready") }),
+            state: stepState({ status: "succeeded" }),
+          }),
+        ),
+      ),
+      ["board.card-updated"],
+    );
+  }),
+);
+
+it.effect("turned on while the planning step is paused, the step resumes with the review", () =>
+  Effect.gen(function* () {
+    const events = yield* decide(
+      update({ enabled: true, rounds: 2 }),
+      readModel({ state: stepState({ status: "paused", stallCount: 1, retryAt: LATER }) }),
+    );
+    assert.deepStrictEqual(types(events), ["board.card-updated", "board.plan-review-started"]);
+    const startedEvent = events[1]!;
+    assert.ok(startedEvent.type === "board.plan-review-started");
+    assert.strictEqual(startedEvent.payload.turnedOnLate, true);
+    assert.strictEqual(startedEvent.payload.state.status, "running");
+    assert.strictEqual(startedEvent.payload.state.stallCount, 0);
+    assert.strictEqual(startedEvent.payload.state.retryAt, null);
+    assert.strictEqual(startedEvent.payload.state.lastNudgeAt, LATER);
+    assert.strictEqual(startedEvent.payload.state.planReviewRounds, 2);
+  }),
+);
+
+it.effect("the reopened review's completion replaces the pinned one, then pins again", () =>
+  Effect.gen(function* () {
+    const reopened = stepState({ planReviewStartedAt: NOW, planReviewRounds: 2 });
+    const earlier = { ...succeededCompletion, completedAt: "2025-12-31T00:00:00.000Z" };
+    const events = yield* decide(
+      complete({
+        planReview: ON,
+        payload: JSON.stringify({ planReview: { roundsRun: 2, converged: false } }),
+      }),
+      readModel({ state: reopened, completions: [earlier] }),
+    );
+    assert.deepStrictEqual(types(events), ["board.card-step-completed"]);
+    const event = events[0]!;
+    assert.ok(event.type === "board.card-step-completed");
+    assert.strictEqual(event.payload.completion.completedAt, LATER);
+    assert.deepStrictEqual(event.payload.planReviewFinished, {
+      rounds: 2,
+      roundsRun: 2,
+      converged: false,
+    });
+
+    // A completion recorded after the review started is pinned as ever.
+    const retry = (yield* decide(
+      complete({ planReview: ON }),
+      readModel({
+        state: reopened,
+        completions: [{ ...earlier, summary: "Earlier.", completedAt: LATER }],
+      }),
+    ))[0]!;
+    assert.ok(retry.type === "board.card-step-completed");
+    assert.strictEqual(retry.payload.completion.summary, "Earlier.");
+    assert.strictEqual(retry.payload.completion.payload, null);
+
+    // A non-success never replaces the pinned success.
+    const failed = (yield* decide(
+      complete({ outcome: "failed", planReview: ON }),
+      readModel({ state: reopened, completions: [earlier] }),
+    ))[0]!;
+    assert.ok(failed.type === "board.card-step-completed");
+    assert.strictEqual(failed.payload.completion.outcome, "succeeded");
+    assert.strictEqual(failed.payload.completion.completedAt, earlier.completedAt);
   }),
 );

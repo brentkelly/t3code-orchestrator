@@ -385,6 +385,12 @@ export function composePlanReviewInstructions(input: {
 export const BOARD_PLAN_REVIEW_LATE_START_LEAD =
   "Plan review was turned on after you posted the plan. Review the plan you proposed now, as below.";
 
+/** Leads the turn sent when a human changes a running plan review's rounds
+    (T3O-50). Only the agent knows how many it has run, so it decides. */
+export function boardPlanReviewRoundsChangedLead(rounds: number): string {
+  return `The plan review limit is now ${rounds} ${rounds === 1 ? "round" : "rounds"} in total. If you have already run ${rounds} or more, stop reviewing: summarise what the reviews found, re-propose the plan with board_propose_plans if it changed, and finish as normal. Otherwise continue until you reach ${rounds}, as below.`;
+}
+
 /** The turn sent into a planning thread when a human turns its running plan
     review off (plan review, T3O-39). */
 export const BOARD_PLAN_REVIEW_STOP_INSTRUCTION =

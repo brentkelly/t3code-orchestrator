@@ -153,6 +153,7 @@ import {
 } from "./briefEdits.ts";
 import { decideBoardCiRecord } from "./ci/ciRecord.ts";
 import { isKeptStepThread } from "./planningThreadKeep.ts";
+import { boardCompletionReopenedByPlanReview } from "./planReview.ts";
 import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
 
 export type { BoardCommand };
@@ -676,6 +677,38 @@ function livePlanReviewStep(board: BoardState, cardId: BoardCardId): BoardCardSt
   if (state === null || planStage === null) return null;
   if (state.stepId !== planStage.stageId || isBoardTerminalStepStatus(state.status)) return null;
   return state;
+}
+
+/**
+ * The plan step a card's own toggle may start a late review on (T3O-50), with
+ * the state it starts from. A live step starts as it is; a paused one resumes,
+ * as `resume-step` would; a step that settled `succeeded` with no review is
+ * reopened on its thread. Failed or blocked steps belong to the recovery ladder.
+ */
+function latePlanReviewStep(
+  board: BoardState,
+  card: BoardCard,
+  at: string,
+): BoardCardStepState | null {
+  const state = boardCardStepState(board, card.id);
+  const planStage = boardStageWithRole(board, "plan");
+  if (state === null || planStage === null) return null;
+  if (state.stepId !== planStage.stageId || card.stage !== planStage.stageId) return null;
+  if (state.planReviewStartedAt !== undefined) return null;
+  const resumed: BoardCardStepState = {
+    ...state,
+    status: "running",
+    stallCount: 0,
+    lastError: null,
+    slotHeld: state.mode === "build",
+    stalledReason: "gave-up",
+    retryAt: null,
+    lastNudgeAt: at,
+  };
+  if (state.status === "paused") return resumed;
+  // Planning steps hold no slot, so a reopened one takes none.
+  if (state.status === "succeeded") return { ...resumed, slotHeld: false };
+  return isBoardTerminalStepStatus(state.status) ? null : state;
 }
 
 /** Start the plan review on the live plan step (plan review, T3O-39). */
@@ -2867,22 +2900,18 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
 
       const dependsOn = proposedDependsOn ?? card.dependsOn;
 
-      // Plan review (T3O-39). Rounds lock once a review has started on the
-      // live plan step; turning it off is always accepted and stops the review.
+      // Plan review (T3O-39). Turning it off is always accepted and stops a
+      // running review; changing its rounds mid-review tells the agent (T3O-50).
       const planReviewStep = livePlanReviewStep(board, card.id);
       const planReviewRunning =
         planReviewStep !== null && planReviewStep.planReviewStartedAt !== undefined;
-      if (
+      const changedPlanReviewRounds =
         planReviewRunning &&
         command.planReview != null &&
         command.planReview.enabled &&
         command.planReview.rounds !== planReviewStep.planReviewRounds
-      ) {
-        return yield* invariant(
-          command,
-          `Card '${card.key}' is in a plan review of ${planReviewStep.planReviewRounds} round(s); its rounds cannot change until it leaves Planning. Turn the review off to stop it.`,
-        );
-      }
+          ? command.planReview.rounds
+          : null;
       // A null reset inherits a default the decider cannot see, so it could
       // stop the review with no stop event; the caller must say on or off.
       if (planReviewRunning && command.planReview === null) {
@@ -2899,13 +2928,16 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
         card.planReview?.enabled !== false;
       // Turned on after the plan was posted: nothing will propose again to
       // start it, so the update does, and the reactor sends the instructions.
-      const startsPlanReview =
-        planReviewStep !== null &&
+      // Even after the step finished or was paused (T3O-50): the toggle is a
+      // request for the review, so it reopens or resumes the step.
+      const lateReviewStep =
         !planReviewRunning &&
         command.planReview?.enabled === true &&
         card.planReview?.enabled !== true &&
         boardCardPlans(board, card.id).length > 0 &&
-        !boardCardChildren(board, card.id).some((child) => child.archivedAt === null);
+        !boardCardChildren(board, card.id).some((child) => child.archivedAt === null)
+          ? latePlanReviewStep(board, card, command.createdAt)
+          : null;
       const { planReview: _priorPlanReview, ...cardWithoutPlanReview } = card;
 
       const mergeStrategy =
@@ -3015,16 +3047,35 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
                 },
               },
             ]
-          : startsPlanReview && planReviewStep !== null && command.planReview != null
+          : lateReviewStep !== null && command.planReview != null
             ? [
                 yield* planReviewStartedEvent({
                   command,
-                  state: planReviewStep,
+                  state: lateReviewStep,
                   rounds: command.planReview.rounds,
                   turnedOnLate: true,
                 }),
               ]
-            : [];
+            : changedPlanReviewRounds !== null && planReviewStep !== null
+              ? [
+                  {
+                    ...(yield* makeBoardEventBase({
+                      cardId: command.cardId,
+                      occurredAt: command.createdAt,
+                      commandId: command.commandId,
+                    })),
+                    type: "board.plan-review-rounds-changed",
+                    payload: {
+                      cardId: command.cardId,
+                      state: {
+                        ...planReviewStep,
+                        planReviewRounds: changedPlanReviewRounds,
+                        updatedAt: command.createdAt,
+                      },
+                    },
+                  },
+                ]
+              : [];
       if (proposedDependsOn === undefined)
         return stopped.length === 0 ? updated : [updated, ...stopped];
       // A group's dependencies hold back every card inside it (T3O-27).
@@ -4015,7 +4066,13 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
       // board_complete_step when done, so the successful retry must supersede
       // the earlier failure (the projector upserts on (cardId, stepId)).
       // With no live step, the recorded outcome re-emits verbatim.
-      const supersede = existing !== undefined && existing.outcome !== "succeeded" && recordable;
+      // A late plan review reopening a settled step (T3O-50) is the one way
+      // past the pin: the review's completion is the step's real result.
+      const supersede =
+        (existing !== undefined && existing.outcome !== "succeeded" && recordable) ||
+        (command.outcome === "succeeded" &&
+          liveMatch &&
+          boardCompletionReopenedByPlanReview(existing, current));
       // Idempotency is conditional on VALIDITY, not just on outcome (T3O-14).
       // A `succeeded` record whose payload nothing can read is not a completed
       // step wearing a green tick — it is a step that claimed a result it never

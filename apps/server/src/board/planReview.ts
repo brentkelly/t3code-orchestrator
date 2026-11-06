@@ -19,6 +19,7 @@ import {
   type BoardCardStepState,
   type BoardSettings,
   type BoardState,
+  type BoardStepCompletion,
 } from "@t3tools/contracts";
 
 function planStageExecution(board: BoardState, settings: BoardSettings, card: BoardCard) {
@@ -81,4 +82,24 @@ export function planReviewInstructions(input: {
       humanInLoop: input.state.humanInLoop && !isBoardCardAutoPlanPending(input.card),
     }),
   };
+}
+
+/**
+ * Whether a new `succeeded` completion replaces the pinned one (T3O-50): only
+ * when a late plan review reopened the step after that completion was recorded.
+ * Everywhere else D4's pin holds. The decider and the MCP reply both read it.
+ */
+export function boardCompletionReopenedByPlanReview(
+  existing: BoardStepCompletion | undefined,
+  current: BoardCardStepState | null,
+): boolean {
+  return (
+    existing !== undefined &&
+    existing.outcome === "succeeded" &&
+    current !== null &&
+    current.stepId === existing.stepId &&
+    !isBoardTerminalStepStatus(current.status) &&
+    current.planReviewStartedAt !== undefined &&
+    existing.completedAt < current.planReviewStartedAt
+  );
 }

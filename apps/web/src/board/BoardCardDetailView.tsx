@@ -1216,8 +1216,8 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
 
 /**
  * Plan review (T3O-39): an adversarial review of the plan once it is posted,
- * run by the planning agent with subagents. Rounds lock while one runs; the
- * switch stays live, and turning it off stops the review.
+ * run by the planning agent with subagents. While one runs, a rounds change
+ * tells the agent the new total, and turning the switch off stops the review.
  */
 function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   const view = props.planReview;
@@ -1246,17 +1246,13 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
       {view.enabled ? (
         <div className="flex items-center gap-2.5 pl-[38px]">
           <span className="flex-1 text-[12px] font-medium text-foreground">Rounds</span>
-          {view.inProgress ? (
-            <span className="text-[12px] text-muted-foreground">{view.rounds}, locked</span>
-          ) : (
-            <NumberStepper
-              ariaLabel="plan review rounds"
-              max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
-              min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
-              onChange={(rounds) => onSet(nextBoardCardPlanReview(view, { rounds }))}
-              value={view.rounds}
-            />
-          )}
+          <NumberStepper
+            ariaLabel="plan review rounds"
+            max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
+            min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
+            onChange={(rounds) => onSet(nextBoardCardPlanReview(view, { rounds }))}
+            value={view.rounds}
+          />
         </div>
       ) : null}
     </div>

@@ -1,6 +1,6 @@
 /**
  * T3o: the card sidebar's Plan review section (plan review, T3O-39), as data.
- * Pure, so the visibility, clamp and lock rules are tested without rendering.
+ * Pure, so the visibility and clamp rules are tested without rendering.
  */
 import {
   BOARD_PLAN_REVIEW_ROUNDS_MAX,
@@ -21,7 +21,8 @@ import {
 export interface BoardCardPlanReviewView {
   readonly enabled: boolean;
   readonly rounds: number;
-  /** A review is running on the live planning step: rounds are locked. */
+  /** A review is running on the live planning step. Its rounds can still
+      change; the agent is told the new total (T3O-50). */
   readonly inProgress: boolean;
   readonly summary: string;
   readonly note: string;
@@ -83,11 +84,13 @@ export function boardCardPlanReviewView(input: {
       : inProgress
         ? `In progress · ${roundsWord(rounds)}`
         : roundsWord(rounds),
-    note: enabled
+    note: inProgress
+      ? `The planning agent is reviewing the plan, up to ${roundsWord(rounds)}. Changing the rounds tells it the new total. The final plan comes to you for sign-off.`
+      : enabled
       ? `When the plan is posted, the planning agent runs up to ${roundsWord(rounds)} of review. The number and focus of reviewing subagents launched each round is outlined in the plan review prompt. The final plan comes to you for sign-off.`
       : "The plan comes straight to you for sign-off.",
-    canDecrease: !inProgress && rounds > BOARD_PLAN_REVIEW_ROUNDS_MIN,
-    canIncrease: !inProgress && rounds < BOARD_PLAN_REVIEW_ROUNDS_MAX,
+    canDecrease: rounds > BOARD_PLAN_REVIEW_ROUNDS_MIN,
+    canIncrease: rounds < BOARD_PLAN_REVIEW_ROUNDS_MAX,
   };
 }
 

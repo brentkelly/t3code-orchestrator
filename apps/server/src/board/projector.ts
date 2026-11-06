@@ -69,6 +69,7 @@ import {
   BoardPlansProposedPayload,
   BoardPlanReviewStartedPayload,
   BoardPlanReviewStoppedPayload,
+  BoardPlanReviewRoundsChangedPayload,
   BoardCardBaseRefRecordedPayload,
   BoardCardPlacedPayload,
   BoardCardWorkerMoveRecordedPayload,
@@ -147,6 +148,9 @@ const decodeBoardPlanReviewStartedPayload = Schema.decodeUnknownEffect(
 );
 const decodeBoardPlanReviewStoppedPayload = Schema.decodeUnknownEffect(
   BoardPlanReviewStoppedPayload,
+);
+const decodeBoardPlanReviewRoundsChangedPayload = Schema.decodeUnknownEffect(
+  BoardPlanReviewRoundsChangedPayload,
 );
 const decodeBoardPlanWrittenPayload = Schema.decodeUnknownEffect(BoardPlanWrittenPayload);
 const decodeBoardPlansApprovedPayload = Schema.decodeUnknownEffect(BoardPlansApprovedPayload);
@@ -1004,6 +1008,12 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
+    case "board.plan-review-rounds-changed":
+      return decodeBoardPlanReviewRoundsChangedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
     // T3o (T3O-62): the worker registry. Touches no card.
     case "board.worker-registered":
       return decodeBoardWorkerRegisteredPayload(event.payload).pipe(
@@ -1434,6 +1444,7 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     // Plan review (T3O-39) is card detail: the sidebar and the rail show it.
     case "board.plan-review-started":
     case "board.plan-review-stopped":
+    case "board.plan-review-rounds-changed":
     // Branch cleanup is card DETAIL too: it lands on the activity rail, which
     // rides `board.subscribeCard`, and changes nothing a column card renders.
     case "board.card-note-recorded":
