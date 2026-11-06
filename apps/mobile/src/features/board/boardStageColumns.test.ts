@@ -1,7 +1,18 @@
-import { BOARD_SEED_STAGE_IDS, type BoardCardId, type BoardCardShell } from "@t3tools/contracts";
+import {
+  BOARD_SEED_STAGE_IDS,
+  BOARD_SEED_STAGES,
+  boardCardShellPendingSplit,
+  type BoardCardId,
+  type BoardCardShell,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { cardsInStage, liveTopLevelBoardCards } from "./boardStageColumns";
+import {
+  boardPagerScrollIndex,
+  cardsInStage,
+  liveTopLevelBoardCards,
+  liveTopLevelBoardCardsWithPlanProgress,
+} from "./boardStageColumns";
 
 const ids = BOARD_SEED_STAGE_IDS;
 
@@ -65,6 +76,95 @@ describe("liveTopLevelBoardCards", () => {
       [],
     );
     expect(live).toEqual([]);
+  });
+});
+
+describe("liveTopLevelBoardCardsWithPlanProgress", () => {
+  it("folds live children into the parent's plan pips and drops the children", () => {
+    const parent = shell({
+      cardId: "parent" as BoardCardId,
+      stage: ids.planning,
+      planCount: 2,
+    });
+    const live = liveTopLevelBoardCardsWithPlanProgress(
+      [
+        parent,
+        shell({
+          cardId: "child-a" as BoardCardId,
+          stage: ids.building,
+          parentCardId: parent.cardId,
+        }),
+        shell({
+          cardId: "child-b" as BoardCardId,
+          stage: ids.done,
+          parentCardId: parent.cardId,
+        }),
+      ],
+      null,
+      BOARD_SEED_STAGES,
+    );
+    expect(live.map((card) => card.cardId)).toEqual(["parent"]);
+    expect(live[0]?.planTotal).toBe(2);
+    expect(live[0]?.planDone).toBe(1);
+    expect(
+      boardCardShellPendingSplit(
+        {
+          stage: live[0]!.stage,
+          planCount: live[0]!.planCount,
+          planTotal: live[0]!.planTotal,
+        },
+        BOARD_SEED_STAGES,
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps Needs approval when two plans have no live children", () => {
+    const live = liveTopLevelBoardCardsWithPlanProgress(
+      [shell({ cardId: "parent" as BoardCardId, stage: ids.planning, planCount: 2 })],
+      null,
+      BOARD_SEED_STAGES,
+    );
+    expect(live[0]?.planTotal).toBeUndefined();
+    expect(
+      boardCardShellPendingSplit(
+        { stage: live[0]!.stage, planCount: live[0]!.planCount },
+        BOARD_SEED_STAGES,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("boardPagerScrollIndex", () => {
+  const stages = BOARD_SEED_STAGES.map((stage) => ({ stageId: stage.stageId }));
+
+  it("waits until the board is mounted and the page has a width", () => {
+    expect(
+      boardPagerScrollIndex({
+        boardReady: false,
+        width: 390,
+        resolvedStageId: ids.building,
+        stages,
+      }),
+    ).toBeNull();
+    expect(
+      boardPagerScrollIndex({
+        boardReady: true,
+        width: 0,
+        resolvedStageId: ids.building,
+        stages,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns the stage index once width is known", () => {
+    expect(
+      boardPagerScrollIndex({
+        boardReady: true,
+        width: 390,
+        resolvedStageId: ids.building,
+        stages,
+      }),
+    ).toBe(stages.findIndex((stage) => stage.stageId === ids.building));
   });
 });
 

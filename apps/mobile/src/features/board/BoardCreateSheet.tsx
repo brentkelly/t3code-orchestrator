@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
-import { TextInput, View } from "react-native";
+import { Alert, TextInput, View } from "react-native";
 
 import { AppSheet } from "../../components/AppSheet";
 import { AppText as Text } from "../../components/AppText";
@@ -16,6 +16,7 @@ import { ScreenScrollView } from "../../components/ScreenScrollView";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { boardEnvironment } from "../../state/board";
+import { boardCommandAlert, boardCommandDidApply } from "./boardCommandResult";
 
 export function BoardCreateSheet(props: {
   readonly environmentId: EnvironmentId;
@@ -76,7 +77,11 @@ export function BoardCreateSheet(props: {
               },
             }).then((result) => {
               setSubmitting(false);
-              if (result._tag !== "Success") return;
+              const alert = boardCommandAlert(result);
+              if (alert !== null) {
+                Alert.alert(alert.title, alert.message);
+              }
+              if (!boardCommandDidApply(result)) return;
               props.onClose();
               navigation.navigate("BoardCard", {
                 environmentId: String(props.environmentId),

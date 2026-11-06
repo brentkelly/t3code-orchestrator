@@ -99,6 +99,22 @@ export function describeBoardCommandResult(
 }
 
 /**
+ * Alert copy for a board command. Applied follow-ups (`conflict`,
+ * `checks-fix`) keep their sentence but are titled as work that started.
+ * Failures and refusals stay under "Could not complete".
+ */
+export function boardCommandAlert(
+  result: AtomCommandResult<unknown, unknown>,
+): { readonly title: string; readonly message: string } | null {
+  const message = describeBoardCommandResult(result);
+  if (message === null) return null;
+  return {
+    title: boardCommandDidApply(result) ? "Started follow-up" : "Could not complete",
+    message,
+  };
+}
+
+/**
  * Whether the command changed the card the way the click asked. A Success
  * `{ sequence }` from `board.dispatchCommand` counts. A Success `{ outcome:
  * "refused" }` from merge/submit does not — the card is still there.

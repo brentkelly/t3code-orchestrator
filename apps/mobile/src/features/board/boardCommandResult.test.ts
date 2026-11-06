@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardCanShowApprovePlans,
+  boardCommandAlert,
   boardCommandDidApply,
   describeBoardCommandResult,
 } from "./boardCommandResult";
@@ -105,5 +106,54 @@ describe("describeBoardCommandResult", () => {
 
   it("stays silent on a dispatch that committed", () => {
     expect(describeBoardCommandResult(AsyncResult.success({ sequence: 12 }))).toBeNull();
+    expect(boardCommandAlert(AsyncResult.success({ sequence: 12 }))).toBeNull();
+  });
+
+  it("titles a failed create as Could not complete", () => {
+    const result = AsyncResult.failure(Cause.fail({ message: "Title is required." }));
+    expect(boardCommandAlert(result)).toEqual({
+      title: "Could not complete",
+      message: "Title is required.",
+    });
+    expect(boardCommandDidApply(result)).toBe(false);
+  });
+
+  it("titles a merge follow-up as Started follow-up", () => {
+    expect(
+      boardCommandAlert(
+        AsyncResult.success({
+          outcome: "conflict",
+          detail: "The branch conflicts with its base.",
+        }),
+      ),
+    ).toEqual({
+      title: "Started follow-up",
+      message: "The branch conflicts with its base. Resolving the conflicts, then merging.",
+    });
+    expect(
+      boardCommandAlert(
+        AsyncResult.success({
+          outcome: "checks-fix",
+        }),
+      ),
+    ).toEqual({
+      title: "Started follow-up",
+      message: "The pull request's checks failed. Fixing them, then merging once CI passes.",
+    });
+    expect(boardCommandDidApply(AsyncResult.success({ outcome: "conflict" }))).toBe(true);
+  });
+
+  it("keeps a refusal under Could not complete", () => {
+    expect(
+      boardCommandAlert(
+        AsyncResult.success({
+          outcome: "refused",
+          detail: "Approve needs two or more plans.",
+        }),
+      ),
+    ).toEqual({
+      title: "Could not complete",
+      message: "Approve needs two or more plans.",
+    });
   });
 });

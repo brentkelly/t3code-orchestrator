@@ -37,8 +37,8 @@ import { useWorkspaceState } from "../../state/workspace";
 import { boardActivityLabel } from "./boardActivityLabel";
 import {
   boardCanShowApprovePlans,
+  boardCommandAlert,
   boardCommandDidApply,
-  describeBoardCommandResult,
 } from "./boardCommandResult";
 
 type BoardCardScreenProps = StaticScreenProps<{
@@ -119,9 +119,9 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
     setBusy(true);
     void work()
       .then((result) => {
-        const feedback = describeBoardCommandResult(result);
-        if (feedback !== null) {
-          Alert.alert("Could not complete", feedback);
+        const alert = boardCommandAlert(result);
+        if (alert !== null) {
+          Alert.alert(alert.title, alert.message);
         }
         if (after !== undefined && boardCommandDidApply(result)) {
           after();

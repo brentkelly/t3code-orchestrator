@@ -1,8 +1,4 @@
-import {
-  BOARD_SEED_STAGE_IDS,
-  BOARD_SEED_STAGES,
-  boardCardAttention,
-} from "@t3tools/contracts";
+import { BOARD_SEED_STAGE_IDS, BOARD_SEED_STAGES, boardCardAttention } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { boardCardStatus, type BoardCardStatusCard } from "./boardCardStatus";
@@ -87,6 +83,21 @@ describe("boardCardStatus", () => {
     expect(
       boardCardStatus({
         card: card({ stage: ids.backlog }),
+        stages: BOARD_SEED_STAGES,
+      }),
+    ).toBeNull();
+  });
+
+  it("marks a split parent Needs approval only before children exist", () => {
+    expect(
+      boardCardStatus({
+        card: card({ stage: ids.planning, planCount: 2 }),
+        stages: BOARD_SEED_STAGES,
+      })?.label,
+    ).toBe("Needs approval");
+    expect(
+      boardCardStatus({
+        card: card({ stage: ids.planning, planCount: 2, planTotal: 2, planDone: 0 }),
         stages: BOARD_SEED_STAGES,
       }),
     ).toBeNull();
