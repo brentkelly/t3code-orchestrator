@@ -1,9 +1,14 @@
-import { defaultBoardStageId } from "@t3tools/client-runtime/board";
+import {
+  boardCardPipelineStages,
+  boardPipelineColumns,
+  defaultBoardStageId,
+} from "@t3tools/client-runtime/board";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   BOARD_SEED_STAGES,
   BoardCardId,
   EnvironmentId,
+  boardProjectFirstStageId,
   deriveBoardCardChildAttention,
   deriveBoardCardChildRunning,
   type BoardCardChildAttention,
@@ -71,7 +76,10 @@ export function BoardHomeScreen(props: {
   const navigation = useNavigation();
   const board = useAtomValue(boardEnvironment.boardAtom(props.environmentId));
   const stagesFromAtom = useAtomValue(boardEnvironment.stageListAtom(props.environmentId));
-  const stages = stagesFromAtom.length > 0 ? stagesFromAtom : BOARD_SEED_STAGES;
+  const projectStageConfigs = useAtomValue(
+    boardEnvironment.projectStageConfigsAtom(props.environmentId),
+  );
+  const catalogue = stagesFromAtom.length > 0 ? stagesFromAtom : BOARD_SEED_STAGES;
   const cards = board?.cards ?? [];
   const scopes = useMemo(
     () =>
@@ -92,17 +100,33 @@ export function BoardHomeScreen(props: {
     [props.environmentId, props.selectedProjectKey, scopes],
   );
   const liveCards = useMemo(
-    () => liveTopLevelBoardCardsWithPlanProgress(cards, projectIds, stages),
-    [cards, projectIds, stages],
+    () => liveTopLevelBoardCardsWithPlanProgress(cards, projectIds, catalogue),
+    [cards, catalogue, projectIds],
   );
   const childAttentionByParent = useMemo(
-    () => deriveBoardCardChildAttention({ cards, stages }),
-    [cards, stages],
+    () => deriveBoardCardChildAttention({ cards, stages: catalogue }),
+    [cards, catalogue],
   );
   const childRunningByParent = useMemo(() => deriveBoardCardChildRunning({ cards }), [cards]);
   const visibleCards = useMemo(
     () => cardsMatchingBoardQuery(liveCards, props.searchQuery),
     [liveCards, props.searchQuery],
+  );
+  const pipelineProjects = useMemo(() => {
+    const inScope =
+      projectIds === null
+        ? props.projects.filter((project) => project.environmentId === props.environmentId)
+        : props.projects.filter((project) => projectIds.includes(project.id));
+    return inScope.map((project) => ({ id: project.id, title: project.title }));
+  }, [projectIds, props.environmentId, props.projects]);
+  const stages = useMemo(
+    () =>
+      boardPipelineColumns({
+        view: { stages: catalogue, projectStageConfigs, cards: liveCards },
+        projects: pipelineProjects,
+        occupiedStageIds: new Set(liveCards.map((card) => card.stage)),
+      }).map((column) => column.stage),
+    [catalogue, liveCards, pipelineProjects, projectStageConfigs],
   );
   const counts = useMemo(() => boardStageLiveCounts(stages, visibleCards), [stages, visibleCards]);
   const [stageId, setStageId] = useState<BoardStageId | null>(null);
@@ -129,6 +153,17 @@ export function BoardHomeScreen(props: {
       }),
     [props.environmentId, props.projects, props.selectedProjectKey, scopes],
   );
+  const createStages = useMemo(() => {
+    if (createProject == null) return stages;
+    const first = boardProjectFirstStageId(
+      { stages: catalogue, projectStageConfigs, cards: [] },
+      createProject.id,
+    );
+    return boardCardPipelineStages(
+      { stages: catalogue, projectStageConfigs },
+      { stage: first, projectId: createProject.id },
+    );
+  }, [catalogue, createProject, projectStageConfigs, stages]);
   const createOpen = props.createRequested && createProject != null;
   const createBlocked =
     !props.createRequested || createProject != null
@@ -313,7 +348,7 @@ export function BoardHomeScreen(props: {
           environmentId={props.environmentId}
           projectId={createProject.id}
           projectTitle={createProject.title}
-          stages={stages}
+          stages={createStages}
           onClose={props.onCreateHandled}
         />
       ) : null}

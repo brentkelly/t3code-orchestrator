@@ -1,4 +1,5 @@
 import {
+  boardCardPipelineStages,
   boardMoveLeavesPlanningUnwritten,
   boardMoveNeedsOverride,
   boardStagePrimaryAction,
@@ -61,7 +62,8 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
   const detail = useAtomValue(boardEnvironment.cardDetailValueAtom({ environmentId, cardId }));
   const board = useAtomValue(boardEnvironment.boardAtom(environmentId));
   const stagesFromAtom = useAtomValue(boardEnvironment.stageListAtom(environmentId));
-  const stages = stagesFromAtom.length > 0 ? stagesFromAtom : BOARD_SEED_STAGES;
+  const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
+  const catalogue = stagesFromAtom.length > 0 ? stagesFromAtom : BOARD_SEED_STAGES;
   const { environments } = useWorkspaceState();
   const connectedIds = useMemo(
     () =>
@@ -103,6 +105,10 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
   }
 
   const card = detail.card;
+  const stages = boardCardPipelineStages(
+    { stages: catalogue, projectStageConfigs },
+    { stage: card.stage, projectId: card.projectId },
+  );
   const mergeHold = boardMergeHold(shell);
   const primary = boardStagePrimaryAction(stages, card.stage, {
     ciEntryLive: card.ci != null,

@@ -20,3 +20,14 @@ export {
   type BoardThreadOpenInput,
 } from "./boardThreadOpen.ts";
 export { boardArchivedCardsInScope } from "./boardArchivedCards.ts";
+export {
+  boardCardPipelineStages,
+  boardCardStageGoneNotes,
+  boardPipelineColumns,
+  boardPipelinesGrid,
+  type BoardPipelineCell,
+  type BoardPipelineColumn,
+  type BoardPipelineColumnKind,
+  type BoardPipelineProject,
+  type BoardPipelinesGrid,
+} from "./boardProjectPipelines.ts";

@@ -1023,12 +1023,12 @@ const RootStackConfig = createWorkspaceStackNavigator({
     BoardArchived: createNativeStackScreen({
       screen: BoardArchivedScreen,
       linking: "board/archive",
-      options: GLASS_HEADER_OPTIONS,
+      options: DETAIL_HEADER_OPTIONS,
     }),
     BoardCard: createNativeStackScreen({
       screen: BoardCardScreen,
       linking: "board/:environmentId/:cardId",
-      options: GLASS_HEADER_OPTIONS,
+      options: DETAIL_HEADER_OPTIONS,
     }),
     NotFound: createNativeStackScreen({
       screen: NotFoundScreen,
