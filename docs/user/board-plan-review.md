@@ -34,10 +34,12 @@ re-posted and the step completed, however you word it.
 
 ## While a review runs
 
-The section header shows **In progress**. You can still change the rounds: the agent is told the new
-limit, and stops if it has already run that many. To stop a review, switch it off:
+The section header shows **In progress**. You can still change the rounds: once you stop clicking, the agent is told
+the new limit, and stops if it has already run that many. To stop a review, switch it off:
 the agent is told to summarise what it has found, re-post the plan if it changed, and finish.
 Changing the Settings default does not stop a review that has already started.
+If you switch off a review that started after planning had finished, the plan the agent re-posts
+still replaces the old one, but the card keeps the planning summary from before the review.
 
 On an auto-planned card the review still runs, but the agent decides everything itself and finishes
 without waiting for your sign-off.

@@ -79,6 +79,7 @@ import {
   type BoardProjectExecutionConfig,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { Debouncer } from "@tanstack/react-pacer";
 import { Link } from "@tanstack/react-router";
 import {
   ArchiveIcon,
@@ -1214,6 +1215,9 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   );
 }
 
+/** How long a mid-review rounds change waits for another click before it is sent. */
+const PLAN_REVIEW_ROUNDS_SETTLE_MS = 800;
+
 /**
  * Plan review (T3O-39): an adversarial review of the plan once it is posted,
  * run by the planning agent with subagents. While one runs, a rounds change
@@ -1222,7 +1226,23 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
 function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   const view = props.planReview;
   const onSet = props.onSetPlanReview;
+  // Mid-review every commit sends the planning agent a turn, so a run of
+  // stepper clicks lands as one change once it settles.
+  const [pendingRounds, setPendingRounds] = useState<number | null>(null);
+  const [roundsCommit] = useState(
+    () =>
+      new Debouncer(
+        (set: (next: BoardCardPlanReview) => void, next: BoardCardPlanReview) => {
+          setPendingRounds(null);
+          set(next);
+        },
+        { wait: PLAN_REVIEW_ROUNDS_SETTLE_MS },
+      ),
+  );
+  // A rounds change still settling when the panel closes is landed, not dropped.
+  useEffect(() => () => roundsCommit.flush(), [roundsCommit]);
   if (view == null || onSet === undefined) return null;
+  const rounds = pendingRounds ?? view.rounds;
   return (
     <div className="flex flex-col gap-2 border-t border-border p-3.5">
       <div className="flex items-center gap-1.5">
@@ -1236,7 +1256,11 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
           aria-label="Adversarial plan review"
           checked={view.enabled}
           className="mt-0.5 shrink-0"
-          onCheckedChange={(next) => onSet(nextBoardCardPlanReview(view, { enabled: next }))}
+          onCheckedChange={(next) => {
+            roundsCommit.cancel();
+            setPendingRounds(null);
+            onSet(nextBoardCardPlanReview({ ...view, rounds }, { enabled: next }));
+          }}
         />
         <span className="flex min-w-0 flex-col gap-0.5">
           <span className="font-medium text-foreground">Adversarial plan review</span>
@@ -1250,8 +1274,16 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
             ariaLabel="plan review rounds"
             max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
             min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
-            onChange={(rounds) => onSet(nextBoardCardPlanReview(view, { rounds }))}
-            value={view.rounds}
+            onChange={(next) => {
+              const change = nextBoardCardPlanReview(view, { rounds: next });
+              if (!view.inProgress) {
+                onSet(change);
+                return;
+              }
+              setPendingRounds(change.rounds);
+              roundsCommit.maybeExecute(onSet, change);
+            }}
+            value={rounds}
           />
         </div>
       ) : null}
@@ -3357,7 +3389,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             ) : (
               <GroupActionsSection group={group} props={props} unmet={unmet} />
             )}
-            <PlanReviewSection props={props} />
+            <PlanReviewSection key={props.detail.card.id} props={props} />
             <QueueSection props={props} />
             {props.stepFailure !== null ? (
               <BoardCardStepFailure
@@ -3458,7 +3490,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               ) : (
                 <GroupActionsSection group={group} props={props} unmet={unmet} />
               )}
-              <PlanReviewSection props={props} />
+              <PlanReviewSection key={props.detail.card.id} props={props} />
               <RailSections
                 group={group}
                 onOpenCi={hasCi ? () => setPane("ci") : undefined}
