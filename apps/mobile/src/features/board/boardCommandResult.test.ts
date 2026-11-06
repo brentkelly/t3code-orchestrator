@@ -143,6 +143,19 @@ describe("describeBoardCommandResult", () => {
     expect(boardCommandDidApply(AsyncResult.success({ outcome: "conflict" }))).toBe(true);
   });
 
+  it("titles a stale-base merge as Started follow-up and explains the return to review", () => {
+    const result = AsyncResult.success({ outcome: "stale-base" as const });
+    expect(describeBoardCommandResult(result)).toBe(
+      "The base branch moved since this card's last review round. The card went back to review to rebase and re-review before merging.",
+    );
+    expect(boardCommandAlert(result)).toEqual({
+      title: "Started follow-up",
+      message:
+        "The base branch moved since this card's last review round. The card went back to review to rebase and re-review before merging.",
+    });
+    expect(boardCommandDidApply(result)).toBe(true);
+  });
+
   it("keeps a refusal under Could not complete", () => {
     expect(
       boardCommandAlert(

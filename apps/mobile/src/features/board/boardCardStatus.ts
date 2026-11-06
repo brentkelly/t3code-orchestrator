@@ -55,13 +55,20 @@ export function boardCardStatus(input: {
   if (isBoardCardWorking(card)) {
     return status("info", "Running");
   }
+  const attention = boardCardAttention({ card, stages, now: input.now });
+  // A pending question or permission prompt is answerable in one tap, the same
+  // carve-out `boardCardNotice` and `docs/t3o/status-colours.md` give it over
+  // the dependency gate. `blocked` and `queued` stay after that so they cannot
+  // hide the violet pill.
+  if (attention !== null && (attention.reason === "input" || attention.reason === "permission")) {
+    return status("attention", attention.label);
+  }
   if (card.queued) {
     return status("neutral", "Queued");
   }
   if (card.blocked) {
     return status("warning", "Blocked");
   }
-  const attention = boardCardAttention({ card, stages, now: input.now });
   if (attention === null) return null;
   if (attention.tone === "attention") return status("attention", attention.label);
   if (attention.tone === "warning") return status("warning", attention.label);

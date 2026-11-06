@@ -68,6 +68,47 @@ describe("boardCardStatus", () => {
     expect(tone?.textClassName).toBe("text-warning-foreground");
   });
 
+  it("ranks a pending question above a queue slot", () => {
+    const waiting = card({
+      stage: ids.building,
+      queued: true,
+      awaitingInput: true,
+      threadState: "waiting",
+    });
+    expect(boardCardAttention({ card: waiting, stages: BOARD_SEED_STAGES })?.reason).toBe("input");
+    const tone = boardCardStatus({ card: waiting, stages: BOARD_SEED_STAGES });
+    expect(tone?.label).toBe("Input needed");
+    expect(tone?.textClassName).toBe("text-adaptive-violet-700-300");
+  });
+
+  it("ranks a pending question above the dependency gate", () => {
+    const waiting = card({
+      stage: ids.building,
+      blocked: true,
+      awaitingInput: true,
+      threadState: "waiting",
+    });
+    expect(boardCardAttention({ card: waiting, stages: BOARD_SEED_STAGES })?.reason).toBe("input");
+    const tone = boardCardStatus({ card: waiting, stages: BOARD_SEED_STAGES });
+    expect(tone?.label).toBe("Input needed");
+    expect(tone?.textClassName).toBe("text-adaptive-violet-700-300");
+  });
+
+  it("ranks a permission prompt above the dependency gate", () => {
+    const waiting = card({
+      stage: ids.building,
+      blocked: true,
+      threadState: "waiting",
+      stepAwaiting: "permission",
+    });
+    expect(boardCardAttention({ card: waiting, stages: BOARD_SEED_STAGES })?.reason).toBe(
+      "permission",
+    );
+    const tone = boardCardStatus({ card: waiting, stages: BOARD_SEED_STAGES });
+    expect(tone?.label).toBe("Needs permission");
+    expect(tone?.textClassName).toBe("text-adaptive-violet-700-300");
+  });
+
   it("marks a waiting-on-human card violet", () => {
     const waiting = card({
       stage: ids.planning,
