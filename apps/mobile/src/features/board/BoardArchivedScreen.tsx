@@ -1,5 +1,5 @@
 import { boardArchivedCardsInScope } from "@t3tools/client-runtime/board";
-import { EnvironmentId, type BoardCardShell } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type BoardCardShell } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as Option from "effect/Option";
@@ -25,6 +25,7 @@ function archivedCardsAtom(environmentId: EnvironmentId) {
 
 type BoardArchivedScreenProps = StaticScreenProps<{
   readonly environmentId: string;
+  readonly projectIds?: string;
 }>;
 
 export function BoardArchivedScreen({ route }: BoardArchivedScreenProps) {
@@ -43,16 +44,30 @@ export function BoardArchivedScreen({ route }: BoardArchivedScreenProps) {
   );
 
   const snapshot = Option.getOrNull(AsyncResult.value(result));
-  const cards = useMemo(
-    () => boardArchivedCardsInScope(snapshot?.cards ?? [], null),
-    [snapshot],
+  const scopeProjectId = useMemo(
+    () => parseArchiveProjectIds(route.params.projectIds),
+    [route.params.projectIds],
   );
+  const cards = useMemo(() => {
+    const archived = snapshot?.cards ?? [];
+    if (scopeProjectId === null) return boardArchivedCardsInScope(archived, null);
+    if (scopeProjectId.length === 0) return [];
+    if (scopeProjectId.length === 1) {
+      return boardArchivedCardsInScope(archived, scopeProjectId[0]!);
+    }
+    const allowed = new Set(scopeProjectId);
+    return archived.filter((card) => allowed.has(card.projectId));
+  }, [scopeProjectId, snapshot]);
 
   if (parsed === null) {
     return (
       <>
         <ScreenHeader title="Archive" onBack={() => navigation.goBack()} />
-        <EmptyState variant="plain" title="Archive not found" detail="This link is missing its environment." />
+        <EmptyState
+          variant="plain"
+          title="Archive not found"
+          detail="This link is missing its environment."
+        />
       </>
     );
   }
@@ -152,6 +167,20 @@ function ArchivedRow(props: {
       </View>
     </View>
   );
+}
+
+function parseArchiveProjectIds(value: string | undefined): ReadonlyArray<ProjectId> | null {
+  if (value === undefined || value.length === 0) return null;
+  const ids: ProjectId[] = [];
+  for (const part of value.split(",")) {
+    if (part.length === 0) continue;
+    try {
+      ids.push(ProjectId.make(part));
+    } catch {
+      return [];
+    }
+  }
+  return ids;
 }
 
 function parseEnvironmentId(value: string | undefined): EnvironmentId | null {

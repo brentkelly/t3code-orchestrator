@@ -66,8 +66,11 @@ GitHub Actions secrets (fail-closed if any is missing on `signed-release`):
 - `T3O_ANDROID_KEY_PASSWORD`
 
 The workflow decodes the keystore to a temp file and runs
-`apps/mobile/plugins/withT3oReleaseSigning.cjs` so Gradle's `signingConfigs.release`
-is written only when those env vars are set.
+`apps/mobile/plugins/withT3oReleaseSigning.cjs` so `buildTypes.release` is
+assigned `signingConfigs.t3oReleaseSigning` (replacing Expo's debug assignment)
+only when those env vars are set. Passwords stay in `System.getenv`, not in
+the generated Gradle file. A re-run of the same workflow run replaces the
+`mobile-v<run_number>` asset instead of failing on the existing tag.
 
 Recovery: if the upload key is lost, publish a new signed app under a new
 package id. Debug prereleases are unaffected.

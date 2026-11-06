@@ -1,9 +1,11 @@
-import { boardThreadOpen } from "@t3tools/client-runtime/board";
 import {
+  boardMoveLeavesPlanningUnwritten,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
+  boardThreadOpen,
   isBoardStageManuallySelectable,
 } from "@t3tools/client-runtime/board";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
   BOARD_SEED_STAGES,
   BoardCardId,
@@ -19,7 +21,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as Linking from "expo-linking";
 import { useMemo, useState, type ReactNode } from "react";
-import { View } from "react-native";
+import { Alert, View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { AppText as Text } from "../../components/AppText";
@@ -32,6 +34,11 @@ import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceState } from "../../state/workspace";
 import { boardActivityLabel } from "./boardActivityLabel";
+import {
+  boardCanShowApprovePlans,
+  boardCommandDidApply,
+  describeBoardCommandResult,
+} from "./boardCommandResult";
 
 type BoardCardScreenProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -107,9 +114,48 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
     isBoardStageManuallySelectable(stages, stage.stageId),
   );
 
-  const run = (work: () => Promise<unknown>) => {
+  const run = (work: () => Promise<AtomCommandResult<unknown, unknown>>, after?: () => void) => {
     setBusy(true);
-    void work().finally(() => setBusy(false));
+    void work()
+      .then((result) => {
+        const feedback = describeBoardCommandResult(result);
+        if (feedback !== null) {
+          Alert.alert("Could not complete", feedback);
+        }
+        if (after !== undefined && boardCommandDidApply(result)) {
+          after();
+        }
+      })
+      .finally(() => setBusy(false));
+  };
+
+  const requestMove = (toStage: BoardStageId) => {
+    const go = () =>
+      run(() =>
+        moveCard({
+          environmentId,
+          input: { cardId: card.id, toStage },
+        }),
+      );
+    if (
+      boardMoveLeavesPlanningUnwritten({
+        stages,
+        card: { stage: card.stage, parentCardId: card.parentCardId },
+        toStage,
+        planCount: detail.plans.length,
+      })
+    ) {
+      const toLabel = stages.find((stage) => stage.stageId === toStage)?.label ?? toStage;
+      showConfirmDialog({
+        title: `Move ${card.key} to ${toLabel} without a plan?`,
+        message:
+          "No plan has been written for this card yet. Its planning thread stays on the card, so moving it back picks the conversation up where it left off.",
+        confirmText: `Move to ${toLabel}`,
+        onConfirm: go,
+      });
+      return;
+    }
+    go();
   };
 
   return (
@@ -127,13 +173,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                 .map((stage) => ({
                   id: `move:${stage.stageId}`,
                   title: `Move to ${stage.label}`,
-                  onPress: () =>
-                    run(() =>
-                      moveCard({
-                        environmentId,
-                        input: { cardId: card.id, toStage: stage.stageId },
-                      }),
-                    ),
+                  onPress: () => requestMove(stage.stageId),
                 })),
               ...(card.archivedAt === null
                 ? [
@@ -146,10 +186,9 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                           dependents: detail.dependents,
                         });
                         const go = () =>
-                          run(() =>
-                            archiveCard({ environmentId, input: { cardId: card.id } }).then(() =>
-                              navigation.goBack(),
-                            ),
+                          run(
+                            () => archiveCard({ environmentId, input: { cardId: card.id } }),
+                            () => navigation.goBack(),
                           );
                         if (confirm) {
                           showConfirmDialog({
@@ -182,10 +221,9 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                     confirmText: "Delete",
                     destructive: true,
                     onConfirm: () =>
-                      run(() =>
-                        deleteCard({ environmentId, input: { cardId: card.id } }).then(() =>
-                          navigation.goBack(),
-                        ),
+                      run(
+                        () => deleteCard({ environmentId, input: { cardId: card.id } }),
+                        () => navigation.goBack(),
                       ),
                   }),
               },
@@ -215,14 +253,21 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                 <Text className="text-sm text-foreground-muted">{plan.summary}</Text>
               </View>
             ))}
-            <MaterialButton
-              label="Approve plans"
-              tone="primary"
-              disabled={busy}
-              onPress={() =>
-                run(() => approvePlans({ environmentId, input: { cardId: card.id } }))
-              }
-            />
+            {boardCanShowApprovePlans({
+              planCount: detail.plans.length,
+              children: detail.children,
+              parentCardId: card.parentCardId,
+              archivedAt: card.archivedAt,
+            }) ? (
+              <MaterialButton
+                label="Approve plans"
+                tone="primary"
+                disabled={busy}
+                onPress={() =>
+                  run(() => approvePlans({ environmentId, input: { cardId: card.id } }))
+                }
+              />
+            ) : null}
           </Section>
         ) : null}
 
@@ -270,12 +315,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                 run(() => mergeCard({ environmentId, input: { cardId: card.id } }));
                 return;
               }
-              run(() =>
-                moveCard({
-                  environmentId,
-                  input: { cardId: card.id, toStage: primary.toStage as BoardStageId },
-                }),
-              );
+              requestMove(primary.toStage as BoardStageId);
             }}
           />
         ) : currentStage !== undefined &&
@@ -284,10 +324,9 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
           <MaterialButton
             label="Archive"
             onPress={() =>
-              run(() =>
-                archiveCard({ environmentId, input: { cardId: card.id } }).then(() =>
-                  navigation.goBack(),
-                ),
+              run(
+                () => archiveCard({ environmentId, input: { cardId: card.id } }),
+                () => navigation.goBack(),
               )
             }
           />
@@ -313,9 +352,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
               .slice(0, 40)
               .map((entry) => (
                 <View key={entry.activityId} className="border-b border-border py-2">
-                  <Text className="text-sm text-foreground">
-                    {boardActivityLabel(entry.kind)}
-                  </Text>
+                  <Text className="text-sm text-foreground">{boardActivityLabel(entry.kind)}</Text>
                   <Text className="text-xs text-foreground-muted">
                     {entry.actor.kind === "human"
                       ? (entry.actor.name ?? "You")

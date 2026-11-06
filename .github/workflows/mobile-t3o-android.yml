@@ -187,8 +187,17 @@ jobs:
             prerelease_flag="--prerelease"
           fi
           cp "${{ steps.apk.outputs.path }}" "${{ steps.apk.outputs.asset }}"
-          gh release create "$tag" \
-            $prerelease_flag \
-            --title "T3o Android $tag" \
-            --notes "T3o Android APK (${{ github.event.inputs.mode }}). Package com.brentkelly.t3o, versionName ${{ steps.version.outputs.versionName }}." \
-            "${{ steps.apk.outputs.asset }}"
+          notes="T3o Android APK (${{ github.event.inputs.mode }}). Package com.brentkelly.t3o, versionName ${{ steps.version.outputs.versionName }}."
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${{ steps.apk.outputs.asset }}" --clobber
+            gh release edit "$tag" \
+              $prerelease_flag \
+              --title "T3o Android $tag" \
+              --notes "$notes"
+          else
+            gh release create "$tag" \
+              $prerelease_flag \
+              --title "T3o Android $tag" \
+              --notes "$notes" \
+              "${{ steps.apk.outputs.asset }}"
+          fi

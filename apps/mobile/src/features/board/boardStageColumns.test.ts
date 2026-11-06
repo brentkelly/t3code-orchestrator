@@ -54,9 +54,17 @@ describe("liveTopLevelBoardCards", () => {
           projectId: "other" as BoardCardShell["projectId"],
         }),
       ],
-      "project-1" as BoardCardShell["projectId"],
+      ["project-1" as BoardCardShell["projectId"]],
     );
     expect(live.map((card) => card.cardId)).toEqual(["a"]);
+  });
+
+  it("shows no cards when the Home scope matches nothing", () => {
+    const live = liveTopLevelBoardCards(
+      [shell({ cardId: "a" as BoardCardId, stage: ids.backlog })],
+      [],
+    );
+    expect(live).toEqual([]);
   });
 });
 
