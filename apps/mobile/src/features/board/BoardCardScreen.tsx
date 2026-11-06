@@ -3,7 +3,7 @@ import {
   boardMoveNeedsOverride,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
-  boardThreadOpen,
+  boardThreadOpenForCard,
   isBoardStageManuallySelectable,
 } from "@t3tools/client-runtime/board";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
@@ -11,8 +11,6 @@ import {
   BOARD_SEED_STAGES,
   BoardCardId,
   EnvironmentId,
-  ThreadId,
-  activeBoardCardThreadId,
   boardCardArchiveNeedsConfirmation,
   boardCardDisplayPullRequest,
   effectiveBoardStageRole,
@@ -34,10 +32,12 @@ import { ScreenHeader } from "./boardUi";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { confirm } from "../../components/ui/Dialog";
 import { StatusPill } from "../../components/StatusPill";
+import { openSettings } from "../settings/settings-navigation";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceState } from "../../state/workspace";
 import { boardActivityLabel } from "./boardActivityLabel";
+import { requestBoardCardArchive } from "./boardCardArchive";
 import { boardCardStatus } from "./boardCardStatus";
 import {
   boardCanShowApprovePlans,
@@ -119,7 +119,11 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
     stepHeld: shell?.held === true,
   });
   const pullRequest = boardCardDisplayPullRequest(card);
-  const threadId = activeBoardCardThreadId(card.threadLinks);
+  const threadOpen = boardThreadOpenForCard({
+    boardHostEnvironmentId: environmentId,
+    threadLinks: card.threadLinks,
+    connectedEnvironmentIds: connectedIds,
+  });
   const currentStage = stages.find((stage) => stage.stageId === card.stage) ?? stages[0];
   const selectableStages = stages.filter((stage) =>
     isBoardStageManuallySelectable(stages, stage.stageId),
@@ -196,27 +200,19 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                     {
                       id: "archive",
                       title: "Archive",
-                      onPress: () => {
-                        const confirm = boardCardArchiveNeedsConfirmation({
-                          stage: card.stage,
-                          dependents: detail.dependents,
-                        });
-                        const go = () =>
-                          run(
-                            () => archiveCard({ environmentId, input: { cardId: card.id } }),
-                            () => navigation.goBack(),
-                          );
-                        if (confirm) {
-                          confirm({
-                            title: "Archive this card?",
-                            message: "Live cards still depend on it.",
-                            confirmText: "Archive",
-                            onConfirm: go,
-                          });
-                          return;
-                        }
-                        go();
-                      },
+                      onPress: () =>
+                        requestBoardCardArchive({
+                          needsConfirmation: boardCardArchiveNeedsConfirmation({
+                            stage: card.stage,
+                            dependents: detail.dependents,
+                          }),
+                          confirm,
+                          go: () =>
+                            run(
+                              () => archiveCard({ environmentId, input: { cardId: card.id } }),
+                              () => navigation.goBack(),
+                            ),
+                        }),
                     },
                   ]
                 : [
@@ -328,27 +324,20 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
           </Section>
         ) : null}
 
-        {threadId !== null ? (
+        {threadOpen !== null ? (
           <Section title="Thread">
             <Button
               label="Open thread"
               onPress={() => {
-                const action = boardThreadOpen({
-                  boardHostEnvironmentId: environmentId,
-                  connectedEnvironmentIds: connectedIds,
-                });
-                if (action.kind === "connect") {
-                  navigation.navigate("SettingsSheet", {
-                    screen: "SettingsContent",
-                    params: { screen: "SettingsEnvironments" },
-                  });
+                if (threadOpen.action.kind === "connect") {
+                  openSettings(navigation, "SettingsEnvironments");
                   return;
                 }
                 selectDetail({
                   name: "Thread",
                   params: {
-                    environmentId: String(action.environmentId),
-                    threadId: String(threadId satisfies ThreadId),
+                    environmentId: String(threadOpen.action.environmentId),
+                    threadId: String(threadOpen.threadId),
                   },
                 });
               }}

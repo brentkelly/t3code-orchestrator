@@ -1,12 +1,11 @@
-import { Platform } from "react-native";
-
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { AppBar } from "../../components/ui/AppBar";
+import type { AppBarMenu } from "../../components/ui/AppBar.types";
 
 /** Native stack already draws iOS chrome; Android still needs an in-screen bar. */
-export function ScreenHeader(props: { readonly title: string; readonly onBack?: () => void }) {
-  if (Platform.OS === "android") {
-    return <AndroidScreenHeader title={props.title} onBack={props.onBack} />;
-  }
-  return <NativeStackScreenOptions options={{ title: props.title, headerShown: true }} />;
+export function ScreenHeader(props: {
+  readonly title: string;
+  readonly onBack?: () => void;
+  readonly menus?: ReadonlyArray<AppBarMenu>;
+}) {
+  return <AppBar title={props.title} onBack={props.onBack} menus={props.menus} sidebar={false} />;
 }

@@ -2,7 +2,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildHomeProjectScopes } from "../home/homeThreadList";
+import { buildHomeProjectScopes, type HomeProjectScope } from "../home/homeThreadList";
 import {
   boardCreateProjectForHomeScope,
   boardProjectIdsForHomeScope,
@@ -136,7 +136,7 @@ describe("boardCreateProjectForHomeScope", () => {
         remoteUrl: "git@github.com:pingdotgg/t3code.git",
       },
     });
-    const scopes = [
+    const scopes: HomeProjectScope[] = [
       {
         key: "github.com/pingdotgg/t3code",
         title: "t3code",
@@ -146,6 +146,8 @@ describe("boardCreateProjectForHomeScope", () => {
           { environmentId: envA, projectId: projectRemote },
           { environmentId: envA, projectId: projectLocal },
         ],
+        pinned: false,
+        archived: false,
       },
     ];
     expect(
