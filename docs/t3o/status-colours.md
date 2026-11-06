@@ -60,8 +60,8 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   `BOARD_ATTENTION_SETTLE_MS` grace the other two ambers do, because a card arriving at Ready for
   merge is briefly PR-less while the stage-move lookup is still in flight. The gate is last because it is the
   one notice whose fact survives elsewhere on the card: the meta row's chain icon carries the count at
-  every stage. Below the gate, `Stage removed` (T3O-43) is amber: the card's project dropped its stage
-  in `t3o.json`, so it is held there until a human moves it on. This is deliberately not a comparison of tones — amber-versus-violet says how loud a
+  every stage. Below the gate, `Stage removed` (T3O-43) is amber: the card's project switched its
+  stage off (T3O-49), so it is held there until a human moves it on. This is deliberately not a comparison of tones — amber-versus-violet says how loud a
   notice is, not which fact the human needs, and `Merge needs you` beating `Needs a human` is a
   ranking between two ambers. The winner truncates rather than pushing, so a long label clips inside
   its card instead of overflowing the column. The neutral informational pills — a queue position, a
@@ -124,6 +124,9 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   CI sent back to review wears an amber note and banner — it is held until a fresh review round
   clears it — and "CI skipped by …" is neutral: a human chose it, so there is nothing to claim.
   Nothing on the card face animates; the running step's name shimmers only in the open card view.
+  T3O-49 adds two CI chips. `Can't run` is amber: the pass is blocked on something outside it (no
+  worktree, a worker out of reach, no pull request for a forge step). `Needs you` is violet: CI
+  stopped at the round-trip limit and a human decides — retry, send back, or skip.
 - **The Summary pane's Heads-up tags and check tiles follow it too.** Plan change is violet (it
   waits on a human's read), Not done is amber, and Shortcut is neutral, never blue, because blue
   means running. A failing check tile is amber, not red.
