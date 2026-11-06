@@ -10,10 +10,12 @@ export function NewThreadButton(props: {
   readonly expanded?: boolean;
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
+  readonly label?: string;
 }) {
+  const label = props.label ?? "New thread";
   return (
     <Pressable
-      accessibilityLabel="New thread"
+      accessibilityLabel={label}
       accessibilityRole="button"
       onPress={props.onPress}
       className={cn(
@@ -32,7 +34,7 @@ export function NewThreadButton(props: {
         type="monochrome"
       />
       {props.extended && props.expanded !== false ? (
-        <AppText className="text-[16px] font-t3-medium text-primary-foreground">New thread</AppText>
+        <AppText className="text-[16px] font-t3-medium text-primary-foreground">{label}</AppText>
       ) : null}
     </Pressable>
   );

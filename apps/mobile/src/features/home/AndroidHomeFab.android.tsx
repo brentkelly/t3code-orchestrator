@@ -70,9 +70,10 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
       state.hasConnections &&
       layoutWidth !== null ? (
         <NewThreadButton
-          key={`${appearance.baseFontSize}:${fontScale}:${layoutWidth}`}
+          key={`${appearance.baseFontSize}:${fontScale}:${layoutWidth}:${props.composeLabel ?? ""}`}
           extended
           expanded={floatingTabsEnabled ? false : expanded}
+          label={props.composeLabel}
           onPress={props.onStartNewTask}
           className="absolute"
           style={
