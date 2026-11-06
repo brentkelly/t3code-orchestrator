@@ -961,6 +961,10 @@ it.effect("a forge-checks step with no pull request holds the card for a human",
           const held = yield* live(h, noPr.id);
           assert.strictEqual(held.stage, ci);
           assert.strictEqual(held.ci?.phase, "held");
+          // Send back is for a stopped pass; a held one is retried or skipped.
+          assert.deepStrictEqual(yield* h.reactor.ciSendBack(noPr.id), {
+            outcome: "not-stopped",
+          });
         }),
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),

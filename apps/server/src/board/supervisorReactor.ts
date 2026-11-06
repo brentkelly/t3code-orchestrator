@@ -3487,7 +3487,7 @@ const make = Effect.gen(function* () {
       createdAt: yield* nowIso,
     });
     if (!landed) return;
-    ciSnapshots.set(runId, { steps, ordinal });
+    rememberCiSnapshot(card.id, runId, steps, ordinal);
     yield* runCiSegment(card.id, runId, steps, 0);
   });
 
@@ -3572,11 +3572,27 @@ const make = Effect.gen(function* () {
   );
 
   /** Each live pass's frozen steps and ordinal, by run id: kept in memory
-      as the pass starts, and read back off its row after a restart. */
+      as the pass starts, and read back off its row after a restart. A card
+      has one live pass, so a card's new pass drops its old entry. */
   const ciSnapshots = new Map<
     string,
-    { readonly steps: ReadonlyArray<BoardCiStep>; readonly ordinal: number }
+    {
+      readonly cardId: BoardCardId;
+      readonly steps: ReadonlyArray<BoardCiStep>;
+      readonly ordinal: number;
+    }
   >();
+  const rememberCiSnapshot = (
+    cardId: BoardCardId,
+    runId: string,
+    steps: ReadonlyArray<BoardCiStep>,
+    ordinal: number,
+  ) => {
+    for (const [known, entry] of ciSnapshots) {
+      if (entry.cardId === cardId && known !== runId) ciSnapshots.delete(known);
+    }
+    ciSnapshots.set(runId, { cardId, steps, ordinal });
+  };
 
   /** The steps a pass froze at its start, and its pass rows as templates. */
   const ciPassSnapshot = Effect.fn("board-supervisor-ciPassSnapshot")(function* (
@@ -3596,7 +3612,7 @@ const make = Effect.gen(function* () {
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
     const pass = detail?.ciPasses.find((candidate) => candidate.runId === runId);
     if (pass?.snapshot == null) return { steps: null, ordinal: 1, rows: [] };
-    ciSnapshots.set(runId, { steps: pass.snapshot, ordinal: pass.ordinal });
+    rememberCiSnapshot(cardId, runId, pass.snapshot, pass.ordinal);
     return { steps: pass.snapshot, ordinal: pass.ordinal, rows: pass.steps };
   });
 
@@ -4405,6 +4421,7 @@ const make = Effect.gen(function* () {
     if (card.ci === null || !isBoardCiPassSettledPhase(card.ci.phase)) {
       return { outcome: "running" } as const;
     }
+    if (card.ci.phase !== "stopped") return { outcome: "not-stopped" } as const;
     yield* ciPasses.cancel(card.id);
     const failed = card.ci.steps.find((step) => isBoardCiStepFailure(step.status));
     yield* sendBackFromCi(card, {

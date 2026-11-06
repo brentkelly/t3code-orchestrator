@@ -154,6 +154,24 @@ describe("normalization and version", () => {
       { where: "building", kind: "prompt", text: "Build carefully" },
     ]);
   });
+
+  it("lists the permission settings an import changes", () => {
+    const texts = boardProjectDeltaNewTexts(
+      { stageSwitches: {}, overrides: { building: { autoExecute: true } }, ci: { steps: [] } },
+      {
+        stageSwitches: {},
+        overrides: {
+          building: { autoExecute: true, runtimeMode: "full-access", humanInLoop: false },
+          review: { rounds: 2 },
+        },
+        ci: { steps: [] },
+      },
+    );
+    expect(texts).toEqual([
+      { where: "building.runtimeMode", kind: "setting", text: "full-access" },
+      { where: "building.humanInLoop", kind: "setting", text: "false" },
+    ]);
+  });
 });
 
 describe("settings commands", () => {

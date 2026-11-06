@@ -91,3 +91,10 @@ export function boardSettingsBreadcrumbLabel(pathname: string): string | null {
   if (pathname.startsWith("/settings/board/projects/")) return "Board project";
   return null;
 }
+
+/** Anchors that moved from the single board page to its Pipeline page
+    (T3O-49), so an old `/settings/board#board-pipeline` link still lands. */
+export function isBoardPipelinePageAnchor(hash: string): boolean {
+  const anchor = hash.replace(/^#/, "");
+  return anchor === "board-pipeline" || anchor === "board-default-model";
+}

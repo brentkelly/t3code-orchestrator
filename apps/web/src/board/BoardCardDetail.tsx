@@ -1037,9 +1037,11 @@ export function BoardCardDetail({
             ? "CI is switched off for this project."
             : outcome === "running"
               ? "CI is still running on this card."
-              : outcome === "not-in-ci"
-                ? "The card is no longer in CI."
-                : "Try again in a moment.",
+              : outcome === "not-stopped"
+                ? "Only a stopped CI pass can be sent back."
+                : outcome === "not-in-ci"
+                  ? "The card is no longer in CI."
+                  : "Try again in a moment.",
         tone: "error",
       });
     });

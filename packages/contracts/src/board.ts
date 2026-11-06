@@ -3234,7 +3234,8 @@ function boardProjectStageConfigFromLegacy(
     overrides: legacy.overrides,
     ci: { steps: boardCiStepsFromLegacy(legacy.ci?.steps ?? []) },
     dismissedImportSha: null,
-    warnings: legacy.warnings,
+    // They described T3O-43's run-time read of the file, which is gone.
+    warnings: [],
     lastChangedBy: null,
   });
 }
@@ -10002,7 +10003,7 @@ export type BoardProjectConfigDetail = typeof BoardProjectConfigDetail.Type;
     full before a human confirms it. */
 export const BoardProjectImportText = Schema.Struct({
   where: TrimmedNonEmptyString,
-  kind: Schema.Literals(["command", "prompt"]),
+  kind: Schema.Literals(["command", "prompt", "setting"]),
   text: Schema.String,
 });
 export type BoardProjectImportText = typeof BoardProjectImportText.Type;
@@ -10292,6 +10293,8 @@ export const BoardCiActionResult = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal("not-in-ci") }),
   /** A pass is still running or a fix agent works on it. */
   Schema.Struct({ outcome: Schema.Literal("running") }),
+  /** Send back is for a stopped pass, and this one hasn't stopped. */
+  Schema.Struct({ outcome: Schema.Literal("not-stopped") }),
   /** The project's CI is switched off: nothing to retry. */
   Schema.Struct({ outcome: Schema.Literal("ci-off") }),
   Schema.Struct({ outcome: Schema.Literal("unknown-card") }),

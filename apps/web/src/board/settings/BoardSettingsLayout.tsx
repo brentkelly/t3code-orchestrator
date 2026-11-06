@@ -6,7 +6,7 @@
  */
 import { AuthSettingsWriteScope, type EnvironmentId, type ProjectId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { Link, Outlet } from "@tanstack/react-router";
+import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 
@@ -101,6 +101,7 @@ function BoardSettingsNav(props: {
   readonly importWaiting: ReadonlySet<string>;
 }) {
   const projects = useBoardSettingsProjects(props.environmentId);
+  const pathname = useLocation({ select: (location) => location.pathname });
   return (
     <nav
       aria-label="Board settings"
@@ -111,9 +112,13 @@ function BoardSettingsNav(props: {
       {projects.length > 0 ? <span className="mx-1 h-4 w-px bg-border" /> : null}
       {projects.map((project) => (
         <Link
-          activeOptions={{ includeSearch: false }}
-          activeProps={{ className: NAV_ACTIVE }}
-          className={cn(NAV_LINK, "inline-flex items-center gap-1.5")}
+          // Active on every tab of the project's page, not only the one it links to.
+          className={cn(
+            NAV_LINK,
+            "inline-flex items-center gap-1.5",
+            pathname.startsWith(`/settings/board/projects/${encodeURIComponent(project.id)}/`) &&
+              NAV_ACTIVE,
+          )}
           key={project.id}
           params={{ projectId: project.id, tab: "pipeline" }}
           to="/settings/board/projects/$projectId/$tab"

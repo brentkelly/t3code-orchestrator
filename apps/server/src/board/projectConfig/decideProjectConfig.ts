@@ -81,7 +81,8 @@ function nextConfig(
     overrides: change.overrides ?? current.overrides,
     ci: change.ci ?? current.ci,
     dismissedImportSha: current.dismissedImportSha,
-    warnings: change.warnings ?? current.warnings,
+    // An import's warnings describe the file as imported; any edit moves on from it.
+    warnings: change.warnings ?? [],
     lastChangedBy: changedBy ?? current.lastChangedBy,
   });
 }

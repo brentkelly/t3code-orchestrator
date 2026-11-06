@@ -326,7 +326,7 @@ describe("legacy configs", () => {
       removedStageIds: ["sprint"],
       addedStageIds: [legacyQa],
       overrides: { ci: { maxFixAttempts: 1, steps: [], enabled: true } },
-      warnings: [],
+      warnings: ["settings.ci.steps[1]: a step needs a name; ignored."],
       source: { path: "/repo/t3o.json", commitSha: "abc" },
       ci: { steps: [{ name: "Check", command: "x", timeoutMinutes: 30 }], active: true },
     };
@@ -334,6 +334,7 @@ describe("legacy configs", () => {
     expect(config.stageSwitches).toEqual({ sprint: false, [legacyQa]: true, ci: true });
     expect(config.overrides).toEqual({ ci: { maxFixAttempts: 1 } });
     expect(config.ci.steps.map((step) => step.id)).toEqual(["legacy-0"]);
+    expect(config.warnings).toEqual([]);
     expect(config.version).toMatch(/^[0-9a-f]{16}$/);
 
     const board: BoardState = {

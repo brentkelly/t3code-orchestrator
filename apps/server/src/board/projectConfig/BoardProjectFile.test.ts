@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * T3O-49: `t3o.json` is read from the project's default branch, whatever the
  * checkout has open, and an export never overwrites uncommitted edits.

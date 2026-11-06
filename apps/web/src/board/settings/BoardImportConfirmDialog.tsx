@@ -131,12 +131,17 @@ export function BoardImportConfirmDialog(props: {
           {preview.texts.length > 0 ? (
             <div className="flex flex-col gap-2">
               <span className="font-medium text-foreground">
-                Review every command and prompt this import installs:
+                Review every command, prompt and permission setting this import installs:
               </span>
               {preview.texts.map((text) => (
                 <div className="flex flex-col gap-1" key={`${text.where}:${text.text}`}>
                   <span className="text-muted-foreground">
-                    {text.kind === "command" ? "Command" : "Prompt"} · {text.where}
+                    {text.kind === "command"
+                      ? "Command"
+                      : text.kind === "prompt"
+                        ? "Prompt"
+                        : "Setting"}{" "}
+                    · {text.where}
                   </span>
                   <pre className="overflow-x-auto rounded-md bg-muted p-2 font-mono text-[11px] whitespace-pre-wrap">
                     {text.text}

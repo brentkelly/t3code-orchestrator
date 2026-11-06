@@ -110,6 +110,15 @@ export function normalizeBoardProjectDelta<D extends BoardProjectStageDelta>(inp
   return { ...input.delta, stageSwitches, overrides };
 }
 
+const PERMISSION_KEYS = new Set([
+  "runtimeMode",
+  "autoExecute",
+  "autoMerge",
+  "humanInLoop",
+  "humanInLoopWithPlan",
+  "humanInLoopWithoutPlan",
+]);
+
 const withoutStepIds = (steps: ReadonlyArray<BoardCiStep>) =>
   steps.map(({ id: _id, ...rest }) => rest);
 
@@ -140,10 +149,10 @@ export function boardProjectDeltaNewTexts(
   next: BoardProjectStageDelta,
 ): ReadonlyArray<{
   readonly where: string;
-  readonly kind: "command" | "prompt";
+  readonly kind: "command" | "prompt" | "setting";
   readonly text: string;
 }> {
-  const out: Array<{ where: string; kind: "command" | "prompt"; text: string }> = [];
+  const out: Array<{ where: string; kind: "command" | "prompt" | "setting"; text: string }> = [];
   const known = new Set<string>();
   for (const step of current.ci.steps) {
     if (step.kind === "script") known.add(`command:${step.command}`);
@@ -171,6 +180,26 @@ export function boardProjectDeltaNewTexts(
   }
   for (const [stageId, patch] of Object.entries(next.overrides)) {
     collectPrompts(patch, null, stageId);
+  }
+  // Settings that change what an agent may do without a human, by path.
+  const permissions = (overrides: BoardProjectStageDelta["overrides"]) => {
+    const found = new Map<string, string>();
+    const walk = (value: unknown, where: string) => {
+      if (typeof value !== "object" || value === null) return;
+      for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+        if (PERMISSION_KEYS.has(key) && typeof inner !== "object") {
+          found.set(`${where}.${key}`, String(inner));
+        } else if (key !== "model") {
+          walk(inner, `${where}.${key}`);
+        }
+      }
+    };
+    for (const [stageId, patch] of Object.entries(overrides)) walk(patch, stageId);
+    return found;
+  };
+  const before = permissions(current.overrides);
+  for (const [where, value] of permissions(next.overrides)) {
+    if (before.get(where) !== value) out.push({ where, kind: "setting", text: value });
   }
   return out;
 }
