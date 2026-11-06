@@ -1,7 +1,7 @@
 import { boardArchivedCardsInScope } from "@t3tools/client-runtime/board";
 import { EnvironmentId, type BoardCardShell } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useFocusEffect, useNavigation, useRoute } from "@react-navigation/native";
+import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
@@ -23,11 +23,13 @@ function archivedCardsAtom(environmentId: EnvironmentId) {
   return boardEnvironment.archivedCardsAtom({ environmentId, input: {} });
 }
 
-export function BoardArchivedScreen() {
+type BoardArchivedScreenProps = StaticScreenProps<{
+  readonly environmentId: string;
+}>;
+
+export function BoardArchivedScreen({ route }: BoardArchivedScreenProps) {
   const navigation = useNavigation();
-  const route = useRoute();
-  const params = route.params as { readonly environmentId?: string };
-  const parsed = parseEnvironmentId(params.environmentId);
+  const parsed = parseEnvironmentId(route.params.environmentId);
   const environmentId = parsed ?? EnvironmentId.make("pending");
   const result = useAtomValue(archivedCardsAtom(environmentId));
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
