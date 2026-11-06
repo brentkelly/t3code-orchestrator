@@ -81,11 +81,9 @@ function useSetCardAutomation(environmentId: EnvironmentId, card: BoardAutomatio
 function AutomationRowView({
   row,
   onChange,
-  onInherit,
 }: {
   readonly row: BoardAutomationRow;
   readonly onChange: (next: boolean) => void;
-  readonly onInherit: () => void;
 }) {
   return (
     // A div, not a label: the switch is its own button, and a label wrapping
@@ -112,11 +110,6 @@ function AutomationRowView({
           )}
         </span>
         <span className="text-[11.5px]/[1.45] text-pretty text-muted-foreground">{row.note}</span>
-        {row.canInherit ? (
-          <Button className="self-start" onClick={onInherit} size="xs" variant="link">
-            Use group's setting
-          </Button>
-        ) : null}
       </span>
     </div>
   );
@@ -273,12 +266,7 @@ function BoardGroupAutomationPanel(
         </span>
       </div>
       {rows.map((row) => (
-        <AutomationRowView
-          key={row.id}
-          onChange={(next) => change(row, next)}
-          onInherit={() => setOwn({ autoMerge: null })}
-          row={row}
-        />
+        <AutomationRowView key={row.id} onChange={(next) => change(row, next)} row={row} />
       ))}
     </div>
   );
@@ -300,12 +288,7 @@ function CardAutomationRows({
       {rows.map((row) => {
         const toggle = row.id === "ownMerge" ? "autoMerge" : row.id;
         return (
-          <AutomationRowView
-            key={row.id}
-            onChange={(next) => set({ [toggle]: next })}
-            onInherit={() => set({ [toggle]: null })}
-            row={row}
-          />
+          <AutomationRowView key={row.id} onChange={(next) => set({ [toggle]: next })} row={row} />
         );
       })}
     </div>

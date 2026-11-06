@@ -56,7 +56,7 @@ and never from an unattended run.
 
 A card inside a group takes the group's automation settings unless it sets its own. The tag next to
 a switch says **from T3O-12** when it is inherited and **overrides T3O-12** when the card has its own
-value; **Use group's setting** puts it back.
+value.
 
 An inherited Auto-build only acts once you have started the group, so the tag reads
 **from T3O-12 · when group starts** until then. A card's own Auto-build starts it by itself, even in

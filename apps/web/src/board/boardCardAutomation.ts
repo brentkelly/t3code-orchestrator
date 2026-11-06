@@ -140,9 +140,6 @@ export interface BoardAutomationRow {
       on by the board-wide setting. */
   readonly switchDisabled: boolean;
   readonly lockReason: string | null;
-  /** The card has its own value under a parent group, so it can go back to
-      the group's. */
-  readonly canInherit: boolean;
 }
 
 function lockState(toggle: BoardResolvedAutomationToggle) {
@@ -151,12 +148,6 @@ function lockState(toggle: BoardResolvedAutomationToggle) {
     lockReason: toggle.lockReason,
     switchDisabled: toggle.locked && (!toggle.value || toggle.source === "board"),
   };
-}
-
-function canInherit(toggle: BoardResolvedAutomationToggle): boolean {
-  // A locked off row could only inherit an on, which the server refuses.
-  if (toggle.locked && !toggle.value) return false;
-  return toggle.own !== null && toggle.inheritedFrom !== null && toggle.source !== "board";
 }
 
 function row(
@@ -172,7 +163,6 @@ function row(
     note: toggle.locked && toggle.lockReason !== null ? toggle.lockReason : note,
     tag: boardAutomationSourceTag(toggle),
     ...lockState(toggle),
-    canInherit: canInherit(toggle),
   };
 }
 
@@ -231,7 +221,6 @@ export function boardGroupAutomationRows(input: {
     // Group rows lock only for the board-wide merge, which holds them on.
     switchDisabled: lockReason !== null,
     lockReason,
-    canInherit: false,
   });
   const rows: BoardAutomationRow[] = [
     plain("autoPlan", "Auto-plan", vm.autoPlan),

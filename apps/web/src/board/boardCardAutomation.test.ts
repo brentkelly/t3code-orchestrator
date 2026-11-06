@@ -161,24 +161,23 @@ describe("a leaf's rows", () => {
     expect(build.note).toBe("Building now.");
     // Locks refuse only turning on: an on row can go off or back to the group.
     expect(build.switchDisabled).toBe(false);
-    expect(build.canInherit).toBe(true);
     const plan = rows.find((r) => r.id === "autoPlan")!;
     expect(plan.locked).toBe(true);
     expect(plan.switchDisabled).toBe(true);
     expect(plan.note).toBe("Planning is finished.");
   });
 
-  it("offers the group's setting back to an own value under a group", () => {
+  it("tags an own value under a group as overriding it", () => {
     const g = shell("g-1", "planning", { group: group({ autoPlan: true }) });
     const ready = child("c-1", "backlog", { autoPlanSetting: false });
     const plan = boardCardAutomationRows({
       resolved: resolve([g, ready], ready),
       inPlanning: false,
     })[0]!;
-    expect(plan).toMatchObject({ on: false, tag: "overrides G-1", canInherit: true });
+    expect(plan).toMatchObject({ on: false, tag: "overrides G-1" });
   });
 
-  it("does not offer the group's on back to a locked row that is off", () => {
+  it("keeps a locked own-off row under a started group off and disabled", () => {
     const g = shell("g-1", "building", { group: group({ autoBuild: true, started: true }) });
     const reviewing = child("c-1", "review", { autoBuildSetting: false });
     const build = boardCardAutomationRows({
@@ -186,7 +185,6 @@ describe("a leaf's rows", () => {
       inPlanning: false,
     }).find((r) => r.id === "autoBuild")!;
     expect(build).toMatchObject({ on: false, locked: true, switchDisabled: true });
-    expect(build.canInherit).toBe(false);
   });
 
   it("says an unattended plan waits for approval unless Auto-build is on too", () => {
@@ -209,7 +207,6 @@ describe("a leaf's rows", () => {
       locked: true,
       switchDisabled: true,
       tag: "board",
-      canInherit: false,
     });
     expect(merge.note).toContain("Settings");
   });
