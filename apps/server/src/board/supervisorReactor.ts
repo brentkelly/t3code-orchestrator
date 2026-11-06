@@ -3538,12 +3538,16 @@ const make = Effect.gen(function* () {
             ? remoteCiRunner(workerConnections.value, workerId)
             : null;
       if (runner === null) {
-        yield* holdInCi(card, "CI can't reach the card's worker. Retry CI, or Skip CI.");
+        yield* holdCiPass(card, runId, "CI can't reach the card's worker. Retry CI, or Skip CI.");
         return;
       }
       const worktree = yield* ensureWorktree(card);
       if (worktree.kind !== "ready") {
-        yield* holdInCi(card, "CI is waiting for the card's worktree, which is not ready.");
+        yield* holdCiPass(
+          card,
+          runId,
+          "CI is waiting for the card's worktree, which is not ready. Retry CI once it is.",
+        );
         return;
       }
       const settings = yield* boardSettings;
@@ -3748,8 +3752,9 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  /** Stop waiting on forge checks: hold the card for a human, with why. */
-  const holdCiForgeStep = Effect.fn("board-supervisor-holdCiForgeStep")(function* (
+  /** Settle a live pass as interrupted and hold the card for a human, with
+      why, so Retry CI can start it again. */
+  const holdCiPass = Effect.fn("board-supervisor-holdCiPass")(function* (
     card: BoardCard,
     runId: string,
     detail: string,
@@ -3757,7 +3762,7 @@ const make = Effect.gen(function* () {
     forgeSteps.delete(String(card.id));
     yield* dispatch({
       type: "board.card.record-ci",
-      commandId: yield* commandId("ci-forge-held"),
+      commandId: yield* commandId("ci-pass-held"),
       cardId: card.id,
       action: { kind: "finish-pass", runId, result: "interrupted" },
       createdAt: yield* nowIso,
@@ -3802,7 +3807,7 @@ const make = Effect.gen(function* () {
         return;
       }
       if (card.pullRequest === null || card.pullRequest.state !== "open") {
-        yield* holdCiForgeStep(
+        yield* holdCiPass(
           card,
           entry.runId,
           `${step.name} waits on the pull request's checks, but the card has no open pull request. Open one, then Retry CI, or Skip CI.`,
@@ -3817,7 +3822,7 @@ const make = Effect.gen(function* () {
       if (probe.state === null) {
         entry.errors += 1;
         if (entry.errors >= 5) {
-          yield* holdCiForgeStep(
+          yield* holdCiPass(
             card,
             entry.runId,
             `The pull request's checks couldn't be read${probe.failure === undefined ? "" : ` (${probe.failure})`}. Retry CI, or Skip CI.`,
@@ -3828,7 +3833,7 @@ const make = Effect.gen(function* () {
       entry.errors = 0;
       const state = probe.state;
       if (state.checksUnread) {
-        yield* holdCiForgeStep(
+        yield* holdCiPass(
           card,
           entry.runId,
           "This forge doesn't report check results, so the board can't tell when they pass. Skip CI, or replace the forge-checks step.",
@@ -4239,29 +4244,24 @@ const make = Effect.gen(function* () {
     // A pass the card has since left or replaced reports nothing more.
     if (card.stage !== BOARD_SEED_STAGE_IDS.ci || card.ci?.runId !== finished.runId) return;
     if (finished.outcome.result === "unavailable") {
-      yield* dispatch({
-        type: "board.card.record-ci",
-        commandId: yield* commandId("ci-unavailable"),
-        cardId: card.id,
-        action: { kind: "finish-pass", runId: finished.runId, result: "interrupted" },
-        createdAt: yield* nowIso,
-      });
-      yield* holdInCi(
-        card,
-        `${finished.outcome.detail} Restart the stage to run CI again, or Skip CI.`,
-      );
+      yield* holdCiPass(card, finished.runId, `${finished.outcome.detail} Retry CI, or Skip CI.`);
       return;
     }
     const passed = finished.outcome.result === "passed";
     if (passed) {
       // T3O-49: a segment passed; the pass goes on from its next step.
       const { steps } = yield* ciPassSnapshot(card.id, finished.runId);
-      yield* runCiSegment(
-        card.id,
-        finished.runId,
-        steps ?? [],
-        steps === null ? Number.MAX_SAFE_INTEGER : finished.segmentEnd,
-      );
+      if (steps === null) {
+        // Without its frozen steps the pass can't tell what comes next, and
+        // passing it would skip any later agent or forge step.
+        yield* holdCiPass(
+          card,
+          finished.runId,
+          "CI lost track of this pass's steps. Retry CI, or Skip CI.",
+        );
+        return;
+      }
+      yield* runCiSegment(card.id, finished.runId, steps, finished.segmentEnd);
       return;
     }
     const recorded = yield* dispatchLanded({

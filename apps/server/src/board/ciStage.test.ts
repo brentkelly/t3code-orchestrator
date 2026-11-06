@@ -758,6 +758,49 @@ it.effect("an agent step runs as a card step between script segments, then the p
   }),
 );
 
+it.effect(
+  "a later segment that can't reach the worker holds the pass, and Retry CI restarts it",
+  () =>
+    Effect.gen(function* () {
+      const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
+      const subject = card("agent-held", review);
+      const agentStep: BoardCiStep = {
+        kind: "agent",
+        id: "audit",
+        name: "Audit",
+        parallel: false,
+        prompt: "Audit it.",
+        model: null,
+        timeoutMinutes: 30,
+      };
+      const board = boardWith([subject], mixedConfig([SCRIPT_A, agentStep, SCRIPT_B]));
+      yield* withGovernor({ board, settings }, (h) =>
+        Effect.gen(function* () {
+          yield* enterCiAndRun(h, subject, 1);
+          const stepId = boardCiAgentStepId((yield* live(h, subject.id)).ci!.runId, 1);
+          // The card is moved to a worker this board has no connection to.
+          yield* Ref.update(h.model, (model) => ({
+            ...model,
+            board: {
+              ...model.board!,
+              cards: model.board!.cards.map((existing) =>
+                existing.id === subject.id
+                  ? { ...existing, placedWorkerId: "worker-gone" as never }
+                  : existing,
+              ),
+            },
+          }));
+          yield* h.pumpDomain(
+            fixCompleted(subject.id, stepId, { verdict: "passed", summary: "ok" }, 2),
+          );
+          yield* h.reactor.drainCi;
+          assert.strictEqual((yield* live(h, subject.id)).ci?.phase, "held");
+          assert.deepStrictEqual(yield* h.reactor.retryCi(subject.id), { outcome: "retried" });
+        }),
+      ).pipe(Effect.provideService(BoardCiRunner, runner));
+    }),
+);
+
 it.effect("a failed agent verdict is the pass's failure: a fix agent gets it", () =>
   Effect.gen(function* () {
     const { runner } = yield* scriptedRunner([{ result: "passed", failedIndex: null }]);
