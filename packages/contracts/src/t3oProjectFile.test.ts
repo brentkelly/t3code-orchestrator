@@ -261,11 +261,12 @@ describe("resolveT3oProjectFile", () => {
         ],
       },
     });
-    expect(v2.delta.ci.steps.map((step) => [step.id, step.parallel])).toEqual([
-      ["lint", false],
-      ["types", true],
+    expect(v2.delta.ci.steps.map((step) => [step.id, step.kind, step.parallel])).toEqual([
+      ["lint", "script", false],
+      ["types", "script", true],
+      ["audit", "agent", false],
     ]);
-    expect(v2.delta.warnings.join("\n")).toContain("agent steps aren't supported");
+    expect(v2.delta.warnings).toEqual([]);
   });
 
   it("ignores CI steps that are invalid or too long, with a warning", () => {
