@@ -15,6 +15,8 @@ import {
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
+// T3o: Board settings ignore the settings scope.
+import { isBoardSettingsPath } from "../board/settings/boardSettingsPaths";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
   retainSettingsScope,
@@ -85,7 +87,12 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
       </SettingsScopeNotice>
     );
   }
-  if (SETTINGS_DEVICE_ONLY_PATHS.has(pathname) || pathname === "/settings/projects") {
+  if (
+    SETTINGS_DEVICE_ONLY_PATHS.has(pathname) ||
+    pathname === "/settings/projects" ||
+    // T3o: Board settings ignore the settings scope.
+    isBoardSettingsPath(pathname)
+  ) {
     return children;
   }
   if (scope.kind === "unavailable")

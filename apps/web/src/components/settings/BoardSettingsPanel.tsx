@@ -25,7 +25,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
-import { EyeIcon, EyeOffIcon, SettingsIcon } from "lucide-react";
+import { EyeIcon, EyeOffIcon, SettingsIcon, WorkflowIcon } from "lucide-react";
 import { useMemo } from "react";
 import * as Option from "effect/Option";
 
@@ -172,8 +172,8 @@ function ProjectsSection({
     <SettingsSection id="board-projects" title={anchor.title} variant="plain">
       <p className="mb-2 max-w-xl px-3 text-[13px] leading-[1.55] text-muted-foreground/80 sm:px-4">
         The prefix for each project's card keys (e.g. T3 → T3-42). Cards take their colour from the
-        project's icon; open a project's settings to change it. The eye hides a project and its
-        cards from the board without touching them.
+        project's icon; the gear opens the project's settings to change it. The flow icon opens its
+        pipeline and CI. The eye hides a project and its cards from the board without touching them.
       </p>
       <ProjectRows board={board} environmentId={environmentId} update={update} />
     </SettingsSection>
@@ -253,8 +253,11 @@ function ProjectRows({
             <div className="flex shrink-0 items-center gap-0.5">
               {/* T3O-49: the project's pipeline, CI and t3o.json. */}
               <Button
-                variant="outline"
-                size="xs"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground"
+                title={`${project.title} pipeline & CI`}
+                aria-label={`Open ${project.title} pipeline & CI`}
                 render={
                   <Link
                     to="/settings/board/projects/$projectId/$tab"
@@ -262,7 +265,7 @@ function ProjectRows({
                   />
                 }
               >
-                Pipeline & CI
+                <WorkflowIcon />
               </Button>
               <Button
                 variant="ghost"
@@ -283,8 +286,8 @@ function ProjectRows({
                 variant="ghost"
                 size="icon-sm"
                 className="text-muted-foreground"
-                title={`Open ${project.title} settings`}
-                aria-label={`Open ${project.title} settings`}
+                title={`${project.title} icon & colour (project settings)`}
+                aria-label={`Open ${project.title} project settings`}
                 render={
                   <Link
                     to="/projects/$projectKey"
