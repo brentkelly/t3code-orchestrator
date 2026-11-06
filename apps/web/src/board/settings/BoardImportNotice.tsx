@@ -81,13 +81,15 @@ export function BoardImportNotices() {
   );
 }
 
-/** The slim version at the top of a project's page. */
+export type BoardImportCandidates = ReturnType<typeof useBoardImportCandidates>;
+
+/** The slim version at the top of a project's page. It shares the page's
+    candidates with the Import tab, so an import or dismiss updates both. */
 export function BoardImportNoticeForProject(props: {
-  readonly projectId: ProjectId;
+  readonly imports: BoardImportCandidates;
   readonly title: string;
 }) {
-  const ids = useMemo(() => [props.projectId], [props.projectId]);
-  const { candidates, refresh } = useBoardImportCandidates(ids);
+  const { candidates, refresh } = props.imports;
   const candidate = candidates?.[0];
   if (candidate === undefined || candidate.status !== "differs" || candidate.dismissed) return null;
   return (

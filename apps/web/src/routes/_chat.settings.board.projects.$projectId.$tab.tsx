@@ -8,5 +8,6 @@ export const Route = createFileRoute("/_chat/settings/board/projects/$projectId/
 
 function BoardProjectSettingsRoute() {
   const { projectId, tab } = Route.useParams();
-  return <BoardProjectSettingsPage projectId={projectId} tab={tab} />;
+  // A new project is a new page: no draft or open row carries over to it.
+  return <BoardProjectSettingsPage key={projectId} projectId={projectId} tab={tab} />;
 }

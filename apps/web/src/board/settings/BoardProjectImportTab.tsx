@@ -10,14 +10,14 @@ import type {
   ProjectId,
 } from "@t3tools/contracts";
 import { CopyIcon, DownloadIcon, UploadIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { describeBoardCommandFailure } from "../boardCommandFeedback";
 import { boardToast } from "../boardToast";
-import { useBoardImportCandidates } from "./BoardImportNotice";
+import type { BoardImportCandidates } from "./BoardImportNotice";
 import { BoardImportConfirmDialog } from "./BoardImportConfirmDialog";
 import { useBoardSettingsContext } from "./BoardSettingsLayout";
 
@@ -27,10 +27,10 @@ export function BoardProjectImportTab(props: {
   readonly projectId: ProjectId;
   readonly projectTitle: string;
   readonly config: BoardProjectStageConfigShell;
+  readonly imports: BoardImportCandidates;
 }) {
   const { environmentId, canWrite } = useBoardSettingsContext();
-  const ids = useMemo(() => [props.projectId], [props.projectId]);
-  const { candidates, refresh } = useBoardImportCandidates(ids);
+  const { candidates, refresh } = props.imports;
   const exportFile = useAtomCommand(boardEnvironment.exportProjectFile, { reportFailure: false });
   const [confirming, setConfirming] = useState(false);
   const [exported, setExported] = useState<BoardProjectExportResult | null>(null);

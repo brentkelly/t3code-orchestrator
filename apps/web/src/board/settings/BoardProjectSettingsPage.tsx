@@ -10,7 +10,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { boardEnvironment } from "../../state/board";
@@ -18,7 +18,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { cn } from "../../lib/utils";
 import { describeBoardCommandFailure } from "../boardCommandFeedback";
 import { boardToast } from "../boardToast";
-import { BoardImportNoticeForProject } from "./BoardImportNotice";
+import { BoardImportNoticeForProject, useBoardImportCandidates } from "./BoardImportNotice";
 import { BoardProjectCiTab } from "./BoardProjectCiTab";
 import { BoardProjectImportTab } from "./BoardProjectImportTab";
 import { BoardProjectPipelineTab } from "./BoardProjectPipelineTab";
@@ -47,6 +47,8 @@ export function BoardProjectSettingsPage(props: {
     (candidate) => candidate.id === projectId,
   );
   const config = useBoardProjectConfig(environmentId, projectId);
+  const ids = useMemo(() => [projectId], [projectId]);
+  const imports = useBoardImportCandidates(ids);
   if (project === undefined) {
     return (
       <p className="px-3 text-sm text-muted-foreground sm:px-4">No such project on this board.</p>
@@ -60,7 +62,7 @@ export function BoardProjectSettingsPage(props: {
         title={project.title}
         lastChangedBy={config.full?.lastChangedBy ?? null}
       />
-      <BoardImportNoticeForProject projectId={projectId} title={project.title} />
+      <BoardImportNoticeForProject imports={imports} title={project.title} />
       <nav aria-label={`${project.title} settings`} className="mx-3 flex gap-1 sm:mx-4">
         {BOARD_PROJECT_SETTINGS_TABS.map((candidate) => (
           <Link
@@ -92,6 +94,7 @@ export function BoardProjectSettingsPage(props: {
       ) : (
         <BoardProjectImportTab
           config={config.shell}
+          imports={imports}
           projectId={projectId}
           projectTitle={project.title}
         />

@@ -1218,6 +1218,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/archived": "project-defaults",
   // T3o: the board page reads the primary environment's settings at any selection.
   "/settings/board": null,
+  // T3o: the board's global stage list (T3O-49).
   "/settings/board/pipeline": null,
 };
 

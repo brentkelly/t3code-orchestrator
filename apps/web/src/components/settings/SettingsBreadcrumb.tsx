@@ -4,6 +4,7 @@ import {
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
+// T3o: Settings → Board page labels (T3O-49).
 import { boardSettingsBreadcrumbLabel } from "../../board/boardSettingsSearch";
 
 const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
