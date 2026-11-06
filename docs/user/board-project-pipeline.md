@@ -17,8 +17,8 @@ saves at once. A stage switched against its default reads **On here** or **Off h
 ## Overrides
 
 Expand a stage on the project's Pipeline tab to override its settings for that project: whether it
-runs on its own, its prompt, the review loop's rounds, auto-merge, and CI's fix attempts and
-round trips. An overridden setting shows the global value beside it, and **Reset to global** clears
+runs on its own, its prompt, the review loop's rounds and auto-merge. CI's fix attempts, round
+trips and fix prompt are on the project's **CI** tab, under **Fix agent**. An overridden setting shows the global value beside it, and **Reset to global** clears
 it. Setting a value back to the global one clears it too, except a prompt, which stays pinned until
 you reset it. **Reset everything to global…** in the page header clears every switch, override and
 CI step.

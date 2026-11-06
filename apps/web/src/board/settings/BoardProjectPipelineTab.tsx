@@ -6,6 +6,7 @@
  */
 import {
   BOARD_CONFIG_VERSION_MISMATCH,
+  BOARD_SEED_STAGE_IDS,
   BOARD_SEED_STAGES,
   boardStageExecutionKind,
   boardStagesInOrder,
@@ -15,6 +16,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { Link } from "@tanstack/react-router";
 import { LockIcon, RotateCcwIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -36,6 +38,18 @@ import {
 } from "./boardProjectSettings.logic";
 import { useBoardSettingsContext } from "./BoardSettingsLayout";
 import type { BoardProjectConfigState } from "./useBoardProjectConfig";
+
+const report = (title: string) => (result: { readonly _tag: string }) => {
+  if (result._tag !== "Failure") return;
+  const description = describeBoardCommandFailure(result);
+  boardToast({
+    title: description.includes(BOARD_CONFIG_VERSION_MISMATCH)
+      ? "Changed elsewhere, reload"
+      : title,
+    description,
+    tone: "error",
+  });
+};
 
 /** The settings a project may override, per stage kind. */
 type OverrideField =
@@ -85,18 +99,6 @@ export function BoardProjectPipelineTab(props: {
   const [open, setOpen] = useState<string | null>(null);
   const { shell, full } = props.config;
 
-  const report = (title: string) => (result: { readonly _tag: string }) => {
-    if (result._tag !== "Failure") return;
-    const description = describeBoardCommandFailure(result);
-    boardToast({
-      title: description.includes(BOARD_CONFIG_VERSION_MISMATCH)
-        ? "Changed elsewhere, reload"
-        : title,
-      description,
-      tone: "error",
-    });
-  };
-
   const onSwitch = (stage: BoardStageDefinition, on: boolean | null) =>
     void setSwitch({
       environmentId,
@@ -123,6 +125,7 @@ export function BoardProjectPipelineTab(props: {
           onOverride={(key, value) => onOverride(stage, key, value)}
           onSwitch={(on) => onSwitch(stage, on)}
           onToggle={() => setOpen((current) => (current === stage.stageId ? null : stage.stageId))}
+          projectId={props.projectId}
           overrides={(full ?? shell).overrides[stage.stageId] ?? {}}
           promptsLoaded={full !== null}
           projectTitle={props.projectTitle}
@@ -136,6 +139,7 @@ export function BoardProjectPipelineTab(props: {
 }
 
 function StageRow(props: {
+  readonly projectId: ProjectId;
   readonly stage: BoardStageDefinition;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly index: number;
@@ -230,17 +234,33 @@ function StageRow(props: {
               until they move on.
             </p>
           ) : null}
-          {fields.map((field) => (
-            <OverrideRow
-              canWrite={props.canWrite && props.promptsLoaded}
-              field={field}
-              global={global[field.key]}
-              key={field.key}
-              loaded={field.kind !== "text" || props.promptsLoaded}
-              onChange={(value) => props.onOverride(field.key, value)}
-              value={props.overrides[field.key]}
-            />
-          ))}
+          {isCi ? (
+            <Button
+              className="mt-1 self-start"
+              render={
+                <Link
+                  params={{ projectId: props.projectId, tab: "ci" }}
+                  to="/settings/board/projects/$projectId/$tab"
+                />
+              }
+              size="xs"
+              variant="outline"
+            >
+              Edit steps and fix agent in the CI tab
+            </Button>
+          ) : (
+            fields.map((field) => (
+              <OverrideRow
+                canWrite={props.canWrite && props.promptsLoaded}
+                field={field}
+                global={global[field.key]}
+                key={field.key}
+                loaded={field.kind !== "text" || props.promptsLoaded}
+                onChange={(value) => props.onOverride(field.key, value)}
+                value={props.overrides[field.key]}
+              />
+            ))
+          )}
         </div>
       ) : null}
     </div>
@@ -262,24 +282,30 @@ function OverrideRow(props: {
   return (
     <div
       className={cn(
-        "flex flex-col gap-1 border-l-2 py-1.5 pl-2.5",
-        overridden ? "border-foreground/40" : "border-transparent",
+        "-ml-2.5 flex flex-col gap-2 border-l-2 py-2 pl-2.5",
+        overridden ? "border-primary" : "border-transparent",
       )}
     >
-      <div className="flex items-center gap-2">
-        <span className="text-[13px] text-foreground">{field.label}</span>
-        <span className="text-[11.5px] text-muted-foreground">
-          {!overridden
-            ? "Global"
-            : sameAsGlobal
-              ? "Same as global"
-              : field.kind === "text"
-                ? "Overridden here"
-                : `Overridden here · global ${String(props.global)}`}
-        </span>
-        <span className="flex-1" />
+      <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="text-[13.5px] text-foreground">{field.label}</span>
+          <span
+            className={cn(
+              "text-[11.5px]",
+              overridden ? "font-medium text-primary" : "text-muted-foreground",
+            )}
+          >
+            {!overridden
+              ? "Global"
+              : sameAsGlobal
+                ? "Same as global"
+                : field.kind === "text"
+                  ? "Overridden here"
+                  : `Overridden here · global ${String(props.global)}`}
+          </span>
+        </div>
         {overridden && props.canWrite ? (
-          <Button size="xs" variant="ghost" onClick={() => props.onChange(undefined)}>
+          <Button size="xs" variant="outline" onClick={() => props.onChange(undefined)}>
             <RotateCcwIcon className="size-3" /> Reset to global
           </Button>
         ) : null}
@@ -365,6 +391,45 @@ function PromptOverride(props: {
           </Button>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** The CI stage's fix-agent settings for one project, on its CI tab. */
+export function BoardProjectCiFixAgent(props: {
+  readonly projectId: ProjectId;
+  readonly config: BoardProjectConfigState;
+}) {
+  const { environmentId, canWrite } = useBoardSettingsContext();
+  const board = useBoardSettings((settings) => settings.board);
+  const setOverride = useAtomCommand(boardEnvironment.setProjectStageOverride, {
+    reportFailure: false,
+  });
+  const { shell, full } = props.config;
+  const stageId = BOARD_SEED_STAGE_IDS.ci;
+  const global = resolveBoardStageExecution(board, stageId) as unknown as Record<string, unknown>;
+  const overrides: BoardStageExecutionPatch = (full ?? shell).overrides[stageId] ?? {};
+  const onOverride = (key: string, value: unknown) => {
+    const edit = boardProjectOverrideEdit(full, stageId, key, value);
+    if (edit === null) return;
+    void setOverride({
+      environmentId,
+      input: { projectId: props.projectId, stageId, ...edit },
+    }).then(report("Couldn't save the override"));
+  };
+  return (
+    <div className="flex flex-col rounded-xl border border-border bg-card px-4 pt-1 pb-2 shadow-xs">
+      {FIELDS.ci.map((field) => (
+        <OverrideRow
+          canWrite={canWrite && full !== null}
+          field={field}
+          global={global[field.key]}
+          key={field.key}
+          loaded={field.kind !== "text" || full !== null}
+          onChange={(value) => onOverride(field.key, value)}
+          value={overrides[field.key]}
+        />
+      ))}
     </div>
   );
 }

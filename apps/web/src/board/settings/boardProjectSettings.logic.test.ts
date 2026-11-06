@@ -46,10 +46,15 @@ describe("the CI step editor", () => {
 
   it("clears a parallel flag a move or removal breaks", () => {
     const steps = [script("a"), script("b", true), agent("c")];
-    expect(moveBoardCiStep(steps, 1, -1).map((step) => [step.id, step.parallel])).toEqual([
+    expect(moveBoardCiStep(steps, 1, 0).map((step) => [step.id, step.parallel])).toEqual([
       ["b", false],
       ["a", false],
       ["c", false],
+    ]);
+    expect(moveBoardCiStep(steps, 0, 2).map((step) => [step.id, step.parallel])).toEqual([
+      ["b", false],
+      ["c", false],
+      ["a", false],
     ]);
     expect(removeBoardCiStep([agent("x"), ...steps.slice(1)], 0)[0]).toMatchObject({
       id: "b",

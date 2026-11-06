@@ -53,13 +53,13 @@ export function normalizeBoardCiParallel(steps: ReadonlyArray<BoardCiStep>): Boa
   );
 }
 
+/** The step at `index` moved to position `target` (drag or up/down). */
 export function moveBoardCiStep(
   steps: ReadonlyArray<BoardCiStep>,
   index: number,
-  delta: -1 | 1,
+  target: number,
 ): BoardCiStep[] {
-  const target = index + delta;
-  if (target < 0 || target >= steps.length) return [...steps];
+  if (target === index || target < 0 || target >= steps.length) return [...steps];
   const next = [...steps];
   const [moved] = next.splice(index, 1);
   next.splice(target, 0, moved!);

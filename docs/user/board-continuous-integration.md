@@ -57,7 +57,7 @@ caps how many times CI may send a card back to review (3 by default). Past it, C
 waits for you, marked **Needs you**: **Retry CI** starts over with fresh attempts, **Send back to
 review anyway** sends it back, and **Skip CI…** moves it on. Moving a card yourself starts its round
 trips again. Defaults are in **Settings** → **Board** → **Pipeline** → **Continuous integration**;
-each project can override them on its **Pipeline** tab, under **Continuous integration**.
+each project can override them on its **CI** tab, under **Fix agent**.
 
 ## Following a run
 
