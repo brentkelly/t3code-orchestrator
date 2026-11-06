@@ -28,19 +28,23 @@ import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { MaterialButton } from "../../components/MaterialButton";
+import { RowPressable } from "../../components/RowPressable";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { ScreenScrollView } from "../../components/ScreenScrollView";
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import { StatusPill } from "../../components/StatusPill";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceState } from "../../state/workspace";
 import { boardActivityLabel } from "./boardActivityLabel";
+import { boardCardStatus } from "./boardCardStatus";
 import {
   boardCanShowApprovePlans,
   boardCommandAlert,
   boardCommandDidApply,
 } from "./boardCommandResult";
 import { boardMergeHold } from "./boardMergeHold";
+import { boardLiveChildren } from "./boardStageColumns";
 
 type BoardCardScreenProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -117,6 +121,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
   const selectableStages = stages.filter((stage) =>
     isBoardStageManuallySelectable(stages, stage.stageId),
   );
+  const liveChildren = boardLiveChildren(detail.children);
 
   const run = (work: () => Promise<AtomCommandResult<unknown, unknown>>, after?: () => void) => {
     setBusy(true);
@@ -278,6 +283,45 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                 }
               />
             ) : null}
+          </Section>
+        ) : null}
+
+        {liveChildren.length > 0 ? (
+          <Section title="Children">
+            {liveChildren.map((child) => {
+              const childShell = board?.cards.find((entry) => entry.cardId === child.cardId);
+              const tone =
+                childShell === undefined ? null : boardCardStatus({ card: childShell, stages });
+              return (
+                <RowPressable
+                  key={child.cardId}
+                  accessibilityRole="button"
+                  accessibilityLabel={child.title}
+                  onPress={() =>
+                    navigation.navigate("BoardCard", {
+                      environmentId: String(environmentId),
+                      cardId: child.cardId,
+                    })
+                  }
+                  className="bg-grouped-card px-4 py-3"
+                >
+                  <View className="flex-row items-center gap-3">
+                    <View className="min-w-0 flex-1">
+                      <Text className="text-base text-foreground" numberOfLines={1}>
+                        {child.title}
+                      </Text>
+                      <Text className="mt-0.5 text-sm text-foreground-muted">
+                        {child.key}
+                        {" · "}
+                        {stages.find((stage) => stage.stageId === child.stage)?.label ??
+                          child.stage}
+                      </Text>
+                    </View>
+                    {tone ? <StatusPill {...tone} size="compact" /> : null}
+                  </View>
+                </RowPressable>
+              );
+            })}
           </Section>
         ) : null}
 

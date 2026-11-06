@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardLiveChildren,
   boardPagerIndexForStageKey,
   boardPagerScrollIndex,
   boardPagerShouldScroll,
@@ -80,6 +81,17 @@ describe("liveTopLevelBoardCards", () => {
       [],
     );
     expect(live).toEqual([]);
+  });
+});
+
+describe("boardLiveChildren", () => {
+  it("drops archived children so a split parent can open the live ones", () => {
+    expect(
+      boardLiveChildren([
+        { cardId: "live", archivedAt: null },
+        { cardId: "gone", archivedAt: "2026-01-01T00:00:00.000Z" },
+      ]).map((child) => child.cardId),
+    ).toEqual(["live"]);
   });
 });
 

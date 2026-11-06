@@ -158,7 +158,6 @@ describe("boardCardStatus", () => {
       stage: ids.building,
       blocked: true,
       threadState: "waiting",
-      stepAwaiting: "permission",
     });
     expect(boardCardAttention({ card: waiting, stages: BOARD_SEED_STAGES })?.reason).toBe(
       "permission",
@@ -201,5 +200,145 @@ describe("boardCardStatus", () => {
         stages: BOARD_SEED_STAGES,
       }),
     ).toBeNull();
+  });
+
+  it("ranks a pause above Running while the interrupted turn is still working", () => {
+    const paused = card({
+      stage: ids.building,
+      stepAwaiting: "paused",
+      threadState: "working",
+    });
+    expect(boardCardAttention({ card: paused, stages: BOARD_SEED_STAGES })?.reason).toBe("paused");
+    expect(boardCardAttention({ card: paused, stages: BOARD_SEED_STAGES })?.label).toBe("Paused");
+    const tone = boardCardStatus({ card: paused, stages: BOARD_SEED_STAGES });
+    expect(tone?.label).toBe("Paused");
+    expect(tone?.textClassName).toBe("text-foreground-secondary");
+  });
+
+  it("ranks a stall above Running", () => {
+    const stalled = card({
+      stage: ids.building,
+      stalled: true,
+      threadState: "working",
+      stepRunning: true,
+    });
+    expect(boardCardAttention({ card: stalled, stages: BOARD_SEED_STAGES })?.reason).toBe(
+      "stalled",
+    );
+    const tone = boardCardStatus({ card: stalled, stages: BOARD_SEED_STAGES });
+    expect(tone?.label).toBe("Stalled — needs a human");
+    expect(tone?.textClassName).toBe("text-warning-foreground");
+  });
+
+  it("ranks Needs approval above Running", () => {
+    const pending = card({
+      stage: ids.planning,
+      planCount: 2,
+      threadState: "working",
+    });
+    expect(boardCardAttention({ card: pending, stages: BOARD_SEED_STAGES })?.reason).toBe(
+      "approval",
+    );
+    const tone = boardCardStatus({ card: pending, stages: BOARD_SEED_STAGES });
+    expect(tone?.label).toBe("Needs approval");
+    expect(tone?.label).not.toBe("Running");
+  });
+
+  it("ranks a held review loop above Running", () => {
+    const held = card({
+      stage: ids.review,
+      reviewOutcome: "round-cap",
+      threadState: "working",
+      stepRunning: true,
+    });
+    expect(boardCardAttention({ card: held, stages: BOARD_SEED_STAGES })?.reason).toBe(
+      "review-held",
+    );
+    const tone = boardCardStatus({ card: held, stages: BOARD_SEED_STAGES });
+    expect(tone?.label).toBe("No convergence");
+    expect(tone?.textClassName).toBe("text-warning-foreground");
+  });
+
+  it("keeps Running for a working card whose held or stopped flags are stale", () => {
+    expect(
+      boardCardStatus({
+        card: card({
+          stage: ids.building,
+          held: true,
+          threadState: "working",
+          stepRunning: true,
+        }),
+        stages: BOARD_SEED_STAGES,
+      })?.label,
+    ).toBe("Running");
+    expect(
+      boardCardStatus({
+        card: card({
+          stage: ids.building,
+          stepAwaiting: "stopped",
+          threadState: "working",
+        }),
+        stages: BOARD_SEED_STAGES,
+      })?.label,
+    ).toBe("Running");
+  });
+
+  it("inherits a child's Input needed onto an idle split parent", () => {
+    const parent = card({
+      stage: ids.planning,
+      planTotal: 2,
+      planDone: 0,
+    });
+    const childAttention = {
+      reason: "input" as const,
+      tone: "attention" as const,
+      label: "Input needed",
+      detail: "A thread on this card is waiting on your answer",
+      childCount: 1,
+    };
+    expect(boardCardStatus({ card: parent, stages: BOARD_SEED_STAGES })).toBeNull();
+    const tone = boardCardStatus({
+      card: parent,
+      stages: BOARD_SEED_STAGES,
+      childAttention,
+    });
+    expect(tone?.label).toBe("1 child needs you");
+    expect(tone?.textClassName).toBe("text-adaptive-violet-700-300");
+  });
+
+  it("does not let a child roll-up hide the parent's own Input needed", () => {
+    const parent = card({
+      stage: ids.planning,
+      awaitingInput: true,
+      threadState: "waiting",
+    });
+    const tone = boardCardStatus({
+      card: parent,
+      stages: BOARD_SEED_STAGES,
+      childAttention: {
+        reason: "stalled",
+        tone: "warning",
+        label: "Stalled — needs a human",
+        detail: "Stalled",
+        childCount: 1,
+      },
+    });
+    expect(tone?.label).toBe("Input needed");
+  });
+
+  it("shows Running when a child is working and the parent is idle", () => {
+    const parent = card({
+      stage: ids.planning,
+      planTotal: 2,
+      planDone: 0,
+    });
+    expect(boardCardStatus({ card: parent, stages: BOARD_SEED_STAGES })).toBeNull();
+    expect(
+      boardCardStatus({
+        card: parent,
+        stages: BOARD_SEED_STAGES,
+        childRunning: 1,
+      })?.label,
+    ).toBe("Running");
   });
 });
