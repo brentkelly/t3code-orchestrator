@@ -17,7 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { SettingsRow, SettingsSection } from "../components/settings/settingsLayout";
+import { SettingsSection } from "../components/settings/settingsLayout";
+import { BoardSettingsCard, BoardSettingsCardRow } from "./settings/boardSettingsCards";
 import { searchableSetting } from "../components/settings/settingsSearch";
 import { updateClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
@@ -81,33 +82,35 @@ export function BoardServerSection() {
     options.find((option) => option.value === selected)?.label ?? "This server";
 
   return (
-    <SettingsSection id={anchor.id} title={anchor.title}>
-      <SettingsRow
-        title="Board server"
-        description="The server whose board this device shows. Pair with the central board server in Environments, then choose it here. Saved on this device only."
-        control={
-          <Select
-            value={value}
-            onValueChange={(next) => {
-              if (typeof next !== "string") return;
-              void updateClientSettings({
-                boardEnvironmentId: next === THIS_SERVER ? null : (next as EnvironmentId),
-              });
-            }}
-          >
-            <SelectTrigger size="sm" aria-label="Board server">
-              <SelectValue>{(selected: string | null) => labelOf(selected)}</SelectValue>
-            </SelectTrigger>
-            <SelectPopup align="end" alignItemWithTrigger={false}>
-              {options.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        }
-      />
+    <SettingsSection id={anchor.id} title={anchor.title} variant="plain">
+      <BoardSettingsCard>
+        <BoardSettingsCardRow
+          label="Board server"
+          description="The server whose board this device shows. Pair with the central board server in Environments, then choose it here. Saved on this device only."
+          control={
+            <Select
+              value={value}
+              onValueChange={(next) => {
+                if (typeof next !== "string") return;
+                void updateClientSettings({
+                  boardEnvironmentId: next === THIS_SERVER ? null : (next as EnvironmentId),
+                });
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Board server">
+                <SelectValue>{(selected: string | null) => labelOf(selected)}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {options.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+      </BoardSettingsCard>
     </SettingsSection>
   );
 }

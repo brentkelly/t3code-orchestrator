@@ -1,5 +1,5 @@
 /**
- * T3o: Settings → Board as a layout (T3O-49): General, Pipeline and one page
+ * T3o: Settings → Board as a layout (T3O-49): General and one page
  * per project, under `/settings/board/`. The sub-nav lists the board's
  * projects; a blue dot marks one whose committed `t3o.json` differs from its
  * pipeline (known once General or the project's Import tab has looked).
@@ -108,7 +108,6 @@ function BoardSettingsNav(props: {
       className="mx-3 flex flex-wrap items-center gap-1 border-b border-border pb-2 sm:mx-4"
     >
       <NavLink to="/settings/board">General</NavLink>
-      <NavLink to="/settings/board/pipeline">Pipeline</NavLink>
       {projects.length > 0 ? <span className="mx-1 h-4 w-px bg-border" /> : null}
       {projects.map((project) => (
         <Link
@@ -144,10 +143,7 @@ function BoardSettingsNav(props: {
   );
 }
 
-function NavLink(props: {
-  readonly to: "/settings/board" | "/settings/board/pipeline";
-  readonly children: ReactNode;
-}) {
+function NavLink(props: { readonly to: "/settings/board"; readonly children: ReactNode }) {
   return (
     <Link
       activeOptions={{ exact: true }}

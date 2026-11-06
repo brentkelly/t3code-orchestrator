@@ -40,11 +40,10 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     to: "/settings/board",
     targetId: "board-projects",
   },
-  // T3O-49: the global stage list has its own page.
   {
     id: "board-pipeline",
     title: "Pipeline",
-    to: "/settings/board/pipeline",
+    to: "/settings/board",
     searchTerms: ["stages default for projects continuous integration ci round trips"],
   },
   // T3O-49: each project's pipeline, CI and t3o.json live on its own page,
@@ -59,7 +58,7 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
   {
     id: "board-default-model",
     title: "Board default model",
-    to: "/settings/board/pipeline",
+    to: "/settings/board",
     targetId: "board-pipeline",
   },
   { id: "board-concurrency", title: "Board concurrency", to: "/settings/board" },
@@ -90,11 +89,4 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
 export function boardSettingsBreadcrumbLabel(pathname: string): string | null {
   if (pathname.startsWith("/settings/board/projects/")) return "Board project";
   return null;
-}
-
-/** Anchors that moved from the single board page to its Pipeline page
-    (T3O-49), so an old `/settings/board#board-pipeline` link still lands. */
-export function isBoardPipelinePageAnchor(hash: string): boolean {
-  const anchor = hash.replace(/^#/, "");
-  return anchor === "board-pipeline" || anchor === "board-default-model";
 }

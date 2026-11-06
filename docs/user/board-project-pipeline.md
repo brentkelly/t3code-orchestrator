@@ -27,12 +27,12 @@ The page header also says how many differences the project has, and who changed 
 
 ## Stages made for one project
 
-**Add stage** on the Pipeline page can make a stage **for every project** or **for one project**. A
+**Add stage** in the Pipeline section can make a stage **for every project** or **for one project**. A
 stage for one project is off by default and switched on for that project; other projects can switch
 it on later. New stages go just before Continuous integration: nothing can sit between CI and Ready
 for merge, since it could change code after CI passed.
 
-Rename, reorder and remove any stage that isn't a role stage on the Pipeline page. A stage can't be
+Rename, reorder and remove any stage that isn't a role stage in the Pipeline section. A stage can't be
 removed while any card, archived included, sits in it.
 
 ## On the board

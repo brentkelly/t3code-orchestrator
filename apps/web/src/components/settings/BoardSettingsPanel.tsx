@@ -45,7 +45,8 @@ import {
   setBoardInstanceConcurrency,
   setBoardProjectSetting,
 } from "./BoardSettingsPanel.logic";
-import { NumberStepper } from "./BoardPipelineSection";
+import { BoardPipelineSection, NumberStepper } from "./BoardPipelineSection";
+import { BoardSettingsCard, BoardSettingsCardRow } from "../../board/settings/boardSettingsCards";
 import { BoardImportNotices } from "../../board/settings/BoardImportNotice";
 import { BoardWorkerSettings } from "../../board/workers/BoardWorkerSettings";
 import { useBoardWorkers } from "../../board/workers/boardWorkersState";
@@ -80,7 +81,8 @@ function useProviderInstanceIds(): ReadonlyArray<string> {
 }
 
 /** Settings → Board → General (T3O-49): the board server, display, the
-    project list with its import notices, concurrency, workers and lifecycle.
+    project list with its import notices, the global pipeline, concurrency, workers and
+    lifecycle.
     The layout resolves the board server first. */
 export function BoardSettingsPanel() {
   const resolution = useBoardEnvironment();
@@ -108,6 +110,7 @@ function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId
       {/* T3O-49: committed t3o.json files waiting to import. */}
       <BoardImportNotices />
       <ProjectsSection board={board} environmentId={environmentId} update={update} />
+      <BoardPipelineSection />
       <BoardConcurrencySettings
         board={board}
         environmentId={environmentId}
@@ -122,39 +125,6 @@ function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId
 }
 
 type UpdateFn = ReturnType<typeof useUpdateBoardSettings>;
-
-/** The prototype's bordered card list container, shared by every non-pipeline
-    section so the page reads as one system. Sections holding these use the
-    `plain` SettingsSection variant: the default `grouped` one draws a second
-    border around them. */
-function CardListContainer(props: { children: React.ReactNode; className?: string; id?: string }) {
-  return (
-    <div
-      id={props.id}
-      className={cn(
-        "mx-3 flex flex-col gap-2 rounded-xl border border-border bg-card px-4 py-3 shadow-xs sm:mx-4",
-        props.className,
-      )}
-    >
-      {props.children}
-    </div>
-  );
-}
-
-/** A label/description + control row inside a `CardListContainer`. */
-function CardRow(props: { label: string; description?: string; control: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4 py-1.5">
-      <div className="flex min-w-0 flex-col">
-        <span className="text-[13.5px] text-foreground">{props.label}</span>
-        {props.description ? (
-          <span className="max-w-md text-xs text-muted-foreground">{props.description}</span>
-        ) : null}
-      </div>
-      {props.control}
-    </div>
-  );
-}
 
 // ── Projects ───────────────────────────────────────────────────────────
 
@@ -324,8 +294,8 @@ function ConcurrencySection({
   const anchor = searchableSetting("board-concurrency");
   return (
     <SettingsSection id="board-concurrency" title={anchor.title} variant="plain">
-      <CardListContainer>
-        <CardRow
+      <BoardSettingsCard>
+        <BoardSettingsCardRow
           label="Global limit"
           description="The maximum number of build steps running at once across all provider instances."
           control={
@@ -379,7 +349,7 @@ function ConcurrencySection({
             </div>
           );
         })}
-      </CardListContainer>
+      </BoardSettingsCard>
     </SettingsSection>
   );
 }
@@ -427,8 +397,8 @@ function DisplaySection({ board, update }: { board: BoardSettings; update: Updat
   const anchor = searchableSetting("board-auto-collapse-empty-stages");
   return (
     <SettingsSection id="board-display" title="Display" variant="plain">
-      <CardListContainer id="board-auto-collapse-empty-stages">
-        <CardRow
+      <BoardSettingsCard id="board-auto-collapse-empty-stages">
+        <BoardSettingsCardRow
           label={anchor.title}
           description="Stages with no cards fold to a narrow strip and open again when a card lands in them. Applies to everyone using this board."
           control={
@@ -441,7 +411,7 @@ function DisplaySection({ board, update }: { board: BoardSettings; update: Updat
             />
           }
         />
-      </CardListContainer>
+      </BoardSettingsCard>
     </SettingsSection>
   );
 }
@@ -453,8 +423,8 @@ function LifecycleSection({ board, update }: { board: BoardSettings; update: Upd
   const autoArchive = searchableSetting("board-auto-archive-done");
   return (
     <SettingsSection id="board-lifecycle" title="Lifecycle" variant="plain">
-      <CardListContainer id="board-reclaim-worktree-on-done">
-        <CardRow
+      <BoardSettingsCard id="board-reclaim-worktree-on-done">
+        <BoardSettingsCardRow
           label={anchor.title}
           description="Remove a card's git worktree as soon as it reaches Done, instead of waiting for it to be archived. A worktree holding uncommitted changes or unpushed commits is kept and flagged on the card. Archiving always reclaims either way."
           control={
@@ -469,9 +439,9 @@ function LifecycleSection({ board, update }: { board: BoardSettings; update: Upd
             />
           }
         />
-      </CardListContainer>
-      <CardListContainer id="board-auto-archive-done">
-        <CardRow
+      </BoardSettingsCard>
+      <BoardSettingsCard id="board-auto-archive-done">
+        <BoardSettingsCardRow
           label={autoArchive.title}
           description="Archive cards left untouched in Done for this many days. With worktrees reclaimed at Done, a card whose worktree was kept for unsaved work stays in Done. Archiving never removes unsaved work, and archived cards can be restored from the archive."
           control={
@@ -485,7 +455,7 @@ function LifecycleSection({ board, update }: { board: BoardSettings; update: Upd
           }
         />
         {board.lifecycle.autoArchiveDone ? (
-          <CardRow
+          <BoardSettingsCardRow
             label="Days in Done before archiving"
             control={
               <NumberStepper
@@ -502,7 +472,7 @@ function LifecycleSection({ board, update }: { board: BoardSettings; update: Upd
             }
           />
         ) : null}
-      </CardListContainer>
+      </BoardSettingsCard>
       <p className="px-3 text-xs text-muted-foreground/70 sm:px-4">
         Defaults: reclaim worktrees at Done {DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE ? "on" : "off"},
         auto-archive off ({DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS} days when on), global concurrency{" "}

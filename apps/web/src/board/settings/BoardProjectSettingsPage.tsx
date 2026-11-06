@@ -29,6 +29,7 @@ import {
 } from "./boardProjectSettings.logic";
 import { useBoardSettingsContext, useBoardSettingsProjects } from "./BoardSettingsLayout";
 import { useBoardProjectConfig } from "./useBoardProjectConfig";
+import { projectAccent, projectIconColorOf } from "../projectAccent";
 
 const TAB_LABELS: Readonly<Record<BoardProjectSettingsTab, string>> = {
   pipeline: "Pipeline",
@@ -49,6 +50,12 @@ export function BoardProjectSettingsPage(props: {
   const config = useBoardProjectConfig(environmentId, projectId);
   const ids = useMemo(() => [projectId], [projectId]);
   const imports = useBoardImportCandidates(ids);
+  const tabCounts: Readonly<Record<BoardProjectSettingsTab, number>> = {
+    pipeline:
+      Object.keys(config.shell.stageSwitches).length + Object.keys(config.shell.overrides).length,
+    ci: config.shell.ciSteps.length,
+    import: 0,
+  };
   if (project === undefined) {
     return (
       <p className="px-3 text-sm text-muted-foreground sm:px-4">No such project on this board.</p>
@@ -59,29 +66,39 @@ export function BoardProjectSettingsPage(props: {
       <ProjectHeader
         config={config.shell}
         projectId={projectId}
+        accentDot={projectAccent(project.id, projectIconColorOf(project)).dot}
         title={project.title}
         lastChangedBy={config.full?.lastChangedBy ?? null}
       />
       <BoardImportNoticeForProject imports={imports} title={project.title} />
-      <nav aria-label={`${project.title} settings`} className="mx-3 flex gap-1 sm:mx-4">
-        {BOARD_PROJECT_SETTINGS_TABS.map((candidate) => (
-          <Link
-            className={cn(
-              "rounded-md px-2.5 py-1 text-[13px]",
-              candidate === tab
-                ? "bg-accent font-medium text-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-            key={candidate}
-            params={{ projectId, tab: candidate }}
-            to="/settings/board/projects/$projectId/$tab"
-          >
-            {TAB_LABELS[candidate]}
-            {candidate === "ci" && config.shell.ciSteps.length > 0 ? (
-              <span className="ml-1 text-muted-foreground">{config.shell.ciSteps.length}</span>
-            ) : null}
-          </Link>
-        ))}
+      <nav
+        aria-label={`${project.title} settings`}
+        className="mx-3 flex gap-0.5 border-b border-border sm:mx-4"
+      >
+        {BOARD_PROJECT_SETTINGS_TABS.map((candidate) => {
+          const count = tabCounts[candidate];
+          return (
+            <Link
+              aria-current={candidate === tab ? "page" : undefined}
+              className={cn(
+                "-mb-px inline-flex items-center gap-1.5 border-b-2 px-2.5 py-2 text-[13px] font-medium",
+                candidate === tab
+                  ? "border-foreground text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+              key={candidate}
+              params={{ projectId, tab: candidate }}
+              to="/settings/board/projects/$projectId/$tab"
+            >
+              {TAB_LABELS[candidate]}
+              {count > 0 ? (
+                <span className="rounded-full bg-accent px-1.5 text-[11px] leading-[18px] font-medium text-muted-foreground tabular-nums">
+                  {count}
+                </span>
+              ) : null}
+            </Link>
+          );
+        })}
       </nav>
       {tab === "pipeline" ? (
         <BoardProjectPipelineTab
@@ -105,6 +122,7 @@ export function BoardProjectSettingsPage(props: {
 
 function ProjectHeader(props: {
   readonly projectId: ProjectId;
+  readonly accentDot: string;
   readonly title: string;
   readonly config: BoardProjectStageConfigShell;
   readonly lastChangedBy: {
@@ -136,39 +154,50 @@ function ProjectHeader(props: {
     });
   };
   return (
-    <div className="mx-3 flex flex-wrap items-center gap-x-3 gap-y-1 sm:mx-4">
-      <h2 className="text-base font-semibold text-foreground">{props.title}</h2>
-      <span className="text-xs text-muted-foreground">
-        {differences === 0
-          ? "Follows the global pipeline"
-          : `${differences} ${differences === 1 ? "difference" : "differences"} from global`}
-      </span>
-      {props.lastChangedBy !== null ? (
-        <span className="text-xs text-muted-foreground">
-          Last changed by {props.lastChangedBy.actor.name ?? props.lastChangedBy.actor.kind} ·{" "}
-          {new Date(props.lastChangedBy.at).toLocaleString()}
-        </span>
-      ) : null}
-      <span className="flex-1" />
-      {canWrite && differences > 0 ? (
-        confirming ? (
-          <span className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              Clear every switch, override and CI step?
-            </span>
-            <Button size="xs" variant="destructive" onClick={onReset}>
-              Reset
-            </Button>
-            <Button size="xs" variant="ghost" onClick={() => setConfirming(false)}>
-              Cancel
-            </Button>
+    <div className="mx-3 flex flex-wrap items-start gap-x-3 gap-y-1 sm:mx-4">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-foreground">
+          <span className={cn("size-2.5 shrink-0 rounded-full", props.accentDot)} />
+          {props.title}
+        </h2>
+        {props.lastChangedBy !== null ? (
+          <span className="pl-[18px] text-xs text-muted-foreground">
+            Last changed by {props.lastChangedBy.actor.name ?? props.lastChangedBy.actor.kind} ·{" "}
+            {new Date(props.lastChangedBy.at).toLocaleString()}
           </span>
-        ) : (
-          <Button size="xs" variant="outline" onClick={() => setConfirming(true)}>
-            Reset everything to global…
-          </Button>
-        )
-      ) : null}
+        ) : null}
+      </div>
+      <span className="flex-1" />
+      <div className="flex flex-col items-end gap-0.5">
+        <span className="text-[13px] text-foreground">
+          {differences === 0
+            ? "Follows the global pipeline"
+            : `${differences} ${differences === 1 ? "difference" : "differences"} from global`}
+        </span>
+        {canWrite && differences > 0 ? (
+          confirming ? (
+            <span className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                Clear every switch, override and CI step?
+              </span>
+              <Button size="xs" variant="destructive" onClick={onReset}>
+                Reset
+              </Button>
+              <Button size="xs" variant="ghost" onClick={() => setConfirming(false)}>
+                Cancel
+              </Button>
+            </span>
+          ) : (
+            <button
+              className="cursor-pointer text-xs text-muted-foreground hover:text-foreground hover:underline"
+              onClick={() => setConfirming(true)}
+              type="button"
+            >
+              Reset everything to global…
+            </button>
+          )
+        ) : null}
+      </div>
     </div>
   );
 }

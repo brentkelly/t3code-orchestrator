@@ -45,7 +45,8 @@ export function BoardPartialStageIcon(props: {
           />
           <Link
             className="border-t border-border pt-2 text-muted-foreground hover:text-foreground"
-            to="/settings/board/pipeline"
+            hash="board-pipeline"
+            to="/settings/board"
           >
             Stage settings ›
           </Link>
