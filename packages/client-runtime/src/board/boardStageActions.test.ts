@@ -14,7 +14,7 @@ import {
   boardStagePrimaryAction,
   boardStageSecondaryActions,
   isBoardStageManuallySelectable,
-} from "./boardStageActions";
+} from "./boardStageActions.ts";
 
 // The global pipeline: CI only joins a project's (T3O-44).
 const stages = BOARD_SEED_STAGES.filter((stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.ci);

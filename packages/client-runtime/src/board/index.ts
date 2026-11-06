@@ -14,7 +14,7 @@ export {
 } from "./boardStageActions.ts";
 export { defaultBoardStageId, type DefaultBoardStageCard } from "./defaultBoardStageId.ts";
 export {
-  boardThreadOpen,
+  boardThreadOpenForCard,
   type BoardThreadOpenAction,
   type BoardThreadOpenInput,
 } from "./boardThreadOpen.ts";

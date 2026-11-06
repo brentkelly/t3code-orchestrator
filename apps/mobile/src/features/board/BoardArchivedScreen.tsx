@@ -8,14 +8,14 @@ import { AsyncResult } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
 import { Alert, View } from "react-native";
 
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
-import { MaterialButton } from "../../components/MaterialButton";
-import { RowPressable } from "../../components/RowPressable";
-import { ScreenHeader } from "../../components/ScreenHeader";
-import { ScreenScrollView } from "../../components/ScreenScrollView";
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText as Text } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { Button } from "../../components/ui/Button";
+import { RowPressable } from "../../components/ui/RowPressable";
+import { ScreenHeader } from "./boardUi";
+import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
+import { confirm } from "../../components/ui/Dialog";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -136,7 +136,7 @@ export function BoardArchivedScreen({ route }: BoardArchivedScreenProps) {
                 run(() => unarchiveCard({ environmentId: parsed, input: { cardId: card.cardId } }))
               }
               onDelete={() =>
-                showConfirmDialog({
+                confirm({
                   title: "Delete this card?",
                   message: "The card, its threads, and its branches go.",
                   confirmText: "Delete",
@@ -177,8 +177,8 @@ function ArchivedRow(props: {
         <Text className="mt-0.5 text-sm text-foreground-muted">{props.card.key}</Text>
       </RowPressable>
       <View className="mt-2 flex-row gap-2">
-        <MaterialButton label="Restore" onPress={props.onRestore} />
-        <MaterialButton label="Delete" onPress={props.onDelete} />
+        <Button label="Restore" onPress={props.onRestore} />
+        <Button label="Delete" onPress={props.onDelete} />
       </View>
     </View>
   );

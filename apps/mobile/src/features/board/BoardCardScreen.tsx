@@ -3,7 +3,7 @@ import {
   boardMoveNeedsOverride,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
-  boardThreadOpen,
+  boardThreadOpenForCard,
   isBoardStageManuallySelectable,
 } from "@t3tools/client-runtime/board";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
@@ -11,8 +11,6 @@ import {
   BOARD_SEED_STAGES,
   BoardCardId,
   EnvironmentId,
-  ThreadId,
-  activeBoardCardThreadId,
   boardCardArchiveNeedsConfirmation,
   boardCardDisplayPullRequest,
   effectiveBoardStageRole,
@@ -20,23 +18,26 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import * as Linking from "expo-linking";
 import { useMemo, useState, type ReactNode } from "react";
 import { Alert, View } from "react-native";
 
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
-import { MaterialButton } from "../../components/MaterialButton";
-import { RowPressable } from "../../components/RowPressable";
-import { ScreenHeader } from "../../components/ScreenHeader";
-import { ScreenScrollView } from "../../components/ScreenScrollView";
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText as Text } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { Button } from "../../components/ui/Button";
+import { RowPressable } from "../../components/ui/RowPressable";
+import { ScreenHeader } from "./boardUi";
+import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
+import { confirm } from "../../components/ui/Dialog";
 import { StatusPill } from "../../components/StatusPill";
+import { openSettings } from "../settings/settings-navigation";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceState } from "../../state/workspace";
 import { boardActivityLabel } from "./boardActivityLabel";
+import { requestBoardCardArchive } from "./boardCardArchive";
 import { boardCardStatus } from "./boardCardStatus";
 import {
   boardCanShowApprovePlans,
@@ -53,6 +54,7 @@ type BoardCardScreenProps = StaticScreenProps<{
 
 export function BoardCardScreen({ route }: BoardCardScreenProps) {
   const navigation = useNavigation();
+  const selectDetail = useSelectWorkspaceDetail();
   const parsed = parseBoardCardRoute(route.params.environmentId, route.params.cardId);
   const environmentId = parsed?.environmentId ?? EnvironmentId.make("pending");
   const cardId = parsed?.cardId ?? BoardCardId.make("pending");
@@ -116,7 +118,11 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
     stepHeld: shell?.held === true,
   });
   const pullRequest = boardCardDisplayPullRequest(card);
-  const threadId = activeBoardCardThreadId(card.threadLinks);
+  const threadOpen = boardThreadOpenForCard({
+    boardHostEnvironmentId: environmentId,
+    threadLinks: card.threadLinks,
+    connectedEnvironmentIds: connectedIds,
+  });
   const currentStage = stages.find((stage) => stage.stageId === card.stage) ?? stages[0];
   const selectableStages = stages.filter((stage) =>
     isBoardStageManuallySelectable(stages, stage.stageId),
@@ -159,7 +165,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
       })
     ) {
       const toLabel = stages.find((stage) => stage.stageId === toStage)?.label ?? toStage;
-      showConfirmDialog({
+      confirm({
         title: `Move ${card.key} to ${toLabel} without a plan?`,
         message:
           "No plan has been written for this card yet. Its planning thread stays on the card, so moving it back picks the conversation up where it left off.",
@@ -193,27 +199,19 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                     {
                       id: "archive",
                       title: "Archive",
-                      onPress: () => {
-                        const confirm = boardCardArchiveNeedsConfirmation({
-                          stage: card.stage,
-                          dependents: detail.dependents,
-                        });
-                        const go = () =>
-                          run(
-                            () => archiveCard({ environmentId, input: { cardId: card.id } }),
-                            () => navigation.goBack(),
-                          );
-                        if (confirm) {
-                          showConfirmDialog({
-                            title: "Archive this card?",
-                            message: "Live cards still depend on it.",
-                            confirmText: "Archive",
-                            onConfirm: go,
-                          });
-                          return;
-                        }
-                        go();
-                      },
+                      onPress: () =>
+                        requestBoardCardArchive({
+                          needsConfirmation: boardCardArchiveNeedsConfirmation({
+                            stage: card.stage,
+                            dependents: detail.dependents,
+                          }),
+                          confirm,
+                          go: () =>
+                            run(
+                              () => archiveCard({ environmentId, input: { cardId: card.id } }),
+                              () => navigation.goBack(),
+                            ),
+                        }),
                     },
                   ]
                 : [
@@ -228,7 +226,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                 id: "delete",
                 title: "Delete",
                 onPress: () =>
-                  showConfirmDialog({
+                  confirm({
                     title: "Delete this card?",
                     message: "The card, its threads, and its branches go.",
                     confirmText: "Delete",
@@ -274,7 +272,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
               stages,
               stage: card.stage,
             }) ? (
-              <MaterialButton
+              <Button
                 label="Approve plans"
                 tone="primary"
                 disabled={busy}
@@ -325,25 +323,21 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
           </Section>
         ) : null}
 
-        {threadId !== null ? (
+        {threadOpen !== null ? (
           <Section title="Thread">
-            <MaterialButton
+            <Button
               label="Open thread"
               onPress={() => {
-                const action = boardThreadOpen({
-                  boardHostEnvironmentId: environmentId,
-                  connectedEnvironmentIds: connectedIds,
-                });
-                if (action.kind === "connect") {
-                  navigation.navigate("SettingsSheet", {
-                    screen: "SettingsContent",
-                    params: { screen: "SettingsEnvironments" },
-                  });
+                if (threadOpen.action.kind === "connect") {
+                  openSettings(navigation, "SettingsEnvironments");
                   return;
                 }
-                navigation.navigate("Thread", {
-                  environmentId: String(action.environmentId),
-                  threadId: String(threadId satisfies ThreadId),
+                selectDetail({
+                  name: "Thread",
+                  params: {
+                    environmentId: String(threadOpen.action.environmentId),
+                    threadId: String(threadOpen.threadId),
+                  },
                 });
               }}
             />
@@ -352,7 +346,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
 
         {pullRequest !== null ? (
           <Section title="Pull request">
-            <MaterialButton
+            <Button
               label={`View PR #${pullRequest.number}`}
               onPress={() => void Linking.openURL(pullRequest.url)}
             />
@@ -361,7 +355,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
 
         {primary !== null ? (
           <View className="gap-2">
-            <MaterialButton
+            <Button
               label={primary.label}
               tone="primary"
               disabled={busy || (primary.kind === "merge" && primary.disabled)}
@@ -380,7 +374,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
         ) : currentStage !== undefined &&
           effectiveBoardStageRole(currentStage) === "done" &&
           card.archivedAt === null ? (
-          <MaterialButton
+          <Button
             label="Archive"
             onPress={() =>
               run(
@@ -392,7 +386,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
         ) : null}
 
         {secondary.map((action) => (
-          <MaterialButton
+          <Button
             key={action.kind}
             label={action.label}
             disabled={busy}

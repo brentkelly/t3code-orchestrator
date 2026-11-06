@@ -6,7 +6,12 @@
  * connect it first — never open a worker thread against the board-host
  * environment id when the thread lives elsewhere.
  */
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  activeBoardCardThreadLink,
+  type BoardCardThreadLink,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 
 export type BoardThreadOpenAction =
   | { readonly kind: "open"; readonly environmentId: EnvironmentId }
@@ -28,4 +33,23 @@ export function boardThreadOpen(input: BoardThreadOpenInput): BoardThreadOpenAct
     return { kind: "connect", environmentId };
   }
   return { kind: "open", environmentId };
+}
+
+export function boardThreadOpenForCard(input: {
+  readonly boardHostEnvironmentId: EnvironmentId;
+  readonly threadLinks: ReadonlyArray<BoardCardThreadLink>;
+  readonly connectedEnvironmentIds: BoardThreadOpenInput["connectedEnvironmentIds"];
+}): { readonly threadId: ThreadId; readonly action: BoardThreadOpenAction } | null {
+  const link = activeBoardCardThreadLink(input.threadLinks);
+  if (link === null) {
+    return null;
+  }
+  return {
+    threadId: link.threadId,
+    action: boardThreadOpen({
+      boardHostEnvironmentId: input.boardHostEnvironmentId,
+      threadEnvironmentId: link.workerId ?? null,
+      connectedEnvironmentIds: input.connectedEnvironmentIds,
+    }),
+  };
 }
