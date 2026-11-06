@@ -113,7 +113,16 @@ import {
   XIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import { Fragment, Suspense, lazy, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  Suspense,
+  lazy,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
@@ -1229,12 +1238,20 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
   // Mid-review every commit sends the planning agent a turn, so a run of
   // stepper clicks lands as one change once it settles.
   const [pendingRounds, setPendingRounds] = useState<number | null>(null);
+  // The settled commit is built from the view as it is when the timer fires:
+  // a review stopped elsewhere in the meantime must not be turned back on.
+  const latest = useRef({ view, onSet });
+  useEffect(() => {
+    latest.current = { view, onSet };
+  });
   const [roundsCommit] = useState(
     () =>
       new Debouncer(
-        (set: (next: BoardCardPlanReview) => void, next: BoardCardPlanReview) => {
+        (next: number) => {
           setPendingRounds(null);
-          set(next);
+          const { view: now, onSet: set } = latest.current;
+          if (now == null || set === undefined || !now.enabled || !now.inProgress) return;
+          set(nextBoardCardPlanReview(now, { rounds: next }));
         },
         { wait: PLAN_REVIEW_ROUNDS_SETTLE_MS },
       ),
@@ -1277,11 +1294,13 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
             onChange={(next) => {
               const change = nextBoardCardPlanReview(view, { rounds: next });
               if (!view.inProgress) {
+                roundsCommit.cancel();
+                setPendingRounds(null);
                 onSet(change);
                 return;
               }
               setPendingRounds(change.rounds);
-              roundsCommit.maybeExecute(onSet, change);
+              roundsCommit.maybeExecute(change.rounds);
             }}
             value={rounds}
           />
