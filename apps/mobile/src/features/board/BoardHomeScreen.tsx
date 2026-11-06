@@ -38,10 +38,14 @@ import {
   boardProjectIdsForHomeScope,
   encodeBoardArchiveProjectIds,
 } from "./boardHomeProjectScope";
+import { boardShouldShowEnvironmentLabel } from "./boardHomeMode";
 import {
-  boardPagerScrollIndex,
+  boardPagerIndexForStageKey,
+  boardPagerShouldScroll,
+  boardPagerStageKey,
   boardStageLiveCounts,
   cardsInStage,
+  cardsMatchingBoardQuery,
   liveTopLevelBoardCardsWithPlanProgress,
 } from "./boardStageColumns";
 
@@ -53,10 +57,12 @@ export function BoardHomeScreen(props: {
     readonly label: string;
   }>;
   readonly onEnvironmentChange: (environmentId: EnvironmentId) => void;
+  readonly selectedEnvironmentId: EnvironmentId | null;
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly selectedProjectKey: string | null;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
   readonly onProjectChange: (projectKey: string | null) => void;
+  readonly searchQuery: string;
   readonly createRequested: boolean;
   readonly onCreateHandled: () => void;
 }) {
@@ -87,7 +93,11 @@ export function BoardHomeScreen(props: {
     () => liveTopLevelBoardCardsWithPlanProgress(cards, projectIds, stages),
     [cards, projectIds, stages],
   );
-  const counts = useMemo(() => boardStageLiveCounts(stages, liveCards), [liveCards, stages]);
+  const visibleCards = useMemo(
+    () => cardsMatchingBoardQuery(liveCards, props.searchQuery),
+    [liveCards, props.searchQuery],
+  );
+  const counts = useMemo(() => boardStageLiveCounts(stages, visibleCards), [stages, visibleCards]);
   const [stageId, setStageId] = useState<BoardStageId | null>(null);
   const resolvedStageId =
     stageId !== null && stages.some((stage) => stage.stageId === stageId)
@@ -95,7 +105,13 @@ export function BoardHomeScreen(props: {
       : defaultBoardStageId({ stages, cards: liveCards });
   const { width } = useWindowDimensions();
   const pagerRef = useRef<FlatList<BoardStageDefinition>>(null);
+  const lastPagerScroll = useRef({ index: null as number | null, width: 0 });
   const boardReady = board !== null;
+  const stageKey = boardPagerStageKey(stages);
+  const showEnvironmentLabel = boardShouldShowEnvironmentLabel({
+    boardEnvironmentId: props.environmentId,
+    selectedEnvironmentId: props.selectedEnvironmentId,
+  });
   const createProject = useMemo(
     () =>
       boardCreateProjectForHomeScope({
@@ -123,30 +139,36 @@ export function BoardHomeScreen(props: {
     );
   }, [createProject, props.createRequested, props.onCreateHandled, props.selectedProjectKey]);
 
-  const scrollPagerToResolvedStage = useCallback(
-    (animated: boolean) => {
-      const index = boardPagerScrollIndex({
-        boardReady,
-        width,
-        resolvedStageId,
-        stages,
-      });
-      if (index === null) return;
-      pagerRef.current?.scrollToIndex({ index, animated });
-    },
-    [boardReady, resolvedStageId, stages, width],
-  );
-
   useEffect(() => {
-    scrollPagerToResolvedStage(false);
-  }, [scrollPagerToResolvedStage]);
+    const index = boardPagerIndexForStageKey({
+      boardReady,
+      width,
+      resolvedStageId,
+      stageKey,
+    });
+    if (index === null) return;
+    if (
+      !boardPagerShouldScroll({
+        index,
+        lastIndex: lastPagerScroll.current.index,
+        width,
+        lastWidth: lastPagerScroll.current.width,
+      })
+    ) {
+      return;
+    }
+    lastPagerScroll.current = { index, width };
+    pagerRef.current?.scrollToIndex({ index, animated: false });
+  }, [boardReady, resolvedStageId, stageKey, width]);
 
   const onPagerScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       if (width <= 0) return;
       const index = Math.round(event.nativeEvent.contentOffset.x / width);
       const next = stages[index]?.stageId;
-      if (next !== undefined && next !== stageId) setStageId(next);
+      if (next === undefined || next === stageId) return;
+      lastPagerScroll.current = { index, width };
+      setStageId(next);
     },
     [stageId, stages, width],
   );
@@ -161,6 +183,11 @@ export function BoardHomeScreen(props: {
 
   return (
     <View className="flex-1">
+      {showEnvironmentLabel ? (
+        <Text className="px-4 pb-2 text-xs font-t3-medium text-foreground-muted">
+          {props.environmentLabel}
+        </Text>
+      ) : null}
       {props.environments.length > 1 ? (
         <ScrollView
           horizontal
@@ -205,7 +232,9 @@ export function BoardHomeScreen(props: {
               onPress={() => {
                 setStageId(stage.stageId);
                 const index = stages.findIndex((entry) => entry.stageId === stage.stageId);
-                if (index >= 0) pagerRef.current?.scrollToIndex({ index, animated: true });
+                if (index < 0) return;
+                lastPagerScroll.current = { index, width };
+                pagerRef.current?.scrollToIndex({ index, animated: true });
               }}
               className={cn(
                 "flex-row items-center gap-1.5 rounded-full px-3 py-1.5",
@@ -255,9 +284,10 @@ export function BoardHomeScreen(props: {
         renderItem={({ item: stage }) => (
           <View style={{ width }} className="flex-1">
             <StageCardList
-              cards={cardsInStage(liveCards, stage.stageId)}
+              cards={cardsInStage(visibleCards, stage.stageId)}
               stages={stages}
               emptyLabel={stage.label}
+              searchQuery={props.searchQuery}
               onOpen={(cardId) =>
                 navigation.navigate("BoardCard", {
                   environmentId: String(props.environmentId),
@@ -285,14 +315,22 @@ function StageCardList(props: {
   readonly cards: ReadonlyArray<BoardCardShell>;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly emptyLabel: string;
+  readonly searchQuery: string;
   readonly onOpen: (cardId: BoardCardId) => void;
 }) {
   if (props.cards.length === 0) {
+    const query = props.searchQuery.trim();
     return (
       <EmptyState
         variant="plain"
-        title={`No cards in ${props.emptyLabel}`}
-        detail="Create a card or swipe to another stage."
+        title={
+          query.length > 0 ? `No cards matching "${query}"` : `No cards in ${props.emptyLabel}`
+        }
+        detail={
+          query.length > 0
+            ? "Clear search or swipe to another stage."
+            : "Create a card or swipe to another stage."
+        }
       />
     );
   }

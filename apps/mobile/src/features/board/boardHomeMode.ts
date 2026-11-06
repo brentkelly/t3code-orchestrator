@@ -29,21 +29,26 @@ export function boardCapableEnvironmentIds(
   return ids;
 }
 
-/** Prefer the Home filter's environment when it has a board; otherwise the first capable one. */
+/** Home filter's environment when it has a board; All falls back; a non-board server stays empty. */
 export function pickBoardEnvironmentId<T extends { readonly environmentId: string }>(input: {
   readonly selectedEnvironmentId: string | null;
   readonly environments: ReadonlyArray<T>;
   readonly boardCapableIds: ReadonlySet<string>;
 }): T["environmentId"] | null {
-  if (
-    input.selectedEnvironmentId !== null &&
-    input.boardCapableIds.has(input.selectedEnvironmentId)
-  ) {
-    return input.selectedEnvironmentId as T["environmentId"];
+  if (input.selectedEnvironmentId !== null) {
+    return input.boardCapableIds.has(input.selectedEnvironmentId)
+      ? (input.selectedEnvironmentId as T["environmentId"])
+      : null;
   }
   return (
-    input.environments.find((environment) =>
-      input.boardCapableIds.has(environment.environmentId),
-    )?.environmentId ?? null
+    input.environments.find((environment) => input.boardCapableIds.has(environment.environmentId))
+      ?.environmentId ?? null
   );
+}
+
+export function boardShouldShowEnvironmentLabel(input: {
+  readonly boardEnvironmentId: string;
+  readonly selectedEnvironmentId: string | null;
+}): boolean {
+  return input.selectedEnvironmentId !== input.boardEnvironmentId;
 }

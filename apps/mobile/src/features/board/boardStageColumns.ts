@@ -49,15 +49,72 @@ export function liveTopLevelBoardCardsWithPlanProgress(
   return liveTopLevelBoardCards(applyBoardCardPlanProgress(live, stages), null);
 }
 
+/** Stable identity for the pager's stage list; a new array of the same ids is the same key. */
+export function boardPagerStageKey(
+  stages: ReadonlyArray<Pick<BoardStageDefinition, "stageId">>,
+): string {
+  return stages.map((stage) => stage.stageId).join("\0");
+}
+
 export function boardPagerScrollIndex(input: {
   readonly boardReady: boolean;
   readonly width: number;
   readonly resolvedStageId: BoardStageId | null;
   readonly stages: ReadonlyArray<Pick<BoardStageDefinition, "stageId">>;
 }): number | null {
+  return boardPagerIndexForStageKey({
+    boardReady: input.boardReady,
+    width: input.width,
+    resolvedStageId: input.resolvedStageId,
+    stageKey: boardPagerStageKey(input.stages),
+  });
+}
+
+export function boardPagerIndexForStageKey(input: {
+  readonly boardReady: boolean;
+  readonly width: number;
+  readonly resolvedStageId: BoardStageId | null;
+  readonly stageKey: string;
+}): number | null {
   if (!input.boardReady || input.width <= 0 || input.resolvedStageId === null) return null;
-  const index = input.stages.findIndex((stage) => stage.stageId === input.resolvedStageId);
+  if (input.stageKey.length === 0) return null;
+  const index = input.stageKey.split("\0").indexOf(input.resolvedStageId);
   return index >= 0 ? index : null;
+}
+
+/** Skip scrollToIndex when a board snapshot did not move the page or change its width. */
+export function boardPagerShouldScroll(input: {
+  readonly index: number | null;
+  readonly lastIndex: number | null;
+  readonly width: number;
+  readonly lastWidth: number;
+}): boolean {
+  if (input.index === null) return false;
+  return input.index !== input.lastIndex || input.width !== input.lastWidth;
+}
+
+export function normaliseBoardCardQuery(query: string): string {
+  return query.trim().toLowerCase();
+}
+
+export function boardCardMatchesQuery(
+  card: Pick<BoardCardShell, "key" | "title">,
+  normalisedQuery: string,
+): boolean {
+  if (normalisedQuery.length === 0) return true;
+  return (
+    card.title.toLowerCase().includes(normalisedQuery) ||
+    card.key.toLowerCase().includes(normalisedQuery)
+  );
+}
+
+export function cardsMatchingBoardQuery<T extends Pick<BoardCardShell, "key" | "title">>(
+  cards: ReadonlyArray<T>,
+  query: string,
+): ReadonlyArray<T> {
+  const normalised = normaliseBoardCardQuery(query);
+  if (normalised.length === 0) return cards;
+  return cards.filter((card) => boardCardMatchesQuery(card, normalised));
 }
 
 export function cardsInStage(
