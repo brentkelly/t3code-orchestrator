@@ -27,6 +27,7 @@ import {
 import { useState } from "react";
 
 import { cn } from "../lib/utils";
+import { boardHeaderButtonClass } from "./boardHeaderButton";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
 import { BoardPlanGraph } from "./BoardPlanGraph";
 import {
@@ -81,16 +82,11 @@ export function BoardPlansPanel({
         <span className="text-[11.5px] text-muted-foreground">in dependency order</span>
         <span className="flex-1" />
         <button
-          className={cn(
-            "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border px-2.5 text-[11.5px] font-medium whitespace-nowrap shadow-xs",
-            chartOpen
-              ? "border-input bg-accent text-foreground"
-              : "border-border bg-popover text-muted-foreground hover:bg-accent hover:text-foreground",
-          )}
+          className={boardHeaderButtonClass(chartOpen)}
           onClick={() => setChartOpen((open) => !open)}
           type="button"
         >
-          <Link2Icon className="size-3" />
+          <Link2Icon />
           {chartOpen ? "Hide chart" : "Dependency chart"}
         </button>
         {onOpenSubBoard === undefined ? null : (

@@ -1,6 +1,6 @@
 /**
  * T3o per-project pipelines on the board (T3O-43/49): which columns a view
- * draws, which projects each covers, and the Pipelines grid.
+ * draws, which projects each covers.
  */
 import {
   BOARD_SEED_STAGES,
@@ -19,7 +19,6 @@ import {
   boardCardStageGoneNotes,
   boardCiStepShapeLine,
   boardPipelineColumns,
-  boardPipelinesGrid,
 } from "./boardProjectPipelines";
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -193,31 +192,6 @@ describe("boardCardStageGoneNotes", () => {
       "Sprint is switched off for mesh.web",
     );
     expect(noteFor({ stage: BOARD_SEED_STAGE_IDS.sprint, projectId: relay.id })).toBeNull();
-  });
-});
-
-describe("boardPipelinesGrid", () => {
-  it("marks default, switched-on and unused stages per project", () => {
-    const grid = boardPipelinesGrid(makeView(), [advisor, web]);
-    expect(grid.stages.map((stage) => stage.label)).toEqual([
-      "Backlog",
-      "Sprint",
-      "Planning",
-      "Ready",
-      "Building",
-      "QA",
-      "Code review",
-      "Ready for merge",
-      "Done",
-    ]);
-    expect(grid.rows[0]!.cells[5]).toBe("unused");
-    expect(grid.rows[1]!.cells.slice(1, 6)).toEqual([
-      "unused",
-      "default",
-      "default",
-      "default",
-      "switched",
-    ]);
   });
 });
 

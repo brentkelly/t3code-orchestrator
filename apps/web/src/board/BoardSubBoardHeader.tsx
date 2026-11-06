@@ -21,6 +21,7 @@ import { GitBranchIcon, Link2Icon } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 
 import { cn } from "../lib/utils";
+import { boardHeaderButtonClass } from "./boardHeaderButton";
 import { boardEnvironment } from "../state/board";
 import { projectAccent } from "./projectAccent";
 import { BoardHint } from "./BoardHint";
@@ -129,16 +130,11 @@ export function BoardSubBoardHeader({
           only exists once there are some. */}
       {(detail?.plans.length ?? 0) > 0 ? (
         <button
-          className={cn(
-            "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border px-2.5 text-[11.5px] font-medium whitespace-nowrap shadow-xs",
-            chartOpen
-              ? "border-input bg-accent text-foreground"
-              : "border-border bg-popover text-muted-foreground hover:bg-accent hover:text-foreground",
-          )}
+          className={boardHeaderButtonClass(chartOpen)}
           onClick={onToggleChart}
           type="button"
         >
-          <Link2Icon className="size-3" />
+          <Link2Icon />
           {chartOpen ? "Hide chart" : "Dependency chart"}
         </button>
       ) : null}

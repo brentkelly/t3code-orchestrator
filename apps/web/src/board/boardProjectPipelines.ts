@@ -1,7 +1,7 @@
 /**
  * T3o per-project pipelines on the board (T3O-43/49): which columns a view
  * draws when its projects switch stages on or off, which projects each
- * column covers, and the Pipelines grid. Pure functions over the read model
+ * column covers. Pure functions over the read model
  * the page already holds; coverage is computed once per render.
  */
 import {
@@ -187,38 +187,6 @@ export function boardCardStageGoneNotes(
     return label === undefined
       ? null
       : `${label} is switched off for ${projectTitle(card.projectId)}`;
-  };
-}
-
-/** A Pipelines grid cell: on by default, switched on for the project, or not used. */
-export type BoardPipelineCell = "default" | "switched" | "unused";
-
-export interface BoardPipelinesGrid {
-  readonly stages: ReadonlyArray<BoardStageDefinition>;
-  readonly rows: ReadonlyArray<{
-    readonly project: BoardPipelineProject;
-    readonly cells: ReadonlyArray<BoardPipelineCell>;
-  }>;
-}
-
-/** The Pipelines grid: projects against every stage any of them uses. */
-export function boardPipelinesGrid(
-  view: BoardStageView,
-  projects: ReadonlyArray<BoardPipelineProject>,
-): BoardPipelinesGrid {
-  const stages = [...boardAllStages(view)]
-    .sort(compareBoardStages)
-    .filter((stage) => projects.some((project) => boardProjectUsesStage(view, project.id, stage)));
-  return {
-    stages,
-    rows: projects.map((project) => ({
-      project,
-      cells: stages.map((stage): BoardPipelineCell => {
-        if (!boardProjectUsesStage(view, project.id, stage)) return "unused";
-        const switched = view.projectStageConfigs?.[project.id]?.stageSwitches[stage.stageId];
-        return switched === true ? "switched" : "default";
-      }),
-    })),
   };
 }
 

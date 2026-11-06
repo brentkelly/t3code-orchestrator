@@ -51,6 +51,7 @@ import {
 } from "./boardCardAutomation";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { boardGroupSettingsVm } from "./boardGroups";
+import { boardHeaderButtonClass } from "./boardHeaderButton";
 import { boardToast } from "./boardToast";
 
 type AutomationPatch = Partial<Record<BoardAutomationToggle, boolean | null>>;
@@ -365,7 +366,7 @@ export function BoardGroupAutomationPopover(props: GroupAutomationProps) {
   return (
     <>
       <Popover>
-        <PopoverTrigger render={<Button size="xs" variant="outline" />}>
+        <PopoverTrigger className={boardHeaderButtonClass(false)}>
           <SlidersHorizontalIcon />
           Automation
         </PopoverTrigger>

@@ -122,7 +122,6 @@ import {
   isBoardGroupShell,
 } from "./boardGroups";
 import { boardCardStageGoneNotes, boardPipelineColumns } from "./boardProjectPipelines";
-import { BoardPipelinesButton } from "./BoardPipelinesButton";
 import { BOARD_UTILITY_MENU_RESERVED_SPACE, BoardUtilityMenu } from "./BoardUtilityMenu";
 import { BoardSubBoardPlanStrip } from "./BoardSubBoardPlanStrip";
 import { BoardCardFilterField, BoardTopBar } from "./BoardTopBar";
@@ -1700,14 +1699,6 @@ function EnvironmentBoard({
                     </span>
                   ))}
                 </div>
-              ) : null}
-              {/* T3O-43: which stages each project in view uses. */}
-              {scopeProjectId === null && projects.length > 1 ? (
-                <BoardPipelinesButton
-                  accentNameFor={accentNameFor}
-                  projects={pipelineProjects}
-                  view={pipelineView}
-                />
               ) : null}
             </>
           )}
