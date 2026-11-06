@@ -22,6 +22,7 @@ const APPLIED_OUTCOMES = new Set([
   "no-worktree",
   "conflict",
   "checks-fix",
+  "stale-base",
 ]);
 
 export function describeBoardCommandFailure(result: {
@@ -64,6 +65,8 @@ function describeSuccessOutcome(value: unknown): string | null {
       return "The branch conflicts with its base. Resolving the conflicts, then merging.";
     case "checks-fix":
       return "The pull request's checks failed. Fixing them, then merging once CI passes.";
+    case "stale-base":
+      return "The base branch moved since this card's last review round. The card went back to review to rebase and re-review before merging.";
     case "unknown-card":
       return "This card no longer exists.";
     case "wrong-stage":
