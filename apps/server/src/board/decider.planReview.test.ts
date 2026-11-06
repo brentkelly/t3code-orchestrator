@@ -554,9 +554,7 @@ it.effect("a late turn-on reopens only a succeeded plan step on a card still in 
       );
     }
     assert.deepStrictEqual(
-      types(
-        yield* decide(on, readModel({ state: stepState({ status: "succeeded" }), plans: [] })),
-      ),
+      types(yield* decide(on, readModel({ state: stepState({ status: "succeeded" }), plans: [] }))),
       ["board.card-updated"],
     );
     // The card moved on, leaving its settled planning step behind.

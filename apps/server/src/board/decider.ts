@@ -693,22 +693,25 @@ function latePlanReviewStep(
   const state = boardCardStepState(board, card.id);
   const planStage = boardStageWithRole(board, "plan");
   if (state === null || planStage === null) return null;
-  if (state.stepId !== planStage.stageId || card.stage !== planStage.stageId) return null;
-  if (state.planReviewStartedAt !== undefined) return null;
-  const resumed: BoardCardStepState = {
+  if (state.stepId !== planStage.stageId || state.planReviewStartedAt !== undefined) return null;
+  if (state.status !== "paused" && !isBoardTerminalStepStatus(state.status)) return state;
+  // A settled planning step outlives the stage; only a card still there reopens.
+  if (
+    state.status !== "paused" &&
+    (state.status !== "succeeded" || card.stage !== planStage.stageId)
+  )
+    return null;
+  return {
     ...state,
     status: "running",
     stallCount: 0,
     lastError: null,
-    slotHeld: state.mode === "build",
+    // Planning steps hold no slot, so a reopened one takes none.
+    slotHeld: state.status === "paused" && state.mode === "build",
     stalledReason: "gave-up",
     retryAt: null,
     lastNudgeAt: at,
   };
-  if (state.status === "paused") return resumed;
-  // Planning steps hold no slot, so a reopened one takes none.
-  if (state.status === "succeeded") return { ...resumed, slotHeld: false };
-  return isBoardTerminalStepStatus(state.status) ? null : state;
 }
 
 /** Start the plan review on the live plan step (plan review, T3O-39). */

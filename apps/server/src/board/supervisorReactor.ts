@@ -2020,30 +2020,30 @@ const make = Effect.gen(function* () {
   /** A human changed a running plan review's rounds (T3O-50): tell the
       planning thread the new total. A paused step is not told, as with a
       stop; it reads the new count when it resumes. */
-  const handlePlanReviewRoundsChanged = Effect.fn(
-    "board-supervisor-handlePlanReviewRoundsChanged",
-  )(function* (event: Extract<BoardEvent, { type: "board.plan-review-rounds-changed" }>) {
-    const board = yield* readBoard;
-    const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
-    const state = boardCardStepState(board, event.payload.cardId);
-    if (
-      card === undefined ||
-      state === null ||
-      state.stepId !== event.payload.state.stepId ||
-      state.threadId === null ||
-      state.status === "paused" ||
-      isBoardTerminalStepStatus(state.status)
-    ) {
-      return;
-    }
-    const review = yield* runningPlanReviewFor(card, state);
-    if (review === null) return;
-    yield* sendTurn({
-      threadId: state.threadId,
-      text: `${boardPlanReviewRoundsChangedLead(review.rounds)}\n\n${review.instructions}`,
-      runtimeMode: state.runtimeMode,
-    });
-  });
+  const handlePlanReviewRoundsChanged = Effect.fn("board-supervisor-handlePlanReviewRoundsChanged")(
+    function* (event: Extract<BoardEvent, { type: "board.plan-review-rounds-changed" }>) {
+      const board = yield* readBoard;
+      const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
+      const state = boardCardStepState(board, event.payload.cardId);
+      if (
+        card === undefined ||
+        state === null ||
+        state.stepId !== event.payload.state.stepId ||
+        state.threadId === null ||
+        state.status === "paused" ||
+        isBoardTerminalStepStatus(state.status)
+      ) {
+        return;
+      }
+      const review = yield* runningPlanReviewFor(card, state);
+      if (review === null) return;
+      yield* sendTurn({
+        threadId: state.threadId,
+        text: `${boardPlanReviewRoundsChangedLead(review.rounds)}\n\n${review.instructions}`,
+        runtimeMode: state.runtimeMode,
+      });
+    },
+  );
 
   /** Whether the Code review stage's open-as-draft setting is on (T3O-12). */
   const draftPullRequestsOn = Effect.fnUntraced(function* (card: BoardCard) {
