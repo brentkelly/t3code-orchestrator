@@ -207,6 +207,7 @@ function ActivityIcon({
     // T3O-39: plan review rows claim nothing about the work — neutral.
     case "plan-review-started":
     case "plan-review-stopped":
+    case "plan-review-rounds-changed":
     case "plan-review-finished":
       return <ScanSearchIcon className={className} />;
   }
@@ -559,6 +560,12 @@ function activitySentence(
       );
     case "plan-review-stopped":
       return <>turned the plan review off</>;
+    case "plan-review-rounds-changed":
+      return payload.planReviewRounds === undefined ? (
+        <>changed the plan review rounds</>
+      ) : (
+        <>changed the plan review to {roundsPhrase(payload.planReviewRounds)}</>
+      );
     case "plan-review-finished": {
       const run = payload.planReviewRoundsRun ?? null;
       const of = payload.planReviewRounds === undefined ? "" : ` of ${payload.planReviewRounds}`;

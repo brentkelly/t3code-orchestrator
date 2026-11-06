@@ -34,6 +34,7 @@ import {
   BOARD_AUTO_PLAN_OFF_INSTRUCTION,
   boardAutoPlanInstruction,
   BOARD_PLAN_REVIEW_LATE_START_LEAD,
+  boardPlanReviewRoundsChangedLead,
   BOARD_PLAN_REVIEW_STOP_INSTRUCTION,
   BOARD_DECISION_REASON_MAX_LENGTH,
   BOARD_DECISION_TEXT_MAX_LENGTH,
@@ -1988,10 +1989,14 @@ const make = Effect.gen(function* () {
 
   /** A human turned plan review on after the plan was posted (plan review,
       T3O-39): no tool result will carry the instructions, so send them as a
-      turn. A paused step is not told, as with a stop. */
+      turn. The decider has already resumed a paused step or reopened a
+      finished one (T3O-50), so the state it reads here is running. */
   const handlePlanReviewStartedLate = Effect.fn("board-supervisor-handlePlanReviewStartedLate")(
     function* (event: Extract<BoardEvent, { type: "board.plan-review-started" }>) {
       if (event.payload.turnedOnLate !== true) return;
+      // Putting the step to work overtakes a schedule, as the
+      // `board.card-step-recovered` arm does for every other resume (T3O-19, D6).
+      yield* clearScheduleForCard(event.payload.cardId);
       const board = yield* readBoard;
       const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
       const state = boardCardStepState(board, event.payload.cardId);
@@ -2010,6 +2015,34 @@ const make = Effect.gen(function* () {
       yield* sendTurn({
         threadId: state.threadId,
         text: `${BOARD_PLAN_REVIEW_LATE_START_LEAD}\n\n${review.instructions}`,
+        runtimeMode: state.runtimeMode,
+      });
+    },
+  );
+
+  /** A human changed a running plan review's rounds (T3O-50): tell the
+      planning thread the new total. A paused step is not told, as with a
+      stop; it reads the new count when it resumes. */
+  const handlePlanReviewRoundsChanged = Effect.fn("board-supervisor-handlePlanReviewRoundsChanged")(
+    function* (event: Extract<BoardEvent, { type: "board.plan-review-rounds-changed" }>) {
+      const board = yield* readBoard;
+      const card = board.cards.find((candidate) => candidate.id === event.payload.cardId);
+      const state = boardCardStepState(board, event.payload.cardId);
+      if (
+        card === undefined ||
+        state === null ||
+        state.stepId !== event.payload.state.stepId ||
+        state.threadId === null ||
+        state.status === "paused" ||
+        isBoardTerminalStepStatus(state.status)
+      ) {
+        return;
+      }
+      const review = yield* runningPlanReviewFor(card, state);
+      if (review === null) return;
+      yield* sendTurn({
+        threadId: state.threadId,
+        text: `${boardPlanReviewRoundsChangedLead(review.rounds)}\n\n${review.instructions}`,
         runtimeMode: state.runtimeMode,
       });
     },
@@ -10466,6 +10499,8 @@ const make = Effect.gen(function* () {
         return handlePlanReviewStopped(event);
       case "board.plan-review-started":
         return handlePlanReviewStartedLate(event);
+      case "board.plan-review-rounds-changed":
+        return handlePlanReviewRoundsChanged(event);
       case "board.card-step-awaiting-input":
       case "board.card-step-paused":
       case "board.card-step-settled":
@@ -10916,8 +10951,9 @@ const make = Effect.gen(function* () {
           event.type !== "board.worker-removed" &&
           event.type !== "board.card-worker-removal" &&
           // T3O-39: a human turned a running plan review off, or turned one
-          // on after the plan was posted.
+          // on after the plan was posted; T3O-50: changed its rounds.
           event.type !== "board.plan-review-stopped" &&
+          event.type !== "board.plan-review-rounds-changed" &&
           !(event.type === "board.plan-review-started" && event.payload.turnedOnLate === true)
         ) {
           return Effect.void;

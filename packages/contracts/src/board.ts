@@ -2600,9 +2600,11 @@ export const BOARD_CARD_ACTIVITY_KINDS = [
       or was reattached. */
   "card-worker-removal",
   /** Plan review (T3O-39): it started, a human turned it off mid-review, or
-      the plan step completed after it ran. */
+      the plan step completed after it ran. T3O-50: a human changed its rounds
+      mid-review. */
   "plan-review-started",
   "plan-review-stopped",
+  "plan-review-rounds-changed",
   "plan-review-finished",
   /** CI (T3O-44): a pass ended (its outcome on the row), the card was sent
       back to review, or a human skipped CI. Each links to the CI tab. */
@@ -2726,7 +2728,7 @@ export const BoardCardActivityPayload = Schema.Struct({
   /** card-worker-removal (T3O-66): what the removal, or the re-add, did. The
       worker's label rides in `detail`, since a removed worker has none left. */
   removalOutcome: Schema.optionalKey(Schema.Literals(["fallback", "orphaned", "reattached"])),
-  /** plan-review-started / -finished (T3O-39): the round limit, and what the
+  /** plan-review-started / -rounds-changed / -finished (T3O-39): the round limit, and what the
       agent reported. A null `roundsRun` is "rounds not reported". */
   planReviewRounds: Schema.optionalKey(PositiveInt),
   planReviewRoundsRun: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
@@ -7146,6 +7148,14 @@ export const BoardPlanReviewStoppedPayload = Schema.Struct({
 });
 export type BoardPlanReviewStoppedPayload = typeof BoardPlanReviewStoppedPayload.Type;
 
+/** A human changed a running plan review's rounds (T3O-50). `state` carries
+    the new `planReviewRounds`; the reactor tells the planning thread. */
+export const BoardPlanReviewRoundsChangedPayload = Schema.Struct({
+  cardId: BoardCardId,
+  state: BoardCardStepState,
+});
+export type BoardPlanReviewRoundsChangedPayload = typeof BoardPlanReviewRoundsChangedPayload.Type;
+
 // ── Thread todo lists (t3o-18, D1/D3/D4) ───────────────────────────────
 
 /**
@@ -8670,6 +8680,7 @@ export const BOARD_EVENT_TYPES = [
   // T3o: plan review (T3O-39) started, or turned off mid-review.
   "board.plan-review-started",
   "board.plan-review-stopped",
+  "board.plan-review-rounds-changed",
   // T3O-62: the worker registry.
   "board.worker-registered",
   "board.worker-removed",
@@ -9013,6 +9024,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
       ...base,
       type: Schema.Literal("board.plan-review-stopped"),
       payload: BoardPlanReviewStoppedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.plan-review-rounds-changed"),
+      payload: BoardPlanReviewRoundsChangedPayload,
     }),
     Schema.Struct({
       ...base,

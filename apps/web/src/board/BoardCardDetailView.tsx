@@ -79,6 +79,7 @@ import {
   type BoardProjectExecutionConfig,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { Debouncer } from "@tanstack/react-pacer";
 import { Link } from "@tanstack/react-router";
 import {
   ArchiveIcon,
@@ -112,7 +113,16 @@ import {
   XIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import { Fragment, Suspense, lazy, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  Suspense,
+  lazy,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
@@ -1214,15 +1224,42 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   );
 }
 
+/** How long a mid-review rounds change waits for another click before it is sent. */
+const PLAN_REVIEW_ROUNDS_SETTLE_MS = 800;
+
 /**
  * Plan review (T3O-39): an adversarial review of the plan once it is posted,
- * run by the planning agent with subagents. Rounds lock while one runs; the
- * switch stays live, and turning it off stops the review.
+ * run by the planning agent with subagents. While one runs, a rounds change
+ * tells the agent the new total, and turning the switch off stops the review.
  */
 function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   const view = props.planReview;
   const onSet = props.onSetPlanReview;
+  // Mid-review every commit sends the planning agent a turn, so a run of
+  // stepper clicks lands as one change once it settles.
+  const [pendingRounds, setPendingRounds] = useState<number | null>(null);
+  // The settled commit is built from the view as it is when the timer fires:
+  // a review stopped elsewhere in the meantime must not be turned back on.
+  const latest = useRef({ view, onSet });
+  useEffect(() => {
+    latest.current = { view, onSet };
+  });
+  const [roundsCommit] = useState(
+    () =>
+      new Debouncer(
+        (next: number) => {
+          setPendingRounds(null);
+          const { view: now, onSet: set } = latest.current;
+          if (now == null || set === undefined || !now.enabled || !now.inProgress) return;
+          set(nextBoardCardPlanReview(now, { rounds: next }));
+        },
+        { wait: PLAN_REVIEW_ROUNDS_SETTLE_MS },
+      ),
+  );
+  // A rounds change still settling when the panel closes is landed, not dropped.
+  useEffect(() => () => roundsCommit.flush(), [roundsCommit]);
   if (view == null || onSet === undefined) return null;
+  const rounds = pendingRounds ?? view.rounds;
   return (
     <div className="flex flex-col gap-2 border-t border-border p-3.5">
       <div className="flex items-center gap-1.5">
@@ -1236,7 +1273,11 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
           aria-label="Adversarial plan review"
           checked={view.enabled}
           className="mt-0.5 shrink-0"
-          onCheckedChange={(next) => onSet(nextBoardCardPlanReview(view, { enabled: next }))}
+          onCheckedChange={(next) => {
+            roundsCommit.cancel();
+            setPendingRounds(null);
+            onSet(nextBoardCardPlanReview({ ...view, rounds }, { enabled: next }));
+          }}
         />
         <span className="flex min-w-0 flex-col gap-0.5">
           <span className="font-medium text-foreground">Adversarial plan review</span>
@@ -1246,17 +1287,23 @@ function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps
       {view.enabled ? (
         <div className="flex items-center gap-2.5 pl-[38px]">
           <span className="flex-1 text-[12px] font-medium text-foreground">Rounds</span>
-          {view.inProgress ? (
-            <span className="text-[12px] text-muted-foreground">{view.rounds}, locked</span>
-          ) : (
-            <NumberStepper
-              ariaLabel="plan review rounds"
-              max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
-              min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
-              onChange={(rounds) => onSet(nextBoardCardPlanReview(view, { rounds }))}
-              value={view.rounds}
-            />
-          )}
+          <NumberStepper
+            ariaLabel="plan review rounds"
+            max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
+            min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
+            onChange={(next) => {
+              const change = nextBoardCardPlanReview(view, { rounds: next });
+              if (!view.inProgress) {
+                roundsCommit.cancel();
+                setPendingRounds(null);
+                onSet(change);
+                return;
+              }
+              setPendingRounds(change.rounds);
+              roundsCommit.maybeExecute(change.rounds);
+            }}
+            value={rounds}
+          />
         </div>
       ) : null}
     </div>
@@ -3361,7 +3408,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
             ) : (
               <GroupActionsSection group={group} props={props} unmet={unmet} />
             )}
-            <PlanReviewSection props={props} />
+            <PlanReviewSection key={props.detail.card.id} props={props} />
             <QueueSection props={props} />
             {props.stepFailure !== null ? (
               <BoardCardStepFailure
@@ -3462,7 +3509,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               ) : (
                 <GroupActionsSection group={group} props={props} unmet={unmet} />
               )}
-              <PlanReviewSection props={props} />
+              <PlanReviewSection key={props.detail.card.id} props={props} />
               <RailSections
                 group={group}
                 onOpenCi={hasCi ? () => setPane("ci") : undefined}

@@ -15,6 +15,11 @@ number is a limit: the review stops early once a round finds nothing new.
 A card you have not touched follows the Settings default. Changing the switch or the rounds gives the
 card its own setting.
 
+You can switch it on after the plan is posted, even once planning has finished or while the planning
+step is paused. The review starts straight away in the same planning thread, and the plan comes back
+to you for sign-off when it ends. Changing the Settings default never starts a review on a card whose
+plan is already posted.
+
 ## The default and the prompt
 
 **Settings → Board → Pipeline → Planning → Plan review** holds:
@@ -29,12 +34,15 @@ re-posted and the step completed, however you word it.
 
 ## While a review runs
 
-The section header shows **In progress** and the rounds are locked. To stop a review, switch it off:
+The section header shows **In progress**. You can still change the rounds: once you stop clicking, the agent is told
+the new limit, and stops if it has already run that many. To stop a review, switch it off:
 the agent is told to summarise what it has found, re-post the plan if it changed, and finish.
 Changing the Settings default does not stop a review that has already started.
+If you switch off a review that started after planning had finished, the plan the agent re-posts
+still replaces the old one, but the card keeps the planning summary from before the review.
 
 On an auto-planned card the review still runs, but the agent decides everything itself and finishes
 without waiting for your sign-off.
 
-The card's activity shows when a review started, when it was turned off, and how many rounds it
-ran.
+The card's activity shows when a review started, when its rounds changed, when it was turned off,
+and how many rounds it ran.

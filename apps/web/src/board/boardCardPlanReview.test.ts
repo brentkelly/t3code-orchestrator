@@ -60,7 +60,7 @@ describe("boardCardPlanReviewView", () => {
     expect(own).toMatchObject({ enabled: false, rounds: 5, summary: "Off" });
   });
 
-  it("locks the rounds while a review is in progress on the planning step", () => {
+  it("keeps the rounds adjustable while a review is in progress, within 1 to 20", () => {
     const view = boardCardPlanReviewView({
       card: { stage: planning, planReview: { enabled: true, rounds: 4 } },
       isGroup: false,
@@ -73,8 +73,16 @@ describe("boardCardPlanReviewView", () => {
       rounds: 1,
       summary: "In progress · 1 round",
       canDecrease: false,
-      canIncrease: false,
+      canIncrease: true,
     });
+    const high = boardCardPlanReviewView({
+      card: { stage: planning, planReview: { enabled: true, rounds: 20 } },
+      isGroup: false,
+      stages: BOARD_SEED_STAGES,
+      planStageExecution: settings(),
+      planReviewStarted: { rounds: 20 },
+    });
+    expect(high).toMatchObject({ inProgress: true, canDecrease: true, canIncrease: false });
   });
 
   it("keeps an inherited review in progress after the Settings default turns off", () => {

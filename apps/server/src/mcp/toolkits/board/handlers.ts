@@ -98,6 +98,7 @@ import { boardAgentActor, stampBoardActivityActor } from "../../../board/activit
 import { boardBriefVersion } from "../../../board/briefEdits.ts";
 import { isKeptStepThread, keptPlanningStepId } from "../../../board/planningThreadKeep.ts";
 import {
+  boardCompletionReopenedByPlanReview,
   planReviewInstructions,
   resolveCardPlanReview,
   runningPlanReviewStep,
@@ -1093,7 +1094,10 @@ export const boardHandlers = {
       // (T3O-19): it may still record its own abandoned step.
       const keptMatch = isKeptStepThread(board, card, stepId, deps.scope.thread.threadId);
       const supersedes =
-        existing !== undefined && existing.outcome !== "succeeded" && (liveMatch || keptMatch);
+        (existing !== undefined && existing.outcome !== "succeeded" && (liveMatch || keptMatch)) ||
+        (input.outcome === "succeeded" &&
+          liveMatch &&
+          boardCompletionReopenedByPlanReview(existing, liveState));
       // The OTHER path where a retry is not a no-op: a `succeeded` record whose
       // payload nothing can read is repaired rather than re-emitted (T3O-14).
       // The decider decides it — this mirrors the rule so the reply does not

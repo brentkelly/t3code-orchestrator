@@ -3506,6 +3506,22 @@ export function makeBoardSqlProjector(sql: SqlClient.SqlClient): BoardSqlProject
         });
         return;
 
+      case "board.plan-review-rounds-changed":
+        yield* upsertStepState(event.payload.state);
+        yield* recordActivity({
+          event,
+          cardId: event.payload.cardId,
+          kind: "plan-review-rounds-changed",
+          payload: {
+            stepId: event.payload.state.stepId,
+            ...(event.payload.state.planReviewRounds === undefined
+              ? {}
+              : { planReviewRounds: event.payload.state.planReviewRounds }),
+          },
+          threadId: event.payload.state.threadId,
+        });
+        return;
+
       // The override is recorded on the step row and nothing else (t3o-33):
       // the step is still queued, and the activity rail keeps its nine curated
       // kinds. What the user sees change is the card starting.
