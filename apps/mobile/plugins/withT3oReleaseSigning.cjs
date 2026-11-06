@@ -3,7 +3,7 @@
  * matching passwords/alias are set. No-op otherwise so debug builds stay
  * unsigned-by-upload-key.
  */
-const { withAppBuildGradle } = require("@expo/config-plugins");
+const { withAppBuildGradle } = require("expo/config-plugins");
 
 function withT3oReleaseSigning(config) {
   const storeFile = process.env.ANDROID_KEYSTORE_PATH;
