@@ -59,6 +59,65 @@ describe("boardCardStatus", () => {
     expect(tone?.textClassName).toBe("text-foreground-secondary");
   });
 
+  it("ranks a conflict rewrite above Running", () => {
+    const tone = boardCardStatus({
+      card: card({
+        stage: ids.merge,
+        stepRunning: true,
+        threadState: "working",
+        stepConflictFix: true,
+      }),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(tone?.label).toBe("Conflicts");
+    expect(tone?.textClassName).toBe("text-warning-foreground");
+  });
+
+  it("ranks a queued conflict rewrite as Conflicts, not Queued", () => {
+    const tone = boardCardStatus({
+      card: card({ stage: ids.merge, queued: true, stepConflictFix: true }),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(tone?.label).toBe("Conflicts");
+    expect(tone?.textClassName).toBe("text-warning-foreground");
+  });
+
+  it("ranks a CI fix above Running", () => {
+    const tone = boardCardStatus({
+      card: card({
+        stage: ids.merge,
+        stepRunning: true,
+        threadState: "working",
+        stepChecksFix: true,
+      }),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(tone?.label).toBe("Fixing CI");
+    expect(tone?.textClassName).toBe("text-warning-foreground");
+  });
+
+  it("ranks a queued CI fix as Fixing CI, not Queued", () => {
+    const tone = boardCardStatus({
+      card: card({ stage: ids.merge, queued: true, stepChecksFix: true }),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(tone?.label).toBe("Fixing CI");
+    expect(tone?.textClassName).toBe("text-warning-foreground");
+  });
+
+  it("ranks a pending question above a conflict rewrite", () => {
+    const waiting = card({
+      stage: ids.merge,
+      stepConflictFix: true,
+      awaitingInput: true,
+      threadState: "waiting",
+    });
+    expect(boardCardAttention({ card: waiting, stages: BOARD_SEED_STAGES })?.reason).toBe("input");
+    const tone = boardCardStatus({ card: waiting, stages: BOARD_SEED_STAGES });
+    expect(tone?.label).toBe("Input needed");
+    expect(tone?.textClassName).toBe("text-adaptive-violet-700-300");
+  });
+
   it("marks a blocked card amber", () => {
     const tone = boardCardStatus({
       card: card({ stage: ids.ready, blocked: true }),

@@ -10,6 +10,7 @@ import {
   type BoardStageDefinition,
 } from "@t3tools/contracts";
 import type { StatusTone } from "../../components/StatusPill";
+import { boardMergeHold } from "./boardMergeHold";
 
 export type BoardCardStatusKind = "success" | "info" | "attention" | "warning" | "neutral";
 
@@ -37,7 +38,8 @@ export const BOARD_CARD_STATUS_TONES: Record<BoardCardStatusKind, Omit<StatusTon
 };
 
 export type BoardCardStatusCard = Parameters<typeof boardCardAttention>[0]["card"] &
-  Pick<BoardCardShell, "blocked" | "queued">;
+  Pick<BoardCardShell, "blocked" | "queued"> &
+  Partial<Pick<BoardCardShell, "stepConflictFix" | "stepChecksFix">>;
 
 export function boardCardStatus(input: {
   readonly card: BoardCardStatusCard;
@@ -52,16 +54,21 @@ export function boardCardStatus(input: {
   if (stage !== undefined && effectiveBoardStageRole(stage) === "done") {
     return status("success", "Done");
   }
-  if (isBoardCardWorking(card)) {
-    return status("info", "Running");
-  }
   const attention = boardCardAttention({ card, stages, now: input.now });
   // A pending question or permission prompt is answerable in one tap, the same
   // carve-out `boardCardNotice` and `docs/t3o/status-colours.md` give it over
-  // the dependency gate. `blocked` and `queued` stay after that so they cannot
-  // hide the violet pill.
+  // Conflicts, Running, and the dependency gate. This row has one pill.
   if (attention !== null && (attention.reason === "input" || attention.reason === "permission")) {
     return status("attention", attention.label);
+  }
+  // A held merge is amber even while the fix is running or queued — the claim
+  // is that the MERGE is held (`docs/t3o/status-colours.md`), not motion.
+  const hold = boardMergeHold(card);
+  if (hold !== null) {
+    return status("warning", hold.label);
+  }
+  if (isBoardCardWorking(card)) {
+    return status("info", "Running");
   }
   if (card.queued) {
     return status("neutral", "Queued");

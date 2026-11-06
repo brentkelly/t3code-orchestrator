@@ -40,6 +40,7 @@ import {
   boardCommandAlert,
   boardCommandDidApply,
 } from "./boardCommandResult";
+import { boardMergeHold } from "./boardMergeHold";
 
 type BoardCardScreenProps = StaticScreenProps<{
   readonly environmentId: string;
@@ -96,10 +97,12 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
   }
 
   const card = detail.card;
+  const mergeHold = boardMergeHold(shell);
   const primary = boardStagePrimaryAction(stages, card.stage, {
     pullRequestState: card.pullRequest?.state ?? null,
     pullRequestNumber: card.pullRequest?.number ?? null,
-    conflictFixLive: shell?.stepConflictFix === true,
+    conflictFixLive: mergeHold !== null,
+    conflictFixReason: mergeHold?.mergeDisabledReason ?? null,
     stepHeld: shell?.held === true,
   });
   const secondary = boardStageSecondaryActions(stages, card.stage, {
@@ -313,18 +316,23 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
         ) : null}
 
         {primary !== null ? (
-          <MaterialButton
-            label={primary.label}
-            tone="primary"
-            disabled={busy || (primary.kind === "merge" && primary.disabled)}
-            onPress={() => {
-              if (primary.kind === "merge") {
-                run(() => mergeCard({ environmentId, input: { cardId: card.id } }));
-                return;
-              }
-              requestMove(primary.toStage as BoardStageId);
-            }}
-          />
+          <View className="gap-2">
+            <MaterialButton
+              label={primary.label}
+              tone="primary"
+              disabled={busy || (primary.kind === "merge" && primary.disabled)}
+              onPress={() => {
+                if (primary.kind === "merge") {
+                  run(() => mergeCard({ environmentId, input: { cardId: card.id } }));
+                  return;
+                }
+                requestMove(primary.toStage as BoardStageId);
+              }}
+            />
+            {primary.kind === "merge" && primary.disabled && primary.disabledReason !== null ? (
+              <Text className="text-sm text-foreground-muted">{primary.disabledReason}</Text>
+            ) : null}
+          </View>
         ) : currentStage !== undefined &&
           effectiveBoardStageRole(currentStage) === "done" &&
           card.archivedAt === null ? (
