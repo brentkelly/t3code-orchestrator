@@ -33,6 +33,7 @@ import {
   commandError,
   followStoredEvents,
   makeSignalReader,
+  readSignalLog,
 } from "./ThreadGatewayV2.ts";
 
 const threadId = ThreadId.make("thread-1");
@@ -173,39 +174,14 @@ describe("makeSignalReader", () => {
       type: "turn-ended",
       threadId,
       turnRef: "run-1",
-      outcome: "completed",
-      errorMessage: null,
     });
     assert.isNull(read(stored("run.updated", run("completed"))));
   });
 
-  it("carries the provider's failure text onto the failed turn's end", () => {
-    const read = singleSignalReader();
-    const failure = {
-      id: TurnItemId.make("item-error"),
-      runId: RunId.make("run-1"),
-      type: "error",
-      failure: { class: "usage_limit", message: "Grok prompt request failed: quota." },
-    };
-    assert.isNull(read(stored("turn-item.updated", failure)));
-    assert.deepStrictEqual(read(stored("run.updated", run("failed"))), {
-      type: "turn-ended",
-      threadId,
-      turnRef: "run-1",
-      outcome: "failed",
-      errorMessage: "Grok prompt request failed: quota.",
-    });
-  });
-
-  it("reads each terminal status in the board's outcome vocabulary", () => {
-    for (const [status, outcome] of [
-      ["failed", "failed"],
-      ["interrupted", "interrupted"],
-      ["cancelled", "cancelled"],
-      ["rolled_back", "cancelled"],
-    ] as const) {
+  it("ends the turn on every terminal status", () => {
+    for (const status of ["failed", "interrupted", "cancelled", "rolled_back"] as const) {
       const signal = singleSignalReader()(stored("run.updated", run(status)));
-      assert.include(signal, { type: "turn-ended", outcome });
+      assert.include(signal, { type: "turn-ended", turnRef: "run-1" });
     }
   });
 
@@ -233,13 +209,25 @@ describe("makeSignalReader", () => {
     assert.isNull(read(stored("runtime-request.updated", request("q1", "pending"))));
     assert.deepStrictEqual(
       read(stored("runtime-request.updated", request("q1", "resolved", { which: "A" }))),
-      { type: "input-resolved", threadId, answered: true },
+      { type: "input-resolved", threadId, answered: true, byBoard: false },
     );
     assert.deepStrictEqual(read(stored("runtime-request.updated", request("q2", "cancelled"))), {
       type: "input-resolved",
       threadId,
       answered: false,
+      byBoard: false,
     });
+    // The board's own answer (the auto-plan steer) says so, durably.
+    assert.deepStrictEqual(
+      read(
+        stored(
+          "runtime-request.updated",
+          request("q3", "resolved", { which: "B" }),
+          "server:board-auto-plan-answer:uuid",
+        ),
+      ),
+      { type: "input-resolved", threadId, answered: true, byBoard: true },
+    );
   });
 
   it("reads an answered permission prompt, and ignores an auth refresh", () => {
@@ -283,8 +271,6 @@ describe("makeSignalReader", () => {
         type: "turn-ended",
         threadId,
         turnRef: "run-1",
-        outcome: "interrupted",
-        errorMessage: null,
       },
     ]);
     // The board's own interrupt is already tracked by the board.
@@ -300,6 +286,48 @@ describe("makeSignalReader", () => {
       makeSignalReader()(
         stored("run.updated", run("cancelled", null, { workStartedAt: t0 }), CLIENT_COMMAND_ID),
       ).map((signal) => signal.type),
+      ["interrupt-requested", "turn-ended"],
+    );
+  });
+
+  it("reads a queued run steered in, deleted or archived away as neither a Stop nor a turn end", () => {
+    // Promote-to-steer, a queue delete and an archive all cancel the queued run
+    // under the human's own command id, never started — the shape a start-up
+    // Stop has. Seeing it queued first is what tells them apart (T3O-76).
+    for (const created of ["run.created", "run.updated"]) {
+      const read = makeSignalReader();
+      read(stored(created, run("queued", null, { queuePosition: 1 }), CLIENT_COMMAND_ID));
+      assert.deepStrictEqual(
+        read(
+          stored("run.updated", run("cancelled", null, { queuePosition: null }), CLIENT_COMMAND_ID),
+        ),
+        [],
+        created,
+      );
+    }
+  });
+
+  it("still reads a queued run that failed to start as a turn that never began", () => {
+    // v2's failQueuedRunStart takes a queued run straight to failed when it
+    // cannot start; the board must still hear it, or the step holds its slot.
+    const read = makeSignalReader();
+    read(stored("run.created", run("queued", null, { queuePosition: 1 }), CLIENT_COMMAND_ID));
+    assert.deepStrictEqual(
+      read(stored("run.updated", run("failed", null, { queuePosition: null }))).map(
+        (signal) => signal.type,
+      ),
+      ["turn-start-failed"],
+    );
+  });
+
+  it("still reads a human's Stop on a run that left the queue and was starting", () => {
+    const read = makeSignalReader();
+    read(stored("run.created", run("queued", null, { queuePosition: 1 }), CLIENT_COMMAND_ID));
+    assert.deepStrictEqual(read(stored("run.updated", run("starting", null))), []);
+    assert.deepStrictEqual(
+      read(stored("run.updated", run("interrupted", null), CLIENT_COMMAND_ID)).map(
+        (signal) => signal.type,
+      ),
       ["interrupt-requested", "turn-ended"],
     );
   });
@@ -520,6 +548,70 @@ describe("followStoredEvents", () => {
         assert.deepStrictEqual(Array.from(sequences), [11, 12, 13]);
         assert.deepStrictEqual(subscribedAfter, [10, 12]);
       }),
+    );
+  });
+});
+
+describe("readSignalLog", () => {
+  effectIt.effect("a resume reads from before its cursor and still reports the run's end", () => {
+    const failure = {
+      id: TurnItemId.make("item-error-resume"),
+      runId: RunId.make("run-resume"),
+      type: "error",
+      failure: { class: "usage_limit", message: "Grok prompt request failed: quota." },
+    };
+    const errorItem = stored("turn-item.updated", failure);
+    const ended = stored("run.updated", run("failed", t0, { id: RunId.make("run-resume") }));
+    const log = [errorItem, ended];
+    const subscribedAfter: Array<number | undefined> = [];
+    const sink = {
+      latestSequence: () => Effect.succeed(ended.sequence),
+      stream: (input?: { readonly afterSequence?: number }) => {
+        subscribedAfter.push(input?.afterSequence);
+        return Stream.fromIterable(
+          log.filter((event) => event.sequence > (input?.afterSequence ?? 0)),
+        );
+      },
+    };
+    // The central cursor already passed the error item, which carries no signal.
+    return readSignalLog(sink, errorItem.sequence, Schedule.recurs(0)).pipe(
+      Stream.runCollect,
+      Effect.map((batches) => {
+        assert.deepStrictEqual(Array.from(batches), [
+          {
+            sequence: ended.sequence,
+            signals: [
+              {
+                type: "turn-ended",
+                threadId,
+                turnRef: "run-resume",
+              },
+            ],
+          },
+        ]);
+        assert.isBelow(subscribedAfter[0] ?? Infinity, errorItem.sequence);
+      }),
+    );
+  });
+
+  effectIt.effect("a resume does not repeat a question already signalled before the cursor", () => {
+    const question = (status: string) =>
+      stored("runtime-request.updated", {
+        id: RuntimeRequestId.make("request-resume"),
+        kind: "user_input",
+        status,
+      });
+    const asked = question("pending");
+    const askedAgain = question("pending");
+    const log = [asked, askedAgain];
+    const sink = {
+      latestSequence: () => Effect.succeed(askedAgain.sequence),
+      stream: (input?: { readonly afterSequence?: number }) =>
+        Stream.fromIterable(log.filter((event) => event.sequence > (input?.afterSequence ?? 0))),
+    };
+    return readSignalLog(sink, asked.sequence, Schedule.recurs(0)).pipe(
+      Stream.runCollect,
+      Effect.map((batches) => assert.deepStrictEqual(Array.from(batches), [])),
     );
   });
 });

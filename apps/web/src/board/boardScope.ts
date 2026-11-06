@@ -4,13 +4,13 @@
  * `BoardPage` renders either the root board or one parent's sub-board; the
  * difference is DATA, held here as pure functions over the shells the page
  * already has. Root scope shows top-level cards across every stage; sub-board
- * scope shows one parent's children across the floor-onward stages a
- * materialised child may occupy (`isBoardStageAtOrAfterSubBoardFloor` — the
- * decider's own rule, so the columns rendered are exactly the columns a child
- * can be in).
+ * scope shows one group's children across Deferred and every stage (T3O-29).
  */
 import {
-  isBoardStageAtOrAfterSubBoardFloor,
+  BOARD_DEFERRED_STAGE_ID,
+  boardStageBeforeBuild,
+  boardStageIndex,
+  isBoardDeferredStage,
   type BoardCardId,
   type BoardCardShell,
   type BoardStageDefinition,
@@ -50,17 +50,131 @@ export function filterBoardColumnsByScope(
   ) as BoardStageColumns;
 }
 
-/** The stages a scope renders: every stage on the root board, the
-    materialisation floor onward inside a sub-board (D1 — ideation columns
-    cannot hold a child, so they do not render there). `stageState` is the
-    read-model view over the same ordered list, for the role helpers. */
+/** The Deferred column (T3O-29): a system stage, never in the board's stage
+    list, drawn only on a sub-board. */
+export const BOARD_DEFERRED_STAGE: BoardStageDefinition = {
+  stageId: BOARD_DEFERRED_STAGE_ID,
+  label: "Deferred",
+  role: null,
+  orderKey: "0",
+  createdAt: "1970-01-01T00:00:00.000Z",
+  updatedAt: "1970-01-01T00:00:00.000Z",
+  projectId: null,
+};
+
+/** The stages a scope renders: every stage on the root board; Deferred and
+    then every stage inside a group (T3O-29), since an inherit group's
+    children run the whole pipeline. */
 export function boardScopeStages(
   stages: ReadonlyArray<BoardStageDefinition>,
-  stageState: BoardState,
   scope: BoardScope,
 ): ReadonlyArray<BoardStageDefinition> {
   if (scope.kind === "root") return stages;
-  return stages.filter((stage) => isBoardStageAtOrAfterSubBoardFloor(stageState, stage.stageId));
+  return [BOARD_DEFERRED_STAGE, ...stages];
+}
+
+/**
+ * A column's collapse default when the human has not set one. The root
+ * board's first column (the intake) starts as a rail. Inside a group an empty
+ * Deferred column, and every empty column before Ready, start as rails, so a
+ * fully planned split reads like the sub-board it always was. A stored manual
+ * collapse or expand always wins (`isBoardColumnCollapsed`).
+ */
+export function boardScopeColumnCollapsedByDefault(input: {
+  readonly scope: BoardScope;
+  readonly stageState: BoardState;
+  readonly stageId: BoardStageDefinition["stageId"];
+  readonly renderedIndex: number;
+  readonly cardCount: number;
+}): boolean {
+  if (input.scope.kind === "root") return input.renderedIndex === 0;
+  if (input.cardCount > 0) return false;
+  if (isBoardDeferredStage(input.stageId)) return true;
+  const ready = boardStageBeforeBuild(input.stageState);
+  if (ready === null) return false;
+  return (
+    boardStageIndex(input.stageState, input.stageId) <
+    boardStageIndex(input.stageState, ready.stageId)
+  );
+}
+
+/** Whether the auto-collapse setting folds this column (T3O-40): on, and empty. */
+export function boardColumnAutoFolded(input: {
+  readonly autoCollapseEmpty: boolean;
+  readonly cardCount: number;
+}): boolean {
+  return input.autoCollapseEmpty && input.cardCount === 0;
+}
+
+/**
+ * A column's rendered collapse state with the auto-collapse setting applied
+ * (T3O-40). While the setting is on, an empty column folds whatever the store
+ * or the scope default says, and only a peek or a drag hovering it opens it.
+ * A column holding cards falls back to the stored-or-default value, so a stage
+ * collapsed by hand stays collapsed when cards arrive.
+ */
+export function boardColumnCollapsed(input: {
+  readonly autoCollapseEmpty: boolean;
+  readonly cardCount: number;
+  readonly dragOverThisColumn: boolean;
+  readonly peeked: boolean;
+  readonly storedOrDefaultCollapsed: boolean;
+}): boolean {
+  return boardColumnAutoFolded(input)
+    ? !(input.peeked || input.dragOverThisColumn)
+    : input.storedOrDefaultCollapsed;
+}
+
+/**
+ * The auto-folded rail a live drag holds open (T3O-40): the latest one it
+ * hovered. Hovering an ordinary column keeps it, so leaving the rail doesn't
+ * snap it shut under the pointer; reaching another auto-folded rail replaces
+ * it, so a long drag across empty stages never widens the board by more than
+ * one opened rail.
+ */
+export function boardDragOpenedRail<S extends string>(input: {
+  readonly current: S | null;
+  readonly hovered: S;
+  readonly hoveredAutoFolded: boolean;
+}): S | null {
+  return input.hoveredAutoFolded ? input.hovered : input.current;
+}
+
+/**
+ * Where a column's collapse toggle goes (T3O-40). On an auto-folded column it
+ * only opens or ends a transient peek, so `collapsedByStage` is never written
+ * for it; on any other column it is the stored manual choice.
+ */
+export function boardCollapseToggle(input: {
+  readonly autoCollapseEmpty: boolean;
+  readonly cardCount: number;
+  readonly key: string;
+  readonly collapsed: boolean;
+  readonly peeked: ReadonlySet<string>;
+}): { readonly kind: "peek"; readonly peeked: ReadonlySet<string> } | { readonly kind: "store" } {
+  if (!boardColumnAutoFolded(input)) return { kind: "store" };
+  const peeked = new Set(input.peeked);
+  if (input.collapsed) peeked.delete(input.key);
+  else peeked.add(input.key);
+  return { kind: "peek", peeked };
+}
+
+/**
+ * The peeks that survive this render (T3O-40): only those on a column of the
+ * current scope that is still empty, and none while the setting is off. A peek
+ * ends when cards arrive, so the column folds again the next time it empties.
+ * Returns `peeked` itself when nothing was dropped, so callers can compare by
+ * reference before setting state.
+ */
+export function livePeekedColumns(input: {
+  readonly autoCollapseEmpty: boolean;
+  readonly peeked: ReadonlySet<string>;
+  readonly emptyColumnKeys: ReadonlyArray<string>;
+}): ReadonlySet<string> {
+  if (input.peeked.size === 0) return input.peeked;
+  const empty = new Set(input.autoCollapseEmpty ? input.emptyColumnKeys : []);
+  const live = [...input.peeked].filter((key) => empty.has(key));
+  return live.length === input.peeked.size ? input.peeked : new Set(live);
 }
 
 /**
@@ -73,9 +187,14 @@ export function boardScopeCollapseKey(scope: BoardScope, stageId: string): strin
   return scope.kind === "root" ? stageId : `sub/${scope.parentCardId}/${stageId}`;
 }
 
+/** Which board's filter text a scope reads (T3O-29). */
+export function boardScopeQueryKey(scope: BoardScope): string {
+  return scope.kind === "root" ? "root" : `sub/${scope.parentCardId}`;
+}
+
 /**
  * Where a sub-board URL should land (D3): on the sub-board when the parent
- * exists and has children; on the root board with the parent's sheet open
+ * exists and is a group; on the root board with the parent's sheet open
  * when the parent exists childless (children all deleted, or a stale link);
  * on the bare root board when the named card does not exist at all. Never a
  * 404 inside the shell — reverse states include navigation.
@@ -86,11 +205,13 @@ export type SubBoardEntry =
   | { readonly kind: "redirect-root" };
 
 export function resolveSubBoardEntry(
-  cards: ReadonlyArray<Pick<BoardCardShell, "cardId" | "parentCardId">>,
+  cards: ReadonlyArray<Pick<BoardCardShell, "cardId" | "parentCardId" | "group">>,
   parentCardId: BoardCardId,
 ): SubBoardEntry {
   const parent = cards.find((card) => card.cardId === parentCardId);
   if (parent === undefined) return { kind: "redirect-root" };
-  const hasChildren = cards.some((card) => card.parentCardId === parentCardId);
-  return hasChildren ? { kind: "sub-board" } : { kind: "redirect-parent-sheet" };
+  // An empty heading is still a group (T3O-29): its board is where cards go.
+  const isGroup =
+    parent.group !== undefined || cards.some((card) => card.parentCardId === parentCardId);
+  return isGroup ? { kind: "sub-board" } : { kind: "redirect-parent-sheet" };
 }

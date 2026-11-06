@@ -17,7 +17,8 @@ const resolveWindowsUserData = (appDataDirectory: string) =>
   }).pipe(Effect.provide(DesktopPreReadyFileSystem.layer));
 
 it.layer(NodeServices.layer)("DesktopPreReadyFileSystem", (it) => {
-  it.effect("migrates the legacy Windows profile state", () =>
+  // T3o: upstream T3 Code's Windows profile state is never adopted.
+  it.effect("does not adopt upstream's legacy Windows profile state", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -27,8 +28,8 @@ it.layer(NodeServices.layer)("DesktopPreReadyFileSystem", (it) => {
 
       const userData = yield* resolveWindowsUserData(root);
 
-      assert.equal(userData, path.join(root, "t3code-v2"));
-      assert.equal(yield* fileSystem.readFileString(path.join(userData, "Local State")), "keys");
+      assert.equal(userData, path.join(root, "t3o"));
+      assert.isFalse(yield* fileSystem.exists(path.join(userData, "Local State")));
     }),
   );
 

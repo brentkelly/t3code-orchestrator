@@ -16,6 +16,7 @@
 import type {
   ChatAttachment,
   CommandId,
+  EnvironmentId,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -150,6 +151,15 @@ export const deletedThreadState = (threadId: ThreadId, projectId: ProjectId): Bo
   usageLimit: null,
 });
 
+/**
+ * What `threadState` answers for a thread on a worker the board cannot reach
+ * right now (T3O-63): neither alive nor dead. Never read as a thread that is
+ * gone — a worker the board merely cannot see may well still be running it
+ * (D22).
+ */
+export const UNKNOWN_THREAD_STATE = "unknown" as const;
+export type UnknownThreadState = typeof UNKNOWN_THREAD_STATE;
+
 /** The cheap per-thread facts the release sweep pre-filters on (t3o-13). */
 export interface BoardThreadRecord {
   readonly threadId: ThreadId;
@@ -188,9 +198,6 @@ export interface BoardAssistantMessage {
 
 // ── Signals ────────────────────────────────────────────────────────────
 
-/** How a turn ended (T3O-22, D9). */
-export type BoardTurnOutcome = "completed" | "failed" | "interrupted" | "cancelled";
-
 export interface BoardTodoItem {
   readonly step: string;
   readonly status: string;
@@ -210,7 +217,8 @@ export interface BoardTodoItem {
  * - `interrupt-requested` — someone pressed Stop.
  * - `approval-responded` — a human answered a permission prompt.
  * - `input-requested` / `input-resolved` — a structured question raised, and
- *   closed; `answered` separates an answer from a cancellation.
+ *   closed; `answered` separates an answer from a cancellation, and `byBoard`
+ *   marks the board's own answer (`answerPendingInput`).
  * - `session-started` — a provider session came up.
  * - `todos-changed` — the agent's todo list was replaced.
  * - `thread-deleted` — the thread is gone for good.
@@ -220,8 +228,6 @@ export type ThreadSignal =
       readonly type: "turn-ended";
       readonly threadId: ThreadId;
       readonly turnRef: string | undefined;
-      readonly outcome: BoardTurnOutcome | undefined;
-      readonly errorMessage: string | null;
     }
   | { readonly type: "turn-start-failed"; readonly threadId: ThreadId; readonly detail: string }
   | {
@@ -234,7 +240,12 @@ export type ThreadSignal =
   | { readonly type: "interrupt-requested"; readonly threadId: ThreadId }
   | { readonly type: "approval-responded"; readonly threadId: ThreadId }
   | { readonly type: "input-requested"; readonly threadId: ThreadId }
-  | { readonly type: "input-resolved"; readonly threadId: ThreadId; readonly answered: boolean }
+  | {
+      readonly type: "input-resolved";
+      readonly threadId: ThreadId;
+      readonly answered: boolean;
+      readonly byBoard?: boolean;
+    }
   | { readonly type: "session-started"; readonly threadId: ThreadId }
   | {
       readonly type: "todos-changed";
@@ -274,6 +285,15 @@ export interface ThreadSpawnInput {
   readonly worktreePath: string;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
+  /** The worker to spawn on (T3O-63); absent means this server. */
+  readonly workerId?: EnvironmentId;
+  /** A card's brief files to copy onto that worker before the thread starts,
+      by name and path on this server. Ignored for a local spawn, whose
+      thread reads them in place. */
+  readonly stageAttachments?: {
+    readonly cardId: string;
+    readonly files: ReadonlyArray<{ readonly name: string; readonly path: string }>;
+  };
 }
 
 export interface ThreadSendInput {
@@ -288,6 +308,10 @@ export interface ThreadSendInput {
 export interface ThreadTargetInput {
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
+}
+
+export interface ThreadAnswerInput extends ThreadTargetInput {
+  readonly text: string;
 }
 
 export interface ThreadSettleInput extends ThreadTargetInput {
@@ -316,11 +340,18 @@ export interface ThreadGatewayShape {
   readonly armLimitRecovery: (
     input: ThreadTargetInput,
   ) => Effect.Effect<boolean, ThreadCommandError>;
+  /** Answer every question of the thread's pending structured user-input
+      request with `text` (T3O-38). False when nothing is pending, or the
+      provider cannot take the answer — the caller then sends a turn instead. */
+  readonly answerPendingInput: (
+    input: ThreadAnswerInput,
+  ) => Effect.Effect<boolean, ThreadCommandError>;
 
-  /** One thread, deleted ones included, or null when it never existed. */
+  /** One thread, deleted ones included, or null when it never existed —
+      or `unknown` while the worker it lives on cannot be reached. */
   readonly threadState: (
     threadId: ThreadId,
-  ) => Effect.Effect<BoardThreadState | null, ThreadReadError>;
+  ) => Effect.Effect<BoardThreadState | UnknownThreadState | null, ThreadReadError>;
   /** The cheap facts for many threads at once; absent ids never existed. */
   readonly threadRecords: (
     threadIds: ReadonlyArray<ThreadId>,
@@ -367,3 +398,34 @@ export interface ThreadGatewayShape {
 export class ThreadGateway extends Context.Service<ThreadGateway, ThreadGatewayShape>()(
   "t3/board/ThreadGateway",
 ) {}
+
+// ── This server's own threads (T3O-63) ─────────────────────────────────
+
+/** The signals one position of the thread log produced, in order. */
+export interface ThreadSignalBatch {
+  readonly sequence: number;
+  readonly signals: ReadonlyArray<ThreadSignal>;
+}
+
+/**
+ * The gateway onto THIS server's threads. On a central server `ThreadGateway`
+ * is a router over this one and every worker's (T3O-63); a worker serves this
+ * one to the central server, never the router, so it only ever hands out its
+ * own threads.
+ */
+export interface LocalThreadGatewayShape extends ThreadGatewayShape {
+  /** This server's threads are always reachable, so never `unknown`. */
+  readonly threadState: (
+    threadId: ThreadId,
+  ) => Effect.Effect<BoardThreadState | null, ThreadReadError>;
+  /** Signals by log position, after `afterSequence` (from now on when null),
+      for as long as the subscriber runs — what a central server resumes a
+      worker's signals from after a dropped connection. Positions that produce
+      no signal are skipped. */
+  readonly signalLog: (afterSequence: number | null) => Stream.Stream<ThreadSignalBatch>;
+}
+
+export class LocalThreadGateway extends Context.Service<
+  LocalThreadGateway,
+  LocalThreadGatewayShape
+>()("t3/board/ThreadGateway/LocalThreadGateway") {}

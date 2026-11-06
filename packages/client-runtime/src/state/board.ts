@@ -22,10 +22,16 @@
  */
 import {
   BOARD_WS_METHODS,
+  EMPTY_BOARD_WORKERS_STATE,
+  type BoardCardWorkerMoveRequest,
+  type BoardWorkerIdInput,
+  type BoardWorkersAddInput,
+  type BoardWorkersDismissSetupInput,
+  type BoardWorkersRepairInput,
+  type BoardWorkersSetDefaultInput,
+  type BoardWorkersSetupProjectInput,
   type BoardAttachCardFileInput,
   type BoardDetachCardFileInput,
-  type BoardProviderLimitActionInput,
-  type BoardProviderLimitResumeAtInput,
   compareBoardStages,
   deriveBoardCardThreadState,
   type BoardCardDetail,
@@ -33,7 +39,7 @@ import {
   type BoardCardShell,
   type BoardCardThreadShell,
   type BoardLabel,
-  type BoardProviderLimit,
+  type BoardProjectStageConfig,
   type BoardStageDefinition,
   type BoardStageId,
   isBoardCardScheduleDue,
@@ -50,6 +56,15 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
+  addBoardWorker,
+  dismissBoardWorkerSetup,
+  previewBoardWorkerRemoval,
+  removeBoardWorker,
+  repairBoardWorker,
+  setDefaultBoardWorker,
+  setupBoardWorkerProject,
+} from "../operations/boardWorkers.ts";
+import {
   approveBoardPlans,
   archiveBoardCard,
   createBoardCard,
@@ -61,10 +76,12 @@ import {
   linkBoardCardThread,
   attachBoardCardFile,
   detachBoardCardFile,
-  probeBoardProviderLimit,
-  setBoardProviderLimitResumeAt,
   mergeBoardCardPullRequest,
   moveBoardCard,
+  moveBoardCards,
+  setBoardCardGroupSettings,
+  setBoardCardAutomation,
+  cancelBoardCardWork,
   refreshBoardCardPullRequest,
   linkBoardCardPullRequest,
   renameBoardStage,
@@ -75,6 +92,7 @@ import {
   reorderBoardStage,
   startBoardStageThread,
   requestBoardReviewRound,
+  skipBoardCardCi,
   removeBoardCardWorktree,
   checkBoardCardWorktree,
   submitBoardCardForMerge,
@@ -83,6 +101,9 @@ import {
   unlinkBoardCardThread,
   updateBoardCard,
   setBoardCardProject,
+  pinBoardCardWorker,
+  boardCardWorkerMove,
+  type PinBoardCardWorkerInput,
   updateBoardLabel,
   type ApproveBoardPlansInput,
   type ArchiveBoardCardInput,
@@ -94,6 +115,10 @@ import {
   type DeleteBoardStageInput,
   type LinkBoardCardThreadInput,
   type MoveBoardCardInput,
+  type MoveBoardCardsInput,
+  type SetBoardCardGroupSettingsInput,
+  type SetBoardCardAutomationInput,
+  type CancelBoardCardWorkInput,
   type RenameBoardStageInput,
   type ReorderBoardCardInput,
   type RequeueBoardCardStepInput,
@@ -121,6 +146,10 @@ export * from "./boardReducer.ts";
 export * from "./boardSubscription.ts";
 
 export type {
+  MoveBoardCardsInput,
+  SetBoardCardGroupSettingsInput,
+  SetBoardCardAutomationInput,
+  CancelBoardCardWorkInput,
   ApproveBoardPlansInput,
   ArchiveBoardCardInput,
   CreateBoardCardInput,
@@ -143,6 +172,7 @@ export type {
   UnlinkBoardCardThreadInput,
   UpdateBoardCardInput,
   SetBoardCardProjectInput,
+  PinBoardCardWorkerInput,
   UpdateBoardLabelInput,
 };
 
@@ -445,8 +475,13 @@ export function boardBuildQueue(
       silently number a scheduled card into the queue. */
   nowMs: number,
 ): ReadonlyMap<string, BoardQueueSlot> {
+  // A card held for its offline worker (T3O-66) waits on no slot, so it takes
+  // no place in the queue; its notice says Worker offline instead.
   const queued = cards.filter(
-    (card) => card.queued && isBoardCardScheduleDue(card.scheduledStartAt, nowMs),
+    (card) =>
+      card.queued &&
+      card.queuedBy !== "worker-offline" &&
+      isBoardCardScheduleDue(card.scheduledStartAt, nowMs),
   );
   if (queued.length === 0) return EMPTY_QUEUE;
   const stageOrder = new Map(stages.map((stage, index) => [stage.stageId, index]));
@@ -610,15 +645,24 @@ export function createBoardEnvironmentAtoms<R, ER>(
     }).pipe(Atom.withLabel(`environment-board-stages:${environmentId}`)),
   );
 
-  /** The board's provider cooldowns (T3O-22, D14). Empty on the overwhelming
-      majority of boards, which is why it rides its own array rather than a
-      field on every card. */
-  const EMPTY_PROVIDER_LIMITS: ReadonlyArray<BoardProviderLimit> = [];
-  const providerLimitsAtom = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get) => {
-      const limits = get(options.boardSnapshotValueAtom(environmentId))?.providerLimits ?? [];
-      return limits.length === 0 ? EMPTY_PROVIDER_LIMITS : limits;
-    }).pipe(Atom.withLabel(`environment-board-provider-limits:${environmentId}`)),
+  /** Each project's `t3o.json` stage config (T3O-43). Empty when no project
+      has one — every project then follows the global pipeline. */
+  const EMPTY_PROJECT_STAGE_CONFIGS: Readonly<Record<string, BoardProjectStageConfig>> = {};
+  const projectStageConfigsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(
+      (get) =>
+        get(options.boardSnapshotValueAtom(environmentId))?.projectStageConfigs ??
+        EMPTY_PROJECT_STAGE_CONFIGS,
+    ).pipe(Atom.withLabel(`environment-board-project-stage-configs:${environmentId}`)),
+  );
+
+  /** The board's workers (T3O-62, D19), or the local-only summary when the
+      board has none — which is every board until a worker is added. */
+  const workersAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(
+      (get) =>
+        get(options.boardSnapshotValueAtom(environmentId))?.workers ?? EMPTY_BOARD_WORKERS_STATE,
+    ).pipe(Atom.withLabel(`environment-board-workers:${environmentId}`)),
   );
 
   /** The archive page's cards (t3o-13), read when the page opens. */
@@ -673,7 +717,8 @@ export function createBoardEnvironmentAtoms<R, ER>(
     archivedCardsAtom,
     labelCatalogueAtom,
     stageListAtom,
-    providerLimitsAtom,
+    projectStageConfigsAtom,
+    workersAtom,
     /** Raw subscription state (loading/failure visible), keyed like
         `cardDetailValueAtom`. */
     cardDetailStateAtom,
@@ -720,6 +765,12 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:request-review-round",
       execute: (input: { readonly cardId: BoardCardId }) => requestBoardReviewRound(input),
     }),
+    /** Skip CI for a card in the CI stage (T3O-44). Resolves to where the
+        card went, or why it could not. */
+    skipCi: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:skip-ci",
+      execute: (input: { readonly cardId: BoardCardId }) => skipBoardCardCi(input),
+    }),
     /** Remove a finished card's kept worktree past the safety rule (T3O-52). */
     removeCardWorktree: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:remove-card-worktree",
@@ -740,16 +791,54 @@ export function createBoardEnvironmentAtoms<R, ER>(
       label: "environment-data:commands:board:detach-card-file",
       execute: (input: BoardDetachCardFileInput) => detachBoardCardFile(input),
     }),
-    /** Probe a limited provider now (T3O-22, D14) — "Resume now". */
-    probeProviderLimit: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:board:probe-provider-limit",
-      execute: (input: BoardProviderLimitActionInput) => probeBoardProviderLimit(input),
+    // T3O-62: managing the board's workers. Each answers with what the
+    // Workers settings show: the add summary, or a refusal to read inline.
+    addWorker: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:add-worker",
+      execute: (input: BoardWorkersAddInput) => addBoardWorker(input),
     }),
-    /** Set a limited provider's resume time by hand (T3O-22, D14), or clear it
-        with null to hand the schedule back to the blind poll. */
-    setProviderLimitResumeAt: createEnvironmentCommand(runtime, {
-      label: "environment-data:commands:board:set-provider-limit-resume-at",
-      execute: (input: BoardProviderLimitResumeAtInput) => setBoardProviderLimitResumeAt(input),
+    repairWorker: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:repair-worker",
+      execute: (input: BoardWorkersRepairInput) => repairBoardWorker(input),
+    }),
+    removeWorker: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:remove-worker",
+      execute: (input: BoardWorkerIdInput) => removeBoardWorker(input),
+    }),
+    previewWorkerRemoval: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:preview-worker-removal",
+      execute: (input: BoardWorkerIdInput) => previewBoardWorkerRemoval(input),
+    }),
+    setDefaultWorker: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-default-worker",
+      execute: (input: BoardWorkersSetDefaultInput) => setDefaultBoardWorker(input),
+    }),
+    setupWorkerProject: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:setup-worker-project",
+      execute: (input: BoardWorkersSetupProjectInput) => setupBoardWorkerProject(input),
+    }),
+    dismissWorkerSetup: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:dismiss-worker-setup",
+      execute: (input: BoardWorkersDismissSetupInput) => dismissBoardWorkerSetup(input),
+    }),
+    /** Regroup cards (T3O-27); the board's New phase and shared parent. */
+    moveCards: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:move-cards",
+      execute: (input: MoveBoardCardsInput) => moveBoardCards(input),
+    }),
+    setGroupSettings: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-group-settings",
+      execute: (input: SetBoardCardGroupSettingsInput) => setBoardCardGroupSettings(input),
+    }),
+    /** A card's own Automation toggles (T3O-38). */
+    setCardAutomation: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:set-card-automation",
+      execute: (input: SetBoardCardAutomationInput) => setBoardCardAutomation(input),
+    }),
+    /** Destructive: the caller confirmed it by the card's typed key. */
+    cancelCardWork: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:cancel-card-work",
+      execute: (input: CancelBoardCardWorkInput) => cancelBoardCardWork(input),
     }),
     reorderCard: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:reorder-card",
@@ -781,6 +870,16 @@ export function createBoardEnvironmentAtoms<R, ER>(
     setCardProject: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:set-card-project",
       execute: (input: SetBoardCardProjectInput) => setBoardCardProject(input),
+    }),
+    /** Pin a card to a worker, or follow the default (T3O-65). */
+    pinCardWorker: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:pin-card-worker",
+      execute: (input: PinBoardCardWorkerInput) => pinBoardCardWorker(input),
+    }),
+    /** The Move dialog's check / move / ask-push (T3O-65). */
+    cardWorkerMove: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:board:card-worker-move",
+      execute: (input: BoardCardWorkerMoveRequest) => boardCardWorkerMove(input),
     }),
     linkThread: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:board:link-thread",
@@ -861,3 +960,4 @@ function parseBoardCardDetailKey(key: string): {
   ];
   return { environmentId, cardId: input.cardId };
 }
+export * from "./boardWorkerPairing.ts";

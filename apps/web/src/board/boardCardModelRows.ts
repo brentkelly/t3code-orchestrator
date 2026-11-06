@@ -20,6 +20,7 @@ import {
   type BoardStageDefinition,
   type BoardStageId,
   type RuntimeMode,
+  type BoardProjectExecutionConfig,
 } from "@t3tools/contracts";
 
 /** One row of the popover: a stage the card can override, and the value it runs
@@ -59,6 +60,8 @@ export function boardCardModelRows(input: {
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly boardSettings: BoardSettings;
   readonly parentCard: Pick<BoardCard, "key" | "modelOverrides"> | null;
+  /** The card's project's `t3o.json` overrides (T3O-43). */
+  readonly projectConfig?: BoardProjectExecutionConfig | null | undefined;
 }): ReadonlyArray<BoardCardModelRowSpec> {
   const rows: BoardCardModelRowSpec[] = [];
   for (const role of ["plan", "build", "review"] as const) {
@@ -67,7 +70,11 @@ export function boardCardModelRows(input: {
     // null role — still reports its holder.
     const stage = input.stages.find((candidate) => effectiveBoardStageRole(candidate) === role);
     if (stage === undefined) continue;
-    const exec = resolveBoardStageExecution(input.boardSettings, stage.stageId);
+    const exec = resolveBoardStageExecution(
+      input.boardSettings,
+      stage.stageId,
+      input.projectConfig,
+    );
     const review = isBoardReviewStageExecution(exec) ? exec : null;
     const workspaceModel =
       review === null ? exec.model : (review.phases.review.model ?? review.model);

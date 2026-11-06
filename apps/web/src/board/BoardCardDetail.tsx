@@ -8,6 +8,7 @@
  * Mounting this component IS the detail subscription — it exists only while a
  * card is selected, so the board at rest opens none.
  */
+import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import { boardThreadStateSource } from "@t3tools/shared/boardThreadState";
 import {
   BoardCardId,
@@ -26,13 +27,16 @@ import {
   boardCardProjectLock,
   boardStallIsWaiting,
   boardStageWithRole,
+  boardCardWorktreeIsCancelledWork,
   boardCardWorktreeKept,
   boardCardWorktreeKeptReason,
-  isBoardDependencyInScope,
   isBoardMergeStageExecution,
   isBoardCardBaseRetargeted,
   resolveBoardCardEffectiveBase,
   boardSubBoardFloorStage,
+  boardShellMergesIntoIntegrationBranch,
+  boardSplitRecommendationFallback,
+  boardStagesInOrder,
   isBoardStageAtOrAfterBuild,
   deriveBoardCardThreadState,
   boardBuildHumanInLoopDefault,
@@ -47,6 +51,9 @@ import {
   EMPTY_BOARD_CARD_REVIEW_OVERRIDES,
   type BoardCardReviewOverrides,
   type BoardCardStageModelOverride,
+  boardShellAncestorIds,
+  boardShellAutoMergeArmedByCard,
+  boardShellDescendantIds,
 } from "@t3tools/contracts";
 import {
   boardBuildQueue,
@@ -67,18 +74,25 @@ import { randomUUID } from "../lib/utils";
 import { getCustomModelOptionsByInstance, resolveAppModelSelectionState } from "../modelSelection";
 import { getTriggerDisplayModelName } from "../components/chat/providerIconUtils";
 import { boardEnvironment } from "../state/board";
+import { cardThreadIdsMissingFromShell, useBoardCardThreadRows } from "./boardCardThreadRows";
+import { boardThreadWorker, threadWorkerRanOn } from "./workers/threadWorker";
 import { boardAttachmentLimits } from "./boardAttachmentUpload";
 import { boardConflictFix } from "./boardConflictFix";
 import { boardScheduleKind } from "./boardSchedule";
 import { boardQueueInfo } from "./boardQueueInfo";
+import { boardCardPlanReviewView, boardPlanStageExecution } from "./boardCardPlanReview";
 import { projectIconColorOf } from "./projectAccent";
 import { useEnvironment } from "../state/environments";
 import { deriveProviderInstanceEntries } from "../providerInstances";
-import { primaryServerProvidersAtom } from "../state/server";
 import { usePaginatedBranches } from "../state/queries";
 import { environmentShell } from "../state/shell";
 import { threadEnvironment } from "../state/threads";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../hooks/useSettings";
+import {
+  boardAdoptableThreads,
+  useBoardAdoptKnownCardThreadIds,
+  useBoardAdoptThreadSearch,
+} from "./boardAdoptThreadSearch";
+import { boardQueueReason, boardThreadMoveDividers } from "./workers/cardWorker";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
   boardStageRestartBlockedReason,
@@ -89,6 +103,7 @@ import {
 } from "./boardCardThreadMenu";
 import type { BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { boardStageLabel } from "./boardStages";
+import { boardToast } from "./boardToast";
 import { indexBoardLabels } from "./labelColour";
 import {
   BoardCardDetailPopup,
@@ -98,7 +113,17 @@ import {
   type BoardDetailThreadLink,
 } from "./BoardCardDetailView";
 import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
+import { BoardArchiveGroupDialog } from "./BoardGroupDialogs";
+import { BoardCardAutomation } from "./BoardCardAutomation";
+import { boardCardPlanningFinishedFromDetail } from "./boardCardAutomation";
+import {
+  boardGroupNote,
+  boardShellGroup,
+  boardShellIntegrationAncestor,
+  isBoardGroupShell,
+} from "./boardGroups";
 import { boardMoveLeavesPlanningUnwritten } from "@t3tools/client-runtime/board";
+import { boardCardPipelineStages } from "./boardProjectPipelines";
 import type { BoardCardNav } from "./BoardCardNavRails";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
 import { boardCardProjectOptions } from "./BoardCardProjectSelect";
@@ -106,6 +131,7 @@ import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import {
   describeBoardCheckWorktreeOutcome,
   describeBoardCommandFailure,
+  describeBoardSkipCiOutcome,
   describeBoardMergeOutcome,
   // T3o: the forced re-check's answer (T3O-48).
   describeBoardRefreshOutcome,
@@ -115,6 +141,11 @@ import {
 } from "./boardCommandFeedback";
 import { useOpenLink } from "../browser/useOpenLink";
 import { refreshBoardArchivedCards } from "./BoardArchivedCardsSheet";
+import {
+  useBoardServerProviders,
+  useBoardSettings,
+  useUpdateBoardSettings,
+} from "./useBoardEnvironmentId";
 
 /** The modal frame, empty, while `board.subscribeCard` opens — same sheet, so
     nothing jumps when the detail lands. */
@@ -167,7 +198,25 @@ export function BoardCardDetail({
 }) {
   const detail = useAtomValue(boardEnvironment.cardDetailValueAtom({ environmentId, cardId }));
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
-  const stages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
+  const allStages = useAtomValue(boardEnvironment.stageListAtom(environmentId));
+  // T3O-43: the card's own project's pipeline, from its t3o.json.
+  const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
+  const pipelineCardProjectId = detail?.card.projectId ?? null;
+  const pipelineCardStage = detail?.card.stage ?? null;
+  const stages = useMemo(
+    () =>
+      pipelineCardProjectId === null || pipelineCardStage === null
+        ? allStages
+        : boardCardPipelineStages(
+            { stages: allStages, projectStageConfigs },
+            { stage: pipelineCardStage, projectId: pipelineCardProjectId },
+          ),
+    [allStages, pipelineCardProjectId, pipelineCardStage, projectStageConfigs],
+  );
+  const projectExecutionConfig =
+    pipelineCardProjectId === null ? null : (projectStageConfigs[pipelineCardProjectId] ?? null);
+  // T3O-65: the board's workers, for the queue's reason.
+  const workersState = useAtomValue(boardEnvironment.workersAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
 
   const updateCard = useAtomCommand(boardEnvironment.updateCard);
@@ -226,6 +275,10 @@ export function BoardCardDetail({
   const requestReviewRound = useAtomCommand(boardEnvironment.requestReviewRound, {
     reportFailure: false,
   });
+  // "Skip CI" (T3O-44). A refusal is an answer, toasted below.
+  const skipCi = useAtomCommand(boardEnvironment.skipCi, { reportFailure: false });
+  const [skippingCi, setSkippingCi] = useState(false);
+  const createCard = useAtomCommand(boardEnvironment.createCard);
   // "Remove worktree" (T3O-52). Same reason again: a refusal is an answer.
   const removeCardWorktree = useAtomCommand(boardEnvironment.removeCardWorktree, {
     reportFailure: false,
@@ -274,15 +327,15 @@ export function BoardCardDetail({
     () => ({ cards: [], stages, nextCardNumberByProject: {} }),
     [stages],
   );
-  const boardSettings = usePrimarySettings((settings) => settings.board);
+  const boardSettings = useBoardSettings((settings) => settings.board);
   // Persisting a newly derived key prefix for the target project (T3O-33), the
   // same write the create dialog makes on a project's first card.
-  const updateSettings = useUpdatePrimarySettings();
+  const updateSettings = useUpdateBoardSettings();
   // Full settings + providers resolve the default model for a blank thread — the
   // same resolution a Threads-view "new thread" uses, so a card-started blank
   // thread lands on the app's default model, not a board-specific one (D3).
-  const allSettings = usePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const allSettings = useBoardSettings();
+  const serverProviders = useBoardServerProviders();
 
   /** Report a rejected command inline (the decider names cycles, missing
       dependencies, the label cap); clear it once the next command succeeds. */
@@ -378,11 +431,7 @@ export function BoardCardDetail({
   // edges the UI could not otherwise create. Rather than leave a state that can
   // be inherited but not made, the picker offers them and marks them with the
   // owning project's dot.
-  //
-  // Every picker is scoped to the card's own level (t3o-25, T3O-10): a child
-  // sees only its siblings, a top-level card only other top-level cards. The
-  // decider refuses anything else, and offering it here would only teach the
-  // rule by refusal.
+
   const dependencyOptions = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
     const shells = board?.cards ?? [];
@@ -390,15 +439,14 @@ export function BoardCardDetail({
       (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
     );
     const existing = new Set<string>([card.id, ...card.dependsOn]);
+    // Dependencies cross groups (T3O-27); the card's own ancestors and
+    // descendants are refused, so they are not offered.
+    const related = new Set<string>([
+      ...boardShellAncestorIds(shells, card.parentCardId),
+      ...boardShellDescendantIds(shells, card.id),
+    ]);
     return shells
-      .filter(
-        (candidate) =>
-          !existing.has(candidate.cardId) &&
-          isBoardDependencyInScope({
-            dependentParentCardId: card.parentCardId,
-            dependencyParentCardId: candidate.parentCardId,
-          }),
-      )
+      .filter((candidate) => !existing.has(candidate.cardId) && !related.has(candidate.cardId))
       .map((candidate) => ({
         id: candidate.cardId,
         key: candidate.key,
@@ -436,24 +484,64 @@ export function BoardCardDetail({
     return (board?.cards ?? []).filter((shell) => shell.parentCardId === card.id);
   }, [board, card]);
 
+  // T3o (T3O-63): the worker each thread lives on, for where it opens.
+  const workers = useAtomValue(boardEnvironment.workersAtom(environmentId));
+  // "today" in a move divider is measured from when the card was opened.
+  const [openedAt] = useState(() => Date.now());
+  // The group archive confirmation (T3O-29): a group always warns.
+  const [archiveGroupOpen, setArchiveGroupOpen] = useState(false);
+  // Older settled threads are not in the shell; read them so they are named, not "deleted".
+  const missingThreadIds = useMemo(
+    () => cardThreadIdsMissingFromShell(card?.threadLinks ?? [], snapshot?.threads ?? []),
+    [card, snapshot],
+  );
+  const offShellThreads = useBoardCardThreadRows(environmentId, missingThreadIds);
   const threadLinks = useMemo<ReadonlyArray<BoardDetailThreadLink>>(() => {
     if (card === null) return [];
     const threads = snapshot?.threads ?? [];
+    // T3O-65: "Moved from {worker}" above the first thread after each move.
+    const movedFrom = boardThreadMoveDividers({
+      links: card.threadLinks,
+      moves: (detail?.activity ?? []).flatMap((entry) =>
+        entry.kind === "card-worker-moved" && entry.payload.movePhase === "done"
+          ? [{ at: entry.createdAt, fromWorkerId: entry.payload.fromWorkerId ?? null }]
+          : [],
+      ),
+      state: workers,
+      nowMs: openedAt,
+    });
     return card.threadLinks.map((link) => {
-      const thread = threads.find((candidate) => candidate.id === link.threadId);
+      const thread =
+        threads.find((candidate) => candidate.id === link.threadId) ??
+        offShellThreads.threads.get(link.threadId);
       const { threadState, awaitingInput } = deriveBoardCardThreadState(
         thread === undefined ? undefined : boardThreadStateSource(thread),
       );
+      const worker = boardThreadWorker({
+        workerId: link.workerId,
+        workers,
+        boardEnvironmentId: environmentId,
+      });
       return {
         threadId: link.threadId,
         role: link.role,
         tombstoned: link.tombstonedAt !== null,
-        title: thread?.title ?? null,
+        // A thread on another worker is not in this server's snapshot.
+        title:
+          thread?.title ??
+          (link.workerId !== undefined
+            ? `Thread on ${worker.label}`
+            : offShellThreads.loading.has(link.threadId)
+              ? "Loading thread…"
+              : null),
         threadState,
         awaitingInput,
+        worker,
+        ranOn: threadWorkerRanOn(worker, workers),
+        movedFrom: movedFrom.get(link.threadId) ?? null,
       };
     });
-  }, [card, snapshot]);
+  }, [card, detail?.activity, snapshot, offShellThreads, workers, environmentId, openedAt]);
 
   // Agent display names and accents for the Activity rail (t3o-18, D11). Resolved
   // at render time from the provider instance list the app already holds, so a
@@ -476,9 +564,12 @@ export function BoardCardDetail({
       )
         .get(override.instanceId)
         ?.find((candidate) => candidate.slug === override.model);
-      return option ? getTriggerDisplayModelName(option) : override.model;
+      const driverKind = providerEntries.find(
+        (entry) => entry.instanceId === override.instanceId,
+      )?.driverKind;
+      return option ? getTriggerDisplayModelName(option, driverKind) : override.model;
     },
-    [allSettings, serverProviders],
+    [allSettings, providerEntries, serverProviders],
   );
   const agents = useMemo<BoardActivityAgentLookup>(() => {
     const byId = new Map(providerEntries.map((entry) => [entry.instanceId, entry]));
@@ -500,20 +591,34 @@ export function BoardCardDetail({
     [board, cardId],
   );
 
+  // The shell holds only the newest settled threads; the rest come from search (T3O-41).
+  const [adoptQuery, setAdoptQuery] = useState("");
+  const adoptSearchRead = useBoardAdoptThreadSearch(
+    environmentId,
+    card?.projectId ?? null,
+    adoptQuery,
+  );
+  const [adoptOpen, setAdoptOpen] = useState(false);
+  const knownCardThreads = useBoardAdoptKnownCardThreadIds(environmentId, adoptOpen);
   const adoptableThreads = useMemo<ReadonlyArray<BoardPickerOption>>(() => {
     if (card === null) return [];
-    const linkedLive = new Set(
-      card.threadLinks.filter((link) => link.tombstonedAt === null).map((link) => link.threadId),
-    );
-    return (snapshot?.threads ?? [])
-      .filter(
-        (thread) =>
-          thread.projectId === card.projectId &&
-          thread.archivedAt === null &&
-          !linkedLive.has(thread.id),
-      )
-      .map((thread) => ({ id: thread.id, key: "", title: thread.title }));
-  }, [card, snapshot]);
+    const onCards = new Set((board?.cardThreads ?? []).map((entry) => entry.threadId));
+    return boardAdoptableThreads({
+      projectId: card.projectId,
+      cardThreadIds: card.threadLinks.map((link) => link.threadId),
+      linkedElsewhere: (threadId) =>
+        onCards.has(threadId) || (knownCardThreads?.has(threadId) ?? false),
+      threads: [...(snapshot?.threads ?? []), ...adoptSearchRead.rows],
+    });
+  }, [card, snapshot, board, knownCardThreads, adoptSearchRead.rows]);
+  const adoptSearch = useMemo(
+    () => ({
+      onQueryChange: setAdoptQuery,
+      onOpenChange: setAdoptOpen,
+      pending: adoptSearchRead.pending,
+    }),
+    [adoptSearchRead.pending],
+  );
 
   // ── Everything below this line runs before the loading early return ──
   // The card's own shell, and the queue state derived from it. These sit ABOVE
@@ -547,13 +652,25 @@ export function BoardCardDetail({
             slot: boardBuildQueue(allShellCards, queueStages, Date.now()).get(cardId),
             running: boardRunningStepCount(allShellCards),
             cap: boardSettings.concurrency.globalMaxConcurrent,
+            reason: boardQueueReason({
+              card: cardShell,
+              state: workersState,
+              cards: allShellCards,
+              concurrency: boardSettings.concurrency,
+              // Named as the board's own queue pill names it.
+              projectName:
+                snapshot?.projects.find((project) => project.id === cardShell.projectId)?.title ??
+                "this project",
+            }),
           }),
     [
       allShellCards,
-      boardSettings.concurrency.globalMaxConcurrent,
+      boardSettings.concurrency,
       cardId,
-      cardShell?.queued,
+      cardShell,
       queueStages,
+      snapshot,
+      workersState,
     ],
   );
   // Null whenever reordering could not actually improve the card's position —
@@ -625,12 +742,15 @@ export function BoardCardDetail({
   // ── Project (T3O-33) ───────────────────────────────────────────────────
   // The lock comes from the SAME predicate the decider refuses on, so the row
   // and the rejection cannot disagree. `detail.children` carries archived
-  // children too, which is what the parent refusal needs: an archived child is
-  // still a card holding a number in the parent's project namespace.
+  // children too, as the server's count does.
   const projectLock = boardCardProjectLock({
     board: stageState,
     card,
     childCount: detail.children.length,
+    integrationParentId:
+      cardShell === undefined
+        ? card.parentCardId
+        : (boardShellIntegrationAncestor(allShellCards, cardShell)?.cardId ?? null),
   });
   const projectOptions =
     projectLock === null
@@ -695,19 +815,23 @@ export function BoardCardDetail({
 
   // Per-card human-in-the-loop stance on the Build role (D6): shown only when
   // the card is on the build stage. The default flips on whether the card has a
-  // plan — a sub-board child counts as planned (t3o-23: its approved plan is
-  // its brief) — and an explicit override wins over it. The same rule the
+  // plan — a split child owns a copy of its plan (T3O-27) — and an explicit
+  // override wins over it. The same rule the
   // reactor runs the step under, so the hint here never contradicts the run.
   const buildStageId = boardStageWithRole(stageState, "build")?.stageId ?? null;
   const humanInLoop =
     buildStageId !== null && card.stage === buildStageId
       ? (() => {
-          const exec = resolveBoardStageExecution(boardSettings, buildStageId);
-          const fallback = boardBuildHumanInLoopDefault(exec, card, detail.hasPlan);
+          const exec = resolveBoardStageExecution(
+            boardSettings,
+            buildStageId,
+            projectExecutionConfig,
+          );
+          const fallback = boardBuildHumanInLoopDefault(exec, detail.hasPlan);
           return {
             value: card.humanInLoop ?? fallback,
             explicit: card.humanInLoop !== null,
-            basis: card.parentCardId !== null ? "child" : detail.hasPlan ? "plan" : "no-plan",
+            basis: detail.hasPlan ? "plan" : "no-plan",
           } as const;
         })()
       : null;
@@ -732,18 +856,28 @@ export function BoardCardDetail({
   // The review loop's round budget, for the Review pane's R1..Rn bar. Resolved
   // from the same settings the executor reads, so the bar and the real loop can
   // never disagree on the cap.
-  const reviewExecution = resolveBoardStageExecution(boardSettings, BOARD_SEED_STAGE_IDS.review);
+  const reviewExecution = resolveBoardStageExecution(
+    boardSettings,
+    BOARD_SEED_STAGE_IDS.review,
+    projectExecutionConfig,
+  );
   // The board-wide auto-merge default (T3O-38, D2/D3). Resolved off the
   // MERGE-ROLE stage, not off a stage literally named "Ready for merge": the
   // role is what the server reads, and keying on the name would silently
   // disagree with it on a renamed pipeline.
   const mergeStageId = boardStageWithRole(stageState, "merge")?.stageId ?? null;
   const mergeExecution =
-    mergeStageId === null ? null : resolveBoardStageExecution(boardSettings, mergeStageId);
+    mergeStageId === null
+      ? null
+      : resolveBoardStageExecution(boardSettings, mergeStageId, projectExecutionConfig);
   const boardWideAutoMerge =
     mergeExecution !== null && isBoardMergeStageExecution(mergeExecution)
       ? mergeExecution.autoMerge
       : false;
+  const boardMergeStrategy =
+    mergeExecution !== null && isBoardMergeStageExecution(mergeExecution)
+      ? mergeExecution.strategy
+      : "squash";
   /**
    * The rounds this card's loop has RECORDED — the budget's floor.
    *
@@ -786,7 +920,8 @@ export function BoardCardDetail({
     isBoardStageAtOrAfterBuild(stageState, card.stage) &&
     unmetDependencyKeys.length > 0;
   const stageRestart = resolveBoardThreadStageRestart({
-    autoExecute: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
+    autoExecute: resolveBoardStageExecution(boardSettings, card.stage, projectExecutionConfig)
+      .autoExecute,
     stageLabel: boardStageLabel(stages, card.stage),
     runInFlight: isBoardCardRunInFlight(cardShell),
     stalled: stepStalled,
@@ -821,11 +956,13 @@ export function BoardCardDetail({
       archived: card.archivedAt !== null,
       inDoneStage: doneStageId !== null && card.stage === doneStageId,
       reclaimWorktreeOnDone: boardSettings.lifecycle.reclaimWorktreeOnDone,
+      cancelledWork: boardCardWorktreeIsCancelledWork(card),
     })
       ? {
           reason: boardCardWorktreeKeptReason(card.worktree.reclaimBlockedReason),
           path: card.worktree.path,
           branch: card.worktree.branch,
+          cancelledWork: boardCardWorktreeIsCancelledWork(card),
         }
       : null;
 
@@ -872,6 +1009,49 @@ export function BoardCardDetail({
       }
       setFeedback(describeBoardReviewRoundOutcome(result.value));
     });
+  };
+
+  const onSkipCi = () => {
+    setSkippingCi(true);
+    void skipCi({ environmentId, input: { cardId: card.id } }).then((result) => {
+      setSkippingCi(false);
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          boardToast({
+            title: "CI could not be skipped",
+            description: describeBoardCommandFailure(result),
+            tone: "error",
+          });
+        }
+        return;
+      }
+      boardToast(
+        describeBoardSkipCiOutcome(result.value, card.key, (stageId) =>
+          boardStageLabel(stages, stageId as BoardStageId),
+        ),
+      );
+    });
+  };
+
+  /** A follow-up card in the first stage, for a decision worth revisiting. */
+  const onCreateFollowUp = (draft: { readonly title: string; readonly brief: string }) => {
+    const firstStage = stageState.stages?.[0];
+    if (firstStage === undefined) return;
+    runCommand(
+      createCard({
+        environmentId,
+        input: {
+          cardId: BoardCardId.make(randomUUID()),
+          projectId: card.projectId,
+          title: draft.title,
+          brief: draft.brief,
+          stage: firstStage.stageId,
+          orderKey: boardColumnAppendOrderKey(
+            (board?.cards ?? []).filter((shell) => shell.stage === firstStage.stageId),
+          ),
+        },
+      }),
+    );
   };
 
   // Restart is a server command (D2): the reactor runs the stage's configured
@@ -929,8 +1109,8 @@ export function BoardCardDetail({
   };
 
   // The approve gate (t3o-23, D1): two or more plans, nothing materialised
-  // yet, a top-level card at or before the build stage, and a floor stage for
-  // the children to land in. These are the cheap STRUCTURAL checks only — the
+  // yet, a card at or before the build stage (at any depth — splits nest,
+  // T3O-27), and a floor stage for the children to land in. These are the cheap STRUCTURAL checks only — the
   // decider additionally gates on unmet dependencies, plan-graph cycles and a
   // live step, and a refusal from any of those surfaces through the shared
   // command feedback, so the button may offer an approval the decider still
@@ -942,11 +1122,32 @@ export function BoardCardDetail({
     // Live children only, matching the decider's re-approval guard: a first
     // round whose children all archived may be re-split.
     detail.children.every((child) => child.archivedAt !== null) &&
-    card.parentCardId === null &&
     card.archivedAt === null &&
     floorStage !== null &&
     buildStage !== null &&
     (!isBoardStageAtOrAfterBuild(stageState, card.stage) || card.stage === buildStage.stageId);
+
+  // What the split gate shows (T3O-31). A proposal made before T3O-31 has no
+  // stored recommendation, so it falls back to the server's rule.
+  const firstStage = boardStagesInOrder(stageState)[0] ?? null;
+  const splitGate =
+    canApproveSplit && floorStage !== null && firstStage !== null
+      ? {
+          recommendation:
+            card.splitRecommendation ??
+            boardSplitRecommendationFallback({
+              plans: detail.plans,
+              underIntegrationBranch: boardShellMergesIntoIntegrationBranch(
+                board?.cards ?? [],
+                card,
+              ),
+            }),
+          ownBranch: `board/${sanitizeBranchFragment(card.key)}`,
+          landsOn: baseBranchInfo.effective ?? "the default branch",
+          readyLabel: floorStage.label,
+          backlogLabel: firstStage.label,
+        }
+      : null;
 
   const moveStage = (toStage: BoardStageId) => {
     const targetColumn = (board?.cards ?? []).filter((shell) => shell.stage === toStage);
@@ -961,15 +1162,72 @@ export function BoardCardDetail({
           cardId: card.id,
           toStage,
           ...(toDone ? {} : { orderKey: boardColumnAppendOrderKey(targetColumn) }),
-          ...(areBoardStagesAdjacent(stageState, card.stage, toStage) ? {} : { override: true }),
+          ...(areBoardStagesAdjacent(stageState, card.stage, toStage, null)
+            ? {}
+            : { override: true }),
         },
       }),
     );
   };
 
+  // The group popup (T3O-29): Open board, the group's note, its settings and
+  // the archive warning, all from the shells the board already holds.
+  const groupShells = board?.cards ?? EMPTY_SHELL_CARDS;
+  const groupStats =
+    cardShell === undefined || !isBoardGroupShell(groupShells, cardShell)
+      ? null
+      : { shells: groupShells, stages: stageState, attentionFor: () => null };
+  const groupView =
+    groupStats === null || cardShell === undefined
+      ? null
+      : {
+          chip: `Group · ${childShells.length} ${childShells.length === 1 ? "card" : "cards"}`,
+          note: boardGroupNote(groupStats, cardShell),
+          onOpenBoard: onOpenSubBoard === undefined ? undefined : () => onOpenSubBoard(card.id),
+          onArchive: () => setArchiveGroupOpen(true),
+          ownBranch: boardShellGroup(groupShells, cardShell)?.target === "own",
+        };
+  // The Automation section (T3O-38). A done or archived card has nothing left
+  // to automate, so it gets none.
+  const automationGroup = groupView === null || cardShell === undefined ? null : cardShell;
+  const automation =
+    card.archivedAt !== null ||
+    boardStageWithRole(stageState, "done")?.stageId === card.stage ? null : (
+      <BoardCardAutomation
+        boardWideAutoMerge={boardWideAutoMerge}
+        card={card}
+        environmentId={environmentId}
+        group={automationGroup}
+        inPlanning={boardStageWithRole(stageState, "plan")?.stageId === card.stage}
+        planningFinished={boardCardPlanningFinishedFromDetail({
+          stages: stageState,
+          stage: card.stage,
+          stepCompletions: detail?.stepCompletions ?? [],
+          stepLive:
+            cardShell?.stepRunning === true ||
+            cardShell?.queued === true ||
+            (cardShell?.stepAwaiting ?? null) !== null,
+        })}
+        shells={groupShells}
+        stages={stageState}
+      />
+    );
+  const autoMergeArmed =
+    boardShellAutoMergeArmedByCard({ shells: groupShells, boardWide: boardWideAutoMerge }).get(
+      String(card.id),
+    ) === true;
+  // A group's child can be parked in Deferred (T3O-29).
+  const parentIsGroup =
+    card.parentCardId !== null && groupShells.some((shell) => shell.cardId === card.parentCardId);
+
   const view = (
     <BoardCardDetailView
+      group={groupView}
+      stageLadderDeferred={parentIsGroup && groupView === null}
+      stalledReason={cardShell?.stalledReason}
+      workerShell={cardShell}
       nav={nav}
+      adoptSearch={adoptSearch}
       adoptableThreads={adoptableThreads}
       stageRestart={stageRestart}
       stepFailure={stepFailure}
@@ -997,7 +1255,8 @@ export function BoardCardDetail({
         ),
         names: projectNames,
         stopsAgent: isBoardCardRunInFlight(cardShell),
-        restartsStage: resolveBoardStageExecution(boardSettings, card.stage).autoExecute,
+        restartsStage: resolveBoardStageExecution(boardSettings, card.stage, projectExecutionConfig)
+          .autoExecute,
       }}
       onSetProject={
         canSetProject
@@ -1041,10 +1300,31 @@ export function BoardCardDetail({
       onSetHumanInLoop={(value) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, humanInLoop: value } }))
       }
+      planReview={boardCardPlanReviewView({
+        card,
+        isGroup: card.group !== null,
+        stages,
+        planStageExecution: boardPlanStageExecution(boardSettings, stages, projectExecutionConfig),
+        planReviewStarted: detail.planReviewStarted,
+      })}
+      onSetPlanReview={(planReview) =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, planReview } }))
+      }
       stages={stages}
       canApproveSplit={canApproveSplit}
-      approveSplitTargetLabel={floorStage?.label ?? null}
-      onApproveSplit={() => runCommand(approvePlans({ environmentId, input: { cardId: card.id } }))}
+      splitGate={splitGate}
+      onApproveSplit={(settings) =>
+        runCommand(
+          approvePlans({
+            environmentId,
+            input: {
+              cardId: card.id,
+              autoBuild: settings.autoBuild,
+              mergeTarget: settings.mergeTarget,
+            },
+          }),
+        )
+      }
       catalogue={catalogue}
       dependencies={dependencies}
       dependencyOptions={dependencyOptions}
@@ -1225,6 +1505,9 @@ export function BoardCardDetail({
         });
       }}
       onRequestReviewRound={onRequestReviewRound}
+      onSkipCi={onSkipCi}
+      skipCiPending={skippingCi}
+      onCreateFollowUp={onCreateFollowUp}
       stepLive={stepLive}
       onOpenPullRequest={(url) => {
         // Refresh on the way out: clicking through is the moment the user is
@@ -1294,6 +1577,7 @@ export function BoardCardDetail({
       reviewMaxRounds={reviewMaxRounds}
       reviewOverrides={card.reviewOverrides}
       boardSettings={boardSettings}
+      projectExecutionConfig={projectExecutionConfig}
       onSetModelOverrides={(modelOverrides) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, modelOverrides } }))
       }
@@ -1301,13 +1585,13 @@ export function BoardCardDetail({
       onSetScheduledStartAt={(scheduledStartAt) =>
         runCommand(updateCard({ environmentId, input: { cardId: card.id, scheduledStartAt } }))
       }
-      onSetAutoStart={(autoStart) =>
-        runCommand(updateCard({ environmentId, input: { cardId: card.id, autoStart } }))
-      }
-      onSetAutoMerge={(autoMerge) =>
-        runCommand(updateCard({ environmentId, input: { cardId: card.id, autoMerge } }))
-      }
+      automation={automation}
+      autoMergeArmed={autoMergeArmed}
       autoMergeFromBoardSetting={boardWideAutoMerge}
+      boardMergeStrategy={boardMergeStrategy}
+      onSetMergeStrategy={(mergeStrategy) =>
+        runCommand(updateCard({ environmentId, input: { cardId: card.id, mergeStrategy } }))
+      }
       resolveModelDisplayName={resolveModelDisplayName}
       // Queued counts as running for this note's purpose: a queued step has
       // already been selected onto the run row, so its model and authority are
@@ -1373,6 +1657,17 @@ export function BoardCardDetail({
         }}
       />
       {view}
+      {archiveGroupOpen && cardShell !== undefined ? (
+        <BoardArchiveGroupDialog
+          group={cardShell}
+          onClose={() => setArchiveGroupOpen(false)}
+          onConfirm={(confirmCardKey) =>
+            runCommand(archiveCard({ environmentId, input: { cardId: card.id, confirmCardKey } }))
+          }
+          shells={groupShells}
+          stages={stageState}
+        />
+      ) : null}
     </>
   );
 }

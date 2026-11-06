@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T3O-49 Spec</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --font-sans:"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --font-mono:"SF Mono","SFMono-Regular","JetBrains Mono",Consolas,Menlo,monospace;
+  --doc-bg:#f6f6f7; --doc-fg:#27272a; --doc-muted:#71717a; --doc-border:#e4e4e7; --doc-card:#ffffff;
+  --anno:#db2777; --anno-soft:color-mix(in srgb,#db2777 10%,transparent);
+}
+.th-light{
+  --bg:#fcfcfc; --fg:#27272a; --card:#ffffff; --popover:#ffffff; --muted:#fafafa; --muted-fg:#71717a; --accent:#f4f4f5;
+  --border:#e4e4e7; --input:#d4d4d8; --column-bg:color-mix(in srgb,#27272a 4.5%,transparent);
+  --primary:oklch(0.488 0.217 264); --primary-fg:#fff;
+  --info:#3b82f6; --info-fg:#1d4ed8; --attention:#8b5cf6; --attention-fg:#6d28d9; --success:#10b981; --success-fg:#047857;
+  --warning:#f59e0b; --warning-fg:#b45309; --destructive:#ef4444; --destructive-fg:#b91c1c;
+  --shadow-xs:0 1px 2px rgb(0 0 0 / 5%); --shadow-pop:0 18px 40px -18px rgb(0 0 0 / 35%);
+}
+.th-dark{
+  color-scheme:dark;
+  --bg:#000000; --fg:#f1f3f7; --card:#18181b; --popover:#141416; --muted:#0a0a0a; --muted-fg:#a3a3a3; --accent:#191a1d;
+  --border:rgb(255 255 255 / 8%); --input:rgb(255 255 255 / 18%); --column-bg:#131316;
+  --primary:oklch(0.588 0.217 264); --primary-fg:#fff;
+  --info:#3b82f6; --info-fg:#60a5fa; --attention:#8b5cf6; --attention-fg:#a78bfa; --success:#10b981; --success-fg:#34d399;
+  --warning:#f59e0b; --warning-fg:#fbbf24; --destructive:#ef4444; --destructive-fg:#f87171;
+  --shadow-xs:none; --shadow-pop:0 18px 48px -16px rgb(0 0 0 / 90%);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--doc-bg);color:var(--doc-fg);font-family:var(--font-sans);-webkit-font-smoothing:antialiased}
+a{color:#1d4ed8;text-decoration:none} a:hover{text-decoration:underline}
+.doc{max-width:1240px;margin:0 auto;padding:40px 24px 120px;display:flex;flex-direction:column;gap:56px}
+.sec{display:flex;flex-direction:column;gap:16px}
+.sec-h{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.sec-n{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:var(--doc-fg);color:#fff;font:600 13px var(--font-sans);flex:none;align-self:center}
+.sec-t{margin:0;font:600 20px var(--font-sans);letter-spacing:-0.015em}
+.sec-d{margin:0;max-width:78ch;font:400 13.5px/1.6 var(--font-sans);color:var(--doc-muted);text-wrap:pretty}
+.pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:16px}
+.frame{display:flex;flex-direction:column;gap:8px;min-width:0}
+.frame-l{font:600 10.5px var(--font-sans);letter-spacing:.08em;text-transform:uppercase;color:var(--doc-muted)}
+.mock{position:relative;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:14px;padding:16px;font-family:var(--font-sans);overflow:hidden;min-width:0}
+.th-light.mock{border-color:var(--doc-border)}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:10px 24px;padding:16px 18px;border:1px solid var(--doc-border);border-radius:12px;background:var(--doc-card)}
+.note{display:flex;gap:10px;font:400 12.5px/1.55 var(--font-sans);color:var(--doc-fg);text-wrap:pretty}
+.note b{font-weight:600}
+.mk{position:absolute;z-index:5;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:99px;background:var(--anno);color:#fff;font:700 10px var(--font-sans);box-shadow:0 0 0 2px var(--bg)}
+.mk-i{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;margin-top:1px;border-radius:99px;background:var(--anno);color:#fff;font:700 10px var(--font-sans)}
+.cut{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 6px;border-radius:5px;background:#fef3c7;color:#92400e;font:600 10px var(--font-sans);letter-spacing:.04em;text-transform:uppercase;vertical-align:1px}
+.flow{display:flex;flex-direction:column;gap:6px;padding:14px 16px;border:1px dashed var(--doc-border);border-radius:12px;background:var(--doc-card)}
+.flow-h{font:600 12px var(--font-sans);letter-spacing:.02em}
+.flow ol{margin:0;padding-left:18px;font:400 12.5px/1.6 var(--font-sans);color:var(--doc-fg)}
+
+/* ── mock primitives ── */
+.row{display:flex;align-items:center;gap:8px;min-width:0}
+.col{position:relative;flex:none;width:208px;border-radius:12px;background:var(--column-bg);padding:9px}
+.col-off{background:transparent;outline:1.5px dashed color-mix(in srgb,var(--fg) 16%,transparent);outline-offset:-1.5px}
+.col-h{display:flex;align-items:center;gap:4px;padding:2px 4px 9px;font:600 13px var(--font-sans);color:var(--muted-fg);white-space:nowrap}
+.col-n{margin-left:auto;font:500 11px var(--font-sans);color:var(--muted-fg)}
+.col-hint{margin:-4px 4px 9px;font:400 10.5px/1.4 var(--font-sans);color:var(--muted-fg)}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;color:var(--muted-fg)}
+.card{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:9px 10px;box-shadow:var(--shadow-xs)}
+.card+.card{margin-top:7px}
+.key{display:inline-flex;align-items:center;height:16px;padding:0 5px;border-radius:5px;font:600 10px var(--font-mono);letter-spacing:.01em}
+.k-adv{background:color-mix(in srgb,#8b8bf5 16%,transparent);color:#6366f1}
+.k-web{background:color-mix(in srgb,#38bdf8 18%,transparent);color:#0284c7}
+.k-rel{background:color-mix(in srgb,#f59e0b 18%,transparent);color:#b45309}
+.th-dark .k-adv{color:#a5b4fc}.th-dark .k-web{color:#7dd3fc}.th-dark .k-rel{color:#fcd34d}
+.ttl{margin-top:5px;font:500 12.5px/1.35 var(--font-sans);color:var(--fg);text-wrap:pretty}
+.ph{height:30px;border-radius:9px;background:var(--card);border:1px solid var(--border);opacity:.55}
+.ph+.ph{margin-top:7px}
+.ci{display:flex;flex-direction:column;gap:5px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)}
+.ci-h{display:flex;align-items:center;gap:6px;font:500 10.5px var(--font-sans);color:var(--fg)}
+.chip{display:inline-flex;align-items:center;height:16px;padding:0 6px;border-radius:5px;font:500 10px var(--font-sans);letter-spacing:.03em;text-transform:uppercase;margin-left:auto}
+.c-info{background:color-mix(in srgb,var(--info) 13%,transparent);color:var(--info-fg)}
+.c-warn{background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning-fg)}
+.c-ok{background:color-mix(in srgb,var(--success) 15%,transparent);color:var(--success-fg)}
+.c-plain{background:var(--accent);color:var(--fg)}
+.c-pri{background:color-mix(in srgb,var(--primary) 12%,transparent);color:var(--primary)}
+.segs{display:flex;gap:3px;height:5px}
+.sg{display:flex;flex-direction:column;gap:1px;min-width:0}
+.sg>i{flex:1;border-radius:2px;display:block}
+.s-ok{background:var(--success)} .s-run{background:var(--info)} .s-fail{background:var(--warning)} .s-cx{background:color-mix(in srgb,var(--fg) 22%,transparent)}
+.s-pend{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 14%,transparent)}
+.ci-l{display:flex;align-items:center;gap:7px;min-width:0;font:400 10.5px var(--font-sans);color:var(--muted-fg)}
+.ci-l b{font:500 10.5px var(--font-mono);color:var(--fg)}
+.ci-l span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.back{display:flex;align-items:center;gap:5px;font:500 10.5px var(--font-sans);color:var(--muted-fg)}
+.sent{display:flex;gap:7px;margin-top:8px;padding:7px 8px;border-radius:7px;background:color-mix(in srgb,var(--warning) 9%,transparent)}
+.small{font:400 10.5px/1.4 var(--font-sans);color:var(--muted-fg)}
+.pop{position:absolute;z-index:4;width:236px;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;background:var(--popover);box-shadow:var(--shadow-pop);overflow:hidden}
+.pop-r{display:flex;align-items:center;gap:8px;padding:5px 11px;font:500 11.5px var(--font-sans);color:var(--fg)}
+.pop-r em{margin-left:auto;font:400 10.5px var(--font-sans);font-style:normal;color:var(--muted-fg)}
+.pop-s{padding:7px 11px 2px;font:600 9.5px var(--font-sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted-fg)}
+.dot{width:7px;height:7px;border-radius:99px;flex:none;display:inline-block}
+.d-adv{background:#8b8bf5}.d-web{background:#38bdf8}.d-rel{background:#f59e0b}.d-hub{background:#c08a5b}.d-wal{background:#4aa8b8}
+.tip{position:absolute;z-index:4;padding:6px 9px;border-radius:7px;background:var(--fg);color:var(--bg);font:500 11px/1.4 var(--font-sans);box-shadow:var(--shadow-pop);max-width:220px}
+.panel{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:10px;background:var(--card);box-shadow:var(--shadow-xs);overflow:hidden}
+.pr{display:flex;align-items:center;gap:9px;padding:10px 13px;font:500 12.5px var(--font-sans);color:var(--fg);border-top:1px solid var(--border)}
+.pr:first-child{border-top:none}
+.num{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;border-radius:5px;background:var(--accent);color:var(--muted-fg);font:600 10px var(--font-mono)}
+.pill{display:inline-flex;align-items:center;flex:none;padding:1px 7px;border:1px solid var(--border);border-radius:99px;font:500 10.5px var(--font-sans);color:var(--muted-fg);white-space:nowrap}
+.pill.pri{border-color:transparent;background:color-mix(in srgb,var(--primary) 12%,transparent);color:var(--primary)}
+.pill.warn{border-color:transparent;background:color-mix(in srgb,var(--warning) 16%,transparent);color:var(--warning-fg)}
+.sw{position:relative;width:34px;height:19px;flex:none;border-radius:99px;background:color-mix(in srgb,var(--fg) 16%,transparent)}
+.sw::after{content:"";position:absolute;top:2.5px;left:2.5px;width:14px;height:14px;border-radius:99px;background:#fff;box-shadow:0 1px 2px rgb(0 0 0 / 25%)}
+.sw.on{background:var(--primary)} .sw.on::after{left:17.5px}
+.sw.sm{width:26px;height:15px}.sw.sm::after{width:11px;height:11px;top:2px;left:2px}.sw.sm.on::after{left:13px}
+.seg2{display:inline-flex;padding:2px;border:1px solid var(--input);border-radius:8px;background:var(--popover)}
+.seg2 span{padding:2px 10px;border-radius:6px;font:500 11.5px var(--font-sans);color:var(--muted-fg)}
+.seg2 span.on{background:var(--fg);color:var(--bg)}
+.pchip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border:1px solid var(--border);border-radius:7px;background:var(--card);font:500 11.5px var(--font-sans);color:var(--fg)}
+.pchip.off{border-style:dashed;background:transparent;color:var(--muted-fg)}
+.pchip.exc{border-color:color-mix(in srgb,var(--primary) 40%,var(--border))}
+.pchip i{font-style:normal;font:500 10px var(--font-sans);color:var(--primary)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border:1px solid var(--input);border-radius:7px;background:var(--popover);color:var(--fg);font:500 11.5px var(--font-sans);box-shadow:var(--shadow-xs);white-space:nowrap}
+.btn.pri{border-color:transparent;background:var(--primary);color:var(--primary-fg)}
+.btn.ghost{border-color:transparent;background:transparent;box-shadow:none;color:var(--muted-fg)}
+.btn.sm{height:22px;padding:0 7px;font-size:10.5px}
+.lbl{font:600 9.5px var(--font-sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted-fg)}
+.mono{font-family:var(--font-mono)}
+.mut{color:var(--muted-fg)}
+.ov{border-left:2px solid var(--primary);padding-left:9px;margin-left:-11px}
+.warnbox{display:flex;gap:7px;padding:8px 10px;border:1px solid color-mix(in srgb,var(--warning) 40%,transparent);border-radius:8px;background:color-mix(in srgb,var(--warning) 7%,var(--card));font:400 11px/1.5 var(--font-sans);color:var(--fg)}
+.infobox{display:flex;gap:7px;padding:8px 10px;border:1px solid color-mix(in srgb,var(--info) 30%,transparent);border-radius:8px;background:color-mix(in srgb,var(--info) 5%,var(--card));font:400 11px/1.5 var(--font-sans);color:var(--fg)}
+.vbox{display:flex;flex-direction:column;gap:5px;padding:9px 11px;border:1px solid color-mix(in srgb,var(--attention) 35%,transparent);border-radius:9px;background:color-mix(in srgb,var(--attention) 6%,var(--card))}
+.grp{display:flex;flex-direction:column;border:1px solid color-mix(in srgb,var(--primary) 30%,var(--border));border-left:3px solid var(--primary);border-radius:9px;background:var(--card);overflow:hidden}
+.grp-h{display:flex;align-items:center;gap:6px;padding:5px 10px;border-bottom:1px solid color-mix(in srgb,var(--primary) 18%,var(--border));font:600 10.5px var(--font-sans);color:var(--primary)}
+.then{display:flex;align-items:center;gap:7px;height:18px;padding-left:18px;font:500 9.5px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted-fg)}
+.then::before{content:"";width:1px;height:100%;background:var(--input)}
+.st{display:flex;align-items:center;gap:9px;padding:8px 10px;border-top:1px solid var(--border)}
+.st:first-child{border-top:none}
+.ico{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;flex:none;border-radius:6px;background:var(--accent);color:var(--fg)}
+.st-n{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+.st-n b{font:500 12px var(--font-sans);color:var(--fg)}
+.st-n span{font:400 10.5px var(--font-sans);color:var(--muted-fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sys{position:relative;padding:7px 96px 7px 10px;font:400 10.5px/1.55 var(--font-mono);color:var(--muted-fg);background:var(--muted);white-space:pre-wrap}
+.sys::after{content:"Added by the board";position:absolute;top:6px;right:8px;padding:0 6px;border:1px solid var(--border);border-radius:99px;background:var(--card);font:500 9.5px/16px var(--font-sans);color:var(--muted-fg)}
+.code{margin:0;padding:8px 10px;font:400 10.5px/1.55 var(--font-mono);color:var(--fg);background:var(--card);white-space:pre;overflow-x:auto}
+.bdg{position:relative;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex:none;border-radius:99px;font:600 9.5px var(--font-sans);background:color-mix(in srgb,var(--fg) 8%,transparent);color:var(--fg)}
+.bdg.run{background:var(--info);color:#fff}
+.bdg.pend{background:transparent;box-shadow:inset 0 0 0 1px var(--border);color:var(--muted-fg)}
+.bdg i{position:absolute;left:-3px;bottom:-3px;width:10px;height:10px;border-radius:99px;box-shadow:0 0 0 1.5px var(--card);display:flex;align-items:center;justify-content:center;font:700 7px/1 var(--font-sans);font-style:normal;color:#fff}
+.bdg i.ok{background:var(--success)} .bdg i.x{background:var(--warning)} .bdg i.fx{background:var(--info)} .bdg i.cx{background:var(--muted-fg)}
+.cr{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border);font:500 10.5px var(--font-mono);color:var(--fg)}
+.cr:first-child{border-top:none}
+.cr em{margin-left:auto;font:500 10.5px var(--font-sans);font-style:normal}
+.cr small{width:44px;text-align:right;font:500 10.5px var(--font-mono);color:var(--muted-fg)}
+.req{padding:0 4px;border:1px solid var(--border);border-radius:4px;font:500 8.5px var(--font-sans);letter-spacing:.04em;text-transform:uppercase;color:var(--muted-fg)}
+.fl{display:flex;flex-direction:column;gap:2px;padding:4px 8px}
+.fl b{font:500 11.5px/1.4 var(--font-sans);color:var(--fg)} .fl code{font:400 10.5px var(--font-mono);color:var(--info-fg)} .fl span{font:400 10.5px/1.45 var(--font-sans);color:var(--muted-fg)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;font:400 12px var(--font-sans);color:var(--doc-muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw-c{width:22px;height:8px;border-radius:3px;display:inline-block}
+table.tiers{width:100%;border-collapse:collapse;font:400 12.5px/1.5 var(--font-sans)}
+table.tiers th{text-align:left;font:600 11px var(--font-sans);letter-spacing:.06em;text-transform:uppercase;color:var(--doc-muted);padding:8px 10px;border-bottom:1px solid var(--doc-border)}
+table.tiers td{padding:9px 10px;border-bottom:1px solid var(--doc-border);vertical-align:top;text-wrap:pretty}
+</style>
+</helmet>
+
+<div class="doc">
+
+  <!-- ═══ Header ═══ -->
+  <header style="display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;background:color-mix(in srgb,#8b8bf5 16%,transparent);color:#6366f1;font:600 11.5px var(--font-mono)">T3O-49</span>
+      <span style="font:500 12.5px var(--font-sans);color:var(--doc-muted)">UX spec · board, card and settings</span>
+    </div>
+    <h1 style="margin:0;font:600 30px/1.15 var(--font-sans);letter-spacing:-0.025em">CI and project-based stages, v2</h1>
+    <p style="margin:0;max-width:80ch;font:400 14.5px/1.6 var(--font-sans);color:var(--doc-muted);text-wrap:pretty">One global list of stages with per-project switches and overrides, edited on the board rather than in <span class="mono" style="font-size:13px;color:var(--doc-fg)">t3o.json</span>. CI becomes a list of typed steps per project with parallel groups and a built-in Sync with base. Each screen below is shown in light and dark, with numbered notes and the interaction flows. Interactive versions: <a href="t3o.dc.html">the board</a> (Tweaks → CI demo states for the rarer CI states) and <a href="T3 Settings.dc.html">Settings</a>.</p>
+    <div style="display:flex;flex-direction:column;gap:8px;padding:14px 16px;border:1px solid var(--doc-border);border-radius:12px;background:var(--doc-card)">
+      <span style="font:600 12px var(--font-sans)">Status colours (docs/t3o/status-colours.md) and motion</span>
+      <div class="legend">
+        <span><i class="sw-c" style="background:#10b981"></i>Green · done only</span>
+        <span><i class="sw-c" style="background:#3b82f6"></i>Blue · running, including a fix agent at work</span>
+        <span><i class="sw-c" style="background:#8b5cf6"></i>Violet · waiting on a human</span>
+        <span><i class="sw-c" style="background:#f59e0b"></i>Amber · blocked or failed check (never red)</span>
+        <span><i class="sw-c" style="background:var(--anno)"></i>Pink markers · spec annotations, not UI</span>
+      </div>
+      <span style="font:400 12px/1.55 var(--font-sans);color:var(--doc-muted);text-wrap:pretty">Nothing on a card face animates. Inside the open card, the only motion is the existing shimmer on a running step's name, which pauses when the tab is hidden and under reduced motion. This pass also removed the pulsing "thread running" dot and the pulsing planning pip from card faces, and moved CI failures from red to amber everywhere.</span>
+    </div>
+  </header>
+
+  <!-- ═══ 1 · Board partial stages ═══ -->
+  <section class="sec">
+    <div class="sec-h"><span class="sec-n">1</span><h2 class="sec-t">Board · partial stages</h2></div>
+    <p class="sec-d">The board shows the union of every in-view project's stages as columns. A stage that doesn't apply to every project in view carries a half-filled circle. Single-project view hides stages that project has switched off, unless a card still sits there.</p>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · all projects, popover open</span>
+          <div class="{{ th.mock }}" style="height:330px">
+            <div class="row" style="gap:10px;align-items:flex-start">
+              <div class="col">
+                <div class="col-h">Sprint
+                  <span class="icon-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor" stroke="none"></path></svg></span>
+                  <span class="col-n">2</span></div>
+                <div class="card"><span class="row"><span class="key k-adv">T3-195</span></span><span class="ttl">Persist composer drafts per worktree</span></div>
+                <div class="ph"></div>
+              </div>
+              <div class="col">
+                <div class="col-h">CI
+                  <span class="icon-btn" style="background:var(--accent);color:var(--fg)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor" stroke="none"></path></svg></span>
+                  <span class="col-n">3</span></div>
+                <div class="ph"></div><div class="ph"></div><div class="ph"></div>
+                <div class="pop" style="top:30px;left:4px">
+                  <div style="display:flex;flex-direction:column;gap:2px;padding:10px 11px 7px"><span style="font:600 12px var(--font-sans)">CI</span><span class="small">2 of 3 projects in view run this stage</span></div>
+                  <div class="pop-s">Included</div>
+                  <div class="pop-r"><i class="dot d-adv"></i>core.agent.advisor<em style="color:var(--fg)">Switched on</em></div>
+                  <div class="pop-r"><i class="dot d-rel"></i>mesh.relay<em style="color:var(--fg)">Switched on</em></div>
+                  <div class="pop-s">Not included</div>
+                  <div class="pop-r" style="color:var(--muted-fg)"><i class="dot d-web" style="opacity:.35"></i>mesh.web<em>Off by default</em></div>
+                  <div class="pop-r" style="margin-top:5px;padding:8px 11px;border-top:1px solid var(--border)">Stage settings<em>›</em></div>
+                </div>
+              </div>
+            </div>
+            <div class="tip" style="top:46px;left:24px;opacity:.0"></div>
+            <span class="mk" style="top:18px;left:78px">1</span>
+            <span class="mk" style="top:88px;left:440px">2</span>
+            <span class="mk" style="top:300px;left:440px">3</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · hover tooltip, and mesh.web alone</span>
+          <div class="{{ th.mock }}" style="height:250px">
+            <div class="row" style="gap:10px;align-items:flex-start">
+              <div class="col">
+                <div class="col-h">Staging soak
+                  <span class="icon-btn" style="background:var(--accent);color:var(--fg)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor" stroke="none"></path></svg></span>
+                  <span class="col-n">1</span></div>
+                <div class="tip" style="top:32px;left:10px">1 of 3 projects · only mesh.relay<div style="font-weight:400;opacity:.7;margin-top:2px">Click for the list</div></div>
+                <div class="ph" style="margin-top:44px"></div>
+              </div>
+              <div class="col col-off">
+                <div class="col-h">Sprint <span style="margin-left:4px;padding:0 5px;border:1px dashed var(--input);border-radius:5px;font:500 9.5px var(--font-sans);letter-spacing:.03em;text-transform:uppercase">Off</span><span class="col-n">1</span></div>
+                <div class="col-hint">Switched off for mesh.web. Shown until its last card moves on. <span style="color:var(--info-fg);font-weight:500">Pipeline settings</span></div>
+                <div class="card"><span class="row"><span class="key k-web">MW-39</span></span><span class="ttl">Docs search with keyboard nav</span></div>
+              </div>
+            </div>
+            <span class="mk" style="top:56px;left:206px">4</span>
+            <span class="mk" style="top:18px;left:300px">5</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">1</span><span><b>Partial icon.</b> Shown only in multi-project view, only when the stage runs for some but not all projects in view. Hidden projects (eye off in Settings) don't count. 20px hit area; same muted grey as the column name. The column's collapse control appears only while hovering the stage name itself, so hovering the icon never shifts it.</span></div>
+      <div class="note"><span class="mk-i">2</span><span><b>Click → popover.</b> Included and Not included, each with the project colour dot and whether that's the default or a project switch. Rows link to the project's Pipeline tab. Outside click or Esc closes; one popover at a time.</span></div>
+      <div class="note"><span class="mk-i">3</span><span><b>Stage settings</b> deep-links to Settings → Pipeline with that stage expanded (<span class="mono">#pipeline/ci</span>).</span></div>
+      <div class="note"><span class="mk-i">4</span><span><b>Hover tooltip</b> after ~300ms: "N of M projects · only X" (or "not X" when fewer are missing). It never shows while the popover is open. <span class="cut">v1: native title</span> is acceptable for the first cut.</span></div>
+      <div class="note"><span class="mk-i">5</span><span><b>Retired, still occupied.</b> In single-project view a switched-off stage is hidden, except while a card sits in it: dashed outline, "Off" tag, a hint with a link to that project's pipeline. Drops into it are refused with "Sprint is off for mesh.web". It disappears once empty. The card face also says "Sprint is switched off for mesh.web".</span></div>
+      <div class="note"><span class="mk-i">·</span><span><b>Pipelines matrix</b> (existing button beside the legend) keeps working: cells now mean "on by default / switched on for the project / not used", and project names link to their pipeline settings.</span></div>
+    </div>
+  </section>
+
+  <!-- ═══ 2 · Settings global pipeline ═══ -->
+  <section class="sec">
+    <div class="sec-h"><span class="sec-n">2</span><h2 class="sec-t">Settings → Board → Pipeline</h2></div>
+    <p class="sec-d">Each stage card gains its default for projects and a derived "Applies to" summary with per-project exceptions. Role stages show a lock instead of a default switch. New stages can be made for every project or for one.</p>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · CI expanded</span>
+          <div class="{{ th.mock }}">
+            <div class="panel">
+              <div class="pr"><span class="num">2</span>Sprint<span style="flex:1"></span><span class="pill">Default on</span><span class="pill">3 of 5 projects</span><span class="pill">Manual</span></div>
+              <div class="pr"><span class="num">7</span>Visual QA<span style="flex:1"></span><span class="pill">Only mesh.web</span><span class="pill pri">Auto</span></div>
+              <div class="pr" style="background:var(--muted)"><span class="num">8</span>CI<span style="flex:1"></span><span class="mut" style="font:400 11px var(--font-sans)">▴</span></div>
+              <div style="display:flex;flex-direction:column;gap:9px;padding:6px 14px 14px 40px">
+                <div style="display:flex;flex-direction:column;gap:9px;padding:11px 12px;border:1px solid var(--border);border-radius:9px;background:var(--muted)">
+                  <div class="row" style="justify-content:space-between">
+                    <span style="display:flex;flex-direction:column;gap:1px"><span style="font:500 12px var(--font-sans)">Default for projects</span><span class="small">Off unless a project switches it on.</span></span>
+                    <span class="seg2"><span>On</span><span class="on">Off</span></span>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:6px;padding-top:9px;border-top:1px solid var(--border)">
+                    <span style="font:500 12px var(--font-sans)">Applies to <b style="font-weight:600">2 of 5 projects</b> <span class="small">2 exceptions to the default</span></span>
+                    <div class="row" style="flex-wrap:wrap;gap:5px">
+                      <span class="pchip exc"><i class="dot d-adv"></i>core.agent.advisor <i>on here</i></span>
+                      <span class="pchip off"><i class="dot d-web" style="opacity:.35"></i>mesh.web</span>
+                      <span class="pchip exc"><i class="dot d-rel"></i>mesh.relay <i>on here</i></span>
+                      <span class="pchip off"><i class="dot d-hub" style="opacity:.35"></i>12z.hub</span>
+                      <span class="pchip off"><i class="dot d-wal" style="opacity:.35"></i>walls</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="row"><span style="font:400 12px var(--font-sans)">Steps</span><span style="flex:1"></span><span class="pill">Set per project</span></div>
+                <div class="row" style="padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--card);font:500 11.5px var(--font-sans)"><i class="dot d-adv"></i>core.agent.advisor<span class="mono mut" style="font-size:10.5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">Typecheck ∥ Lint → Test ∥ Migration review → GitHub checks</span><span class="mut" style="margin-left:auto">›</span></div>
+              </div>
+              <div class="pr"><span class="num">9</span>Ready for merge<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--muted-fg)" stroke-width="2.2"><rect width="18" height="11" x="3" y="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg><span style="flex:1"></span><span class="pill">Manual</span></div>
+              <div class="pr" style="color:var(--muted-fg)">＋ Add stage</div>
+            </div>
+            <span class="mk" style="top:28px;right:24px">1</span>
+            <span class="mk" style="top:164px;right:24px">2</span>
+            <span class="mk" style="top:224px;left:58px">3</span>
+            <span class="mk" style="bottom:56px;left:150px">4</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · add stage</span>
+          <div class="{{ th.mock }}">
+            <div class="panel" style="padding:12px 14px;gap:9px;background:var(--muted)">
+              <span style="font:600 12.5px var(--font-sans)">New stage</span>
+              <div class="row" style="align-items:flex-start;padding:7px 9px;border-radius:7px"><span style="width:14px;height:14px;border-radius:99px;border:1.5px solid var(--input);flex:none;margin-top:1px"></span><span style="display:flex;flex-direction:column;gap:1px"><span style="font:500 12px var(--font-sans)">For every project</span><span class="small">Pick the default afterwards.</span></span></div>
+              <div class="row" style="align-items:flex-start;padding:7px 9px;border:1px solid var(--input);border-radius:7px;background:var(--card)"><span style="width:14px;height:14px;border-radius:99px;border:1.5px solid var(--primary);flex:none;margin-top:1px;display:flex;align-items:center;justify-content:center"><i style="width:7px;height:7px;border-radius:99px;background:var(--primary)"></i></span><span style="display:flex;flex-direction:column;gap:1px"><span style="font:500 12px var(--font-sans)">For one project</span><span class="small">Off by default; on only for the project you pick. Others can opt in later.</span></span></div>
+              <div class="row" style="padding-left:30px"><span class="small">Project</span><span class="btn" style="min-width:160px">mesh.web ▾</span></div>
+              <div class="row" style="justify-content:flex-end"><span class="btn ghost">Cancel</span><span class="btn pri">Add stage</span></div>
+            </div>
+            <span class="mk" style="top:72px;right:24px">5</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">1</span><span><b>Collapsed chips</b>: Default on / Opt-in / Only &lt;project&gt;, plus "N of M projects" when not every project runs it. Tooltip names them.</span></div>
+      <div class="note"><span class="mk-i">2</span><span><b>Default for projects</b> is a two-way segment, not a switch, so it reads as a default rather than "this stage is on". Changing it moves every project without an exception at once, no confirm; the card freeze rule still applies.</span></div>
+      <div class="note"><span class="mk-i">3</span><span><b>Applies to</b> lists every project. Solid = runs it, dashed = doesn't; a blue border and "on here / off here" marks an exception. Each chip opens that project's Pipeline tab.</span></div>
+      <div class="note"><span class="mk-i">4</span><span><b>Role stages</b> (Backlog, Planning, Building, Code review, Ready for merge, Done) show a lock and "Every project"; expanding explains why they can't be switched off. They can't be removed.</span></div>
+      <div class="note"><span class="mk-i">5</span><span><b>For one project</b> creates the stage off by default and switched on for the picked project. It shows "Only mesh.web" and "Made for this project" on that project's page. Removing any stage asks to confirm and leaves cards in place as a retired column.</span></div>
+      <div class="note"><span class="mk-i">·</span><span><b>CI's steps</b> are no longer here. The stage lists projects with steps (each a link to its CI tab) and keeps the global fix-agent defaults.</span></div>
+    </div>
+  </section>
+
+  <!-- ═══ 3 · Project page ═══ -->
+  <section class="sec">
+    <div class="sec-h"><span class="sec-n">3</span><h2 class="sec-t">Settings → Board → Projects → &lt;project&gt;</h2></div>
+    <p class="sec-d">One page per project with three tabs, each deep-linkable: <span class="mono" style="font-size:12.5px">#projects/advisor/pipeline</span>, <span class="mono" style="font-size:12.5px">/ci</span>, <span class="mono" style="font-size:12.5px">/import</span>. The sidebar lists projects under Board; a blue dot marks one with a t3o.json waiting. The header shows the difference count and "Reset everything to global…".</p>
+
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">3a · Pipeline tab</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }}</span>
+          <div class="{{ th.mock }}">
+            <div class="row" style="gap:2px;border-bottom:1px solid var(--border);margin-bottom:12px">
+              <span style="padding:7px 10px;border-bottom:2px solid var(--fg);font:500 12px var(--font-sans)">Pipeline <span class="pill" style="border:none;background:var(--accent);padding:0 5px">2</span></span>
+              <span style="padding:7px 10px;font:500 12px var(--font-sans);color:var(--muted-fg)">CI <span class="pill" style="border:none;background:var(--accent);padding:0 5px">5</span></span>
+              <span style="padding:7px 10px;font:500 12px var(--font-sans);color:var(--muted-fg)">Import &amp; export</span>
+            </div>
+            <div class="panel">
+              <div class="pr"><span class="num">1</span>Backlog<span style="flex:1"></span><span class="pill">🔒 Always on</span></div>
+              <div class="pr"><span class="num">2</span>Sprint<span style="flex:1"></span><span class="small">Default on</span><span class="sw on"></span></div>
+              <div class="pr" style="background:var(--muted)"><span class="num">6</span>Code review<span class="pill pri">1 override</span><span style="flex:1"></span><span class="pill">🔒 Always on</span></div>
+              <div style="display:flex;flex-direction:column;gap:2px;padding:4px 14px 10px 42px">
+                <div class="row" style="padding:7px 0"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:400 12.5px var(--font-sans)">Auto execute</span><span class="small">Global</span></span><span class="sw on"></span></div>
+                <div class="row ov" style="padding:7px 0 7px 9px"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:400 12.5px var(--font-sans)">Rounds</span><span style="font:500 10.5px var(--font-sans);color:var(--primary)">Overridden here · global 5</span></span><span class="btn sm">↺ Reset to global</span><span class="btn" style="padding:0 4px;gap:12px">− <b style="font-weight:500">3</b> +</span></div>
+                <div class="row" style="padding:7px 0"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:400 12.5px var(--font-sans)">Model</span><span class="small">Global</span></span><span class="btn" style="min-width:130px">claude-opus-4 ▾</span></div>
+              </div>
+              <div class="pr"><span class="num">7</span><span class="mut" style="text-decoration:line-through">Visual QA</span><span class="pill">Only mesh.web</span><span style="flex:1"></span><span class="small">Default off</span><span class="sw"></span></div>
+              <div class="pr"><span class="num">8</span>CI<span class="pill pri">On here</span><span style="flex:1"></span><span class="small">Default off</span><span class="sw on"></span></div>
+            </div>
+            <span class="mk" style="top:96px;right:24px">1</span>
+            <span class="mk" style="top:206px;left:30px">2</span>
+            <span class="mk" style="bottom:66px;left:30px">3</span>
+            <span class="mk" style="bottom:28px;left:30px">4</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">1</span><span><b>Role stages</b> show "Always on" with a lock; the tooltip and the expanded row give the reason. Their settings can still be overridden.</span></div>
+      <div class="note"><span class="mk-i">2</span><span><b>Overrides</b> sit against the global value. An overridden row gets a blue left rule, "Overridden here · global 5" and Reset to global. Setting a value equal to global clears the override; prompts are the exception, an override survives until reset.</span></div>
+      <div class="note"><span class="mk-i">3</span><span><b>Off for this project</b>: name struck through, switch off, the global default shown beside it. Expanding says cards skip it.</span></div>
+      <div class="note"><span class="mk-i">4</span><span><b>Switched against the default</b> gets "On here / Off here". Only these switches and the overrides are stored, so a stage added globally later reaches this project with its default.</span></div>
+    </div>
+
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">3b · CI tab</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }}</span>
+          <div class="{{ th.mock }}">
+            <div class="panel" style="flex-direction:row;align-items:center;gap:12px;padding:10px 13px;margin-bottom:12px"><span style="display:flex;flex-direction:column;gap:1px;flex:1"><span style="font:500 12.5px var(--font-sans)">Run CI for this project</span><span class="small">Cards leaving Code review run these steps before Ready for merge.</span></span><span class="sw on"></span></div>
+            <div class="row" style="gap:9px;padding:8px 11px;border:1px solid var(--border);border-radius:9px;background:var(--muted)">
+              <span class="mut" style="font-size:10px">🔒</span><span class="ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="6" r="3"></circle><path d="M12 6h5a2 2 0 0 1 2 2v7"></path><circle cx="19" cy="18" r="3"></circle><path d="M12 18H7a2 2 0 0 1-2-2V9"></path></svg></span>
+              <span class="st-n"><b>Sync with base</b><span>Always first, always alone. A conflict starts a fix agent inside CI.</span></span><span class="pill">Built in</span>
+            </div>
+            <div class="then">then</div>
+            <div class="grp">
+              <div class="grp-h">∥ Parallel <span style="font-weight:400;color:var(--muted-fg)">2 steps start together</span></div>
+              <div class="st"><span class="mut">⋮⋮</span><span class="ico">›_</span><span class="st-n"><b>Typecheck <span class="lbl" style="margin-left:4px">Script</span></b><span class="mono">bun run typecheck · 5 min</span></span><span class="row small" style="gap:6px"><span class="sw sm"></span>Parallel with previous</span></div>
+              <div class="st"><span class="mut">⋮⋮</span><span class="ico">›_</span><span class="st-n"><b>Lint <span class="lbl" style="margin-left:4px">Script</span></b><span class="mono">bun run lint · 5 min</span></span><span class="row small" style="gap:6px;color:var(--fg)"><span class="sw sm on"></span>Parallel with previous</span></div>
+              <div class="warnbox" style="border-radius:0;border-width:1px 0 0">⚠ Typecheck and Lint share one worktree. Scripts running at once can collide on build output, caches or lockfiles.</div>
+            </div>
+            <div class="then">then, once the group above passes</div>
+            <div class="grp">
+              <div class="grp-h">∥ Parallel <span style="font-weight:400;color:var(--muted-fg)">2 steps start together</span></div>
+              <div class="st"><span class="mut">⋮⋮</span><span class="ico">›_</span><span class="st-n"><b>Test <span class="lbl" style="margin-left:4px">Script</span></b><span class="mono">bun run test --reporter=dot · 15 min</span></span></div>
+              <div class="st" style="flex-direction:column;align-items:stretch;gap:7px">
+                <div class="row" style="gap:9px"><span class="mut">⋮⋮</span><span class="ico">⚙</span><span class="st-n"><b>Migration review <span class="lbl" style="margin-left:4px">Agent</span></b><span>Runs in its own thread · claude-sonnet-4</span></span><span class="row small" style="gap:6px;color:var(--fg)"><span class="sw sm on"></span>Parallel with previous</span></div>
+                <div style="margin-left:46px;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                  <div class="sys" style="border-bottom:1px solid var(--border)">Card RL-16 in mesh.relay · CI step 5 · Migration review.
+The branch, its base ref and the diff are attached.</div>
+                  <div style="padding:8px 10px;font:400 11.5px/1.5 var(--font-sans);background:var(--card)">Check every new or changed migration. Fail if one isn't reversible…</div>
+                  <div class="sys" style="border-top:1px solid var(--border)">Report with board_ci_result: verdict, summary, failures[].</div>
+                </div>
+              </div>
+            </div>
+            <div class="then">then, once the group above passes</div>
+            <div class="panel"><div class="st"><span class="mut">⋮⋮</span><span class="ico">⎇</span><span class="st-n"><b>GitHub checks <span class="lbl" style="margin-left:4px">Forge checks</span></b><span>Only ci/build, ci/e2e · gives up after 10 min</span></span><span class="row small" style="gap:6px"><span class="sw sm"></span>Parallel with previous</span></div></div>
+            <div class="row" style="padding-top:10px;gap:6px"><span class="small" style="font-weight:500">Add step</span><span class="btn sm">＋ Script</span><span class="btn sm">＋ Agent</span><span class="btn sm">＋ Forge checks</span></div>
+            <span class="mk" style="top:80px;right:24px">1</span>
+            <span class="mk" style="top:146px;left:8px">2</span>
+            <span class="mk" style="top:168px;right:24px">3</span>
+            <span class="mk" style="top:250px;left:8px">4</span>
+            <span class="mk" style="top:358px;right:24px">5</span>
+            <span class="mk" style="bottom:62px;right:24px">6</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · fix agent and progress help</span>
+          <div class="{{ th.mock }}">
+            <div class="row" style="align-items:baseline;margin-bottom:7px"><b style="font:600 13px var(--font-sans)">Fix agent</b><span class="small">Runs when a step fails, then every step re-runs from the top.</span></div>
+            <div class="panel" style="padding:2px 13px 4px;margin-bottom:12px">
+              <div class="row ov" style="padding:8px 0 8px 9px"><span style="display:flex;flex-direction:column;flex:1"><span style="font:400 12.5px var(--font-sans)">Fix attempts</span><span style="font:500 10.5px var(--font-sans);color:var(--primary)">Overridden here · global 2</span></span><span class="btn sm">Reset to global</span><span class="btn" style="padding:0 4px;gap:12px">− <b style="font-weight:500">1</b> +</span></div>
+              <div class="row" style="padding:8px 0"><span style="display:flex;flex-direction:column;flex:1"><span style="font:400 12.5px var(--font-sans)">Model</span><span class="small">Global</span></span><span class="btn" style="min-width:130px">claude-sonnet-4 ▾</span></div>
+              <div class="row" style="padding:8px 0"><span style="display:flex;flex-direction:column;flex:1"><span style="font:400 12.5px var(--font-sans)">Prompt</span><span class="small">Uses the global prompt · 74 words</span></span><span class="btn sm">Override for this project</span></div>
+            </div>
+            <div class="panel">
+              <div class="row" style="padding:9px 12px"><span style="font:500 12px var(--font-sans);flex:1">‹/› Report progress and results from a script</span><span class="small">Optional ▴</span></div>
+              <div style="display:flex;flex-direction:column;gap:8px;padding:0 12px 12px">
+                <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                  <div class="row" style="padding:5px 8px 5px 10px;background:var(--muted);border-bottom:1px solid var(--border)"><span class="small" style="flex:1;font-weight:500">Progress · print any time</span><span class="btn sm">⧉ Copy</span></div>
+                  <pre class="code">echo '::t3o-progress::{"message":"Running unit tests","done":128,"total":212}'</pre>
+                </div>
+                <div style="display:flex;flex-direction:column;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                  <div class="row" style="padding:5px 8px 5px 10px;background:var(--muted);border-bottom:1px solid var(--border)"><span class="small" style="flex:1;font-weight:500">Result · write once before exiting</span><span class="btn sm">⧉ Copy</span></div>
+                  <pre class="code">cat > "$T3O_CI_RESULT" &lt;&lt;'JSON'
+{ "summary": "3 of 212 tests failed",
+  "failures": [{ "title": "slow_consumer_drops_oldest",
+    "detail": "dropped frames (0 vs 12)",
+    "file": "infra/relay/src/fanout.rs", "line": 311 }] }
+JSON</pre>
+                </div>
+              </div>
+            </div>
+            <span class="mk" style="top:52px;right:24px">7</span>
+            <span class="mk" style="top:184px;right:24px">8</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">1</span><span><b>Run CI for this project</b> mirrors the CI stage switch on the Pipeline tab. Off keeps the steps for later.</span></div>
+      <div class="note"><span class="mk-i">2</span><span><b>Sync with base</b> is a locked first row: no handle, no toggle, no delete. It can't be the target of a drop; dropping above it lands below it.</span></div>
+      <div class="note"><span class="mk-i">3</span><span><b>Parallel with previous</b> per step. Consecutive parallel steps render as one bordered group with a blue left rule and a "Parallel" header, so grouping is visible without reading toggles. The first step after Sync can't be parallel (toggle disabled, tooltip says why).</span></div>
+      <div class="note"><span class="mk-i">4</span><span><b>Shared-worktree warning</b> appears inside any group holding two or more Script steps. It's a warning, not a block.</span></div>
+      <div class="note"><span class="mk-i">5</span><span><b>Agent step</b> expanded: the board's prefix and suffix are shown read-only around the editable prompt, in the same "Added by the board" style as stage prompts. Script: command + timeout. Forge checks: forge (from the repo, read-only), "Only these" name chips (Enter to add, empty = all), and the no-checks timeout.</span></div>
+      <div class="note"><span class="mk-i">6</span><span><b>Reorder</b> by dragging the handle; a 2px blue line shows the drop point (above or below the hovered row). Dropping a step into the first slot clears its parallel flag. Click a row to expand its fields.</span></div>
+      <div class="note"><span class="mk-i">7</span><span><b>Fix agent</b>: attempts, model and prompt follow global until overridden, with the same override pattern as the Pipeline tab.</span></div>
+      <div class="note"><span class="mk-i">8</span><span><b>Progress and result help</b>, collapsed by default, with copyable examples of the progress line and the <span class="mono">$T3O_CI_RESULT</span> file. Agent steps report the same shape through their tool, so no help is needed there.</span></div>
+    </div>
+
+    <h3 style="margin:8px 0 0;font:600 14px var(--font-sans)">3c · Import &amp; export tab</h3>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · import confirm, export done</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:12px">
+            <div class="panel" style="flex-direction:row;gap:11px;padding:12px 13px;align-items:flex-start">
+              <span class="ico" style="width:28px;height:28px">⤓</span>
+              <span style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:0"><b style="font:600 12.5px var(--font-sans)">Import from the repo</b><span class="small">Reads t3o.json at the root of the default branch. Replaces this project's differences.</span><span class="row" style="margin-top:3px"><span class="pill pri">Changed since last import</span><span class="mono small">main @ b71e0d4 · was 91b07fe</span></span></span>
+              <span class="btn pri">Import…</span>
+            </div>
+            <div style="align-self:center;width:min(380px,100%);display:flex;flex-direction:column;gap:10px;padding:16px;border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:var(--shadow-pop)">
+              <b style="font:600 13.5px var(--font-sans)">Import 12z.hub's t3o.json?</b>
+              <div class="row" style="flex-wrap:wrap;gap:5px"><span class="pill">+1 stage</span><span class="pill">CI · 3 steps</span><span class="pill">2 overrides</span><span class="pill warn">1 ignored entry</span></div>
+              <div class="panel" style="box-shadow:none">
+                <div class="row" style="padding:6px 10px;font:400 11.5px var(--font-sans)"><b class="mono" style="color:var(--success-fg);width:12px">+</b>Staging soak on (off by default)</div>
+                <div class="row" style="padding:6px 10px;border-top:1px solid var(--border);font:400 11.5px var(--font-sans)"><b class="mono" style="color:var(--success-fg);width:12px">+</b>CI on: Typecheck ∥ Lint, then Build</div>
+                <div class="row" style="padding:6px 10px;border-top:1px solid var(--border);font:400 11.5px var(--font-sans)"><b class="mono" style="color:var(--primary);width:12px">±</b>Code review rounds 3 (global 5)</div>
+                <div class="row" style="padding:6px 10px;border-top:1px solid var(--border);font:400 11.5px var(--font-sans)"><b class="mono" style="color:var(--warning-fg);width:12px">!</b>stages.review.round isn't a known setting</div>
+              </div>
+              <span class="small" style="font-size:11.5px;line-height:1.5">Replaces 12z.hub's differences with the file. Global settings and other projects are untouched.</span>
+              <div class="row" style="justify-content:flex-end"><span class="btn ghost">Cancel</span><span class="btn pri">Replace and import</span></div>
+            </div>
+            <div class="vbox">
+              <b style="font:600 12px var(--font-sans)">ⓘ Written, but not committed</b>
+              <span class="small" style="font-size:11.5px;line-height:1.5">t3o.json is in mesh.relay's project root, uncommitted. Nobody else sees it until you commit and push it.</span>
+              <div class="row"><code class="mono" style="flex:1;min-width:0;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);font-size:10.5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">git add t3o.json &amp;&amp; git commit -m "chore: export t3o pipeline" &amp;&amp; git push</code><span class="btn sm">Copy</span></div>
+            </div>
+            <span class="mk" style="top:20px;right:100px">1</span>
+            <span class="mk" style="top:132px;left:40px">2</span>
+            <span class="mk" style="bottom:72px;left:8px">3</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">1</span><span><b>File state</b>: No t3o.json (Import disabled), Not imported yet, Changed since last import (blue), Imported · up to date (disabled). The short SHA is the default-branch commit the board read.</span></div>
+      <div class="note"><span class="mk-i">2</span><span><b>Import confirm</b>: summary chips (the brief's "+1 stage, CI · 3 steps, 2 overrides, 1 ignored entry"), then one line per change marked + new, ± changed, = same, ! ignored. The note states that it replaces this project's differences and how many exist now. The confirm is the only place an import applies; nothing imports silently.</span></div>
+      <div class="note"><span class="mk-i">3</span><span><b>Export</b> writes straight away, no confirm (it only touches the working copy). The violet box means it's now on the human: commit and push. Copyable git command. <span class="cut">Cut for v1</span>: offering to commit for you.</span></div>
+    </div>
+  </section>
+
+  <!-- ═══ 4 · Import notice ═══ -->
+  <section class="sec">
+    <div class="sec-h"><span class="sec-n">4</span><h2 class="sec-t">Import notice</h2></div>
+    <p class="sec-d">When board settings load and a project's repo has a t3o.json that hasn't been imported or dismissed, or that changed since, the board offers it. It lives at the top of Settings → Board, and as one quiet pill in the board header for projects in view. It never interrupts the board itself.</p>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · two projects stacked, and the board pill</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;flex-direction:column;border:1px solid color-mix(in srgb,var(--primary) 28%,var(--border));border-radius:10px;background:color-mix(in srgb,var(--primary) 4%,var(--card));overflow:hidden">
+              <div class="row" style="padding:9px 13px;border-bottom:1px solid color-mix(in srgb,var(--primary) 18%,var(--border))"><b style="font:600 12.5px var(--font-sans);flex:1">2 projects have a t3o.json to import</b><span class="small" style="font-weight:500">Dismiss all</span></div>
+              <div class="row" style="align-items:flex-start;padding:10px 13px;gap:9px"><i class="dot d-hub" style="margin-top:5px"></i><span style="display:flex;flex-direction:column;gap:1px;flex:1;min-width:0"><span style="font:500 12px/1.45 var(--font-sans)">12z.hub has a t3o.json. Import its pipeline and CI settings?</span><span class="small">main @ c3d58a1 · +1 stage, CI · 3 steps, 2 overrides, 1 ignored entry</span></span><span class="btn ghost sm">No thanks</span><span class="btn pri sm">Import…</span></div>
+              <div class="row" style="align-items:flex-start;padding:10px 13px;gap:9px;border-top:1px solid color-mix(in srgb,var(--primary) 14%,var(--border))"><i class="dot d-rel" style="margin-top:5px"></i><span style="display:flex;flex-direction:column;gap:1px;flex:1;min-width:0"><span style="font:500 12px/1.45 var(--font-sans)">mesh.relay's t3o.json changed since you imported it. Import the new version?</span><span class="small">main @ b71e0d4 · was 91b07fe · CI · 4 steps, 1 override</span></span><span class="btn ghost sm">No thanks</span><span class="btn pri sm">Import…</span></div>
+            </div>
+            <div class="row" style="gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px">
+              <i class="dot" style="background:#a1a1aa"></i><b style="font:600 12.5px var(--font-sans)">All projects</b>
+              <span class="small">▬ core.agent.advisor &nbsp;▬ mesh.web &nbsp;▬ mesh.relay</span>
+              <span class="btn sm">▥ Pipelines</span>
+              <span style="display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:7px;background:color-mix(in srgb,var(--primary) 9%,transparent);color:var(--primary);font:500 10.5px var(--font-sans);white-space:nowrap">⎘ mesh.relay's t3o.json changed</span>
+            </div>
+            <span class="mk" style="top:24px;right:96px">1</span>
+            <span class="mk" style="top:70px;right:20px">2</span>
+            <span class="mk" style="bottom:22px;right:20px">3</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">1</span><span><b>Stacking.</b> One project: a single row with a file icon, no header. Two or more: one panel with a count header and Dismiss all, one row per project with its colour dot. Show up to three rows, then "+N more" expands. Oldest file first.</span></div>
+      <div class="note"><span class="mk-i">2</span><span><b>Import…</b> opens the same confirm as the Import &amp; export tab. <b>No thanks</b> remembers the file's SHA; the notice returns only if the file changes again. The project's sidebar dot and the tab's count clear with it.</span></div>
+      <div class="note"><span class="mk-i">3</span><span><b>Board pill</b>: only for projects in view, one pill whatever the count ("2 t3o.json files to import"), links to Settings → Board. Not shown on sub-boards. <span class="cut">Cut for v1</span> if Settings is the only entry point we can afford; the sidebar dot covers discovery.</span></div>
+      <div class="note"><span class="mk-i">·</span><span><b>Also shown</b> at the top of that project's page, as a slim one-line version, so a deep link to the project doesn't hide it.</span></div>
+    </div>
+  </section>
+
+  <!-- ═══ 5 · Card face ═══ -->
+  <section class="sec">
+    <div class="sec-h"><span class="sec-n">5</span><h2 class="sec-t">Card in CI · face</h2></div>
+    <p class="sec-d">One segment row per pass. The first narrow segment is Sync with base; each later segment is a group, sized by its step count. A group's parallel steps stack as thin lanes inside one segment. The status line names the single most useful thing happening. Nothing on the face animates or ticks.</p>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }}</span>
+          <div class="{{ th.mock }}">
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">
+              <div style="display:flex;flex-direction:column">
+                <div class="card"><span class="row"><span class="key k-adv">T3-185</span></span><span class="ttl">Remember column widths per project</span>
+                  <div class="ci"><div class="ci-h">CI<span class="chip c-info">Running</span></div>
+                    <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-run"></i><i class="s-run"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span></div>
+                    <div class="ci-l"><b>3/6</b><span>Test · 128/212 +1</span></div></div></div>
+                <div class="card"><span class="row"><span class="key k-adv">T3-187</span></span><span class="ttl">File watcher misses renames inside new folders</span>
+                  <div class="ci"><div class="back">↶ Back from Ready for merge: base moved</div><div class="ci-h">CI · pass 3<span class="chip c-info">Running</span></div>
+                    <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-run"></i></span></div>
+                    <div class="ci-l"><b>5/6</b><span>Waiting on GitHub checks 3/5</span></div></div></div>
+                <div class="card"><span class="row"><span class="key k-adv">T3-185</span></span><span class="ttl">Remember column widths per project</span>
+                  <div class="ci"><div class="ci-h">CI<span class="chip c-info">Fixing</span></div>
+                    <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-run"></i></span><span class="sg" style="flex:2"><i class="s-pend"></i><i class="s-pend"></i></span><span class="sg" style="flex:2"><i class="s-pend"></i><i class="s-pend"></i></span><span class="sg" style="flex:1"><i class="s-pend"></i></span></div>
+                    <div class="ci-l"><b>0/6</b><span>Resolving conflicts with main · 1/3 files</span></div></div></div>
+              </div>
+              <div style="display:flex;flex-direction:column">
+                <div class="card"><span class="row"><span class="key k-rel">RL-16</span></span><span class="ttl">Weighted fair queueing for fan-out</span>
+                  <div class="ci"><div class="ci-h">CI<span class="chip c-info">Fixing</span></div>
+                    <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-fail"></i></span><span class="sg" style="flex:2"><i class="s-pend"></i><i class="s-pend"></i></span></div>
+                    <div class="ci-l"><b>1/4</b><span>Check failed · fix 1 of 2</span></div></div></div>
+                <div class="card"><span class="row"><span class="key k-adv">T3-187</span></span><span class="ttl">File watcher misses renames inside new folders</span>
+                  <div class="ci"><div class="ci-h">CI · pass 3<span class="chip c-warn">Blocked</span></div>
+                    <div class="segs"><span class="sg" style="flex:0 0 10px"><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-ok"></i></span><span class="sg" style="flex:2"><i class="s-ok"></i><i class="s-ok"></i></span><span class="sg" style="flex:1"><i class="s-fail"></i></span></div>
+                    <div class="ci-l"><b>5/6</b><span style="color:var(--warning-fg)">Can't read Azure DevOps checks</span></div></div></div>
+                <div class="card"><span class="row"><span class="key k-rel">RL-15</span><span class="small" style="margin-left:auto">Code review</span></span><span class="ttl">Drop metric for slow subscribers</span>
+                  <div class="sent"><span style="color:var(--warning-fg);font-size:11px">↶</span><span style="display:flex;flex-direction:column;gap:1px"><span style="font:500 10.5px var(--font-sans)">Sent back by CI</span><span class="small">Test · 3 failures still failing after 2 fix attempts</span></span></div></div>
+                <div class="card"><span class="row"><span class="key k-adv">T3-173</span><span class="small" style="margin-left:auto">Ready for merge</span></span><span class="ttl">Drop the legacy thread migration path</span>
+                  <div class="row small" style="margin-top:7px;font-weight:500;gap:5px">» CI skipped by brent</div></div>
+              </div>
+            </div>
+            <span class="mk" style="top:76px;left:22px">1</span>
+            <span class="mk" style="top:76px;left:120px">2</span>
+            <span class="mk" style="top:104px;left:160px">3</span>
+            <span class="mk" style="top:168px;left:22px">4</span>
+            <span class="mk" style="top:86px;right:24px">5</span>
+            <span class="mk" style="top:214px;right:24px">6</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">1</span><span><b>Sync segment</b>: fixed 10px, always first. Blue while syncing or resolving conflicts, green once synced.</span></div>
+      <div class="note"><span class="mk-i">2</span><span><b>Group segments</b> grow with step count. Parallel steps stack as 2px lanes in one 5px segment, so "two things at once" reads without labels. Hover a lane for the step name and state (title only, no tooltip chrome).</span></div>
+      <div class="note"><span class="mk-i">3</span><span><b>Status line</b> priority: sync conflict → script with progress (fraction, not timer) → forge checks ("Waiting on GitHub checks 3/5", "…to appear", "…PR head to be pushed") → script time in whole minutes → agent. "+1" means another step in the group is also running. Counts are passed/total steps.</span></div>
+      <div class="note"><span class="mk-i">4</span><span><b>Back from Ready for merge</b>: a muted line above the head when Ready for merge returned the card (stale base, conflicts, or failing forge checks). It stays for the whole pass.</span></div>
+      <div class="note"><span class="mk-i">5</span><span><b>Chips</b>: Running and Fixing are blue (an agent or step is working). A failed step's segment is amber. Blocked (forge unreadable) is the only amber chip, and its status line is amber too.</span></div>
+      <div class="note"><span class="mk-i">6</span><span><b>Outside CI</b>: "Sent back by CI" on Code review cards moves from red to an amber tint and adds the failure count. "CI skipped by &lt;name&gt;" on later cards is unchanged.</span></div>
+    </div>
+  </section>
+
+  <!-- ═══ 6 · Card view CI tab ═══ -->
+  <section class="sec">
+    <div class="sec-h"><span class="sec-n">6</span><h2 class="sec-t">Card view · CI tab</h2></div>
+    <p class="sec-d">Groups and steps in run order. Each step row has the shared numbered badge, a type icon, name and sub-line, duration (live timer while running) and a status label. Click a row to expand its detail; running, failed and forge steps open by default in the current pass.</p>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · T3-185 running</span>
+          <div class="{{ th.mock }}" style="background:color-mix(in srgb,var(--muted) 55%,var(--card));padding:0">
+            <div class="row" style="height:40px;padding:0 13px;border-bottom:1px solid var(--border)"><b style="font:600 12px var(--font-sans)">Continuous integration</b><span class="small">Pass 1 · fix attempts 0 of 2</span><span class="chip c-info" style="text-transform:none;letter-spacing:0">Test · 128/212</span></div>
+            <div style="display:flex;flex-direction:column;gap:10px;padding:12px">
+              <div class="panel" style="border-radius:11px">
+                <div class="row" style="padding:9px 11px;border-bottom:1px solid var(--border)"><b style="font:600 12px var(--font-sans)">Pass 1</b><span class="chip c-info" style="margin-left:0;text-transform:none;letter-spacing:0">Running</span><span class="small" style="margin-left:auto">3m ago</span></div>
+                <div class="st"><span class="bdg">1<i class="ok">✓</i></span><span class="mut" style="font-size:11px">⇄</span><span class="st-n"><b>Sync with base</b><span>Already up to date with main, passed at once.</span></span><small class="mono small">2s</small><span class="small" style="color:var(--success-fg);font-weight:500">Passed</span></div>
+                <div style="border-top:1px solid var(--border)">
+                  <div style="box-shadow:inset 3px 0 0 color-mix(in srgb,var(--info) 55%,var(--border))">
+                    <div class="small" style="padding:6px 11px 0 38px;font-weight:500">In parallel · 2 steps</div>
+                    <div class="st"><span class="bdg">2<i class="ok">✓</i></span><span class="mut" style="font-size:11px">›_</span><span class="st-n"><b>Typecheck</b><span class="mono">bun run typecheck</span></span><small class="mono small">48s</small><span class="small" style="color:var(--success-fg);font-weight:500">Passed</span></div>
+                    <div class="st"><span class="bdg">3<i class="ok">✓</i></span><span class="mut" style="font-size:11px">›_</span><span class="st-n"><b>Lint</b><span class="mono">bun run lint</span></span><small class="mono small">21s</small><span class="small" style="color:var(--success-fg);font-weight:500">Passed</span></div>
+                  </div>
+                </div>
+                <div style="border-top:1px solid var(--border)">
+                  <div style="box-shadow:inset 3px 0 0 color-mix(in srgb,var(--info) 55%,var(--border))">
+                    <div class="small" style="padding:6px 11px 0 38px;font-weight:500">In parallel · 2 steps</div>
+                    <div class="st" style="background:color-mix(in srgb,var(--info) 5%,transparent)"><span class="bdg run">4</span><span class="mut" style="font-size:11px">›_</span><span class="st-n"><b>Test</b><span class="mono">bun run test --reporter=dot</span></span><small class="mono" style="font-size:10.5px">1:12</small><span class="small" style="color:var(--info-fg);font-weight:500">Running</span></div>
+                    <div style="display:flex;flex-direction:column;gap:6px;padding:0 10px 10px 54px;background:color-mix(in srgb,var(--info) 5%,transparent)">
+                      <div class="row small" style="color:var(--fg)"><span style="flex:1">Running unit tests</span><b class="mono" style="font-weight:500">128 / 212</b></div>
+                      <div style="height:4px;border-radius:2px;background:color-mix(in srgb,var(--fg) 8%,transparent)"><div style="width:60%;height:100%;border-radius:2px;background:var(--info)"></div></div>
+                      <span><span class="btn sm">›_ View live log</span></span>
+                    </div>
+                    <div class="st" style="background:color-mix(in srgb,var(--info) 5%,transparent)"><span class="bdg run">5</span><span class="mut" style="font-size:11px">⚙</span><span class="st-n"><b>Migration review</b><span>Agent · own thread</span></span><small class="mono" style="font-size:10.5px">1:35</small><span class="small" style="color:var(--info-fg);font-weight:500">Running</span></div>
+                    <div style="display:flex;flex-direction:column;gap:6px;padding:0 10px 10px 54px;background:color-mix(in srgb,var(--info) 5%,transparent)"><span class="small">Working in its own thread. The verdict, summary and failures land here when it reports.</span><span><span class="btn sm">💬 Open Migration review thread</span></span></div>
+                  </div>
+                </div>
+                <div class="st" style="border-top:1px solid var(--border)"><span class="bdg pend">6</span><span class="mut" style="font-size:11px">⎇</span><span class="st-n"><b>GitHub checks</b><span>5 named checks · GitHub</span></span><span class="small">Not started</span></div>
+                <div class="small" style="padding:7px 11px;border-top:1px solid var(--border)">6 steps · Sync with base, then 3 groups in order · a failure stops later groups once its own group finishes</div>
+              </div>
+              <span style="font:500 11.5px var(--font-sans);color:var(--info-fg)">⚙ CI settings for core.agent.advisor</span>
+              <div class="row" style="padding:10px 12px;border:1px dashed var(--input);border-radius:11px"><span class="small" style="flex:1">Moves the card to Ready for merge without a passing CI run.</span><span class="btn">» Skip CI…</span></div>
+            </div>
+            <span class="mk" style="top:54px;right:14px">1</span>
+            <span class="mk" style="top:118px;left:6px">2</span>
+            <span class="mk" style="top:276px;left:6px">3</span>
+            <span class="mk" style="top:330px;right:14px">4</span>
+            <span class="mk" style="bottom:72px;left:6px">5</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · forge checks, failures, fix agent</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:10px;background:color-mix(in srgb,var(--muted) 55%,var(--card))">
+            <div class="row" style="align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--info) 35%,transparent);border-radius:11px;background:color-mix(in srgb,var(--info) 6%,var(--card))"><span style="display:flex;flex-direction:column;gap:2px;flex:1"><b style="font:600 12px var(--font-sans)">Fix agent is working on Check</b><span class="small">Attempt 1 of 2. It has the step's structured failures and output. When it commits, every step re-runs from Sync with base.</span></span><span class="btn sm">💬 View thread</span></div>
+            <div class="panel" style="border-radius:11px">
+              <div class="st"><span class="bdg">2<i class="fx">✕</i></span><span class="mut" style="font-size:11px">›_</span><span class="st-n"><b>Check</b><span class="mono">cargo xtask check</span></span><small class="mono small">2m 04s</small><span class="small" style="color:var(--info-fg);font-weight:500">Failed · fixing</span></div>
+              <div style="display:flex;flex-direction:column;gap:7px;padding:0 11px 11px 54px">
+                <span class="small" style="color:var(--fg);font-size:11px">1 error, 1 warning in relay-fanout</span>
+                <div style="display:flex;flex-direction:column;border-left:2px solid var(--warning);padding-left:2px">
+                  <div class="small" style="padding:0 8px 2px;color:var(--warning-fg);font-weight:500">2 failures</div>
+                  <div class="fl"><b>mismatched types: expected usize, found Instant</b><code>infra/relay/src/fanout.rs:142</code><span>push_back takes a weight (usize), not a timestamp.</span></div>
+                  <div class="fl"><b>unused import: AtomicUsize</b><code>infra/relay/src/fanout.rs:7</code></div>
+                </div>
+                <span><span class="btn sm">›_ View log</span></span>
+              </div>
+            </div>
+            <div class="panel" style="border-radius:11px">
+              <div class="st"><span class="bdg run">6</span><span class="mut" style="font-size:11px">⎇</span><span class="st-n"><b>GitHub checks</b><span>5 named checks · GitHub</span></span><small class="mono" style="font-size:10.5px">5:12</small><span class="small" style="color:var(--info-fg);font-weight:500">3/5 passed</span></div>
+              <div style="display:flex;flex-direction:column;gap:6px;padding:0 11px 11px 54px">
+                <div style="display:flex;flex-direction:column">
+                  <div class="cr"><span class="bdg" style="width:15px;height:15px;background:var(--success)"></span>ci/build <span class="req">Required</span><small>3m 32s</small><em style="color:var(--success-fg)">Passed</em></div>
+                  <div class="cr"><span class="bdg" style="width:15px;height:15px;background:var(--success)"></span>ci/lint<small>48s</small><em style="color:var(--success-fg)">Passed</em></div>
+                  <div class="cr"><span class="bdg" style="width:15px;height:15px;background:var(--success)"></span>codeql<small>5m 01s</small><em style="color:var(--success-fg)">Passed</em></div>
+                  <div class="cr"><span class="bdg" style="width:15px;height:15px;background:var(--info)"></span>ci/e2e <span class="req">Required</span><small style="color:var(--fg)">4:20</small><em style="color:var(--info-fg)">Running</em></div>
+                  <div class="cr"><span class="bdg pend" style="width:15px;height:15px"></span>deploy-preview<small></small><em class="mut">Queued</em></div>
+                </div>
+                <span class="small" style="font-size:10px">Elapsed and required come from GitHub. Job steps and annotations come later.</span>
+                <span><span class="btn sm">Open on GitHub ↗</span></span>
+              </div>
+            </div>
+            <div class="panel" style="border-radius:11px">
+              <div class="row" style="padding:9px 11px"><b style="font:600 12px var(--font-sans)">Pass 1</b><span class="chip c-plain" style="margin-left:0;text-transform:none;letter-spacing:0">Fixed in place</span><span class="small">Test timed out</span><span class="small" style="margin-left:auto">1h 52m ago ▾</span></div>
+            </div>
+            <span class="mk" style="top:22px;right:18px">6</span>
+            <span class="mk" style="top:112px;left:6px">7</span>
+            <span class="mk" style="top:268px;right:18px">8</span>
+            <span class="mk" style="top:416px;left:6px">9</span>
+            <span class="mk" style="bottom:22px;right:18px">10</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · live log viewer</span>
+          <div class="{{ th.mock }}" style="padding:0;display:flex;flex-direction:column;height:300px">
+            <div class="row" style="gap:9px;padding:10px 12px;border-bottom:1px solid var(--border)"><span class="mut">›_</span><span style="display:flex;flex-direction:column;flex:1;min-width:0"><span class="row"><b style="font:600 12px var(--font-sans)">Test</b><span class="mono small">bun run test --reporter=dot</span></span><span class="small">T3-185 · pass 1 · live, following output</span></span><span class="btn sm" style="border-color:color-mix(in srgb,var(--info) 40%,transparent);background:color-mix(in srgb,var(--info) 8%,transparent);color:var(--info-fg)">↓ Following</span><span class="btn sm">⧉ Copy</span><span class="mut">✕</span></div>
+            <div style="position:relative;flex:1;min-height:0;background:var(--muted)">
+              <pre class="code" style="background:transparent;height:100%;padding:10px 14px">$ bun run test --reporter=dot
+ ✓ board/columns.test.ts (18 tests) 412ms
+ ✓ board/drag.test.ts (24 tests) 1.2s
+::t3o-progress::{"message":"Running unit tests","done":76,"total":212}
+ ✓ server/events/log.test.ts (22 tests) 1.8s
+ ✓ server/worktrees.test.ts (16 tests) 2.4s
+ ✓ runtime/replay.test.ts (14 tests) 640ms
+::t3o-progress::{"message":"Running unit tests","done":128,"total":212}</pre>
+              <span class="btn" style="position:absolute;left:50%;bottom:12px;transform:translateX(-50%);border-radius:99px;box-shadow:var(--shadow-pop)">↓ New output · jump to latest</span>
+            </div>
+            <div class="small" style="padding:6px 12px;border-top:1px solid var(--border)">13 lines · scroll up to pause following</div>
+            <span class="mk" style="top:12px;right:92px">11</span>
+            <span class="mk" style="bottom:42px;left:40%">12</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · forge and sync states, shared badge</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:8px">
+            <div class="infobox"><b style="font-weight:600;flex:none">Waiting</b>No checks on the PR head yet. Waiting up to 10 min for GitHub to start them.</div>
+            <div class="infobox"><b style="font-weight:600;flex:none">Waiting</b>The PR head isn't pushed yet (3a9e1f2). Checks start once the push lands.</div>
+            <div class="warnbox"><b style="font-weight:600;flex:none">Failed</b>No checks appeared within 10 min. The PR's workflows may not trigger on this branch.</div>
+            <div class="warnbox"><b style="font-weight:600;flex:none">Blocked</b>Azure DevOps doesn't expose check results, so the board can't tell when they pass. Skip CI or replace this step.</div>
+            <div class="panel" style="box-shadow:none">
+              <div class="st"><span class="bdg">1<i class="ok">✓</i></span><span class="st-n"><b>Sync with base</b><span>Rebased onto main @ 9f2c0a1 · 3 new commits, no conflicts</span></span><span class="small" style="color:var(--success-fg);font-weight:500">Passed</span></div>
+              <div class="st" style="background:color-mix(in srgb,var(--info) 5%,transparent)"><span class="bdg run">1</span><span class="st-n"><b>Sync with base</b><span>Conflicts with main in 3 files · fix agent resolving (1 of 3)</span></span><span class="btn sm">Open conflict-fix thread</span><span class="small" style="color:var(--info-fg);font-weight:500">Fixing conflicts</span></div>
+            </div>
+            <div class="row" style="flex-wrap:wrap;gap:14px;padding-top:4px">
+              <span class="row small"><span class="bdg">2<i class="ok">✓</i></span>Done</span>
+              <span class="row small"><span class="bdg run">2</span>Running</span>
+              <span class="row small"><span class="bdg">2<i class="x">✕</i></span>Failed</span>
+              <span class="row small"><span class="bdg">2<i class="fx">✕</i></span>Failed · fix agent on it</span>
+              <span class="row small"><span class="bdg">2<i class="cx">–</i></span>Cancelled</span>
+              <span class="row small"><span class="bdg pend">2</span>Not started</span>
+            </div>
+            <span class="mk" style="top:14px;right:16px">13</span>
+            <span class="mk" style="bottom:20px;right:16px">14</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">1</span><span><b>Header status</b> uses the same priority as the card face, so the two never disagree.</span></div>
+      <div class="note"><span class="mk-i">2</span><span><b>Sync row</b>: up to date (collapsed, nothing to expand), rebased (commit and count), or conflicts being fixed (file count, thread link).</span></div>
+      <div class="note"><span class="mk-i">3</span><span><b>Parallel groups</b> stay flat: a blue rule down the left edge of the group's rows and an "In parallel · N steps" caption, no nested box. Checks and failures inside a step are also unboxed (hairline rows; an amber left rule for failures), so the pass card is the only container.</span></div>
+      <div class="note"><span class="mk-i">4</span><span><b>Script</b>: progress message, fraction and bar (from <span class="mono">::t3o-progress::</span>); "View live log" while running, "View log" afterwards. Without progress lines the row shows only the live timer.</span></div>
+      <div class="note"><span class="mk-i">5</span><span><b>CI settings for &lt;project&gt;</b> deep-links to that project's CI tab. Skip CI is unchanged.</span></div>
+      <div class="note"><span class="mk-i">6</span><span><b>Fix agent box</b> (existing), now mentioning the structured failures it received.</span></div>
+      <div class="note"><span class="mk-i">7</span><span><b>Failures</b> from <span class="mono">$T3O_CI_RESULT</span> (or an agent's report): title, <span class="mono">file:line</span> (opens the file in the diff panel), detail. Without a result file, a line says the fix agent gets the output tail.</span></div>
+      <div class="note"><span class="mk-i">8</span><span><b>Forge checks</b>: one sub-row per check with badge, name, Required (GitHub), elapsed where known, status. "Open on GitHub/Forgejo" opens the run in a popup window (1120×820), not a tab, so the card stays put.</span></div>
+      <div class="note"><span class="mk-i">9</span><span><b>Agent step</b>: verdict chip (green passed, amber failed), summary, failures, and "Open … thread", which switches the card to that thread.</span></div>
+      <div class="note"><span class="mk-i">10</span><span><b>Earlier passes</b> collapse to one line with outcome and the step that failed; expanding shows the same rows, read-only.</span></div>
+      <div class="note"><span class="mk-i">11</span><span><b>Log viewer</b>: modal over the card. Live while the step runs, following new output; Copy copies the whole log; Esc or ✕ closes.</span></div>
+      <div class="note"><span class="mk-i">12</span><span><b>Pause scroll</b>: scrolling up stops following and shows "jump to latest"; the toggle in the header does the same. Progress lines stay in the raw log. <span class="cut">v1</span>: hiding them behind a filter.</span></div>
+      <div class="note"><span class="mk-i">13</span><span><b>Forge step states</b>: waiting for checks to appear and PR head not pushed are blue (still running); no checks appeared is an amber failure the fix agent can try; can't read this forge's checks is amber Blocked and shows a banner at the top of the tab.</span></div>
+      <div class="note"><span class="mk-i">14</span><span><b>Shared numbered badge</b> used by steps and checks: green tick done, solid blue running, amber ✕ failed (blue ✕ while a fix agent works on it), grey dash cancelled, outline not started.</span></div>
+    </div>
+  </section>
+
+  <!-- ═══ 7 · Empty / onboarding ═══ -->
+  <section class="sec">
+    <div class="sec-h"><span class="sec-n">7</span><h2 class="sec-t">Empty and onboarding</h2></div>
+    <p class="sec-d">A project with no CI still gets a CI tab on cards from Code review onward, so the absence is explained where people look for it. Both the card and Settings offer the same one-click starter.</p>
+    <div class="pair">
+      <sc-for list="{{ themes }}" as="th" hint-placeholder-count="2">
+        <div class="frame">
+          <span class="frame-l">{{ th.label }} · card CI tab, and Settings CI tab</span>
+          <div class="{{ th.mock }}" style="display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;flex-direction:column;gap:10px;padding:14px;border:1px dashed var(--input);border-radius:11px;background:var(--card)">
+              <b style="font:600 12.5px var(--font-sans)">mesh.web has no CI</b>
+              <span class="small" style="font-size:11.5px;line-height:1.55">Cards go from Code review straight to Ready for merge. Add steps in this project's CI settings and the next card out of Code review runs them.</span>
+              <div class="row" style="gap:10px;padding:10px 11px;border:1px solid color-mix(in srgb,var(--primary) 40%,var(--border));border-radius:9px;background:color-mix(in srgb,var(--primary) 5%,var(--card))"><span class="ico" style="background:var(--primary);color:var(--primary-fg);width:26px;height:26px">⚙</span><span style="display:flex;flex-direction:column;gap:1px"><b style="font:600 11.5px var(--font-sans)">Add an agent step that runs this project's checks per AGENTS.md</b><span class="small">One click. Turns CI on for the project.</span></span></div>
+              <span style="font:500 11.5px var(--font-sans);color:var(--info-fg)">Set up CI steps in project settings</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;padding:16px;border:1px dashed var(--input);border-radius:11px;background:var(--card)">
+              <b style="font:600 13.5px var(--font-sans)">mesh.web has no CI yet</b>
+              <span class="small" style="font-size:11.5px;line-height:1.55">Without CI, cards go from Code review straight to Ready for merge. Add steps here and CI turns on for this project.</span>
+              <div class="row" style="gap:10px;padding:11px 12px;border:1px solid color-mix(in srgb,var(--primary) 40%,var(--border));border-radius:9px;background:color-mix(in srgb,var(--primary) 5%,var(--card))"><span class="ico" style="background:var(--primary);color:var(--primary-fg);width:28px;height:28px">⚙</span><span style="display:flex;flex-direction:column;gap:1px;flex:1"><b style="font:600 12px var(--font-sans)">Add an agent step that runs this project's checks</b><span class="small">Reads AGENTS.md, runs what it lists, reports passed or failed with failures.</span></span><span style="font:500 11.5px var(--font-sans);color:var(--primary)">Add step</span></div>
+              <div class="row small" style="gap:6px;flex-wrap:wrap">Or start from <span class="btn sm">Script</span><span class="btn sm">Agent</span><span class="btn sm">Forge checks</span> · or <span style="color:var(--info-fg);font-weight:500">import a t3o.json</span></div>
+            </div>
+            <span class="mk" style="top:86px;right:20px">1</span>
+            <span class="mk" style="bottom:52px;right:20px">2</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="mk-i">1</span><span><b>Card CI tab</b> (no CI): appears on cards at Code review or later. The starter adds a "Project checks" agent step and switches CI on for the project; the current card isn't re-routed, and a confirmation replaces the button. A toast links to the settings.</span></div>
+      <div class="note"><span class="mk-i">2</span><span><b>Settings CI tab</b> (no steps): same starter, plus blank Script / Agent / Forge checks and a link to Import. The first step added switches CI on, since CI is opt-in by default.</span></div>
+      <div class="note"><span class="mk-i">·</span><span>A project whose forge can't report checks (Azure DevOps, GitCafe) gets a warning inside any Forge checks step it adds, before a card ever blocks on it.</span></div>
+    </div>
+  </section>
+
+  <!-- ═══ Flows ═══ -->
+  <section class="sec">
+    <div class="sec-h"><span class="sec-n">↻</span><h2 class="sec-t">Interaction flows</h2></div>
+    <div class="pair">
+      <div class="flow"><span class="flow-h">Switch a stage off for one project</span><ol>
+        <li>Board: click a column's half-circle → popover → the project row (or Settings → Projects → project → Pipeline).</li>
+        <li>Flip the stage's switch. No confirm; it saves at once ("Saved just now").</li>
+        <li>Cards already in that stage stay; in that project's view the column shows as retired until they move on. New cards skip it.</li>
+      </ol></div>
+      <div class="flow"><span class="flow-h">Override a setting, then undo it</span><ol>
+        <li>Project → Pipeline → expand the stage → change the value. The row turns overridden with the global value beside it.</li>
+        <li>Reset to global clears the override, as does setting it back to the global value (except prompts).</li>
+        <li>"Reset everything to global…" in the page header confirms, then clears every switch, override and CI step.</li>
+      </ol></div>
+      <div class="flow"><span class="flow-h">Build a CI pipeline</span><ol>
+        <li>Project → CI → Add step (or the one-click starter). The new step opens expanded; CI switches on with the first step.</li>
+        <li>Toggle "Parallel with previous" to join a group; the group box appears immediately, with the worktree warning if two scripts share it.</li>
+        <li>Drag to reorder; the drop line shows where it lands. Removing a step needs no confirm (undo via toast).</li>
+      </ol></div>
+      <div class="flow"><span class="flow-h">Import a t3o.json</span><ol>
+        <li>Notice (Settings → Board, project page, or the board pill) or Project → Import &amp; export → Import…</li>
+        <li>Confirm shows summary chips and per-change lines, and states it replaces this project's differences.</li>
+        <li>Replace and import applies, clears the notice and toasts the summary. No thanks hides it until the file's SHA changes.</li>
+      </ol></div>
+      <div class="flow"><span class="flow-h">Watch and dig into a run</span><ol>
+        <li>Card face shows segments and one status line; click opens the card on the CI tab while it's in CI.</li>
+        <li>Expand a step; View live log opens the follower; Open on GitHub opens a popup window.</li>
+        <li>Fix agent box links to its thread. Skip CI asks to confirm and records the skip by name.</li>
+      </ol></div>
+      <div class="flow"><span class="flow-h">Back from Ready for merge</span><ol>
+        <li>Ready for merge finds a stale base, conflicts or failing forge checks on a CI project and sends the card back to CI.</li>
+        <li>A new pass starts at Sync with base; the face shows "Back from Ready for merge: base moved", the tab a banner, and the activity feed a row.</li>
+      </ol></div>
+    </div>
+  </section>
+
+  <!-- ═══ Cuts + forge tiers ═══ -->
+  <section class="sec">
+    <div class="sec-h"><span class="sec-n">✂</span><h2 class="sec-t">Suggested cuts for v1, and forge tiers</h2></div>
+    <div class="notes" style="grid-template-columns:1fr">
+      <div class="note"><span class="cut" style="flex:none">Cut</span><span><b>Board import pill.</b> Settings notices plus the sidebar dot are enough to discover a t3o.json; the pill can follow.</span></div>
+      <div class="note"><span class="cut" style="flex:none">Cut</span><span><b>Styled hover tooltip on partial columns.</b> Ship the native title for the summary; keep the click popover.</span></div>
+      <div class="note"><span class="cut" style="flex:none">Cut</span><span><b>Live log streaming.</b> v1 can show the log after the step finishes plus the progress fraction while running; live follow, pause and jump come next. The viewer's shape stays the same.</span></div>
+      <div class="note"><span class="cut" style="flex:none">Cut</span><span><b>Drag reorder.</b> Up/down buttons on each row cover it; drag is a nicety.</span></div>
+      <div class="note"><span class="cut" style="flex:none">Cut</span><span><b>Per-project fix-agent prompt override.</b> Attempts and model are enough per project; the prompt stays global.</span></div>
+      <div class="note"><span class="cut" style="flex:none">Cut</span><span><b>"+N more" collapse for 4+ import notices.</b> Rare; show them all.</span></div>
+      <div class="note"><span class="cut" style="flex:none;background:#e0e7ff;color:#3730a3">Keep</span><span><b>Must stay in v1</b>: amber failures, static card faces, Sync with base, parallel groups with the worktree warning, the import confirm summary, and the forge "can't be read" blocked state, since without it those cards would sit in CI forever.</span></div>
+    </div>
+    <div style="padding:6px 4px;border:1px solid var(--doc-border);border-radius:12px;background:var(--doc-card);overflow-x:auto">
+      <table class="tiers">
+        <thead><tr><th style="width:150px">Forge</th><th>Common tier (designed above)</th><th>Rich tier, later (room left)</th></tr></thead>
+        <tbody>
+          <tr><td><b>GitHub</b></td><td>Per check: status, description, link, start/finish → elapsed, workflow name, Required badge.</td><td>Job steps as nested rows; annotations as failures (file/line/message); failed-job logs in the log viewer after completion.</td></tr>
+          <tr><td><b>GitLab</b></td><td>Per check: status, description, link.</td><td>Jobs grouped by pipeline stage with durations; live job logs through the same log viewer (the only forge with live streaming).</td></tr>
+          <tr><td><b>Bitbucket</b></td><td>Per check: status, description, link.</td><td>Pipeline steps as nested rows; step logs in the viewer.</td></tr>
+          <tr><td><b>Forgejo / Gitea</b></td><td>Per check: status, description, link.</td><td>Actions task status and timing on newer versions → elapsed column fills in.</td></tr>
+          <tr><td><b>Azure DevOps, GitCafe</b></td><td>No checks API: amber Blocked state only, plus the warning in the step editor.</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      themes: [
+        { label: "Light", mock: "mock th-light" },
+        { label: "Dark", mock: "mock th-dark" },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

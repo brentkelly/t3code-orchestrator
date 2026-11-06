@@ -21,6 +21,9 @@ import {
   boardCardStepState,
   BOARD_SEED_STAGE_IDS,
   BoardStageId,
+  DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
+  DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
+  DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES,
   DEFAULT_BOARD_BUILD_PROMPT,
   DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
   DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
@@ -46,7 +49,8 @@ import {
   type BoardStageExecution,
   type BoardState,
   type BoardEvent,
-  type BoardUsageLimitMatch,
+  type BoardConcurrencySettings,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 
 import type { BoardMergeState } from "./boardMergeState.ts";
@@ -57,7 +61,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
-import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -74,10 +78,20 @@ import { BoardQueries } from "./BoardQueries.ts";
 import { boardRepositoryOf } from "./boardRepository.ts";
 import { projectBoardEvent, type BoardReadModel } from "./projector.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
-import { UsageLimitDetector, type UsageLimitDetectorShape } from "./UsageLimitDetector.ts";
+import { BoardWorkspaces, type BoardWorkspacesShape } from "./workspace/BoardWorkspace.ts";
+import type { LocalBoardWorkspaceDeps } from "./workspace/LocalBoardWorkspace.ts";
+import { localBoardWorkspaceDeps, makeBoardWorkspaces } from "./workspace/workspaceLayer.ts";
 import type { WorktreeRetirer } from "./worktreeRetire.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
-import type { BoardProject, BoardThreadState, ThreadSignal } from "./ThreadGateway.ts";
+import {
+  ThreadGateway,
+  type BoardProject,
+  type BoardThreadState,
+  type LocalThreadGatewayShape,
+  type ThreadGatewayShape,
+  type ThreadSignal,
+} from "./ThreadGateway.ts";
+import { BoardPlacement, type BoardPlacementShape } from "./workers/BoardPlacement.ts";
 import {
   aliveThread,
   failedThread,
@@ -145,9 +159,7 @@ export const failedThreadShell = (
     a release the decider refused mid-turn can finally land (t3o-13). */
 export const idleThreadShell = (
   threadId: string,
-  /** Which provider instance the thread runs on (T3O-22). The cooldown paths
-      read it — that is how a clean turn on ANY thread, including a human's own
-      non-board one, lifts a limit. */
+  /** Which provider instance the thread runs on. */
   instanceId: ProviderInstanceId = codexStep.providerInstanceId,
 ): BoardThreadState => idleThread(threadId, instanceId);
 
@@ -167,11 +179,25 @@ export const makeBoardCard = (input: {
   readonly scheduledStartAt?: string | null;
   /** The card's auto-start arm (T3O-24). Absent is unarmed. */
   readonly autoStart?: boolean;
+  readonly autoPlanSetting?: boolean | null;
+  readonly autoBuildSetting?: boolean | null;
+  readonly autoMergeSetting?: boolean | null;
   /** The per-card auto-merge arm (T3O-38, D3). */
   readonly autoMerge?: boolean;
   /** A recorded auto-merge hold (T3O-38, D4) — the state a refused armed
       merge leaves behind. */
   readonly autoMergeHold?: BoardCard["autoMergeHold"];
+  /** Where the card is pinned and placed (T3O-65). Absent follows the default
+      and has never run, as every fixture written before workers reads. */
+  readonly pinnedWorkerId?: BoardCard["pinnedWorkerId"];
+  readonly placedWorkerId?: BoardCard["placedWorkerId"];
+  readonly workerMove?: BoardCard["workerMove"];
+  readonly placementOrphaned?: BoardCard["placementOrphaned"];
+  /** The card's CI entry and last CI outcome (T3O-44). */
+  readonly ci?: BoardCard["ci"];
+  readonly ciLastOutcome?: BoardCard["ciLastOutcome"];
+  /** The card's own merge strategy (T3O-80). Absent follows the default. */
+  readonly mergeStrategy?: BoardCard["mergeStrategy"];
   /** The cards this one waits on (t3o-13). Absent is nothing. */
   readonly dependsOn?: ReadonlyArray<string>;
   /** The sub-board parent this card is a child of (t3o-23). Absent is
@@ -193,18 +219,29 @@ export const makeBoardCard = (input: {
   dependsOn: (input.dependsOn ?? []).map((id) => BoardCardId.make(id)),
   parentCardId: input.parentCardId == null ? null : BoardCardId.make(input.parentCardId),
   sourcePlanId: null,
+  group: null,
   threadLinks: [],
   attachments: [],
   externalRef: null,
   humanInLoop: input.humanInLoop ?? null,
   reviewOverrides: null,
   modelOverrides: null,
+  mergeStrategy: input.mergeStrategy ?? null,
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: (input.scheduledStartAt ?? null) as BoardCard["scheduledStartAt"],
-  autoStart: input.autoStart ?? false,
-  autoMerge: input.autoMerge ?? false,
+  // `autoStart` / `autoMerge` are the pre-T3O-38 spellings of an own
+  // Auto-build / Auto-merge on.
+  autoPlanSetting: input.autoPlanSetting ?? null,
+  autoBuildSetting: input.autoBuildSetting ?? (input.autoStart === true ? true : null),
+  autoMergeSetting: input.autoMergeSetting ?? (input.autoMerge === true ? true : null),
   autoMergeHold: input.autoMergeHold ?? null,
+  pinnedWorkerId: input.pinnedWorkerId ?? null,
+  placedWorkerId: input.placedWorkerId ?? null,
+  workerMove: input.workerMove ?? null,
+  placementOrphaned: input.placementOrphaned ?? null,
+  ci: input.ci ?? null,
+  ciLastOutcome: input.ciLastOutcome ?? null,
   worktree: input.worktree ?? null,
   pullRequest: input.pullRequest ?? null,
   pullRequestHistory: input.pullRequestHistory ?? [],
@@ -287,6 +324,7 @@ const planningStageExecution = (
   /** The planning interview's real stance (t3o-34): asking IS the job there, so
       the suites that drive a stopped planning agent need it on. */
   humanInLoop = false,
+  autoAdvance = false,
 ): BoardStageExecution => ({
   kind: "simple",
   autoExecute: true,
@@ -296,7 +334,7 @@ const planningStageExecution = (
   humanInLoop,
   humanInLoopWithPlan: false,
   humanInLoopWithoutPlan: false,
-  autoAdvance: false,
+  autoAdvance,
   timeoutMs: DEFAULT_BOARD_STEP_TIMEOUT_MS,
   maxAttempts: DEFAULT_BOARD_STEP_MAX_ATTEMPTS,
   maxInvocationsPerStageEntry: DEFAULT_BOARD_MAX_INVOCATIONS_PER_STAGE_ENTRY,
@@ -310,12 +348,18 @@ export const settingsWith = (input: {
   readonly building: ReadonlyArray<TestBuildStep>;
   readonly globalMaxConcurrent: number;
   readonly perInstance?: Record<string, number | null>;
+  /** Per-worker limits (T3O-65). Absent is none: `local` inherits the two
+      fields above, as a settings file written before workers does. */
+  readonly workers?: BoardConcurrencySettings["workers"];
   /** Pass a step to make Planning auto-execute too — the plan-mode counterpart
       of `building`, for the suites that drive a card into Planning. */
   readonly planning?: TestBuildStep;
   /** Run the Planning step human-in-the-loop, as the real planning interview
       does (t3o-34). */
   readonly planningHumanInLoop?: boolean;
+  /** Whether Planning auto-advances on a successful run. Defaults to off, what
+      the stage ships with. */
+  readonly planningAutoAdvance?: boolean;
   /** Overrides for the merge stage's config (strategy, branch cleanup, the
       conflict prompt). Absent leaves it at the compiled-in defaults, which is
       what a board nobody has configured actually resolves to. */
@@ -335,6 +379,10 @@ export const settingsWith = (input: {
       Defaults to on (what the stage ships with); a suite proving the DIRECTED
       advance ignores it switches it off. */
   readonly buildAutoAdvance?: boolean;
+  /** Auto-archive of idle Done cards (T3O-77). Absent is the shipped default:
+      off, 7 days. */
+  readonly autoArchiveDone?: boolean;
+  readonly autoArchiveAfterDays?: number;
 }): BoardSettings => ({
   projects: {},
   // The board has no workspace default in the harness: every test stage names
@@ -348,6 +396,7 @@ export const settingsWith = (input: {
           [BOARD_SEED_STAGE_IDS.planning]: planningStageExecution(
             input.planning,
             input.planningHumanInLoop ?? false,
+            input.planningAutoAdvance ?? false,
           ),
         }),
     ...(input.merge === undefined
@@ -370,8 +419,14 @@ export const settingsWith = (input: {
   concurrency: {
     perInstance: input.perInstance ?? {},
     globalMaxConcurrent: input.globalMaxConcurrent,
+    workers: input.workers ?? {},
   },
-  lifecycle: { reclaimWorktreeOnDone: input.reclaimWorktreeOnDone ?? true },
+  lifecycle: {
+    reclaimWorktreeOnDone: input.reclaimWorktreeOnDone ?? true,
+    autoArchiveDone: input.autoArchiveDone ?? DEFAULT_BOARD_AUTO_ARCHIVE_DONE,
+    autoArchiveAfterDays: input.autoArchiveAfterDays ?? DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
+  },
+  display: { autoCollapseEmptyStages: DEFAULT_BOARD_AUTO_COLLAPSE_EMPTY_STAGES },
 });
 
 export type Harness = {
@@ -398,10 +453,14 @@ export type Harness = {
   readonly decided: Effect.Effect<ReadonlyArray<HarnessEvent>>;
   /** Every merge the reactor asked the forge for, in order. */
   readonly mergeAttempts: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
+  /** The merge method of each attempt, in the same order (T3O-80). */
+  readonly mergeMethods: Effect.Effect<ReadonlyArray<string>>;
   /** Every structured refusal probe the reactor made (T3O-38, D6). */
   readonly mergeStateProbes: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** Every mark-ready request the reactor made (T3O-12), in order. */
   readonly markReadyCalls: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
+  /** Every pull request the reactor asked the forge to close (T3O-28), in order. */
+  readonly closePullRequestCalls: Effect.Effect<ReadonlyArray<{ readonly number: number }>>;
   /** T3o (T3O-48): every pull request lookup, with whether it was FORCED — so a
       test can tell a human's "Check again" from the automatic cached refresh. */
   readonly pullRequestLookups: Effect.Effect<ReadonlyArray<{ readonly forced: boolean }>>;
@@ -433,16 +492,6 @@ export type Harness = {
       remote-only base was MATERIALISED (T3O-5, D7) has nowhere else to read it:
       `git branch develop origin/develop` leaves no trace on the card. */
   readonly gitInvocations: Effect.Effect<ReadonlyArray<ReadonlyArray<string>>>;
-  /** What the STUBBED usage-limit detector answers for a thread from now on
-      (T3O-22, criterion 25).
-   *
-      The behavioural suite drives `wait` / `exhausted` / `slow-down` / null
-      through this rather than by crafting provider prose and hoping the
-      classifier agrees — those tests are about the SUPERVISOR, and the
-      classifier has three suites of its own. A thread with no verdict set
-      answers null, which is every fixture written before T3O-22 and leaves them
-      behaving exactly as they did. */
-  readonly setUsageVerdict: (threadId: string, verdict: BoardUsageLimitMatch | null) => void;
 };
 
 /** Run `body` against a live reactor wired to the stateful engine double. */
@@ -486,8 +535,9 @@ export function withGovernor(
     /** Make git itself fail on an otherwise healthy repository (T3O-15):
         `worktree-add` fails `createWorktree`, `branch-create` makes every
         `git branch <name> <start>` exit non-zero. The transient failures the
-        reactor must retry on its next pass rather than park. */
-    readonly gitFailure?: "worktree-add" | "branch-create";
+        reactor must retry on its next pass rather than park. `remote-delete`
+        makes `git push <remote> --delete` fail as an auth or network error does. */
+    readonly gitFailure?: "worktree-add" | "branch-create" | "remote-delete";
     /** Reject every `thread.create`, so a test can drive the spawn-failure path
         (a thread the engine refuses to create) without a provider double. */
     readonly rejectThreadCreate?: boolean;
@@ -608,14 +658,18 @@ export function withGovernor(
         the card's brief images from `<stateDir>/board/attachments`; without
         one the reactor stages nothing, as the other tests expect. */
     readonly serverConfig?: Layer.Layer<ServerConfig.ServerConfig>;
-    /** The stubbed usage-limit verdict per thread id (T3O-22). Absent threads
-        answer null — "the catalogue says nothing" — so every fixture written
-        before this behaves identically. See `setUsageVerdict`. */
-    readonly usageVerdicts?: ReadonlyMap<string, BoardUsageLimitMatch | null>;
     /** The worktree retirer (T3O-23), over the stubbed git driver. By default
         the real one with nothing running and no remove scripts, so it only
         removes — what every fixture written before it expects. */
     readonly worktreeRetirer?: Layer.Layer<WorktreeRetirer, never, GitVcsDriver.GitVcsDriver>;
+    /** The board's gateway over the harness's own threads (T3O-63): a router
+        that also reaches a worker. Absent: the threads are the fake alone. */
+    readonly gateway?: (local: LocalThreadGatewayShape) => ThreadGatewayShape;
+    /** Where the supervisor spawns each card's threads (T3O-63). */
+    readonly placement?: BoardPlacementShape;
+    /** Where cards' git runs (T3O-64), built from this harness's own local
+        workspace services. By default every card is local. */
+    readonly workspaces?: (local: LocalBoardWorkspaceDeps) => BoardWorkspacesShape;
   },
   body: (h: Harness) => Effect.Effect<void>,
 ): Effect.Effect<void> {
@@ -657,7 +711,7 @@ export function withGovernor(
               remoteName: "origin",
               remoteUrl: "git@github.com:acme/repo.git",
             },
-            provider: "github",
+            provider: SourceControlProviderKind.make("github"),
             owner: "acme",
             name: "repo",
           }
@@ -691,6 +745,7 @@ export function withGovernor(
       pendingTurnStartAt: (threadId) => threadPendingTurnStarts.get(String(threadId)) ?? null,
     });
     const shells = fake.states;
+    const gateway = input.gateway?.(fake.gateway) ?? fake.gateway;
 
     const boardQueriesStub = {
       // The reactor's todo signal + boot sweep have something to call;
@@ -702,6 +757,7 @@ export function withGovernor(
       boardCardThreads: () => Effect.succeed([]),
       boardAllCardThreads: () => Effect.succeed([]),
       boardCardIdForThread: () => Effect.succeed(null),
+      boardThreadWorker: () => Effect.succeed(null),
       boardThreadTodo: (threadId: ThreadId) => {
         const todo = threadTodos.get(String(threadId));
         return Effect.succeed(
@@ -724,7 +780,7 @@ export function withGovernor(
       recordCommand(command).pipe(
         Effect.andThen(
           Effect.gen(function* () {
-            const context = yield* loadDecisionContext(command, boardQueriesStub, fake.gateway);
+            const context = yield* loadDecisionContext(command, boardQueriesStub, gateway);
             const outcome = yield* decideBoardCommand({
               command,
               readModel: yield* Ref.get(model),
@@ -894,6 +950,17 @@ export function withGovernor(
         if (request.args?.[0] === "rev-list" && request.args[1] === "--count") {
           return Effect.succeed({ stdout: "2\n", stderr: "", exitCode: 0 });
         }
+        if (
+          input.gitFailure === "remote-delete" &&
+          request.args?.[0] === "push" &&
+          request.args.includes("--delete")
+        ) {
+          return Effect.succeed({
+            stdout: "",
+            stderr: "fatal: Authentication failed",
+            exitCode: 128,
+          });
+        }
         if (request.args?.[0] === "worktree" && request.args[1] === "list") {
           return Effect.succeed({
             stdout: input.registeredWorktrees ?? "",
@@ -901,11 +968,15 @@ export function withGovernor(
             exitCode: 0,
           });
         }
-        if (request.args?.[0] === "branch" && request.args[1] !== undefined) {
+        const createdBranch =
+          request.args?.[0] === "branch"
+            ? request.args.slice(1).find((arg) => !arg.startsWith("-"))
+            : undefined;
+        if (createdBranch !== undefined) {
           if (input.gitFailure === "branch-create") {
             return Effect.succeed({ stdout: "", stderr: "fatal: cannot lock ref", exitCode: 128 });
           }
-          createdBranches.add(request.args[1]);
+          createdBranches.add(createdBranch);
           return Effect.succeed({ stdout: "", stderr: "", exitCode: 0 });
         }
         // `git log -1 --format=%cI` answers the configured commit time (the
@@ -930,11 +1001,12 @@ export function withGovernor(
 
     const setupStub = {
       runForThread: () => Effect.void,
-    } as unknown as ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
+    } as unknown as BoardSetupScriptRunner["Service"];
 
     // Every merge attempt the reactor makes, so a test can assert that a
     // refusal did NOT silently retry and that a conflict fix did.
     const mergeAttempts = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
+    const mergeMethods = yield* Ref.make<ReadonlyArray<string>>([]);
     // Every refusal probe, so a test can assert the happy path costs ONE forge
     // call and that a hard hold is never re-probed.
     const mergeStateProbes = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
@@ -944,7 +1016,12 @@ export function withGovernor(
       ReadonlyArray<{ readonly number: number; readonly forced: boolean }>
     >([]);
     const markReadyCalls = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
+    const closePullRequestCalls = yield* Ref.make<ReadonlyArray<{ readonly number: number }>>([]);
     const pullRequestStub = BoardPullRequestGateway.of({
+      close: (request) =>
+        Ref.update(closePullRequestCalls, (calls) => [...calls, { number: request.number }]).pipe(
+          Effect.as("closed" as const),
+        ),
       repository: () =>
         Effect.succeed(
           boardRepositoryOf(projectRepositoryIdentity, input.projectOriginUrl ?? null),
@@ -1009,10 +1086,13 @@ export function withGovernor(
           }),
         ),
       merge: (request) =>
-        Ref.updateAndGet(mergeAttempts, (attempts) => [
-          ...attempts,
-          { number: request.number },
-        ]).pipe(
+        Ref.update(mergeMethods, (methods) => [...methods, request.method]).pipe(
+          Effect.andThen(
+            Ref.updateAndGet(mergeAttempts, (attempts) => [
+              ...attempts,
+              { number: request.number },
+            ]),
+          ),
           Effect.andThen((attempts) => {
             const scripted = input.mergeOutcomes?.[attempts.length - 1];
             const detail = scripted === undefined ? input.mergeFailure : (scripted ?? undefined);
@@ -1043,26 +1123,17 @@ export function withGovernor(
         ),
     });
 
-    // The usage-limit detector, STUBBED (T3O-22, criterion 25). Mutable so a
-    // test can change a thread's verdict mid-run — which is exactly the probe
-    // story: the same thread refuses once, then answers cleanly.
-    const usageVerdicts = new Map<string, BoardUsageLimitMatch | null>(input.usageVerdicts ?? []);
-    const usageLimitStub: UsageLimitDetectorShape = {
-      classifyTurn: (classifyInput) =>
-        Effect.succeed(usageVerdicts.get(String(classifyInput.threadId)) ?? null),
-    };
-
     const gitLayer = Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub);
     const deps = Layer.mergeAll(
       (input.worktreeRetirer ?? worktreeRetirerTestLayer()).pipe(Layer.provide(gitLayer)),
       Layer.succeed(BoardEngine, boardEngineStub),
       Layer.succeed(BoardQueries, boardQueriesStub),
-      fake.layer,
+      Layer.succeed(ThreadGateway, gateway),
+      input.placement === undefined ? Layer.empty : Layer.succeed(BoardPlacement, input.placement),
       Layer.succeed(ServerSettingsService, settingsStub),
       gitLayer,
-      Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),
+      Layer.succeed(BoardSetupScriptRunner, setupStub),
       Layer.succeed(BoardPullRequestGateway, pullRequestStub),
-      Layer.succeed(UsageLimitDetector, usageLimitStub),
       BoardStepSlotsLive,
       input.serverConfig ?? Layer.empty,
     );
@@ -1112,7 +1183,15 @@ export function withGovernor(
           // prove the opposite of what the test says. The projector's update
           // path is an idempotent upsert of the card the payload carries, so
           // a fixture must build the event from the card it currently holds.
-          event.type === "board.card-updated"
+          event.type === "board.card-updated" ||
+          // And a pin (T3O-65): a client command whose card the placement
+          // pass re-reads from the model.
+          event.type === "board.card-worker-pinned" ||
+          // And plan review turned on late (T3O-39): a card edit's second
+          // event, read back as the step's started review; and its rounds
+          // changed mid-review (T3O-50).
+          event.type === "board.plan-review-started" ||
+          event.type === "board.plan-review-rounds-changed"
             ? Ref.get(model).pipe(
                 Effect.flatMap((m) => projectBoardEvent(m, event)),
                 Effect.flatMap((next) => Ref.set(model, next)),
@@ -1149,8 +1228,10 @@ export function withGovernor(
           commands: Ref.get(commands),
           decided: Ref.get(decided),
           mergeAttempts: Ref.get(mergeAttempts),
+          mergeMethods: Ref.get(mergeMethods),
           mergeStateProbes: Ref.get(mergeStateProbes),
           markReadyCalls: Ref.get(markReadyCalls),
+          closePullRequestCalls: Ref.get(closePullRequestCalls),
           pullRequestLookups: Ref.get(pullRequestLookups),
           pullRequestGets: Ref.get(pullRequestGets),
           removedWorktrees: Ref.get(removedWorktrees),
@@ -1162,9 +1243,26 @@ export function withGovernor(
           setBoardSettings: (settings) => void (boardSettings = settings),
           setWorktreeUndurable: (undurable) => void (worktreeUndurable = undurable),
           gitInvocations: Effect.sync(() => [...gitInvocationLog]),
-          setUsageVerdict: (threadId, verdict) => void usageVerdicts.set(threadId, verdict),
         });
-      }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provideMerge(deps)))),
+      }).pipe(
+        Effect.provide(
+          SupervisorReactorLive.pipe(
+            Layer.provideMerge(
+              Layer.effect(
+                BoardWorkspaces,
+                localBoardWorkspaceDeps.pipe(
+                  Effect.map((local) =>
+                    input.workspaces === undefined
+                      ? makeBoardWorkspaces(local)
+                      : input.workspaces(local),
+                  ),
+                ),
+              ),
+            ),
+            Layer.provideMerge(deps),
+          ),
+        ),
+      ),
     );
   }).pipe(Effect.provide(NodeServices.layer));
 }
@@ -1326,18 +1424,45 @@ export const cardTitleUpdated = (card: BoardCard, sequence: number): HarnessEven
     payload: { cardId: card.id, card: { ...card, title: `${card.title} (edited)` } },
   }) as unknown as HarnessEvent;
 
-/** An edit that TOUCHED the auto-merge arm (T3O-38, D3). The marker key is
-    what the reactor keys the fire-on-toggle on, so a helper that only set the
+/** An edit that TOUCHED the auto-merge toggle (T3O-38). The marker is what
+    the reactor keys the fire-on-toggle on, so a helper that only set the
     card's field would prove nothing. */
 export const cardAutoMergeUpdated = (
   card: BoardCard,
   autoMerge: boolean,
   sequence: number,
+): HarnessEvent => cardAutomationUpdated(card, { autoMerge: autoMerge ? true : null }, sequence);
+
+/** A `board.card.set-automation` as the decider records it: the card with its
+    new own toggles, and the marker naming which moved. The harness does not
+    loop the reactor's events back, so a test writes the card into the model
+    itself (see `setAutomation`) and pumps this. */
+const cardAutomationUpdated = (
+  card: BoardCard,
+  settings: {
+    readonly autoPlan?: boolean | null;
+    readonly autoBuild?: boolean | null;
+    readonly autoMerge?: boolean | null;
+  },
+  sequence: number,
 ): HarnessEvent =>
   ({
     type: "board.card-updated",
     sequence,
-    payload: { cardId: card.id, card: { ...card, autoMerge }, autoMerge },
+    payload: {
+      cardId: card.id,
+      card: {
+        ...card,
+        ...(settings.autoPlan === undefined ? {} : { autoPlanSetting: settings.autoPlan }),
+        ...(settings.autoBuild === undefined ? {} : { autoBuildSetting: settings.autoBuild }),
+        ...(settings.autoMerge === undefined ? {} : { autoMergeSetting: settings.autoMerge }),
+      },
+      automationChanged: {
+        ...(settings.autoPlan === undefined ? {} : { autoPlan: true }),
+        ...(settings.autoBuild === undefined ? {} : { autoBuild: true }),
+        ...(settings.autoMerge === undefined ? {} : { autoMerge: true }),
+      },
+    },
   }) as unknown as HarnessEvent;
 
 export const cardArchived = (card: BoardCard, sequence: number): HarnessEvent =>
@@ -1373,26 +1498,11 @@ export const cardDeleted = (
  * A turn ending on a thread. `turnId` names the turn that ENDED — pass it
  * whenever the fixture also gives the thread a state, because that is the pair
  * the turn-end handler compares to tell a lagging read from a live second turn.
- *
- * The board reads `errorMessage` (T3O-22, D4): Grok's quota refusal arrives
- * ONLY that way, on a `failed` turn with no assistant message anywhere.
  */
-export const turnCompleted = (
-  threadId: ThreadId,
-  turnId?: string,
-  /** A failed turn's own error text, for the Grok-shaped refusal path. */
-  errorMessage?: string,
-  /** How the turn ended. Defaults to the pair that always travels together — an
-      error text means `failed`, its absence means `completed` — and is passed
-      explicitly only to build the odd shapes: an interrupted turn (a human
-      pressed Stop) or a failure that named nothing. */
-  state?: "completed" | "failed" | "interrupted" | "cancelled",
-): ThreadSignal => ({
+export const turnCompleted = (threadId: ThreadId, turnId?: string): ThreadSignal => ({
   type: "turn-ended",
   threadId,
   turnRef: turnId,
-  outcome: state ?? (errorMessage === undefined ? "completed" : "failed"),
-  errorMessage: errorMessage ?? null,
 });
 
 /** A structured question being ANSWERED (t3o-34, D5). It is raised from inside a
@@ -1426,3 +1536,43 @@ export const stepStatus = (board: BoardState, cardId: BoardCardId) =>
 /** The stage a card currently sits in, per the live read model. */
 export const cardStage = (board: BoardState, cardId: BoardCardId): BoardStageId | null =>
   board.cards.find((candidate) => candidate.id === cardId)?.stage ?? null;
+
+/**
+ * Flip a card's own Automation toggles the way `board.card.set-automation`
+ * does (T3O-38): the card is written into the model, then the decider's event
+ * is delivered to the reactor.
+ */
+export const setAutomation = (
+  h: Pick<Harness, "model" | "pumpDomain">,
+  cardId: BoardCardId,
+  settings: {
+    readonly autoPlan?: boolean | null;
+    readonly autoBuild?: boolean | null;
+    readonly autoMerge?: boolean | null;
+  },
+  sequence: number,
+) =>
+  Effect.gen(function* () {
+    let updated: BoardCard | undefined;
+    yield* Ref.update(h.model, (current) => {
+      const board = current.board!;
+      return {
+        ...current,
+        board: {
+          ...board,
+          cards: board.cards.map((card) => {
+            if (card.id !== cardId) return card;
+            updated = {
+              ...card,
+              ...(settings.autoPlan === undefined ? {} : { autoPlanSetting: settings.autoPlan }),
+              ...(settings.autoBuild === undefined ? {} : { autoBuildSetting: settings.autoBuild }),
+              ...(settings.autoMerge === undefined ? {} : { autoMergeSetting: settings.autoMerge }),
+            };
+            return updated;
+          }),
+        },
+      };
+    });
+    if (updated === undefined) return;
+    yield* h.pumpDomain(cardAutomationUpdated(updated, settings, sequence));
+  });

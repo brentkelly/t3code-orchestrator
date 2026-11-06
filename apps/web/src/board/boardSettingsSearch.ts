@@ -11,6 +11,22 @@
 import type { SettingsSearchItem } from "../components/settings/settingsSearch";
 
 export const BOARD_SETTINGS_SEARCH_ITEMS = [
+  // T3O-71: which server's board this device shows.
+  {
+    id: "board-server",
+    title: "Board server",
+    to: "/settings/board",
+    searchTerms: ["central board remote environment connection"],
+  },
+  // T3O-40: board display preferences.
+  { id: "board-display", title: "Board display", to: "/settings/board" },
+  {
+    id: "board-auto-collapse-empty-stages",
+    title: "Auto-collapse empty stages",
+    to: "/settings/board",
+    targetId: "board-display",
+    searchTerms: ["fold hide empty columns"],
+  },
   { id: "board-projects", title: "Projects", to: "/settings/board" },
   {
     id: "board-key-prefix",
@@ -25,6 +41,13 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     targetId: "board-projects",
   },
   { id: "board-pipeline", title: "Pipeline", to: "/settings/board" },
+  // T3O-43: each project's t3o.json, read-only.
+  {
+    id: "board-project-pipelines",
+    title: "Project pipelines",
+    to: "/settings/board",
+    searchTerms: ["t3o.json per project stages override"],
+  },
   {
     id: "board-default-model",
     title: "Board default model",
@@ -32,9 +55,24 @@ export const BOARD_SETTINGS_SEARCH_ITEMS = [
     targetId: "board-pipeline",
   },
   { id: "board-concurrency", title: "Board concurrency", to: "/settings/board" },
+  // T3O-62: the distributed board.
+  { id: "board-workers", title: "Workers", to: "/settings/board" },
+  {
+    id: "board-default-worker",
+    title: "Default worker",
+    to: "/settings/board",
+    targetId: "board-workers",
+  },
+  { id: "board-project-checkouts", title: "Project checkouts", to: "/settings/board" },
   {
     id: "board-reclaim-worktree-on-done",
     title: 'Reclaim worktrees at "Done"',
+    to: "/settings/board",
+    targetId: "board-lifecycle",
+  },
+  {
+    id: "board-auto-archive-done",
+    title: "Auto-archive Done cards",
     to: "/settings/board",
     targetId: "board-lifecycle",
   },

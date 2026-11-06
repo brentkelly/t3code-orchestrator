@@ -54,9 +54,11 @@ export function boardCardProjectLockHint(lock: BoardCardProjectLock): string {
     case "built":
       return "Pinned — the build has a worktree on this project";
     case "child":
-      return "Pinned — inherits its parent's project";
+      return "Pinned — lands on a group's integration branch in this project";
     case "parent":
-      return "Pinned — this card was split into sub-board cards";
+      return "Pinned — its own integration branch lives in this project";
+    case "project-stage":
+      return `Pinned — ${lock.stageLabel} is a stage only this project's t3o.json defines`;
   }
 }
 

@@ -1,5 +1,8 @@
 import * as Option from "effect/Option";
 
+// T3o: the fork's own default home directory name.
+import { T3O_DESKTOP_IDENTITY } from "../../../../scripts/lib/t3o-desktop-identity.ts";
+
 export type JoinPath = (first: string, ...segments: string[]) => string;
 
 function normalizeConfiguredBaseDir(t3Home: Option.Option<string>): Option.Option<string> {
@@ -16,7 +19,8 @@ export function resolveDesktopBaseDir(input: {
   readonly t3Home: Option.Option<string>;
 }): string {
   return Option.getOrElse(normalizeConfiguredBaseDir(input.t3Home), () =>
-    input.joinPath(input.homeDirectory, ".t3"),
+    // T3o: default home is ~/.t3o so the fork never shares upstream T3 Code's ~/.t3.
+    input.joinPath(input.homeDirectory, T3O_DESKTOP_IDENTITY.homeDirName),
   );
 }
 

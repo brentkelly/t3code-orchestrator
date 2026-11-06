@@ -18,7 +18,11 @@ export const Route = createFileRoute("/pair")({
       };
     }
 
-    if (authGateState.status === "authenticated" || authGateState.status === "hosted-static") {
+    if (
+      authGateState.status === "authenticated" ||
+      authGateState.status === "hosted-static" ||
+      authGateState.status === "guest"
+    ) {
       // T3o: an already-paired client lands on the board, not threads home.
       throw redirect({ to: resolvePairExitTarget(authGateState.status), replace: true });
     }
@@ -46,8 +50,7 @@ function PairRouteView() {
     <PairingRouteSurface
       auth={authGateState.auth}
       onAuthenticated={() => {
-        // Recreate the primary connection so its WebSocket and cached scopes
-        // use the newly issued cookie after re-pairing.
+        // Recreate the connection so WebSocket and cached scopes use the new pairing cookie.
         // T3o: a completed pairing lands on the board.
         router.history.replace(resolvePairExitTarget(authGateState.status));
         router.history.flush();

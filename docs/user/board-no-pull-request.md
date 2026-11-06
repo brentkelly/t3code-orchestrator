@@ -65,5 +65,6 @@ sitting.
 ## Related
 
 - [Auto-merge](board-auto-merge.md) — arming a card to merge itself once the forge accepts it.
+- [Merge strategy](board-merge-strategy.md) — merging one card with a merge commit or a rebase.
 - [Asking for another review round](board-another-review-round.md) — pulling a card back for one
   more pass.

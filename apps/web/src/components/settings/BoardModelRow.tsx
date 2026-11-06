@@ -8,7 +8,7 @@
  * dragged the whole board-pipeline panel, its prompt envelopes and its dialogs
  * into the pane's chunk.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   ProviderInstanceId,
@@ -22,20 +22,16 @@ import { ChevronDownIcon } from "lucide-react";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { sortProviderInstanceEntries } from "../../providerInstances";
 import { cn } from "../../lib/utils";
-import { usePrimarySettings } from "../../hooks/useSettings";
-import { usePrimaryEnvironmentId } from "../../state/environments";
 import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import { ModelPickerContent } from "../chat/ModelPickerContent";
-import {
-  buildTraitsTriggerDisplay,
-  getTraitsSectionVisibility,
-  TraitsMenuContent,
-} from "../chat/TraitsPicker";
+import { buildTraitsTriggerDisplay } from "@t3tools/client-runtime/model-traits";
+import { getTraitsSectionVisibility, TraitsMenuContent } from "../chat/TraitsPicker";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { Button } from "../ui/button";
 import { BoardModelControlsMenu } from "./BoardModelControlsMenu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { useBoardEnvironmentId, useBoardSettings } from "../../board/useBoardEnvironmentId";
 
 export type InstanceEntries = ReturnType<typeof sortProviderInstanceEntries>;
 export type ActiveModel = { instanceId: ProviderInstanceId; model: string };
@@ -67,12 +63,11 @@ function ModelControlsMenu(props: {
 }) {
   // Upstream gates plan-mode traits on the client setting; the row reads the
   // same source as the composer so both show the same controls for a model.
-  const planModeEnabled = usePrimarySettings((settings) => settings.planModeEnabled);
+  const planModeEnabled = useBoardSettings((settings) => settings.planModeEnabled);
   const traits = getTraitsSectionVisibility({
     provider: props.provider,
     models: props.models,
     model: props.model,
-    prompt: "",
     modelOptions: props.modelOptions,
     allowPromptInjectedEffort: false,
     planModeEnabled,
@@ -106,8 +101,6 @@ function ModelControlsMenu(props: {
             provider={props.provider}
             models={props.models}
             model={props.model}
-            prompt=""
-            onPromptChange={() => {}}
             modelOptions={props.modelOptions}
             allowPromptInjectedEffort={false}
             planModeEnabled={planModeEnabled}
@@ -120,25 +113,6 @@ function ModelControlsMenu(props: {
         : { runtimeMode: props.runtimeMode, onRuntimeModeChange: props.onRuntimeModeChange })}
     />
   );
-}
-
-/**
- * A selection's display name — the same label `ModelRow`'s trigger shows for a
- * picked model, resolved for a selection the row is not itself rendering.
- *
- * Exported so a row that INHERITS a model can name it (t3o-30, D1): "Opus 5
- * (default)" only reads as a real answer if it is the same name the picker uses.
- * Falls back to the raw slug for a model the instance no longer lists, which is
- * still more use than "Select a model".
- */
-export function boardModelDisplayName(
-  selection: ActiveModel,
-  getModelOptions: (active: ActiveModel) => ModelOptionsByInstance,
-): string {
-  const option = getModelOptions(selection)
-    .get(selection.instanceId)
-    ?.find((entry) => entry.slug === selection.model);
-  return option ? getTriggerDisplayModelName(option) : selection.model;
 }
 
 /**
@@ -187,7 +161,8 @@ export function ModelRow(props: {
   placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const environmentId = usePrimaryEnvironmentId();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const environmentId = useBoardEnvironmentId();
   // With nothing picked the popup still needs an instance to open on: use the
   // first available one, with an empty model so no row reads as selected.
   const firstEntry = props.instanceEntries.find((entry) => entry.enabled && entry.isAvailable);
@@ -207,7 +182,7 @@ export function ModelRow(props: {
     props.selection === null
       ? (props.placeholder ?? "Select a model")
       : selectedOption
-        ? getTriggerDisplayModelName(selectedOption)
+        ? getTriggerDisplayModelName(selectedOption, activeEntry?.driverKind)
         : active.model;
 
   return (
@@ -264,6 +239,7 @@ export function ModelRow(props: {
                 modelOptionsByInstance={modelOptions}
                 terminalOpen={false}
                 onRequestClose={() => setOpen(false)}
+                searchInputRef={searchInputRef}
                 onInstanceModelChange={(instanceId, model) => {
                   props.onChange({ instanceId, model });
                   setOpen(false);

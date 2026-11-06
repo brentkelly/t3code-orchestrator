@@ -2,6 +2,7 @@
  * T3o board view helpers shared by web and mobile (T3O-18, D17).
  */
 export {
+  boardCiAwareNextStageId,
   boardMoveLeavesPlanningUnwritten,
   boardMoveNeedsOverride,
   boardStagePrimaryAction,

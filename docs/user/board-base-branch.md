@@ -44,9 +44,11 @@ card is rebased, and it disappears just as readily if you change your mind and p
 ## What actually happens next
 
 The rebase runs during the card's next round of **Code review**. The agent fetches the new base,
-rebases the card's branch onto it, resolves any conflicts, runs your project's checks, and
-force-pushes with `--force-with-lease`. One more review round then runs on the rebased change before
-the card can merge, so nothing reaches **Ready for merge** with a diff nobody reviewed.
+rebases the card's branch onto it, resolves any conflicts, and force-pushes with
+`--force-with-lease`. It runs checks only when it had to resolve code, and then only the checks that
+cover the files it resolved. A clean rebase, or one whose conflicts were only in docs, runs none.
+One more review round then runs on the rebased change before the card can merge, so nothing reaches
+**Ready for merge** with a diff nobody reviewed.
 
 If the card already has a pull request open, the same step retargets it at the new base. That has to
 happen, because a pull request keeps whatever branch it was opened against: left alone it would show

@@ -41,6 +41,7 @@ import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { cn } from "../lib/utils";
 import { BOARD_CARD_REVIEW_ITEM_KINDS } from "./boardCardProgressBlock";
 import { formatRelativeTime } from "../timestampFormat";
+import type { BoardCardWorkerChip } from "./workers/cardWorker";
 import type { BoardCardMeta, BoardCardSummaryItem } from "./boardCardSummary";
 import { BoardHint } from "./BoardHint";
 
@@ -215,6 +216,10 @@ export function BoardCardReviewBlock({
   );
 }
 
+/** The small bordered chip that opens a card's plans or a group's sub-board. */
+export const BOARD_CHIP_CLASS =
+  "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 text-[10.5px] font-medium whitespace-nowrap text-muted-foreground";
+
 /**
  * The split parent's plan bar (t3o-25, prototype `hasPlans`): one segment per
  * child plan card at `flex:1`, coloured by where that plan stands — done,
@@ -244,8 +249,6 @@ export function BoardCardPlansRow({
       : BOARD_THREAD_TODO_STATUS_DONE.repeat(Math.min(done, total)) +
         BOARD_THREAD_TODO_STATUS_PENDING.repeat(Math.max(0, total - done));
   const label = `${done}/${total} plans`;
-  const chipClass =
-    "inline-flex h-5 shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-1.5 text-[10.5px] font-medium text-muted-foreground";
   const chipBody = (
     <>
       {label}
@@ -271,14 +274,14 @@ export function BoardCardPlansRow({
           ))}
         </span>
         {onOpen === undefined ? (
-          <span className={chipClass}>{chipBody}</span>
+          <span className={BOARD_CHIP_CLASS}>{chipBody}</span>
         ) : (
           // A real button so it is focusable on its own; clicks and keys stop
           // here so the card underneath does not also open its detail sheet.
           <BoardHint label="Open this card's sub-board">
             <button
               className={cn(
-                chipClass,
+                BOARD_CHIP_CLASS,
                 "cursor-pointer transition-colors hover:bg-accent hover:text-foreground",
               )}
               onClick={(event) => {
@@ -457,8 +460,16 @@ function MetaCount({
  * nothing at all when the card is tied to nothing, so a bare card keeps its
  * height.
  */
-export function BoardCardMetaRow({ meta }: { readonly meta: BoardCardMeta }) {
-  if (meta.empty) return null;
+export function BoardCardMetaRow({
+  meta,
+  worker,
+}: {
+  readonly meta: BoardCardMeta;
+  /** The worker chip (T3O-65), at the row's right end; null on a board with
+      one worker. */
+  readonly worker?: BoardCardWorkerChip | null | undefined;
+}) {
+  if (meta.empty && worker == null) return null;
   return (
     <div className="flex items-center gap-2.5 text-muted-foreground">
       {meta.dependencyCount === 0 ? null : (
@@ -508,6 +519,22 @@ export function BoardCardMetaRow({ meta }: { readonly meta: BoardCardMeta }) {
           </span>
         </BoardHint>
       ) : null}
+      {worker == null ? null : (
+        // Never a status colour (T3O-65): worker trouble goes in the notice
+        // slot. Solid when the card is bound to its worker, dashed while it
+        // follows the default and hasn't started.
+        <BoardHint label={worker.tooltip}>
+          <span
+            aria-label={worker.tooltip}
+            className={cn(
+              "inline-flex h-4 max-w-[110px] shrink-0 items-center rounded border px-1.5 text-[10px] font-medium text-muted-foreground",
+              worker.bound ? "border-border" : "border-dashed border-border",
+            )}
+          >
+            <span className="truncate">{worker.label}</span>
+          </span>
+        </BoardHint>
+      )}
     </div>
   );
 }

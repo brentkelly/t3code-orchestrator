@@ -1,21 +1,20 @@
 /**
- * The Plans panel (t3o-29): what a split parent's modal shows once its
- * children exist.
+ * The Cards panel (t3o-29, T3O-34): what a group's modal shows once it has
+ * children.
  *
  * The pane it replaces rendered the plan markdown — which, after approval, is
  * a second copy of four Brief panes (`decider.ts` makes each plan body the
  * child's brief at materialisation). A parent whose whole job is to supervise
  * four cards was therefore showing prose the human read at approval and
- * nothing at all about what the four cards were doing. This shows the split:
- * one row per plan, in dependency order, each carrying its child's live stage,
- * what is holding it up, and its PR.
+ * nothing at all about what the four cards were doing. This shows the group:
+ * one row per child card (plus any plan with no card), in dependency order,
+ * each carrying its child's live stage, what is holding it up, and its PR.
  *
  * No "Back to thread" button, unlike the markdown pane: this panel is a split
- * parent's default pane (t3o-28, D4), and the header's Thread pill is already
- * the way to its planning thread.
+ * parent's default pane (t3o-28, D4), and the header's Planning pill is
+ * already the way to its planning thread.
  *
- * Pure presentation over `deriveBoardPlanRows` — see `boardPlanRows.ts` for
- * why none of this needed a wire change.
+ * Pure presentation over `deriveBoardPlanRows` — see `boardPlanRows.ts`.
  */
 import {
   CheckIcon,
@@ -50,6 +49,7 @@ const TONE_DOT: Record<BoardPlanRowTone, string> = {
 export function BoardPlansPanel({
   planRows,
   integrationBranch,
+  ownBranch = true,
   onOpenChild,
   onOpenSubBoard,
 }: {
@@ -57,6 +57,9 @@ export function BoardPlansPanel({
   /** The parent's integration branch, for the footer; null before the reactor
       has cut it. */
   readonly integrationBranch: string | null;
+  /** Whether the card integrates on a branch of its own. An inheriting group
+      (T3O-34) has no integration branch, so it has no final review to state. */
+  readonly ownBranch?: boolean | undefined;
   /** Open one child inside this parent's sub-board. Absent leaves the rows
       informational. */
   readonly onOpenChild?: ((childCardId: string) => void) | undefined;
@@ -74,7 +77,7 @@ export function BoardPlansPanel({
   return (
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
       <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-border pl-3.5 pr-3">
-        <SectionHeading>Plans</SectionHeading>
+        <SectionHeading>Cards</SectionHeading>
         <span className="text-[11.5px] text-muted-foreground">in dependency order</span>
         <span className="flex-1" />
         <button
@@ -91,7 +94,7 @@ export function BoardPlansPanel({
           {chartOpen ? "Hide chart" : "Dependency chart"}
         </button>
         {onOpenSubBoard === undefined ? null : (
-          <BoardHint label="Open these plans as a board">
+          <BoardHint label="Open these cards as a board">
             <button
               className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] border border-input bg-popover px-2.5 text-[11.5px] font-medium whitespace-nowrap text-foreground shadow-xs hover:bg-accent"
               onClick={onOpenSubBoard}
@@ -107,10 +110,10 @@ export function BoardPlansPanel({
         {chartOpen ? <BoardPlanGraph onOpenChild={onOpenChild} rows={planRows.rows} /> : null}
         <div className="flex flex-col gap-[7px]">
           {planRows.rows.map((row) => (
-            <PlanRow key={row.planId} onOpenChild={onOpenChild} row={row} />
+            <PlanRow key={row.rowId} onOpenChild={onOpenChild} row={row} />
           ))}
         </div>
-        <BoardPlanFinalReviewCard branch={final.branch} note={final.note} />
+        {ownBranch ? <BoardPlanFinalReviewCard branch={final.branch} note={final.note} /> : null}
       </div>
     </section>
   );

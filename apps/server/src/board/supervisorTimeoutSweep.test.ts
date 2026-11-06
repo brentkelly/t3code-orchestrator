@@ -84,6 +84,7 @@ const runningStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   // the sweep's clock is what these tests isolate.
   slotHeld: false,
   forceStart: false,
+  queuedBy: null,
   startedAt: STARTED,
   updatedAt: STARTED,
   ...overrides,

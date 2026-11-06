@@ -64,6 +64,21 @@ import Migration042 from "./042_BoardProviderLimits.ts";
 import Migration043 from "./043_BoardCardsAutoMerge.ts";
 import Migration044 from "./044_BoardEventLog.ts";
 import Migration045 from "./045_BoardOrchestrationV2.ts";
+import Migration046 from "./046_BoardWorkers.ts";
+import Migration047 from "./047_BoardDistributedThreads.ts";
+import Migration048 from "./048_BoardCardPlacement.ts";
+import Migration049 from "./049_BoardCardPlacementOrphaned.ts";
+import Migration050 from "./050_BoardDropProviderLimits.ts";
+import Migration051 from "./051_BoardCardGroups.ts";
+import Migration052 from "./052_BoardSplitGate.ts";
+import Migration053 from "./053_BoardCardDecisions.ts";
+import Migration054 from "./054_BoardCardsPlanReview.ts";
+import Migration055 from "./055_BoardCardAutomation.ts";
+import Migration056 from "./056_BoardThreadLinkRetired.ts";
+import Migration057 from "./057_BoardCardsMergeStrategy.ts";
+import Migration058 from "./058_BoardStagesProjectOwned.ts";
+import Migration059 from "./059_BoardProjectStageConfigs.ts";
+import Migration060 from "./060_BoardCi.ts";
 
 /** Ledger table for the board migration lineage, independent of upstream. */
 export const BOARD_MIGRATION_TABLE = "t3o_sql_migrations";
@@ -138,6 +153,21 @@ export const BOARD_MIGRATIONS = [
   [43, "BoardCardsAutoMerge", Migration043],
   [44, "BoardEventLog", Migration044],
   [45, "BoardOrchestrationV2", Migration045],
+  [46, "BoardWorkers", Migration046],
+  [47, "BoardDistributedThreads", Migration047],
+  [48, "BoardCardPlacement", Migration048],
+  [49, "BoardCardPlacementOrphaned", Migration049],
+  [50, "BoardDropProviderLimits", Migration050],
+  [51, "BoardCardGroups", Migration051],
+  [52, "BoardSplitGate", Migration052],
+  [53, "BoardCardDecisions", Migration053],
+  [54, "BoardCardsPlanReview", Migration054],
+  [55, "BoardCardAutomation", Migration055],
+  [56, "BoardThreadLinkRetired", Migration056],
+  [57, "BoardCardsMergeStrategy", Migration057],
+  [58, "BoardStagesProjectOwned", Migration058],
+  [59, "BoardProjectStageConfigs", Migration059],
+  [60, "BoardCi", Migration060],
 ] as const;
 
 const boardLoader = Migrator.fromRecord(

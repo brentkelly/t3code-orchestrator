@@ -18,10 +18,11 @@
  * made the card read "in flight" and hid the only restart there was — while the
  * step that needed restarting had nothing running at all.
  */
-import { boardNextStageId, type BoardStageDefinition, type BoardStageId } from "@t3tools/contracts";
+import type { BoardStageDefinition, BoardStageId } from "@t3tools/contracts";
 
 import type { BoardReviewPhaseStatus } from "./boardReviewLoop";
 import { boardStageLabelMidSentence } from "./boardCardThreadMenu";
+import { boardCiAwareNextStageId } from "@t3tools/client-runtime/board";
 import { boardStageLabel } from "./boardStages";
 
 export interface BoardStepRecovery {
@@ -43,18 +44,22 @@ export function resolveBoardStepRecovery(input: {
   readonly stalled: boolean;
   readonly archived: boolean;
   readonly blocked: boolean;
+  /** False on a group card: its stage is derived from its children, so a hand
+      move is not a way out. */
+  readonly handMoves?: boolean;
+  /** The card has a live CI entry (T3O-44): it leaves CI by passing or by
+      Skip CI, never by a move. */
+  readonly ciEntryLive?: boolean;
 }): BoardStepRecovery | null {
   if (!input.stalled || input.archived) return null;
   const stage = boardStageLabelMidSentence(boardStageLabel(input.stages, input.stage));
-  const nextStage = boardNextStageId(
-    { cards: [], stages: input.stages, nextCardNumberByProject: {} },
-    input.stage,
-  );
+  // The list is the card's own pipeline, so this walks into CI, never past it.
+  const nextStage = boardCiAwareNextStageId(input.stages, input.stage, input.ciEntryLive === true);
   return {
     continueLabel: `Continue ${stage}`,
     restartLabel: `Restart ${stage}`,
     next:
-      nextStage === null
+      nextStage === null || input.handMoves === false
         ? null
         : {
             label: `Move to ${boardStageLabel(input.stages, nextStage)}`,

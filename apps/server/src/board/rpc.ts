@@ -33,15 +33,15 @@ import {
   type BoardCardDetailStreamItem,
   type BoardCardId,
   type BoardCardPullRequestActionInput,
+  type BoardCardWorkerMoveAnswer,
+  type BoardCardWorkerMoveRequest,
   // T3o: the refresh's own payload (T3O-48).
   type BoardRefreshCardPullRequestInput,
   type BoardLinkCardPullRequestInput,
-  type BoardProviderLimitActionInput,
-  type BoardProviderLimitResumeAtInput,
   type BoardClientCommand,
   type BoardSubscribeBoardInput,
   type BoardSubscribeCardInput,
-  type OrchestrationClientOrigin,
+  OrchestrationClientOrigin,
   type ProjectId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -60,7 +60,6 @@ import {
   claimBoardCardAttachment,
   deleteBoardCardAttachmentFile,
 } from "./attachments.ts";
-import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import {
   BOARD_HUMAN_ACTOR_FALLBACK_NAME,
   boardHumanActor,
@@ -74,41 +73,73 @@ import { BoardThreadTail } from "./boardThreadTail.ts";
 import { ThreadGateway, type ThreadGatewayShape } from "./ThreadGateway.ts";
 import type { BoardCommand } from "./decider.ts";
 import type { SupervisorReactorShape } from "./supervisorReactor.ts";
+import { BoardCardMover, type BoardCardMoverShape } from "./workers/BoardCardMove.ts";
+import { BoardWorkers } from "./workers/BoardWorkers.ts";
+import { workerGatewayRpcHandlers } from "./workers/workerGatewayRpc.ts";
+import { boardWorkerRpcHandlers } from "./workers/workerRpc.ts";
+import { BoardWorkspaces, type BoardWorkspacesShape } from "./workspace/BoardWorkspace.ts";
+import { boardWorkerGitCallRpcHandlers } from "./workspace/workerGitRpc.ts";
 
 export interface BoardRpcHandlerDeps {
   readonly currentSession: AuthenticatedSession;
   /** The supervisor reactor performs the card→PR actions: it owns the forge
       gateway and the step machinery a conflict fix needs. */
   readonly boardSupervisor: SupervisorReactorShape;
-  /** The connecting client, stamped on every board event its commands make. */
-  readonly clientOrigin: OrchestrationClientOrigin;
+  /** The connecting client's self-description (ws.ts `readClientAnalyticsProps`). Its
+      surface and app version are stamped on every board event its commands make. */
+  readonly clientAnalyticsProps: Readonly<Record<string, unknown>>;
 }
 
-/** A client that said nothing about itself has no origin worth stamping. */
-const hasClientOrigin = (origin: OrchestrationClientOrigin): boolean =>
-  origin.surface !== undefined || origin.appVersion !== undefined;
+const decodeClientOrigin = Schema.decodeUnknownOption(OrchestrationClientOrigin);
+
+/**
+ * The origin a client's board commands carry: its surface and app version, each kept only
+ * when valid, or undefined when it said nothing usable about itself.
+ */
+export const boardClientOrigin = (
+  props: Readonly<Record<string, unknown>>,
+): OrchestrationClientOrigin | undefined => {
+  const surface = decodeClientOrigin({ surface: props.surface });
+  const appVersion = decodeClientOrigin({ appVersion: props.appVersion });
+  const origin: OrchestrationClientOrigin = {
+    ...(surface._tag === "Some" ? surface.value : {}),
+    ...(appVersion._tag === "Some" ? appVersion.value : {}),
+  };
+  return origin.surface === undefined && origin.appVersion === undefined ? undefined : origin;
+};
 
 export const boardRpcHandlers = (deps: BoardRpcHandlerDeps) =>
   Effect.gen(function* () {
     const boardEngine = yield* BoardEngine;
     const boardQueries = yield* BoardQueries;
     // Built once per connection, so the actor-name caches live as long as it does.
+    const workspaces = yield* BoardWorkspaces;
     const stampActor = boardActorStamp({
       threads: yield* ThreadGateway,
       boardQueries,
-      git: yield* GitVcsDriver,
+      workspaces,
     });
     // The subscription's services, provided here so the handler's stream needs
     // only the RPC scope.
     const subscriptionContext = yield* Effect.context<
-      BoardEngine | BoardQueries | BoardThreadTail
+      BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
     >();
-    return makeBoardRpcHandlers(deps, {
-      boardEngine,
-      boardQueries,
-      stampActor,
-      subscriptionContext,
-    });
+    return {
+      ...makeBoardRpcHandlers(deps, {
+        boardEngine,
+        boardQueries,
+        stampActor,
+        mover: yield* BoardCardMover,
+        subscriptionContext,
+      }),
+      // T3O-62: worker management, and the worker side's handshake.
+      ...(yield* boardWorkerRpcHandlers(deps.currentSession)),
+      // T3O-63: the worker side's thread gateway, MCP relay and staging.
+      ...workerGatewayRpcHandlers(deps.currentSession),
+      // T3O-64: the named git and forge operations, for a central server
+      // whose cards run here.
+      ...boardWorkerGitCallRpcHandlers(deps.currentSession, workspaces),
+    };
   });
 
 function makeBoardRpcHandlers(
@@ -117,10 +148,14 @@ function makeBoardRpcHandlers(
     readonly boardEngine: BoardEngineShape;
     readonly boardQueries: BoardQueriesShape;
     readonly stampActor: (command: BoardCommand) => Effect.Effect<void>;
-    readonly subscriptionContext: Context.Context<BoardEngine | BoardQueries | BoardThreadTail>;
+    readonly mover: BoardCardMoverShape;
+    readonly subscriptionContext: Context.Context<
+      BoardEngine | BoardQueries | BoardThreadTail | BoardWorkers
+    >;
   },
 ) {
   const { boardEngine, boardQueries } = services;
+  const clientOrigin = boardClientOrigin(deps.clientAnalyticsProps);
   const authorized = <A, E, R>(
     method: keyof typeof BOARD_RPC_SCOPES,
     effect: Effect.Effect<A, E, R>,
@@ -190,7 +225,7 @@ function makeBoardRpcHandlers(
           Effect.andThen(
             boardEngine.dispatch(
               command,
-              hasClientOrigin(deps.clientOrigin) ? { origin: deps.clientOrigin } : undefined,
+              clientOrigin === undefined ? undefined : { origin: clientOrigin },
             ),
           ),
           Effect.mapError(
@@ -262,32 +297,6 @@ function makeBoardRpcHandlers(
      * "the forge refused because a check is failing" is the system working
      * correctly, and the caller renders each outcome differently.
      */
-    /**
-     * "Resume now" on a limited provider (T3O-22, D14). One click, one prober —
-     * the same single-card wake the reset time performs, because ten cards
-     * arriving at once is exactly as bad whether a clock or a human chose the
-     * moment.
-     */
-    [BOARD_WS_METHODS.probeProviderLimit]: (input: BoardProviderLimitActionInput) =>
-      authorized(
-        BOARD_WS_METHODS.probeProviderLimit,
-        deps.boardSupervisor.probeProviderLimit(input.providerInstanceId),
-      ),
-
-    /**
-     * "Set resume time" on a provider that named none (T3O-22, D14) — a human
-     * reading the provider's own dashboard knows something the board's blind
-     * poll does not. Null hands the schedule back to the poll.
-     */
-    [BOARD_WS_METHODS.setProviderLimitResumeAt]: (input: BoardProviderLimitResumeAtInput) =>
-      authorized(
-        BOARD_WS_METHODS.setProviderLimitResumeAt,
-        deps.boardSupervisor.setProviderLimitResumeAt({
-          providerInstanceId: input.providerInstanceId,
-          resumeAt: input.resumeAt,
-        }),
-      ),
-
     [BOARD_WS_METHODS.mergeCardPullRequest]: (input: BoardCardPullRequestActionInput) =>
       authorized(
         BOARD_WS_METHODS.mergeCardPullRequest,
@@ -320,6 +329,14 @@ function makeBoardRpcHandlers(
         deps.boardSupervisor.requestReviewRound(input.cardId),
       ),
 
+    /** Skip CI (T3O-44): a human's override, so what it records carries the
+        human, like a drag. */
+    [BOARD_WS_METHODS.skipCi]: (input: BoardCardPullRequestActionInput) =>
+      authorized(
+        BOARD_WS_METHODS.skipCi,
+        deps.boardSupervisor.skipCi(input.cardId, services.stampActor),
+      ),
+
     /**
      * "Remove worktree" on a finished card that kept one (T3O-52, D5). The
      * human confirmed at a dialog naming what is lost; the branch survives.
@@ -336,6 +353,31 @@ function makeBoardRpcHandlers(
       authorized(
         BOARD_WS_METHODS.checkCardWorktree,
         deps.boardSupervisor.checkWorktree(input.cardId),
+      ),
+
+    /** The Move dialog (T3O-65): check, move, or ask the agent to push. A
+        move is a human act (D18), so each step it records carries the human. */
+    [BOARD_WS_METHODS.cardWorkerMove]: (input: BoardCardWorkerMoveRequest) =>
+      authorized(
+        BOARD_WS_METHODS.cardWorkerMove,
+        Effect.suspend((): Effect.Effect<BoardCardWorkerMoveAnswer> => {
+          if (input.action === "ask-push") return services.mover.askAgentToPush(input.cardId);
+          // T3O-66: a force-move off an offline or removed worker, and its
+          // restart-from-base confirmation.
+          const force = { force: input.force, restartFromBase: input.restartFromBase };
+          if (input.action === "move") {
+            return services.mover.move(
+              input.cardId,
+              input.toWorkerId ?? null,
+              services.stampActor,
+              force,
+            );
+          }
+          if (input.toWorkerId === undefined) {
+            return Effect.succeed({ outcome: "refused", detail: "Pick a worker to move to." });
+          }
+          return services.mover.check(input.cardId, input.toWorkerId, force);
+        }),
       ),
 
     /**
@@ -567,27 +609,17 @@ function makeBoardRpcHandlers(
  * Resolution is two point reads plus at most one `git config` per project for the
  * lifetime of the process, on a path a human drives by hand. Every failure
  * degrades to the fallback name; none can fail the dispatch.
+ *
+ * T3O-64: read from this server's own checkout of the project when it has
+ * one, and otherwise from the card's worker, where the commits are made.
  */
 export function boardActorStamp(deps: {
   readonly threads: Pick<ThreadGatewayShape, "project">;
   readonly boardQueries: BoardQueriesShape;
-  readonly git: GitVcsDriver["Service"];
+  readonly workspaces: Pick<BoardWorkspacesShape, "localProject" | "forCard">;
 }): (command: BoardCommand) => Effect.Effect<void> {
   const projectByCard = new Map<string, ProjectId>();
   const nameByProject = new Map<string, string>();
-
-  const gitUserName = (workspaceRoot: string) =>
-    deps.git
-      .execute({
-        operation: "board.activityActor.userName",
-        cwd: workspaceRoot,
-        args: ["config", "user.name"],
-        allowNonZeroExit: true,
-      })
-      .pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.catchCause(() => Effect.succeed("")),
-      );
 
   const resolveName = Effect.fn("board-activity-actor-name")(function* (cardId: BoardCardId) {
     let projectId = projectByCard.get(String(cardId));
@@ -608,10 +640,14 @@ export function boardActorStamp(deps: {
       .project(projectId)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
     const workspaceRoot = project?.workspaceRoot;
-    const resolved =
+    const workspace =
       workspaceRoot === undefined || workspaceRoot.length === 0
-        ? ""
-        : yield* gitUserName(workspaceRoot);
+        ? yield* deps.workspaces.forCard({ id: cardId, projectId })
+        : yield* deps.workspaces.localProject(projectId);
+    const resolved = yield* workspace.gitUserName({}).pipe(
+      Effect.map((result) => result.name),
+      Effect.catchCause(() => Effect.succeed("")),
+    );
     const name = resolved.length > 0 ? resolved : BOARD_HUMAN_ACTOR_FALLBACK_NAME;
     nameByProject.set(String(projectId), name);
     return name;

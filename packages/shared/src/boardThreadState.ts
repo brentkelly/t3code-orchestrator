@@ -55,7 +55,8 @@ export function boardThreadSessionStatus(
 /**
  * Background work left running after the turn ended (T3O-20). Only work that
  * wakes the agent counts — a command left running (a dev server) does not
- * (upstream #14872). Monitors alone read as `monitoring`.
+ * (upstream #14872), nor a monitor the agent is not waiting on (#24610).
+ * Awaited monitors alone read as `monitoring`.
  */
 export function boardThreadBackgroundLiveness(
   thread: BoardThreadShellFields,

@@ -23,7 +23,6 @@ import {
   type BoardStepCompletion,
   type ThreadId,
 } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
 import { ChevronDownIcon, ChevronLeftIcon, MessageSquareIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -33,13 +32,13 @@ import {
   sortProviderInstanceEntries,
 } from "../providerInstances";
 import { getCustomModelOptionsByInstance } from "../modelSelection";
-import { primaryServerProvidersAtom } from "../state/server";
-import { usePrimarySettings } from "../hooks/useSettings";
 import { ModelRow } from "../components/settings/BoardModelRow";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardSectionHeading as SectionHeading } from "./BoardCardFields";
 import { BoardHint } from "./BoardHint";
+import type { BoardStepBadgeState } from "./boardCi";
+import { BoardShimmerText, BoardStepBadge } from "./BoardStepBadge";
 import { boardReviewPhaseShownStatus } from "./boardStepRecovery";
 import {
   deriveBoardReviewLoop,
@@ -48,6 +47,7 @@ import {
   type BoardReviewLoopFinding,
   type BoardReviewPhaseStatus,
 } from "./boardReviewLoop";
+import { useBoardServerProviders, useBoardSettings } from "./useBoardEnvironmentId";
 
 const PHASE_NAMES: Record<BoardReviewPhaseId, string> = {
   review: "Fresh-eyes review",
@@ -135,38 +135,15 @@ function FindingRow({ entry }: { readonly entry: BoardReviewLoopFinding }) {
     step stalled (T3O-13). */
 type ShownPhaseStatus = BoardReviewPhaseStatus | "stopped";
 
-/** The step marker: a numbered dot at rest, a spinner while the phase runs. */
-function PhaseMarker({
-  index,
-  status,
-}: {
-  readonly index: number;
-  readonly status: ShownPhaseStatus;
-}) {
-  if (status === "running") {
-    return (
-      <BoardHint label="Running now">
-        <span
-          aria-label="Running now"
-          role="img"
-          className="size-5 shrink-0 animate-spin rounded-full border-2 border-[color-mix(in_srgb,var(--info)_25%,transparent)] border-t-info-foreground"
-        />
-      </BoardHint>
-    );
-  }
-  return (
-    <span
-      className={cn(
-        "inline-flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold",
-        status === "done"
-          ? "bg-foreground/8 text-foreground"
-          : "text-muted-foreground/70 shadow-[inset_0_0_0_1px_var(--border)]",
-      )}
-    >
-      {index}
-    </span>
-  );
-}
+/** The review phase's shared step badge (T3O-44). A skipped phase wears the
+    cancelled dash; a stopped one stays a plain number, as amber is the pill's. */
+const PHASE_BADGE: Record<ShownPhaseStatus, BoardStepBadgeState> = {
+  done: "passed",
+  running: "running",
+  pending: "pending",
+  skipped: "cancelled",
+  stopped: "pending",
+};
 
 /** The per-phase prose, written from the round's actual numbers. */
 function phaseNote(
@@ -333,11 +310,13 @@ function Round({
             return (
               <div key={phaseId} className="border-t border-border">
                 <div className="flex items-start gap-2.5 px-3 py-2.5">
-                  <PhaseMarker index={index + 1} status={status} />
+                  <BoardStepBadge index={index + 1} state={PHASE_BADGE[status]} />
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="text-[12.5px] font-medium text-foreground">
-                      {PHASE_NAMES[phaseId]}
-                    </span>
+                    <BoardShimmerText
+                      active={status === "running"}
+                      className="w-fit text-[12.5px] font-medium text-foreground"
+                      text={PHASE_NAMES[phaseId]}
+                    />
                     <span className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">
                       {phaseNote(round, phaseId, status)}
                     </span>
@@ -630,8 +609,8 @@ function PlannedRoundSettings({
   readonly phaseRuntimeMode: RuntimeMode;
   readonly onChange: (model: BoardReviewRoundOverride | null) => void;
 }) {
-  const settings = usePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const settings = useBoardSettings();
+  const serverProviders = useBoardServerProviders();
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );
@@ -826,10 +805,7 @@ export function BoardCardReviewPane({
             pill.className,
           )}
         >
-          {pill.spinning ? (
-            <span className="size-2.5 shrink-0 animate-spin rounded-full border-[1.7px] border-[color-mix(in_srgb,var(--info)_25%,transparent)] border-t-current" />
-          ) : null}
-          {pill.label}
+          <BoardShimmerText active={pill.spinning} text={pill.label} />
         </span>
         <button
           className="inline-flex h-6 shrink-0 items-center gap-1 rounded-[7px] border border-input bg-popover pl-1.5 pr-2.5 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"

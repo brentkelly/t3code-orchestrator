@@ -17,6 +17,7 @@
  */
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  BOARD_LOCAL_WORKER_ID,
   isBoardCardAwaitingPermission,
   type BoardCardThreadShell,
   type EnvironmentId,
@@ -33,18 +34,35 @@ import {
   SquareArrowOutUpRightIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import ChatView from "../components/ChatView";
 import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
+import { Button } from "../components/ui/button";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useArchivedThreadSnapshots } from "../lib/archivedThreadsState";
 import { useThreadShell } from "../state/entities";
-import { BoardCardThreadAddMenu, type BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
+import { threadFamilies } from "../state/threads";
+import {
+  boardCardChatPresence,
+  boardCardMissingThreadReason,
+  useBoardCardThreadRows,
+} from "./boardCardThreadRows";
+import {
+  BoardCardThreadAddMenu,
+  type BoardAdoptSearch,
+  type BoardThreadStageRestart,
+} from "./BoardCardThreadAddMenu";
 import { BoardCardThreadTodosStrip } from "./BoardCardThreadTodosStrip";
 import type { BoardPickerOption } from "./BoardSearchAddPicker";
 import type { BoardDetailThreadLink } from "./BoardCardDetailView";
 import { BoardHint } from "./BoardHint";
 import type { BoardQueueInfo } from "./boardQueueInfo";
+import { BoardThreadWorkerGate } from "./workers/BoardThreadWorkerGate";
+import { threadWorkerOpensOn } from "./workers/threadWorker";
+
+const NO_THREAD_IDS: ReadonlyArray<ThreadId> = [];
 
 /** The live chat for one linked thread. Split out so the thread-detail
     subscription hooks are keyed by the mounted thread and unmount with it. */
@@ -56,12 +74,27 @@ function BoardCardChat({
   readonly threadId: ThreadId;
 }) {
   const threadRef = scopeThreadRef(environmentId, threadId);
-  const shell = useThreadShell(threadRef);
+  const inShell = useThreadShell(threadRef) !== null;
+  // The shell keeps only the newest settled threads; older ones are read on demand (T3O-41).
+  const rows = useBoardCardThreadRows(environmentId, inShell ? NO_THREAD_IDS : [threadId]);
+  const presence = boardCardChatPresence({ threadId, inShell, rows });
 
-  if (shell === null) {
+  if (presence === "gone") {
+    return <BoardCardMissingChat environmentId={environmentId} threadId={threadId} />;
+  }
+  if (presence !== "open") {
     return (
-      <div className="flex flex-1 items-center justify-center p-6 text-[12.5px] text-muted-foreground">
-        This thread is no longer on the server.
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-[12.5px] text-muted-foreground">
+        {presence === "loading" ? "Loading thread…" : "Couldn't load this thread."}
+        {presence === "failed" ? (
+          <Button
+            onClick={() => threadFamilies.refresh(appAtomRegistry, environmentId, threadId)}
+            size="xs"
+            variant="outline"
+          >
+            Retry
+          </Button>
+        ) : null}
       </div>
     );
   }
@@ -75,13 +108,55 @@ function BoardCardChat({
   );
 }
 
-export function BoardCardThreadPane({
+/** A linked thread the active family read did not return: archived, or truly gone. Mounted only
+    then, so the archived snapshot is read only when it can explain the absence. */
+function BoardCardMissingChat({
   environmentId,
+  threadId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const archived = useArchivedThreadSnapshots([environmentId]);
+  const archivedThreads = archived.snapshots.find((entry) => entry.environmentId === environmentId)
+    ?.snapshot.threads;
+  const reason = boardCardMissingThreadReason({
+    threadId,
+    archivedThreadIds: archivedThreads?.map((thread) => thread.id) ?? null,
+    // An initial read is not yet waiting, so no snapshot and no error still means loading.
+    archivedLoading:
+      archived.isLoading || (archivedThreads === undefined && archived.error === null),
+  });
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-[12.5px] text-muted-foreground">
+      {reason === "checking"
+        ? "Loading thread…"
+        : reason === "archived"
+          ? "This thread is archived. Unarchive it to open it here."
+          : reason === "unknown"
+            ? "Couldn't load this thread."
+            : "This thread is no longer on the server."}
+      {reason === "unknown" ? (
+        <Button onClick={archived.refresh} size="xs" variant="outline">
+          Retry
+        </Button>
+      ) : null}
+      {reason === "archived" ? (
+        <Button render={<Link to="/settings/archived" />} size="xs" variant="outline">
+          Archived threads
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+export function BoardCardThreadPane({
   cardKey,
   threadLinks,
   selectedThreadId,
   onSelectThread,
   adoptableThreads,
+  adoptSearch,
   stageRestart,
   onLinkThread,
   onRestartStage,
@@ -93,13 +168,14 @@ export function BoardCardThreadPane({
   queueInfo,
   queueForceStartPending,
   onQueueForceStart,
+  footer = null,
 }: {
-  readonly environmentId: EnvironmentId;
   readonly cardKey: string;
   readonly threadLinks: ReadonlyArray<BoardDetailThreadLink>;
   readonly selectedThreadId: ThreadId | null;
   readonly onSelectThread: (threadId: ThreadId) => void;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
+  readonly adoptSearch?: BoardAdoptSearch | undefined;
   /** Present only when the card's current stage auto-executes; `null` hides the
       restart item. A non-null `disabledReason` disables it (a run is in flight). */
   readonly stageRestart: BoardThreadStageRestart | null;
@@ -121,6 +197,8 @@ export function BoardCardThreadPane({
   readonly queueInfo?: BoardQueueInfo | null | undefined;
   readonly queueForceStartPending?: boolean | undefined;
   readonly onQueueForceStart?: (() => void) | undefined;
+  /** Docked at the end of the thread, e.g. the split gate (T3O-31). */
+  readonly footer?: ReactNode;
 }) {
   // A new blank thread becomes the card's most-recently-linked live thread, so
   // selecting it opens its ChatView (which focuses the composer on mount, D3).
@@ -160,6 +238,7 @@ export function BoardCardThreadPane({
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-2.5 pr-3">
         <BoardCardThreadAddMenu
+          adoptSearch={adoptSearch}
           adoptableThreads={adoptableThreads}
           label=""
           onAdoptThread={(id) => onLinkThread(id as ThreadId, "linked")}
@@ -193,7 +272,15 @@ export function BoardCardThreadPane({
                 )}
                 key={link.threadId}
               >
-                <BoardHint label={link.tombstoned ? "Deleted thread" : link.role}>
+                <BoardHint
+                  label={
+                    link.tombstoned
+                      ? "Deleted thread"
+                      : link.ranOn === null
+                        ? link.role
+                        : `${link.role} · ${link.ranOn}`
+                  }
+                >
                   <button
                     className="inline-flex min-w-0 items-center gap-1.5 rounded focus-visible:outline-2 focus-visible:outline-ring"
                     onClick={() => onSelectThread(link.threadId)}
@@ -301,8 +388,12 @@ export function BoardCardThreadPane({
         {selected !== null && !selected.tombstoned ? (
           <Link
             className="inline-flex size-6 shrink-0 items-center justify-center rounded-[7px] border border-input bg-popover text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
-            params={{ environmentId, threadId: selected.threadId }}
-            title="Open in the threads view"
+            params={{ environmentId: selected.worker.environmentId, threadId: selected.threadId }}
+            title={
+              selected.worker.workerId === BOARD_LOCAL_WORKER_ID
+                ? "Open in the threads view"
+                : threadWorkerOpensOn(selected.worker)
+            }
             to="/$environmentId/$threadId"
           >
             <SquareArrowOutUpRightIcon className="size-3" />
@@ -322,8 +413,8 @@ export function BoardCardThreadPane({
             <span className="font-semibold text-foreground">{queueInfo.headline}.</span> No agent
             has picked this up yet.
           </p>
-          {onQueueForceStart === undefined ? null : (
-            <BoardHint label="Run this task now, over the agent limit.">
+          {onQueueForceStart === undefined || queueInfo.waitingForCheckout === true ? null : (
+            <BoardHint label="Run this task now, past every agent limit: the board's, its worker's and its provider's.">
               <button
                 className={cn(
                   "inline-flex h-[24px] shrink-0 items-center gap-[5px] rounded-[7px] border border-input bg-popover px-2 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent",
@@ -358,6 +449,7 @@ export function BoardCardThreadPane({
             </div>
             <div className="pt-0.5">
               <BoardCardThreadAddMenu
+                adoptSearch={adoptSearch}
                 adoptableThreads={adoptableThreads}
                 label="Add a thread"
                 onAdoptThread={(id) => onLinkThread(id as ThreadId, "linked")}
@@ -377,11 +469,17 @@ export function BoardCardThreadPane({
             threadId={selected.threadId}
             todo={threadTodos?.get(selected.threadId)}
           />
-          <BoardCardChat
-            environmentId={environmentId}
-            key={selected.threadId}
-            threadId={selected.threadId}
-          />
+          {/* A thread on a worker opens in that worker's environment (T3O-63). */}
+          <BoardThreadWorkerGate key={selected.threadId} worker={selected.worker}>
+            {(threadEnvironmentId) => (
+              <BoardCardChat environmentId={threadEnvironmentId} threadId={selected.threadId} />
+            )}
+          </BoardThreadWorkerGate>
+        </div>
+      )}
+      {footer == null ? null : (
+        <div className="max-h-[60%] shrink-0 overflow-y-auto border-t border-border p-3">
+          {footer}
         </div>
       )}
     </section>

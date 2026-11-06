@@ -17,9 +17,8 @@ import {
   type BoardAttachCardFileInput,
   type BoardCardId,
   type BoardDetachCardFileInput,
-  type BoardProviderLimitActionInput,
-  type BoardProviderLimitResumeAtInput,
   type BoardClientCommand,
+  type BoardCardWorkerMoveRequest,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -46,8 +45,13 @@ type CommandInput<T extends CommandType> = Omit<
 export type CreateBoardCardInput = CommandInput<"board.card.create">;
 export type MoveBoardCardInput = CommandInput<"board.card.move">;
 export type ReorderBoardCardInput = CommandInput<"board.card.reorder">;
+export type MoveBoardCardsInput = CommandInput<"board.card.move-cards">;
+export type SetBoardCardGroupSettingsInput = CommandInput<"board.card.set-group-settings">;
+export type SetBoardCardAutomationInput = CommandInput<"board.card.set-automation">;
+export type CancelBoardCardWorkInput = CommandInput<"board.card.cancel-work">;
 export type UpdateBoardCardInput = CommandInput<"board.card.update">;
 export type SetBoardCardProjectInput = CommandInput<"board.card.set-project">;
+export type PinBoardCardWorkerInput = CommandInput<"board.card.pin-worker">;
 export type ForceStartBoardCardStepInput = CommandInput<"board.card.force-start-step">;
 export type RequeueBoardCardStepInput = CommandInput<"board.card.requeue-step">;
 export type ReopenBoardCardStepInput = CommandInput<"board.card.reopen-step">;
@@ -130,6 +134,11 @@ export const submitBoardCardForMerge = (input: { readonly cardId: BoardCardId })
 export const requestBoardReviewRound = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.requestReviewRound, input);
 
+/** "Skip CI" (T3O-44): stop the card's CI run and move it to the stage after
+    CI. The server records the skip under the caller's name. */
+export const skipBoardCardCi = (input: { readonly cardId: BoardCardId }) =>
+  request(BOARD_WS_METHODS.skipCi, input);
+
 /** "Remove worktree" on a finished card that kept one (T3O-52): removes it
     past the safety rule. The branch is kept. */
 export const removeBoardCardWorktree = (input: { readonly cardId: BoardCardId }) =>
@@ -139,6 +148,11 @@ export const removeBoardCardWorktree = (input: { readonly cardId: BoardCardId })
 export const checkBoardCardWorktree = (input: { readonly cardId: BoardCardId }) =>
   request(BOARD_WS_METHODS.checkCardWorktree, input);
 
+/** The Move dialog (T3O-65): check a move, start it, or ask the card's agent
+    to push. Answers what the action gives. */
+export const boardCardWorkerMove = (input: BoardCardWorkerMoveRequest) =>
+  request(BOARD_WS_METHODS.cardWorkerMove, input);
+
 /** Claim a pending upload onto a card's brief (t3o-32): the server copies the
     file into the card's folder and records it, in that order. */
 export const attachBoardCardFile = (input: BoardAttachCardFileInput) =>
@@ -146,17 +160,6 @@ export const attachBoardCardFile = (input: BoardAttachCardFileInput) =>
 
 export const detachBoardCardFile = (input: BoardDetachCardFileInput) =>
   request(BOARD_WS_METHODS.detachCardFile, input);
-
-/** Probe a limited provider now (T3O-22) — the popover's "Resume now". One
-    prober, exactly as the timed probe picks one: waking the whole fleet at a
-    moment the human chose is the same mistake as waking it at the reset time. */
-export const probeBoardProviderLimit = (input: BoardProviderLimitActionInput) =>
-  request(BOARD_WS_METHODS.probeProviderLimit, input);
-
-/** Set (or clear, with null) a limited provider's resume time by hand (T3O-22).
-    A human-set time is never overwritten by a later loose match. */
-export const setBoardProviderLimitResumeAt = (input: BoardProviderLimitResumeAtInput) =>
-  request(BOARD_WS_METHODS.setProviderLimitResumeAt, input);
 
 export const createBoardCard: (input: CreateBoardCardInput) => CommandEffect = Effect.fn(
   "BoardCommands.createBoardCard",
@@ -264,6 +267,21 @@ export const setBoardCardProject: (input: SetBoardCardProjectInput) => CommandEf
   });
 });
 
+/** Pin a card to a worker, or null to follow the default (T3O-65). Refused by
+    the decider for a card whose worktree is on another worker — that is a
+    move (`boardCardWorkerMove`). */
+export const pinBoardCardWorker: (input: PinBoardCardWorkerInput) => CommandEffect = Effect.fn(
+  "BoardCommands.pinBoardCardWorker",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.pin-worker",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
 export const linkBoardCardThread: (input: LinkBoardCardThreadInput) => CommandEffect = Effect.fn(
   "BoardCommands.linkBoardCardThread",
 )(function* (input) {
@@ -294,6 +312,58 @@ export const archiveBoardCard: (input: ArchiveBoardCardInput) => CommandEffect =
   return yield* dispatch({
     ...input,
     type: "board.card.archive",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** Regroup cards (T3O-27): into a group, out of one, or within one. */
+export const moveBoardCards: (input: MoveBoardCardsInput) => CommandEffect = Effect.fn(
+  "BoardCommands.moveBoardCards",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.move-cards",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+/** A group's merge target, auto-build, auto-merge and auto-plan (T3O-29). */
+export const setBoardCardGroupSettings: (input: SetBoardCardGroupSettingsInput) => CommandEffect =
+  Effect.fn("BoardCommands.setBoardCardGroupSettings")(function* (input) {
+    const metadata = yield* commandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "board.card.set-group-settings",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+/** A card's own Automation toggles (T3O-38): true / false, or null to
+    inherit from the parent group. */
+export const setBoardCardAutomation: (input: SetBoardCardAutomationInput) => CommandEffect =
+  Effect.fn("BoardCommands.setBoardCardAutomation")(function* (input) {
+    const metadata = yield* commandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "board.card.set-automation",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+/** Cancel a started leaf's work so it can become a group (T3O-28). The
+    caller has confirmed it by the card's typed key. */
+export const cancelBoardCardWork: (input: CancelBoardCardWorkInput) => CommandEffect = Effect.fn(
+  "BoardCommands.cancelBoardCardWork",
+)(function* (input) {
+  const metadata = yield* commandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "board.card.cancel-work",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });

@@ -18,9 +18,7 @@
  * traits, and nesting those inside a still-open menu stacks three focus traps
  * where picking a model is an outside-pointerdown on the menu containing it.
  */
-import type { ReactNode } from "react";
-
-import { useAtomValue } from "@effect/atom-react";
+import { useMemo, type ReactNode } from "react";
 
 import {
   type BoardCardModelOverrides,
@@ -31,9 +29,10 @@ import {
 import {
   ModelRow,
   type ActiveModel,
+  type InstanceEntries,
   type ModelOptionsByInstance,
 } from "../components/settings/BoardModelRow";
-import { getTriggerDisplayModelName } from "../components/chat/providerIconUtils";
+import { boardModelDisplayName } from "../components/settings/boardModelDisplayName";
 import { Popover, PopoverPopup } from "../components/ui/popover";
 import { getCustomModelOptionsByInstance } from "../modelSelection";
 import {
@@ -41,9 +40,10 @@ import {
   deriveProviderInstanceEntries,
   sortProviderInstanceEntries,
 } from "../providerInstances";
-import { primaryServerProvidersAtom } from "../state/server";
-import { usePrimarySettings } from "../hooks/useSettings";
+import { useBoardWorkersState } from "./workers/BoardWorkersContext";
+import { boardWorkerOnlyProviders } from "./workers/cardWorker";
 import type { BoardCardModelRowSpec } from "./boardCardModelRows";
+import { useBoardServerProviders, useBoardSettings } from "./useBoardEnvironmentId";
 
 /**
  * The trigger text for a row with no override: the value it will actually run
@@ -60,16 +60,10 @@ import type { BoardCardModelRowSpec } from "./boardCardModelRows";
 function placeholderFor(
   row: BoardCardModelRowSpec,
   getModelOptions: (active: ActiveModel) => ModelOptionsByInstance,
+  instanceEntries: InstanceEntries,
 ): string {
   if (row.inheritedModel === null) return "Default (unset in Settings)";
-  const active: ActiveModel = {
-    instanceId: row.inheritedModel.instanceId,
-    model: row.inheritedModel.model,
-  };
-  const option = getModelOptions(active)
-    .get(active.instanceId)
-    ?.find((candidate) => candidate.slug === active.model);
-  const name = option ? getTriggerDisplayModelName(option) : active.model;
+  const name = boardModelDisplayName(row.inheritedModel, getModelOptions, instanceEntries);
   return row.inheritedFromCardKey === null
     ? `${name} (default)`
     : `${name} (from ${row.inheritedFromCardKey})`;
@@ -104,8 +98,15 @@ export function BoardCardModelsPopover({
   // Resolved here rather than drilled through the detail view, exactly as the
   // review pane's per-round drawer does — this module is lazily loaded, so the
   // provider list it pulls in costs nothing until the popover is opened.
-  const settings = usePrimarySettings();
-  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const settings = useBoardSettings();
+  const ownProviders = useBoardServerProviders();
+  // T3O-65: and the instance ids only workers have, so a card can pick a model
+  // its worker offers.
+  const workers = useBoardWorkersState();
+  const serverProviders = useMemo(
+    () => [...ownProviders, ...boardWorkerOnlyProviders(workers, ownProviders)],
+    [ownProviders, workers],
+  );
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings, null),
   );
@@ -202,7 +203,7 @@ export function BoardCardModelsPopover({
                 onRuntimeModeChange={(runtimeMode) =>
                   setRow(row.stageId, current === null ? null : { ...current, runtimeMode })
                 }
-                placeholder={placeholderFor(row, getModelOptions)}
+                placeholder={placeholderFor(row, getModelOptions, instanceEntries)}
                 runtimeMode={current?.runtimeMode ?? row.inheritedRuntimeMode}
                 selection={
                   current === null ? null : { instanceId: current.instanceId, model: current.model }

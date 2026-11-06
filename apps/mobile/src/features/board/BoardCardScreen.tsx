@@ -20,18 +20,19 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import * as Linking from "expo-linking";
 import { useMemo, useState, type ReactNode } from "react";
 import { Alert, View } from "react-native";
 
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
-import { MaterialButton } from "../../components/MaterialButton";
-import { RowPressable } from "../../components/RowPressable";
-import { ScreenHeader } from "../../components/ScreenHeader";
-import { ScreenScrollView } from "../../components/ScreenScrollView";
-import { showConfirmDialog } from "../../components/ConfirmDialogHost";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText as Text } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
+import { Button } from "../../components/ui/Button";
+import { RowPressable } from "../../components/ui/RowPressable";
+import { ScreenHeader } from "./boardUi";
+import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
+import { confirm } from "../../components/ui/Dialog";
 import { StatusPill } from "../../components/StatusPill";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -53,6 +54,7 @@ type BoardCardScreenProps = StaticScreenProps<{
 
 export function BoardCardScreen({ route }: BoardCardScreenProps) {
   const navigation = useNavigation();
+  const selectDetail = useSelectWorkspaceDetail();
   const parsed = parseBoardCardRoute(route.params.environmentId, route.params.cardId);
   const environmentId = parsed?.environmentId ?? EnvironmentId.make("pending");
   const cardId = parsed?.cardId ?? BoardCardId.make("pending");
@@ -103,6 +105,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
   const card = detail.card;
   const mergeHold = boardMergeHold(shell);
   const primary = boardStagePrimaryAction(stages, card.stage, {
+    ciEntryLive: card.ci != null,
     pullRequestState: card.pullRequest?.state ?? null,
     pullRequestNumber: card.pullRequest?.number ?? null,
     conflictFixLive: mergeHold !== null,
@@ -153,13 +156,13 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
     if (
       boardMoveLeavesPlanningUnwritten({
         stages,
-        card: { stage: card.stage, parentCardId: card.parentCardId },
+        card: { stage: card.stage },
         toStage,
         planCount: detail.plans.length,
       })
     ) {
       const toLabel = stages.find((stage) => stage.stageId === toStage)?.label ?? toStage;
-      showConfirmDialog({
+      confirm({
         title: `Move ${card.key} to ${toLabel} without a plan?`,
         message:
           "No plan has been written for this card yet. Its planning thread stays on the card, so moving it back picks the conversation up where it left off.",
@@ -204,7 +207,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                             () => navigation.goBack(),
                           );
                         if (confirm) {
-                          showConfirmDialog({
+                          confirm({
                             title: "Archive this card?",
                             message: "Live cards still depend on it.",
                             confirmText: "Archive",
@@ -228,7 +231,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                 id: "delete",
                 title: "Delete",
                 onPress: () =>
-                  showConfirmDialog({
+                  confirm({
                     title: "Delete this card?",
                     message: "The card, its threads, and its branches go.",
                     confirmText: "Delete",
@@ -274,7 +277,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
               stages,
               stage: card.stage,
             }) ? (
-              <MaterialButton
+              <Button
                 label="Approve plans"
                 tone="primary"
                 disabled={busy}
@@ -327,7 +330,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
 
         {threadId !== null ? (
           <Section title="Thread">
-            <MaterialButton
+            <Button
               label="Open thread"
               onPress={() => {
                 const action = boardThreadOpen({
@@ -341,9 +344,12 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                   });
                   return;
                 }
-                navigation.navigate("Thread", {
-                  environmentId: String(action.environmentId),
-                  threadId: String(threadId satisfies ThreadId),
+                selectDetail({
+                  name: "Thread",
+                  params: {
+                    environmentId: String(action.environmentId),
+                    threadId: String(threadId satisfies ThreadId),
+                  },
                 });
               }}
             />
@@ -352,7 +358,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
 
         {pullRequest !== null ? (
           <Section title="Pull request">
-            <MaterialButton
+            <Button
               label={`View PR #${pullRequest.number}`}
               onPress={() => void Linking.openURL(pullRequest.url)}
             />
@@ -361,7 +367,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
 
         {primary !== null ? (
           <View className="gap-2">
-            <MaterialButton
+            <Button
               label={primary.label}
               tone="primary"
               disabled={busy || (primary.kind === "merge" && primary.disabled)}
@@ -380,7 +386,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
         ) : currentStage !== undefined &&
           effectiveBoardStageRole(currentStage) === "done" &&
           card.archivedAt === null ? (
-          <MaterialButton
+          <Button
             label="Archive"
             onPress={() =>
               run(
@@ -392,7 +398,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
         ) : null}
 
         {secondary.map((action) => (
-          <MaterialButton
+          <Button
             key={action.kind}
             label={action.label}
             disabled={busy}
@@ -406,8 +412,8 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
 
         {detail.activity.length > 0 ? (
           <Section title="Activity">
-            {detail.activity
-              .toReversed()
+            {[...detail.activity]
+              .reverse()
               .slice(0, 40)
               .map((entry) => (
                 <View key={entry.activityId} className="border-b border-border py-2">

@@ -273,6 +273,7 @@ const overdueStep = (overrides?: Partial<BoardCardStepState>): BoardCardStepStat
   // False keeps boot reconcile's slot restore out of what these assert.
   slotHeld: false,
   forceStart: false,
+  queuedBy: null,
   startedAt: OVERDUE,
   updatedAt: OVERDUE,
   ...overrides,

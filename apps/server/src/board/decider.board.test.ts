@@ -14,10 +14,16 @@ import {
   BoardLabelId,
   boardPlanId,
   CommandId,
+  EnvironmentId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
   BOARD_SEED_STAGE_IDS,
+  defaultBoardCardGroup,
+  BoardClientCommand,
+  EMPTY_BOARD_STATE,
+  EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+  resolveBoardCardForThread,
   type BoardCard,
   type BoardCardStepState,
   type BoardLabel,
@@ -27,6 +33,8 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Schema from "effect/Schema";
 
 import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
@@ -57,6 +65,7 @@ function makeCard(
     dependsOn: [],
     parentCardId: null,
     sourcePlanId: null,
+    group: null,
     threadLinks: [],
     attachments: [],
     externalRef: null,
@@ -66,9 +75,17 @@ function makeCard(
     splitRationale: null,
     baseBranch: null,
     scheduledStartAt: null,
-    autoStart: false,
-    autoMerge: false,
+    autoPlanSetting: null,
+    autoBuildSetting: null,
+    autoMergeSetting: null,
     autoMergeHold: null,
+    mergeStrategy: null,
+    pinnedWorkerId: null,
+    placedWorkerId: null,
+    workerMove: null,
+    placementOrphaned: null,
+    ci: null,
+    ciLastOutcome: null,
     worktree: null,
     pullRequest: null,
     pullRequestHistory: [],
@@ -113,6 +130,7 @@ function makeStepStateFor(cardId: string): BoardCardStepState {
     status: "running",
     slotHeld: true,
     forceStart: false,
+    queuedBy: null,
     startedAt: NOW,
     updatedAt: NOW,
   };
@@ -663,6 +681,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
                   status: "running" as const,
                   slotHeld: true,
                   forceStart: false,
+                  queuedBy: null,
                   startedAt: NOW,
                   updatedAt: NOW,
                 },
@@ -845,6 +864,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       assert.deepStrictEqual(event.payload.card.modelOverrides, {
         [BOARD_SEED_STAGE_IDS.building]: opusOverride,
       });
+      // T3O-65: the marker that lets Change model restart a provider stall.
+      assert.strictEqual(event.payload.modelOverridesEdited, true);
     }),
   );
 
@@ -1314,6 +1335,172 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           },
         ]);
       }
+    }),
+  );
+
+  // ── Retired links (T3O-41) ───────────────────────────────────────────
+
+  const retiredLink = {
+    threadId: ThreadId.make("thread-1"),
+    role: "merge",
+    linkedAt: NOW,
+    tombstonedAt: null,
+    retiredAt: "2026-01-02T00:00:00.000Z",
+  };
+
+  it.effect("retiring a live thread keeps its link, retired", () =>
+    Effect.gen(function* () {
+      const card = makeCard({
+        id: "card-a",
+        threadLinks: [{ ...retiredLink, retiredAt: undefined }].map(
+          ({ retiredAt: _, ...link }) => link,
+        ),
+      });
+      const later = "2026-01-02T00:00:00.000Z";
+      const event = yield* decide(
+        {
+          type: "board.card.retire-thread",
+          commandId: CommandId.make("cmd-retire"),
+          cardId: BoardCardId.make("card-a"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: later,
+        },
+        makeReadModel({
+          threads: [makeThread({ id: "thread-1" })],
+          board: { cards: [card], nextCardNumberByProject: {} },
+        }),
+      );
+      assert.strictEqual(event.type, "board.card-thread-unlinked");
+      if (event.type !== "board.card-thread-unlinked") return;
+      assert.strictEqual(event.payload.tombstonedAt, null);
+      assert.strictEqual(event.payload.retiredAt, later);
+      assert.deepStrictEqual(event.payload.card.threadLinks, [retiredLink]);
+      // A retired agent can no longer act for the card.
+      const board = { ...EMPTY_BOARD_STATE, cards: [event.payload.card] };
+      assert.isNull(resolveBoardCardForThread(board, ThreadId.make("thread-1")));
+    }),
+  );
+
+  it.effect("retiring a deleted thread tombstones it instead", () =>
+    Effect.gen(function* () {
+      const card = makeCard({
+        id: "card-a",
+        threadLinks: [
+          { threadId: ThreadId.make("thread-1"), role: "merge", linkedAt: NOW, tombstonedAt: null },
+        ],
+      });
+      const event = yield* decide(
+        {
+          type: "board.card.retire-thread",
+          commandId: CommandId.make("cmd-retire"),
+          cardId: BoardCardId.make("card-a"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+        },
+        makeReadModel({
+          threads: [makeThread({ id: "thread-1", deletedAt: NOW })],
+          board: { cards: [card], nextCardNumberByProject: {} },
+        }),
+      );
+      if (event.type !== "board.card-thread-unlinked") return assert.fail(event.type);
+      assert.isFalse("retiredAt" in event.payload);
+      assert.deepStrictEqual(event.payload.card.threadLinks, [
+        { threadId: ThreadId.make("thread-1"), role: "merge", linkedAt: NOW, tombstonedAt: NOW },
+      ]);
+    }),
+  );
+
+  it.effect("a human unlink removes a retired link outright", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        {
+          type: "board.card.unlink-thread",
+          commandId: CommandId.make("cmd-unlink"),
+          cardId: BoardCardId.make("card-a"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+        },
+        makeReadModel({
+          threads: [makeThread({ id: "thread-1" })],
+          board: {
+            cards: [makeCard({ id: "card-a", threadLinks: [retiredLink] })],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      if (event.type !== "board.card-thread-unlinked") return assert.fail(event.type);
+      assert.deepStrictEqual(event.payload.card.threadLinks, []);
+    }),
+  );
+
+  it.effect("relinking a retired thread on its card un-retires it in place", () =>
+    Effect.gen(function* () {
+      const later = "2026-01-03T00:00:00.000Z";
+      const event = yield* decide(
+        {
+          type: "board.card.link-thread",
+          commandId: CommandId.make("cmd-link"),
+          cardId: BoardCardId.make("card-a"),
+          threadId: ThreadId.make("thread-1"),
+          role: "linked",
+          createdAt: later,
+        },
+        makeReadModel({
+          threads: [makeThread({ id: "thread-1" })],
+          board: {
+            cards: [makeCard({ id: "card-a", threadLinks: [retiredLink] })],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      if (event.type !== "board.card-thread-linked") return assert.fail(event.type);
+      assert.deepStrictEqual(event.payload.card.threadLinks, [
+        {
+          threadId: ThreadId.make("thread-1"),
+          role: "linked",
+          linkedAt: later,
+          tombstonedAt: null,
+        },
+      ]);
+    }),
+  );
+
+  it.effect("a retired thread still belongs to its card: adopting it elsewhere is refused", () =>
+    Effect.gen(function* () {
+      const failure = yield* decideFail(
+        {
+          type: "board.card.link-thread",
+          commandId: CommandId.make("cmd-link"),
+          cardId: BoardCardId.make("card-b"),
+          threadId: ThreadId.make("thread-1"),
+          role: "linked",
+          createdAt: NOW,
+        },
+        makeReadModel({
+          threads: [makeThread({ id: "thread-1" })],
+          board: {
+            cards: [
+              makeCard({ id: "card-a", threadLinks: [retiredLink] }),
+              makeCard({ id: "card-b" }),
+            ],
+            nextCardNumberByProject: {},
+          },
+        }),
+      );
+      assert.include(String(failure), "already linked to card 'card-a'");
+    }),
+  );
+
+  it.effect("keeps retire-thread out of the commands a client may send", () =>
+    Effect.sync(() => {
+      const decoded = Schema.decodeUnknownExit(BoardClientCommand)({
+        type: "board.card.retire-thread",
+        commandId: "cmd-retire",
+        cardId: "card-a",
+        threadId: "thread-1",
+        createdAt: NOW,
+      });
+      assert.isTrue(Exit.isFailure(decoded));
     }),
   );
 
@@ -1787,6 +1974,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         status,
         slotHeld: status === "running" || status === "awaiting-input",
         forceStart: false,
+        queuedBy: null,
         startedAt: status === "running" || status === "awaiting-input" ? NOW : null,
         updatedAt: NOW,
       });
@@ -1804,6 +1992,12 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       const reopenCard = makeCard({ id: "card-reopen", stage: BOARD_SEED_STAGE_IDS.review });
       // set-project only accepts a card that has never been built (T3O-33).
       const projectCard = makeCard({ id: "card-project", stage: "ready" });
+      // mark-auto-plan only accepts a leaf in planning (T3O-32).
+      const autoPlanCard = makeCard({ id: "card-auto-plan", stage: "planning" });
+      const autoPlanningCard = {
+        ...makeCard({ id: "card-auto-planning", stage: "planning" }),
+        autoPlan: { mode: "build" as const, requestedAt: NOW, endedAt: null },
+      };
       const briefAttachment = {
         id: BoardCardAttachmentId.make("att-1"),
         name: "bug.png",
@@ -1811,6 +2005,17 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         mimeType: "image/png",
         sizeBytes: 1024,
         addedAt: NOW,
+      };
+      // An empty heading (T3O-27), for the group-settings command.
+      const groupCard = {
+        ...makeCard({ id: "card-group", stage: "sprint" }),
+        group: defaultBoardCardGroup(
+          EMPTY_BOARD_STATE,
+          { stage: BOARD_SEED_STAGE_IDS.sprint },
+          {
+            heading: true,
+          },
+        ),
       };
       // Not in Backlog: the catalog's stage delete expects that column empty.
       const attachedCard = makeCard({
@@ -1839,8 +2044,11 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             settleCard,
             splitCard,
             attachedCard,
+            groupCard,
             reopenCard,
             projectCard,
+            autoPlanCard,
+            autoPlanningCard,
           ],
           labels: [...BOARD_SEED_LABELS, tombstonedLabel],
           plans: [readyPlan, ...splitPlans],
@@ -1861,6 +2069,15 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             // catalog's completion needs one to succeed against.
             makeStepState("card-ready", "running", "build"),
           ],
+          // T3O-62: a registered worker for the registry commands to act on.
+          workers: [
+            {
+              id: EnvironmentId.make("env-worker-a"),
+              label: "worker-a",
+              url: "http://worker-a:3773",
+              addedAt: NOW,
+            },
+          ],
           stepCompletions: [
             {
               cardId: BoardCardId.make("card-reopen"),
@@ -1880,6 +2097,34 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         "board.card.create": createCommand({ cardId: "card-new" }),
         // The one legitimate path into building — explicit, user-originated.
         "board.card.move": moveCommand({ cardId: "card-ready", toStage: "building" }),
+        "board.card.move-cards": {
+          type: "board.card.move-cards",
+          commandId: CommandId.make("cmd-move-cards"),
+          cardId: BoardCardId.make("card-project"),
+          cardIds: [BoardCardId.make("card-project")],
+          parentCardId: BoardCardId.make("card-group"),
+          createdAt: NOW,
+        },
+        "board.card.set-group-settings": {
+          type: "board.card.set-group-settings",
+          commandId: CommandId.make("cmd-group-settings"),
+          cardId: BoardCardId.make("card-group"),
+          autoBuild: true,
+          createdAt: NOW,
+        },
+        "board.card.set-automation": {
+          type: "board.card.set-automation",
+          commandId: CommandId.make("cmd-set-automation"),
+          cardId: BoardCardId.make("card-ready"),
+          autoBuild: true,
+          createdAt: NOW,
+        },
+        "board.card.sync-groups": {
+          type: "board.card.sync-groups",
+          commandId: CommandId.make("cmd-sync-groups"),
+          cardId: BoardCardId.make("card-group"),
+          createdAt: NOW,
+        },
         "board.card.reorder": {
           type: "board.card.reorder",
           commandId: CommandId.make("cmd-reorder"),
@@ -1930,10 +2175,24 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           threadId: ThreadId.make("thread-1"),
           createdAt: NOW,
         },
+        "board.card.retire-thread": {
+          type: "board.card.retire-thread",
+          commandId: CommandId.make("cmd-retire"),
+          cardId: BoardCardId.make("card-linked"),
+          threadId: ThreadId.make("thread-1"),
+          createdAt: NOW,
+        },
         "board.card.archive": {
           type: "board.card.archive",
           commandId: CommandId.make("cmd-archive"),
           cardId: BoardCardId.make("card-ready"),
+          createdAt: NOW,
+        },
+        "board.card.cancel-work": {
+          type: "board.card.cancel-work",
+          commandId: CommandId.make("cmd-cancel-work"),
+          cardId: BoardCardId.make("card-building"),
+          confirmCardKey: "CARD-1",
           createdAt: NOW,
         },
         "board.card.unarchive": {
@@ -2076,6 +2335,35 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         },
         // Reporting only: it writes an activity row and touches no card field,
         // so it cannot possibly emit a move.
+        "board.card.record-decisions": {
+          type: "board.card.record-decisions",
+          commandId: CommandId.make("cmd-record-decisions"),
+          cardId: BoardCardId.make("card-ready"),
+          decisions: [
+            {
+              question: "Ship behind a flag?",
+              decision: "No flag",
+              reason: "Small and reversible.",
+              flag: "unclear",
+              decidedBy: "agent",
+            },
+          ],
+          stepId: null,
+          threadId: null,
+          createdAt: NOW,
+        },
+        "board.card.mark-auto-plan": {
+          type: "board.card.mark-auto-plan",
+          commandId: CommandId.make("cmd-mark-auto-plan"),
+          cardId: BoardCardId.make("card-auto-plan"),
+          createdAt: NOW,
+        },
+        "board.card.end-auto-plan": {
+          type: "board.card.end-auto-plan",
+          commandId: CommandId.make("cmd-end-auto-plan"),
+          cardId: BoardCardId.make("card-auto-planning"),
+          createdAt: NOW,
+        },
         "board.card.record-note": {
           type: "board.card.record-note",
           commandId: CommandId.make("cmd-record-note"),
@@ -2278,31 +2566,71 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           stageId: BoardStageId.make("backlog"),
           createdAt: NOW,
         },
-        // Provider cooldowns (T3O-22): the third aggregate that carries no
-        // card at all.
-        "board.provider-limit.record": {
-          type: "board.provider-limit.record",
-          commandId: CommandId.make("cmd-limit-record"),
-          limit: {
-            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-            kind: "wait",
-            until: NOW,
-            detectedAt: NOW,
-            lastCheckedAt: NOW,
-            reason: "You've hit your session limit",
-            ruleId: "claude-code.session-limit",
-            sourceCardId: BoardCardId.make("card-ready"),
-            knownTime: true,
-            blindSince: null,
-            probeCardId: null,
-            setByHuman: false,
+        "board.worker.register": {
+          type: "board.worker.register",
+          commandId: CommandId.make("cmd-worker-register"),
+          mode: "add",
+          worker: {
+            id: EnvironmentId.make("env-worker-b"),
+            label: "worker-b",
+            url: "http://worker-b:3773",
+            addedAt: NOW,
           },
           createdAt: NOW,
         },
-        "board.provider-limit.clear": {
-          type: "board.provider-limit.clear",
-          commandId: CommandId.make("cmd-limit-clear"),
-          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        "board.worker.remove": {
+          type: "board.worker.remove",
+          commandId: CommandId.make("cmd-worker-remove"),
+          workerId: EnvironmentId.make("env-worker-a"),
+          createdAt: NOW,
+        },
+        "board.worker.set-default": {
+          type: "board.worker.set-default",
+          commandId: CommandId.make("cmd-worker-default"),
+          workerId: EnvironmentId.make("env-worker-a"),
+          createdAt: NOW,
+        },
+        "board.card.pin-worker": {
+          type: "board.card.pin-worker",
+          commandId: CommandId.make("cmd-pin-worker"),
+          cardId: BoardCardId.make("card-ready"),
+          workerId: EnvironmentId.make("env-worker-a"),
+          createdAt: NOW,
+        },
+        "board.card.place": {
+          type: "board.card.place",
+          commandId: CommandId.make("cmd-place"),
+          cardId: BoardCardId.make("card-ready"),
+          workerId: EnvironmentId.make("env-worker-a"),
+          createdAt: NOW,
+        },
+        "board.card.move-worker": {
+          type: "board.card.move-worker",
+          commandId: CommandId.make("cmd-move-worker"),
+          cardId: BoardCardId.make("card-worktree"),
+          step: { phase: "start", toWorkerId: EnvironmentId.make("env-worker-a"), sha: null },
+          createdAt: NOW,
+        },
+        "board.card.pipeline-move": {
+          type: "board.card.pipeline-move",
+          commandId: CommandId.make("cmd-pipeline-move"),
+          cardId: BoardCardId.make("card-ready"),
+          toStage: BoardStageId.make("building"),
+          createdAt: NOW,
+        },
+        "board.card.record-ci": {
+          type: "board.card.record-ci",
+          commandId: CommandId.make("cmd-record-ci"),
+          cardId: BoardCardId.make("card-ready"),
+          action: { kind: "finish-pass", runId: "run-1", result: "cancelled" },
+          createdAt: NOW,
+        },
+        "board.project.set-stage-config": {
+          type: "board.project.set-stage-config",
+          commandId: CommandId.make("cmd-project-stage-config"),
+          projectId: ProjectId.make("project-1"),
+          config: EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+          stages: [],
           createdAt: NOW,
         },
       };
@@ -2312,7 +2640,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       // command may emit a board.card-moved: the move itself. A card changes
       // stage because a human dragged it or pressed the button, and for no
       // other reason (D18).
-      const mayMoveIntoBuilding = new Set(["board.card.move"]);
+      // The board's own move (T3O-44) is the pipeline's, never a client's.
+      const mayMoveIntoBuilding = new Set(["board.card.move", "board.card.pipeline-move"]);
       for (const [commandType, command] of Object.entries(catalog)) {
         const events = yield* decideEvents(command, readModel);
         const movesIntoBuilding = events.some(
@@ -2454,6 +2783,151 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         makeReadModel({ board: { cards: [], labels: catalogue, nextCardNumberByProject: {} } }),
       );
       assert.include(String(failure), "at most");
+    }),
+  );
+
+  // ── Incremental labels (T3O-68) ──────────────────────────────────────
+
+  const labelUpdate = (fields: {
+    readonly labels?: ReadonlyArray<string>;
+    readonly addLabels?: ReadonlyArray<string>;
+    readonly removeLabels?: ReadonlyArray<string>;
+  }) =>
+    ({
+      type: "board.card.update",
+      commandId: CommandId.make("cmd-label-edit"),
+      cardId: BoardCardId.make("card-tagged"),
+      ...(fields.labels === undefined
+        ? {}
+        : { labels: fields.labels.map((id) => BoardLabelId.make(id)) }),
+      ...(fields.addLabels === undefined
+        ? {}
+        : { addLabels: fields.addLabels.map((id) => BoardLabelId.make(id)) }),
+      ...(fields.removeLabels === undefined
+        ? {}
+        : { removeLabels: fields.removeLabels.map((id) => BoardLabelId.make(id)) }),
+      createdAt: NOW,
+    }) as const;
+
+  const retiredLabel: BoardLabel = {
+    labelId: BoardLabelId.make("label-retired"),
+    name: "retired",
+    colour: "#3b82f6",
+    deletedAt: NOW,
+    createdAt: NOW,
+    updatedAt: NOW,
+  };
+
+  /** A card tagged with `labels`, against the seeds plus one tombstone. */
+  const taggedModel = (labels: ReadonlyArray<string>) =>
+    makeReadModel({
+      board: {
+        cards: [makeCard({ id: "card-tagged", labels: labels.map((id) => BoardLabelId.make(id)) })],
+        labels: [...BOARD_SEED_LABELS, retiredLabel],
+        nextCardNumberByProject: {},
+      },
+    });
+
+  const updatedLabels = (event: Effect.Success<ReturnType<typeof decide>>) => {
+    assert.strictEqual(event.type, "board.card-updated");
+    return event.type === "board.card-updated" ? event.payload.card.labels : [];
+  };
+
+  it.effect("addLabels/removeLabels apply to the card as the update lands", () =>
+    Effect.gen(function* () {
+      // The agent read [feature]; someone tagged bug before its update landed.
+      // An incremental edit keeps bug, where a whole-set replace would drop it.
+      const event = yield* decide(
+        labelUpdate({
+          addLabels: [BOARD_SEED_LABEL_IDS.chore],
+          removeLabels: [BOARD_SEED_LABEL_IDS.feature],
+        }),
+        taggedModel([BOARD_SEED_LABEL_IDS.feature, BOARD_SEED_LABEL_IDS.bug]),
+      );
+      assert.deepStrictEqual(updatedLabels(event), [
+        BOARD_SEED_LABEL_IDS.bug,
+        BOARD_SEED_LABEL_IDS.chore,
+      ]);
+    }),
+  );
+
+  it.effect("adding a carried label or removing an absent one changes nothing", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        labelUpdate({
+          addLabels: [BOARD_SEED_LABEL_IDS.feature],
+          removeLabels: [BOARD_SEED_LABEL_IDS.chore],
+        }),
+        taggedModel([BOARD_SEED_LABEL_IDS.feature]),
+      );
+      assert.deepStrictEqual(updatedLabels(event), [BOARD_SEED_LABEL_IDS.feature]);
+    }),
+  );
+
+  it.effect("a carried tombstoned label survives an add and can be removed", () =>
+    Effect.gen(function* () {
+      const kept = yield* decide(
+        labelUpdate({ addLabels: [BOARD_SEED_LABEL_IDS.bug] }),
+        taggedModel(["label-retired"]),
+      );
+      assert.deepStrictEqual(updatedLabels(kept), [
+        BoardLabelId.make("label-retired"),
+        BOARD_SEED_LABEL_IDS.bug,
+      ]);
+      const removed = yield* decide(
+        labelUpdate({ removeLabels: ["label-retired"] }),
+        taggedModel(["label-retired"]),
+      );
+      assert.deepStrictEqual(updatedLabels(removed), []);
+    }),
+  );
+
+  it.effect("addLabels rejects a tombstoned or unknown label", () =>
+    Effect.gen(function* () {
+      const tombstoned = yield* decideFail(
+        labelUpdate({ addLabels: ["label-retired"] }),
+        taggedModel([]),
+      );
+      assert.include(String(tombstoned), "is deleted");
+      const unknown = yield* decideFail(
+        labelUpdate({ addLabels: ["label-nope"] }),
+        taggedModel([]),
+      );
+      assert.include(String(unknown), "does not exist");
+    }),
+  );
+
+  it.effect("rejects labels with addLabels, a label both added and removed, and the cap", () =>
+    Effect.gen(function* () {
+      const mixed = yield* decideFail(
+        labelUpdate({
+          labels: [BOARD_SEED_LABEL_IDS.bug],
+          addLabels: [BOARD_SEED_LABEL_IDS.chore],
+        }),
+        taggedModel([]),
+      );
+      assert.include(String(mixed), "not both");
+      const both = yield* decideFail(
+        labelUpdate({
+          addLabels: [BOARD_SEED_LABEL_IDS.bug],
+          removeLabels: [BOARD_SEED_LABEL_IDS.bug],
+        }),
+        taggedModel([]),
+      );
+      assert.include(String(both), "both added and removed");
+      // Named by the label's name, not its id.
+      assert.include(String(both), "Label 'bug'");
+      const capped = yield* decideFail(
+        labelUpdate({ addLabels: [BOARD_SEED_LABEL_IDS.chore] }),
+        taggedModel([
+          BOARD_SEED_LABEL_IDS.feature,
+          BOARD_SEED_LABEL_IDS.bug,
+          "label-retired",
+          "label-x",
+          "label-y",
+        ]),
+      );
+      assert.include(String(capped), "at most");
     }),
   );
 
@@ -2983,6 +3457,7 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       status,
       slotHeld: status === "running",
       forceStart: false,
+      queuedBy: null,
       startedAt: status === "running" ? NOW : null,
       updatedAt: NOW,
     }) as const satisfies BoardCardStepState;
@@ -3809,240 +4284,6 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     );
   });
 
-  // ── Auto-start (T3O-24) ───────────────────────────────────────────────────
-
-  describe("auto-start (T3O-24, D1/D2/D4)", () => {
-    const OPEN = "card-blocker-open";
-    const DONE = "card-blocker-done";
-
-    /** The blockers every fixture below draws from. */
-    const blockers = [
-      makeCard({ id: OPEN, stage: "building" }),
-      makeCard({ id: DONE, stage: "done" }),
-    ];
-
-    /** A card waiting at Ready on the blockers named. */
-    const waiting = (
-      overrides: Partial<BoardCard> = {},
-      dependsOn: ReadonlyArray<string> = [OPEN],
-    ) =>
-      makeCard({
-        id: "card-1",
-        stage: "ready",
-        dependsOn: dependsOn.map((id) => BoardCardId.make(id)),
-        ...overrides,
-      });
-
-    const boardWith = (card: BoardCard) =>
-      makeReadModel({ board: seededBoard([card, ...blockers]) });
-
-    const arm = (autoStart: boolean) =>
-      ({
-        type: "board.card.update",
-        commandId: CommandId.make("cmd-arm"),
-        cardId: BoardCardId.make("card-1"),
-        autoStart,
-        createdAt: NOW,
-      }) satisfies BoardCommand;
-
-    it.effect("records the arm and says the edit touched it", () =>
-      Effect.gen(function* () {
-        const event = yield* decide(arm(true), boardWith(waiting()));
-        assert.strictEqual(event.type, "board.card-updated");
-        if (event.type !== "board.card-updated") return;
-        assert.isTrue(event.payload.card.autoStart);
-        // The marker the supervisor reads to know an armed card is worth
-        // re-checking; without it a title edit and an arm look the same.
-        assert.strictEqual(event.payload.autoStart, true);
-      }),
-    );
-
-    it.effect("an arm on its own is a real change, not an empty update", () =>
-      Effect.gen(function* () {
-        const event = yield* decide(arm(true), boardWith(waiting()));
-        assert.strictEqual(event.type, "board.card-updated");
-      }),
-    );
-
-    it.effect("disarming is always accepted — a reverse state cannot be refused", () =>
-      Effect.gen(function* () {
-        // Even where ARMING would be refused: a card dragged into Building
-        // while armed must still be able to say no.
-        const event = yield* decide(
-          arm(false),
-          boardWith(waiting({ autoStart: true, stage: BoardStageId.make("building") })),
-        );
-        assert.strictEqual(event.type, "board.card-updated");
-        if (event.type !== "board.card-updated") return;
-        assert.isFalse(event.payload.card.autoStart);
-        assert.strictEqual(event.payload.autoStart, false);
-      }),
-    );
-
-    it.effect("refuses to arm a sub-board child, which already cascades", () =>
-      Effect.gen(function* () {
-        const error = yield* decideFail(
-          arm(true),
-          boardWith(waiting({ parentCardId: BoardCardId.make("card-parent") })),
-        );
-        assert.include(String(error), "sub-board child");
-      }),
-    );
-
-    it.effect("refuses to arm a card that is not waiting in the stage before build", () =>
-      Effect.gen(function* () {
-        const error = yield* decideFail(
-          arm(true),
-          boardWith(waiting({ stage: BoardStageId.make("building") })),
-        );
-        assert.include(String(error), "not waiting in 'Ready'");
-      }),
-    );
-
-    it.effect("refuses to arm a card with nothing left to wait for", () =>
-      Effect.gen(function* () {
-        const error = yield* decideFail(arm(true), boardWith(waiting({}, [DONE])));
-        assert.include(String(error), "no unmet dependencies");
-      }),
-    );
-
-    it.effect("validates the arm against the dependencies the SAME edit leaves behind", () =>
-      Effect.gen(function* () {
-        // One edit dropping the last blocking edge AND arming the card would
-        // otherwise arm a card with nothing to wait for — spent on the next
-        // tick, and never visibly on.
-        const error = yield* decideFail(
-          {
-            type: "board.card.update",
-            commandId: CommandId.make("cmd-arm-and-drop"),
-            cardId: BoardCardId.make("card-1"),
-            autoStart: true,
-            dependsOn: [],
-            createdAt: NOW,
-          },
-          boardWith(waiting()),
-        );
-        assert.include(String(error), "no unmet dependencies");
-      }),
-    );
-
-    it.effect("an unrelated edit leaves the arm alone and does not claim to touch it", () =>
-      Effect.gen(function* () {
-        const event = yield* decide(
-          {
-            type: "board.card.update",
-            commandId: CommandId.make("cmd-title"),
-            cardId: BoardCardId.make("card-1"),
-            title: "Renamed",
-            createdAt: NOW,
-          },
-          boardWith(waiting({ autoStart: true })),
-        );
-        assert.strictEqual(event.type, "board.card-updated");
-        if (event.type !== "board.card-updated") return;
-        assert.isTrue(event.payload.card.autoStart);
-        assert.isFalse("autoStart" in event.payload);
-      }),
-    );
-
-    it.effect("a created card is never born armed", () =>
-      Effect.gen(function* () {
-        const event = yield* decide(
-          createCommand({ cardId: "card-new" }),
-          makeReadModel({ board: seededBoard() }),
-        );
-        assert.strictEqual(event.type, "board.card-created");
-        if (event.type !== "board.card-created") return;
-        assert.isFalse("autoStart" in event.payload);
-      }),
-    );
-
-    // ── D4: the arm is spent when the card leaves Ready, by any route ──────
-
-    it.effect("the forward move into Building clears the arm in the same event", () =>
-      Effect.gen(function* () {
-        // Fire-and-clear is ONE event, so there is no cleared-but-unstarted
-        // window and no second command that can be lost.
-        const event = yield* decide(
-          moveCommand({ cardId: "card-1", toStage: "building" }),
-          boardWith(waiting({ autoStart: true }, [DONE])),
-        );
-        assert.strictEqual(event.type, "board.card-moved");
-        if (event.type !== "board.card-moved") return;
-        assert.isFalse(event.payload.card.autoStart);
-      }),
-    );
-
-    it.effect("a BACKWARD drag out of Ready clears it too — a parked card stays parked", () =>
-      Effect.gen(function* () {
-        const event = yield* decide(
-          moveCommand({ cardId: "card-1", toStage: "planning" }),
-          boardWith(waiting({ autoStart: true })),
-        );
-        assert.strictEqual(event.type, "board.card-moved");
-        if (event.type !== "board.card-moved") return;
-        assert.isFalse(event.payload.card.autoStart);
-      }),
-    );
-
-    it.effect("a card dragged back INTO Ready from Building arrives disarmed", () =>
-      Effect.gen(function* () {
-        // The deliberate consequence of D4: a build that went wrong and got
-        // pulled back must never relaunch itself under the person parking it.
-        // Driven as the round trip a human really makes, because an armed card
-        // sitting in Building is not a state the decider lets anyone reach.
-        const started = yield* decide(
-          moveCommand({ cardId: "card-1", toStage: "building" }),
-          boardWith(waiting({ autoStart: true }, [DONE])),
-        );
-        assert.strictEqual(started.type, "board.card-moved");
-        if (started.type !== "board.card-moved") return;
-        const back = yield* decide(
-          moveCommand({ cardId: "card-1", toStage: "ready" }),
-          boardWith(started.payload.card),
-        );
-        assert.strictEqual(back.type, "board.card-moved");
-        if (back.type !== "board.card-moved") return;
-        assert.isFalse(back.payload.card.autoStart);
-      }),
-    );
-
-    it.effect("a reorder WITHIN Ready keeps the arm — the card moved nowhere", () =>
-      Effect.gen(function* () {
-        // The other edge of D4, and the one a refactor is most likely to erase:
-        // dragging a card up its own column is not leaving the stage, so it must
-        // not spend the arm the way every `board.card.move` route does.
-        const event = yield* decide(
-          {
-            type: "board.card.reorder",
-            commandId: CommandId.make("cmd-reorder"),
-            cardId: BoardCardId.make("card-1"),
-            orderKey: "t",
-            createdAt: NOW,
-          },
-          boardWith(waiting({ autoStart: true })),
-        );
-        assert.strictEqual(event.type, "board.card-reordered");
-        if (event.type !== "board.card-reordered") return;
-        assert.isTrue(event.payload.card.autoStart);
-      }),
-    );
-
-    it.effect("the dependency gate still refuses the move it would have made", () =>
-      Effect.gen(function* () {
-        // The decider stays the single authority (D3): the reactor pre-checks
-        // this so it never teaches the rule by refusal, but the rule lives here.
-        const error = yield* decideFail(
-          moveCommand({ cardId: "card-1", toStage: "building" }),
-          boardWith(waiting({ autoStart: true })),
-        );
-        assert.include(String(error), "until its dependency is done");
-      }),
-    );
-  });
-
-  // ── Auto-merge (T3O-38) ───────────────────────────────────────────────────
-
   describe("auto-merge (T3O-38, D3/D4/D10)", () => {
     const HOLD = {
       reason: "Required status check 'test' has not passed.",
@@ -4059,15 +4300,6 @@ it.layer(NodeServices.layer)("board decider", (it) => {
 
     const boardWith = (card: BoardCard) => makeReadModel({ board: seededBoard([card]) });
 
-    const arm = (autoMerge: boolean) =>
-      ({
-        type: "board.card.update",
-        commandId: CommandId.make("cmd-arm-merge"),
-        cardId: BoardCardId.make("card-1"),
-        autoMerge,
-        createdAt: NOW,
-      }) satisfies BoardCommand;
-
     const recordHold = (hold: BoardCard["autoMergeHold"]) =>
       ({
         type: "board.card.record-auto-merge-hold",
@@ -4076,94 +4308,6 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         hold,
         createdAt: NOW,
       }) satisfies BoardCommand;
-
-    it.effect("records the arm and says the edit touched it", () =>
-      Effect.gen(function* () {
-        const event = yield* decide(arm(true), boardWith(at("building")));
-        assert.strictEqual(event.type, "board.card-updated");
-        if (event.type !== "board.card-updated") return;
-        assert.isTrue(event.payload.card.autoMerge);
-        // The marker the supervisor reads before firing a merge on a card
-        // already parked at the merge stage; without it a title edit and an
-        // arm look the same, and one of them must never merge anything.
-        assert.strictEqual(event.payload.autoMerge, true);
-      }),
-    );
-
-    it.effect("an arm on its own is a real change, not an empty update", () =>
-      Effect.gen(function* () {
-        const event = yield* decide(arm(true), boardWith(at("backlog")));
-        assert.strictEqual(event.type, "board.card-updated");
-      }),
-    );
-
-    it.effect("arms a card in any stage before Done — the arm is not one column's", () =>
-      Effect.gen(function* () {
-        for (const stage of [
-          "backlog",
-          "sprint",
-          "planning",
-          "ready",
-          "building",
-          "review",
-          "merge",
-        ]) {
-          const event = yield* decide(arm(true), boardWith(at(stage)));
-          assert.strictEqual(event.type, "board.card-updated", stage);
-        }
-      }),
-    );
-
-    it.effect("refuses a card already in Done, which has nothing left to merge", () =>
-      Effect.gen(function* () {
-        const error = yield* decideFail(arm(true), boardWith(at("done")));
-        assert.include(String(error), "nothing left for an auto-merge to do");
-      }),
-    );
-
-    it.effect("refuses a sub-board child, which already merges itself down", () =>
-      Effect.gen(function* () {
-        const child = at("merge", { parentCardId: BoardCardId.make("card-parent") });
-        const error = yield* decideFail(arm(true), boardWith(child));
-        assert.include(String(error), "sub-board child");
-      }),
-    );
-
-    it.effect("disarming is always accepted — a reverse state cannot be refused", () =>
-      Effect.gen(function* () {
-        // Even in Done, where ARMING is refused: a card must always be able to
-        // say no.
-        const event = yield* decide(
-          arm(false),
-          boardWith(at("done", { autoMerge: true, autoMergeHold: HOLD })),
-        );
-        assert.strictEqual(event.type, "board.card-updated");
-        if (event.type !== "board.card-updated") return;
-        assert.isFalse(event.payload.card.autoMerge);
-        // …and it CLEARS the hold (D10): a hold explains a merge that is no
-        // longer going to happen by itself.
-        assert.strictEqual(event.payload.card.autoMergeHold, null);
-      }),
-    );
-
-    it.effect("leaves the hold alone on an edit that did not touch the arm", () =>
-      Effect.gen(function* () {
-        const event = yield* decide(
-          {
-            type: "board.card.update",
-            commandId: CommandId.make("cmd-title"),
-            cardId: BoardCardId.make("card-1"),
-            title: "Renamed",
-            createdAt: NOW,
-          } satisfies BoardCommand,
-          boardWith(at("merge", { autoMerge: true, autoMergeHold: HOLD })),
-        );
-        assert.strictEqual(event.type, "board.card-updated");
-        if (event.type !== "board.card-updated") return;
-        assert.deepStrictEqual(event.payload.card.autoMergeHold, HOLD);
-        assert.isFalse("autoMerge" in event.payload);
-      }),
-    );
 
     it.effect("records a hold and clears it back to null", () =>
       Effect.gen(function* () {
@@ -4370,6 +4514,166 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         assert.strictEqual(event.payload.transition, "state-changed");
         assert.strictEqual(event.payload.card.pullRequest?.state, "merged");
         assert.strictEqual(event.payload.card.pullRequest?.linked, true);
+      }),
+    );
+  });
+
+  describe("per-card merge strategy (T3O-80)", () => {
+    const HOLD = {
+      reason: "Merge commits are not allowed on this repository.",
+      classification: "other",
+      detail: null,
+      attempt: 1,
+      heldSince: NOW,
+      retryAt: null,
+      headSha: "sha-one",
+    } as const;
+
+    const setStrategy = (mergeStrategy: BoardCard["mergeStrategy"]) =>
+      ({
+        type: "board.card.update",
+        commandId: CommandId.make("cmd-merge-strategy"),
+        cardId: BoardCardId.make("card-1"),
+        mergeStrategy,
+        createdAt: NOW,
+      }) satisfies BoardCommand;
+
+    const boardWith = (...cards: ReadonlyArray<BoardCard>) =>
+      makeReadModel({ board: seededBoard([...cards]) });
+
+    const updatedCard = (event: { readonly type: string; readonly payload: unknown }) => {
+      assert.strictEqual(event.type, "board.card-updated");
+      return (event.payload as { readonly card: BoardCard }).card;
+    };
+
+    it.effect("sets the strategy, and a strategy-only edit is a real change", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          setStrategy("merge"),
+          boardWith(makeCard({ id: "card-1", stage: "ready" })),
+        );
+        assert.strictEqual(updatedCard(event).mergeStrategy, "merge");
+      }),
+    );
+
+    it.effect("null clears it back to the default, in any stage", () =>
+      Effect.gen(function* () {
+        for (const stage of ["backlog", "building", "merge", "done"]) {
+          const event = yield* decide(
+            setStrategy(null),
+            boardWith(makeCard({ id: "card-1", stage, mergeStrategy: "rebase" })),
+          );
+          assert.strictEqual(updatedCard(event).mergeStrategy, null, stage);
+        }
+      }),
+    );
+
+    it.effect("a change clears the auto-merge hold", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          setStrategy("squash"),
+          boardWith(
+            makeCard({
+              id: "card-1",
+              stage: "merge",
+              autoMergeSetting: true,
+              autoMergeHold: HOLD,
+              mergeStrategy: "merge",
+            }),
+          ),
+        );
+        const card = updatedCard(event);
+        assert.strictEqual(card.mergeStrategy, "squash");
+        assert.strictEqual(card.autoMergeHold, null);
+        assert.isTrue(card.autoMergeSetting);
+        // The cleared hold was the retry, so the event tells the supervisor.
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type === "board.card-updated") {
+          assert.strictEqual(event.payload.autoMergeHoldReleased, true);
+        }
+      }),
+    );
+
+    it.effect("a change on a card with no hold does not ask for a merge", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          setStrategy("squash"),
+          boardWith(
+            makeCard({
+              id: "card-1",
+              stage: "merge",
+              autoMergeSetting: true,
+              mergeStrategy: "merge",
+            }),
+          ),
+        );
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type === "board.card-updated") {
+          assert.isFalse("autoMergeHoldReleased" in event.payload);
+          // Still a change, which an inheriting child's hold has to hear about.
+          assert.strictEqual(event.payload.mergeStrategyEdited, true);
+        }
+      }),
+    );
+
+    it.effect("re-writing the same strategy leaves the hold alone", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          setStrategy("merge"),
+          boardWith(
+            makeCard({ id: "card-1", stage: "merge", autoMergeHold: HOLD, mergeStrategy: "merge" }),
+          ),
+        );
+        assert.deepStrictEqual(updatedCard(event).autoMergeHold, HOLD);
+        if (event.type === "board.card-updated") {
+          assert.isFalse("mergeStrategyEdited" in event.payload);
+        }
+      }),
+    );
+
+    it.effect("an edit that does not name the strategy keeps it", () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          {
+            type: "board.card.update",
+            commandId: CommandId.make("cmd-title"),
+            cardId: BoardCardId.make("card-1"),
+            title: "Renamed",
+            createdAt: NOW,
+          },
+          boardWith(makeCard({ id: "card-1", stage: "ready", mergeStrategy: "rebase" })),
+        );
+        assert.strictEqual(updatedCard(event).mergeStrategy, "rebase");
+      }),
+    );
+
+    it.effect("a sub-board child may set its own", () =>
+      Effect.gen(function* () {
+        const parent = makeCard({ id: "card-parent", stage: "building" });
+        const child = makeCard({
+          id: "card-1",
+          stage: "building",
+          parentCardId: BoardCardId.make("card-parent"),
+        });
+        const event = yield* decide(setStrategy("merge"), boardWith(parent, child));
+        assert.strictEqual(updatedCard(event).mergeStrategy, "merge");
+      }),
+    );
+
+    it.effect("a create carries the strategy, and omits the key without one", () =>
+      Effect.gen(function* () {
+        const withStrategy = yield* decide(
+          { ...createCommand({ cardId: "card-new" }), mergeStrategy: "merge" },
+          boardWith(),
+        );
+        assert.strictEqual(withStrategy.type, "board.card-created");
+        if (withStrategy.type === "board.card-created") {
+          assert.strictEqual(withStrategy.payload.mergeStrategy, "merge");
+        }
+        const without = yield* decide(createCommand({ cardId: "card-new" }), boardWith());
+        if (without.type === "board.card-created") {
+          assert.isFalse("mergeStrategy" in without.payload);
+        }
       }),
     );
   });

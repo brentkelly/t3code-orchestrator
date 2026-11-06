@@ -35,6 +35,10 @@ const ALLOWED_UPSTREAM_IMPORTS = new Map([
     "orchestration-v2/ThreadManagementService.ts",
     "named in the board MCP tools' dependencies, which McpToolAccess requires of every tool",
   ],
+  [
+    "provider/ProviderRegistry.ts",
+    "a worker reporting its own provider instances to a central board (T3O-62); no threads",
+  ],
 ]);
 
 /**

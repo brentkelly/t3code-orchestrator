@@ -21,9 +21,11 @@ import {
   type BoardLabelId,
 } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { BoardCardContent } from "./BoardCardItem";
+
+const NOW_MS = Date.parse("2026-10-27T12:00:00Z");
 
 function shell(stage: string, overrides?: Partial<BoardCardShell>): BoardCardShell {
   return {
@@ -364,9 +366,10 @@ describe("BoardCardContent (D7)", () => {
   });
 
   it("wears an amber `Merge held` pill with its elapsed clock (T3O-38, D12)", () => {
+    using _now = vi.spyOn(Date, "now").mockReturnValue(NOW_MS);
     const held = shell("merge", {
-      autoMergeArmed: true,
-      autoMergeHeldSince: new Date(Date.now() - 12 * 60_000).toISOString(),
+      autoMergeSetting: true,
+      autoMergeHeldSince: new Date(NOW_MS - 12 * 60_000).toISOString(),
     });
     const html = renderToStaticMarkup(
       <BoardCardContent
@@ -392,9 +395,10 @@ describe("BoardCardContent (D7)", () => {
   });
 
   it("swaps the label and the glyph, NOT the colour, once it gives up (T3O-38, D12)", () => {
+    using _now = vi.spyOn(Date, "now").mockReturnValue(NOW_MS);
     const gaveUp = shell("merge", {
-      autoMergeArmed: true,
-      autoMergeHeldSince: new Date(Date.now() - 90 * 60_000).toISOString(),
+      autoMergeSetting: true,
+      autoMergeHeldSince: new Date(NOW_MS - 90 * 60_000).toISOString(),
       autoMergeGaveUp: true,
     });
     const html = renderToStaticMarkup(
@@ -415,6 +419,7 @@ describe("BoardCardContent (D7)", () => {
   });
 
   it("wears ONE notice when the merge gave up on a card whose step also parked (T3O-45)", () => {
+    using _now = vi.spyOn(Date, "now").mockReturnValue(NOW_MS);
     // The bug, exactly as photographed: a merge-stage card whose step settled
     // without moving it on AND whose auto-merge ladder ran out wore
     // `Needs a human` beside `Merge needs you` — the same claim twice, in the
@@ -422,8 +427,8 @@ describe("BoardCardContent (D7)", () => {
     // hung off the card's right edge.
     const both = shell("merge", {
       held: true,
-      autoMergeArmed: true,
-      autoMergeHeldSince: new Date(Date.now() - 90 * 60_000).toISOString(),
+      autoMergeSetting: true,
+      autoMergeHeldSince: new Date(NOW_MS - 90 * 60_000).toISOString(),
       autoMergeGaveUp: true,
     });
     // The card really does have both facts — otherwise this asserts nothing.
@@ -446,12 +451,13 @@ describe("BoardCardContent (D7)", () => {
   });
 
   it("gives a pending question the notice slot over a held merge (T3O-45)", () => {
+    using _now = vi.spyOn(Date, "now").mockReturnValue(NOW_MS);
     // One click from being answered. The merge pill is the more specific fact
     // about the MERGE, but it is not the one the human can act on.
     const asking = shell("merge", {
       awaitingInput: true,
-      autoMergeArmed: true,
-      autoMergeHeldSince: new Date(Date.now() - 90 * 60_000).toISOString(),
+      autoMergeSetting: true,
+      autoMergeHeldSince: new Date(NOW_MS - 90 * 60_000).toISOString(),
       autoMergeGaveUp: true,
     });
     const html = renderToStaticMarkup(
@@ -492,11 +498,12 @@ describe("BoardCardContent (D7)", () => {
   });
 
   it("yields the pill slot to a running conflict fix (T3O-38)", () => {
+    using _now = vi.spyOn(Date, "now").mockReturnValue(NOW_MS);
     // A conflict fix RUNS and a hold WAITS; the server never records both,
     // and a running agent is the more specific claim if they collide.
     const both = shell("merge", {
       stepConflictFix: true,
-      autoMergeHeldSince: new Date(Date.now() - 5 * 60_000).toISOString(),
+      autoMergeHeldSince: new Date(NOW_MS - 5 * 60_000).toISOString(),
     });
     const html = renderToStaticMarkup(
       <BoardCardContent
@@ -513,7 +520,7 @@ describe("BoardCardContent (D7)", () => {
   });
 
   it("shows a quiet `Auto` glyph in the merge column, and nothing earlier (T3O-38, D13)", () => {
-    const armed = shell("merge", { autoMergeArmed: true });
+    const armed = shell("merge", { autoMergeSetting: true });
     const atMerge = renderToStaticMarkup(
       <BoardCardContent
         card={armed}
@@ -529,7 +536,7 @@ describe("BoardCardContent (D7)", () => {
     expect(atMerge).toContain("text-muted-foreground");
 
     // An armed card in Building looks normal because it IS normal.
-    const building = shell("building", { autoMergeArmed: true });
+    const building = shell("building", { autoMergeSetting: true });
     const earlier = renderToStaticMarkup(
       <BoardCardContent
         card={building}
@@ -543,7 +550,7 @@ describe("BoardCardContent (D7)", () => {
   });
 
   it("wears the glyph when the BOARD-WIDE setting is what arms the card (T3O-38, D2)", () => {
-    // The shell's `autoMergeArmed` is the card's OWN arming only — the SQL
+    // The shell's `autoMergeSetting` is the card's OWN setting only — the SQL
     // snapshot producer cannot see settings — so a board whose merge stage
     // auto-merges everything left the column silent while the modal's chip
     // said the card was armed.
@@ -556,7 +563,7 @@ describe("BoardCardContent (D7)", () => {
         selected={false}
         attention={attentionOf(plain)}
         atMergeStage
-        autoMergeBoardWide
+        autoMergeArmed
       />,
     );
     expect(boardWide).toContain("Auto-merge armed");
@@ -570,7 +577,7 @@ describe("BoardCardContent (D7)", () => {
         queueSlot={undefined}
         selected={false}
         attention={attentionOf(plain)}
-        autoMergeBoardWide
+        autoMergeArmed
       />,
     );
     expect(earlier).not.toContain("Auto-merge armed");

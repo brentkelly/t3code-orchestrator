@@ -1,19 +1,19 @@
 import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
-import * as Result from "effect/Result";
-
 import * as Effect from "effect/Effect";
+import { GraphQLClientError } from "effect/graphql";
 
-import { GitHubApiResponseError } from "./GitHubApi.ts";
-import { decodePullRequestCoreJson, pullRequestCoreGraphQlQuery } from "./gitHubPullRequestJson.ts";
+import { GitHubApiResponseError } from "./GitHubRequestPolicy.ts";
+import { PullRequestSummary } from "./pullRequestBatches.graphql.ts";
+import { PullRequestCore } from "./pullRequestReads.graphql.ts";
 import {
-  coreQueryForFields,
-  fillDroppedCoreFields,
   isMissingScopeRefusal,
   readCoreWithScopeFallback,
+  T3oPullRequestCoreWithoutReviewers,
+  T3oPullRequestCoreWithoutReviewersOrChecks,
+  T3oPullRequestSummaryWithoutChecks,
+  withoutSelection,
 } from "./t3oGraphQlScopeFallback.ts";
-
-const PULL_REQUEST_CORE_GRAPHQL_QUERY = pullRequestCoreGraphQlQuery("github.com");
 
 const balanced = (query: string) => {
   let depth = 0;
@@ -25,91 +25,46 @@ const balanced = (query: string) => {
   return depth === 0;
 };
 
-const pullRequest = {
-  number: 7,
-  title: "Conflicted",
-  url: "https://github.com/acme/web/pull/7",
-  headRefName: "feature",
-  baseRefName: "main",
-  headRefOid: "abc123",
-  state: "OPEN",
-  mergeable: "CONFLICTING",
-  createdAt: "2026-07-01T00:00:00Z",
-  updatedAt: "2026-07-02T00:00:00Z",
-  viewerCanUpdate: true,
-  viewerDidAuthor: false,
-  viewerCanUpdateBranch: true,
-  baseRef: null,
-  labels: { nodes: [] },
-};
-const response = (fields: Record<string, unknown>) =>
-  // @effect-diagnostics-next-line preferSchemaOverJson:off
-  JSON.stringify({
-    data: {
-      repository: {
-        mergeCommitAllowed: true,
-        squashMergeAllowed: true,
-        rebaseMergeAllowed: true,
-        viewerPermission: "WRITE",
-        pullRequest: { ...pullRequest, ...fields },
-      },
-    },
-  });
-
-describe("coreQueryForFields", () => {
-  it("leaves the document whole while every gated field is still asked for", () => {
-    expect(
-      coreQueryForFields(PULL_REQUEST_CORE_GRAPHQL_QUERY, "reviewRequests,statusCheckRollup"),
-    ).toBe(PULL_REQUEST_CORE_GRAPHQL_QUERY);
-  });
-
-  it("drops team review requests and keeps everything else", () => {
-    const query = coreQueryForFields(PULL_REQUEST_CORE_GRAPHQL_QUERY, "statusCheckRollup");
-    expect(query).not.toContain("reviewRequests");
-    expect(query).not.toContain("requestedReviewer");
-    expect(query).toContain("statusCheckRollup");
-    expect(query).toContain("labels(first: 100)");
-    expect(query).toContain("mergeable");
-    expect(balanced(query)).toBe(true);
-  });
-
-  it("drops the check rollup with the commits connection that carries it", () => {
-    const query = coreQueryForFields(PULL_REQUEST_CORE_GRAPHQL_QUERY, "");
-    expect(query).not.toContain("reviewRequests");
-    expect(query).not.toContain("commits(");
-    expect(query).not.toContain("statusCheckRollup");
-    expect(query).toContain("autoMergeRequest");
-    expect(balanced(query)).toBe(true);
-  });
+describe("withoutSelection", () => {
   it("keeps the names either side of an inline selection apart", () => {
-    expect(coreQueryForFields("{ x { a commits(last: 1) { n } b } }", "")).toBe("{ x { a b } }");
-    expect(coreQueryForFields("{ x {\n  a\n  commits(last: 1) { n }\n  b\n} }", "")).toBe(
+    expect(withoutSelection("{ x { a commits(last: 1) { n } b } }", "commits(")).toBe(
+      "{ x { a b } }",
+    );
+    expect(withoutSelection("{ x {\n  a\n  commits(last: 1) { n }\n  b\n} }", "commits(")).toBe(
       "{ x {\n  a\n  b\n} }",
     );
   });
 });
 
-describe("fillDroppedCoreFields", () => {
-  it("lets the core decoder read an answer without the dropped fields", () => {
-    const raw = response({});
-    expect(Result.isFailure(decodePullRequestCoreJson(raw))).toBe(true);
-
-    const decoded = decodePullRequestCoreJson(fillDroppedCoreFields(raw, ""));
-    expect(Result.isSuccess(decoded)).toBe(true);
-    if (Result.isSuccess(decoded)) {
-      expect(decoded.success.mergeability).toBe("conflicting");
-      expect(decoded.success.reviewRequestLogins).toEqual([]);
-      expect(decoded.success.checks).toEqual([]);
-    }
+describe("the fallback operations", () => {
+  it("drop team review requests and their variable, and keep everything else", () => {
+    const query = T3oPullRequestCoreWithoutReviewers.document;
+    expect(PullRequestCore.document).toContain("reviewRequests(");
+    expect(query).not.toContain("reviewRequests");
+    expect(query).not.toContain("$requestedReviewers");
+    expect(query).toContain("statusCheckRollup");
+    expect(query).toContain("fragment CheckContext");
+    expect(query).toContain("$required:");
+    expect(query).toContain("labels(first:100)");
+    expect(balanced(query)).toBe(true);
   });
 
-  it("leaves an answer alone when nothing was dropped", () => {
-    const raw = response({ reviewRequests: { nodes: [] }, commits: { nodes: [] } });
-    expect(fillDroppedCoreFields(raw, "reviewRequests,statusCheckRollup")).toBe(raw);
+  it("drop the check rollup with the fragment and variable only it used", () => {
+    const query = T3oPullRequestCoreWithoutReviewersOrChecks.document;
+    expect(query).not.toContain("reviewRequests");
+    expect(query).not.toContain("commits(");
+    expect(query).not.toContain("CheckContext");
+    expect(query).not.toContain("$required");
+    expect(query).toContain("autoMergeRequest");
+    expect(query).toContain("$headRef:");
+    expect(balanced(query)).toBe(true);
   });
 
-  it("leaves an unreadable answer for the decoder to reject", () => {
-    expect(fillDroppedCoreFields("not json", "")).toBe("not json");
+  it("drop the summary's rollup and keep its template batchable", () => {
+    expect(PullRequestSummary.document).toContain("statusCheckRollup");
+    expect(T3oPullRequestSummaryWithoutChecks.document).not.toContain("commits(");
+    expect(T3oPullRequestSummaryWithoutChecks.document).toContain("$stacks:");
+    expect(T3oPullRequestSummaryWithoutChecks.template?.selections[0]?.name).toBe("repository");
   });
 });
 
@@ -123,7 +78,7 @@ describe("readCoreWithScopeFallback (T3O-8)", () => {
     ],
   });
 
-  it("recognises GitHub refusing the token a field", () => {
+  it("recognises GitHub refusing the token a field, raw or mapped", () => {
     expect(isMissingScopeRefusal(refused)).toBe(true);
     expect(
       isMissingScopeRefusal(
@@ -137,48 +92,75 @@ describe("readCoreWithScopeFallback (T3O-8)", () => {
     ).toBe(true);
     expect(
       isMissingScopeRefusal(
+        new GraphQLClientError.GraphQLClientError({
+          operation: "PullRequestSummary",
+          reason: new GraphQLClientError.ResponseError({
+            errors: [{ message: "x", type: "INSUFFICIENT_SCOPES" }],
+            status: 200,
+          }),
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isMissingScopeRefusal(
         new GitHubApiResponseError({ host: "github.com", operation: "x", status: 502 }),
+      ),
+    ).toBe(false);
+    // An HTTP 403 is not GraphQL refusing one field.
+    expect(
+      isMissingScopeRefusal(
+        new GitHubApiResponseError({
+          host: "github.com",
+          operation: "x",
+          status: 403,
+          githubErrors: ["Resource not accessible by integration"],
+        }),
       ),
     ).toBe(false);
   });
 
+  const reads = (outcome: (attempt: string) => Effect.Effect<string, GitHubApiResponseError>) => ({
+    full: () => outcome("full"),
+    withoutReviewers: () => outcome("withoutReviewers"),
+    withoutReviewersOrChecks: () => outcome("withoutReviewersOrChecks"),
+  });
+  const finish = (read: Effect.Effect<string, GitHubApiResponseError>) =>
+    read.pipe(Effect.map((attempt) => ({ attempt })));
+
   effectIt.effect("gives up reviewers first, then checks, and marks unread checks", () => {
     const asked: Array<string> = [];
-    const read = (fields: string) =>
+    const outcome = (attempt: string) =>
       Effect.suspend(() => {
-        asked.push(fields);
-        return fields.includes("reviewRequests") || fields.includes("statusCheckRollup")
-          ? Effect.fail(refused)
-          : Effect.succeed({ mergeability: "mergeable" });
+        asked.push(attempt);
+        return attempt === "withoutReviewersOrChecks"
+          ? Effect.succeed(attempt)
+          : Effect.fail(refused);
       });
-    return readCoreWithScopeFallback(read).pipe(
+    return readCoreWithScopeFallback(reads(outcome), finish).pipe(
       Effect.map((core) => {
-        expect(asked).toEqual(["reviewRequests,statusCheckRollup", "statusCheckRollup", ""]);
-        expect(core).toEqual({ mergeability: "mergeable", checksUnread: true });
+        expect(asked).toEqual(["full", "withoutReviewers", "withoutReviewersOrChecks"]);
+        expect(core).toEqual({ attempt: "withoutReviewersOrChecks", checksUnread: true });
       }),
     );
   });
 
-  effectIt.effect("keeps the checks when only reviewers were refused", () => {
-    const read = (fields: string) =>
-      fields.includes("reviewRequests")
-        ? Effect.fail(refused)
-        : Effect.succeed({ mergeability: "mergeable" });
-    return readCoreWithScopeFallback(read).pipe(
-      Effect.map((core) => expect(core).toEqual({ mergeability: "mergeable" })),
-    );
-  });
+  effectIt.effect("keeps the checks when only reviewers were refused", () =>
+    readCoreWithScopeFallback(
+      reads((attempt) => (attempt === "full" ? Effect.fail(refused) : Effect.succeed(attempt))),
+      finish,
+    ).pipe(Effect.map((core) => expect(core).toEqual({ attempt: "withoutReviewers" }))),
+  );
 
   effectIt.effect("does not retry any other failure", () => {
     let attempts = 0;
-    const read = () =>
+    const outcome = () =>
       Effect.suspend(() => {
         attempts += 1;
         return Effect.fail(
           new GitHubApiResponseError({ host: "github.com", operation: "x", status: 502 }),
         );
       });
-    return Effect.flip(readCoreWithScopeFallback(read)).pipe(
+    return Effect.flip(readCoreWithScopeFallback(reads(outcome), finish)).pipe(
       Effect.map((error) => {
         expect(error._tag).toBe("GitHubApiResponseError");
         expect(attempts).toBe(1);

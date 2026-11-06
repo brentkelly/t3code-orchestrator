@@ -250,7 +250,6 @@ it.effect("a Merge click that readies a draft waits for its CI, even on an unarm
       assert.strictEqual(result.outcome, "refused");
       assert.strictEqual((yield* h.mergeAttempts).length, 0);
       assert.strictEqual(cardOf(yield* h.board)?.autoMergeHold?.classification, "soft");
-
       yield* TestClock.adjust(RUNG_ONE);
       yield* h.reactor.drain;
       assert.strictEqual((yield* h.mergeAttempts).length, 1);
@@ -272,8 +271,8 @@ it.effect("a Merge click soon after arrival readied the draft still waits for it
       assert.strictEqual(result.outcome, "refused");
       assert.strictEqual((yield* h.mergeAttempts).length, 0);
       assert.strictEqual(cardOf(yield* h.board)?.autoMergeHold?.classification, "soft");
-
-      yield* TestClock.adjust(RUNG_ONE);
+      // Clicked 20s in, the rung ends by 4m20s; the next 30s sweep tick is 4m30s.
+      yield* TestClock.adjust(Duration.sum(RUNG_ONE, Duration.seconds(10)));
       yield* h.reactor.drain;
       assert.strictEqual((yield* h.mergeAttempts).length, 1);
       assert.strictEqual(String(cardOf(yield* h.board)?.stage), DONE);

@@ -1,6 +1,6 @@
 import { View } from "react-native";
 
-import { SegmentedControl } from "../../components/SegmentedControl";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import type { HomeMode } from "./boardHomeMode";
 
 export function HomeModeBar(props: {

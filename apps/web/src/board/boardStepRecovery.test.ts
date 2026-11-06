@@ -12,7 +12,8 @@ import {
   resolveBoardStepRecovery,
 } from "./boardStepRecovery";
 
-const stages = BOARD_SEED_STAGES;
+// The global pipeline: CI only joins a project's (T3O-44).
+const stages = BOARD_SEED_STAGES.filter((stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.ci);
 
 describe("resolveBoardStepRecovery", () => {
   it("offers Continue first, then Restart and the next stage, for a stalled review", () => {
@@ -33,6 +34,22 @@ describe("resolveBoardStepRecovery", () => {
         disabledReason: null,
       },
     });
+  });
+
+  it("in a CI project, moves a stalled review into CI and offers no move out of a live entry", () => {
+    const withCi = BOARD_SEED_STAGES;
+    const base = { stages: withCi, stalled: true, archived: false, blocked: false };
+    expect(resolveBoardStepRecovery({ ...base, stage: BOARD_SEED_STAGE_IDS.review })?.next).toEqual(
+      {
+        label: "Move to Continuous integration",
+        toStage: BOARD_SEED_STAGE_IDS.ci,
+        disabledReason: null,
+      },
+    );
+    expect(
+      resolveBoardStepRecovery({ ...base, stage: BOARD_SEED_STAGE_IDS.ci, ciEntryLive: true })
+        ?.next,
+    ).toBeNull();
   });
 
   it("is not offered when nothing has stalled, or on an archived card", () => {
@@ -57,6 +74,19 @@ describe("resolveBoardStepRecovery", () => {
     expect(recovery?.continueLabel).toBe("Continue building");
     expect(recovery?.restartLabel).toBe("Restart building");
     expect(recovery?.next?.toStage).toBe(BOARD_SEED_STAGE_IDS.review);
+  });
+
+  it("offers no hand move on a group card, whose stage its children drive (T3O-37)", () => {
+    const recovery = resolveBoardStepRecovery({
+      stages,
+      stage: BOARD_SEED_STAGE_IDS.review,
+      stalled: true,
+      archived: false,
+      blocked: false,
+      handMoves: false,
+    });
+    expect(recovery?.restartLabel).toBe("Restart code review");
+    expect(recovery?.next).toBeNull();
   });
 
   it("keeps the next stage visible but disabled while dependencies block the card", () => {

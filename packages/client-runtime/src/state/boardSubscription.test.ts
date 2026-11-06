@@ -6,6 +6,7 @@ import {
   BOARD_WS_METHODS,
   BoardCardId,
   BoardLabelId,
+  EMPTY_BOARD_WORKERS_STATE,
   EnvironmentId,
   ThreadId,
   type BoardLabel,
@@ -48,7 +49,6 @@ const SNAPSHOT: BoardShellSnapshot = {
   labels: [label("label-1", "Bug")],
   stages: [],
   cardThreads: [],
-  providerLimits: [],
 };
 
 const labelUpserted = (sequence: number, name: string): BoardShellStreamItem => ({
@@ -81,6 +81,16 @@ describe("applyBoardShellStreamItem", () => {
       threads: [{ cardId: BoardCardId.make("card-1"), threadId: ThreadId.make("thread-1") }],
     });
     expect(next?.cardThreads.map((entry) => entry.threadId)).toEqual(["thread-1"]);
+    expect(next?.snapshotSequence).toBe(10);
+  });
+
+  it("always applies the worker summary, a fresh read, without moving the cursor", () => {
+    const state = {
+      ...EMPTY_BOARD_WORKERS_STATE,
+      defaultWorkerId: EnvironmentId.make("env-worker"),
+    };
+    const next = applyBoardShellStreamItem(SNAPSHOT, { kind: "workers", sequence: 3, state });
+    expect(next?.workers).toBe(state);
     expect(next?.snapshotSequence).toBe(10);
   });
 
@@ -124,6 +134,7 @@ const boardSession = (
     subscribeServerConfig: () => Stream.empty as never,
     ready: Effect.void,
     probe: Effect.void,
+    inboundFrames: Effect.succeed(0),
     closed: Effect.never,
   };
 };

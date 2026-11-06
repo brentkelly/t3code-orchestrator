@@ -22,17 +22,19 @@ import {
   BoardLabelId,
   assignBoardKeyPrefix,
   boardStagesInOrder,
-  isBoardDependencyInScope,
   isBoardStageAtOrAfterSubBoardFloor,
   resolveBoardStageExecution,
   type BoardCardShell,
   type BoardStageDefinition,
   type BoardStageId,
   type BoardState,
+  type BoardWorkerId,
   type EnvironmentId,
   type ProjectIconOverride,
   type ProjectId,
+  boardShellAncestorIds,
 } from "@t3tools/contracts";
+import { boardCardPipelineStages } from "./boardProjectPipelines";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
@@ -54,7 +56,6 @@ import { cn, randomUUID } from "../lib/utils";
 import { boardEnvironment, environmentBoard } from "../state/board";
 import { useEnvironment } from "../state/environments";
 import { environmentShell } from "../state/shell";
-import { usePrimarySettings, useUpdatePrimarySettings } from "../hooks/useSettings";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
@@ -84,11 +85,19 @@ import {
 } from "./boardCardDraftStore";
 import { boardCardCreateShortcutLabel, isBoardCardCreateShortcut } from "./boardCardCreateShortcut";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
+import { BoardWorkerPicker } from "./workers/BoardWorkerPicker";
+import {
+  boardWorkerCheckoutWarning,
+  boardWorkerFieldLabel,
+  boardWorkerLabel,
+} from "./workers/cardWorker";
+import { useBoardWorkerChoices } from "./workers/useBoardWorkerChoices";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import { BoardLabelField } from "./BoardLabelField";
 import { boardStageLabel } from "./boardStages";
 import { describeBoardCommandFailure } from "./boardCommandFeedback";
 import { projectAccent, projectIconColorOf } from "./projectAccent";
+import { useBoardSettings, useUpdateBoardSettings } from "./useBoardEnvironmentId";
 
 /** A `BoardState` view over a bare stage list, so the read-model stage helpers
     apply. */
@@ -129,10 +138,12 @@ export function BoardCardCreateDialog({
 }) {
   const catalogue = useAtomValue(boardEnvironment.labelCatalogueAtom(environmentId));
   const stageList = useAtomValue(boardEnvironment.stageListAtom(environmentId));
-  const stages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
+  const allStages = stageList.length > 0 ? stageList : BOARD_SEED_STAGES;
+  // T3O-43: the picker offers the chosen project's own pipeline.
+  const projectStageConfigs = useAtomValue(boardEnvironment.projectStageConfigsAtom(environmentId));
   const shellState = useAtomValue(environmentShell.stateValueAtom(environmentId));
-  const boardSettings = usePrimarySettings((settings) => settings.board);
-  const updateSettings = useUpdatePrimarySettings();
+  const boardSettings = useBoardSettings((settings) => settings.board);
+  const updateSettings = useUpdateBoardSettings();
   const createCard = useAtomCommand(boardEnvironment.createCard);
   // Attach failures after a successful create are reported in the dialog's
   // own feedback line, not the global toast.
@@ -163,9 +174,26 @@ export function BoardCardCreateDialog({
 
   const initialProjectId = defaultProjectId ?? projects[0]?.id ?? null;
   const [projectId, setProjectId] = useState<ProjectId | null>(initialProjectId);
+  const stages = useMemo(
+    () =>
+      projectId === null
+        ? allStages
+        : boardCardPipelineStages(
+            { stages: allStages, projectStageConfigs },
+            { stage: "", projectId },
+          ),
+    [allStages, projectId, projectStageConfigs],
+  );
+  const projectExecutionConfig =
+    projectId === null ? null : (projectStageConfigs[projectId] ?? null);
   // The card's base branch (T3O-5, D13): null follows the chosen project's
   // default, which is what the picker reads until someone changes it.
   const [baseBranch, setBaseBranch] = useState<string | null>(null);
+  // The worker the card is pinned to (T3O-65, D20); null follows the default.
+  // Not part of the stored draft: a pin is a choice about the board as it is
+  // now, and a worker can be gone by the time a draft is reopened.
+  const [pinnedWorkerId, setPinnedWorkerId] = useState<BoardWorkerId | null>(null);
+  const workerField = useBoardWorkerChoices(environmentId, projectId);
   /** The card's scheduled start (T3O-19), null until the clock is touched. */
   const [scheduledStartAt, setScheduledStartAt] = useState<string | null>(null);
   const [stage, setStage] = useState<BoardStageId>(defaultStage);
@@ -179,10 +207,7 @@ export function BoardCardCreateDialog({
   // Dependencies may cross projects (T3O-33, D3): `dependsOn` stores card ids
   // and the decider has never enforced a same-project rule, so a card that
   // changes project inherits cross-project edges — a state the picker should be
-  // able to create too. Foreign options carry their project's dot. A child's
-  // picker is scoped to its level (t3o-25, T3O-10): a child sees only its
-  // siblings, a top-level card only other top-level cards — the decider
-  // refuses anything else.
+  // able to create too. Foreign options carry their project's dot.
   const dependencyOptions = useMemo(() => {
     const projectTitleById = new Map(
       projects.map((project) => [String(project.id), project.title]),
@@ -191,14 +216,13 @@ export function BoardCardCreateDialog({
     const projectById = new Map(
       (snapshot?.projects ?? []).map((project) => [String(project.id), project]),
     );
+    // Dependencies cross groups (T3O-27); only the new card's own ancestry is
+    // refused, so its group and that group's ancestors are not offered.
+    const ancestors = boardShellAncestorIds(allCards, subBoardParentId ?? null);
     return allCards
       .filter(
         (card) =>
-          !dependsOn.includes(card.cardId as BoardCardId) &&
-          isBoardDependencyInScope({
-            dependentParentCardId: subBoardParentId,
-            dependencyParentCardId: card.parentCardId,
-          }),
+          !dependsOn.includes(card.cardId as BoardCardId) && !ancestors.has(String(card.cardId)),
       )
       .map((card) => ({
         id: card.cardId,
@@ -278,6 +302,7 @@ export function BoardCardCreateDialog({
   const resetFields = useCallback(() => {
     setProjectId(defaultProjectId ?? projects[0]?.id ?? null);
     setBaseBranch(null);
+    setPinnedWorkerId(null);
     setScheduledStartAt(null);
     setStage(defaultStage);
     setTitle("");
@@ -363,6 +388,7 @@ export function BoardCardCreateDialog({
         const fields = restoration.fields;
         setProjectId(fields.projectId);
         setBaseBranch(fields.baseBranch);
+        setPinnedWorkerId(null);
         setScheduledStartAt(fields.scheduledStartAt);
         setStage(fields.stage);
         setTitle(fields.title);
@@ -479,6 +505,9 @@ export function BoardCardCreateDialog({
         // (T3O-5, D12/D16): "no opinion" and "pinned to whatever main is
         // called today" must not collapse into the same stored value.
         ...(baseBranch === null ? {} : { baseBranch }),
+        // The worker pin (T3O-65): absent follows the default — and a child
+        // created here then copies its parent's pin.
+        ...(pinnedWorkerId === null ? {} : { pinnedWorkerId }),
         // The scheduled start (T3O-19, D14). Absent when the clock was never
         // touched, which is nearly every card — and the reason the field is
         // key-optional on the command rather than a nullable one.
@@ -588,7 +617,7 @@ export function BoardCardCreateDialog({
         </div>
         {/* A card may be created into any stage (D10); warn when the chosen
             stage auto-executes, since creating there starts an agent. */}
-        {resolveBoardStageExecution(boardSettings, stage).autoExecute ? (
+        {resolveBoardStageExecution(boardSettings, stage, projectExecutionConfig).autoExecute ? (
           <p className="mx-4 mt-2 rounded-md bg-warning/10 px-2.5 py-1.5 text-[12px] text-warning-foreground">
             {boardStageLabel(stages, stage)} runs automatically — creating here starts an agent.
           </p>
@@ -642,6 +671,9 @@ export function BoardCardCreateDialog({
                   // the old project's checkout says nothing about the new one,
                   // so it goes back to that project's default.
                   setBaseBranch(null);
+                  // So does the worker pin (T3O-65): a worker chosen for the
+                  // old project may have no checkout of the new one.
+                  setPinnedWorkerId(null);
                 }}
                 value={projectId ?? ""}
               >
@@ -694,7 +726,42 @@ export function BoardCardCreateDialog({
                 />
               </div>
             ) : null}
+
+            {workerField.shown ? (
+              // Where the card runs (T3O-65, prototype 4.1). Only once a second
+              // worker exists.
+              <div className="min-w-0 flex-1">
+                <BoardSectionHeading className="mb-[7px]">
+                  Worker{" "}
+                  <span className="font-normal text-muted-foreground normal-case">
+                    where this card runs
+                  </span>
+                </BoardSectionHeading>
+                <BoardWorkerPicker
+                  choices={workerField.choices}
+                  className="h-8 w-full"
+                  followLabel={`Follow default — ${boardWorkerLabel(workerField.workers.defaultWorkerId, workerField.workers)}`}
+                  onSelect={setPinnedWorkerId}
+                  onSetUp={workerField.setUp}
+                  pinnedWorkerId={pinnedWorkerId}
+                  value={boardWorkerFieldLabel(pinnedWorkerId, workerField.workers)}
+                />
+              </div>
+            ) : null}
           </div>
+          {workerField.shown
+            ? (() => {
+                const warning = boardWorkerCheckoutWarning({
+                  state: workerField.workers,
+                  pinnedWorkerId,
+                  projectRepositoryKey: workerField.projectRepositoryKey,
+                  projectName: workerField.projectName,
+                });
+                return warning === null ? null : (
+                  <p className="-mt-2 text-[12px] text-warning-foreground">{warning}</p>
+                );
+              })()
+            : null}
 
           {/* Title and Label share a row (T3O-31). Title comes FIRST and holds
               autofocus: the label control used to be the dialog's first text

@@ -83,6 +83,10 @@ describe("resolvePairExitTarget", () => {
     expect(resolvePairExitTarget("hosted-static")).toBe("/");
   });
 
+  it("sends a guest-link session where upstream does, never to the board", () => {
+    expect(resolvePairExitTarget("guest")).toBe("/");
+  });
+
   it("rejects a status outside the union at compile time", () => {
     // The real guard against an upstream status rename is the type, not a
     // runtime branch: a renamed status must stop compiling at the seam rather

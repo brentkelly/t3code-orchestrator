@@ -16,6 +16,7 @@
  */
 import {
   BOARD_CARD_BRIEF_BODY_KIND,
+  boardSplitChildPlanCopy,
   BoardCardArchivedPayload,
   boardCardCreatedDependsOn,
   boardCardCreatedLabels,
@@ -35,6 +36,7 @@ import {
   BoardCardWorktreeReadyPayload,
   BoardCardWorktreeReclaimedPayload,
   BoardCardAutoMergeHoldRecordedPayload,
+  BoardCardCiRecordedPayload,
   BoardCardPullRequestRecordedPayload,
   BoardCardStepSelectedPayload,
   BoardCardStepAdmittedPayload,
@@ -46,8 +48,14 @@ import {
   BoardCardStepRetunedPayload,
   BoardCardStepSteeredPayload,
   BoardCardStepCheckedInPayload,
-  BoardProviderLimitRecordedPayload,
-  BoardProviderLimitClearedPayload,
+  BoardDefaultWorkerSetPayload,
+  BoardWorkerRegisteredPayload,
+  BoardWorkerRemovedPayload,
+  BOARD_LOCAL_WORKER_ID,
+  compareBoardWorkers,
+  type BoardWorker,
+  type BoardWorkerId,
+  type EnvironmentId,
   BoardCardStageThreadRequestedPayload,
   BoardCardUpdatedPayload,
   boardBriefHasImage,
@@ -59,14 +67,23 @@ import {
   BoardLabelUpdatedPayload,
   BoardPlansApprovedPayload,
   BoardPlansProposedPayload,
+  BoardPlanReviewStartedPayload,
+  BoardPlanReviewStoppedPayload,
+  BoardPlanReviewRoundsChangedPayload,
   BoardCardBaseRefRecordedPayload,
+  BoardCardPlacedPayload,
+  BoardCardWorkerMoveRecordedPayload,
+  BoardCardWorkerPinnedPayload,
+  BoardCardWorkerRemovalPayload,
   BoardCardIntegrationBranchRecordedPayload,
   BoardPlanWrittenPayload,
   BoardStageCreatedPayload,
   BoardStageDeletedPayload,
+  BoardProjectStageConfigSetPayload,
+  type BoardProjectStageConfig,
   BoardStageRenamedPayload,
   BoardStageReorderedPayload,
-  boardStages,
+  boardAllStages,
   boardStepParkedReason,
   compareBoardLabels,
   compareBoardStages,
@@ -77,8 +94,6 @@ import {
   type BoardCard,
   type BoardCardId,
   type BoardCardStepState,
-  type BoardProviderLimit,
-  type ProviderInstanceId,
   type BoardLabel,
   type BoardPlan,
   type BoardStageDefinition,
@@ -128,10 +143,27 @@ const decodeBoardCardStepCompletedPayload = Schema.decodeUnknownEffect(
   BoardCardStepCompletedPayload,
 );
 const decodeBoardPlansProposedPayload = Schema.decodeUnknownEffect(BoardPlansProposedPayload);
+const decodeBoardPlanReviewStartedPayload = Schema.decodeUnknownEffect(
+  BoardPlanReviewStartedPayload,
+);
+const decodeBoardPlanReviewStoppedPayload = Schema.decodeUnknownEffect(
+  BoardPlanReviewStoppedPayload,
+);
+const decodeBoardPlanReviewRoundsChangedPayload = Schema.decodeUnknownEffect(
+  BoardPlanReviewRoundsChangedPayload,
+);
 const decodeBoardPlanWrittenPayload = Schema.decodeUnknownEffect(BoardPlanWrittenPayload);
 const decodeBoardPlansApprovedPayload = Schema.decodeUnknownEffect(BoardPlansApprovedPayload);
 const decodeBoardCardIntegrationBranchRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardIntegrationBranchRecordedPayload,
+);
+const decodeBoardCardWorkerPinnedPayload = Schema.decodeUnknownEffect(BoardCardWorkerPinnedPayload);
+const decodeBoardCardPlacedPayload = Schema.decodeUnknownEffect(BoardCardPlacedPayload);
+const decodeBoardCardWorkerMoveRecordedPayload = Schema.decodeUnknownEffect(
+  BoardCardWorkerMoveRecordedPayload,
+);
+const decodeBoardCardWorkerRemovalPayload = Schema.decodeUnknownEffect(
+  BoardCardWorkerRemovalPayload,
 );
 const decodeBoardCardBaseRefRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardBaseRefRecordedPayload,
@@ -151,6 +183,7 @@ const decodeBoardCardWorktreeReclaimedPayload = Schema.decodeUnknownEffect(
 const decodeBoardCardPullRequestRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardPullRequestRecordedPayload,
 );
+const decodeBoardCardCiRecordedPayload = Schema.decodeUnknownEffect(BoardCardCiRecordedPayload);
 const decodeBoardCardAutoMergeHoldRecordedPayload = Schema.decodeUnknownEffect(
   BoardCardAutoMergeHoldRecordedPayload,
 );
@@ -158,6 +191,9 @@ const decodeBoardStageCreatedPayload = Schema.decodeUnknownEffect(BoardStageCrea
 const decodeBoardStageRenamedPayload = Schema.decodeUnknownEffect(BoardStageRenamedPayload);
 const decodeBoardStageReorderedPayload = Schema.decodeUnknownEffect(BoardStageReorderedPayload);
 const decodeBoardStageDeletedPayload = Schema.decodeUnknownEffect(BoardStageDeletedPayload);
+const decodeBoardProjectStageConfigSetPayload = Schema.decodeUnknownEffect(
+  BoardProjectStageConfigSetPayload,
+);
 const decodeBoardCardStageThreadRequestedPayload = Schema.decodeUnknownEffect(
   BoardCardStageThreadRequestedPayload,
 );
@@ -179,12 +215,9 @@ const decodeBoardCardStepSteeredPayload = Schema.decodeUnknownEffect(BoardCardSt
 const decodeBoardCardStepCheckedInPayload = Schema.decodeUnknownEffect(
   BoardCardStepCheckedInPayload,
 );
-const decodeBoardProviderLimitRecordedPayload = Schema.decodeUnknownEffect(
-  BoardProviderLimitRecordedPayload,
-);
-const decodeBoardProviderLimitClearedPayload = Schema.decodeUnknownEffect(
-  BoardProviderLimitClearedPayload,
-);
+const decodeBoardWorkerRegisteredPayload = Schema.decodeUnknownEffect(BoardWorkerRegisteredPayload);
+const decodeBoardWorkerRemovedPayload = Schema.decodeUnknownEffect(BoardWorkerRemovedPayload);
+const decodeBoardDefaultWorkerSetPayload = Schema.decodeUnknownEffect(BoardDefaultWorkerSetPayload);
 
 // Canonical card order: (createdAt, id), needed because createdAt is
 // client-supplied, so dispatch order ≠ createdAt order in general. Compared
@@ -232,6 +265,8 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // approve decider emits; absent on every other create.
     parentCardId: payload.parentCardId ?? null,
     sourcePlanId: payload.sourcePlanId ?? null,
+    // A heading is born a group (T3O-27); every other card is born a leaf.
+    group: payload.group ?? null,
     threadLinks: [],
     attachments: [],
     externalRef: null,
@@ -254,12 +289,23 @@ export function boardCardFromCreatedPayload(payload: BoardCardCreatedPayload): B
     // the same way: absent — every legacy event and every card created without
     // a time — is null, which is "start as soon as the pipeline reaches it".
     scheduledStartAt: payload.scheduledStartAt ?? null,
+    // The worker pin (T3O-65, D20) rides the flat created payload the same
+    // way: absent — every legacy event and every card that follows the
+    // default — is null. Nothing has spawned, so nothing is placed or moving.
+    pinnedWorkerId: payload.pinnedWorkerId ?? null,
+    mergeStrategy: payload.mergeStrategy ?? null,
+    placedWorkerId: null,
+    workerMove: null,
+    placementOrphaned: null,
+    ci: null,
+    ciLastOutcome: null,
     // A card is never born armed (T3O-24, D2): the arm is a human delegating
     // the D18 build gate on a card they can already see waiting, and there is
     // no create-command field to set it with. Nor born auto-merging (T3O-38,
     // D3), for the same reason — and with nothing merged, nothing held.
-    autoStart: false,
-    autoMerge: false,
+    autoPlanSetting: null,
+    autoBuildSetting: null,
+    autoMergeSetting: null,
     autoMergeHold: null,
     // A created card never has a worktree: it is provisioned lazily on its
     // first `build`-mode stage entry (D5/D6), never at birth.
@@ -351,7 +397,7 @@ function upsertLabel<M extends BoardReadModel>(model: M, label: BoardLabel): M {
     slice in canonical `compareBoardStages` order so replay equals rehydration. */
 function upsertStage<M extends BoardReadModel>(model: M, stage: BoardStageDefinition): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
-  const current = boardStages(board);
+  const current = boardAllStages(board);
   const stages = (
     current.some((existing) => existing.stageId === stage.stageId)
       ? current.map((existing) => (existing.stageId === stage.stageId ? stage : existing))
@@ -366,8 +412,28 @@ function removeStage<M extends BoardReadModel>(
   stageId: BoardStageDefinition["stageId"],
 ): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
-  const stages = boardStages(board).filter((stage) => stage.stageId !== stageId);
+  const stages = boardAllStages(board).filter((stage) => stage.stageId !== stageId);
   return { ...model, board: { ...board, stages } };
+}
+
+/** Record a project's `t3o.json` stage config (T3O-43): the config itself,
+    in project-id order so replay equals rehydration, and the project-owned
+    stage rows it wrote and dropped. */
+function setProjectStageConfig<M extends BoardReadModel>(
+  model: M,
+  payload: BoardProjectStageConfigSetPayload,
+): M {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const configs = { ...board.projectStageConfigs, [payload.projectId]: payload.config };
+  const projectStageConfigs = Object.fromEntries(
+    Object.entries(configs).toSorted(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    ),
+  ) as Record<ProjectId, BoardProjectStageConfig>;
+  let next: M = { ...model, board: { ...board, projectStageConfigs } };
+  for (const stage of payload.upserts) next = upsertStage(next, stage);
+  for (const stageId of payload.deletedStageIds) next = removeStage(next, stageId);
+  return next;
 }
 
 /** Counter bump: monotonic max, so replaying a legacy event (cardNumber 0)
@@ -464,69 +530,46 @@ function checksFixShellField(state: Parameters<typeof isBoardChecksFixLive>[0]):
   return isBoardChecksFixLive(state) ? { stepChecksFix: true } : {};
 }
 
-/** The three step-derived stall fields the `card-stalled` delta carries
-    (T3O-22, D10/D14), spread whole or not at all: a step that is not stalled
-    omits every one of them, and their ABSENCE on this delta is what clears the
-    card's chip. `limitedByInstanceId` rides only beside a `usage-limit` reason,
-    so an ordinary stall costs no extra bytes. */
+/** The two step-derived stall fields the `card-stalled` delta carries
+    (T3O-22, D10), spread whole or not at all: a step that is not stalled
+    omits both, and their ABSENCE on this delta is what clears the card's
+    chip. */
 function stallShellFields(state: BoardCardStepState) {
   if (state.status !== "stalled") return {};
   return {
     stalledReason: state.stalledReason,
     ...(state.retryAt === null ? {} : { retryAt: state.retryAt }),
-    ...(state.stalledReason === "usage-limit"
-      ? { limitedByInstanceId: state.providerInstanceId }
-      : {}),
   };
 }
 
-/** Canonical provider-cooldown order (T3O-22): by provider instance id, one
-    record per instance. Applied on both sides of replay-equals-rehydration,
-    like every other board slice. */
-export function compareBoardProviderLimits(
-  left: BoardProviderLimit,
-  right: BoardProviderLimit,
-): number {
-  return compareStrings(left.providerInstanceId, right.providerInstanceId);
+/** Add or replace one registered worker (T3O-62), in `compareBoardWorkers`
+    order on both sides of replay-equals-rehydration. */
+function upsertWorker<M extends BoardReadModel>(model: M, worker: BoardWorker): M {
+  const board = model.board ?? EMPTY_BOARD_STATE;
+  const workers = [
+    ...(board.workers ?? []).filter((existing) => existing.id !== worker.id),
+    worker,
+  ].toSorted(compareBoardWorkers);
+  return { ...model, board: { ...board, workers } };
 }
 
-/** Upsert a card's live step state by cardId (t3o-10). One record per card,
-    so a new state for a card replaces its prior one — selecting the next step
-    of a multi-step recipe overwrites the previous step's terminal record. */
-/** Replace (or add) one provider cooldown (T3O-22). Keyed on the provider
-    instance, kept in a stable order so a from-empty replay and a table
-    rehydration produce the same array. */
-function upsertProviderLimit<M extends BoardReadModel>(model: M, limit: BoardProviderLimit): M {
+/** Drop one worker. The slice goes when the last one does, so a board whose
+    workers were all removed decodes exactly as one that never had any. */
+function removeWorker<M extends BoardReadModel>(model: M, workerId: EnvironmentId): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
-  const current = board.providerLimits ?? [];
-  const exists = current.some(
-    (existing) => existing.providerInstanceId === limit.providerInstanceId,
-  );
-  const providerLimits = (
-    exists
-      ? current.map((existing) =>
-          existing.providerInstanceId === limit.providerInstanceId ? limit : existing,
-        )
-      : [...current, limit]
-  ).toSorted(compareBoardProviderLimits);
-  return { ...model, board: { ...board, providerLimits } };
+  const remaining = (board.workers ?? []).filter((existing) => existing.id !== workerId);
+  const { workers: _dropped, ...rest } = board;
+  return { ...model, board: remaining.length === 0 ? rest : { ...board, workers: remaining } };
 }
 
-/** Lift one provider cooldown. The slice is dropped entirely when the last one
-    goes, so a board that has recovered decodes exactly as one that never hit a
-    limit — the same absent-vs-empty rule every other board slice follows. */
-function clearProviderLimit<M extends BoardReadModel>(
-  model: M,
-  providerInstanceId: ProviderInstanceId,
-): M {
+/** Record the default worker. `local` is the absent default, so choosing it
+    again drops the field rather than storing the value that absence means. */
+function setDefaultWorker<M extends BoardReadModel>(model: M, workerId: BoardWorkerId): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
-  const remaining = (board.providerLimits ?? []).filter(
-    (existing) => existing.providerInstanceId !== providerInstanceId,
-  );
-  const { providerLimits: _dropped, ...rest } = board;
+  const { defaultWorkerId: _dropped, ...rest } = board;
   return {
     ...model,
-    board: remaining.length === 0 ? rest : { ...board, providerLimits: remaining },
+    board: workerId === BOARD_LOCAL_WORKER_ID ? rest : { ...board, defaultWorkerId: workerId },
   };
 }
 
@@ -550,6 +593,7 @@ function setCardSplitRationale<M extends BoardReadModel>(
   model: M,
   cardId: BoardCardId,
   splitRationale: BoardCard["splitRationale"],
+  splitRecommendation: BoardCard["splitRecommendation"],
 ): M {
   const board = model.board ?? EMPTY_BOARD_STATE;
   if (!board.cards.some((card) => card.id === cardId)) return model;
@@ -557,7 +601,15 @@ function setCardSplitRationale<M extends BoardReadModel>(
     ...model,
     board: {
       ...board,
-      cards: board.cards.map((card) => (card.id === cardId ? { ...card, splitRationale } : card)),
+      cards: board.cards.map((card) => {
+        if (card.id !== cardId) return card;
+        const { splitRecommendation: _prior, ...rest } = card;
+        return {
+          ...rest,
+          splitRationale,
+          ...(splitRecommendation === undefined ? {} : { splitRecommendation }),
+        };
+      }),
     },
   };
 }
@@ -595,9 +647,19 @@ export function projectBoardEvent<M extends BoardReadModel>(
     case "board.card-created":
       return decodeBoardCardCreatedPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
-        Effect.map((payload) =>
-          bumpNextCardNumber(upsertCard(model, boardCardFromCreatedPayload(payload)), payload),
-        ),
+        Effect.map((payload) => {
+          const card = boardCardFromCreatedPayload(payload);
+          const next = bumpNextCardNumber(upsertCard(model, card), payload);
+          // A split child owns a copy of its plan (T3O-27), mirroring the SQL
+          // projection's row.
+          const source =
+            payload.briefFromPlanId === undefined || payload.briefOnly === true
+              ? undefined
+              : next.board?.plans?.find((plan) => plan.planId === payload.briefFromPlanId);
+          return source === undefined
+            ? next
+            : upsertPlan(next, boardSplitChildPlanCopy(source, card));
+        }),
       );
 
     case "board.card-moved":
@@ -719,7 +781,12 @@ export function projectBoardEvent<M extends BoardReadModel>(
           // carries the card id and the plans, never the card itself. Applied
           // BEFORE the plans so an unknown card id is a no-op on both.
           replaceCardPlans(
-            setCardSplitRationale(model, payload.cardId, payload.splitRationale),
+            setCardSplitRationale(
+              model,
+              payload.cardId,
+              payload.splitRationale,
+              payload.splitRecommendation,
+            ),
             payload.cardId,
             // Strip the body — read model holds metadata only (D8).
             payload.plans.map(({ body: _body, ...plan }) => plan),
@@ -751,6 +818,31 @@ export function projectBoardEvent<M extends BoardReadModel>(
 
     case "board.card-base-ref-recorded":
       return decodeBoardCardBaseRefRecordedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    // Placement (T3O-65): each carries the whole post-change card.
+    case "board.card-worker-pinned":
+      return decodeBoardCardWorkerPinnedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-placed":
+      return decodeBoardCardPlacedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-worker-move-recorded":
+      return decodeBoardCardWorkerMoveRecordedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
+    case "board.card-worker-removal":
+      return decodeBoardCardWorkerRemovalPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
@@ -794,10 +886,20 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => upsertCard(model, payload.card)),
       );
 
+    // CI (T3O-44): the card's compact CI state is on the aggregate; pass rows
+    // with their tails are table-only.
+    case "board.card-ci-recorded":
+      return decodeBoardCardCiRecordedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertCard(model, payload.card)),
+      );
+
     // Reporting only — it changes no card field, so the read model is
     // unchanged and a replay that includes it lands exactly where a replay
     // without it would.
     case "board.card-note-recorded":
+    // The decision log is table-only (T3O-32, D8).
+    case "board.card-decisions-recorded":
       return Effect.succeed(model);
 
     case "board.stage-created":
@@ -892,18 +994,49 @@ export function projectBoardEvent<M extends BoardReadModel>(
         Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
-    // T3o (T3O-22): the provider-cooldown slice. Keyed on the provider
-    // instance, so — unlike every case above — it touches no card at all.
-    case "board.provider-limit-recorded":
-      return decodeBoardProviderLimitRecordedPayload(event.payload).pipe(
+    // T3o: plan review (T3O-39). Starting writes the step state; stopping
+    // clears it, so turning review back on starts a fresh one.
+    case "board.plan-review-started":
+      return decodeBoardPlanReviewStartedPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
-        Effect.map((payload) => upsertProviderLimit(model, payload.limit)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
       );
 
-    case "board.provider-limit-cleared":
-      return decodeBoardProviderLimitClearedPayload(event.payload).pipe(
+    case "board.plan-review-stopped":
+      return decodeBoardPlanReviewStoppedPayload(event.payload).pipe(
         Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
-        Effect.map((payload) => clearProviderLimit(model, payload.providerInstanceId)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
+    case "board.plan-review-rounds-changed":
+      return decodeBoardPlanReviewRoundsChangedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertStepState(model, payload.state)),
+      );
+
+    // T3o (T3O-62): the worker registry. Touches no card.
+    case "board.worker-registered":
+      return decodeBoardWorkerRegisteredPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => upsertWorker(model, payload.worker)),
+      );
+
+    case "board.worker-removed":
+      return decodeBoardWorkerRemovedPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => removeWorker(model, payload.workerId)),
+      );
+
+    case "board.default-worker-set":
+      return decodeBoardDefaultWorkerSetPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => setDefaultWorker(model, payload.workerId)),
+      );
+
+    case "board.project-stage-config-set":
+      return decodeBoardProjectStageConfigSetPayload(event.payload).pipe(
+        Effect.mapError(toBoardProjectorDecodeError(`${event.type}:payload`)),
+        Effect.map((payload) => setProjectStageConfig(model, payload)),
       );
 
     default: {
@@ -994,6 +1127,15 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     // the card aggregate, so this delta carries the real values like any
     // other card field.
     case "board.card-auto-merge-hold-recorded":
+    // CI progress (T3O-44) is a shell field on the card aggregate.
+    case "board.card-ci-recorded":
+    // Placement (T3O-65): the bound worker and the move are shell fields on
+    // the card aggregate.
+    case "board.card-worker-pinned":
+    case "board.card-placed":
+    case "board.card-worker-move-recorded":
+    // T3O-66: Worker removed is a shell field on the card aggregate.
+    case "board.card-worker-removal":
       return Option.some({
         kind: "card-upserted",
         sequence: event.sequence,
@@ -1060,6 +1202,10 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
         // Admission also settles the durable "being worked" dot: held for a slot
         // (`queued`) means not running; admitted to running lights `stepRunning`.
         stepRunning: event.payload.state.status === "running",
+        // Which limit holds it (T3O-65), only beside `queued`.
+        ...(event.payload.state.status === "queued" && event.payload.state.queuedBy !== null
+          ? { queuedBy: event.payload.state.queuedBy }
+          : {}),
       });
 
     case "board.card-step-recovered":
@@ -1197,22 +1343,22 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
       }
       return Option.none();
 
-    // T3o (T3O-22, D14): the provider cooldown rides its own delta, following
-    // the label catalogue's precedent — ONE fact per provider account, never
-    // denormalised onto every card that shares it, so the top bar can say
-    // "Anthropic limit · 1:00 AM" with no card on screen.
-    case "board.provider-limit-recorded":
-      return Option.some({
-        kind: "card-provider-limit-upserted",
-        sequence: event.sequence,
-        limit: event.payload.limit,
-      });
+    // T3o (T3O-62): the worker summary mixes registry facts with runtime
+    // connection status, so it is not a pure function of one event. The board
+    // subscription re-sends the whole `workers` state instead.
+    case "board.worker-registered":
+    case "board.worker-removed":
+    case "board.default-worker-set":
+      return Option.none();
 
-    case "board.provider-limit-cleared":
+    case "board.project-stage-config-set":
       return Option.some({
-        kind: "card-provider-limit-cleared",
+        kind: "project-stage-config",
         sequence: event.sequence,
-        providerInstanceId: event.payload.providerInstanceId,
+        projectId: event.payload.projectId,
+        config: event.payload.config,
+        upserts: event.payload.upserts,
+        deletedStageIds: event.payload.deletedStageIds,
       });
 
     case "board.card-step-paused":
@@ -1295,9 +1441,14 @@ export function boardShellStreamEvent(event: BoardEvent): Option.Option<BoardShe
     // A background-wait check-in (T3O-20) leaves the step running on the same
     // thread; the card's "Waiting" label is thread-derived, not step-derived.
     case "board.card-step-checked-in":
+    // Plan review (T3O-39) is card detail: the sidebar and the rail show it.
+    case "board.plan-review-started":
+    case "board.plan-review-stopped":
+    case "board.plan-review-rounds-changed":
     // Branch cleanup is card DETAIL too: it lands on the activity rail, which
     // rides `board.subscribeCard`, and changes nothing a column card renders.
     case "board.card-note-recorded":
+    case "board.card-decisions-recorded":
       // Agent write-path events are card DETAIL, not column-card shell fields
       // (D7): an agent's progress note, a non-review step completion or a plan
       // BODY rewrite changes nothing a column card renders, so they emit no

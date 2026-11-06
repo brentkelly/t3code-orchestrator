@@ -4,17 +4,9 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
 /**
- * T3o (t3o-34, T3O-67): the server's own GitHub API calls honour gitenv.
- *
- * gitenv first reached only spawned processes (`gh`, `git`, agent sessions). Since v0.1.0, PR
- * reads and the merge go through `GitHubApi`'s HTTP transport, which resolves its token per
- * host and never saw the project. Board merges for a project with a gitenv entry then ran as
- * the machine's ambient account, and GitHub refused them.
- *
- * `T3oGitenvProject` carries the directory the current operation acts on. The providers set it
- * from each call's `cwd` (`t3oWithGitenvProject`), and `GitHubApi.credential` asks
- * `t3oGitenvCredential` before any ambient source. The order is: pinned credential, then
- * gitenv, then Settings token, `GH_TOKEN`, `gh auth token`.
+ * T3o (t3o-34, T3O-67): the directory the current GitHub API call acts on, set from each
+ * provider call's `cwd`. `GitHubRequestPolicy.credential` resolves pinned credential, then this
+ * project's gitenv token, then the ambient sources. See docs/t3o/gitenv.md.
  */
 export const T3oGitenvProject = Context.Reference<string | null>(
   "@t3tools/source-control-github/server/t3oGitenvCredential/T3oGitenvProject",
@@ -56,10 +48,10 @@ export const t3oInvalidateAmbientUnlessGitenv = <E, R>(
 
 /**
  * The gitenv project a batched read was asked under: the matched main checkout, or "" when no
- * entry applies. Lookups grouped into one request share one token, so this belongs in the group
- * key.
+ * entry applies. Lookups grouped into one request share one token, so this belongs in every
+ * batch key (`GitHubGraphQlClient.batchKey`, which all aliased GitHub reads use).
  */
-export const t3oGitenvBatchKey = (context: Context.Context<never>): string => {
+export const t3oGitenvBatchKey = <S>(context: Context.Context<S>): string => {
   const project = Context.getOrElse(context, T3oGitenvProject, () => null);
   return project === null ? "" : (gitenvToken(project)?.root ?? "");
 };

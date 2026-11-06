@@ -25,11 +25,11 @@ give you **upstream**, without the board. To run T3o you build it from this chec
 
 ### Download
 
-| Surface | Where |
-| ------- | ----- |
-| Android APK | [This repo's GitHub Releases](https://github.com/brentkelly/t3code-orchestrator/releases) — `t3o-*-debug.apk` prereleases (no keystore) and signed `t3o-*.apk` when secrets exist. See [docs/t3o/mobile.md](./docs/t3o/mobile.md). |
-| Web / Linux service | Build this checkout ([Install and build](#install-and-build)). |
-| Desktop | T3o desktop installers from this repo when published; upstream GitHub Releases are not T3o. |
+| Surface             | Where                                                                                                                                                                                                                              |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Android APK         | [This repo's GitHub Releases](https://github.com/brentkelly/t3code-orchestrator/releases) — `t3o-*-debug.apk` prereleases (no keystore) and signed `t3o-*.apk` when secrets exist. See [docs/t3o/mobile.md](./docs/t3o/mobile.md). |
+| Web / Linux service | Build this checkout ([Install and build](#install-and-build)).                                                                                                                                                                     |
+| Desktop             | T3o desktop installers from this repo when published; upstream GitHub Releases are not T3o.                                                                                                                                        |
 
 The Play Store and App Store **T3 Code** apps are upstream. They will not show the Board.
 
@@ -164,6 +164,16 @@ yay -S t3code-nightly-bin
 
 The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
 
+#### Nix (nixpkgs)
+
+```bash
+nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code
+```
+
+The package is maintained in [nixpkgs](https://github.com/NixOS/nixpkgs/tree/nixos-unstable/pkgs/by-name/t3/t3code)
+and includes the desktop app (`t3code-desktop`) and the `t3` command.
+See [Nix installation](./docs/user/install.md#nix-nixpkgs) for NixOS configuration and updates.
+
 ## Some notes
 
 We are very very early in this project. Expect bugs.
@@ -174,6 +184,7 @@ We are (mostly) not accepting contributions yet. Small fixes may be considered. 
 
 Full docs live in [docs/](./docs). There's no docs site yet.
 
+- [FAQ](./docs/user/faq.md)
 - [Install and first run](./docs/user/install.md)
 - [Permission modes](./docs/user/permission-modes.md)
 - [Keyboard shortcuts](./docs/user/keybindings.md)

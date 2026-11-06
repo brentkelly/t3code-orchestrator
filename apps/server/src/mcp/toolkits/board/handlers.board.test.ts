@@ -11,6 +11,7 @@
  */
 import {
   BoardCardAttachmentId,
+  BoardLabelColour,
   BoardCardId,
   boardPlanId,
   BoardStageId,
@@ -24,8 +25,11 @@ import {
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { ServerConfig } from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -153,6 +157,14 @@ const scopeFor = (threadId: ThreadId): McpInvocationScope => ({
 
 const withScope = (threadId: ThreadId) =>
   Effect.provideService(McpInvocationContext.McpInvocationContext, scopeFor(threadId));
+
+const withSubagentScope = (threadId: ThreadId) => {
+  const scope = scopeFor(threadId);
+  return Effect.provideService(McpInvocationContext.McpInvocationContext, {
+    ...scope,
+    thread: { ...scope.thread!, subagent: true },
+  });
+};
 
 /** Create a project, a card, a real thread, and link the thread to the card,
     so a handler call from `linkedThread` resolves `card-1`. */
@@ -1241,6 +1253,39 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
     }),
   );
 
+  it.effect("board_propose_plans carries the Planned flags and the recommendation (T3O-31)", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* boardHandlers
+        .board_propose_plans({
+          plans: [
+            { key: "now", title: "Now", summary: "s", dependsOn: [], body: "plan" },
+            {
+              key: "later",
+              title: "Later",
+              summary: "s",
+              dependsOn: [],
+              body: "brief",
+              planned: false,
+            },
+          ],
+          splitRationale: "Now and later are separate deliveries, each worth its own review round.",
+          recommendedAutoBuild: true,
+          recommendedMergeTarget: "own",
+        })
+        .pipe(withScope(linkedThread));
+      const snapshotQuery = yield* boardStackSnapshotQuery;
+      const board = (yield* snapshotQuery.getCommandReadModel()).board;
+      const card = board?.cards.find((candidate) => candidate.id === cardId);
+      // Explicit advice wins over the fallback (which would say off, inherit).
+      assert.deepStrictEqual(card?.splitRecommendation, { autoBuild: true, mergeTarget: "own" });
+      assert.strictEqual(
+        board?.plans?.find((plan) => plan.planId === boardPlanId(cardId, "later"))?.planned,
+        false,
+      );
+    }),
+  );
+
   it.effect("board_propose_plans rejects a cycle from the handler, naming the edge", () =>
     Effect.gen(function* () {
       yield* seed();
@@ -1487,6 +1532,386 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       assert.strictEqual(failure.code, "rejected");
       assert.include(failure.message, "card-ghost");
     }),
+  );
+
+  // ── Grouping (T3O-27) ────────────────────────────────────────────────
+
+  const readCards = Effect.gen(function* () {
+    const snapshotQuery = yield* boardStackSnapshotQuery;
+    const model = yield* snapshotQuery.getCommandReadModel();
+    return model.board?.cards ?? [];
+  });
+
+  it.effect("refuses every regroup without approved: true, telling the agent to ask", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const a = yield* boardHandlers
+        .board_create_card({ projectId, title: "A", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const b = yield* boardHandlers
+        .board_create_card({ projectId, title: "B", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const refusals = [
+        yield* Effect.flip(
+          boardHandlers
+            .board_move_card({ cardId: b.cardId, parentCardId: a.key })
+            .pipe(withScope(orphanThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers.board_indent_cards({ cardIds: [b.key] }).pipe(withScope(orphanThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers
+            .board_outdent_cards({ cardIds: [b.key], approved: false })
+            .pipe(withScope(orphanThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers
+            .board_group_cards({ cardIds: [a.key, b.key], title: "Epic" })
+            .pipe(withScope(orphanThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers
+            .board_set_group_settings({ cardId: a.key, autoBuild: true })
+            .pipe(withScope(orphanThread)),
+        ),
+        // Creating under a leaf turns it into a group: the same regroup.
+        yield* Effect.flip(
+          boardHandlers
+            .board_create_card({ projectId, title: "Under A", parentCardId: a.key })
+            .pipe(withScope(orphanThread)),
+        ),
+      ];
+      for (const failure of refusals) {
+        assert.strictEqual(failure.code, "invalid-input");
+        assert.include(failure.message, "approved: true");
+        assert.include(failure.message, "ask them to confirm");
+      }
+      // Nothing moved, and nothing was created under A.
+      const cards = yield* readCards;
+      assert.isNull(cards.find((card) => card.id === b.cardId)?.parentCardId ?? null);
+      assert.isFalse(cards.some((card) => card.parentCardId === a.cardId));
+    }),
+  );
+
+  it.effect("refuses a regroup from an unattended run even with approved: true", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("unattended-regroup");
+      yield* startStep({ ...own, suffix: "unattended-regroup" });
+      const a = yield* boardHandlers
+        .board_create_card({ projectId, title: "A", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const b = yield* boardHandlers
+        .board_create_card({ projectId, title: "B", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_group_cards({ cardIds: [a.key, b.key], title: "Epic", approved: true })
+          .pipe(withScope(own.ownThread)),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "unattended");
+      const cards = yield* readCards;
+      assert.isNull(cards.find((card) => card.id === a.cardId)?.parentCardId ?? null);
+    }),
+  );
+
+  it.effect("refuses approved: true from a delegated child thread", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const a = yield* boardHandlers
+        .board_create_card({ projectId, title: "A", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const b = yield* boardHandlers
+        .board_create_card({ projectId, title: "B", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const failure = yield* Effect.flip(
+        boardHandlers
+          .board_group_cards({ cardIds: [a.key, b.key], title: "Epic", approved: true })
+          .pipe(withSubagentScope(ThreadId.make("thread-child"))),
+      );
+      assert.strictEqual(failure.code, "invalid-input");
+      assert.include(failure.message, "delegated task");
+      const cards = yield* readCards;
+      assert.isNull(cards.find((card) => card.id === a.cardId)?.parentCardId ?? null);
+    }),
+  );
+
+  it.effect("refuses destructive flows and auto-plan from an unattended run", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("unattended-destroy");
+      yield* startStep({ ...own, suffix: "unattended-destroy" });
+      const group = yield* boardHandlers
+        .board_create_card({ projectId, title: "G", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      yield* boardHandlers
+        .board_create_card({
+          projectId,
+          title: "Inside G",
+          stage: BoardStageId.make("backlog"),
+          parentCardId: group.key,
+          approved: true,
+        })
+        .pipe(withScope(orphanThread));
+      const leaf = yield* boardHandlers
+        .board_create_card({ projectId, title: "Leaf", stage: BoardStageId.make("backlog") })
+        .pipe(withScope(orphanThread));
+      const refusals = [
+        yield* Effect.flip(
+          boardHandlers
+            .board_archive_card({
+              cardId: group.cardId,
+              confirmCardKey: group.key,
+              approved: true,
+            })
+            .pipe(withScope(own.ownThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers
+            .board_cancel_card_work({
+              cardId: leaf.cardId,
+              confirmCardKey: leaf.key,
+              approved: true,
+            })
+            .pipe(withScope(own.ownThread)),
+        ),
+        yield* Effect.flip(
+          boardHandlers
+            .board_set_automation({ cardId: leaf.cardId, autoPlan: true, approved: true })
+            .pipe(withScope(own.ownThread)),
+        ),
+      ];
+      for (const failure of refusals) {
+        assert.strictEqual(failure.code, "invalid-input");
+        assert.include(failure.message, "unattended");
+      }
+      const cards = yield* readCards;
+      assert.isNull(cards.find((card) => card.id === group.cardId)?.archivedAt ?? null);
+    }),
+  );
+
+  it.effect(
+    "regroups with approval: create inside, indent, outdent, group into new, settings",
+    () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const a = yield* boardHandlers
+          .board_create_card({ projectId, title: "A", stage: BoardStageId.make("backlog") })
+          .pipe(withScope(orphanThread));
+        const inside = yield* boardHandlers
+          .board_create_card({
+            projectId,
+            title: "Inside A",
+            stage: BoardStageId.make("backlog"),
+            parentCardId: a.key,
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        let cards = yield* readCards;
+        assert.strictEqual(cards.find((card) => card.id === inside.cardId)?.parentCardId, a.cardId);
+        assert.isNotNull(cards.find((card) => card.id === a.cardId)?.group ?? null);
+        // A is a group now, so creating another card inside it is no regroup.
+        const second = yield* boardHandlers
+          .board_create_card({
+            projectId,
+            title: "Also inside A",
+            stage: BoardStageId.make("backlog"),
+            parentCardId: a.key,
+          })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        assert.strictEqual(cards.find((card) => card.id === second.cardId)?.parentCardId, a.cardId);
+
+        const b = yield* boardHandlers
+          .board_create_card({ projectId, title: "B", stage: BoardStageId.make("backlog") })
+          .pipe(withScope(orphanThread));
+        // B sits below A in the column, so indenting it lands it inside A.
+        const indented = yield* boardHandlers
+          .board_indent_cards({ cardIds: [b.key], approved: true })
+          .pipe(withScope(orphanThread));
+        assert.strictEqual(indented.parentKey, a.key);
+
+        const outdented = yield* boardHandlers
+          .board_outdent_cards({ cardIds: [b.key], approved: true })
+          .pipe(withScope(orphanThread));
+        assert.isNull(outdented.parentKey);
+        cards = yield* readCards;
+        assert.isNull(cards.find((card) => card.id === b.cardId)?.parentCardId ?? null);
+
+        const grouped = yield* boardHandlers
+          .board_group_cards({ cardIds: [b.key], title: "Phase 2", approved: true })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        assert.strictEqual(
+          cards.find((card) => card.id === b.cardId)?.parentCardId,
+          grouped.groupCardId,
+        );
+        assert.isTrue(
+          cards.find((card) => card.id === grouped.groupCardId)?.group?.heading ?? false,
+        );
+
+        yield* boardHandlers
+          .board_set_group_settings({ cardId: grouped.groupKey, autoBuild: true, approved: true })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        assert.isTrue(
+          cards.find((card) => card.id === grouped.groupCardId)?.group?.autoBuild ?? false,
+        );
+
+        // board_move_card's parent argument moves it back to the top level.
+        yield* boardHandlers
+          .board_move_card({ cardId: b.cardId, parentCardId: null, approved: true })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        assert.isNull(cards.find((card) => card.id === b.cardId)?.parentCardId ?? null);
+      }),
+  );
+
+  it.effect(
+    "destructive group flows need approval and the key: share a parent, cancel work, archive a group (T3O-28)",
+    () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const create = (title: string, stage: string) =>
+          boardHandlers
+            .board_create_card({ projectId, title, stage: BoardStageId.make(stage) })
+            .pipe(withScope(orphanThread));
+
+        // Share a parent: a started card and another go side by side.
+        const started = yield* create("Started", "building");
+        const other = yield* create("Other", "backlog");
+        const shared = yield* boardHandlers
+          .board_share_parent({
+            cardId: started.key,
+            cardIds: [other.key],
+            title: "Shared",
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        let cards = yield* readCards;
+        for (const id of [started.cardId, other.cardId]) {
+          assert.strictEqual(
+            cards.find((card) => card.id === id)?.parentCardId,
+            shared.groupCardId,
+          );
+        }
+
+        // Cancel work: refused without approval, and with the wrong key.
+        const leaf = yield* create("Leaf", "building");
+        const extra = yield* create("Extra", "backlog");
+        const unapproved = yield* Effect.flip(
+          boardHandlers
+            .board_cancel_card_work({ cardId: leaf.key, confirmCardKey: leaf.key })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(unapproved.message, "approved: true");
+        const wrongKey = yield* Effect.flip(
+          boardHandlers
+            .board_cancel_card_work({ cardId: leaf.key, confirmCardKey: other.key, approved: true })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(wrongKey.message, "does not match");
+        const cancelled = yield* boardHandlers
+          .board_cancel_card_work({
+            cardId: leaf.key,
+            confirmCardKey: leaf.key,
+            cardIds: [extra.key],
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        assert.deepStrictEqual(cancelled.cardIds, [extra.cardId]);
+        cards = yield* readCards;
+        const parent = cards.find((card) => card.id === leaf.cardId);
+        assert.strictEqual(parent?.stage, "sprint");
+        assert.isNotNull(parent?.group ?? null);
+        assert.strictEqual(
+          cards.find((card) => card.id === extra.cardId)?.parentCardId,
+          leaf.cardId,
+        );
+
+        // Archive a group: the key needs approval, then the subtree goes.
+        const unapprovedArchive = yield* Effect.flip(
+          boardHandlers
+            .board_archive_card({ cardId: shared.groupCardId, confirmCardKey: shared.groupKey })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(unapprovedArchive.message, "approved: true");
+        yield* boardHandlers
+          .board_archive_card({
+            cardId: shared.groupCardId,
+            confirmCardKey: shared.groupKey,
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        cards = yield* readCards;
+        for (const id of [shared.groupCardId, started.cardId, other.cardId]) {
+          assert.isNotNull(cards.find((card) => card.id === id)?.archivedAt ?? null);
+        }
+      }),
+  );
+
+  it.effect(
+    "board_new_phase moves a group's deferred cards into a sibling heading's Backlog (T3O-29)",
+    () =>
+      Effect.gen(function* () {
+        yield* seed();
+        const group = yield* boardHandlers
+          .board_create_card({ projectId, title: "Event log", stage: BoardStageId.make("sprint") })
+          .pipe(withScope(orphanThread));
+        const createChild = (title: string, stage: string) =>
+          boardHandlers
+            .board_create_card({
+              projectId,
+              title,
+              stage: BoardStageId.make(stage),
+              parentCardId: group.cardId,
+              approved: true,
+            })
+            .pipe(withScope(orphanThread));
+        const later = yield* createChild("Later", "deferred");
+        const active = yield* createChild("Now", "backlog");
+
+        const unapproved = yield* Effect.flip(
+          boardHandlers
+            .board_new_phase({ groupCardId: group.key, cardIds: [later.key], title: "Phase 2" })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(unapproved.message, "approved: true");
+        const notDeferred = yield* Effect.flip(
+          boardHandlers
+            .board_new_phase({
+              groupCardId: group.key,
+              cardIds: [active.key],
+              title: "Phase 2",
+              approved: true,
+            })
+            .pipe(withScope(orphanThread)),
+        );
+        assert.include(notDeferred.message, "only deferred cards move");
+
+        const phase = yield* boardHandlers
+          .board_new_phase({
+            groupCardId: group.key,
+            cardIds: [later.key],
+            title: "Event log: Phase 2",
+            approved: true,
+          })
+          .pipe(withScope(orphanThread));
+        const cards = yield* readCards;
+        const heading = cards.find((card) => card.id === phase.groupCardId);
+        assert.strictEqual(heading?.title, "Event log: Phase 2");
+        assert.isNull(heading?.parentCardId ?? null);
+        assert.isTrue(heading?.group?.heading ?? false);
+        const moved = cards.find((card) => card.id === later.cardId);
+        assert.strictEqual(moved?.parentCardId, phase.groupCardId);
+        assert.strictEqual(moved?.stage, "backlog");
+        assert.strictEqual(
+          cards.find((card) => card.id === active.cardId)?.parentCardId,
+          group.cardId,
+        );
+      }),
   );
 
   it.effect("board_update_card resolves label names on update and rejects unknown ones", () =>
@@ -1936,6 +2361,37 @@ it.layer(makeLayer("t3o-board-mcp-edits-test-"))("board mcp toolkit — card edi
 
   const read = (card: string) =>
     boardHandlers.board_get_card({ card }).pipe(withScope(linkedThread));
+
+  it.effect("create, update and read carry the card's merge strategy (T3O-80)", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const created = yield* boardHandlers
+        .board_create_card({ projectId, title: "Sync upstream", mergeStrategy: "merge" })
+        .pipe(withScope(orphanThread));
+      assert.strictEqual((yield* read(created.cardId)).mergeStrategy, "merge");
+
+      // A strategy-only update is a real change, not a refused empty edit.
+      yield* boardHandlers
+        .board_update_card({ cardId: created.cardId, mergeStrategy: "rebase" })
+        .pipe(withScope(orphanThread));
+      const rebased = yield* read(created.cardId);
+      assert.strictEqual(rebased.mergeStrategy, "rebase");
+      assert.strictEqual(rebased.effectiveMergeStrategy, "rebase");
+
+      yield* boardHandlers
+        .board_update_card({ cardId: created.cardId, mergeStrategy: null })
+        .pipe(withScope(orphanThread));
+      const cleared = yield* read(created.cardId);
+      assert.strictEqual(cleared.mergeStrategy, null);
+      // A cleared card reports what it will actually merge with: the board default.
+      assert.strictEqual(cleared.effectiveMergeStrategy, "squash");
+
+      const plain = yield* boardHandlers
+        .board_create_card({ projectId, title: "Plain" })
+        .pipe(withScope(orphanThread));
+      assert.strictEqual((yield* read(plain.cardId)).mergeStrategy, null);
+    }),
+  );
 
   it.effect("reads another card by key: brief, version, dependencies and plans", () =>
     Effect.gen(function* () {
@@ -2568,3 +3024,326 @@ it.layer(makeLayer("t3o-board-mcp-link-pr-test-"))(
     );
   },
 );
+
+it.layer(makeLayer("t3o-board-mcp-labels-test-"))("board mcp toolkit — labels (T3O-68)", (it) => {
+  const manage = (input: Parameters<typeof boardHandlers.board_manage_labels>[0]) =>
+    boardHandlers.board_manage_labels(input).pipe(withScope(orphanThread));
+  const newCard = (title: string, labels: ReadonlyArray<string> = []) =>
+    boardHandlers.board_create_card({ projectId, title, labels }).pipe(withScope(orphanThread));
+  const labelNamesOf = (card: string) =>
+    boardHandlers.board_get_card({ card }).pipe(
+      withScope(orphanThread),
+      Effect.map((read) => read.labels),
+    );
+
+  it.effect("list returns the catalogue with card counts; includeDeleted shows tombstones", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* newCard("Counted", ["Bug"]);
+      const listed = yield* manage({ action: "list" });
+      const bug = listed.labels.find((label) => label.name === "bug");
+      assert.isDefined(bug);
+      assert.strictEqual(bug?.deleted, false);
+      assert.isAtLeast(bug?.cardCount ?? 0, 1);
+      assert.includeMembers(
+        listed.labels.map((label) => label.name),
+        ["feature", "bug", "chore"],
+      );
+
+      yield* manage({ action: "create", name: "list-gone" });
+      yield* manage({ action: "delete", name: "list-gone" });
+      const live = yield* manage({ action: "list" });
+      assert.notInclude(
+        live.labels.map((label) => label.name),
+        "list-gone",
+      );
+      const all = yield* manage({ action: "list", includeDeleted: true });
+      assert.strictEqual(all.labels.find((label) => label.name === "list-gone")?.deleted, true);
+    }),
+  );
+
+  it.effect("create picks a colour when none is given and keeps an explicit one", () =>
+    Effect.gen(function* () {
+      const auto = yield* manage({ action: "create", name: "auto-colour" });
+      assert.strictEqual(auto.labels.length, 1);
+      assert.strictEqual(auto.labels[0]?.name, "auto-colour");
+      assert.match(auto.labels[0]?.colour ?? "", /^#[0-9a-fA-F]{6}$/);
+      assert.strictEqual(auto.labels[0]?.cardCount, 0);
+      const explicit = yield* manage({
+        action: "create",
+        name: "explicit-colour",
+        colour: BoardLabelColour.make("#123abc"),
+      });
+      assert.strictEqual(explicit.labels[0]?.colour, "#123abc");
+    }),
+  );
+
+  it.effect("create rejects a duplicate name case-insensitively", () =>
+    Effect.gen(function* () {
+      yield* manage({ action: "create", name: "dupe" });
+      const failure = yield* Effect.flip(manage({ action: "create", name: "DUPE" }));
+      assert.strictEqual(failure.code, "rejected");
+      assert.include(failure.message, "already exists");
+    }),
+  );
+
+  it.effect("the tool schema rejects a colour that is not a 6-digit hex", () =>
+    Effect.sync(() => {
+      const params = BoardToolkit.tools.board_manage_labels.parametersSchema;
+      const decode = Schema.decodeUnknownExit(params);
+      assert.isTrue(Exit.isFailure(decode({ action: "create", name: "x", colour: "blue" })));
+      assert.isTrue(Exit.isFailure(decode({ action: "create", name: "x", colour: "#abc" })));
+      assert.isTrue(Exit.isSuccess(decode({ action: "create", name: "x", colour: "#aabbcc" })));
+    }),
+  );
+
+  it.effect("flags that do not belong to the action, or a missing name, are invalid input", () =>
+    Effect.gen(function* () {
+      const misplaced = yield* Effect.flip(
+        manage({ action: "create", name: "flagged", newName: "other" }),
+      );
+      assert.strictEqual(misplaced.code, "invalid-input");
+      assert.include(misplaced.message, "newName");
+      const forced = yield* Effect.flip(manage({ action: "list", force: true }));
+      assert.strictEqual(forced.code, "invalid-input");
+      const nameless = yield* Effect.flip(manage({ action: "delete" }));
+      assert.strictEqual(nameless.code, "invalid-input");
+      const empty = yield* Effect.flip(manage({ action: "update", name: "feature" }));
+      assert.strictEqual(empty.code, "invalid-input");
+    }),
+  );
+
+  it.effect("update renames and recolours, addressed case-insensitively", () =>
+    Effect.gen(function* () {
+      yield* manage({ action: "create", name: "to-rename" });
+      const renamed = yield* manage({
+        action: "update",
+        name: "TO-RENAME",
+        newName: "renamed",
+        colour: BoardLabelColour.make("#00ff00"),
+      });
+      assert.deepStrictEqual(renamed.labels, [
+        { name: "renamed", colour: "#00ff00", deleted: false, cardCount: 0 },
+      ]);
+      const gone = yield* Effect.flip(
+        manage({ action: "update", name: "to-rename", newName: "x" }),
+      );
+      assert.strictEqual(gone.code, "unknown-label");
+      assert.include(gone.message, "renamed");
+    }),
+  );
+
+  it.effect("update rejects a rename onto another live label's name", () =>
+    Effect.gen(function* () {
+      yield* manage({ action: "create", name: "collide-a" });
+      yield* manage({ action: "create", name: "collide-b" });
+      const failure = yield* Effect.flip(
+        manage({ action: "update", name: "collide-a", newName: "Collide-B" }),
+      );
+      assert.strictEqual(failure.code, "rejected");
+    }),
+  );
+
+  it.effect("update on a deleted label says to restore it first", () =>
+    Effect.gen(function* () {
+      yield* manage({ action: "create", name: "retired" });
+      yield* manage({ action: "delete", name: "retired" });
+      const failure = yield* Effect.flip(
+        manage({ action: "update", name: "retired", newName: "revived" }),
+      );
+      assert.strictEqual(failure.code, "unknown-label");
+      assert.include(failure.message, "restore");
+    }),
+  );
+
+  it.effect("delete is refused while a live card carries the label, naming the card", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* manage({ action: "create", name: "in-use" });
+      const card = yield* newCard("Carrier", ["in-use"]);
+      const failure = yield* Effect.flip(manage({ action: "delete", name: "in-use" }));
+      assert.strictEqual(failure.code, "rejected");
+      assert.include(failure.message, card.key);
+      assert.include(failure.message, "force: true");
+      const listed = yield* manage({ action: "list" });
+      assert.strictEqual(listed.labels.find((label) => label.name === "in-use")?.deleted, false);
+    }),
+  );
+
+  it.effect("delete with force tombstones the label and the card keeps it", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* manage({ action: "create", name: "forced" });
+      const card = yield* newCard("Keeps it", ["forced"]);
+      const deleted = yield* manage({ action: "delete", name: "forced", force: true });
+      assert.strictEqual(deleted.labels[0]?.deleted, true);
+      assert.strictEqual(deleted.labels[0]?.cardCount, 1);
+      assert.deepStrictEqual(yield* labelNamesOf(card.key), ["forced"]);
+    }),
+  );
+
+  it.effect("delete is allowed when only archived cards carry the label", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* manage({ action: "create", name: "archived-only" });
+      const card = yield* newCard("Archived carrier", ["archived-only"]);
+      yield* boardHandlers
+        .board_archive_card({ cardId: card.cardId })
+        .pipe(withScope(orphanThread));
+      const deleted = yield* manage({ action: "delete", name: "archived-only" });
+      assert.strictEqual(deleted.labels[0]?.deleted, true);
+      assert.strictEqual(deleted.labels[0]?.cardCount, 0);
+    }),
+  );
+
+  it.effect("the refusal names at most ten cards and counts the rest", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* manage({ action: "create", name: "popular" });
+      yield* Effect.forEach(
+        Array.from({ length: 12 }, (_, index) => index),
+        (index) => newCard(`Popular ${index}`, ["popular"]),
+      );
+      const failure = yield* Effect.flip(manage({ action: "delete", name: "popular" }));
+      assert.include(failure.message, "12 non-archived cards");
+      assert.include(failure.message, "and 2 more");
+    }),
+  );
+
+  it.effect("restore brings a deleted label back; a live-name collision is refused", () =>
+    Effect.gen(function* () {
+      yield* manage({ action: "create", name: "comeback" });
+      yield* manage({ action: "delete", name: "comeback" });
+      const restored = yield* manage({ action: "restore", name: "COMEBACK" });
+      assert.strictEqual(restored.labels[0]?.deleted, false);
+      const notDeleted = yield* Effect.flip(manage({ action: "restore", name: "comeback" }));
+      assert.strictEqual(notDeleted.code, "unknown-label");
+
+      yield* manage({ action: "delete", name: "comeback" });
+      yield* manage({ action: "create", name: "comeback" });
+      const collision = yield* Effect.flip(manage({ action: "restore", name: "comeback" }));
+      assert.strictEqual(collision.code, "rejected");
+      const unknown = yield* Effect.flip(manage({ action: "restore", name: "never-existed" }));
+      assert.strictEqual(unknown.code, "unknown-label");
+    }),
+  );
+
+  it.effect("restore takes the most recently deleted of several same-named labels", () =>
+    Effect.gen(function* () {
+      yield* manage({ action: "create", name: "twice", colour: BoardLabelColour.make("#111111") });
+      yield* manage({ action: "delete", name: "twice" });
+      // A tombstone's deletedAt is the clock; move it past the first one.
+      yield* TestClock.adjust("1 second");
+      yield* manage({ action: "create", name: "twice", colour: BoardLabelColour.make("#222222") });
+      yield* manage({ action: "delete", name: "twice" });
+      const restored = yield* manage({ action: "restore", name: "twice" });
+      assert.strictEqual(restored.labels[0]?.colour, "#222222");
+    }),
+  );
+
+  it.effect("addLabels adds a live label and keeps the rest; unknown or deleted is rejected", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const card = yield* newCard("Tag me", ["feature"]);
+      yield* boardHandlers
+        .board_update_card({ cardId: card.key, addLabels: ["BUG", "feature"] })
+        .pipe(withScope(orphanThread));
+      assert.deepStrictEqual(yield* labelNamesOf(card.key), ["feature", "bug"]);
+
+      const unknown = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: card.key, addLabels: ["nope"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(unknown.code, "unknown-label");
+      assert.include(unknown.message, "board_manage_labels");
+
+      yield* manage({ action: "create", name: "dead-tag" });
+      yield* manage({ action: "delete", name: "dead-tag" });
+      const deleted = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: card.key, addLabels: ["dead-tag"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(deleted.code, "unknown-label");
+    }),
+  );
+
+  it.effect("removeLabels removes live and deleted labels; a label not carried is a no-op", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      yield* manage({ action: "create", name: "to-retire" });
+      const card = yield* newCard("Untag me", ["feature", "chore", "to-retire"]);
+      yield* manage({ action: "delete", name: "to-retire", force: true });
+      yield* boardHandlers
+        .board_update_card({ cardId: card.key, removeLabels: ["Feature", "to-retire", "bug"] })
+        .pipe(withScope(orphanThread));
+      assert.deepStrictEqual(yield* labelNamesOf(card.key), ["chore"]);
+
+      // Removing only labels the card does not carry still succeeds.
+      yield* boardHandlers
+        .board_update_card({ cardId: card.key, removeLabels: ["bug"] })
+        .pipe(withScope(orphanThread));
+      assert.deepStrictEqual(yield* labelNamesOf(card.key), ["chore"]);
+    }),
+  );
+
+  it.effect("removeLabels rejects a name that is no label at all", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const card = yield* newCard("Typo", ["feature"]);
+      const typo = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: card.key, removeLabels: ["featrue"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(typo.code, "unknown-label");
+      assert.include(typo.message, "featrue");
+      assert.deepStrictEqual(yield* labelNamesOf(card.key), ["feature"]);
+    }),
+  );
+
+  it.effect("a label in both addLabels and removeLabels is rejected by name", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      // The card does not carry 'bug', so the removal alone would be a no-op.
+      const card = yield* newCard("Both", ["feature"]);
+      const both = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: card.key, addLabels: ["bug"], removeLabels: ["BUG"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(both.code, "invalid-input");
+      assert.include(both.message, "'bug'");
+      assert.deepStrictEqual(yield* labelNamesOf(card.key), ["feature"]);
+    }),
+  );
+
+  it.effect("labels with addLabels/removeLabels is rejected; the five-label cap holds", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const card = yield* newCard("Capped", ["feature"]);
+      const both = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: card.key, labels: ["bug"], addLabels: ["chore"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(both.code, "rejected");
+      assert.include(both.message, "addLabels");
+
+      yield* Effect.forEach(["cap-1", "cap-2", "cap-3", "cap-4", "cap-5"], (name) =>
+        manage({ action: "create", name }),
+      );
+      yield* boardHandlers
+        .board_update_card({ cardId: card.key, addLabels: ["cap-1", "cap-2", "cap-3", "cap-4"] })
+        .pipe(withScope(orphanThread));
+      const capped = yield* Effect.flip(
+        boardHandlers
+          .board_update_card({ cardId: card.key, addLabels: ["cap-5"] })
+          .pipe(withScope(orphanThread)),
+      );
+      assert.strictEqual(capped.code, "rejected");
+      assert.include(capped.message, "at most");
+    }),
+  );
+});

@@ -28,6 +28,7 @@
  */
 import type { BoardCardPullRequest, BoardReviewPhaseId, BoardStageRole } from "./board.ts";
 import {
+  BOARD_CI_FIX_PAYLOAD_SHAPE,
   BOARD_BUILD_SUMMARY_PAYLOAD_SHAPE,
   BOARD_REVIEW_PHASE_LABELS,
   DEFAULT_BOARD_SYNC_PHASE_PROMPT,
@@ -52,6 +53,30 @@ export const BOARD_ENVELOPE_QUESTION_MECHANISM =
 export const BOARD_ENVELOPE_MOVE_GUARD =
   "Never move the card between stages yourself; finish your work and the board or a human moves the card on.";
 
+/** The decision log (T3O-32), stated on every planning run, attended or
+    not, so the log exists however the plan was reached. */
+export const BOARD_ENVELOPE_DECISION_LOG =
+  "Before you call board_propose_plans, record every decision this planning session made with board_record_decisions: what was asked, what was decided, a one-line reason and who decided (agent, or human when the user answered). Flag a call you were not sure about as unclear, and a call that shapes the work as important.";
+
+/** What an auto-planned run is told (T3O-32, T3O-38): no more questions.
+    Rides the postamble of a fresh auto-plan run and is the steering turn sent
+    into a live planning thread, followed by what happens to the plan — use
+    `boardAutoPlanInstruction`. */
+export const BOARD_AUTO_PLAN_INSTRUCTION =
+  "Auto-plan: stop interviewing and do not ask any more questions. Decide every remaining question yourself, record each decision with board_record_decisions (flag any you are unsure of as unclear), propose the plan with board_propose_plans, then call board_complete_step.";
+
+/** The full auto-plan instruction: with Auto-build on the plan is approved and
+    built without a human; without it the plan waits for the user's approval. */
+export function boardAutoPlanInstruction(autoBuild: boolean): string {
+  return autoBuild
+    ? `${BOARD_AUTO_PLAN_INSTRUCTION} Auto-build is on: the plan you propose is approved and built automatically, unclear decisions included, so make each call the way you would defend it in review.`
+    : `${BOARD_AUTO_PLAN_INSTRUCTION} Your plan will be presented to the user for approval, so make each call the way you would defend it in review.`;
+}
+
+/** Sent into a planning thread when Auto-plan is turned off mid-run (T3O-38). */
+export const BOARD_AUTO_PLAN_OFF_INSTRUCTION =
+  "The user is back: Auto-plan is off. You may ask questions again, and it is fine to end a turn waiting on an answer. Your plan will be presented to the user for approval.";
+
 /** The `plan` role's deliverable contract (role-keyed so a user rewrite of the
     editable Planning prompt cannot break the plan pipeline).
 
@@ -64,10 +89,12 @@ export const BOARD_ENVELOPE_MOVE_GUARD =
     a user who has already customised their Planning prompt still gets the rule,
     and no rewrite can delete it. */
 export const BOARD_ENVELOPE_PLAN_DELIVERABLE = [
+  BOARD_ENVELOPE_DECISION_LOG,
   "When the plan is agreed, record it with board_propose_plans, as ONE plan.",
   "Two or more plans is not a longer plan — it splits this card into that many child cards, each with its own branch, build and code review, and holds the card behind a human approval gate until someone approves it.",
   "Split only when this card is a large feature whose parts are worth building and reviewing one at a time, or whose parts could be built concurrently for a real speed-up; then pass splitRationale saying why.",
   "A bug fix, a contained change, or work that is merely long is one plan with several sections.",
+  "In a split, mark each plan planned: true when it is a full implementation plan, or planned: false when it is a brief that still needs planning, and pass recommendedAutoBuild and recommendedMergeTarget: every child fully planned → auto-build on with its own branch; an epic breakdown → auto-build off, inherit; already inside a group with its own branch → prefer inherit.",
 ].join(" ");
 
 /** The `build` role's deliverable contract (T3O-21): the structured payload
@@ -96,6 +123,13 @@ export interface ComposeStepPromptStep {
   readonly prompt: string;
   /** Frozen human-in-the-loop stance (D5): governs the postamble. */
   readonly humanInLoop: boolean;
+  /** An auto-planned planning run (T3O-32). */
+  readonly autoPlan?: boolean;
+  /** With `autoPlan`: Auto-build is on, so the plan is approved and built. */
+  readonly autoBuild?: boolean;
+  /** The plan review this step is running (plan review, T3O-39): set once a
+      review has started, so a respawned or nudged thread resumes it. */
+  readonly planReview?: { readonly instructions: string };
 }
 
 export interface ComposeStepPromptInput {
@@ -210,6 +244,11 @@ function boardLinkedPullRequestLines(
   ];
 }
 
+/** Regrouping needs a human (T3O-27): an unattended run has no one to confirm
+    it, so it never regroups. */
+export const BOARD_ENVELOPE_REGROUP_GUARD =
+  "Do not regroup cards (move them between groups, indent, outdent, group them, or change a group's settings) without a human's explicit confirmation.";
+
 /** The system postamble (D5): branches on human-in-the-loop (an unattended run
     carries the `/unattended` stance; a human-in-the-loop run is
     question-friendly), then appends the role-keyed deliverable segment and the
@@ -220,6 +259,10 @@ export function boardStepPostamble(input: {
   readonly humanInLoop: boolean;
   readonly role: BoardStageRole | null;
   readonly step: Pick<ComposeStepPromptStep, "stepId" | "stepLabel">;
+  /** An auto-planned planning run (T3O-32). */
+  readonly autoPlan?: boolean;
+  /** With `autoPlan`: the plan is approved and built without a human. */
+  readonly autoBuild?: boolean;
 }): string {
   const { step } = input;
   const call = completionCall(step);
@@ -241,10 +284,13 @@ export function boardStepPostamble(input: {
         // tool. The supervisor still reads a plan tool when a provider emits one.
         `Commit as you go: the supervisor watches for new commits and activity to tell a productive long job from a wedged one, and a run that shows neither will be nudged and eventually escalated.`,
         `If you are truly blocked and need a human decision, ${BOARD_ENVELOPE_QUESTION_MECHANISM}; never end a turn with an unanswered question in prose.`,
+        BOARD_ENVELOPE_REGROUP_GUARD,
       ];
   const deliverable =
     input.role === "plan"
-      ? [BOARD_ENVELOPE_PLAN_DELIVERABLE]
+      ? input.autoPlan === true
+        ? [BOARD_ENVELOPE_PLAN_DELIVERABLE, boardAutoPlanInstruction(input.autoBuild === true)]
+        : [BOARD_ENVELOPE_PLAN_DELIVERABLE]
       : input.role === "build"
         ? [BOARD_ENVELOPE_BUILD_DELIVERABLE]
         : [];
@@ -262,6 +308,8 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
     humanInLoop: input.step.humanInLoop,
     role: input.role,
     step: input.step,
+    ...(input.step.autoPlan === true ? { autoPlan: true } : {}),
+    ...(input.step.autoBuild === true ? { autoBuild: true } : {}),
   });
   // The build draft line (T3O-12) rides on the body, so an empty-body
   // re-entry (D7) stays the clean conversational thread it is.
@@ -271,8 +319,82 @@ export function composeStepPrompt(input: ComposeStepPromptInput): string {
       ? `\n\n${BOARD_DRAFT_PULL_REQUEST_BUILD}`
       : "";
   const bodyBlock = body.trim().length > 0 ? `${body}${draftLine}\n\n` : "";
-  return `${preamble}\n\n${bodyBlock}${postamble}`;
+  const reviewBlock =
+    input.role === "plan" && input.step.planReview !== undefined
+      ? `${input.step.planReview.instructions}\n\n`
+      : "";
+  return `${preamble}\n\n${bodyBlock}${reviewBlock}${postamble}`;
 }
+
+/** Substitute every `{rounds}` in a plan-review prompt. */
+export function fillPlanReviewRounds(prompt: string, rounds: number): string {
+  return prompt.replaceAll("{rounds}", String(rounds));
+}
+
+/** The fixed lead of the plan-review instructions (plan review, T3O-39). */
+export function planReviewInstructionsLead(rounds: number): string {
+  const roundWord = rounds === 1 ? "round" : "rounds";
+  return `Plan review is on for this card: up to ${rounds} ${roundWord} of adversarial review, run inside this thread.`;
+}
+
+/** The fixed closing of the plan-review instructions: the board mechanics,
+    after the user's prompt and taking precedence over it. */
+export function planReviewInstructionsClosing(input: {
+  readonly rounds: number;
+  /** A human is in the loop and no auto-plan is pending. */
+  readonly humanInLoop: boolean;
+}): string {
+  const finish = input.humanInLoop
+    ? `With a human in the loop: if you need a human decision, ${BOARD_ENVELOPE_QUESTION_MECHANISM}. Then summarise the final plan in the thread, wait for the human's sign-off, and only then call board_complete_step.`
+    : "This run is unattended: ask nothing. Decide every question yourself, flag a call you are unsure of as unclear with board_record_decisions, summarise the final plan in the thread, then call board_complete_step without waiting.";
+  return [
+    "Board rules for the plan review. These come after the text above and take precedence over it:",
+    `- ${input.rounds} is a maximum. Stop as soon as a round produces no new substantive finding, and record that call (rounds run, converged or not) with board_record_decisions.`,
+    "- Run the reviewers in the foreground and do not end your turn while waiting for them.",
+    "- If your runtime cannot spawn subagents, run each reviewer pass yourself in turn, and say so in the thread.",
+    "- Post each reviewer's findings in the thread, and record any new decisions with board_record_decisions.",
+    "- If the plan changed, re-propose the final plan with board_propose_plans (that does not start another review). If board_propose_plans refuses because the plans are frozen, stop reviewing and summarise.",
+    "- When you call board_complete_step, add `planReview: { roundsRun, converged }` to the payload.",
+    `- ${finish}`,
+    "- If an auto-plan instruction arrives during the review, it overrides this text: stop asking and finish.",
+  ].join("\n");
+}
+
+/**
+ * The plan-review instructions (plan review, T3O-39): a fixed lead, the user's
+ * editable prompt with `{rounds}` filled in, and a fixed closing that comes
+ * after it and wins over it. The closing carries the board mechanics, so no
+ * rewrite of the prompt can remove them.
+ */
+export function composePlanReviewInstructions(input: {
+  readonly prompt: string;
+  readonly rounds: number;
+  /** A human is in the loop and no auto-plan is pending: ask, then wait for
+      sign-off. Otherwise the review finishes without asking anything. */
+  readonly humanInLoop: boolean;
+}): string {
+  return [
+    planReviewInstructionsLead(input.rounds),
+    fillPlanReviewRounds(input.prompt, input.rounds),
+    planReviewInstructionsClosing(input),
+  ].join("\n\n");
+}
+
+/** Leads the turn sent when a human turns plan review on after the plan was
+    posted (plan review, T3O-39). The review instructions follow it. */
+export const BOARD_PLAN_REVIEW_LATE_START_LEAD =
+  "Plan review was turned on after you posted the plan. Review the plan you proposed now, as below.";
+
+/** Leads the turn sent when a human changes a running plan review's rounds
+    (T3O-50). Only the agent knows how many it has run, so it decides. */
+export function boardPlanReviewRoundsChangedLead(rounds: number): string {
+  return `The plan review limit is now ${rounds} ${rounds === 1 ? "round" : "rounds"} in total. If you have already run ${rounds} or more, stop reviewing: summarise what the reviews found, re-propose the plan with board_propose_plans if it changed, and finish as normal. Otherwise continue until you reach ${rounds}, as below.`;
+}
+
+/** The turn sent into a planning thread when a human turns its running plan
+    review off (plan review, T3O-39). */
+export const BOARD_PLAN_REVIEW_STOP_INSTRUCTION =
+  "Stop the plan review now: summarise what the reviews found so far, re-propose the plan with board_propose_plans if it changed, and finish as normal.";
 
 /** A review phase's system preamble (D6/D7): the round header, plus — for any
     phase past the very first review — the pointer to the prior phases'
@@ -361,10 +483,21 @@ export function composeBoardReviewPhasePrompt(input: {
   readonly rounds: number;
   readonly prompt: string;
   readonly draftPullRequests?: boolean;
+  /** The CI failure that sent the card back (T3O-44): a must-fix finding for
+      the review and triage of the round that follows. */
+  readonly ciFinding?: { readonly stepName: string | null; readonly finding: string } | null;
 }): string {
+  const ci =
+    input.ciFinding == null || input.phase === "adjudicate"
+      ? ""
+      : [
+          `CI sent this card back to review${input.ciFinding.stepName === null ? "" : ` after its "${input.ciFinding.stepName}" step failed`}. Treat this as a blocking, must-fix finding this round${input.phase === "review" ? ": report it as a critical finding" : ": fix it"}, whatever else you find:`,
+          input.ciFinding.finding.trim(),
+        ].join("\n\n");
   return [
     boardReviewPhasePreamble(input),
     input.prompt.trim(),
+    ci,
     boardDraftPullRequestLine({
       draftPullRequests: input.draftPullRequests === true,
       phase: input.phase,
@@ -445,7 +578,7 @@ function boardSyncPhasePullRequestRetarget(retargetedTo: string): string {
 }
 
 /** The rebase MECHANICS half of `DEFAULT_BOARD_SYNC_PHASE_PROMPT` — fetch,
-    rebase, resolve preserving both sides, run the checks, force-with-lease,
+    rebase, resolve preserving both sides, verify what it resolved, force-with-lease,
     abort clean and complete `failed` if unsafe. Correct verbatim for both
     triggers, so a retarget swaps only the opening sentence rather than forking
     the prompt (T3O-5, D10). Split by locating the first sentence boundary: the
@@ -454,4 +587,41 @@ function boardSyncPhaseMechanics(): string {
   const marker = "Fetch the base branch";
   const at = DEFAULT_BOARD_SYNC_PHASE_PROMPT.indexOf(marker);
   return at < 0 ? DEFAULT_BOARD_SYNC_PHASE_PROMPT : DEFAULT_BOARD_SYNC_PHASE_PROMPT.slice(at);
+}
+
+/**
+ * The CI fix agent's step body (T3O-44): the stage's fix prompt, the failure
+ * it is looking at, and the completion contract. The board runs the steps; the
+ * agent only fixes, so it is told what failed rather than asked to find out.
+ */
+export function composeBoardCiFixPrompt(input: {
+  readonly prompt: string;
+  readonly attempt: number;
+  readonly maxAttempts: number;
+  readonly failure: {
+    readonly stepName: string;
+    readonly command: string;
+    readonly status: "failed" | "timed-out";
+    readonly exitCode: number | null;
+    readonly tail: string;
+    readonly logPath: string | null;
+  };
+}): string {
+  const { failure } = input;
+  const ended =
+    failure.status === "timed-out"
+      ? "timed out and was killed"
+      : `exited with code ${failure.exitCode ?? "unknown"}`;
+  return [
+    input.prompt,
+    "",
+    `CI step "${failure.stepName}" failed: \`${failure.command}\` ${ended}. This is fix attempt ${input.attempt} of ${input.maxAttempts}.`,
+    ...(failure.logPath === null ? [] : [`The full log is at \`${failure.logPath}\`.`]),
+    "The last lines of its output:",
+    "```",
+    failure.tail.length > 0 ? failure.tail : "(no output)",
+    "```",
+    "",
+    `Do not run the CI steps yourself to finish: the board re-runs every step from the top after you report a fix. Complete with a payload shaped ${BOARD_CI_FIX_PAYLOAD_SHAPE}: "fixed" once your fix is committed and pushed, or "return-to-review" with a finding that says what failed and why, which the next review round must fix.`,
+  ].join("\n");
 }

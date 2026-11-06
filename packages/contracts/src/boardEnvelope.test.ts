@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  BOARD_CONFLICT_VERIFICATION,
   BOARD_SEED_STAGE_IDS,
   BoardStageId,
   boardRunLabel,
@@ -20,6 +21,9 @@ import {
   effectiveBoardStageRole,
 } from "./board.ts";
 import {
+  BOARD_AUTO_PLAN_INSTRUCTION,
+  boardAutoPlanInstruction,
+  BOARD_ENVELOPE_DECISION_LOG,
   BOARD_ENVELOPE_BUILD_DELIVERABLE,
   BOARD_ENVELOPE_MOVE_GUARD,
   BOARD_ENVELOPE_PLAN_DELIVERABLE,
@@ -126,6 +130,61 @@ describe("boardStepPostamble (envelope split)", () => {
     expect(postamble.indexOf(BOARD_ENVELOPE_PLAN_DELIVERABLE)).toBeLessThan(
       postamble.indexOf(BOARD_ENVELOPE_MOVE_GUARD),
     );
+  });
+});
+
+describe("decision log and auto-plan (T3O-32)", () => {
+  it("tells every planning run to record decisions before proposing, attended or not", () => {
+    for (const humanInLoop of [true, false]) {
+      const postamble = boardStepPostamble({ humanInLoop, role: "plan", step: stepOf(null) });
+      expect(postamble).toContain(BOARD_ENVELOPE_DECISION_LOG);
+      expect(postamble.indexOf("board_record_decisions")).toBeLessThan(
+        postamble.indexOf("record it with board_propose_plans"),
+      );
+    }
+    expect(
+      boardStepPostamble({ humanInLoop: false, role: "build", step: stepOf(null) }),
+    ).not.toContain("board_record_decisions");
+  });
+
+  it("carries the auto-plan instruction only on an auto-planned planning run", () => {
+    const auto = composeStepPrompt({
+      card: { key: "T3-1", title: "Ship it", stage: "planning" },
+      stageLabel: "Planning",
+      step: {
+        stepId: "planning",
+        stepLabel: null,
+        prompt: "Plan.",
+        humanInLoop: false,
+        autoPlan: true,
+      },
+      role: "plan",
+    });
+    expect(auto).toContain(BOARD_AUTO_PLAN_INSTRUCTION);
+    // Without Auto-build the plan waits for the user (T3O-38).
+    expect(auto).toContain(boardAutoPlanInstruction(false));
+    expect(auto).not.toContain("approved and built automatically");
+    expect(promptFor({ role: "plan", humanInLoop: false })).not.toContain(
+      BOARD_AUTO_PLAN_INSTRUCTION,
+    );
+  });
+
+  it("tells an auto-planned run with Auto-build on that its plan is approved and built", () => {
+    const auto = composeStepPrompt({
+      card: { key: "T3-1", title: "Ship it", stage: "planning" },
+      stageLabel: "Planning",
+      step: {
+        stepId: "planning",
+        stepLabel: null,
+        prompt: "Plan.",
+        humanInLoop: false,
+        autoPlan: true,
+        autoBuild: true,
+      },
+      role: "plan",
+    });
+    expect(auto).toContain(boardAutoPlanInstruction(true));
+    expect(auto).toContain("approved and built automatically");
   });
 });
 
@@ -589,6 +648,14 @@ describe("composeBoardSyncPhasePrompt retarget wording (T3O-5, D10)", () => {
     expect(moved).not.toContain("has CHANGED");
   });
 
+  it("verifies only what the rebase resolved, never the whole suite (T3O-69)", () => {
+    // A clean rebase, or one that only touched docs, used to re-run every check
+    // the repository defines. The review round and CI that follow cover that.
+    const moved = composeBoardSyncPhasePrompt({ round: 2, baseRefName: "board/T3-1" });
+    expect(moved).toContain(BOARD_CONFLICT_VERIFICATION);
+    expect(moved).not.toContain("run the project's own checks");
+  });
+
   it("names both the old and the new base on a retarget, and drops the sibling claim", () => {
     // "A sibling card merged into it" is simply false for a retarget, and the
     // agent acting on it would go looking for a merge that never happened.
@@ -616,7 +683,7 @@ describe("composeBoardSyncPhasePrompt retarget wording (T3O-5, D10)", () => {
       "Fetch the base branch",
       "--force-with-lease",
       "git rebase --abort",
-      "run the project's own checks",
+      BOARD_CONFLICT_VERIFICATION,
     ]) {
       expect(retargeted).toContain(clause);
     }

@@ -12,6 +12,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { BOARD_PRE_V2_BACKUP_FILENAME } from "./boardPreV2Backup.ts";
+import { BOARD_MIGRATIONS } from "./migrations/index.ts";
+
+/** A migrated board's ledger reaches the newest board migration. */
+const LATEST_BOARD_MIGRATION = BOARD_MIGRATIONS.at(-1)![0];
 
 const latestBoardMigration = (file: string) => {
   const database = new NodeSqlite.DatabaseSync(file, { readOnly: true });
@@ -39,7 +43,7 @@ it.effect("keeps one copy of a board database a v1 build left, as it was (T3O-59
     // A fresh install: nothing was there before v2, so nothing is kept.
     yield* open(Effect.void);
     assert.isFalse(NodeFS.existsSync(backupPath));
-    assert.strictEqual(latestBoardMigration(boardsPath), 45);
+    assert.strictEqual(latestBoardMigration(boardsPath), LATEST_BOARD_MIGRATION);
 
     // The board as a v1 build left it: its ledger stops short of the v2 marker.
     yield* open(
@@ -50,7 +54,7 @@ it.effect("keeps one copy of a board database a v1 build left, as it was (T3O-59
     yield* open(Effect.void);
     assert.isTrue(NodeFS.existsSync(backupPath));
     assert.strictEqual(latestBoardMigration(backupPath), 44);
-    assert.strictEqual(latestBoardMigration(boardsPath), 45);
+    assert.strictEqual(latestBoardMigration(boardsPath), LATEST_BOARD_MIGRATION);
 
     // Kept once: later boots leave the copy alone.
     const kept = NodeFS.statSync(backupPath).mtimeMs;

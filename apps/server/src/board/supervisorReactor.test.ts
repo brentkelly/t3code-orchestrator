@@ -25,7 +25,7 @@ import * as Duration from "effect/Duration";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { BoardSetupScriptRunner } from "./ports/BoardSetupScriptRunner.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { ServerActivation } from "../serverActivation.ts";
@@ -35,6 +35,8 @@ import {
   BoardPullRequestGatewayError,
 } from "./BoardPullRequestGateway.ts";
 import { SupervisorReactor, SupervisorReactorLive } from "./supervisorReactor.ts";
+import { WorkerConnectionsNoneTest } from "./workers/boardWorkers.testkit.ts";
+import { BoardWorkspacesLive } from "./workspace/workspaceLayer.ts";
 import { boardDecidedEvents, type BoardCommand } from "./decider.ts";
 import { decideBoardCommandOnModel } from "./decisionContext.testkit.ts";
 import { boardEngineDouble, boardServicesTestLayer } from "./boardServices.testkit.ts";
@@ -47,7 +49,6 @@ import {
   makeFakeThreadGateway,
   type ThreadGatewayCall,
 } from "./threadGateway.testkit.ts";
-import { UsageLimitDetector } from "./UsageLimitDetector.ts";
 import { worktreeRetirerTestLayer } from "./worktreeRetire.testkit.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
@@ -74,6 +75,7 @@ const card: BoardCard = {
   dependsOn: [],
   parentCardId: null,
   sourcePlanId: null,
+  group: null,
   threadLinks: [],
   attachments: [],
   externalRef: null,
@@ -83,9 +85,17 @@ const card: BoardCard = {
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: null,
-  autoStart: false,
-  autoMerge: false,
+  autoPlanSetting: null,
+  autoBuildSetting: null,
+  autoMergeSetting: null,
   autoMergeHold: null,
+  mergeStrategy: null,
+  pinnedWorkerId: null,
+  placedWorkerId: null,
+  workerMove: null,
+  placementOrphaned: null,
+  ci: null,
+  ciLastOutcome: null,
   worktree: {
     branch: "board/t3-1",
     baseRefName: "main",
@@ -130,6 +140,7 @@ const runningState: BoardCardStepState = {
   status: "running",
   slotHeld: true,
   forceStart: false,
+  queuedBy: null,
   startedAt: NOW,
   updatedAt: NOW,
 };
@@ -236,7 +247,7 @@ function reconcileCommandObjects(input: {
 
     const setupStub = {
       runForThread: () => Effect.succeed(undefined),
-    } as unknown as ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
+    } as unknown as BoardSetupScriptRunner["Service"];
 
     const deps = Layer.mergeAll(
       boardServicesTestLayer({
@@ -251,7 +262,7 @@ function reconcileCommandObjects(input: {
       worktreeRetirerTestLayer().pipe(
         Layer.provide(Layer.succeed(GitVcsDriver.GitVcsDriver, gitStub)),
       ),
-      Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, setupStub),
+      Layer.succeed(BoardSetupScriptRunner, setupStub),
       // Boot reconcile never looks a pull request up (it reconciles step state,
       // not forge state), so an always-empty gateway is the honest stub here.
       Layer.succeed(
@@ -265,6 +276,7 @@ function reconcileCommandObjects(input: {
             ),
           merge: () => Effect.void,
           markReady: () => Effect.succeed("not-draft" as const),
+          close: () => Effect.succeed("not-open" as const),
           mergeState: () =>
             Effect.fail(
               new BoardPullRequestGatewayError({
@@ -275,13 +287,6 @@ function reconcileCommandObjects(input: {
         }),
       ),
       BoardStepSlotsLive,
-      // Boot reconcile classifies no turn (T3O-22): it reconciles step state
-      // against the world, and a stub that says "the catalogue matched nothing"
-      // is what leaves every reconcile decision exactly as it was.
-      Layer.succeed(
-        UsageLimitDetector,
-        UsageLimitDetector.of({ classifyTurn: () => Effect.succeed(null) }),
-      ),
       Layer.succeed(
         ServerActivation,
         input.gateOnActivation === undefined
@@ -302,7 +307,18 @@ function reconcileCommandObjects(input: {
       }
       const commands = yield* Ref.get(recorded);
       return commands;
-    }).pipe(Effect.provide(SupervisorReactorLive.pipe(Layer.provide(deps))));
+    }).pipe(
+      Effect.provide(
+        SupervisorReactorLive.pipe(
+          Layer.provide(
+            BoardWorkspacesLive.pipe(
+              Layer.provideMerge(deps),
+              Layer.provide(WorkerConnectionsNoneTest),
+            ),
+          ),
+        ),
+      ),
+    );
   }).pipe(Effect.provide(NodeServices.layer));
 }
 
@@ -389,6 +405,7 @@ it.effect("t3o-22: a review loop that runs out of rounds does NOT advance the ca
     assert.include(types, "board.card.settle-step");
     // The whole point: nothing converged, so the card holds where it is.
     assert.notInclude(types, "board.card.move");
+    assert.notInclude(types, "board.card.pipeline-move");
     // ...and no round 2 is started either — the budget really is spent.
     assert.notInclude(types, "board.card.select-step");
   }),
@@ -415,7 +432,7 @@ it.effect("t3o-22: a review loop that CONVERGES still advances the card", () =>
         nextCardNumberByProject: {},
       },
     });
-    assert.include(types, "board.card.move");
+    assert.include(types, "board.card.pipeline-move");
   }),
 );
 
@@ -440,6 +457,7 @@ it.effect("t3o-22: a stopped loop holds even with budget remaining", () =>
       },
     });
     assert.notInclude(types, "board.card.move");
+    assert.notInclude(types, "board.card.pipeline-move");
     assert.notInclude(types, "board.card.select-step");
   }),
 );
@@ -552,7 +570,32 @@ it.effect("boot: a step that completed while the server was down is settled and 
     });
     assert.include(types, "board.card.settle-step");
     // Every step succeeded → board-driven Building → Code review advance (D18).
-    assert.include(types, "board.card.move");
+    assert.include(types, "board.card.pipeline-move");
+  }),
+);
+
+it.effect("boot: a human-in-the-loop step that completed while down advances too (T3O-76)", () =>
+  Effect.gen(function* () {
+    const types = yield* reconcileCommands({
+      board: {
+        cards: [{ ...card, humanInLoop: true }],
+        stepStates: [{ ...runningState, humanInLoop: true }],
+        stepCompletions: [
+          {
+            cardId,
+            stepId,
+            outcome: "succeeded",
+            summary: "done",
+            payload: null,
+            threadId: ThreadId.make("thread-1"),
+            completedAt: NOW,
+          },
+        ],
+        nextCardNumberByProject: {},
+      },
+    });
+    assert.include(types, "board.card.settle-step");
+    assert.include(types, "board.card.pipeline-move");
   }),
 );
 

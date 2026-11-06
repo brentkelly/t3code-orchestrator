@@ -7,13 +7,15 @@ import * as PlatformError from "effect/PlatformError";
 
 import { resolveUserDataPath } from "./DesktopUserData.ts";
 
-it.effect("identifies a failed source read and preserves its cause", () => {
-  const sourceState = "/profiles/t3code/Local State";
+// T3o: the fork has no legacy profile of its own, so the only Local State it may read is the one
+// in its own profile; upstream T3 Code's profiles are never inspected for migration.
+it.effect("identifies a failed profile inspection and preserves its cause", () => {
+  const ownState = "/profiles/t3o/Local State";
   const cause = PlatformError.systemError({
     _tag: "PermissionDenied",
     module: "FileSystem",
-    method: "readFileString",
-    pathOrDescriptor: sourceState,
+    method: "exists",
+    pathOrDescriptor: ownState,
   });
   return Effect.gen(function* () {
     const error = yield* resolveUserDataPath({
@@ -21,53 +23,39 @@ it.effect("identifies a failed source read and preserves its cause", () => {
       isDevelopment: false,
       platform: "win32",
     }).pipe(Effect.flip);
-    assert.equal(error.operation, "read");
-    assert.equal(error.resourcePath, sourceState);
+    assert.equal(error.operation, "inspect");
+    assert.equal(error.resourcePath, ownState);
     assert.equal(error.category, "PermissionDenied");
     assert.strictEqual(error.cause, cause);
   }).pipe(
     Effect.provideService(
       FileSystem.FileSystem,
       FileSystem.makeNoop({
-        exists: (path) => Effect.succeed(path === sourceState),
-        readFileString: () => Effect.fail(cause),
+        exists: () => Effect.fail(cause),
       }),
     ),
     Effect.provide(NodeServices.layer),
   );
 });
 
-it.effect.each(["t3code", "T3 Code (Alpha)"])(
-  "preserves Windows credential keys from %s without copying browser databases",
+it.effect.each(["t3code", "t3code-v2", "T3 Code (Alpha)"])(
+  "never adopts upstream's Windows credential keys from %s",
   (sourceName) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-profile-" });
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3o-profile-" });
       const source = path.join(directory, sourceName);
-      const destination = path.join(directory, "t3code-v2");
-      const state = '{"os_crypt":{"encrypted_key":"test-encrypted-key"}}';
-      yield* fs.makeDirectory(path.join(directory, "T3 Code (Alpha)"), { recursive: true });
-      yield* fs.makeDirectory(path.join(source, "IndexedDB"), { recursive: true });
-      yield* fs.writeFileString(path.join(source, "Local State"), state);
-      yield* fs.writeFileString(path.join(source, "IndexedDB", "LOCK"), "V1 owns this database");
-      yield* resolveUserDataPath({
-        appDataDirectory: directory,
-        isDevelopment: false,
-        platform: "win32",
-      });
-      assert.equal(yield* fs.readFileString(path.join(destination, "Local State")), state);
-      assert.equal(yield* fs.readFileString(path.join(source, "Local State")), state);
-      assert.isFalse(yield* fs.exists(path.join(destination, "IndexedDB")));
-      yield* fs.writeFileString(path.join(destination, "Local State"), "existing V2 state");
-      yield* resolveUserDataPath({
-        appDataDirectory: directory,
-        isDevelopment: false,
-        platform: "win32",
-      });
-      assert.equal(
-        yield* fs.readFileString(path.join(destination, "Local State")),
-        "existing V2 state",
-      );
+      yield* fs.makeDirectory(source, { recursive: true });
+      yield* fs.writeFileString(path.join(source, "Local State"), "upstream keys");
+      for (const isDevelopment of [false, true]) {
+        const resolved = yield* resolveUserDataPath({
+          appDataDirectory: directory,
+          isDevelopment,
+          platform: "win32",
+        });
+        assert.equal(resolved, path.join(directory, isDevelopment ? "t3o-dev" : "t3o"));
+        assert.isFalse(yield* fs.exists(path.join(resolved, "Local State")));
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

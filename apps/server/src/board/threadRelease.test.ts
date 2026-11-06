@@ -95,6 +95,7 @@ const stepState = (input: {
     retryAt: null,
     slotHeld: false,
     forceStart: false,
+    queuedBy: null,
     startedAt: null,
     updatedAt: NOW,
   }) as unknown as BoardCardStepState;
@@ -130,6 +131,21 @@ const released = (state: BoardState, abandoned?: ReadonlySet<string>): ReadonlyA
   boardReleasedThreadIds(state, abandoned).map(String);
 
 describe("boardReleasedThreadIds", () => {
+  it("releases a retired thread even while its step is the card's current one (T3O-41)", () => {
+    const state = board({
+      card: card({
+        stage: String(BOARD_SEED_STAGE_IDS.merge),
+        links: [{ ...link("thread-fix", String(BOARD_SEED_STAGE_IDS.merge)), retiredAt: NOW }],
+      }),
+      step: stepState({
+        stepId: String(BOARD_SEED_STAGE_IDS.merge),
+        threadId: "thread-fix",
+        status: "running",
+      }),
+    });
+    assert.deepStrictEqual(released(state), ["thread-fix"]);
+  });
+
   it("keeps the running step's own thread and releases every earlier one", () => {
     const state = board({
       card: card({
@@ -169,8 +185,8 @@ describe("boardReleasedThreadIds", () => {
     },
   );
 
-  // A human-in-the-loop stage never auto-advances, so its finished run sits in
-  // its own column waiting to be dragged — and its thread is where the human
+  // A stage with auto-advance off does not move the card, so its finished run
+  // sits in its own column waiting to be dragged — and its thread is where the human
   // picks the work back up.
   it("keeps a succeeded step's thread while the card is still in that stage", () => {
     const state = board({

@@ -230,6 +230,7 @@ const leftoverStep = (stepId: string): BoardCardStepState => ({
   status: "stalled",
   slotHeld: false,
   forceStart: false,
+  queuedBy: null,
   startedAt: NOW,
   updatedAt: NOW,
 });

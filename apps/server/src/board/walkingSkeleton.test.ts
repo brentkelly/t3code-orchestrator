@@ -70,6 +70,7 @@ const expectedCard = {
   dependsOn: [],
   parentCardId: null,
   sourcePlanId: null,
+  group: null,
   threadLinks: [],
   attachments: [],
   externalRef: null,
@@ -79,9 +80,17 @@ const expectedCard = {
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: null,
-  autoStart: false,
-  autoMerge: false,
+  autoPlanSetting: null,
+  autoBuildSetting: null,
+  autoMergeSetting: null,
   autoMergeHold: null,
+  mergeStrategy: null,
+  pinnedWorkerId: null,
+  placedWorkerId: null,
+  workerMove: null,
+  placementOrphaned: null,
+  ci: null,
+  ciLastOutcome: null,
   worktree: null,
   pullRequest: null,
   pullRequestHistory: [],
@@ -493,7 +502,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
         createdAt,
       });
       yield* engine.dispatch({
-        type: "board.card.update",
+        type: "board.card.set-automation",
         commandId: CommandId.make("cmd-card-arm-auto-merge"),
         cardId: BoardCardId.make("card-auto-merge"),
         autoMerge: true,
@@ -517,7 +526,7 @@ it.layer(makeBoardSkeletonTestLayer("t3o-board-skeleton-test-"))("board walking 
 
       const rehydrated = yield* snapshotQuery.getCommandReadModel();
       const rehydratedCard = rehydrated.board?.cards.find((card) => card.id === "card-auto-merge");
-      assert.isTrue(rehydratedCard?.autoMerge);
+      assert.isTrue(rehydratedCard?.autoMergeSetting);
       assert.strictEqual(rehydratedCard?.autoMergeHold?.attempt, 2);
 
       const events: BoardEvent[] = Array.from(yield* Stream.runCollect(engine.readBoardEvents()));

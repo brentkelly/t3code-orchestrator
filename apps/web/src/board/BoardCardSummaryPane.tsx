@@ -125,8 +125,14 @@ export function BoardCardSummaryPane({
   onOpenPullRequest,
   onSelectReview,
   onOpenChild,
+  decisionLog,
+  buildPending = false,
 }: {
   readonly summary: BoardCardWorkSummary;
+  /** The card's decision log section (T3O-32), when it has one. */
+  readonly decisionLog?: React.ReactNode;
+  /** No build has finished yet: the pane is here for the decision log. */
+  readonly buildPending?: boolean;
   readonly onBackToThread: () => void;
   readonly onOpenPullRequest: (url: string) => void;
   readonly onSelectReview: () => void;
@@ -143,7 +149,7 @@ export function BoardCardSummaryPane({
   return (
     <section className="flex min-h-0 min-w-0 flex-col border-r border-border bg-muted/55">
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border pl-[22px] pr-3">
-        <SectionHeading>Build summary</SectionHeading>
+        <SectionHeading>{buildPending ? "Summary" : "Build summary"}</SectionHeading>
         <span className="flex-1" />
         <button
           className="inline-flex h-6 shrink-0 items-center gap-1 rounded-[7px] border border-input bg-popover pl-1.5 pr-2.5 text-[11.5px] font-medium text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground"
@@ -159,6 +165,10 @@ export function BoardCardSummaryPane({
           {lead !== null ? (
             <p className="text-[15px]/[1.5] font-medium text-pretty text-foreground">
               <InlineCode text={lead} />
+            </p>
+          ) : buildPending ? (
+            <p className="text-[12.5px]/[1.5] text-muted-foreground">
+              The build summary appears here when the build finishes.
             </p>
           ) : build.empty ? (
             <p className="text-[15px]/[1.5] text-muted-foreground">No build summary</p>
@@ -207,6 +217,8 @@ export function BoardCardSummaryPane({
             ) : null}
           </div>
         </div>
+
+        {decisionLog}
 
         {structured !== null && structured.notes.length > 0 ? (
           <div className="flex flex-col gap-2.5">

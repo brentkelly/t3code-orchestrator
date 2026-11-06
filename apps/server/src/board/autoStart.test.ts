@@ -15,6 +15,7 @@
 import {
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
+  boardCardStepState,
   BoardPlanId,
   type BoardCard,
   type BoardPlan,
@@ -130,7 +131,7 @@ const stageOf = (board: BoardState, id: string): string | null =>
   String(board.cards.find((card) => card.id === BoardCardId.make(id))?.stage ?? "") || null;
 
 const armOf = (board: BoardState, id: string): boolean | null =>
-  board.cards.find((card) => card.id === BoardCardId.make(id))?.autoStart ?? null;
+  board.cards.find((card) => card.id === BoardCardId.make(id))?.autoBuildSetting ?? null;
 
 const moveTypes = (commands: ReadonlyArray<HarnessCommand>) =>
   commands.filter((command) => command.type === "board.card.move");
@@ -144,10 +145,8 @@ it.effect("starts an armed card when its last dependency reaches Done", () =>
       yield* deliver(h, cardMoved(blocker("dep", DONE), BUILDING, DONE, 1));
 
       assert.strictEqual(stageOf(yield* board, "waiter"), BUILDING);
-      // The arm is SPENT by the move that fired it (D4), in the same event —
-      // so there is no cleared-but-unstarted window and no second command
-      // that can be lost.
-      assert.strictEqual(armOf(yield* board, "waiter"), false);
+      // Auto-build is a lasting setting (T3O-38): the move does not spend it.
+      assert.strictEqual(armOf(yield* board, "waiter"), true);
       // An ORDINARY forward move, the one a human's Begin build makes (D3):
       // no `override`, so the decider's every gate still applies and nothing
       // downstream can tell an auto-started card from a dragged one.
@@ -218,7 +217,7 @@ it.effect("fires when the blocking card is ARCHIVED rather than finished", () =>
   ),
 );
 
-it.effect("never fires for a sub-board child — its siblings already cascade", () =>
+it.effect("fires for a leaf inside a group too — any leaf may be armed (T3O-27)", () =>
   withGovernor(
     setup([
       makeBoardCard({ id: "parent", stage: BUILDING, orderKey: "a" }),
@@ -227,20 +226,11 @@ it.effect("never fires for a sub-board child — its siblings already cascade", 
     ]),
     (h) =>
       Effect.gen(function* () {
-        const { board, commands } = h;
+        const { board } = h;
         yield* deliver(h, cardMoved(blocker("dep", DONE), BUILDING, DONE, 1));
-
-        // A child is started by `cascadeUnblockedChildren` off its PARENT's
-        // Begin build (t3o-28 D3). Its dependency finishing here is not a
-        // parent's Begin build, and a second mechanism firing on it would be
-        // two answers to one question.
-        assert.strictEqual(stageOf(yield* board, "waiter"), READY);
-        assert.lengthOf(
-          moveTypes(yield* commands).filter(
-            (command) => command.cardId === BoardCardId.make("waiter"),
-          ),
-          0,
-        );
+        // The per-card arm is the card's own trigger; group auto-build is an
+        // additional one, not a replacement.
+        assert.strictEqual(stageOf(yield* board, "waiter"), BUILDING);
       }),
   ),
 );
@@ -451,3 +441,63 @@ it.effect("an auto-started card with no free slot queues honestly", () =>
       }),
   ),
 );
+
+// ── Automation toggles (T3O-38) ───────────────────────────────────────────
+
+const armEdit = (card: BoardCard, sequence: number) =>
+  ({
+    type: "board.card-updated",
+    sequence,
+    payload: { cardId: card.id, card, automationChanged: { autoBuild: true } },
+  }) as never;
+
+it.effect("a child's own Auto-build starts it without beginning its unstarted group", () => {
+  const group: BoardCard = {
+    ...makeBoardCard({ id: "group", stage: READY, orderKey: "a" }),
+    group: {
+      target: "inherit",
+      autoBuild: true,
+      autoMerge: false,
+      autoPlan: false,
+      started: false,
+      placed: BOARD_SEED_STAGE_IDS.ready,
+      prevStage: null,
+      heading: true,
+      integrated: false,
+    },
+  };
+  const own = armedCard({ dependsOn: [], parentCardId: "group" });
+  const sibling = makeBoardCard({
+    id: "sibling",
+    stage: READY,
+    orderKey: "n",
+    parentCardId: "group",
+  });
+  return withGovernor(setup([group, own, sibling]), (h) =>
+    Effect.gen(function* () {
+      yield* h.pumpDomain(armEdit(own, 1));
+      assert.strictEqual(stageOf(yield* h.board, "waiter"), BUILDING);
+      yield* deliverAutoStart(h, "waiter", 2);
+
+      const after = yield* h.board;
+      assert.strictEqual(stageOf(after, "sibling"), READY, "the group's cascade did not run");
+      assert.isFalse(
+        after.cards.find((card) => card.id === BoardCardId.make("group"))?.group?.started,
+      );
+    }),
+  );
+});
+
+it.effect("Auto-build runs the build unattended even when the card asks for a human", () => {
+  const card: BoardCard = { ...armedCard({ dependsOn: [] }), humanInLoop: true };
+  return withGovernor(setup([card]), (h) =>
+    Effect.gen(function* () {
+      yield* h.pumpDomain(armEdit(card, 1));
+      yield* deliverAutoStart(h, "waiter", 2);
+
+      const state = boardCardStepState(yield* h.board, BoardCardId.make("waiter"));
+      assert.strictEqual(state?.stepId, BUILDING);
+      assert.isFalse(state?.humanInLoop);
+    }),
+  );
+});

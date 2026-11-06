@@ -34,11 +34,15 @@ import {
   type BoardThreadRecord,
   type BoardThreadState,
   type BoardThreadUsageLimit,
+  LocalThreadGateway,
+  type LocalThreadGatewayShape,
   type ThreadGatewayShape,
   type ThreadSendInput,
+  type ThreadSignalBatch,
   type ThreadSettleInput,
   type ThreadSignal,
   type ThreadSpawnInput,
+  type ThreadAnswerInput,
   type ThreadTargetInput,
   type TodoLogEntry,
   type TodoSignal,
@@ -52,7 +56,8 @@ export type ThreadGatewayCall =
   | ({ readonly type: "thread.stop-session" } & ThreadTargetInput)
   | ({ readonly type: "thread.settle" } & ThreadSettleInput)
   | ({ readonly type: "thread.delete" } & ThreadTargetInput)
-  | ({ readonly type: "thread.arm-limit-recovery" } & ThreadTargetInput);
+  | ({ readonly type: "thread.arm-limit-recovery" } & ThreadTargetInput)
+  | ({ readonly type: "thread.answer-pending-input" } & ThreadAnswerInput);
 
 /** The fields a fixture sets on a thread; everything derived is computed. */
 export interface FakeThreadInput {
@@ -168,8 +173,10 @@ interface FakeRecord extends BoardThreadRecord {
 }
 
 export interface FakeThreadGateway {
-  readonly gateway: ThreadGatewayShape;
+  readonly gateway: LocalThreadGatewayShape;
   readonly layer: Layer.Layer<ThreadGateway>;
+  /** The same gateway as a server's own threads (T3O-63). */
+  readonly localLayer: Layer.Layer<LocalThreadGateway>;
   /** Every call, in order, refused ones included. */
   readonly calls: Effect.Effect<ReadonlyArray<ThreadGatewayCall>>;
   /** What `threadState` answers. Set one to change a thread's live view. */
@@ -204,6 +211,11 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
     // Every subscription sees every signal, as `observe`'s contract promises; the
     // unbounded replay stands in for "the subscriber attached before the emit".
     const signals = yield* PubSub.unbounded<ThreadSignal>({ replay: Number.MAX_SAFE_INTEGER });
+    // The same signals by log position, one per emit, for `signalLog`.
+    const batches = yield* PubSub.unbounded<ThreadSignalBatch>({
+      replay: Number.MAX_SAFE_INTEGER,
+    });
+    const signalHead = yield* Ref.make(0);
     const todoLog = yield* Ref.make<ReadonlyArray<TodoLogEntry>>([]);
     const todoPubSub = yield* PubSub.unbounded<TodoLogEntry>();
     const projects = options.projects ?? [];
@@ -236,7 +248,7 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
         return new Map(current).set(String(threadId), change(existing));
       });
 
-    const gateway: ThreadGatewayShape = {
+    const gateway: LocalThreadGatewayShape = {
       spawn: (input) =>
         Effect.gen(function* () {
           yield* record({ type: "thread.spawn", ...input });
@@ -278,6 +290,17 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
             ...current,
             settlementDecided: true,
           }));
+        }),
+      // As the engine does: answered only while a question is pending.
+      answerPendingInput: (input) =>
+        Effect.gen(function* () {
+          yield* record({ type: "thread.answer-pending-input", ...input });
+          const state = (yield* Ref.get(states)).get(String(input.threadId));
+          if (state === undefined || !state.awaitingUserInput) return false;
+          yield* Ref.update(states, (current) =>
+            new Map(current).set(String(input.threadId), { ...state, awaitingUserInput: false }),
+          );
+          return true;
         }),
       // As the engine does: armed only for a limit that names its reset time.
       armLimitRecovery: (input) =>
@@ -354,6 +377,16 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
         Effect.succeed(projects.find((project) => project.id === projectId) ?? null),
 
       observe: Stream.fromPubSub(signals),
+      signalLog: (afterSequence) =>
+        Stream.unwrap(
+          Ref.get(signalHead).pipe(
+            Effect.map((head) =>
+              Stream.fromPubSub(batches).pipe(
+                Stream.filter((batch) => batch.sequence > (afterSequence ?? head)),
+              ),
+            ),
+          ),
+        ),
 
       todoLogHead: Ref.get(todoLog).pipe(Effect.map((log) => log.length)),
       readTodoLog: (after, upTo) =>
@@ -372,10 +405,16 @@ export const makeFakeThreadGateway = (options: FakeThreadGatewayOptions = {}) =>
     return {
       gateway,
       layer: Layer.succeed(ThreadGateway, gateway),
+      localLayer: Layer.succeed(LocalThreadGateway, gateway),
       calls: Ref.get(calls),
       states,
       settled: Ref.get(settled),
-      emit: (signal) => PubSub.publish(signals, signal).pipe(Effect.asVoid),
+      emit: (signal) =>
+        Ref.updateAndGet(signalHead, (head) => head + 1).pipe(
+          Effect.flatMap((sequence) => PubSub.publish(batches, { sequence, signals: [signal] })),
+          Effect.andThen(PubSub.publish(signals, signal)),
+          Effect.asVoid,
+        ),
       appendTodo: (signal) =>
         Effect.gen(function* () {
           const log = yield* Ref.updateAndGet(todoLog, (current) => [
@@ -401,6 +440,7 @@ export const inertThreadGateway = (
   settle: () => Effect.void,
   delete: () => Effect.void,
   armLimitRecovery: () => Effect.succeed(false),
+  answerPendingInput: () => Effect.succeed(false),
   threadState: () => Effect.succeed(null),
   threadRecords: () => Effect.succeed(new Map()),
   threadsInWorktree: () => Effect.succeed([]),

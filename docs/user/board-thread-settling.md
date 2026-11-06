@@ -8,6 +8,12 @@ the card is finished with it.
 The card keeps them all. Settling only clears the inbox; the card's thread tabs are untouched, and
 every finished round is still there to read.
 
+Settled card threads are also hidden from the **Settled** shelf in Threads view, so your one-off
+threads are easy to find there. Open an old card thread from its card instead. To list them in
+Settled again, turn off **Hide card threads** in the sidebar's filter menu, or choose **Show** in
+the note under the **Settled** header. The setting is saved per device, and search still finds
+hidden card threads.
+
 ## What stays in the inbox
 
 Whatever the card is actually working in, and nothing else:
@@ -31,6 +37,10 @@ might want again.
 Dragging a card backwards works the same way. The threads of the stage it left settle, because the
 card is not in that stage any more — and if you send it forward again, whichever thread it resumes
 comes back with it.
+
+The conversation a card opens when you drag it back into a stage it already finished is yours to
+steer. When its agent reports the stage finished, the card moves on exactly as it did the first
+time, if that stage moves cards on by itself.
 
 Moving a card on from Planning before its plan is written asks you to confirm first. If you go
 ahead, the card keeps its planning thread and any agent reply still in progress finishes. That

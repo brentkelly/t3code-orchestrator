@@ -9,9 +9,9 @@ import {
   BOARD_SEED_STAGE_IDS,
   BOARD_SEED_STAGES,
   BoardLabelId,
+  EMPTY_BOARD_PROJECT_STAGE_CONFIG,
   BoardStageId,
   ProjectId,
-  ProviderInstanceId,
   ThreadId,
   type BoardCard,
   type BoardCardShell,
@@ -61,6 +61,7 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   dependsOn: [],
   parentCardId: null,
   sourcePlanId: null,
+  group: null,
   threadLinks: [],
   attachments: [],
   externalRef: null,
@@ -70,9 +71,17 @@ const fullCard = (id: string, overrides?: Partial<BoardCard>): BoardCard => ({
   splitRationale: null,
   baseBranch: null,
   scheduledStartAt: null,
-  autoStart: false,
-  autoMerge: false,
+  autoPlanSetting: null,
+  autoBuildSetting: null,
+  autoMergeSetting: null,
   autoMergeHold: null,
+  mergeStrategy: null,
+  pinnedWorkerId: null,
+  placedWorkerId: null,
+  workerMove: null,
+  placementOrphaned: null,
+  ci: null,
+  ciLastOutcome: null,
   worktree: null,
   blocked: false,
   archivedAt: null,
@@ -99,11 +108,52 @@ const snapshot = (input?: Partial<BoardShellSnapshot>): BoardShellSnapshot => ({
   labels: [],
   stages: [],
   cardThreads: [],
-  providerLimits: [],
   ...input,
 });
 
 describe("board shell reducer", () => {
+  it("project-stage-config replaces the project's config and its own stage rows (T3O-43)", () => {
+    const own = (id: string, label: string, orderKey: string) => ({
+      stageId: BoardStageId.make(`${projectId}:${id}`),
+      label,
+      role: null,
+      orderKey,
+      createdAt: NOW,
+      updatedAt: NOW,
+      projectId,
+    });
+    const backlog = BOARD_SEED_STAGES[0]!;
+    const before = snapshot({
+      stages: [own("old", "Old", "c"), own("kept", "Kept", "z"), backlog],
+      projectStageConfigs: {
+        [projectId]: EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+        [ProjectId.make("other")]: EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+      },
+    });
+    const config = {
+      ...EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+      removedStageIds: [BOARD_SEED_STAGE_IDS.sprint],
+    };
+    const next = applyBoardShellStreamEvent(before, {
+      kind: "project-stage-config",
+      sequence: 2,
+      projectId,
+      config,
+      // "kept" is re-ordered ahead of backlog, "new" is added, "old" is dropped.
+      upserts: [own("kept", "Kept again", "a"), own("new", "New", "m")],
+      deletedStageIds: [BoardStageId.make(`${projectId}:old`)],
+    });
+    expect(next.stages.map((stage) => [stage.stageId, stage.label])).toEqual([
+      [`${projectId}:kept`, "Kept again"],
+      [backlog.stageId, backlog.label],
+      [`${projectId}:new`, "New"],
+    ]);
+    expect(next.projectStageConfigs?.[projectId]).toEqual(config);
+    expect(next.projectStageConfigs?.[ProjectId.make("other")]).toEqual(
+      EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+    );
+  });
+
   it("appends a card to an empty board", () => {
     const next = applyBoardShellStreamEvent(snapshot(), {
       kind: "card-upserted",
@@ -121,6 +171,29 @@ describe("board shell reducer", () => {
       card: cardShell("card-1", { title: "Renamed" }),
     });
     expect(next.cards).toEqual([cardShell("card-1", { title: "Renamed" })]);
+  });
+
+  it("clears a card's CI entry and last CI outcome when an upsert omits them (T3O-44)", () => {
+    const inCi = cardShell("card-1", {
+      stage: BOARD_SEED_STAGE_IDS.ci,
+      ci: {
+        runId: "run-1",
+        entry: 1,
+        fixAttempts: 0,
+        maxFixAttempts: 2,
+        phase: "running",
+        steps: [{ name: "Check", status: "running", startedAt: NOW, finishedAt: null }],
+      },
+      ciLastOutcome: { kind: "skipped", actor: "Brent" },
+    });
+    expect(inCi.ci?.phase).toBe("running");
+    const next = applyBoardShellStreamEvent(snapshot({ cards: [inCi] }), {
+      kind: "card-upserted",
+      sequence: 2,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.merge }),
+    });
+    expect(next.cards[0]?.ci).toBeUndefined();
+    expect(next.cards[0]?.ciLastOutcome).toBeUndefined();
   });
 
   it("removes a card", () => {
@@ -156,6 +229,48 @@ describe("board shell reducer", () => {
       stepRunning: true,
     });
     expect(cleared.cards?.[0]?.queued).toBe(false);
+  });
+
+  it("card-queued carries which limit holds the card, card deltas keep it, and leaving the queue clears it (T3O-65)", () => {
+    const held = snapshot({
+      cards: [cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building })],
+    });
+    const queued = applyBoardShellStreamEvent(held, {
+      kind: "card-queued",
+      sequence: 2,
+      cardId: BoardCardId.make("card-1"),
+      queued: true,
+      stepRunning: false,
+      queuedBy: "worker",
+    });
+    expect(queued.cards?.[0]?.queuedBy).toBe("worker");
+    // A drag re-upserts the card without step state: the reason stays.
+    const dragged = applyBoardShellStreamEvent(queued, {
+      kind: "card-upserted",
+      sequence: 3,
+      card: cardShell("card-1", { stage: BOARD_SEED_STAGE_IDS.building, orderKey: "zz" }),
+    });
+    expect(dragged.cards?.[0]?.queued).toBe(true);
+    expect(dragged.cards?.[0]?.queuedBy).toBe("worker");
+    // A different limit takes over.
+    const board = applyBoardShellStreamEvent(dragged, {
+      kind: "card-queued",
+      sequence: 4,
+      cardId: BoardCardId.make("card-1"),
+      queued: true,
+      stepRunning: false,
+      queuedBy: "board",
+    });
+    expect(board.cards?.[0]?.queuedBy).toBe("board");
+    // Admitted: no longer queued, no reason left behind.
+    const admitted = applyBoardShellStreamEvent(board, {
+      kind: "card-queued",
+      sequence: 5,
+      cardId: BoardCardId.make("card-1"),
+      queued: false,
+      stepRunning: true,
+    });
+    expect(admitted.cards?.[0]?.queuedBy).toBeUndefined();
   });
 
   it("card-queued admitted-to-running lights stepRunning; holding for a slot clears it", () => {
@@ -493,12 +608,11 @@ describe("board shell reducer", () => {
         queued: false,
         stalledReason: "usage-limit",
         retryAt: "2026-01-01T02:50:00.000Z",
-        limitedByInstanceId: ProviderInstanceId.make("claudeAgent"),
       },
     );
     expect(parked.cards?.[0]?.stalledReason).toBe("usage-limit");
     // A parked card sits for HOURS, so a drag or a rename inside that window is
-    // likely. The `stalled` flag is preserved above; without the three keys
+    // likely. The `stalled` flag is preserved above; without the stall keys
     // riding with it the face's words revert to the gave-up phrasing and the
     // detail modal paints its red "stopped" banner over a card that is calmly
     // counting down to its own resume.
@@ -510,7 +624,6 @@ describe("board shell reducer", () => {
     expect(reordered.cards?.[0]?.stalled).toBe(true);
     expect(reordered.cards?.[0]?.stalledReason).toBe("usage-limit");
     expect(reordered.cards?.[0]?.retryAt).toBe("2026-01-01T02:50:00.000Z");
-    expect(reordered.cards?.[0]?.limitedByInstanceId).toBe("claudeAgent");
     // …and the window reopening still clears the whole slice, because
     // `card-stalled` deletes the keys rather than spreading over what is held.
     const resumed = applyBoardShellStreamEvent(reordered, {
@@ -526,7 +639,6 @@ describe("board shell reducer", () => {
     });
     expect(resumed.cards?.[0]?.stalledReason).toBeUndefined();
     expect(resumed.cards?.[0]?.retryAt).toBeUndefined();
-    expect(resumed.cards?.[0]?.limitedByInstanceId).toBeUndefined();
     expect(resumed.cards?.[0]?.queued).toBe(true);
   });
 
@@ -780,7 +892,8 @@ describe("withBoardThreadFields", () => {
     kind: "user_input" as const,
     createdAt: v2Now,
   };
-  const monitorTask = { taskId: "monitor-1", kind: "monitor" as const };
+  // Upstream holds a monitor only when the agent waits on it (#24610).
+  const monitorTask = { taskId: "monitor-1", kind: "monitor" as const, awaited: true as const };
 
   const linked = cardShell("card-1", {
     threadLinks: [{ threadId, role: "build", linkedAt: NOW, tombstonedAt: null }],
@@ -1040,6 +1153,19 @@ describe("boardBuildQueue", () => {
     expect(queue.get("card-b")).toEqual({ position: 1, total: 2, ahead: 0, startsNext: true });
     expect(queue.get("card-c")).toEqual({ position: 2, total: 2, ahead: 1, startsNext: false });
     expect(queue.has("card-a")).toBe(false);
+  });
+
+  it("leaves out a card held for its offline worker: it waits on no slot (T3O-66)", () => {
+    const cards = [
+      {
+        ...queuedCard("card-held", BOARD_SEED_STAGE_IDS.building, "a"),
+        queuedBy: "worker-offline" as const,
+      },
+      queuedCard("card-b", BOARD_SEED_STAGE_IDS.building, "m"),
+    ];
+    const queue = boardBuildQueue(cards, BOARD_SEED_STAGES, NOW_MS);
+    expect(queue.has("card-held")).toBe(false);
+    expect(queue.get("card-b")).toEqual({ position: 1, total: 1, ahead: 0, startsNext: true });
   });
 
   // The governor admits the LATER stage first, so a Building card queued behind

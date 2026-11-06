@@ -92,6 +92,7 @@ const planningStep = (input: {
   status: input.status,
   slotHeld: false,
   forceStart: false,
+  queuedBy: null,
   startedAt: NOW,
   updatedAt: NOW,
 });

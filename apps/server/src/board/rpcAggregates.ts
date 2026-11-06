@@ -3,10 +3,32 @@
  * `RPC_AGGREGATES` (observability/RpcInstrumentation.ts), whose type makes a
  * method without a label a compile error.
  */
-import { BOARD_WS_METHODS } from "@t3tools/contracts";
+import {
+  BOARD_WORKER_GATEWAY_WS_METHODS,
+  BOARD_WORKER_GIT_CALL_WS_METHODS,
+  BOARD_WORKER_WS_METHODS,
+  BOARD_WORKERS_WS_METHODS,
+  BOARD_WS_METHODS,
+} from "@t3tools/contracts";
 
-type BoardWsMethod = (typeof BOARD_WS_METHODS)[keyof typeof BOARD_WS_METHODS];
+// T3O-62: worker management and the worker-side handshake are board RPCs too.
+// T3O-63: so are the worker's thread gateway, the MCP relay and staging, and
+// T3O-64: the git operations a card's worker runs.
+const BOARD_METHOD_MAPS = [
+  BOARD_WS_METHODS,
+  BOARD_WORKERS_WS_METHODS,
+  BOARD_WORKER_WS_METHODS,
+  BOARD_WORKER_GATEWAY_WS_METHODS,
+  BOARD_WORKER_GIT_CALL_WS_METHODS,
+];
+
+type BoardWsMethod =
+  | (typeof BOARD_WS_METHODS)[keyof typeof BOARD_WS_METHODS]
+  | (typeof BOARD_WORKERS_WS_METHODS)[keyof typeof BOARD_WORKERS_WS_METHODS]
+  | (typeof BOARD_WORKER_WS_METHODS)[keyof typeof BOARD_WORKER_WS_METHODS]
+  | (typeof BOARD_WORKER_GATEWAY_WS_METHODS)[keyof typeof BOARD_WORKER_GATEWAY_WS_METHODS]
+  | (typeof BOARD_WORKER_GIT_CALL_WS_METHODS)[keyof typeof BOARD_WORKER_GIT_CALL_WS_METHODS];
 
 export const BOARD_RPC_AGGREGATES = Object.fromEntries(
-  Object.values(BOARD_WS_METHODS).map((method) => [method, "board"]),
+  BOARD_METHOD_MAPS.flatMap((methods) => Object.values(methods)).map((method) => [method, "board"]),
 ) as Readonly<Record<BoardWsMethod, "board">>;

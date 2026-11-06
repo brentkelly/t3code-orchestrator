@@ -530,6 +530,7 @@ it.effect("boot reconcile settles the threads finished while nothing was asking"
             retryAt: null,
             slotHeld: false,
             forceStart: false,
+            queuedBy: null,
             startedAt: NOW,
             updatedAt: NOW,
           },

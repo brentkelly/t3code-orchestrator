@@ -6,8 +6,9 @@
  * prototype's two forms (`.plans/prototype/T3 Code Kanban v4.dc.html`):
  *
  * - **Backlog and Sprint** — a 760px sheet. The work has not started, so the
- *   card is what you read: brief, dependencies and threads on the left, the
- *   stage action, labels, the stage ladder and provenance in a 244px rail.
+ *   card is what you read: brief and threads on the left, the stage action,
+ *   labels, dependencies, activity, automation, the stage ladder and
+ *   provenance in a 244px rail.
  * - **Planning onward** — a 1220px working surface. The card's thread runs in
  *   the modal (`BoardCardThreadPane`), with everything else stacked into a
  *   336px rail beside it and the brief one tab away. This is the prototype's
@@ -27,6 +28,7 @@
 import {
   DEFAULT_BOARD_REVIEW_ROUNDS,
   activeBoardCardThreadId,
+  BOARD_SEED_STAGE_IDS,
   isBoardCardAwaitingPermission,
   BOARD_AUTO_MERGE_MAX_ATTEMPTS,
   boardCardArchiveNeedsConfirmation,
@@ -34,11 +36,12 @@ import {
   boardCardPullRequestIsOpenDraft,
   boardCardHasLiveBranch,
   boardStageIndex,
-  boardNextStageId,
   boardStagesInOrder,
   boardStageById,
   boardStageWithRole,
   effectiveBoardStageRole,
+  isBoardDeferredStage,
+  isBoardStageAtOrAfterBuild,
   liveBoardCardDependents,
   parseReviewStepId,
   sortBoardCardThreadLinks,
@@ -52,9 +55,13 @@ import {
   type BoardCardThreadShell,
   type BoardCardThreadState,
   type BoardLabel,
+  type BoardCardPlanReview,
+  BOARD_PLAN_REVIEW_ROUNDS_MAX,
+  BOARD_PLAN_REVIEW_ROUNDS_MIN,
   type BoardLabelId,
   type BoardStageDefinition,
   type BoardCardModelOverrides,
+  type BoardMergeStrategy,
   type BoardCardStageModelOverride,
   type BoardSettings,
   type BoardStageId,
@@ -66,7 +73,13 @@ import {
   type BoardCardReviewOverrides,
   type BoardReviewRoundOverride,
   type RuntimeMode,
+  type BoardCardStepStalledReason,
+  type BoardSplitRecommendation,
+  isLiveBoardCardThreadLink,
+  type BoardProjectExecutionConfig,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { Debouncer } from "@tanstack/react-pacer";
 import { Link } from "@tanstack/react-router";
 import {
   ArchiveIcon,
@@ -87,30 +100,35 @@ import {
   LoaderCircleIcon,
   LockIcon,
   MessageSquareIcon,
+  MessageSquareTextIcon,
   SquareIcon,
   PlayIcon,
   RefreshCcwIcon,
   RotateCcwIcon,
   SlidersHorizontalIcon,
+  MergeIcon,
   Trash2Icon,
   TriangleAlertIcon,
+  Undo2Icon,
   XIcon,
 } from "lucide-react";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  Suspense,
+  lazy,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { BoardCardNavRails, useBoardCardNavKeys, type BoardCardNav } from "./BoardCardNavRails";
 import { useBoardUiStore } from "./boardUiStore";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogPopup } from "../components/ui/dialog";
-import {
-  Menu,
-  MenuCheckboxItem,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuTrigger,
-} from "../components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import {
   boardCardModelOverrideSummary,
@@ -118,13 +136,17 @@ import {
   hasBoardCardModelOverride,
   type BoardCardModelRowSpec,
 } from "./boardCardModelRows";
+import { boardCardMergeStrategyView } from "./boardCardMergeStrategy";
 import { Switch } from "../components/ui/switch";
+import { NumberStepper } from "../components/settings/BoardPipelineSection";
+import { nextBoardCardPlanReview, type BoardCardPlanReviewView } from "./boardCardPlanReview";
 import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { BoardArchiveConfirmDialog } from "./BoardArchiveConfirmDialog";
 import { BoardBaseBranchConfirmDialog } from "./BoardBaseBranchConfirmDialog";
 import { BoardBaseBranchSelect } from "./BoardBaseBranchSelect";
+import { BoardCardWorkerRow } from "./workers/BoardCardWorkerRow";
 import { boardBriefDisplayText } from "./boardBriefDisplay";
 import { BoardCardProjectConfirmDialog } from "./BoardCardProjectConfirmDialog";
 import { BoardCardProjectRowValue, type BoardProjectOption } from "./BoardCardProjectSelect";
@@ -140,6 +162,7 @@ import { BoardLabelChips } from "./BoardLabelChips";
 import { BoardLabelField } from "./BoardLabelField";
 import { BoardLinkPullRequest } from "./BoardLinkPullRequest";
 import {
+  BoardCollapsibleSection,
   BoardDependencySection,
   BoardSectionHeading as SectionHeading,
   type BoardDependencyEntry,
@@ -150,21 +173,21 @@ import { BoardCardWorktreeKept } from "./BoardCardWorktreeKept";
 import { BoardCardStepPaused } from "./BoardCardStepPaused";
 import { type BoardConflictFixInfo } from "./boardConflictFix";
 import {
-  boardAutoMergeArm,
   boardAutoMergeBanner,
   boardAutoMergeCountdown,
   boardAutoMergeHeaderChip,
-  type BoardAutoMergeArm,
   type BoardAutoMergeBanner,
 } from "./boardAutoMergeHold";
-import type { BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
+import type { BoardAdoptSearch, BoardThreadStageRestart } from "./BoardCardThreadAddMenu";
 import { BoardCardActivityRail, type BoardActivityAgentLookup } from "./BoardCardActivityRail";
 import { deriveBoardReviewLoop, hasBoardReviewSteps } from "./boardReviewLoop";
+import { boardCiSentBackBanner, isBoardCiLive } from "./boardCi";
 import { deriveBoardPlanRows } from "./boardPlanRows";
 import { boardCardHasSummaryPane, deriveBoardCardWorkSummary } from "./boardCardWorkSummary";
 import { boardStageLabel } from "./boardStages";
 import type { BoardQueueInfo } from "./boardQueueInfo";
 import {
+  boardCiAwareNextStageId,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
   isBoardStageManuallySelectable,
@@ -172,8 +195,16 @@ import {
 } from "@t3tools/client-runtime/board";
 import { BoardCardSchedulePopover } from "./BoardCardSchedulePopover";
 import type { BoardScheduleKind } from "./boardSchedule";
-import { boardCardAutoStartCopy, boardCardAutoStartGate } from "./boardCardAutoStart";
+import { boardCardMoveBlocked } from "./boardCardMoveGate";
 import { BoardHint } from "./BoardHint";
+import { BoardDecisionLog } from "./BoardDecisionLog";
+import { boardDecisionFollowUp, boardDecisionLogView } from "./boardDecisionLog";
+import { BOARD_DEFERRED_STAGE } from "./boardScope";
+import { BoardSplitGate } from "./BoardSplitGate";
+import { boardGroupUsesCardActions } from "./boardGroups";
+import { BOARD_SPLIT_CHANGE_REQUEST_PREFILL, type BoardSplitGateSettings } from "./boardSplitGate";
+import { useComposerDraftStore } from "../composerDraftStore";
+import { threadWorkerOpensOn, type BoardThreadWorker } from "./workers/threadWorker";
 import {
   boardForwardShownBesideRecovery,
   boardReviewPaneStopped,
@@ -222,6 +253,9 @@ const BoardPlansPanel = lazy(() =>
  * phase progress and findings from the card's step completions. Lazy like its
  * siblings: a card that never reaches review pays nothing for it.
  */
+const BoardCardCiPane = lazy(() =>
+  import("./BoardCardCiPane").then((module) => ({ default: module.BoardCardCiPane })),
+);
 const BoardCardReviewPane = lazy(() =>
   import("./BoardCardReviewPane").then((module) => ({ default: module.BoardCardReviewPane })),
 );
@@ -244,6 +278,13 @@ const BoardCardSummaryPane = lazy(() =>
 const BoardCardModelsPopover = lazy(() =>
   import("./BoardCardModelsPopover").then((module) => ({
     default: module.BoardCardModelsPopover,
+  })),
+);
+
+/** The per-card merge strategy override (T3O-80), mounted only while open. */
+const BoardCardMergeStrategyPopover = lazy(() =>
+  import("./BoardCardMergeStrategyPopover").then((module) => ({
+    default: module.BoardCardMergeStrategyPopover,
   })),
 );
 
@@ -293,30 +334,74 @@ export function boardCardIsDone(
     create dialog, so it lives in `BoardCardFields`. */
 export type BoardDetailDependency = BoardDependencyEntry;
 
-/** The rail in the working-surface layout's right rail. Absent when the card
-    has no activity — not an empty skeleton (no-speculative-inventory). */
-function ActivitySection({
-  detail,
-  stages,
-  agents,
-  projectNames,
+/** The rail's shared tail, in both layouts (T3O-38): labels, dependencies and
+    activity, then Automation and the Stage ladder, collapsed by default with
+    their summaries on the header, then provenance. Dependencies and Activity
+    sit here even on a Backlog card, so the brief has the main column. */
+function RailSections({
+  props,
+  group,
+  onOpenThread,
+  onOpenCi,
 }: {
-  readonly detail: BoardCardDetail;
-  readonly stages: ReadonlyArray<BoardStageDefinition>;
-  readonly agents: BoardActivityAgentLookup | undefined;
-  readonly projectNames: ReadonlyMap<string, string>;
+  readonly props: BoardCardDetailViewProps;
+  readonly group: BoardCardDetailGroup | null;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+  /** Open the CI tab, which every CI activity row links to (T3O-44). */
+  readonly onOpenCi?: (() => void) | undefined;
 }) {
-  if (detail.activity.length === 0) return null;
+  const { card } = props.detail;
+  const activity = props.detail.activity;
   return (
-    <div className="flex flex-col gap-2 border-t border-border p-3.5">
-      <SectionHeading>Activity</SectionHeading>
-      <BoardCardActivityRail
-        agents={agents}
-        entries={detail.activity}
-        projectNames={projectNames}
-        stages={stages}
-      />
-    </div>
+    <>
+      <div className="flex flex-col gap-2 border-t border-border p-3.5">
+        <LabelSection
+          catalogue={props.catalogue}
+          onCreateLabel={props.onCreateLabel}
+          onDeleteLabel={props.onDeleteLabel}
+          onRecolourLabel={props.onRecolourLabel}
+          onSetLabels={props.onSetLabels}
+          onUndeleteLabel={props.onUndeleteLabel}
+          selected={card.labels}
+        />
+      </div>
+      <div className="border-t border-border p-3.5">
+        <DependenciesSection {...props} />
+      </div>
+      {activity.length === 0 ? null : (
+        <BoardCollapsibleSection
+          className="border-t border-border p-3.5"
+          summary={String(activity.length)}
+          title="Activity"
+        >
+          <BoardCardActivityRail
+            agents={props.agents}
+            entries={activity}
+            onOpenCi={onOpenCi}
+            projectNames={props.project.names}
+            stages={props.stages}
+          />
+        </BoardCollapsibleSection>
+      )}
+      {props.automation == null ? null : (
+        <div className="border-t border-border p-3.5">{props.automation}</div>
+      )}
+      {group === null ? (
+        <BoardCollapsibleSection
+          className="border-t border-border p-3.5"
+          summary={boardStageLabel(props.stages, card.stage)}
+          title="Stage"
+        >
+          <StageLadder
+            deferred={props.stageLadderDeferred}
+            onMoveStage={props.onMoveStage}
+            stage={card.stage}
+            stages={props.stages}
+          />
+        </BoardCollapsibleSection>
+      ) : null}
+      <InfoSection onOpenThread={onOpenThread} props={props} />
+    </>
   );
 }
 
@@ -327,10 +412,50 @@ export interface BoardDetailThreadLink {
   readonly title: string | null;
   readonly threadState: BoardCardThreadState;
   readonly awaitingInput: boolean;
+  /** The worker the thread lives on, which is where it opens (T3O-63). */
+  readonly worker: BoardThreadWorker;
+  /** "ran on {worker}", only on a board with more than one worker. */
+  readonly ranOn: string | null;
+  /** "Moved from {worker} · {time}" when this is the first thread after a
+      move (T3O-65), drawn as a divider above it. */
+  readonly movedFrom?: string | null | undefined;
+}
+
+/** What the split gate needs beyond the plans (T3O-31). */
+export interface BoardSplitGateContext {
+  readonly recommendation: BoardSplitRecommendation;
+  readonly ownBranch: string;
+  readonly landsOn: string;
+  readonly readyLabel: string;
+  readonly backlogLabel: string;
+}
+
+export interface BoardCardDetailGroup {
+  /** "Group · N cards". */
+  readonly chip: string;
+  /** Why the group is in its stage, under Open board. */
+  readonly note: string;
+  readonly onOpenBoard: (() => void) | undefined;
+  /** Opens the group archive confirmation. */
+  readonly onArchive: () => void;
+  /** Whether the group has its own integration branch, and so its own
+      integration review and summary. */
+  readonly ownBranch: boolean;
 }
 
 export interface BoardCardDetailViewProps {
   readonly environmentId: EnvironmentId;
+  /** Why the live step stalled, from the card's shell (T3O-65 shows the
+      provider-not-on-worker panel off it). */
+  readonly stalledReason?: BoardCardStepStalledReason | undefined;
+  /** What the card's shell says of its work and its worker (T3O-66), for the
+      Worker offline / Worker removed panel. */
+  readonly workerShell?:
+    | Pick<
+        BoardCardShell,
+        "workerId" | "placementOrphaned" | "stepRunning" | "queued" | "stepAwaiting"
+      >
+    | undefined;
   readonly detail: BoardCardDetail;
   readonly catalogue: ReadonlyArray<BoardLabel>;
   /** The read-model stage list (D13): column labels, the stage ladder, and the
@@ -345,9 +470,12 @@ export interface BoardCardDetailViewProps {
   readonly humanInLoop: {
     readonly value: boolean;
     readonly explicit: boolean;
-    readonly basis: "plan" | "no-plan" | "child";
+    readonly basis: "plan" | "no-plan";
   } | null;
   readonly onSetHumanInLoop: (value: boolean) => void;
+  /** The Plan review section (plan review, T3O-39); null where it is hidden. */
+  readonly planReview?: BoardCardPlanReviewView | null | undefined;
+  readonly onSetPlanReview?: ((next: BoardCardPlanReview) => void) | undefined;
   readonly labelsById: ReadonlyMap<BoardLabelId, BoardLabel>;
   /** Project title, or null when the project is not on disk (archived card). */
   readonly projectName: string | null;
@@ -365,6 +493,8 @@ export interface BoardCardDetailViewProps {
       the modal's per-tab counts and its sticky todos strip. */
   readonly threadTodos?: ReadonlyMap<ThreadId, BoardCardThreadShell> | undefined;
   readonly adoptableThreads: ReadonlyArray<BoardPickerOption>;
+  /** Server search behind the adopt list (T3O-41). */
+  readonly adoptSearch?: BoardAdoptSearch | undefined;
   /** The review loop's configured round cap, for the Review pane's R1..Rn bar
       (t3o-16). Absent falls back to the compiled default. */
   readonly reviewMaxRounds?: number | undefined;
@@ -458,6 +588,14 @@ export interface BoardCardDetailViewProps {
       round" at Code review and Ready for merge, "Request review" on a card
       that has never had one. Absent hides the button entirely. */
   readonly onRequestReviewRound?: (() => void) | undefined;
+  /** "Skip CI and move to Ready for merge" (T3O-44). */
+  readonly onSkipCi?: (() => void) | undefined;
+  /** A Skip CI request is in flight. */
+  readonly skipCiPending?: boolean | undefined;
+  /** Create a follow-up card from the decision log (T3O-32). */
+  readonly onCreateFollowUp?:
+    | ((draft: { readonly title: string; readonly brief: string }) => void)
+    | undefined;
   /** Whether ANY step is live on the card — running, queued, or parked
       (stalled / awaiting input / paused). One step at a time is a decider
       invariant, so "Another review round" is disabled rather than hidden while
@@ -497,6 +635,7 @@ export interface BoardCardDetailViewProps {
     readonly reason: string;
     readonly path: string | null;
     readonly branch: string;
+    readonly cancelledWork: boolean;
   } | null;
   /** "Check again": refresh and re-run the cleanup. */
   readonly onCheckWorktree?: (() => void) | undefined;
@@ -508,11 +647,11 @@ export interface BoardCardDetailViewProps {
   /** Purge the card outright. Always behind `BoardDeleteConfirmDialog` — the
       server does not ask, so this must never be reachable without one. */
   readonly onDelete: () => void;
-  /** The plan pane's approve gate (t3o-23, D1): whether it renders, the
-      floor stage's label for the confirm copy, and the dispatch. */
+  /** The split gate (T3O-31): whether a proposal is pending, what the gate
+      shows, and the dispatch with the human's final settings. */
   readonly canApproveSplit: boolean;
-  readonly approveSplitTargetLabel: string | null;
-  readonly onApproveSplit: () => void;
+  readonly splitGate: BoardSplitGateContext | null;
+  readonly onApproveSplit: (settings: BoardSplitGateSettings) => void;
   readonly onLinkThread: (threadId: ThreadId, role: string) => void;
   readonly onUnlinkThread: (threadId: ThreadId) => void;
   /** The parent this card is a child of (t3o-25), for the identity row's
@@ -527,8 +666,16 @@ export interface BoardCardDetailViewProps {
   /** The workspace pipeline config (t3o-29), for resolving what each override
       row falls back to when this card sets nothing. */
   readonly boardSettings: BoardSettings;
+  /** The card's project's `t3o.json` overrides (T3O-43). */
+  readonly projectExecutionConfig?: BoardProjectExecutionConfig | null | undefined;
   /** Write this card's per-stage model overrides; null clears them. */
   readonly onSetModelOverrides: (next: BoardCardModelOverrides | null) => void;
+  /** The merge stage's configured strategy (T3O-80), what "Use board default"
+      names. Absent reads as squash, the stage's own default. */
+  readonly boardMergeStrategy?: BoardMergeStrategy | undefined;
+  /** Write this card's own merge strategy; null returns it to the default.
+      Absent hides the control. */
+  readonly onSetMergeStrategy?: ((next: BoardMergeStrategy | null) => void) | undefined;
   /** What the card's schedule control is offering (T3O-19, D13), derived by the
       container from the card's live step — the copy has to be honest about
       whether setting a time will STOP an agent that is working right now. */
@@ -536,18 +683,14 @@ export interface BoardCardDetailViewProps {
   /** Set or clear the card's scheduled start; null clears the hold, which
       starts or resumes the card immediately. */
   readonly onSetScheduledStartAt: (next: string | null) => void;
-  /** Arm or disarm the card's auto-start (T3O-24). Absent hides the control
-      entirely — the eager view is mounted by tests that pass no handler. */
-  readonly onSetAutoStart?: ((next: boolean) => void) | undefined;
-  /** Arm or disarm the card's auto-merge (T3O-38, D3). Absent hides the
-      control entirely — the eager view is mounted by tests that pass no
-      handler. */
-  readonly onSetAutoMerge?: ((next: boolean) => void) | undefined;
-  /** Whether the merge-role stage's board-wide auto-merge setting is on
-      (T3O-38, D2/D3). It HIDES the per-card switch — two controls that can
-      disagree about one card is worse than one — and it is what makes the
-      header chip read `Auto-merge · board`, so a user who cannot find the
-      switch learns where the decision was actually made. */
+  /** The Automation section (T3O-38), built by the container, which holds
+      the shells and the board settings it resolves against. Null hides it —
+      a done or archived card has nothing left to automate. */
+  readonly automation?: ReactNode;
+  /** The card's resolved Auto-merge, for the header chip (T3O-38). */
+  readonly autoMergeArmed?: boolean | undefined;
+  /** Whether that Auto-merge comes from the board-wide setting, which makes
+      the chip read `Auto-merge · board` so a user learns where it was set. */
   readonly autoMergeFromBoardSetting?: boolean | undefined;
   /** Resolve an override's model slug to its display name for the header pill
       and tooltip (t3o-29, D7). Passed from the container, which holds the
@@ -564,6 +707,12 @@ export interface BoardCardDetailViewProps {
   /** The children's shells, for the Plans panel's live per-child state
       (t3o-29, D1). Empty on every card without a split. */
   readonly childShells?: ReadonlyArray<BoardCardShell> | undefined;
+  /** The group popup (T3O-29), or null for a leaf: Open board instead of the
+      stage's actions, Automation instead of the Stage ladder, and the
+      archive confirmation instead of a one-click archive. */
+  readonly group?: BoardCardDetailGroup | null | undefined;
+  /** A group's child also lists Deferred on its Stage ladder (T3O-29). */
+  readonly stageLadderDeferred?: boolean | undefined;
   /** The card's base branch (T3O-5, D13): what it branches off and merges back
       into, resolved through `resolveBoardCardEffectiveBase` by the container —
       the one layer that can see the project's default branch. */
@@ -977,6 +1126,41 @@ function AutoMergeBanner({ info }: { readonly info: BoardAutoMergeBanner }) {
   );
 }
 
+/** A card CI sent back to review (T3O-44): why, the fixes it used, and the
+    door to the run. Amber, like every hold the board did not resolve. */
+function BoardCiSentBackBanner({
+  banner,
+  onViewRun,
+}: {
+  readonly banner: { readonly title: string; readonly reason: string; readonly meta: string };
+  readonly onViewRun: () => void;
+}) {
+  return (
+    <div className="mx-3.5 mt-2.5 flex items-start gap-2.5 rounded-[10px] border border-amber-500/40 bg-[color-mix(in_srgb,#f59e0b_9%,var(--card))] py-2.5 pr-2.5 pl-3 dark:bg-[color-mix(in_srgb,#f59e0b_11%,#1c1c20)]">
+      <Undo2Icon
+        aria-hidden="true"
+        className="mt-px size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+      />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-[12.5px] font-medium text-foreground">{banner.title}</span>
+        {banner.reason === "" ? null : (
+          <span className="text-[11.5px] leading-[1.45] text-pretty text-muted-foreground">
+            {banner.reason}
+          </span>
+        )}
+        <span className="text-[11px] leading-[1.45] text-muted-foreground/80">{banner.meta}</span>
+      </div>
+      <button
+        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-input bg-popover px-2.5 text-[11.5px] font-medium text-foreground shadow-xs hover:bg-accent"
+        onClick={onViewRun}
+        type="button"
+      >
+        View CI run
+      </button>
+    </div>
+  );
+}
+
 /**
  * The queued-for-build banner (t3o-33) — the fix for a queued card opening on
  * the planning conversation it left behind and explaining nothing.
@@ -1004,8 +1188,10 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
       <p className="mt-1 text-[11.5px] leading-[1.45] text-muted-foreground">{info.detail}</p>
       {props.onQueueForceStart === undefined && props.onQueueMoveToFront === undefined ? null : (
         <div className="mt-2.5 flex items-center gap-1.5">
-          {props.onQueueForceStart === undefined ? null : (
-            <BoardHint label="Run this task now, over the agent limit.">
+          {/* A card waiting for its worker's checkout has no limit to start
+              past (T3O-65): nothing can run until the clone lands. */}
+          {props.onQueueForceStart === undefined || info.waitingForCheckout === true ? null : (
+            <BoardHint label="Run this task now, past every agent limit: the board's, its worker's and its provider's.">
               <button
                 className={cn(
                   "inline-flex h-[28px] items-center justify-center gap-[6px] rounded-lg border border-primary bg-primary px-2.5 text-[12px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90",
@@ -1038,9 +1224,97 @@ function QueueSection({ props }: { readonly props: BoardCardDetailViewProps }) {
   );
 }
 
+/** How long a mid-review rounds change waits for another click before it is sent. */
+const PLAN_REVIEW_ROUNDS_SETTLE_MS = 800;
+
+/**
+ * Plan review (T3O-39): an adversarial review of the plan once it is posted,
+ * run by the planning agent with subagents. While one runs, a rounds change
+ * tells the agent the new total, and turning the switch off stops the review.
+ */
+function PlanReviewSection({ props }: { readonly props: BoardCardDetailViewProps }) {
+  const view = props.planReview;
+  const onSet = props.onSetPlanReview;
+  // Mid-review every commit sends the planning agent a turn, so a run of
+  // stepper clicks lands as one change once it settles.
+  const [pendingRounds, setPendingRounds] = useState<number | null>(null);
+  // The settled commit is built from the view as it is when the timer fires:
+  // a review stopped elsewhere in the meantime must not be turned back on.
+  const latest = useRef({ view, onSet });
+  useEffect(() => {
+    latest.current = { view, onSet };
+  });
+  const [roundsCommit] = useState(
+    () =>
+      new Debouncer(
+        (next: number) => {
+          setPendingRounds(null);
+          const { view: now, onSet: set } = latest.current;
+          if (now == null || set === undefined || !now.enabled || !now.inProgress) return;
+          set(nextBoardCardPlanReview(now, { rounds: next }));
+        },
+        { wait: PLAN_REVIEW_ROUNDS_SETTLE_MS },
+      ),
+  );
+  // A rounds change still settling when the panel closes is landed, not dropped.
+  useEffect(() => () => roundsCommit.flush(), [roundsCommit]);
+  if (view == null || onSet === undefined) return null;
+  const rounds = pendingRounds ?? view.rounds;
+  return (
+    <div className="flex flex-col gap-2 border-t border-border p-3.5">
+      <div className="flex items-center gap-1.5">
+        <SectionHeading>Plan review</SectionHeading>
+        <span className="flex-1" />
+        <span className="text-[11px] font-medium text-foreground">{view.summary}</span>
+      </div>
+      {/* A div, not a label: the switch is a button, as in the auto-start row. */}
+      <div className="flex items-start gap-2.5 text-[12.5px]">
+        <Switch
+          aria-label="Adversarial plan review"
+          checked={view.enabled}
+          className="mt-0.5 shrink-0"
+          onCheckedChange={(next) => {
+            roundsCommit.cancel();
+            setPendingRounds(null);
+            onSet(nextBoardCardPlanReview({ ...view, rounds }, { enabled: next }));
+          }}
+        />
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="font-medium text-foreground">Adversarial plan review</span>
+          <span className="text-[11.5px] leading-[1.45] text-muted-foreground">{view.note}</span>
+        </span>
+      </div>
+      {view.enabled ? (
+        <div className="flex items-center gap-2.5 pl-[38px]">
+          <span className="flex-1 text-[12px] font-medium text-foreground">Rounds</span>
+          <NumberStepper
+            ariaLabel="plan review rounds"
+            max={BOARD_PLAN_REVIEW_ROUNDS_MAX}
+            min={BOARD_PLAN_REVIEW_ROUNDS_MIN}
+            onChange={(next) => {
+              const change = nextBoardCardPlanReview(view, { rounds: next });
+              if (!view.inProgress) {
+                roundsCommit.cancel();
+                setPendingRounds(null);
+                onSet(change);
+                return;
+              }
+              setPendingRounds(change.rounds);
+              roundsCommit.maybeExecute(change.rounds);
+            }}
+            value={rounds}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function DependenciesSection(props: BoardCardDetailViewProps) {
   return (
     <BoardDependencySection
+      collapsible
+      key={props.detail.card.id}
       dependencies={props.dependencies}
       onAdd={props.onAddDependency}
       onRemove={props.onRemoveDependency}
@@ -1061,7 +1335,9 @@ function ThreadsSection(props: BoardCardDetailViewProps) {
         <BoardSearchAddPicker
           label="Adopt"
           onPick={(id) => props.onLinkThread(id as ThreadId, "linked")}
+          onQueryChange={props.adoptSearch?.onQueryChange}
           options={props.adoptableThreads}
+          pending={props.adoptSearch?.pending}
           placeholder="Search threads…"
         />
       </div>
@@ -1070,57 +1346,64 @@ function ThreadsSection(props: BoardCardDetailViewProps) {
       ) : (
         <ul className="flex flex-col gap-1.5">
           {props.threadLinks.map((link) => (
-            <li
-              className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]"
-              key={link.threadId}
-            >
-              <div className="flex min-w-0 flex-1 flex-col">
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className={cn(
-                      "min-w-0 truncate text-[13px] text-foreground",
-                      link.tombstoned && "text-muted-foreground line-through",
-                    )}
-                  >
-                    {link.title ?? "Deleted thread"}
-                  </span>
-                  {/* A permission prompt (T3O-16) needs the human as much as a
+            <Fragment key={link.threadId}>
+              {link.movedFrom == null ? null : (
+                <li className="flex items-center gap-2 text-[10.5px] text-muted-foreground">
+                  <span className="h-px flex-1 bg-border" />
+                  {link.movedFrom}
+                  <span className="h-px flex-1 bg-border" />
+                </li>
+              )}
+              <li className="flex items-center gap-[9px] rounded-lg border border-border bg-muted px-2.5 py-[7px]">
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "min-w-0 truncate text-[13px] text-foreground",
+                        link.tombstoned && "text-muted-foreground line-through",
+                      )}
+                    >
+                      {link.title ?? "Deleted thread"}
+                    </span>
+                    {/* A permission prompt (T3O-16) needs the human as much as a
                       question does. */}
-                  {link.awaitingInput || isBoardCardAwaitingPermission(link) ? (
-                    <CircleAlertIcon className="size-3 shrink-0 text-attention-foreground" />
-                  ) : null}
+                    {link.awaitingInput || isBoardCardAwaitingPermission(link) ? (
+                      <CircleAlertIcon className="size-3 shrink-0 text-attention-foreground" />
+                    ) : null}
+                  </div>
+                  <span className="text-[10.5px] text-muted-foreground">
+                    {link.role}
+                    {link.tombstoned
+                      ? " · deleted"
+                      : isBoardCardAwaitingPermission(link)
+                        ? " · Waiting for permission"
+                        : ` · ${THREAD_STATE_LABEL[link.threadState]}`}
+                    {link.threadId === activeThreadId && !link.tombstoned ? " · active" : ""}
+                    {link.ranOn === null ? "" : ` · ${link.ranOn}`}
+                  </span>
                 </div>
-                <span className="text-[10.5px] text-muted-foreground">
-                  {link.role}
-                  {link.tombstoned
-                    ? " · deleted"
-                    : isBoardCardAwaitingPermission(link)
-                      ? " · Waiting for permission"
-                      : ` · ${THREAD_STATE_LABEL[link.threadState]}`}
-                  {link.threadId === activeThreadId && !link.tombstoned ? " · active" : ""}
-                </span>
-              </div>
-              {link.tombstoned ? null : (
-                <Link
-                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                  params={{ environmentId: props.environmentId, threadId: link.threadId }}
-                  title="Open thread"
-                  to="/$environmentId/$threadId"
-                >
-                  <ExternalLinkIcon className="size-3.5" />
-                </Link>
-              )}
-              {link.tombstoned ? null : (
-                <Button
-                  onClick={() => props.onUnlinkThread(link.threadId)}
-                  size="icon-xs"
-                  title="Unlink thread"
-                  variant="ghost"
-                >
-                  <XIcon />
-                </Button>
-              )}
-            </li>
+                {link.tombstoned ? null : (
+                  <Link
+                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    params={{ environmentId: link.worker.environmentId, threadId: link.threadId }}
+                    title={threadWorkerOpensOn(link.worker)}
+                    to="/$environmentId/$threadId"
+                  >
+                    <ExternalLinkIcon className="size-3.5" />
+                  </Link>
+                )}
+                {link.tombstoned ? null : (
+                  <Button
+                    onClick={() => props.onUnlinkThread(link.threadId)}
+                    size="icon-xs"
+                    title="Unlink thread"
+                    variant="ghost"
+                  >
+                    <XIcon />
+                  </Button>
+                )}
+              </li>
+            </Fragment>
           ))}
         </ul>
       )}
@@ -1135,14 +1418,20 @@ function StageLadder({
   stage,
   stages,
   onMoveStage,
+  deferred = false,
 }: {
   readonly stage: BoardStageId;
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly onMoveStage: (toStage: BoardStageId) => void;
+  /** Lists Deferred first: only a group's child may sit there (T3O-29). */
+  readonly deferred?: boolean | undefined;
 }) {
+  const ladder = deferred
+    ? [BOARD_DEFERRED_STAGE, ...boardStagesInOrder(stageStateOf(stages))]
+    : boardStagesInOrder(stageStateOf(stages));
   return (
     <div className="flex flex-col gap-px">
-      {boardStagesInOrder(stageStateOf(stages)).map((candidate) => {
+      {ladder.map((candidate) => {
         const current = candidate.stageId === stage;
         const rung = (
           <>
@@ -1157,7 +1446,11 @@ function StageLadder({
         );
         // The build role onward is granted by the pipeline, not chosen — those
         // rungs render as plain rows so the ladder still reads whole.
-        if (current || !isBoardStageManuallySelectable(stages, candidate.stageId)) {
+        if (
+          current ||
+          (!isBoardDeferredStage(candidate.stageId) &&
+            !isBoardStageManuallySelectable(stages, candidate.stageId))
+        ) {
           return (
             <div
               aria-current={current ? "true" : undefined}
@@ -1378,12 +1671,110 @@ function BoardStepRecoveryButton({
 
 /** Stage action, blocked reason and archive — the things you *do* to a card,
     kept together at the top of the rail. */
-function ActionsSection({
+/** A group's action area (T3O-29): Open board, a secondary forward move while
+    the group is still placed by hand (before Building — the decider derives its
+    stage from there on), and why the group sits where it does. Its planning
+    thread is the header's Planning pill (T3O-34). */
+function GroupActionsSection({
+  group,
   props,
   unmet,
 }: {
+  readonly group: BoardCardDetailGroup;
   readonly props: BoardCardDetailViewProps;
   readonly unmet: ReadonlyArray<BoardDetailDependency>;
+}) {
+  const { card } = props.detail;
+  const displayed = boardCardDisplayPullRequest(card);
+  const primaryAction =
+    card.archivedAt !== null || isBoardStageAtOrAfterBuild(stageStateOf(props.stages), card.stage)
+      ? null
+      : boardStagePrimaryAction(props.stages, card.stage);
+  const forward = primaryAction?.kind === "move" ? primaryAction : null;
+  const blocked =
+    forward !== null &&
+    boardCardMoveBlocked({
+      stages: props.stages,
+      stage: card.stage,
+      toStage: forward.toStage,
+      unmetCount: unmet.length,
+    });
+  return (
+    <div className="flex flex-col gap-3 border-t border-border p-3.5">
+      <div className="flex flex-col gap-1.5">
+        <Button disabled={group.onOpenBoard === undefined} onClick={group.onOpenBoard}>
+          <LayersIcon />
+          Open board
+        </Button>
+        {forward === null ? null : (
+          <BoardHint label={blocked ? "Blocked by unmet dependencies" : undefined}>
+            <Button
+              disabled={blocked}
+              onClick={() => props.onMoveStage(forward.toStage)}
+              variant="outline"
+            >
+              <ArrowRightIcon />
+              {forward.label}
+            </Button>
+          </BoardHint>
+        )}
+        {displayed === null ? null : (
+          <ViewPullRequestButton onOpen={props.onOpenPullRequest} pullRequest={displayed} />
+        )}
+        <p className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">{group.note}</p>
+      </div>
+    </div>
+  );
+}
+
+/** The outline secondary look shared by the action-area buttons; hover is added
+    per button because :hover still matches a disabled one. */
+const OUTLINE_ACTION_CLASS =
+  "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs";
+
+/** The outline View PR button, shared by the leaf and group action areas. */
+function ViewPullRequestButton({
+  pullRequest,
+  onOpen,
+}: {
+  readonly pullRequest: NonNullable<ReturnType<typeof boardCardDisplayPullRequest>>;
+  readonly onOpen: (url: string) => void;
+}) {
+  return (
+    <BoardHint label={`Open pull request #${pullRequest.number}`}>
+      <button
+        className={cn(OUTLINE_ACTION_CLASS, "hover:bg-accent")}
+        onClick={() => onOpen(pullRequest.url)}
+        type="button"
+      >
+        <PullRequestGlyph.pullRequest className="size-3.5" />
+        <span>View PR</span>
+        <span className="text-muted-foreground">{`#${pullRequest.number}`}</span>
+        {/* Neutral (T3O-12): a draft is waiting for the review loop, not on
+            anyone. The board marks it ready at Ready for merge. */}
+        {boardCardPullRequestIsOpenDraft(pullRequest) ? (
+          <span className="rounded border border-input px-1 text-[10.5px] text-muted-foreground">
+            Draft
+          </span>
+        ) : null}
+      </button>
+    </BoardHint>
+  );
+}
+
+function ActionsSection({
+  props,
+  unmet,
+  onReviewSplit,
+  group = null,
+}: {
+  readonly props: BoardCardDetailViewProps;
+  /** An own-branch group from Code review on (T3O-37): its own PR's Merge and
+      review controls, plus Open board. Its stage is derived, so no hand move. */
+  readonly group?: BoardCardDetailGroup | null;
+  readonly unmet: ReadonlyArray<BoardDetailDependency>;
+  /** Opens the split gate's pane (T3O-31). */
+  readonly onReviewSplit: () => void;
 }) {
   const { card } = props.detail;
   const archived = card.archivedAt !== null;
@@ -1406,35 +1797,26 @@ function ActionsSection({
     stepHeld: props.stepHeld === true,
     hasBranch: card.worktree !== null,
     blocked: card.blocked,
+    ciEntryLive: card.ci !== null,
   };
   const primaryAction = boardStagePrimaryAction(props.stages, card.stage, actionContext);
-  const forward = primaryAction !== null && !archived ? primaryAction : null;
+  const forward =
+    primaryAction !== null && !archived && (group === null || primaryAction.kind === "merge")
+      ? primaryAction
+      : null;
   // The pre-build dependency gate (T3O-24, D7). `card.blocked` is derived from
   // the build role ONWARD, so a card waiting at Ready carries `false` and the
   // forward button below would be live at the exact gate the decider refuses.
   // Read from the dependencies this view already resolved, and folded into one
   // `blocked` for everything in this section — the button, its hint and the
   // callout — so the three cannot disagree about the same card.
-  const gate = boardCardAutoStartGate({
+  const moveBlocked = boardCardMoveBlocked({
     stages: props.stages,
     stage: card.stage,
     toStage: forward !== null && forward.kind === "move" ? forward.toStage : null,
-    parentCardId: card.parentCardId,
-    archived,
     unmetCount: unmet.length,
   });
-  const blocked = card.blocked || gate.moveBlocked;
-  // The arm (D9). Offered only where it can act, and only when the container
-  // gave this view a way to set it — the same predicate the decider enforces on
-  // the way in, so the control and the refusal can never disagree.
-  const autoStart =
-    gate.canArm && props.onSetAutoStart !== undefined
-      ? {
-          armed: card.autoStart,
-          copy: boardCardAutoStartCopy(card.autoStart),
-          onToggle: props.onSetAutoStart,
-        }
-      : null;
+  const blocked = card.blocked || moveBlocked;
   // The countdown rides the Merge button only while a rung is actually
   // pending: an exhausted hold has nothing to count down to, and the button
   // goes back to saying Merge.
@@ -1523,6 +1905,8 @@ function ActionsSection({
     stalled: props.stepFailure !== null,
     archived,
     blocked,
+    handMoves: group === null,
+    ciEntryLive: card.ci != null,
   });
   // A merge from this card is mid-flight: the button holds its spot but shows a
   // spinner and refuses further clicks until the round trip settles.
@@ -1572,10 +1956,10 @@ function ActionsSection({
   // action), so keep the section alive whenever a PR is linked — otherwise the
   // link vanishes exactly when a merged card lands in Done.
   if (
+    group === null &&
     forward === null &&
     !props.canApproveSplit &&
     !blocked &&
-    autoStart === null &&
     humanInLoop === null &&
     displayed === null &&
     reviewRound === null &&
@@ -1670,28 +2054,25 @@ function ActionsSection({
         </BoardHint>
       ) : null}
       {props.canApproveSplit ? (
-        // A pending split (t3o-27): the forward stage button is REPLACED by
-        // Approve split, because the card cannot advance until the split is
-        // resolved — the decider refuses every forward move while it stands.
-        // Amber, matching the card face's "Needs approval" state (distinct
-        // from the blue "Input needed" a thread question raises).
-        // The hint is planning's own argument for the split when it left one
-        // (t3o card 11), so the reason is readable without opening the pane;
-        // the generic sentence covers a split proposed before rationales
-        // existed.
+        // A pending split (t3o-27): the forward stage button is REPLACED,
+        // because the card cannot advance until the split is resolved — the
+        // decider refuses every forward move while it stands. It opens the
+        // split gate at the end of the planning thread (T3O-31), where the
+        // human approves with the group settings. Violet, matching the card
+        // face's "Input needed": a plan is waiting on the human.
         <BoardHint
           label={
             card.splitRationale ??
-            "This card's planning proposed a multi-part split; approve it to materialise the plan cards"
+            "This card's planning proposed a multi-part split; review it in the planning thread"
           }
         >
           <button
-            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-amber-500/60 bg-amber-500/15 px-3 text-[13px] font-medium text-amber-700 shadow-xs hover:bg-amber-500/25 dark:text-amber-300"
-            onClick={() => props.onApproveSplit()}
+            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-attention/55 bg-attention/12 px-3 text-[13px] font-medium text-attention-foreground shadow-xs hover:bg-attention/20"
+            onClick={onReviewSplit}
             type="button"
           >
             <LayersIcon className="size-3.5" />
-            Approve split
+            Review split
           </button>
         </BoardHint>
       ) : forward !== null &&
@@ -1779,7 +2160,7 @@ function ActionsSection({
         <BoardHint label={reviewRound.hint}>
           <button
             className={cn(
-              "inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs",
+              OUTLINE_ACTION_CLASS,
               // :hover still matches a disabled button, so the accent has to be
               // gated rather than relying on `disabled` to suppress it.
               reviewRound.disabled ? "cursor-not-allowed opacity-50" : "hover:bg-accent",
@@ -1799,26 +2180,26 @@ function ActionsSection({
           this link — which needs the URL — lives here on the detail, which
           already subscribes to the whole card. */}
       {displayed !== null ? (
-        <BoardHint label={`Open pull request #${displayed.number}`}>
-          <button
-            className="inline-flex h-[34px] items-center justify-center gap-[7px] rounded-lg border border-input bg-popover px-3 text-[13px] font-medium text-foreground shadow-xs hover:bg-accent"
-            onClick={() => props.onOpenPullRequest(displayed.url)}
-            type="button"
-          >
-            <PullRequestGlyph.pullRequest className="size-3.5" />
-            <span>View PR</span>
-            <span className="text-muted-foreground">{`#${displayed.number}`}</span>
-            {/* Neutral (T3O-12): a draft is waiting for the review loop, not on
-                anyone. The board marks it ready at Ready for merge. */}
-            {boardCardPullRequestIsOpenDraft(displayed) ? (
-              <span className="rounded border border-input px-1 text-[10.5px] text-muted-foreground">
-                Draft
-              </span>
-            ) : null}
-          </button>
-        </BoardHint>
+        <ViewPullRequestButton onOpen={props.onOpenPullRequest} pullRequest={displayed} />
       ) : null}
       {linkPullRequest === null ? null : <BoardLinkPullRequest onLink={linkPullRequest} />}
+      {group === null ? null : (
+        <>
+          <button
+            className={cn(
+              OUTLINE_ACTION_CLASS,
+              group.onOpenBoard === undefined ? "cursor-not-allowed opacity-50" : "hover:bg-accent",
+            )}
+            disabled={group.onOpenBoard === undefined}
+            onClick={group.onOpenBoard}
+            type="button"
+          >
+            <LayersIcon className="size-3.5" />
+            Open board
+          </button>
+          <p className="text-[11.5px]/[1.5] text-pretty text-muted-foreground">{group.note}</p>
+        </>
+      )}
       {blocked ? (
         <div className="flex gap-[7px] rounded-lg border border-warning/35 bg-warning/8 px-2.5 py-2.5 text-[11.5px]/[1.45] text-warning-foreground">
           <LockIcon className="mt-px size-3.5 shrink-0" />
@@ -1826,38 +2207,6 @@ function ActionsSection({
             {unmet.length === 0
               ? "Blocked by unmet dependencies"
               : `Blocked by ${unmet.map((dependency) => dependency.key).join(", ")}`}
-          </span>
-        </div>
-      ) : null}
-      {autoStart !== null ? (
-        // The arm (T3O-24, D9), directly under the callout it answers, with the
-        // switch leading the row as the mockups have it.
-        //
-        // Tinted with `--primary`, never `--info`. `docs/t3o/status-colours.md`
-        // gives blue to RUNNING, and this card is not running; a CHECKED
-        // CONTROL is UI state, the exemption that doc already grants the blue
-        // open chip on a selected pull request. The status SURFACE for this
-        // feature — the card face's chip — stays neutral (D8).
-        //
-        // A DIV, not a label: `Switch` renders a `role="switch"` button, and a
-        // label wrapping a button toggles nothing — the row would look like one
-        // tap target and behave like two. The switch is the control, as it is
-        // in every settings row.
-        <div
-          className={cn(
-            "flex items-center gap-2.5 rounded-lg border px-2.5 py-2 text-[12.5px]",
-            autoStart.armed ? "border-primary/55 bg-primary/8" : "border-input bg-popover",
-          )}
-        >
-          <Switch
-            aria-label={autoStart.copy.label}
-            checked={autoStart.armed}
-            className="shrink-0"
-            onCheckedChange={(next) => autoStart.onToggle(next)}
-          />
-          <span className="flex min-w-0 flex-col">
-            <span className="font-medium text-foreground">{autoStart.copy.label}</span>
-            <span className="text-[11px] text-muted-foreground">{autoStart.copy.hint}</span>
           </span>
         </div>
       ) : null}
@@ -1887,17 +2236,13 @@ function ActionsSection({
 }
 
 /** The toggle's hint for a card running on the DEFAULT stance: names the
-    default and the reason it applies, so a user reading "conversation" on a
-    sub-board child knows it came from the with-plan setting, not from a plan
-    they forgot to write. */
+    default and the reason it applies. */
 function humanInLoopDefaultHint(humanInLoop: {
   readonly value: boolean;
-  readonly basis: "plan" | "no-plan" | "child";
+  readonly basis: "plan" | "no-plan";
 }): string {
   const stance = humanInLoop.value ? "conversation" : "unattended";
   switch (humanInLoop.basis) {
-    case "child":
-      return `Default: ${stance} (sub-board child; its approved plan is its brief).`;
     case "plan":
       return `Default: ${stance} (a plan exists).`;
     case "no-plan":
@@ -1905,7 +2250,13 @@ function humanInLoopDefaultHint(humanInLoop: {
   }
 }
 
-function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
+function InfoSection({
+  props,
+  onOpenThread,
+}: {
+  readonly props: BoardCardDetailViewProps;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+}) {
   const base = props.baseBranch;
   return (
     <div className="border-t border-border p-3.5 text-[11.5px]/[1.7] text-muted-foreground">
@@ -1925,6 +2276,14 @@ function InfoSection({ props }: { readonly props: BoardCardDetailViewProps }) {
           names its parent — not hidden, because someone on a child deserves to
           know what it branches off without hunting for the parent. */}
       <BoardBaseBranchRow props={props} />
+      {/* Worker (T3O-65): where the card runs, and Move. Absent with one worker. */}
+      <BoardCardWorkerRow
+        card={props.detail.card}
+        environmentId={props.environmentId}
+        onOpenThread={onOpenThread}
+        shell={props.workerShell}
+        stalledReason={props.stalledReason}
+      />
       <div>Created · {formatRelativeTimeLabel(props.detail.card.createdAt)}</div>
       {base.retargeted && base.effective !== null ? (
         // Derived, never stored (D14): between retargeting and the rebase that
@@ -1954,7 +2313,7 @@ function BoardCardProjectRow({ props }: { readonly props: BoardCardDetailViewPro
   // current stage's, and a thread is pinned to the project it was created in, so
   // these keep pointing at the old repository.
   const retainedThreads = card.threadLinks.filter(
-    (link) => link.tombstonedAt === null && link.role !== card.stage,
+    (link) => isLiveBoardCardThreadLink(link) && link.role !== card.stage,
   ).length;
 
   if (onSet === undefined) {
@@ -2067,7 +2426,10 @@ function BoardBaseBranchRow({ props }: { readonly props: BoardCardDetailViewProp
   );
 }
 
-export type BoardCardPane = "thread" | "review" | "summary" | "plan" | "brief";
+/** `planning` is the Thread pane pinned to a group's planning thread (T3O-34):
+    a pane of its own, so its pill lights by the user's choice rather than by
+    which thread happens to be the default. */
+export type BoardCardPane = "thread" | "planning" | "review" | "ci" | "summary" | "plan" | "brief";
 
 /** Whether the card has reached the review-role stage — from there on the loop
     is what the card is about, so the modal opens on the Review pane. */
@@ -2105,6 +2467,8 @@ export function initialBoardCardPane(
   stage: BoardStageId,
   liveChildCount = 0,
 ): BoardCardPane {
+  // A card in CI opens on its run (T3O-44).
+  if (stage === BOARD_SEED_STAGE_IDS.ci) return "ci";
   const def = boardStageById(stageStateOf(stages), stage);
   const role = def === null ? null : effectiveBoardStageRole(def);
   if (role === "merge" || role === "done") return "summary";
@@ -2136,17 +2500,21 @@ export function initialBoardCardThreadId(
   stage: BoardStageId,
   links: ReadonlyArray<BoardCardThreadLink>,
 ): ThreadId | null {
-  const active = activeBoardCardThreadId(links);
+  // A card whose threads are all retired (T3O-41) still opens its newest one.
+  const active =
+    activeBoardCardThreadId(links) ??
+    sortBoardCardThreadLinks(links.filter((link) => link.tombstonedAt === null)).at(-1)?.threadId ??
+    null;
   const state = stageStateOf(stages);
   const stageIndex = boardStageIndex(state, stage);
   if (stageIndex < 0 || isStageAtOrAfterReview(stages, stage)) return active;
-  const current = sortBoardCardThreadLinks(
-    links.filter((link) => link.tombstonedAt === null),
-  ).filter((link) => {
-    if (parseReviewStepId(link.role) !== null) return false;
-    const linkStageIndex = boardStageIndex(state, link.role as BoardStageId);
-    return linkStageIndex <= stageIndex;
-  });
+  const current = sortBoardCardThreadLinks(links.filter(isLiveBoardCardThreadLink)).filter(
+    (link) => {
+      if (parseReviewStepId(link.role) !== null) return false;
+      const linkStageIndex = boardStageIndex(state, link.role as BoardStageId);
+      return linkStageIndex <= stageIndex;
+    },
+  );
   return current.at(-1)?.threadId ?? active;
 }
 
@@ -2156,43 +2524,76 @@ export function initialBoardCardThreadId(
     model set before the pipeline gets there. The Review pill exists whenever
     the board has a review-role stage (or the card carries review-loop
     completions — past reviews stay readable); the Plan pill once the card has
-    a plan. */
+    a plan or children. A group with a planning thread also gets a Planning
+    pill (T3O-34): the Thread pane pinned to that thread. */
 function PaneTabs({
   pane,
   hasReview,
+  hasCi = false,
+  ciLive = false,
   hasSummary,
   hasPlan,
   planCount,
   onSelect,
+  hasPlanning = false,
+  plansLabel = null,
 }: {
   readonly pane: BoardCardPane;
   readonly hasReview: boolean;
+  /** The CI pill (T3O-44): the card is in CI or has run it. */
+  readonly hasCi?: boolean | undefined;
+  /** CI is running or fixing, which lights the pill's blue dot. */
+  readonly ciLive?: boolean | undefined;
   readonly hasSummary: boolean;
   readonly hasPlan: boolean;
+  /** Whether the Planning pill shows: a group with a live planning thread. */
+  readonly hasPlanning?: boolean | undefined;
+  /** The plans pill's label when it lists a group's cards. */
+  readonly plansLabel?: string | null | undefined;
   /** Non-null once the card has materialised children (t3o-29): the plan pill
       then labels the Plans panel by how many rows it holds — "4 plans", not
       "Plan" — because the pill names its pane's contents. */
   readonly planCount: number | null;
   readonly onSelect: (pane: BoardCardPane) => void;
 }) {
-  const tab = (value: BoardCardPane) =>
+  const pill = (active: boolean) =>
     cn(
       "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[7px] px-2.5 text-[11.5px]",
-      pane === value
+      active
         ? "bg-card font-medium text-foreground shadow-[0_0_0_1px_var(--border)]"
         : "text-muted-foreground hover:text-foreground",
     );
+  const tab = (value: BoardCardPane) => pill(pane === value);
   return (
     <div className="flex shrink-0 items-center gap-0.5 rounded-[9px] bg-accent p-0.5">
       <button className={tab("thread")} onClick={() => onSelect("thread")} type="button">
         <MessageSquareIcon className="size-3" />
         Thread
       </button>
+      {hasPlanning ? (
+        <BoardHint label="The thread that planned this group">
+          <button className={tab("planning")} onClick={() => onSelect("planning")} type="button">
+            <MessageSquareTextIcon className="size-3" />
+            Planning
+          </button>
+        </BoardHint>
+      ) : null}
       {hasReview ? (
         <BoardHint label="Adversarial review loop">
           <button className={tab("review")} onClick={() => onSelect("review")} type="button">
             <RefreshCcwIcon className="size-3" />
             Review
+          </button>
+        </BoardHint>
+      ) : null}
+      {hasCi ? (
+        <BoardHint label={ciLive ? "Continuous integration · running" : "Continuous integration"}>
+          <button className={tab("ci")} onClick={() => onSelect("ci")} type="button">
+            <ListChecksIcon className="size-3" />
+            CI
+            {ciLive ? (
+              <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-info" />
+            ) : null}
           </button>
         </BoardHint>
       ) : null}
@@ -2207,7 +2608,8 @@ function PaneTabs({
       {hasPlan ? (
         <button className={tab("plan")} onClick={() => onSelect("plan")} type="button">
           {planCount === null ? <FileIcon className="size-3" /> : <LayersIcon className="size-3" />}
-          {planCount === null ? "Plan" : `${planCount} ${planCount === 1 ? "plan" : "plans"}`}
+          {plansLabel ??
+            (planCount === null ? "Plan" : `${planCount} ${planCount === 1 ? "plan" : "plans"}`)}
         </button>
       ) : null}
       <button className={tab("brief")} onClick={() => onSelect("brief")} type="button">
@@ -2215,44 +2617,6 @@ function PaneTabs({
         Brief
       </button>
     </div>
-  );
-}
-
-/**
- * The kebab's auto-merge arm (T3O-38, D3; T3O-42), exported so it can be
- * rendered on its own: the kebab popup is a portal, and a portal renders
- * nothing on the server, so a static-markup test can never reach it through
- * the trigger (same reason `BoardCardThreadAddMenuBody` is exported).
- *
- * A card mid-build already has a rail full of things to click and this is a
- * set-once decision, so it lives here rather than competing with the stage's
- * own actions. A CheckboxItem, not a MenuItem: Base UI leaves the menu open
- * on a checkbox click, so the user sees the switch move and can read what
- * they just chose before dismissing it.
- */
-export function BoardCardAutoMergeMenuItem(props: {
-  readonly arm: BoardAutoMergeArm | null;
-  readonly onToggle: ((next: boolean) => void) | undefined;
-}) {
-  const { arm, onToggle } = props;
-  if (arm === null || onToggle === undefined) return null;
-  return (
-    <>
-      <MenuCheckboxItem
-        checked={arm.armed}
-        onCheckedChange={(next) => onToggle(next)}
-        variant="switch"
-      >
-        <span className="flex items-start gap-2 py-0.5">
-          <PullRequestGlyph.merged className="mt-px size-4 shrink-0 text-muted-foreground" />
-          <span className="flex min-w-0 flex-col gap-0.5">
-            <span>{arm.copy.label}</span>
-            <span className="text-[11px] text-muted-foreground leading-snug">{arm.copy.hint}</span>
-          </span>
-        </span>
-      </MenuCheckboxItem>
-      <MenuSeparator />
-    </>
   );
 }
 
@@ -2265,20 +2629,10 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // pill reads the three shell facts instead, and `boardAutoMergeHold` is the
   // one place either set of words is written, so they cannot disagree.
   const autoMergeChip = boardAutoMergeHeaderChip({
-    armed: card.autoMerge || card.parentCardId !== null || props.autoMergeFromBoardSetting === true,
-    fromBoardSetting: !card.autoMerge && props.autoMergeFromBoardSetting === true,
-  });
-  const hold = card.autoMergeHold;
-  // The per-card auto-merge switch (T3O-38, D3), which lives in the KEBAB
-  // (T3O-42): it is armed once and rarely, and the card's action rail already
-  // carries everything a user reaches for on the way through a stage.
-  const autoMergeArm = boardAutoMergeArm({
-    card,
-    stages: props.stages,
-    canSet: props.onSetAutoMerge !== undefined,
+    armed: props.autoMergeArmed === true,
     fromBoardSetting: props.autoMergeFromBoardSetting === true,
   });
-  const onSetAutoMerge = props.onSetAutoMerge;
+  const hold = card.autoMergeHold;
   // Minute-grained, off the render's clock, exactly as the board pill is: the
   // one per-second element is the Merge button's countdown, which is its own
   // isolated component.
@@ -2298,7 +2652,18 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // The contracts' definition of unmet, mirrored: an unknown id counts as
   // unmet (nothing can prove it finished), an archived dependency does not
   // count at all (t3o-13, D1), and everything else must be done.
-  const unmet = props.dependencies.filter(
+  // A waiting group holds back every card inside it (T3O-27), as the decider's
+  // move gate does.
+  const groupDependencies: ReadonlyArray<BoardDetailDependency> =
+    props.detail.groupDependencies.map((dependency) => ({
+      cardId: dependency.cardId,
+      key: dependency.key,
+      title: dependency.title,
+      stage: dependency.stage,
+      known: true,
+      archived: dependency.archivedAt !== null,
+    }));
+  const unmet = [...props.dependencies, ...groupDependencies].filter(
     (dependency) => !dependency.known || (!dependency.archived && dependency.stage !== "done"),
   );
 
@@ -2312,6 +2677,16 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [mergeStrategyOpen, setMergeStrategyOpen] = useState(false);
+  const onSetMergeStrategy = props.onSetMergeStrategy;
+  const mergeStrategy = boardCardMergeStrategyView({
+    card,
+    parent:
+      props.parentCard == null
+        ? null
+        : { key: props.parentCard.key, mergeStrategy: props.detail.parentMergeStrategy },
+    boardStrategy: props.boardMergeStrategy ?? "squash",
+  });
 
   // The rows the card can override, and what each falls back to (t3o-29).
   // Derived eagerly — it is picker-free, and the kebab needs the summary to
@@ -2319,6 +2694,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   const modelRows = boardCardModelRows({
     stages: props.stages,
     boardSettings: props.boardSettings,
+    projectConfig: props.projectExecutionConfig,
     // The parent's key comes from the board's shells (the "part of" chip's
     // source), its overrides from the detail payload — only together do they
     // let a child's row say "(from T3O-41)".
@@ -2381,7 +2757,36 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
         : null,
     [isSplitParent, props.detail.plans, props.detail.children, props.childShells, props.stages],
   );
-  const pane = paneChoice ?? initialBoardCardPane(props.stages, card.stage, liveChildCount);
+  const group = props.group ?? null;
+  const groupUsesCardActions =
+    group !== null &&
+    boardGroupUsesCardActions({
+      ownBranch: group.ownBranch,
+      stages: stageStateOf(props.stages),
+      stage: card.stage,
+    });
+  // Which tab the thread pane is on. Absent means "whichever thread the card's
+  // stage makes current", so the pane follows the card until the user picks a
+  // thread, and a since-unlinked selection falls back to that same default.
+  const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
+  const selectedThread =
+    props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
+    initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
+  // A group's Planning pane (T3O-34) is the Thread pane pinned to its planning
+  // thread; the Thread pill still lists every thread, planning included.
+  const planStageId = boardStageWithRole(stageStateOf(props.stages), "plan")?.stageId ?? null;
+  const planningLink =
+    group === null || planStageId === null
+      ? undefined
+      : props.threadLinks.findLast(
+          (candidate) => candidate.role === planStageId && !candidate.tombstoned,
+        );
+  const groupDefaultPane: BoardCardPane = (planRows?.rows.length ?? 0) > 0 ? "plan" : "brief";
+  const pane =
+    paneChoice ??
+    (group !== null && !groupUsesCardActions
+      ? groupDefaultPane
+      : initialBoardCardPane(props.stages, card.stage, liveChildCount));
   // The plan is a first-class entity, so its pill only exists once one is
   // written; if the card loses its plans while the pane is open, fall back to
   // the thread rather than render an empty surface. The review pane exists at
@@ -2389,16 +2794,23 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
   // review-loop completions — past reviews stay readable after the card moves
   // on): a round's model is only writable BEFORE the executor freezes it, so
   // the pane must open before the card gets there.
-  const hasPlan = props.detail.plans.length > 0;
+  const hasPlan = props.detail.plans.length > 0 || isSplitParent;
   const reviewStageId = boardStageWithRole(stageStateOf(props.stages), "review")?.stageId ?? null;
   const reviewStarted = hasBoardReviewSteps(props.detail.stepCompletions);
-  const hasReview = reviewStageId !== null || reviewStarted;
-  const hasSummary = boardCardHasSummaryPane({
-    stages: props.stages,
-    stage: card.stage,
-    stepCompletions: props.detail.stepCompletions,
-    card,
-  });
+  // An inherit group never reviews; an own-branch group's integration does.
+  const integrates = group === null || group.ownBranch;
+  const hasReview = integrates && (reviewStageId !== null || reviewStarted);
+  // An inherit group's Summary is its decision log, which its children's
+  // planning inherits as context (T3O-32).
+  const hasSummary = !integrates
+    ? props.detail.decisions.length > 0
+    : boardCardHasSummaryPane({
+        stages: props.stages,
+        stage: card.stage,
+        stepCompletions: props.detail.stepCompletions,
+        card,
+        decisionCount: props.detail.decisions.length,
+      });
   // The card-level running/queued signals describe the review loop only while
   // the card sits ON the review stage — anywhere else the live step is some
   // other stage's, and feeding it in would spin the review pill during a
@@ -2411,12 +2823,27 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       (link) => link.threadId === activeThreadId && link.threadState === "working",
     );
   const reviewStalled = onReviewStage && boardReviewPaneStopped(props.stepFailure);
+  // CI (T3O-44): the tab exists while the card is in CI or once it has run.
+  const inCi = card.stage === BOARD_SEED_STAGE_IDS.ci;
+  const hasCi = inCi || card.ci !== null || props.detail.ciPasses.length > 0;
+  const ciBanner = boardCiSentBackBanner({ inCi, outcome: card.ciLastOutcome });
   const activePane: BoardCardPane =
     (pane === "plan" && !hasPlan) ||
     (pane === "review" && !hasReview) ||
-    (pane === "summary" && !hasSummary)
+    (pane === "ci" && !hasCi) ||
+    (pane === "summary" && !hasSummary) ||
+    (pane === "planning" && planningLink === undefined)
       ? "thread"
       : pane;
+  const shownThread =
+    activePane === "planning" && planningLink !== undefined
+      ? planningLink.threadId
+      : selectedThread;
+  // Picking a thread from the Planning pane leaves the pin for the Thread pane.
+  const selectThread = (threadId: ThreadId | null) => {
+    setSelectedThreadId(threadId);
+    if (activePane === "planning") setPane("thread");
+  };
   // Derived only while the Summary pane is showing: the panel re-renders on
   // every thread-link or detail push, and the walk over step completions is
   // wasted on any other pane.
@@ -2444,211 +2871,288 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
       reviewMaxRounds,
     ],
   );
-  // Which tab the thread pane is on. Absent means "whichever thread the card's
-  // stage makes current", so the pane follows the card until the user picks a
-  // thread, and a since-unlinked selection falls back to that same default.
-  const [selectedThreadId, setSelectedThreadId] = useState<ThreadId | null>(null);
-  const selectedThread =
-    props.threadLinks.find((link) => link.threadId === selectedThreadId)?.threadId ??
-    initialBoardCardThreadId(props.stages, card.stage, card.threadLinks);
+
+  // The decision log (T3O-32). Null open state means "the default rule".
+  const [logOpen, setLogOpen] = useState<boolean | null>(null);
+  const stagesState = stageStateOf(props.stages);
+  const buildStage = boardStageWithRole(stagesState, "build");
+  const pastBuild =
+    buildStage !== null &&
+    boardStageIndex(stagesState, card.stage) > boardStageIndex(stagesState, buildStage.stageId);
+  const decisionLog = summaryShown
+    ? boardDecisionLogView({
+        decisions: props.detail.decisions,
+        autoPlanned: card.autoPlan !== undefined,
+        pastBuild,
+      })
+    : null;
+  const buildPending =
+    !isStageAtOrAfterReview(props.stages, card.stage) &&
+    !props.detail.stepCompletions.some(
+      (completion) =>
+        buildStage !== null &&
+        completion.stepId === buildStage.stageId &&
+        completion.outcome === "succeeded",
+    );
 
   return (
     <>
       {/* Identity row: key, the card's labels, its stage. `relative z-10` lifts
           it (and the × / ⋯ / fullscreen buttons it carries) above the nav
           rails' band, which would otherwise sit over them (T3O-37, D8). */}
-      <div className="relative z-10 flex shrink-0 items-center gap-[9px] px-4 pt-4">
-        <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">{card.key}</span>
-        {props.parentCard != null ? (
-          // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
-          // back into the sub-board it lives on, with this sheet still open.
-          <BoardHint label={`Part of ${props.parentCard.key}'s sub-board — open it`}>
-            <button
-              className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
-              disabled={props.onOpenParentSubBoard === undefined}
-              onClick={props.onOpenParentSubBoard}
-              type="button"
-            >
-              <LayersIcon className="size-2.5" />
-              {props.parentCard.key}
-            </button>
-          </BoardHint>
-        ) : null}
-        <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
-        {/* On a done card the stage chip IS the completion badge, cut to the
-            same block as the label chips beside it (t3o-36): the sheet no
-            longer wears a wash, so this and the title's check carry "done".
-            Green means done and only done — docs/t3o/status-colours.md. */}
-        <span
-          className={cn(
-            "inline-flex shrink-0 items-center font-medium",
-            done
-              ? "h-4 rounded-[5px] bg-success/16 px-1.5 text-[10px] tracking-[0.03em] text-success-foreground uppercase"
-              : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
-          )}
-        >
-          {boardStageLabel(props.stages, card.stage)}
-        </span>
-        {archived ? (
-          <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-            Archived
+      <div className="relative z-10 flex shrink-0 items-start gap-[9px] px-4 pt-4">
+        {/* The key and its chips wrap onto a second line rather than pushing
+            the tabs and the kebab off a narrow modal (T3O-80). */}
+        <div className="flex min-h-7 min-w-0 flex-1 flex-wrap items-center gap-x-[9px] gap-y-1.5">
+          <span className="shrink-0 text-[11.5px] font-medium text-muted-foreground">
+            {card.key}
           </span>
-        ) : null}
-        {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
-            is set, then the clock plus its label. Hidden on a done-role card
-            and on an archived one — neither is going to move again on a timer.
-            Beside the stage chip, because what it holds is the stage. */}
-        {archived || done ? null : (
-          <BoardCardSchedulePopover
-            // Sized to the chip row it sits in, not to a button row.
-            className="h-[18px]"
-            kind={props.scheduleKind}
-            onChange={props.onSetScheduledStartAt}
-            scheduledStartAt={card.scheduledStartAt}
-            stageLabel={boardStageLabel(props.stages, card.stage)}
-          />
-        )}
-        {/* The auto-merge arm, read-only (T3O-38, D13). NAMES THE SOURCE:
-            with the board-wide setting on the per-card switch is hidden, so a
-            user who goes looking for it needs to be told where the decision
-            actually lives. Neutral, like the queue chip below — an armed card
-            is not running, not done, and asking nothing of anyone. */}
-        {archived || done || autoMergeChip === null ? null : (
-          <BoardHint label={autoMergeChip.tooltip}>
-            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-              <PullRequestGlyph.merged className="size-2.5" />
-              {autoMergeChip.label}
+          {props.parentCard != null ? (
+            // "Part of <parent>" (t3o-25, AC4): the chip is the child's door
+            // back into the sub-board it lives on, with this sheet still open.
+            <BoardHint label={`Part of ${props.parentCard.key}'s sub-board — open it`}>
+              <button
+                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground hover:bg-muted-foreground/25 disabled:pointer-events-none"
+                disabled={props.onOpenParentSubBoard === undefined}
+                onClick={props.onOpenParentSubBoard}
+                type="button"
+              >
+                <LayersIcon className="size-2.5" />
+                {props.parentCard.key}
+              </button>
+            </BoardHint>
+          ) : null}
+          {group === null ? null : (
+            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground">
+              <LayersIcon className="size-2.5" />
+              {group.chip}
             </span>
-          </BoardHint>
-        )}
-        {/* Queued for a build slot (t3o-33). Beside the stage badge, because
-            "Building" alone is what made a queued card look mid-build. Neutral,
-            not `--attention`: nothing is waiting on the user here — see
-            docs/t3o/status-colours.md. */}
-        {props.queueInfo != null ? (
-          <BoardHint label={props.queueInfo.detail}>
-            <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
-              <ClockIcon className="size-2.5" />
-              {props.queueInfo.label}
-            </span>
-          </BoardHint>
-        ) : null}
-        {/* Shown only once this card actually overrides something (t3o-29, D7).
-            An override changes what the card spends and what authority it runs
-            under; that should not be invisible from the card. It costs nothing
-            on a card that has not set one. */}
-        {modelOverridden ? (
-          <BoardHint label={modelPillTitle}>
-            <button
-              className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={() => setModelsOpen(true)}
-              type="button"
-            >
-              <SlidersHorizontalIcon className="size-2.5" />
-              {modelPillLabel}
-            </button>
-          </BoardHint>
-        ) : null}
-        <span className="flex-1" />
-        <PaneTabs
-          hasPlan={hasPlan}
-          hasReview={hasReview}
-          hasSummary={hasSummary}
-          onSelect={setPane}
-          pane={activePane}
-          planCount={planRows === null ? null : planRows.rows.length}
-        />
-        <Menu>
-          <MenuTrigger
-            aria-label="More actions"
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground"
-            title="More actions"
+          )}
+          <BoardLabelChips labelIds={card.labels} labelsById={props.labelsById} />
+          {/* On a done card the stage chip IS the completion badge, cut to the
+              same block as the label chips beside it (t3o-36): the sheet no
+              longer wears a wash, so this and the title's check carry "done".
+              Green means done and only done — docs/t3o/status-colours.md. */}
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center font-medium",
+              done
+                ? "h-4 rounded-[5px] bg-success/16 px-1.5 text-[10px] tracking-[0.03em] text-success-foreground uppercase"
+                : "h-[18px] rounded-md bg-muted-foreground/14 px-[7px] text-[11px] text-foreground",
+            )}
           >
-            <EllipsisVerticalIcon className="size-[15px]" />
-          </MenuTrigger>
-          {/* `min-w-*`, never a fixed width: the Models row below sizes itself
-              to a mono override summary that can run long, and a hard box
-              would crowd it. */}
-          <MenuPopup align="end" className={autoMergeArm === null ? "min-w-42" : "min-w-68"}>
-            <BoardCardAutoMergeMenuItem arm={autoMergeArm} onToggle={onSetAutoMerge} />
-            {/* Opening the overrides CLOSES this menu (t3o-29, D7): the popover
-                contains a model picker that is itself a popover, and selecting
-                from it is an outside-pointerdown on any menu still holding it
-                open. Base UI closes the menu; the row's selection is lost. */}
-            {modelRows.length > 0 ? (
-              <>
-                <MenuItem onClick={() => setModelsOpen(true)}>
-                  <SlidersHorizontalIcon />
-                  <span className="flex-1">Models</span>
+            {/* "Continuous integration" is too long for this row (T3O-44). */}
+            {card.stage === BOARD_SEED_STAGE_IDS.ci
+              ? "CI"
+              : boardStageLabel(props.stages, card.stage)}
+          </span>
+          {archived ? (
+            <span className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+              Archived
+            </span>
+          ) : null}
+          {/* The card's scheduled start (T3O-19, D14): a bare clock until a time
+              is set, then the clock plus its label. Hidden on a done-role card
+              and on an archived one — neither is going to move again on a timer.
+              Beside the stage chip, because what it holds is the stage. */}
+          {archived || done ? null : (
+            <BoardCardSchedulePopover
+              // Sized to the chip row it sits in, not to a button row.
+              className="h-[18px]"
+              kind={props.scheduleKind}
+              onChange={props.onSetScheduledStartAt}
+              scheduledStartAt={card.scheduledStartAt}
+              stageLabel={boardStageLabel(props.stages, card.stage)}
+            />
+          )}
+          {/* The resolved Auto-merge, read-only (T3O-38, D13). NAMES THE SOURCE
+              when it is the board-wide setting, which no card switch can turn
+              off. Neutral, like the queue chip below — an armed card is not
+              running, not done, and asking nothing of anyone. */}
+          {archived || done || autoMergeChip === null ? null : (
+            <BoardHint label={autoMergeChip.tooltip}>
+              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+                <PullRequestGlyph.merged className="size-2.5" />
+                {autoMergeChip.label}
+              </span>
+            </BoardHint>
+          )}
+          {/* Queued for a build slot (t3o-33). Beside the stage badge, because
+              "Building" alone is what made a queued card look mid-build. Neutral,
+              not `--attention`: nothing is waiting on the user here — see
+              docs/t3o/status-colours.md. */}
+          {props.queueInfo != null ? (
+            <BoardHint label={props.queueInfo.detail}>
+              <span className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md bg-muted px-[7px] text-[11px] font-medium text-muted-foreground">
+                <ClockIcon className="size-2.5" />
+                {props.queueInfo.label}
+              </span>
+            </BoardHint>
+          ) : null}
+          {/* Shown only once this card actually overrides something (t3o-29, D7).
+              An override changes what the card spends and what authority it runs
+              under; that should not be invisible from the card. It costs nothing
+              on a card that has not set one. */}
+          {modelOverridden ? (
+            <BoardHint label={modelPillTitle}>
+              <button
+                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => setModelsOpen(true)}
+                type="button"
+              >
+                <SlidersHorizontalIcon className="size-2.5" />
+                {modelPillLabel}
+              </button>
+            </BoardHint>
+          ) : null}
+          {/* The card's own merge strategy (T3O-80). Shown whenever the card has
+              one, even one equal to the default, because it pins the card if the
+              default moves. Neutral, like the models pill. */}
+          {archived ||
+          done ||
+          mergeStrategy.pill === null ||
+          onSetMergeStrategy === undefined ? null : (
+            <BoardHint label={mergeStrategy.pill.tooltip}>
+              <button
+                className="inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+                onClick={() => setMergeStrategyOpen(true)}
+                type="button"
+              >
+                <MergeIcon className="size-2.5" />
+                {mergeStrategy.pill.label}
+              </button>
+            </BoardHint>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-[9px]">
+          <PaneTabs
+            ciLive={inCi && isBoardCiLive(card.ci)}
+            hasCi={hasCi}
+            hasPlan={hasPlan}
+            hasReview={hasReview}
+            hasSummary={hasSummary}
+            onSelect={setPane}
+            hasPlanning={planningLink !== undefined}
+            pane={activePane}
+            planCount={planRows === null ? null : planRows.rows.length}
+            plansLabel={group === null || planRows === null ? null : "Cards"}
+          />
+          <Menu>
+            <MenuTrigger
+              aria-label="More actions"
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground data-popup-open:bg-accent data-popup-open:text-foreground"
+              title="More actions"
+            >
+              <EllipsisVerticalIcon className="size-[15px]" />
+            </MenuTrigger>
+            {/* `min-w-*`, never a fixed width: the Models row below sizes itself
+                to a mono override summary that can run long, and a hard box
+                would crowd it. */}
+            <MenuPopup align="end" className="min-w-42">
+              {/* Opening the overrides CLOSES this menu (t3o-29, D7): the popover
+                  contains a model picker that is itself a popover, and selecting
+                  from it is an outside-pointerdown on any menu still holding it
+                  open. Base UI closes the menu; the row's selection is lost. */}
+              {modelRows.length > 0 ? (
+                <>
+                  <MenuItem onClick={() => setModelsOpen(true)}>
+                    <SlidersHorizontalIcon />
+                    <span className="flex-1">Models</span>
+                    <span className="font-mono text-[11px] font-medium text-muted-foreground">
+                      {modelSummary}
+                    </span>
+                  </MenuItem>
+                </>
+              ) : null}
+              {onSetMergeStrategy === undefined ? null : (
+                <MenuItem onClick={() => setMergeStrategyOpen(true)}>
+                  <MergeIcon />
+                  <span className="flex-1">Merge strategy</span>
                   <span className="font-mono text-[11px] font-medium text-muted-foreground">
-                    {modelSummary}
+                    {mergeStrategy.menuValue}
                   </span>
                 </MenuItem>
-                <MenuSeparator />
-              </>
-            ) : null}
-            <MenuItem
-              onClick={() => {
-                if (!archived && archiveNeedsConfirmation) {
-                  setArchiveConfirmOpen(true);
-                  return;
-                }
-                props.onArchiveToggle();
-              }}
+              )}
+              {modelRows.length > 0 || onSetMergeStrategy !== undefined ? <MenuSeparator /> : null}
+              <MenuItem
+                onClick={() => {
+                  if (!archived && group !== null) {
+                    group.onArchive();
+                    return;
+                  }
+                  if (!archived && archiveNeedsConfirmation) {
+                    setArchiveConfirmOpen(true);
+                    return;
+                  }
+                  props.onArchiveToggle();
+                }}
+              >
+                {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+                {archived ? "Restore card" : "Archive card"}
+              </MenuItem>
+              {/* Unconditionally confirmed, unlike archive: there is no version
+                  of this the user can undo if they meant something else. */}
+              <MenuItem onClick={() => setDeleteConfirmOpen(true)} variant="destructive">
+                <Trash2Icon />
+                Delete card…
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+          {/* Mounted only while open, so the lazy chunk is never fetched for a
+              card nobody overrides. The anchor is a zero-size span sitting where
+              the kebab is, which is what puts the popover under the kebab for
+              both doors into it — the menu item and the header pill. */}
+          {modelsOpen ? (
+            <Suspense fallback={null}>
+              <BoardCardModelsPopover
+                anchor={<PopoverTrigger render={<span aria-hidden className="block size-0" />} />}
+                onChange={props.onSetModelOverrides}
+                onOpenChange={setModelsOpen}
+                open={modelsOpen}
+                overrides={card.modelOverrides}
+                rows={modelRows}
+                stepRunning={props.stepRunning === true}
+              />
+            </Suspense>
+          ) : null}
+          {mergeStrategyOpen && onSetMergeStrategy !== undefined ? (
+            <Suspense fallback={null}>
+              <BoardCardMergeStrategyPopover
+                anchor={<PopoverTrigger render={<span aria-hidden className="block size-0" />} />}
+                onChange={onSetMergeStrategy}
+                onOpenChange={setMergeStrategyOpen}
+                open={mergeStrategyOpen}
+                options={mergeStrategy.options}
+                value={card.mergeStrategy}
+              />
+            </Suspense>
+          ) : null}
+          <BoardArchiveConfirmDialog
+            cardKey={card.key}
+            dependents={liveDependents}
+            onConfirm={props.onArchiveToggle}
+            onOpenChange={setArchiveConfirmOpen}
+            open={archiveConfirmOpen}
+          />
+          <BoardDeleteConfirmDialog
+            branch={card.worktree?.branch ?? null}
+            cardKey={card.key}
+            dependents={liveDependents}
+            onConfirm={props.onDelete}
+            onOpenChange={setDeleteConfirmOpen}
+            open={deleteConfirmOpen}
+            threadCount={card.threadLinks.length}
+          />
+          <BoardHint label="Close">
+            <button
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={props.onClose}
+              type="button"
             >
-              {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
-              {archived ? "Restore card" : "Archive card"}
-            </MenuItem>
-            {/* Unconditionally confirmed, unlike archive: there is no version
-                of this the user can undo if they meant something else. */}
-            <MenuItem onClick={() => setDeleteConfirmOpen(true)} variant="destructive">
-              <Trash2Icon />
-              Delete card…
-            </MenuItem>
-          </MenuPopup>
-        </Menu>
-        {/* Mounted only while open, so the lazy chunk is never fetched for a
-            card nobody overrides. The anchor is a zero-size span sitting where
-            the kebab is, which is what puts the popover under the kebab for
-            both doors into it — the menu item and the header pill. */}
-        {modelsOpen ? (
-          <Suspense fallback={null}>
-            <BoardCardModelsPopover
-              anchor={<PopoverTrigger render={<span aria-hidden className="block size-0" />} />}
-              onChange={props.onSetModelOverrides}
-              onOpenChange={setModelsOpen}
-              open={modelsOpen}
-              overrides={card.modelOverrides}
-              rows={modelRows}
-              stepRunning={props.stepRunning === true}
-            />
-          </Suspense>
-        ) : null}
-        <BoardArchiveConfirmDialog
-          cardKey={card.key}
-          dependents={liveDependents}
-          onConfirm={props.onArchiveToggle}
-          onOpenChange={setArchiveConfirmOpen}
-          open={archiveConfirmOpen}
-        />
-        <BoardDeleteConfirmDialog
-          branch={card.worktree?.branch ?? null}
-          cardKey={card.key}
-          dependents={liveDependents}
-          onConfirm={props.onDelete}
-          onOpenChange={setDeleteConfirmOpen}
-          open={deleteConfirmOpen}
-          threadCount={card.threadLinks.length}
-        />
-        <BoardHint label="Close">
-          <button
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
-            onClick={props.onClose}
-            type="button"
-          >
-            <XIcon className="size-[15px]" />
-          </button>
-        </BoardHint>
+              <XIcon className="size-[15px]" />
+            </button>
+          </BoardHint>
+        </div>
       </div>
 
       <TitleBody done={done} onSave={props.onSaveTitle} title={card.title} />
@@ -2661,6 +3165,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
           conflict fix starts — and rendered after it so a card that somehow
           carries both leads with the thing that is actually running. */}
       {autoMergeBanner === null ? null : <AutoMergeBanner info={autoMergeBanner} />}
+      {ciBanner === null ? null : (
+        <BoardCiSentBackBanner banner={ciBanner} onViewRun={() => setPane("ci")} />
+      )}
       {props.conflictFix === null ? null : (
         <ConflictBanner
           info={props.conflictFix}
@@ -2716,6 +3223,60 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 onOpenPullRequest={props.onOpenPullRequest}
                 onSelectReview={() => setPane("review")}
                 summary={workSummary}
+                buildPending={buildPending}
+                decisionLog={
+                  decisionLog === null ? null : (
+                    <BoardDecisionLog
+                      view={decisionLog}
+                      open={logOpen}
+                      onOpenChange={setLogOpen}
+                      onSendBack={
+                        buildStage === null
+                          ? undefined
+                          : () => {
+                              props.onMoveStage(buildStage.stageId);
+                              setPane("thread");
+                            }
+                      }
+                      onFollowUp={(() => {
+                        const create = props.onCreateFollowUp;
+                        const draft = boardDecisionFollowUp({
+                          cardKey: card.key,
+                          rows: decisionLog.rows,
+                        });
+                        return create === undefined || draft === null
+                          ? undefined
+                          : () => create(draft);
+                      })()}
+                    />
+                  )
+                }
+              />
+            </Suspense>
+          ) : activePane === "ci" ? (
+            <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
+              <BoardCardCiPane
+                activeThreadId={activeThreadId}
+                cardKey={card.key}
+                ci={card.ci}
+                inCi={inCi}
+                lastOutcome={card.ciLastOutcome}
+                onBackToThread={() => setPane("thread")}
+                onOpenThread={(threadId) => {
+                  setSelectedThreadId(threadId);
+                  setPane("thread");
+                }}
+                onSkipCi={props.onSkipCi}
+                passes={props.detail.ciPasses}
+                skipPending={props.skipCiPending}
+                skipToLabel={(() => {
+                  const next = boardCiAwareNextStageId(
+                    props.stages,
+                    BOARD_SEED_STAGE_IDS.ci,
+                    false,
+                  );
+                  return next === null ? undefined : boardStageLabel(props.stages, next);
+                })()}
               />
             </Suspense>
           ) : activePane === "review" ? (
@@ -2736,7 +3297,9 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   // like every other transition (t3o-22, D8) — the button
                   // exists because a held loop will never make the move on its
                   // own, not because the move is special.
-                  const next = boardNextStageId(stageStateOf(props.stages), card.stage);
+                  // This list is the card's pipeline: a CI in it (T3O-44) is
+                  // the next stop, never one to step over.
+                  const next = boardCiAwareNextStageId(props.stages, card.stage, false);
                   return next === null || card.blocked ? undefined : () => props.onMoveStage(next);
                 })()}
                 onBackToThread={() => setPane("thread")}
@@ -2759,6 +3322,7 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
               <BoardPlansPanel
                 integrationBranch={card.worktree?.branch ?? null}
                 onOpenChild={props.onOpenChildInSubBoard}
+                ownBranch={group === null || group.ownBranch}
                 onOpenSubBoard={props.onOpenOwnSubBoard}
                 planRows={planRows}
               />
@@ -2771,40 +3335,80 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 plans={props.detail.plans}
                 childCards={props.detail.children}
                 stages={props.stages}
-                canApproveSplit={props.canApproveSplit}
-                approveTargetLabel={props.approveSplitTargetLabel}
-                splitRationale={card.splitRationale}
-                onApproveSplit={props.onApproveSplit}
+                onReviewSplit={props.canApproveSplit ? () => setPane("thread") : undefined}
                 onOpenChild={props.onOpenChildInSubBoard}
               />
             </Suspense>
           ) : (
             <Suspense fallback={<div className="min-h-0 border-r border-border bg-muted/55" />}>
               <BoardCardThreadPane
+                adoptSearch={props.adoptSearch}
                 adoptableThreads={props.adoptableThreads}
                 cardKey={card.key}
-                environmentId={props.environmentId}
                 maximised={props.maximised}
                 onCreateBlankThread={props.onCreateBlankThread}
                 onLinkThread={props.onLinkThread}
                 onRestartStage={props.onRestartStage}
-                onSelectThread={setSelectedThreadId}
+                onSelectThread={selectThread}
                 onToggleMaximised={props.onToggleMaximised}
                 onUnlinkThread={props.onUnlinkThread}
-                selectedThreadId={selectedThread}
+                selectedThreadId={shownThread}
                 stageRestart={props.stageRestart}
                 threadLinks={props.threadLinks}
                 threadTodos={props.threadTodos}
                 queueInfo={props.queueInfo}
                 queueForceStartPending={props.queueForceStartPending}
                 onQueueForceStart={props.onQueueForceStart}
+                footer={
+                  props.canApproveSplit && props.splitGate !== null ? (
+                    <BoardSplitGate
+                      // A re-proposal is a new gate: start from its own
+                      // recommendation rather than the last one's edits.
+                      key={props.detail.plans.map((plan) => plan.planId + plan.updatedAt).join()}
+                      {...props.splitGate}
+                      onApprove={props.onApproveSplit}
+                      onAskForChanges={() => {
+                        // The planning thread, not whichever tab is open: that
+                        // conversation proposed the split and must revise it.
+                        const planningThread = initialBoardCardThreadId(
+                          props.stages,
+                          card.stage,
+                          card.threadLinks,
+                        );
+                        const link = props.threadLinks.find(
+                          (candidate) => candidate.threadId === planningThread,
+                        );
+                        if (link === undefined || link.tombstoned) return;
+                        selectThread(link.threadId);
+                        useComposerDraftStore
+                          .getState()
+                          .setPrompt(
+                            scopeThreadRef(link.worker.environmentId, link.threadId),
+                            BOARD_SPLIT_CHANGE_REQUEST_PREFILL,
+                          );
+                      }}
+                      plans={props.detail.plans}
+                      splitRationale={card.splitRationale}
+                    />
+                  ) : null
+                }
               />
             </Suspense>
           )}
 
           {/* The rail: everything about the card that is not the conversation. */}
           <div className="flex min-h-0 flex-col overflow-y-auto [&>*:first-child]:border-t-0">
-            <ActionsSection props={props} unmet={unmet} />
+            {group === null || groupUsesCardActions ? (
+              <ActionsSection
+                group={group}
+                onReviewSplit={() => setPane("thread")}
+                props={props}
+                unmet={unmet}
+              />
+            ) : (
+              <GroupActionsSection group={group} props={props} unmet={unmet} />
+            )}
+            <PlanReviewSection key={props.detail.card.id} props={props} />
             <QueueSection props={props} />
             {props.stepFailure !== null ? (
               <BoardCardStepFailure
@@ -2833,35 +3437,12 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 {props.feedback}
               </p>
             ) : null}
-            <div className="border-t border-border p-3.5">
-              <DependenciesSection {...props} />
-            </div>
-            <ActivitySection
-              agents={props.agents}
-              detail={props.detail}
-              projectNames={props.project.names}
-              stages={props.stages}
+            <RailSections
+              group={group}
+              onOpenCi={hasCi ? () => setPane("ci") : undefined}
+              onOpenThread={selectThread}
+              props={props}
             />
-            <div className="flex flex-col gap-2 border-t border-border p-3.5">
-              <LabelSection
-                catalogue={props.catalogue}
-                onCreateLabel={props.onCreateLabel}
-                onDeleteLabel={props.onDeleteLabel}
-                onRecolourLabel={props.onRecolourLabel}
-                onSetLabels={props.onSetLabels}
-                onUndeleteLabel={props.onUndeleteLabel}
-                selected={card.labels}
-              />
-            </div>
-            <div className="flex flex-col gap-2 border-t border-border p-3.5">
-              <SectionHeading>Stage</SectionHeading>
-              <StageLadder
-                onMoveStage={props.onMoveStage}
-                stage={card.stage}
-                stages={props.stages}
-              />
-            </div>
-            <InfoSection props={props} />
           </div>
         </div>
       ) : (
@@ -2906,10 +3487,6 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                 />
               </div>
 
-              <div className="min-w-0">
-                <DependenciesSection {...props} />
-              </div>
-
               {/* The mockup's pre-Planning card has no Threads section —
                   adoption belongs to the thread pane. A card that already
                   carries links still shows them, so state is never hidden. */}
@@ -2918,43 +3495,27 @@ export function BoardCardDetailPanel(props: BoardCardDetailPanelProps) {
                   <ThreadsSection {...props} />
                 </div>
               )}
-
-              {props.detail.activity.length === 0 ? null : (
-                <div className="min-w-0">
-                  <SectionHeading className="mb-[7px]">Activity</SectionHeading>
-                  <BoardCardActivityRail
-                    agents={props.agents}
-                    entries={props.detail.activity}
-                    projectNames={props.project.names}
-                    stages={props.stages}
-                  />
-                </div>
-              )}
             </div>
 
             {/* ── Right: what you can do with it ──────────────────────── */}
             <div className="flex w-[244px] shrink-0 flex-col border-l border-border [&>*:first-child]:border-t-0">
-              <ActionsSection props={props} unmet={unmet} />
-              <div className="flex flex-col gap-2 border-t border-border p-3.5">
-                <LabelSection
-                  catalogue={props.catalogue}
-                  onCreateLabel={props.onCreateLabel}
-                  onDeleteLabel={props.onDeleteLabel}
-                  onRecolourLabel={props.onRecolourLabel}
-                  onSetLabels={props.onSetLabels}
-                  onUndeleteLabel={props.onUndeleteLabel}
-                  selected={card.labels}
+              {group === null || groupUsesCardActions ? (
+                <ActionsSection
+                  group={group}
+                  onReviewSplit={() => setPane("thread")}
+                  props={props}
+                  unmet={unmet}
                 />
-              </div>
-              <div className="flex flex-col gap-2 border-t border-border p-3.5">
-                <SectionHeading>Stage</SectionHeading>
-                <StageLadder
-                  onMoveStage={props.onMoveStage}
-                  stage={card.stage}
-                  stages={props.stages}
-                />
-              </div>
-              <InfoSection props={props} />
+              ) : (
+                <GroupActionsSection group={group} props={props} unmet={unmet} />
+              )}
+              <PlanReviewSection key={props.detail.card.id} props={props} />
+              <RailSections
+                group={group}
+                onOpenCi={hasCi ? () => setPane("ci") : undefined}
+                onOpenThread={selectThread}
+                props={props}
+              />
             </div>
           </div>
         </div>
@@ -2972,6 +3533,7 @@ function worktreeKeptProps(
     reason: kept.reason,
     path: kept.path,
     branch: kept.branch,
+    cancelledWork: kept.cancelledWork,
     onCheckAgain: props.onCheckWorktree ?? null,
     checking: props.checkingWorktree === true,
     onRemove: props.onRemoveWorktree ?? null,

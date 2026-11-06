@@ -55,12 +55,22 @@ it("advertises the card lifecycle verbs, delete included (T3O-2)", () => {
   expect(boardToolNames).toContain("board_delete_card");
 });
 
+it("advertises board_manage_labels so agents can manage the label catalogue (T3O-68)", () => {
+  const boardToolNames = Object.values(BoardToolkit.tools).map((tool) => tool.name);
+  expect(boardToolNames).toContain("board_manage_labels");
+});
+
 it("no longer advertises the deleted agent-activity tools (t3o-18, D13)", () => {
   const boardToolNames = Object.values(BoardToolkit.tools).map((tool) => tool.name);
   // `tools/list` is all-or-nothing to a client, so this is also the tripwire for
   // a stale reference resurrecting a tool that has no handler behind it.
   expect(boardToolNames).not.toContain("board_report_progress");
   expect(boardToolNames).not.toContain("board_request_input");
+});
+
+it("gives agents no tool to choose a card's worker (D20: a human act)", () => {
+  const boardToolNames = Object.values(BoardToolkit.tools).map((tool) => tool.name);
+  expect(boardToolNames).not.toContain("board_pin_card_worker");
 });
 
 it("gives every advertised tool an MCP-valid object inputSchema", () => {

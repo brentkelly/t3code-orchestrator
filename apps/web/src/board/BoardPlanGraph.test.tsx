@@ -17,6 +17,7 @@ const planIdOf = (key: string): BoardPlanId => boardPlanId(parentId, key);
 
 function row(key: string, n: number, dependsOn: ReadonlyArray<string> = []): BoardPlanRow {
   return {
+    rowId: `plan:${planIdOf(key)}`,
     planId: planIdOf(key),
     n,
     title: `Plan ${key}`,
@@ -27,7 +28,7 @@ function row(key: string, n: number, dependsOn: ReadonlyArray<string> = []): Boa
     done: false,
     tone: "idle",
     live: null,
-    dependsOn: dependsOn.map(planIdOf),
+    dependsOn: dependsOn.map((dependency) => `plan:${planIdOf(dependency)}`),
     dependsOnNumbers: [],
     blockers: [],
   };

@@ -33,7 +33,7 @@ const legacyCard = {
 
 describe("runOnWorktreeRemove", () => {
   it("decodes from t3.json", () => {
-    const file = Schema.decodeUnknownSync(T3ProjectFile)({
+    const file = Schema.decodeSync(T3ProjectFile)({
       scripts: [{ name: "Park caches", command: "./park.sh", runOnWorktreeRemove: true }],
     });
     expect(file.scripts?.[0]?.runOnWorktreeRemove).toBe(true);
@@ -83,7 +83,7 @@ describe("hookWarning on a reclaimed worktree", () => {
   });
 
   it("rides the activity row", () => {
-    const row = Schema.decodeUnknownSync(BoardCardActivityPayload)({
+    const row = Schema.decodeSync(BoardCardActivityPayload)({
       hookWarning: "Remove script timed out",
     });
     expect(row.hookWarning).toBe("Remove script timed out");

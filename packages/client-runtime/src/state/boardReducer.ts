@@ -33,15 +33,13 @@ const REVIEW_SHELL_FIELDS = [
   "issuesDisputed",
 ] as const satisfies ReadonlyArray<keyof BoardCardShell>;
 
-/** The stall slice (T3O-22, D10/D14) — carried as a group for the same reason
-    the review slice is: the reason, the retry time and the provider holding the
-    card describe ONE stop, and half of them left behind would put a stale
-    "resuming 2:50am" under a card that is running again. */
-const STALL_SHELL_FIELDS = [
-  "stalledReason",
-  "retryAt",
-  "limitedByInstanceId",
-] as const satisfies ReadonlyArray<keyof BoardCardShell>;
+/** The stall slice (T3O-22, D10) — carried as a group for the same reason
+    the review slice is: the reason and the retry time describe ONE stop, and
+    half of them left behind would put a stale "resuming 2:50am" under a card
+    that is running again. */
+const STALL_SHELL_FIELDS = ["stalledReason", "retryAt"] as const satisfies ReadonlyArray<
+  keyof BoardCardShell
+>;
 
 /**
  * Carry forward the key-optional shell fields a card-carrying delta cannot
@@ -89,11 +87,16 @@ function preserveAbsentShellFields(
   // means "the producer could not see step state" — carry.
   const carryStall =
     next.stalled && next.stalledReason === undefined && existing.stalledReason !== undefined;
+  // Which limit holds a queued card (T3O-65) rides only `card-queued` and the
+  // snapshot, so under a card still queued, a delta without it means "carry".
+  const carryQueuedBy =
+    next.queued && next.queuedBy === undefined && existing.queuedBy !== undefined;
   if (
     briefHasImage === next.briefHasImage &&
     planCount === next.planCount &&
     !carryReview &&
-    !carryStall
+    !carryStall &&
+    !carryQueuedBy
   ) {
     return next;
   }
@@ -114,6 +117,7 @@ function preserveAbsentShellFields(
     ...next,
     ...(briefHasImage === undefined ? {} : { briefHasImage }),
     ...(planCount === undefined ? {} : { planCount }),
+    ...(carryQueuedBy ? { queuedBy: existing.queuedBy } : {}),
     ...carried,
   };
 }
@@ -135,6 +139,9 @@ export function applyBoardShellStreamItem(
   if (item.kind === "snapshot") return item.snapshot;
   if (snapshot === null) return null;
   if (item.kind === "card-threads") return applyBoardShellStreamEvent(snapshot, item);
+  // T3O-62: the worker summary carries runtime status the board log never
+  // sees, so its sequence is only the board head: a fresh read, unguarded.
+  if (item.kind === "workers") return applyBoardShellStreamEvent(snapshot, item);
   if (item.sequence <= snapshot.snapshotSequence) return snapshot;
   return { ...applyBoardShellStreamEvent(snapshot, item), snapshotSequence: item.sequence };
 }
@@ -231,12 +238,24 @@ export function applyBoardShellStreamEvent(
       // Admission also settles the durable `stepRunning` dot: admitted-to-running
       // (`queued=false, stepRunning=true`) vs held-for-a-slot (`queued=true,
       // stepRunning=false`). Both flip on this one delta.
-      const nextCards = Arr.map(cards, (card) =>
-        card.cardId === event.cardId &&
-        (card.queued !== event.queued || card.stepRunning !== event.stepRunning)
-          ? { ...card, queued: event.queued, stepRunning: event.stepRunning }
-          : card,
-      );
+      // …and which limit holds it (T3O-65), authoritative here: absent clears.
+      const nextCards = Arr.map(cards, (card) => {
+        if (
+          card.cardId !== event.cardId ||
+          (card.queued === event.queued &&
+            card.stepRunning === event.stepRunning &&
+            card.queuedBy === event.queuedBy)
+        ) {
+          return card;
+        }
+        const { queuedBy: _previous, ...rest } = card;
+        return {
+          ...rest,
+          queued: event.queued,
+          stepRunning: event.stepRunning,
+          ...(event.queuedBy === undefined ? {} : { queuedBy: event.queuedBy }),
+        };
+      });
       return { ...snapshot, cards: nextCards };
     }
     case "card-stalled": {
@@ -277,7 +296,6 @@ export function applyBoardShellStreamEvent(
         // "preserve", as it does for every other step-derived field.
         const nextStalledReason = event.stalledReason;
         const nextRetryAt = event.retryAt;
-        const nextLimitedBy = event.limitedByInstanceId;
         if (
           card.stalled === event.stalled &&
           card.queued === event.queued &&
@@ -287,12 +305,11 @@ export function applyBoardShellStreamEvent(
           card.stepConflictFix === event.stepConflictFix &&
           card.stepChecksFix === event.stepChecksFix &&
           card.stalledReason === nextStalledReason &&
-          card.retryAt === nextRetryAt &&
-          card.limitedByInstanceId === nextLimitedBy
+          card.retryAt === nextRetryAt
         ) {
           return card;
         }
-        // The three stall keys are DELETED first, then re-applied from the
+        // The stall keys are DELETED first, then re-applied from the
         // delta. Spreading them conditionally over `...card` would preserve a
         // stale reason on the delta that says the step is no longer stalled —
         // and this delta is the only thing that ever clears the chip.
@@ -300,6 +317,9 @@ export function applyBoardShellStreamEvent(
         for (const field of STALL_SHELL_FIELDS) delete stripped[field];
         // Key-optional and authoritative here too (T3O-12): absent means false.
         delete stripped.stepChecksFix;
+        // Every emitter of this delta leaves the step out of the queue, so the
+        // limit that held it goes with it (T3O-65).
+        if (!event.queued) delete stripped.queuedBy;
         return {
           ...stripped,
           stalled: event.stalled,
@@ -311,7 +331,6 @@ export function applyBoardShellStreamEvent(
           ...(event.stepChecksFix === true ? { stepChecksFix: true } : {}),
           ...(nextStalledReason === undefined ? {} : { stalledReason: nextStalledReason }),
           ...(nextRetryAt === undefined ? {} : { retryAt: nextRetryAt }),
-          ...(nextLimitedBy === undefined ? {} : { limitedByInstanceId: nextLimitedBy }),
         };
       });
       return { ...snapshot, cards: nextCards };
@@ -404,34 +423,31 @@ export function applyBoardShellStreamEvent(
       ].sort(compareBoardStages);
       return { ...snapshot, stages: nextStages };
     }
-    case "card-provider-limit-upserted": {
-      // The provider-cooldown slice (T3O-22, D14): one fact per provider
-      // ACCOUNT, riding once like the label catalogue rather than denormalised
-      // onto every card that shares it — which is also what lets the top bar
-      // say "Anthropic limit · 1:00 AM" with no card on screen.
-      const limits = snapshot.providerLimits;
-      const nextLimits = limits.some(
-        (existing) => existing.providerInstanceId === event.limit.providerInstanceId,
-      )
-        ? Arr.map(limits, (existing) =>
-            existing.providerInstanceId === event.limit.providerInstanceId ? event.limit : existing,
-          )
-        : Arr.append(limits, event.limit);
-      return { ...snapshot, providerLimits: nextLimits };
-    }
-    case "card-provider-limit-cleared":
-      return {
-        ...snapshot,
-        providerLimits: Arr.filter(
-          snapshot.providerLimits,
-          (existing) => existing.providerInstanceId !== event.providerInstanceId,
-        ),
-      };
+    case "workers":
+      // The whole worker summary, replaced wholesale (T3O-62).
+      return { ...snapshot, workers: event.state };
     case "stage-removed": {
       const stages = snapshot.stages;
       return {
         ...snapshot,
         stages: Arr.filter(stages, (stage) => stage.stageId !== event.stageId),
+      };
+    }
+    case "project-stage-config": {
+      // A project's t3o.json (T3O-43): its config replaced, and the
+      // project-owned stage rows it wrote and dropped, in one delta.
+      const dropped = new Set<string>(event.deletedStageIds);
+      const upserted = new Map<string, (typeof event.upserts)[number]>(
+        event.upserts.map((stage) => [stage.stageId, stage]),
+      );
+      const kept = snapshot.stages
+        .filter((stage) => !dropped.has(stage.stageId) && !upserted.has(stage.stageId))
+        .concat(event.upserts);
+      return {
+        ...snapshot,
+        // Spread-then-sort: Hermes (mobile) has no `Array#toSorted`.
+        stages: [...kept].sort(compareBoardStages),
+        projectStageConfigs: { ...snapshot.projectStageConfigs, [event.projectId]: event.config },
       };
     }
   }

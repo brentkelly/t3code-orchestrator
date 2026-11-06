@@ -10,6 +10,7 @@ import {
   BoardStageId,
   boardCardStepState,
   boardPlanId,
+  boardSplitChildPlanCopy,
   ProviderInstanceId,
   ThreadId,
   type BoardCard,
@@ -28,6 +29,7 @@ import {
   cardArchived,
   cardMoved,
   cardStage,
+  cardTitleUpdated,
   codexStep,
   makeBoardCard,
   movedToBuilding,
@@ -199,7 +201,10 @@ it.effect(
       },
       ({ pumpDomain, board, slots }) =>
         Effect.gen(function* () {
-          const child = childCard("card-child", "building");
+          const child = {
+            ...childCard("card-child", "building"),
+            sourcePlanId: boardPlanId(parentId, "card-child"),
+          };
           yield* pumpDomain(cardCreated(child, 1));
           const after = yield* board;
           assert.strictEqual(stepStatus(after, BoardCardId.make("card-child")), null);
@@ -337,6 +342,38 @@ it.effect("starts the siblings a finishing child unblocks, with no human in betw
   ),
 );
 
+it.effect("starts the cards a group's own finished dependency frees (T3O-26)", () =>
+  withGovernor(
+    {
+      // The group waits on a top-level card that left Done for a fix round;
+      // one child already runs, the other was held back on the floor.
+      board: {
+        cards: [
+          makeBoardCard({ id: "card-dep", stage: "done", orderKey: "a" }),
+          { ...parentCard(), dependsOn: [BoardCardId.make("card-dep")] },
+          childCard("card-one", "building"),
+          childCard("card-two", "ready"),
+        ],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(
+          cardMoved(
+            makeBoardCard({ id: "card-dep", stage: "done", orderKey: "a" }),
+            "merge",
+            "done",
+            1,
+          ),
+        );
+        const after = yield* board;
+        assert.strictEqual(cardStage(after, BoardCardId.make("card-two")), "building");
+      }),
+  ),
+);
+
 it.effect("starts nothing while the parent is still short of the build stage", () =>
   withGovernor(
     {
@@ -381,6 +418,80 @@ it.effect("leaves a child a human parked past the floor alone", () =>
       Effect.gen(function* () {
         yield* pumpDomain(movedToBuilding(parentCard(), 1));
         assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "review");
+      }),
+  ),
+);
+
+it.effect("an unrelated sibling edit does not restart a child parked on the floor (T3O-27)", () =>
+  withGovernor(
+    {
+      // A human dragged card-one back to the floor to park it; card-two runs.
+      board: {
+        cards: [parentCard(), childCard("card-one", "ready"), childCard("card-two", "building")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(cardTitleUpdated(childCard("card-two", "building"), 1));
+        assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "ready");
+      }),
+  ),
+);
+
+it.effect("starts a card that lands on the floor of a started auto-build group (T3O-27)", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childCard("card-one", "ready")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        const landed = childCard("card-one", "ready");
+        yield* pumpDomain({
+          type: "board.card-updated",
+          sequence: 1,
+          payload: { cardId: landed.id, card: landed, regrouped: true },
+        } as unknown as HarnessEvent);
+        assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "building");
+      }),
+  ),
+);
+
+it.effect("starts a card a human creates on the floor of a started auto-build group (T3O-27)", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childCard("card-one", "ready")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(cardCreated(childCard("card-one", "ready"), 1));
+        assert.strictEqual(cardStage(yield* board, BoardCardId.make("card-one")), "building");
+      }),
+  ),
+);
+
+it.effect("kicks off a card a human creates straight into a group's build stage (T3O-27)", () =>
+  withGovernor(
+    {
+      board: {
+        cards: [parentCard(), childCard("card-one", "building")],
+        nextCardNumberByProject: {},
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ pumpDomain, board }) =>
+      Effect.gen(function* () {
+        yield* pumpDomain(cardCreated(childCard("card-one", "building"), 1));
+        assert.isNotNull(stepStatus(yield* board, BoardCardId.make("card-one")));
       }),
   ),
 );
@@ -472,12 +583,23 @@ const materialisedChild = (id: string, stage: string): BoardCard => ({
 });
 
 it.effect(
-  "runs a cascaded child unattended even though it owns no plan row (its plan is its brief)",
+  "runs a cascaded child unattended: it owns a copy of the plan it was cut from (T3O-27)",
   () =>
     withGovernor(
       {
         board: {
           cards: [parentCard(), materialisedChild("card-one", "ready")],
+          plans: [
+            boardSplitChildPlanCopy(
+              {
+                planId: boardPlanId(parentId, "one"),
+                cardId: parentId,
+                title: "Plan one",
+                summary: "The first part",
+              },
+              { id: BoardCardId.make("card-one"), createdAt: NOW },
+            ),
+          ],
           nextCardNumberByProject: {},
         },
         settings: settingsPausingPlanless(),
@@ -500,7 +622,7 @@ it.effect(
           assert.isNotNull(state);
           // The whole point of the sub-board: dependency resolution → build →
           // PR → merge with no human in between (t3o-28, D3). A materialised
-          // child is a planned build — the plan-less pause must not apply.
+          // child owns its plan, so the plan-less pause does not apply.
           assert.strictEqual(state!.humanInLoop, false);
         }),
     ),
@@ -1005,6 +1127,7 @@ const runningBuildStep = (cardId: BoardCardId): BoardCardStepState => ({
   status: "running",
   slotHeld: true,
   forceStart: false,
+  queuedBy: null,
   startedAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 });
@@ -1345,6 +1468,7 @@ it.effect("a child's conflict fix succeeding merges even when the arm was LOST",
       status: "running",
       slotHeld: true,
       forceStart: false,
+      queuedBy: null,
       startedAt: NOW,
       updatedAt: NOW,
     };

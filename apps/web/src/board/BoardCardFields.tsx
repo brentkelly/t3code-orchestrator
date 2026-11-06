@@ -8,7 +8,8 @@
  * Pure presentation — entries in, a pick or a removal out.
  */
 import type { BoardCardId, BoardStageDefinition, BoardStageId } from "@t3tools/contracts";
-import { XIcon } from "lucide-react";
+import { ChevronDownIcon, XIcon } from "lucide-react";
+import { useState } from "react";
 
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/utils";
@@ -35,6 +36,50 @@ export function BoardSectionHeading({
   );
 }
 
+/** A sidebar section that opens on its header (T3O-38): collapsed by default,
+    the header carrying a one-line summary of what is inside. */
+export function BoardCollapsibleSection({
+  title,
+  summary,
+  defaultOpen = false,
+  className,
+  children,
+}: {
+  readonly title: string;
+  readonly summary?: React.ReactNode;
+  readonly defaultOpen?: boolean;
+  readonly className?: string;
+  readonly children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={cn("flex flex-col gap-2", className)}>
+      <button
+        aria-expanded={open}
+        className="flex w-full min-w-0 items-center gap-1.5 text-left"
+        onClick={() => setOpen((value) => !value)}
+        type="button"
+      >
+        <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+          {title}
+        </span>
+        <span className="flex-1" />
+        {summary === undefined ? null : (
+          <span className="truncate text-[11px] font-medium text-foreground">{summary}</span>
+        )}
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-3 shrink-0 text-muted-foreground transition-transform duration-[120ms]",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+      {open ? children : null}
+    </div>
+  );
+}
+
 export interface BoardDependencyEntry {
   readonly cardId: BoardCardId;
   readonly key: string;
@@ -57,6 +102,7 @@ export function BoardDependencySection({
   stages,
   onAdd,
   onRemove,
+  collapsible,
 }: {
   readonly dependencies: ReadonlyArray<BoardDependencyEntry>;
   readonly options: ReadonlyArray<BoardPickerOption>;
@@ -64,19 +110,49 @@ export function BoardDependencySection({
   readonly stages: ReadonlyArray<BoardStageDefinition>;
   readonly onAdd: (cardId: BoardCardId) => void;
   readonly onRemove: (cardId: BoardCardId) => void;
+  /** Collapsible behind a chevron and a summary (T3O-39): starts closed with
+      no dependencies and open with some. Adding one opens it. Remount per
+      card (a `key`) so the open state does not carry over. */
+  readonly collapsible?: boolean;
 }) {
+  const [openOverride, setOpenOverride] = useState<boolean | null>(null);
+  const open = collapsible !== true || (openOverride ?? dependencies.length > 0);
+  const toggle = () => setOpenOverride(!open);
   return (
     <>
-      <div className="mb-[7px] flex items-center gap-1.5">
-        <BoardSectionHeading>Dependencies</BoardSectionHeading>
+      <div className={cn("flex items-center gap-1.5", open && "mb-[7px]")}>
+        {collapsible === true ? (
+          <button className="cursor-pointer" onClick={toggle} type="button">
+            <BoardSectionHeading>Dependencies</BoardSectionHeading>
+          </button>
+        ) : (
+          <BoardSectionHeading>Dependencies</BoardSectionHeading>
+        )}
         <BoardSearchAddPicker
           label="Add"
-          onPick={(id) => onAdd(id as BoardCardId)}
+          onPick={(id) => {
+            setOpenOverride(true);
+            onAdd(id as BoardCardId);
+          }}
           options={options}
           placeholder="Search cards…"
         />
+        {collapsible === true ? (
+          <button
+            aria-expanded={open}
+            aria-label={open ? "Collapse dependencies" : "Expand dependencies"}
+            className="flex flex-1 cursor-pointer items-center justify-end gap-1.5 self-stretch"
+            onClick={toggle}
+            type="button"
+          >
+            <span className="text-[11px] font-medium text-foreground">
+              {dependencies.length === 0 ? "None" : String(dependencies.length)}
+            </span>
+            <ChevronDownIcon className={cn("size-3 text-muted-foreground", open && "rotate-180")} />
+          </button>
+        ) : null}
       </div>
-      {dependencies.length === 0 ? (
+      {!open ? null : dependencies.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">No dependencies.</p>
       ) : (
         <ul className="flex flex-col gap-1.5">

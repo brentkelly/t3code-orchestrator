@@ -33,12 +33,12 @@ import type {
   VcsStatusChangeRequest,
 } from "@t3tools/contracts";
 
-import * as GitManager from "../git/GitManager.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { boardMergeStateOf, type BoardMergeState } from "./boardMergeState.ts";
 import { boardRepositoryOf, type BoardRepository } from "./boardRepository.ts";
+import { BoardGitStatus } from "./ports/BoardGitStatus.ts";
 import { ThreadGateway } from "./ThreadGateway.ts";
 
 /**
@@ -248,6 +248,15 @@ export class BoardPullRequestGateway extends Context.Service<
       input: BoardPullRequestRef,
     ) => Effect.Effect<"readied" | "not-draft", BoardPullRequestGatewayError>;
     /**
+     * Close an open pull request without merging it (T3O-28) — archiving a
+     * group, or cancelling a started card's work. Reads the forge LIVE first
+     * and acts only on an open one, so it is idempotent: a pull request that
+     * is already closed or merged comes back `not-open` with no write.
+     */
+    readonly close: (
+      input: BoardPullRequestRef,
+    ) => Effect.Effect<"closed" | "not-open", BoardPullRequestGatewayError>;
+    /**
      * The repository the board's pull requests live on (T3O-24): the
      * project's `origin`, falling back to its identity. Null when the project
      * has neither. Every other operation here addresses this one, so a pull
@@ -269,14 +278,11 @@ export class BoardPullRequestGateway extends Context.Service<
 export const layer: Layer.Layer<
   BoardPullRequestGateway,
   never,
-  | GitManager.GitManager
-  | GitVcsDriver.GitVcsDriver
-  | PullRequestService.PullRequestService
-  | ThreadGateway
+  BoardGitStatus | GitVcsDriver.GitVcsDriver | PullRequestService.PullRequestService | ThreadGateway
 > = Layer.effect(
   BoardPullRequestGateway,
   Effect.gen(function* () {
-    const gitManager = yield* GitManager.GitManager;
+    const gitManager = yield* BoardGitStatus;
     const git = yield* GitVcsDriver.GitVcsDriver;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const threads = yield* ThreadGateway;
@@ -371,9 +377,41 @@ export const layer: Layer.Layer<
         ),
       );
 
+    const close = (input: BoardPullRequestRef) =>
+      repositoryOf("close", input.projectId, "blocked").pipe(
+        Effect.flatMap((repository) => {
+          const reference = {
+            projectId: input.projectId,
+            ...addressOf(repository),
+            number: input.number,
+            allowStale: false,
+          } as const;
+          return pullRequests.invalidate({ reference }).pipe(
+            Effect.andThen(pullRequests.summary(reference)),
+            Effect.flatMap((summary): Effect.Effect<"closed" | "not-open", unknown> =>
+              summary.state !== "open"
+                ? Effect.succeed("not-open")
+                : pullRequests
+                    .runAction({ ...reference, action: "close" })
+                    .pipe(Effect.as("closed" as const)),
+            ),
+          );
+        }),
+        Effect.catch((error) =>
+          Effect.fail(
+            new BoardPullRequestGatewayError({
+              operation: "close",
+              detail: failureDetail(error),
+              refusal: refusalOf(error),
+            }),
+          ),
+        ),
+      );
+
     return BoardPullRequestGateway.of({
       repository: (projectId) => repository(projectId),
       markReady,
+      close,
       find: (input) =>
         // T3o (T3O-48): a forced lookup bumps this checkout's PR-lookup epoch,
         // which is part of the cache key — so it bypasses the lookup TTL and

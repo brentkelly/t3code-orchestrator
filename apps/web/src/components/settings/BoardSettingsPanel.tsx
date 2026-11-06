@@ -4,8 +4,9 @@
  * (`BoardPipelineSection`), concurrency ceilings and lifecycle windows — all
  * sharing the prototype's bordered-card aesthetic. Execution config and
  * project edits reach the decider / reactor, so the panel reads and writes
- * through `usePrimarySettings` / `useUpdatePrimarySettings`; stage CRUD is a
- * board command dispatched through the environment.
+ * through `useBoardSettings` / `useUpdateBoardSettings` — the board server's
+ * settings (T3O-71); stage CRUD is a board command dispatched through the
+ * environment.
  *
  * The pipeline is keyed by STAGE ID, so a rename never orphans a stage's config.
  * A stage's resolved config is frozen onto the card at stage entry (D12), so a
@@ -13,6 +14,7 @@
  * card.
  */
 import {
+  DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS,
   DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT,
   DEFAULT_BOARD_KEY_PREFIX,
   DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE,
@@ -28,17 +30,11 @@ import { useMemo } from "react";
 import * as Option from "effect/Option";
 
 import { projectAccent, projectIconColorOf } from "../../board/projectAccent";
-import {
-  useClientSettings,
-  usePrimarySettings,
-  useUpdatePrimarySettings,
-} from "../../hooks/useSettings";
+import { useClientSettings } from "../../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
-} from "../../logicalProject";
-import { usePrimaryEnvironmentId } from "../../state/environments";
-import { primaryServerProvidersAtom } from "../../state/server";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { environmentShell } from "../../state/shell";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -50,15 +46,28 @@ import {
   setBoardProjectSetting,
 } from "./BoardSettingsPanel.logic";
 import { BoardPipelineSection, NumberStepper } from "./BoardPipelineSection";
+import { BoardProjectPipelinesSection } from "./BoardProjectPipelinesSection";
+import { BoardWorkerSettings } from "../../board/workers/BoardWorkerSettings";
+import { useBoardWorkers } from "../../board/workers/boardWorkersState";
+import { boardShowsWorkers } from "../../board/workers/cardWorker";
+import { WorkerConcurrencySection } from "../../board/workers/WorkerConcurrencySection";
+import { boardLocalConcurrencyDiverges } from "../../board/workers/workerConcurrency";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { BoardServerSection, BoardServerStatusNotice } from "../../board/BoardServerSettings";
+import {
+  useBoardEnvironment,
+  useBoardServerProviders,
+  useBoardSettings,
+  useUpdateBoardSettings,
+} from "../../board/useBoardEnvironmentId";
 
 /** The provider instances the server reports, built-in drivers included, plus
     any configured custom instances — the concurrency rows offer these. Free text
     would risk an invalid slug that fails the whole-settings decode on save. */
 function useProviderInstanceIds(): ReadonlyArray<string> {
-  const providers = useAtomValue(primaryServerProvidersAtom);
-  const providerInstances = usePrimarySettings((settings) => settings.providerInstances);
+  const providers = useBoardServerProviders();
+  const providerInstances = useBoardSettings((settings) => settings.providerInstances);
   return useMemo(
     () => [
       ...new Set([
@@ -71,22 +80,52 @@ function useProviderInstanceIds(): ReadonlyArray<string> {
 }
 
 export function BoardSettingsPanel() {
-  const board = usePrimarySettings((settings) => settings.board);
-  const update = useUpdatePrimarySettings();
-  const instanceIds = useProviderInstanceIds();
-  const environmentId = usePrimaryEnvironmentId();
-
+  const resolution = useBoardEnvironment();
   return (
     <SettingsPageContainer>
-      <ProjectsSection board={board} environmentId={environmentId} update={update} />
-      <BoardPipelineSection />
-      <ConcurrencySection board={board} instanceIds={instanceIds} update={update} />
-      <LifecycleSection board={board} update={update} />
+      {/* T3O-71: which server's board this device shows, and whether it is reachable. */}
+      <BoardServerStatusNotice className="mx-3 sm:mx-4" />
+      <BoardServerSection />
+      {/* Without a reachable board server there are no settings to show or save; the sections
+          would only read defaults and drop every edit. */}
+      {resolution.kind === "ready" ? (
+        <BoardSettingsSections environmentId={resolution.environmentId} />
+      ) : resolution.kind === "none" ? (
+        <p className="px-3 text-sm text-muted-foreground sm:px-4">
+          Connect an environment to configure its board.
+        </p>
+      ) : null}
     </SettingsPageContainer>
   );
 }
 
-type UpdateFn = ReturnType<typeof useUpdatePrimarySettings>;
+/** The board server's own settings; rendered only once that server resolves. */
+function BoardSettingsSections({ environmentId }: { environmentId: EnvironmentId }) {
+  const board = useBoardSettings((settings) => settings.board);
+  const update = useUpdateBoardSettings();
+  const instanceIds = useProviderInstanceIds();
+
+  return (
+    <>
+      <DisplaySection board={board} update={update} />
+      <ProjectsSection board={board} environmentId={environmentId} update={update} />
+      <BoardPipelineSection />
+      {/* T3O-43: what each project's committed t3o.json changes. */}
+      <BoardProjectPipelinesSection environmentId={environmentId} />
+      <BoardConcurrencySettings
+        board={board}
+        environmentId={environmentId}
+        instanceIds={instanceIds}
+        update={update}
+      />
+      {/* T3O-62: the board's workers, and which projects each has checked out. */}
+      <BoardWorkerSettings environmentId={environmentId} />
+      <LifecycleSection board={board} update={update} />
+    </>
+  );
+}
+
+type UpdateFn = ReturnType<typeof useUpdateBoardSettings>;
 
 /** The prototype's bordered card list container, shared by every non-pipeline
     section so the page reads as one system. Sections holding these use the
@@ -129,7 +168,7 @@ function ProjectsSection({
   update,
 }: {
   board: BoardSettings;
-  environmentId: EnvironmentId | null;
+  environmentId: EnvironmentId;
   update: UpdateFn;
 }) {
   const anchor = searchableSetting("board-projects");
@@ -140,13 +179,7 @@ function ProjectsSection({
         project's icon; open a project's settings to change it. The eye hides a project and its
         cards from the board without touching them.
       </p>
-      {environmentId === null ? (
-        <p className="px-3 text-sm text-muted-foreground sm:px-4">
-          Connect an environment to configure its projects.
-        </p>
-      ) : (
-        <ProjectRows board={board} environmentId={environmentId} update={update} />
-      )}
+      <ProjectRows board={board} environmentId={environmentId} update={update} />
     </SettingsSection>
   );
 }
@@ -339,10 +372,73 @@ function ConcurrencySection({
   );
 }
 
+/**
+ * Concurrency, per worker once the board has any (T3O-65, D11). A local-only
+ * board keeps the section exactly as it was, unless a per-worker override for
+ * this server outlived the workers.
+ */
+function BoardConcurrencySettings(props: {
+  board: BoardSettings;
+  environmentId: EnvironmentId;
+  instanceIds: ReadonlyArray<string>;
+  update: UpdateFn;
+}) {
+  const workers = useBoardWorkers(props.environmentId);
+  if (
+    !boardShowsWorkers(workers.state) &&
+    !boardLocalConcurrencyDiverges(props.board.concurrency)
+  ) {
+    return (
+      <ConcurrencySection
+        board={props.board}
+        instanceIds={props.instanceIds}
+        update={props.update}
+      />
+    );
+  }
+  const anchor = searchableSetting("board-concurrency");
+  return (
+    <SettingsSection id="board-concurrency" title={anchor.title} variant="plain">
+      <WorkerConcurrencySection
+        concurrency={props.board.concurrency}
+        localInstanceIds={props.instanceIds}
+        onChange={(patch) => props.update({ board: { concurrency: patch } })}
+        workers={workers.state}
+      />
+    </SettingsSection>
+  );
+}
+
+// ── Display ────────────────────────────────────────────────────────────
+
+function DisplaySection({ board, update }: { board: BoardSettings; update: UpdateFn }) {
+  const anchor = searchableSetting("board-auto-collapse-empty-stages");
+  return (
+    <SettingsSection id="board-display" title="Display" variant="plain">
+      <CardListContainer id="board-auto-collapse-empty-stages">
+        <CardRow
+          label={anchor.title}
+          description="Stages with no cards fold to a narrow strip and open again when a card lands in them. Applies to everyone using this board."
+          control={
+            <Switch
+              checked={board.display.autoCollapseEmptyStages}
+              onCheckedChange={(checked) =>
+                update({ board: { display: { autoCollapseEmptyStages: Boolean(checked) } } })
+              }
+              aria-label={anchor.title}
+            />
+          }
+        />
+      </CardListContainer>
+    </SettingsSection>
+  );
+}
+
 // ── Lifecycle ──────────────────────────────────────────────────────────
 
 function LifecycleSection({ board, update }: { board: BoardSettings; update: UpdateFn }) {
   const anchor = searchableSetting("board-reclaim-worktree-on-done");
+  const autoArchive = searchableSetting("board-auto-archive-done");
   return (
     <SettingsSection id="board-lifecycle" title="Lifecycle" variant="plain">
       <CardListContainer id="board-reclaim-worktree-on-done">
@@ -362,9 +458,43 @@ function LifecycleSection({ board, update }: { board: BoardSettings; update: Upd
           }
         />
       </CardListContainer>
+      <CardListContainer id="board-auto-archive-done">
+        <CardRow
+          label={autoArchive.title}
+          description="Archive cards left untouched in Done for this many days. With worktrees reclaimed at Done, a card whose worktree was kept for unsaved work stays in Done. Archiving never removes unsaved work, and archived cards can be restored from the archive."
+          control={
+            <Switch
+              checked={board.lifecycle.autoArchiveDone}
+              onCheckedChange={(checked) =>
+                update({ board: { lifecycle: { autoArchiveDone: Boolean(checked) } } })
+              }
+              aria-label={autoArchive.title}
+            />
+          }
+        />
+        {board.lifecycle.autoArchiveDone ? (
+          <CardRow
+            label="Days in Done before archiving"
+            control={
+              <NumberStepper
+                value={board.lifecycle.autoArchiveAfterDays}
+                min={1}
+                max={365}
+                ariaLabel="Days in Done before archiving"
+                onChange={(value) => {
+                  if (value !== board.lifecycle.autoArchiveAfterDays) {
+                    update({ board: { lifecycle: { autoArchiveAfterDays: value } } });
+                  }
+                }}
+              />
+            }
+          />
+        ) : null}
+      </CardListContainer>
       <p className="px-3 text-xs text-muted-foreground/70 sm:px-4">
         Defaults: reclaim worktrees at Done {DEFAULT_BOARD_RECLAIM_WORKTREE_ON_DONE ? "on" : "off"},
-        global concurrency {DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT}.
+        auto-archive off ({DEFAULT_BOARD_AUTO_ARCHIVE_AFTER_DAYS} days when on), global concurrency{" "}
+        {DEFAULT_BOARD_GLOBAL_MAX_CONCURRENT}.
       </p>
     </SettingsSection>
   );

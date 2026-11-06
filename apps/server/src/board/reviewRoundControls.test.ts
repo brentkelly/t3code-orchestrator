@@ -76,6 +76,7 @@ const abandonedStep = (stage: string): BoardCardStepState => ({
   status: "abandoned",
   slotHeld: false,
   forceStart: false,
+  queuedBy: null,
   startedAt: null,
   updatedAt: NOW,
 });

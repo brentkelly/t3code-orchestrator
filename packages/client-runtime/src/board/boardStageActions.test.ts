@@ -9,6 +9,7 @@ import { BOARD_SEED_STAGE_IDS, BOARD_SEED_STAGES } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  boardCiAwareNextStageId,
   boardMoveLeavesPlanningUnwritten,
   boardMoveNeedsOverride,
   boardStagePrimaryAction,
@@ -16,7 +17,8 @@ import {
   isBoardStageManuallySelectable,
 } from "./boardStageActions";
 
-const stages = BOARD_SEED_STAGES;
+// The global pipeline: CI only joins a project's (T3O-44).
+const stages = BOARD_SEED_STAGES.filter((stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.ci);
 
 describe("boardStagePrimaryAction", () => {
   it("moves a card to the next stage in order", () => {
@@ -59,6 +61,48 @@ describe("boardStagePrimaryAction", () => {
       toStage: BOARD_SEED_STAGE_IDS.done,
       emphasised: false,
     });
+  });
+
+  it("moves into CI from the stage before it, never out of a live entry (T3O-44)", () => {
+    // The card's own pipeline, CI on: the bare list carries the CI seed.
+    const withCi = BOARD_SEED_STAGES;
+    const withoutCi = BOARD_SEED_STAGES.filter(
+      (stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.ci,
+    );
+    // A review loop that stopped short leaves the card in review: the button
+    // sends it on into CI, never over it.
+    expect(boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.review)).toMatchObject({
+      kind: "move",
+      toStage: BOARD_SEED_STAGE_IDS.ci,
+      label: "Move to Continuous integration",
+    });
+    expect(
+      boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.ci, { ciEntryLive: true }),
+    ).toBeNull();
+    expect(
+      boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.ci, { ciEntryLive: false }),
+    ).toMatchObject({ kind: "move", toStage: BOARD_SEED_STAGE_IDS.merge });
+    expect(boardStagePrimaryAction(withoutCi, BOARD_SEED_STAGE_IDS.review)).toMatchObject({
+      kind: "move",
+      toStage: BOARD_SEED_STAGE_IDS.merge,
+    });
+  });
+
+  it("walks CI as the next stage, never past a live entry (boardCiAwareNextStageId)", () => {
+    const withCi = BOARD_SEED_STAGES;
+    const withoutCi = BOARD_SEED_STAGES.filter(
+      (stage) => stage.stageId !== BOARD_SEED_STAGE_IDS.ci,
+    );
+    expect(boardCiAwareNextStageId(withCi, BOARD_SEED_STAGE_IDS.review, false)).toBe(
+      BOARD_SEED_STAGE_IDS.ci,
+    );
+    expect(boardCiAwareNextStageId(withCi, BOARD_SEED_STAGE_IDS.ci, true)).toBeNull();
+    expect(boardCiAwareNextStageId(withCi, BOARD_SEED_STAGE_IDS.ci, false)).toBe(
+      BOARD_SEED_STAGE_IDS.merge,
+    );
+    expect(boardCiAwareNextStageId(withoutCi, BOARD_SEED_STAGE_IDS.review, true)).toBe(
+      BOARD_SEED_STAGE_IDS.merge,
+    );
   });
 
   it("offers Merge in the merge role only while the pull request is still open", () => {
@@ -190,8 +234,8 @@ describe("boardStagePrimaryAction", () => {
   });
 
   it("offers the ordinary forward move from the build role once its step has settled", () => {
-    // A human-in-the-loop build never auto-advances, and a failed one never
-    // will either: the card sits in Building wearing a "Needs a human" chip
+    // A build that finished with auto-advance off does not move on, and a
+    // failed one never will either: the card sits in Building wearing a "Needs a human" chip
     // with nothing to press. `stepHeld` is that chip's own condition, so the
     // button appears exactly when the chip does — labelled and styled by the
     // generic rule, not special-cased (D5, D6).
@@ -362,11 +406,10 @@ describe("boardMoveLeavesPlanningUnwritten", () => {
     from: (typeof ids)[keyof typeof ids],
     to: (typeof ids)[keyof typeof ids],
     planCount = 0,
-    parentCardId: string | null = null,
   ) =>
     boardMoveLeavesPlanningUnwritten({
       stages,
-      card: { stage: from, parentCardId },
+      card: { stage: from },
       toStage: to,
       planCount,
     });
@@ -386,8 +429,8 @@ describe("boardMoveLeavesPlanningUnwritten", () => {
     expect(asks(ids.ready, ids.building)).toBe(false);
   });
 
-  it("does not ask for a sub-board child, which its parent planned", () => {
-    expect(asks(ids.planning, ids.ready, 0, "card-parent")).toBe(false);
+  it("a split child carries its own plan copy, so its plan count decides (T3O-27)", () => {
+    expect(asks(ids.planning, ids.ready, 1)).toBe(false);
   });
 });
 

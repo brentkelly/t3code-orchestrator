@@ -60,28 +60,30 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   `BOARD_ATTENTION_SETTLE_MS` grace the other two ambers do, because a card arriving at Ready for
   merge is briefly PR-less while the stage-move lookup is still in flight. The gate is last because it is the
   one notice whose fact survives elsewhere on the card: the meta row's chain icon carries the count at
-  every stage. This is deliberately not a comparison of tones — amber-versus-violet says how loud a
+  every stage. Below the gate, `Stage removed` (T3O-43) is amber: the card's project dropped its stage
+  in `t3o.json`, so it is held there until a human moves it on. This is deliberately not a comparison of tones — amber-versus-violet says how loud a
   notice is, not which fact the human needs, and `Merge needs you` beating `Needs a human` is a
   ranking between two ambers. The winner truncates rather than pushing, so a long label clips inside
   its card instead of overflowing the column. The neutral informational pills — a queue position, a
   scheduled start, the auto-start arm, the grey `Auto` glyph — keep their own right-hand slot, because
   they assert that nothing is needed from the human, which is the opposite claim.
-- **A card waiting on a provider is amber, and so is the header pill (T3O-22).** A usage limit is
-  the same fact as blocked, one level up: nobody is working, the board cannot make it work, and it
-  is waiting on something outside itself. All five readings of `stalled` — waiting to resume on a
-  usage limit, out of credits, waiting for a retry rung, recovery having given up, and a branch the
-  board could not prepare (T3O-15) — are amber and are the same chip; only the words differ, because
-  the colour is answering "is work happening" and the answer is no in every one of them. Green would
-  be a lie in all five, and blue in all five.
+- **A card waiting on a provider is amber (T3O-22).** A usage limit is the same fact as blocked,
+  one level up: nobody is working, the board cannot make it work, and it is waiting on something
+  outside itself. Every reading of `stalled` — waiting to resume on a usage limit, waiting for a
+  retry rung, recovery having given up, a branch the board could not prepare (T3O-15) — is amber
+  and is the same chip; only the words differ, because the colour is answering "is work happening"
+  and the answer is no in every one of them. Green would be a lie in all of them, and blue too.
   The card modal's stalled banner splits where the chip does not: the two readings the board will
   end by itself (a usage-limit park, a retry rung) are amber and read "waiting to resume", while the
-  three that stay put until a human acts keep the red failure treatment they have had since t3o-30 —
+  ones that stay put until a human acts keep the red failure treatment they have had since t3o-30 —
   the banner asserts "this needs you", which is exactly the half of `stalled` it is still true of.
   `boardStallIsWaiting` is that split, so the banner cannot drift from the chip beside it.
-  The provider-usage pill in the board header takes the same amber for the same reason. It carries
-  no spinner and no ticking countdown: its numbers are coarse (`in 1h 38m`) and repaint only when
-  the board does, because a header is on screen all the time and a per-second repaint there is the
-  GPU cost this document exists to refuse.
+- **A worker the board can't use is amber, and online stays grey (T3O-60).** Worker offline, Worker
+  removed, Access revoked and Incompatible all say the same thing: the cards on that worker are
+  held, and only a human (or the worker coming back) frees them. A failed Move is amber for the same
+  reason — the card is held mid-move until someone retries or picks another worker. Connecting and
+  cloning are running, so they are blue; a finished checkout is green; a worker that is simply
+  online is the steady state and makes no claim, so it is neutral.
 - **No colour without a claim.** A colour asserts something about work happening right now, so an
   indicator that cannot make that assertion stays neutral (`bg-muted text-muted-foreground`) and
   says why in words. The review pane is the case that forced the rule: its loop and round state are
@@ -115,6 +117,13 @@ is violet-500 light / violet-700 foreground, lifting to violet-400 in dark, exac
   card's thread last finished a turn. Only those two: a pending question is answerable the moment it
   is asked, a stall has already exhausted recovery, and a pause is the human's own instruction —
   none of them is guessing about a beat that has not finished.
+- **CI reads the same way (T3O-44).** On the card face's step segments, the card view's CI tab
+  and the step badge Code review shares with it: a running step and a step a fix agent is working
+  on are blue, a passed step is green, a step that failed and will not be fixed in place is amber,
+  and a cancelled step is a grey dash. The Queued chip is neutral, like the build queue's. A card
+  CI sent back to review wears an amber note and banner — it is held until a fresh review round
+  clears it — and "CI skipped by …" is neutral: a human chose it, so there is nothing to claim.
+  Nothing on the card face animates; the running step's name shimmers only in the open card view.
 - **The Summary pane's Heads-up tags and check tiles follow it too.** Plan change is violet (it
   waits on a human's read), Not done is amber, and Shortcut is neutral, never blue, because blue
   means running. A failing check tile is amber, not red.

@@ -49,15 +49,17 @@ import {
   ThreadCommandFailedError,
   ThreadCommandRefusedError,
   deletedThreadState,
+  LocalThreadGateway,
   ThreadGateway,
+  type LocalThreadGatewayShape,
   ThreadReadError,
   type BoardSessionStatus,
   type BoardThreadRecord,
   type BoardThreadState,
   type BoardTodoItem,
-  type BoardTurnOutcome,
   type ThreadGatewayShape,
   type ThreadSignal,
+  type ThreadSignalBatch,
   type TodoLogEntry,
   type TodoSignal,
 } from "./ThreadGateway.ts";
@@ -139,7 +141,10 @@ export const boardThreadStateFromShell = (
 
 // ── Signals ────────────────────────────────────────────────────────────
 
-const turnOutcomeOf = (status: OrchestrationV2Run["status"]): BoardTurnOutcome | null => {
+/** How a run ended, or null while it is still going. */
+type TurnOutcome = "completed" | "failed" | "interrupted" | "cancelled";
+
+const turnOutcomeOf = (status: OrchestrationV2Run["status"]): TurnOutcome | null => {
   switch (status) {
     // A provider turn that finished persists as `waiting` until its checkpoint
     // lands, then `completed`; the board's turn ended at the first of the two.
@@ -252,24 +257,32 @@ export const makeSignalReader = () => {
   };
   const one = (signal: ThreadSignal | null): ReadonlyArray<ThreadSignal> =>
     signal === null ? [] : [signal];
-  // The provider's own failure text, by run, until that run ends: v2 records it
-  // as an `error` turn item ahead of the run's terminal update, and a refusal
-  // that arrives only this way (Grok's quota sentence) is what the board's
-  // usage-limit classifier reads off the turn end.
-  const failures = new Map<string, string>();
   // Runs nobody on the board asked for, by their message, until that message
   // says who wrote it (`run.created` above).
   const awaitingMessage = new Map<
     string,
     { readonly run: OrchestrationV2Run; readonly commandId: CommandId | null }
   >();
-  const noteFailure = (runId: string, message: string) => {
-    failures.delete(runId);
-    failures.set(runId, message);
-    if (failures.size > SEEN_LIMIT) {
-      const oldest = failures.keys().next().value;
-      if (oldest !== undefined) failures.delete(oldest);
+  // Runs whose latest status was `queued` (T3O-76). v2 cancels a queued run
+  // straight out of the queue when a human promotes its message to a steer,
+  // deletes it from the queue, or archives the thread, under that human's
+  // command id and with `startedAt` null — the same shape as a Stop during
+  // start-up. Nothing in the cancelled payload tells them apart (`queuePosition`
+  // is null either way, and a queued run already owns its root node and
+  // attempt), so the reader remembers the one fact that does: the status it
+  // last saw. A run with no remembered status keeps the Stop reading.
+  const queuedRuns = new Set<string>();
+  const noteRunStatus = (run: OrchestrationV2Run): boolean => {
+    const key = String(run.id);
+    const wasQueued = queuedRuns.delete(key);
+    if (run.status === "queued") {
+      queuedRuns.add(key);
+      if (queuedRuns.size > SEEN_LIMIT) {
+        const oldest = queuedRuns.values().next().value;
+        if (oldest !== undefined) queuedRuns.delete(oldest);
+      }
     }
+    return wasQueued;
   };
 
   return (stored: OrchestrationV2StoredEvent): ReadonlyArray<ThreadSignal> => {
@@ -283,6 +296,7 @@ export const makeSignalReader = () => {
         // the run's message decides the rest; v2 commits that message right
         // after the run, in the same command, so the run waits for it.
         const run = event.payload;
+        noteRunStatus(run);
         if (isBoardMintedCommandId(stored.commandId)) {
           return [
             {
@@ -321,10 +335,15 @@ export const makeSignalReader = () => {
       }
       case "run.updated": {
         const run = event.payload;
+        const wasQueued = noteRunStatus(run);
         const outcome = turnOutcomeOf(run.status);
         if (outcome === null || !firstTime(`run:${run.id}`)) return [];
-        const failure = failures.get(String(run.id)) ?? null;
-        failures.delete(String(run.id));
+        // A run cancelled without ever leaving the queue was never a turn: its
+        // message was steered into the live turn, deleted, or dropped with the
+        // thread. It is neither a Stop nor an ending the board should read. A
+        // queued run that FAILED to start (v2's failQueuedRunStart) still is a
+        // turn that never began, and reads as one below.
+        if (wasQueued && run.status === "cancelled") return [];
         // A run that failed without ever starting is a turn that never began
         // (t3o-30, D2) — workspace preparation, or the provider refusing it.
         if (outcome === "failed" && run.startedAt === null) {
@@ -340,8 +359,6 @@ export const makeSignalReader = () => {
           type: "turn-ended",
           threadId: event.threadId,
           turnRef: String(run.id),
-          outcome,
-          errorMessage: outcome === "failed" ? failure : null,
         };
         // v2 records no interrupt request for a run its provider never
         // started, so a human's Stop during start-up arrives only as this end,
@@ -360,10 +377,6 @@ export const makeSignalReader = () => {
       }
       case "turn-item.updated": {
         const item = event.payload;
-        if (item.type === "error" && item.runId !== null) {
-          noteFailure(String(item.runId), item.failure.message);
-          return [];
-        }
         if (item.type !== "run_interrupt_request" || !firstTime(`interrupt:${item.id}`)) return [];
         // The run's end then needs no Stop of its own (below).
         if (item.runId !== null) firstTime(`interrupt-run:${item.runId}`);
@@ -387,6 +400,7 @@ export const makeSignalReader = () => {
                   threadId: event.threadId,
                   answered:
                     request.status === "resolved" && Object.keys(request.answers ?? {}).length > 0,
+                  byBoard: isBoardMintedCommandId(stored.commandId),
                 },
               ]
             : [];
@@ -442,6 +456,40 @@ export const followStoredEvents = (
       Stream.retry(retrySchedule),
       Stream.catchCause((cause) =>
         Stream.fromEffectDrain(Effect.logError("board thread gateway: signal stream ended", cause)),
+      ),
+    );
+  });
+
+/** How far before a resume cursor `readSignalLog` starts reading, so the reader
+    holds most of the memory it would have had at the cursor. A bounded best
+    effort: a live reader remembers a run until its message says who wrote it,
+    and which runs are still queued (`queuedRuns`), so a resume whose run
+    started further back than this loses that memory. A queued run forgotten
+    that way and later cancelled out of the queue falls back to the Stop
+    reading, and pauses its card. */
+export const SIGNAL_READER_WARMUP_EVENTS = 4096;
+
+/**
+ * The signals after `afterSequence` (from now on when null), batched by the log
+ * position that produced them. The reader is stateful (a run awaiting its
+ * message, the dedupe set), so a resume replays the events before the cursor
+ * through it with their signals discarded: a stream that drops between a run's
+ * start and its end still reports it once, and correctly attributed.
+ */
+export const readSignalLog = (
+  sink: Pick<EventSink.EventSinkV2["Service"], "stream" | "latestSequence">,
+  afterSequence: number | null,
+  retrySchedule: Schedule.Schedule<unknown, unknown> = FOLLOW_RETRY,
+): Stream.Stream<ThreadSignalBatch> =>
+  Stream.suspend(() => {
+    const read = makeSignalReader();
+    const startAfter =
+      afterSequence === null ? null : Math.max(0, afterSequence - SIGNAL_READER_WARMUP_EVENTS);
+    return followStoredEvents(sink, retrySchedule, startAfter).pipe(
+      Stream.map((stored) => ({ sequence: stored.sequence, signals: read(stored) })),
+      Stream.filter(
+        (batch) =>
+          batch.signals.length > 0 && (afterSequence === null || batch.sequence > afterSequence),
       ),
     );
   });
@@ -559,7 +607,7 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
       });
     });
 
-  const gateway: ThreadGatewayShape = {
+  const gateway: LocalThreadGatewayShape = {
     // Upstream's `ThreadLaunchService.launch` is NOT used: its preparation runs
     // the project's setup script on every launch, including into an existing
     // worktree or the project root, so every review phase would re-run it and
@@ -711,6 +759,40 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
         return true;
       }),
 
+    answerPendingInput: (input) =>
+      Effect.gen(function* () {
+        const shell = yield* liveShell("runtime-request.respond", input.threadId);
+        const pending = shell.pendingRuntimeRequest;
+        if (pending === null || pending.kind !== "user_input") return false;
+        const context = yield* projections
+          .getRuntimeResponseContext(input.threadId, pending.id)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ThreadCommandFailedError({
+                  command: "runtime-request.respond",
+                  threadId: input.threadId,
+                  detail: describe(cause),
+                  cause,
+                }),
+            ),
+          );
+        const request = context.request;
+        if (request === undefined || request.status !== "pending") return false;
+        if (request.responseCapability.type === "not_resumable") return false;
+        const item = context.item;
+        if (item === undefined || item.type !== "user_input_request") return false;
+        if (item.questions.length === 0) return false;
+        yield* run({
+          type: "runtime-request.respond",
+          commandId: input.commandId,
+          threadId: input.threadId,
+          requestId: pending.id,
+          answers: Object.fromEntries(item.questions.map((question) => [question.id, input.text])),
+        });
+        return true;
+      }),
+
     threadState: (threadId) =>
       Effect.gen(function* () {
         const shell = yield* shellOf(threadId);
@@ -853,6 +935,7 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
         Stream.flatMap((stored) => Stream.fromIterable(read(stored))),
       );
     }),
+    signalLog: (afterSequence) => readSignalLog(eventSink, afterSequence),
 
     todoLogHead: eventSink.latestSequence().pipe(Effect.orElseSucceed(() => 0)),
     readTodoLog: (after, upTo) =>
@@ -874,4 +957,13 @@ export const makeThreadGatewayV2 = Effect.gen(function* () {
   return gateway;
 });
 
-export const ThreadGatewayV2Live = Layer.effect(ThreadGateway, makeThreadGatewayV2);
+/** The gateway onto this server's own threads (T3O-63): what the router and
+    the worker side build on. */
+export const LocalThreadGatewayV2Live = Layer.effect(LocalThreadGateway, makeThreadGatewayV2);
+
+/** One gateway as both the board's `ThreadGateway` and this server's own,
+    for a board with no workers — the test stacks. */
+export const ThreadGatewayV2Live = Layer.effect(
+  ThreadGateway,
+  Effect.map(LocalThreadGateway, (local): ThreadGatewayShape => local),
+).pipe(Layer.provideMerge(LocalThreadGatewayV2Live));

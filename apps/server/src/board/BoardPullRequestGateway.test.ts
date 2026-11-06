@@ -36,7 +36,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as BoardPullRequestGateway from "./BoardPullRequestGateway.ts";
-import * as GitManager from "../git/GitManager.ts";
+import { BoardGitStatus } from "./ports/BoardGitStatus.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -138,7 +138,7 @@ function makeGateway(
   const layer = BoardPullRequestGateway.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        Layer.mock(GitManager.GitManager)({
+        Layer.mock(BoardGitStatus)({
           branchPullRequest: (input) =>
             Effect.sync(() => {
               calls.push(`branchPullRequest:${input.cwd}:${input.branch}`);
@@ -519,6 +519,43 @@ describe("BoardPullRequestGateway.markReady (T3O-12)", () => {
       const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
       const error = yield* Effect.flip(gateway.markReady({ projectId: PROJECT, number: 110 }));
       assert.strictEqual(error.refusal, "blocked");
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("BoardPullRequestGateway.close (T3O-28)", () => {
+  it.effect(
+    "closes an open pull request through the host's close action, after a live read",
+    () => {
+      const { calls, layer } = makeGateway();
+      return Effect.gen(function* () {
+        const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+        assert.strictEqual(yield* gateway.close({ projectId: PROJECT, number: 110 }), "closed");
+        assert.deepStrictEqual(calls, [
+          "invalidate:brentkelly/t3code-orchestrator:110",
+          "summary:brentkelly/t3code-orchestrator:110:allowStale=false",
+          "runAction:brentkelly/t3code-orchestrator:110:close:undefined",
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect.each(["closed", "merged"] as const)("leaves a %s pull request alone", (state) => {
+    const { calls, layer } = makeGateway({ detail: detail({ state }) });
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      assert.strictEqual(yield* gateway.close({ projectId: PROJECT, number: 110 }), "not-open");
+      assert.isFalse(calls.some((call) => call.startsWith("runAction")));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("carries the host's refusal out", () => {
+    const { layer } = makeGateway({ runActionFails: true });
+    return Effect.gen(function* () {
+      const gateway = yield* BoardPullRequestGateway.BoardPullRequestGateway;
+      const error = yield* Effect.flip(gateway.close({ projectId: PROJECT, number: 110 }));
+      assert.strictEqual(error.operation, "close");
+      assert.strictEqual(error.refusal, "host");
     }).pipe(Effect.provide(layer));
   });
 });

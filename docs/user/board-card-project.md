@@ -64,10 +64,13 @@ card back to **Ready** does not unpin it, because none of that has gone away.
 
 Two other cards are pinned as well:
 
-- **A card inside a sub-board** takes its project from the card it was split out of, and branches
-  off that card's integration branch. There is nothing to choose.
-- **A card that has been split** builds through its children, so moving it would have to reissue
-  every child's ID and stop every child's agent. Move it before you split it, or not at all.
+- **A card inside a group with its own branch** branches off that group's integration branch, which
+  lives in the group's repository. There is nothing to choose.
+- **A group with its own branch** cuts that branch in its own repository for every card inside it.
+  Move it before you give it children, or switch it to **Inherit** first.
+
+Cards in a group that inherits land on the trunk of their own project, so they and the group can
+each move freely until they are built.
 
 ## What is offered in the menu
 

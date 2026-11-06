@@ -43,11 +43,14 @@ function plan(
   };
 }
 
+/** A child cut from plan `key`. Materialisation copies the plan's edges onto
+    the card, so `dependsOn` names sibling CARD ids. */
 function child(
   key: string,
   cardId: string,
   stage: BoardStageId,
   archivedAt: string | null = null,
+  dependsOn: ReadonlyArray<string> = [],
 ): BoardCardChildRef {
   return {
     cardId: BoardCardId.make(cardId),
@@ -56,8 +59,34 @@ function child(
     stage,
     archivedAt,
     sourcePlanId: planIdOf(key),
+    dependsOn: dependsOn.map((id) => BoardCardId.make(id)),
   };
 }
+
+/** A child made by hand and grouped: no plan behind it. */
+function handChild(
+  cardId: string,
+  stage: BoardStageId,
+  dependsOn: ReadonlyArray<string> = [],
+): BoardCardChildRef {
+  return {
+    cardId: BoardCardId.make(cardId),
+    key: `T3-${cardId}`,
+    title: `Card ${cardId}`,
+    stage,
+    archivedAt: null,
+    sourcePlanId: null,
+    dependsOn: dependsOn.map((id) => BoardCardId.make(id)),
+  };
+}
+
+/** PLANS' edges as card ids, c1..c4 cut from a..d. */
+const SPLIT_DEPS: Record<string, ReadonlyArray<string>> = {
+  a: [],
+  b: ["c1"],
+  c: ["c2"],
+  d: ["c1"],
+};
 
 function shell(cardId: string, stage: BoardStageId, overrides?: Partial<BoardCardShell>) {
   return {
@@ -89,9 +118,9 @@ describe("deriveBoardPlanRows", () => {
       plans: [...PLANS].toReversed(),
       children: [
         child("a", "c1", BOARD_SEED_STAGE_IDS.done),
-        child("b", "c2", BOARD_SEED_STAGE_IDS.building),
-        child("c", "c3", BOARD_SEED_STAGE_IDS.ready),
-        child("d", "c4", BOARD_SEED_STAGE_IDS.ready),
+        child("b", "c2", BOARD_SEED_STAGE_IDS.building, null, SPLIT_DEPS.b),
+        child("c", "c3", BOARD_SEED_STAGE_IDS.ready, null, SPLIT_DEPS.c),
+        child("d", "c4", BOARD_SEED_STAGE_IDS.ready, null, SPLIT_DEPS.d),
       ],
       cards: [
         shell("c1", BOARD_SEED_STAGE_IDS.done),
@@ -115,9 +144,9 @@ describe("deriveBoardPlanRows", () => {
       plans: PLANS,
       children: [
         child("a", "c1", BOARD_SEED_STAGE_IDS.done),
-        child("b", "c2", BOARD_SEED_STAGE_IDS.review),
-        child("c", "c3", BOARD_SEED_STAGE_IDS.ready),
-        child("d", "c4", BOARD_SEED_STAGE_IDS.ready),
+        child("b", "c2", BOARD_SEED_STAGE_IDS.review, null, SPLIT_DEPS.b),
+        child("c", "c3", BOARD_SEED_STAGE_IDS.ready, null, SPLIT_DEPS.c),
+        child("d", "c4", BOARD_SEED_STAGE_IDS.ready, null, SPLIT_DEPS.d),
       ],
       cards: [
         shell("c1", BOARD_SEED_STAGE_IDS.done),
@@ -147,8 +176,8 @@ describe("deriveBoardPlanRows", () => {
       plans: PLANS,
       children: [
         child("a", "c1", BOARD_SEED_STAGE_IDS.ready, NOW),
-        child("b", "c2", BOARD_SEED_STAGE_IDS.ready),
-        child("c", "c3", BOARD_SEED_STAGE_IDS.ready),
+        child("b", "c2", BOARD_SEED_STAGE_IDS.ready, null, SPLIT_DEPS.b),
+        child("c", "c3", BOARD_SEED_STAGE_IDS.ready, null, SPLIT_DEPS.c),
       ],
       cards: [shell("c2", BOARD_SEED_STAGE_IDS.ready), shell("c3", BOARD_SEED_STAGE_IDS.ready)],
       stages: BOARD_SEED_STAGES,
@@ -166,7 +195,7 @@ describe("deriveBoardPlanRows", () => {
       children: [
         child("a", "c1", BOARD_SEED_STAGE_IDS.done),
         child("b", "c2", BOARD_SEED_STAGE_IDS.building, NOW),
-        child("c", "c3", BOARD_SEED_STAGE_IDS.ready),
+        child("c", "c3", BOARD_SEED_STAGE_IDS.ready, null, SPLIT_DEPS.c),
       ],
       cards: [shell("c1", BOARD_SEED_STAGE_IDS.done), shell("c3", BOARD_SEED_STAGE_IDS.ready)],
       stages: BOARD_SEED_STAGES,
@@ -194,9 +223,9 @@ describe("deriveBoardPlanRows", () => {
       plans: [plan("a", 0), plan("b", 1), plan("c", 2), plan("d", 3), plan("e", 4)],
       children: [
         child("a", "c1", BOARD_SEED_STAGE_IDS.ready),
-        child("b", "c2", BOARD_SEED_STAGE_IDS.ready),
-        child("c", "c3", BOARD_SEED_STAGE_IDS.ready),
-        child("d", "c4", BOARD_SEED_STAGE_IDS.ready),
+        child("b", "c2", BOARD_SEED_STAGE_IDS.ready, null, SPLIT_DEPS.b),
+        child("c", "c3", BOARD_SEED_STAGE_IDS.ready, null, SPLIT_DEPS.c),
+        child("d", "c4", BOARD_SEED_STAGE_IDS.ready, null, SPLIT_DEPS.d),
         child("e", "c5", BOARD_SEED_STAGE_IDS.ready),
       ],
       cards: [
@@ -246,7 +275,111 @@ describe("deriveBoardPlanRows", () => {
     expect(rows[0]!.live?.working).toBe(true);
   });
 
-  it("returns nothing for a card with no plans", () => {
+  it("lists a group whose children have no plans, in dependency order", () => {
+    // Z5-255's shape: children made by hand and grouped, no plan behind any.
+    // Input is card_number order; c1 comes after c3, so it sorts behind it.
+    const { rows, liveTotal, liveDone } = deriveBoardPlanRows({
+      plans: [],
+      children: [
+        handChild("c1", BOARD_SEED_STAGE_IDS.ready, ["c3"]),
+        handChild("c2", BOARD_SEED_STAGE_IDS.done),
+        handChild("c3", BOARD_SEED_STAGE_IDS.building),
+      ],
+      cards: [
+        shell("c1", BOARD_SEED_STAGE_IDS.ready),
+        shell("c2", BOARD_SEED_STAGE_IDS.done),
+        shell("c3", BOARD_SEED_STAGE_IDS.building),
+      ],
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(rows.map((row) => row.key)).toEqual(["T3-c2", "T3-c3", "T3-c1"]);
+    expect(rows.map((row) => row.title)).toEqual(["Card c2", "Card c3", "Card c1"]);
+    expect(rows.every((row) => row.state === "live" && row.planId === null)).toBe(true);
+    expect(rows[2]!.dependsOn).toEqual(["card:c3"]);
+    expect(rows[2]!.dependsOnNumbers).toEqual([2]);
+    expect(rows[2]!.blockers).toEqual([{ n: 2, key: "T3-c3", stageLabel: "building" }]);
+    expect({ liveTotal, liveDone }).toEqual({ liveTotal: 3, liveDone: 1 });
+  });
+
+  it("lists a split group's cards in plan order with plan edges", () => {
+    const { rows } = deriveBoardPlanRows({
+      plans: PLANS,
+      children: ["a", "b", "c", "d"].map((key, index) =>
+        child(key, `c${index + 1}`, BOARD_SEED_STAGE_IDS.ready, null, SPLIT_DEPS[key]),
+      ),
+      cards: [1, 2, 3, 4].map((n) => shell(`c${n}`, BOARD_SEED_STAGE_IDS.ready)),
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(rows.map((row) => row.rowId)).toEqual(["card:c1", "card:c2", "card:c3", "card:c4"]);
+    expect(rows.map((row) => row.planId)).toEqual(PLANS.map((entry) => entry.planId));
+    expect(rows.map((row) => row.dependsOnNumbers)).toEqual([[], [1], [2], [1]]);
+  });
+
+  it("lists every child of a mixed group and appends the card-less plan", () => {
+    // Two cards cut from plans, one made by hand that waits on the first,
+    // and a plan nobody materialised that comes after plan b.
+    const { rows, liveTotal } = deriveBoardPlanRows({
+      plans: [plan("a", 0), plan("b", 1, ["a"]), plan("e", 2, ["b"])],
+      children: [
+        child("a", "c1", BOARD_SEED_STAGE_IDS.done),
+        child("b", "c2", BOARD_SEED_STAGE_IDS.ready, null, ["c1"]),
+        handChild("c9", BOARD_SEED_STAGE_IDS.ready, ["c1"]),
+      ],
+      cards: [
+        shell("c1", BOARD_SEED_STAGE_IDS.done),
+        shell("c2", BOARD_SEED_STAGE_IDS.ready),
+        shell("c9", BOARD_SEED_STAGE_IDS.ready),
+      ],
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(rows.map((row) => row.rowId)).toEqual([
+      "card:c1",
+      "card:c2",
+      "card:c9",
+      `plan:${planIdOf("e")}`,
+    ]);
+    expect(rows[3]!.state).toBe("missing");
+    // Plan e's edge resolves to the card cut from plan b.
+    expect(rows[3]!.dependsOn).toEqual(["card:c2"]);
+    expect(rows[3]!.dependsOnNumbers).toEqual([2]);
+    expect(liveTotal).toBe(3);
+  });
+
+  it("orders a card-less plan behind a card it depends on even when that card comes later", () => {
+    const { rows } = deriveBoardPlanRows({
+      plans: [plan("e", 0, ["b"]), plan("b", 1)],
+      children: [child("b", "c2", BOARD_SEED_STAGE_IDS.ready)],
+      cards: [shell("c2", BOARD_SEED_STAGE_IDS.ready)],
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(rows.map((row) => row.rowId)).toEqual(["card:c2", `plan:${planIdOf("e")}`]);
+  });
+
+  it("terminates on a cycle in sibling dependsOn and lists every row", () => {
+    const { rows } = deriveBoardPlanRows({
+      plans: [],
+      children: [
+        handChild("c1", BOARD_SEED_STAGE_IDS.ready, ["c2"]),
+        handChild("c2", BOARD_SEED_STAGE_IDS.ready, ["c1"]),
+        handChild("c3", BOARD_SEED_STAGE_IDS.ready),
+      ],
+      cards: [],
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(rows.map((row) => row.rowId)).toEqual(["card:c3", "card:c1", "card:c2"]);
+  });
+
+  it("ignores a child's dependency on a card outside the group", () => {
+    const { rows } = deriveBoardPlanRows({
+      plans: [],
+      children: [handChild("c1", BOARD_SEED_STAGE_IDS.ready, ["elsewhere"])],
+      cards: [],
+      stages: BOARD_SEED_STAGES,
+    });
+    expect(rows[0]!.dependsOn).toEqual([]);
+  });
+
+  it("returns nothing for a card with no plans and no children", () => {
     expect(
       deriveBoardPlanRows({ plans: [], children: [], cards: [], stages: BOARD_SEED_STAGES }),
     ).toEqual({ rows: [], liveTotal: 0, liveDone: 0 });
@@ -264,6 +397,10 @@ describe("boardPlanGraphLayout", () => {
           doneKeys.includes(String(entry.planId).split("::")[1]!)
             ? BOARD_SEED_STAGE_IDS.done
             : BOARD_SEED_STAGE_IDS.ready,
+          null,
+          entry.dependsOn.map(
+            (dependency) => `c${plans.findIndex((other) => other.planId === dependency) + 1}`,
+          ),
         ),
       ),
       cards: plans.map((entry, index) =>
@@ -324,8 +461,8 @@ describe("boardPlanGraphLayout", () => {
       plans: [plan("a", 0), plan("b", 1), plan("c", 2)],
       children: [
         child("a", "c1", BOARD_SEED_STAGE_IDS.building),
-        child("b", "c2", BOARD_SEED_STAGE_IDS.building),
-        child("c", "c3", BOARD_SEED_STAGE_IDS.building),
+        child("b", "c2", BOARD_SEED_STAGE_IDS.building, null, SPLIT_DEPS.b),
+        child("c", "c3", BOARD_SEED_STAGE_IDS.building, null, SPLIT_DEPS.c),
       ],
       cards: [
         shell("c1", BOARD_SEED_STAGE_IDS.building, { threadState: "waiting", awaitingInput: true }),
@@ -345,6 +482,37 @@ describe("boardPlanGraphLayout", () => {
     expect(needsHuman(3)).toBe(false);
   });
 
+  it("draws a node per card for a group with no plans, edged by the cards' deps", () => {
+    const { rows } = deriveBoardPlanRows({
+      plans: [],
+      children: [
+        handChild("c1", BOARD_SEED_STAGE_IDS.ready),
+        handChild("c2", BOARD_SEED_STAGE_IDS.ready, ["c1"]),
+        handChild("c3", BOARD_SEED_STAGE_IDS.ready, ["c1"]),
+      ],
+      cards: [
+        shell("c1", BOARD_SEED_STAGE_IDS.ready),
+        shell("c2", BOARD_SEED_STAGE_IDS.ready),
+        shell("c3", BOARD_SEED_STAGE_IDS.ready),
+      ],
+      stages: BOARD_SEED_STAGES,
+    });
+    const layout = boardPlanGraphLayout(rows)!;
+    expect(layout.nodes.map((node) => node.cardId)).toEqual(["c1", "c2", "c3"]);
+    expect(layout.edges.map((edge) => edge.id)).toEqual(["card:c1->card:c2", "card:c1->card:c3"]);
+  });
+
+  it("draws a card-less plan as a gone node with nothing to open", () => {
+    const { rows } = deriveBoardPlanRows({
+      plans: [plan("a", 0)],
+      children: [],
+      cards: [],
+      stages: BOARD_SEED_STAGES,
+    });
+    const node = boardPlanGraphLayout(rows)!.nodes[0]!;
+    expect(node).toMatchObject({ tone: "gone", cardId: null });
+  });
+
   it("returns null when there is nothing to draw", () => {
     expect(boardPlanGraphLayout([])).toBeNull();
   });
@@ -355,7 +523,7 @@ describe("boardPlanFinalReview", () => {
     const final = boardPlanFinalReview({ branch: "t3o/TT-9", liveTotal: 4, liveDone: 1 });
     expect(final.branch).toBe("t3o/TT-9");
     expect(final.note).toBe(
-      "1 of 4 plans done. The final review starts on its own when the last one lands.",
+      "1 of 4 cards done. The final review starts on its own when the last one lands.",
     );
   });
 
@@ -363,19 +531,19 @@ describe("boardPlanFinalReview", () => {
     // D5: the reactor owns the transition, so the copy describes it rather
     // than putting a second trigger next to it.
     expect(boardPlanFinalReview({ branch: "t3o/TT-9", liveTotal: 3, liveDone: 3 }).note).toBe(
-      "All 3 plans done. The final review runs on the integration branch.",
+      "All 3 cards done. The final review runs on the integration branch.",
     );
   });
 
-  it("says so when every plan card has gone", () => {
+  it("says so when every card has gone", () => {
     expect(boardPlanFinalReview({ branch: null, liveTotal: 0, liveDone: 0 }).note).toBe(
-      "No plan cards are left on this split.",
+      "No cards are left in this group.",
     );
   });
 
-  it("singularises a lone plan", () => {
+  it("singularises a lone card", () => {
     expect(boardPlanFinalReview({ branch: null, liveTotal: 1, liveDone: 0 }).note).toContain(
-      "0 of 1 plan done",
+      "0 of 1 card done",
     );
   });
 });

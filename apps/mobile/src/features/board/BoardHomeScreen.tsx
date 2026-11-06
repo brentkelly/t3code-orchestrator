@@ -16,7 +16,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
   FlatList,
   Pressable,
   ScrollView,
@@ -26,11 +25,11 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppText as Text } from "../../components/AppText";
-import { EmptyState } from "../../components/EmptyState";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText as Text } from "../../components/ui/AppText";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { StatusPill } from "../../components/StatusPill";
-import { RowPressable } from "../../components/RowPressable";
+import { RowPressable } from "../../components/ui/RowPressable";
 import { cn } from "../../lib/cn";
 import { boardEnvironment } from "../../state/board";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
@@ -130,23 +129,15 @@ export function BoardHomeScreen(props: {
       }),
     [props.environmentId, props.projects, props.selectedProjectKey, scopes],
   );
-  const [createOpen, setCreateOpen] = useState(false);
-
-  useEffect(() => {
-    if (!props.createRequested) return;
-    props.onCreateHandled();
-    if (createProject) {
-      setCreateOpen(true);
-      return;
-    }
-    Alert.alert(
-      "Could not create",
-      props.selectedProjectKey === null
+  const createOpen = props.createRequested && createProject != null;
+  const createBlocked =
+    !props.createRequested || createProject != null
+      ? null
+      : props.selectedProjectKey === null
         ? "This environment has no project to put a card in."
-        : "No project matches the Home filter.",
-    );
-  }, [createProject, props.createRequested, props.onCreateHandled, props.selectedProjectKey]);
+        : "No project matches the Home filter.";
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the native pager offset in step with the selected stage
   useEffect(() => {
     const index = boardPagerIndexForStageKey({
       boardReady,
@@ -308,13 +299,22 @@ export function BoardHomeScreen(props: {
           </View>
         )}
       />
+      {createBlocked !== null ? (
+        <EmptyState
+          variant="plain"
+          title="Could not create"
+          detail={createBlocked}
+          actionLabel="OK"
+          onAction={props.onCreateHandled}
+        />
+      ) : null}
       {createOpen && createProject ? (
         <BoardCreateSheet
           environmentId={props.environmentId}
           projectId={createProject.id}
           projectTitle={createProject.title}
           stages={stages}
-          onClose={() => setCreateOpen(false)}
+          onClose={props.onCreateHandled}
         />
       ) : null}
     </View>
