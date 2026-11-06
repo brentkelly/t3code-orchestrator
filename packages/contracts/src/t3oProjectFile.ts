@@ -9,28 +9,36 @@ import {
   BOARD_CI_MAX_STEPS,
   BOARD_SEED_STAGE_IDS,
   BOARD_STAGE_EXECUTION_PATCH_KEYS,
+  BoardCiStep,
   BoardStageExecutionPatch,
+  boardLegacyCiStepId,
+  boardNewStageOrderKey,
   boardOrderKeyBetween,
-  boardProjectStageId,
-  boardStageBeforeBuild,
+  boardStageById,
+  boardStageDefaultForProjects,
   boardStageExecutionKind,
   boardStagesInOrder,
   compareBoardStages,
   effectiveBoardStageRole,
+  isBoardStageSwitchable,
+  type BoardProjectImportDelta,
   type BoardProjectStageConfig,
-  type BoardProjectStageConfigSource,
   type BoardStageDefinition,
   type BoardStageExecutionKind,
   type BoardStageId,
   type BoardState,
 } from "./board.ts";
 
+// T3o: since T3O-49 a `t3o.json` is only an import/export format for a
+// project's delta, never read at run time.
 export const T3O_PROJECT_FILE_NAME = "t3o.json";
+export const T3O_PROJECT_FILE_VERSION = 2;
 
+/** What a `t3o.json` would make a project's delta, before normalization. */
 export interface ResolvedT3oProjectFile {
-  readonly config: BoardProjectStageConfig;
-  /** The project-owned stage rows the file declares, placed in board order. */
-  readonly stages: ReadonlyArray<BoardStageDefinition>;
+  readonly delta: BoardProjectImportDelta;
+  /** Stages the import creates: default off, on for this project. */
+  readonly createStages: ReadonlyArray<BoardStageDefinition>;
 }
 
 const STAGE_FILE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -186,105 +194,146 @@ function mergePatches(
   };
 }
 
-interface PendingAdd {
-  readonly fileId: string;
-  readonly label: string;
-  readonly after: string;
-  readonly patch: BoardStageExecutionPatch;
+const decodeStep = Schema.decodeUnknownOption(BoardCiStep);
+
+/** The step kinds this board can run; the rest are ignored on import. */
+export const BOARD_CI_RUNNABLE_STEP_KINDS: ReadonlySet<BoardCiStep["kind"]> = new Set(["script"]);
+
+function decodeCiSteps(value: unknown, where: string, legacy: boolean, warnings: string[]) {
+  if (!Array.isArray(value)) {
+    warnings.push(`${where}: expected a list of steps; ignored.`);
+    return [];
+  }
+  const steps: BoardCiStep[] = [];
+  const ids = new Set<string>();
+  value.forEach((entry, index) => {
+    const at = `${where}[${index}]`;
+    if (!isRecord(entry)) {
+      warnings.push(`${at}: expected an object; ignored.`);
+      return;
+    }
+    const raw = {
+      kind: "script",
+      ...entry,
+      id: typeof entry.id === "string" ? entry.id : legacy ? boardLegacyCiStepId(index) : `step-${index + 1}`,
+    };
+    const decoded = Option.getOrNull(decodeStep(raw));
+    if (decoded === null) {
+      warnings.push(`${at}: not a valid ${String(raw.kind)} step (or too long); ignored.`);
+      return;
+    }
+    if (!BOARD_CI_RUNNABLE_STEP_KINDS.has(decoded.kind)) {
+      warnings.push(`${at}: ${decoded.kind} steps aren't supported on this board yet; ignored.`);
+      return;
+    }
+    if (ids.has(decoded.id)) {
+      warnings.push(`${at}: the id "${decoded.id}" is used twice; ignored.`);
+      return;
+    }
+    if (steps.length >= BOARD_CI_MAX_STEPS) {
+      warnings.push(`${at}: at most ${BOARD_CI_MAX_STEPS} steps; ignored.`);
+      return;
+    }
+    const previous = steps.at(-1);
+    const parallel = decoded.parallel && decoded.kind === "script" && previous?.kind === "script";
+    if (decoded.parallel && !parallel) {
+      warnings.push(`${at}: only a script after a script can run in parallel; it runs on its own.`);
+    }
+    ids.add(decoded.id);
+    steps.push({ ...decoded, parallel });
+  });
+  return steps;
+}
+
+function stageIdList(value: unknown, where: string, warnings: string[]): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    warnings.push(`${where}: expected a list of stage ids; ignored.`);
+    return [];
+  }
+  return value.flatMap((entry) => {
+    if (typeof entry === "string") return [entry];
+    warnings.push(`${where}: entries must be stage ids; one ignored.`);
+    return [];
+  });
 }
 
 /**
- * Resolve a project's parsed `t3o.json` against the board's global stages
- * (T3O-43). Never fails: every problem becomes a warning and the entry is
+ * Resolve a parsed `t3o.json` (v1 or v2) into the delta importing it would
+ * set (T3O-49). Never fails: every problem becomes a warning and the entry is
  * dropped. `raw` is the parsed JSON, or null for a missing file.
+ *
+ * A stage the file adds is reused when one with its id (or the T3O-43
+ * `<projectId>:<id>` form) has the same label, ignored when the label differs,
+ * and otherwise created: default off, on for this project, before CI.
  */
 export function resolveT3oProjectFile(input: {
   readonly raw: unknown;
   readonly board: BoardState;
   readonly projectId: ProjectId;
-  readonly source: BoardProjectStageConfigSource | null;
   readonly now: string;
-  /** Warnings raised before decoding (an unreadable or unparseable file). */
   readonly warnings?: ReadonlyArray<string>;
 }): ResolvedT3oProjectFile {
   const warnings: string[] = [...(input.warnings ?? [])];
-  const empty = (): ResolvedT3oProjectFile => ({
-    config: {
-      removedStageIds: [],
-      addedStageIds: [],
-      overrides: {},
-      warnings,
-      source: input.source,
-      ci: null,
-    },
-    stages: [],
+  const stageSwitches: Record<string, boolean> = {};
+  const overrides: Record<string, BoardStageExecutionPatch> = {};
+  let steps: BoardCiStep[] = [];
+  const result = (createStages: ReadonlyArray<BoardStageDefinition> = []) => ({
+    delta: { stageSwitches, overrides, ci: { steps }, warnings },
+    createStages,
   });
-  if (input.raw === null || input.raw === undefined) return empty();
+  if (input.raw === null || input.raw === undefined) return result();
   if (!isRecord(input.raw)) {
     warnings.push(`${T3O_PROJECT_FILE_NAME} must be a JSON object; ignored.`);
-    return empty();
+    return result();
   }
   for (const key of Object.keys(input.raw)) {
-    if (key !== "$schema" && key !== "stages") warnings.push(`${key}: unknown key; ignored.`);
+    if (!["$schema", "version", "stages", "ci"].includes(key)) {
+      warnings.push(`${key}: unknown key; ignored.`);
+    }
   }
-  const stagesBlock = input.raw.stages;
-  if (stagesBlock === undefined) return empty();
+  const stagesBlock = input.raw.stages ?? {};
   if (!isRecord(stagesBlock)) {
     warnings.push("stages: expected an object; ignored.");
-    return empty();
+    return result();
   }
   for (const key of Object.keys(stagesBlock)) {
-    if (key !== "remove" && key !== "add" && key !== "settings") {
+    if (!["enable", "remove", "add", "settings"].includes(key)) {
       warnings.push(`stages.${key}: unknown key; ignored.`);
     }
   }
 
-  const globalStages = boardStagesInOrder(input.board);
-  const globalById = new Map(globalStages.map((stage) => [String(stage.stageId), stage]));
-  // The stage before build is where approved work waits for Auto-build and
-  // where split children land, so a project can't remove it or put a stage
-  // between it and build: every project keeps the one global hold.
-  const beforeBuild = boardStageBeforeBuild(input.board);
-
-  const removedStageIds: BoardStageId[] = [];
-  const removeBlock = stagesBlock.remove;
-  if (removeBlock !== undefined && !Array.isArray(removeBlock)) {
-    warnings.push("stages.remove: expected a list of stage ids; ignored.");
-  } else if (Array.isArray(removeBlock)) {
-    for (const entry of removeBlock) {
-      if (typeof entry !== "string") {
-        warnings.push("stages.remove: entries must be stage ids; one ignored.");
-        continue;
-      }
-      const stage = globalById.get(entry);
-      if (stage === undefined) {
-        warnings.push(`stages.remove: "${entry}" is not a stage on this board; ignored.`);
-        continue;
-      }
-      const role = effectiveBoardStageRole(stage);
-      if (role !== null) {
-        warnings.push(
-          `stages.remove: "${entry}" (${stage.label}) holds the ${role} role and can't be removed; ignored.`,
-        );
-        continue;
-      }
-      if (stage.stageId === beforeBuild?.stageId) {
-        warnings.push(
-          `stages.remove: "${entry}" (${stage.label}) is where cards wait to build and can't be removed; ignored.`,
-        );
-        continue;
-      }
-      if (stage.stageId === BOARD_SEED_STAGE_IDS.ci) {
-        warnings.push(
-          `stages.remove: "${entry}" (${stage.label}) can't be removed; a project has CI only while stages.settings.ci lists steps, and "enabled": false pauses it. Ignored.`,
-        );
-        continue;
-      }
-      if (!removedStageIds.includes(stage.stageId)) removedStageIds.push(stage.stageId);
+  const switchTarget = (stageId: string, on: boolean, where: string) => {
+    const stage = boardStageById(input.board, stageId as BoardStageId);
+    if (stage === null) {
+      warnings.push(`${where}: "${stageId}" is not a stage on this board; ignored.`);
+      return;
     }
+    if (stage.stageId === BOARD_SEED_STAGE_IDS.ci) {
+      warnings.push(`${where}: "${stageId}" is switched with ci.enabled; ignored.`);
+      return;
+    }
+    if (!isBoardStageSwitchable(input.board, stage)) {
+      const role = effectiveBoardStageRole(stage);
+      warnings.push(
+        role === null
+          ? `${where}: "${stageId}" (${stage.label}) is where cards wait to build and is always on; ignored.`
+          : `${where}: "${stageId}" (${stage.label}) holds the ${role} role and is always on; ignored.`,
+      );
+      return;
+    }
+    stageSwitches[stage.stageId] = on;
+  };
+  for (const stageId of stageIdList(stagesBlock.remove, "stages.remove", warnings)) {
+    switchTarget(stageId, false, "stages.remove");
+  }
+  for (const stageId of stageIdList(stagesBlock.enable, "stages.enable", warnings)) {
+    switchTarget(stageId, true, "stages.enable");
   }
 
-  const pending: PendingAdd[] = [];
+  // Stages the file adds: reuse a same-label stage, else create one.
+  const createStages: BoardStageDefinition[] = [];
+  const addedIds = new Map<string, BoardStageId>();
   const addBlock = stagesBlock.add;
   if (addBlock !== undefined && !Array.isArray(addBlock)) {
     warnings.push("stages.add: expected a list of stages; ignored.");
@@ -297,16 +346,10 @@ export function resolveT3oProjectFile(input: {
       }
       const { id, label, after } = entry;
       if (typeof id !== "string" || !STAGE_FILE_ID_PATTERN.test(id)) {
-        warnings.push(
-          `${where}.id: needs letters, digits, "-" or "_" (at most 64); stage ignored.`,
-        );
+        warnings.push(`${where}.id: needs letters, digits, "-" or "_" (at most 64); stage ignored.`);
         return;
       }
-      if (globalById.has(id)) {
-        warnings.push(`${where}: "${id}" is already a board stage id; stage ignored.`);
-        return;
-      }
-      if (pending.some((candidate) => candidate.fileId === id)) {
+      if (addedIds.has(id)) {
         warnings.push(`${where}: "${id}" is added twice; the later one is ignored.`);
         return;
       }
@@ -314,151 +357,211 @@ export function resolveT3oProjectFile(input: {
         warnings.push(`${where}.label: required; stage "${id}" ignored.`);
         return;
       }
-      if (typeof after !== "string" || after.trim().length === 0) {
-        warnings.push(`${where}.after: required; stage "${id}" ignored.`);
-        return;
+      const existing =
+        boardStageById(input.board, id as BoardStageId) ??
+        boardStageById(input.board, `${input.projectId}:${id}` as BoardStageId);
+      let stageId: BoardStageId;
+      if (existing !== null) {
+        if (existing.label !== label.trim()) {
+          warnings.push(
+            `${where}: "${id}" is already the ${existing.label} stage, with a different label; stage ignored.`,
+          );
+          return;
+        }
+        if (!isBoardStageSwitchable(input.board, existing) || existing.stageId === BOARD_SEED_STAGE_IDS.ci) {
+          warnings.push(`${where}: "${id}" is a built-in stage; stage ignored.`);
+          return;
+        }
+        stageId = existing.stageId;
+      } else {
+        const orderKey = placeNewStage(input.board, createStages, after, where, warnings);
+        if (orderKey === null) {
+          warnings.push(`${where}: no room to place "${id}"; stage ignored.`);
+          return;
+        }
+        stageId = id as BoardStageId;
+        createStages.push({
+          stageId,
+          label: label.trim(),
+          role: null,
+          orderKey,
+          createdAt: input.now,
+          updatedAt: input.now,
+          projectId: input.projectId,
+          defaultForProjects: false,
+        });
       }
-      pending.push({
-        fileId: id,
-        label: label.trim(),
-        after,
-        patch: decodeStagePatch(
-          entry,
-          "simple",
-          `${where}`,
-          warnings,
-          new Set(["id", "label", "after"]),
-        ),
-      });
+      addedIds.set(id, stageId);
+      stageSwitches[stageId] = true;
+      const patch = decodeStagePatch(entry, "simple", where, warnings, new Set(["id", "label", "after"]));
+      if (Object.keys(patch).length > 0) overrides[stageId] = patch;
     });
   }
 
-  // Place each add directly after its anchor. Siblings are placed in reverse
-  // file order so two stages after the same anchor keep their file order.
-  const placed = new Map<string, BoardStageDefinition>();
-  const combined: BoardStageDefinition[] = [...globalStages];
-  let remaining = [...pending].reverse();
-  for (let progress = true; progress && remaining.length > 0;) {
-    progress = false;
-    const next: PendingAdd[] = [];
-    for (const add of remaining) {
-      const anchor =
-        globalById.get(add.after) ??
-        placed.get(add.after) ??
-        (pending.some((candidate) => candidate.fileId === add.after) ? undefined : null);
-      if (anchor === undefined) {
-        next.push(add);
-        continue;
-      }
-      if (anchor === null) {
-        warnings.push(
-          `stages.add: "${add.fileId}" is after "${add.after}", which is not a stage; stage ignored.`,
-        );
-        continue;
-      }
-      if (effectiveBoardStageRole(anchor) === "done") {
-        warnings.push(
-          `stages.add: "${add.fileId}" can't come after ${anchor.label}, the last stage; stage ignored.`,
-        );
-        continue;
-      }
-      if (anchor.stageId === beforeBuild?.stageId) {
-        warnings.push(
-          `stages.add: "${add.fileId}" can't come after ${anchor.label}, where cards wait to build; stage ignored.`,
-        );
-        continue;
-      }
-      combined.sort(compareBoardStages);
-      const position = combined.findIndex((stage) => stage.stageId === anchor.stageId);
-      const following = combined[position + 1];
-      const orderKey = boardOrderKeyBetween(anchor.orderKey, following?.orderKey ?? null);
-      if (orderKey === null) {
-        warnings.push(`stages.add: no room to place "${add.fileId}"; stage ignored.`);
-        continue;
-      }
-      const stage: BoardStageDefinition = {
-        stageId: boardProjectStageId(input.projectId, add.fileId),
-        label: add.label,
-        role: null,
-        orderKey,
-        createdAt: input.now,
-        updatedAt: input.now,
-        projectId: input.projectId,
-      };
-      placed.set(add.fileId, stage);
-      combined.push(stage);
-      progress = true;
-    }
-    remaining = next;
-  }
-  for (const add of remaining) {
-    warnings.push(
-      `stages.add: "${add.fileId}" is after "${add.after}", which could not be placed; stage ignored.`,
-    );
-  }
-
-  const overrides: Record<string, BoardStageExecutionPatch> = {};
-  const addedStageIds: BoardStageId[] = [];
-  for (const add of pending) {
-    const stage = placed.get(add.fileId);
-    if (stage === undefined) continue;
-    addedStageIds.push(stage.stageId);
-    if (Object.keys(add.patch).length > 0) overrides[stage.stageId] = add.patch;
-  }
-
+  // Per-stage settings. v1 kept CI's steps and switch in `settings.ci`.
+  let legacyCi: { readonly steps: unknown; readonly enabled: unknown } | null = null;
   const settingsBlock = stagesBlock.settings;
   if (settingsBlock !== undefined && !isRecord(settingsBlock)) {
     warnings.push("stages.settings: expected an object keyed by stage id; ignored.");
   } else if (isRecord(settingsBlock)) {
-    for (const [stageKey, value] of Object.entries(settingsBlock)) {
+    for (const [stageKey, rawValue] of Object.entries(settingsBlock)) {
       const where = `stages.settings.${stageKey}`;
-      const global = globalById.get(stageKey);
-      const added = placed.get(stageKey);
-      if (global === undefined && added === undefined) {
+      let value = rawValue;
+      if (stageKey === BOARD_SEED_STAGE_IDS.ci && isRecord(rawValue)) {
+        const { steps: legacySteps, enabled, ...rest } = rawValue;
+        if (legacySteps !== undefined || enabled !== undefined) {
+          legacyCi = { steps: legacySteps, enabled };
+        }
+        value = rest;
+      }
+      const target =
+        addedIds.get(stageKey) ?? boardStageById(input.board, stageKey as BoardStageId)?.stageId;
+      if (target === undefined) {
         warnings.push(`${where}: "${stageKey}" is not a stage on this board; ignored.`);
         continue;
       }
-      const targetId = (global ?? added)!.stageId;
-      const kind = global === undefined ? "simple" : boardStageExecutionKind(global.stageId);
+      const kind = addedIds.has(stageKey) ? "simple" : boardStageExecutionKind(target);
       const patch = decodeStagePatch(value, kind, where, warnings);
       if (Object.keys(patch).length === 0) continue;
-      overrides[targetId] = mergePatches(overrides[targetId], patch);
+      overrides[target] = mergePatches(overrides[target], patch);
     }
   }
 
-  // CI (T3O-44): on while `stages.settings.ci` lists at least one step.
-  let ciPatch = overrides[BOARD_SEED_STAGE_IDS.ci];
-  if (ciPatch?.steps !== undefined && ciPatch.steps.length > BOARD_CI_MAX_STEPS) {
+  // CI: v2's top-level `ci`, else v1's `stages.settings.ci`.
+  const ciBlock = input.raw.ci;
+  let ciEnabled: unknown;
+  if (ciBlock !== undefined) {
+    if (!isRecord(ciBlock)) {
+      warnings.push("ci: expected an object; ignored.");
+    } else {
+      for (const key of Object.keys(ciBlock)) {
+        if (key !== "enabled" && key !== "steps") warnings.push(`ci.${key}: unknown key; ignored.`);
+      }
+      if (ciBlock.steps !== undefined) steps = decodeCiSteps(ciBlock.steps, "ci.steps", false, warnings);
+      ciEnabled = ciBlock.enabled;
+    }
+  } else if (legacyCi !== null) {
+    const legacy = legacyCi as { readonly steps: unknown; readonly enabled: unknown };
+    if (legacy.steps !== undefined) {
+      steps = decodeCiSteps(legacy.steps, "stages.settings.ci.steps", true, warnings);
+    }
+    ciEnabled = legacy.enabled;
+  }
+  if (ciEnabled !== undefined && typeof ciEnabled !== "boolean") {
+    warnings.push("ci.enabled: expected true or false; ignored.");
+    ciEnabled = undefined;
+  }
+  if (steps.length > 0 || ciEnabled === true) {
+    stageSwitches[BOARD_SEED_STAGE_IDS.ci] = ciEnabled !== false;
+  }
+  if (ciEnabled === true && steps.length === 0) {
+    warnings.push("ci.enabled: CI is on but has no steps, so cards skip it until one is added.");
+  }
+  return result(createStages);
+}
+
+/** Where a stage the file adds goes: after its `after` anchor, but never
+    between CI and the merge stage (an anchor there is dropped with a
+    warning, and the stage goes just before CI). */
+function placeNewStage(
+  board: BoardState,
+  created: ReadonlyArray<BoardStageDefinition>,
+  after: unknown,
+  where: string,
+  warnings: string[],
+): string | null {
+  const ordered = [...boardStagesInOrder(board), ...created].sort(compareBoardStages);
+  const fallback = () => {
+    const key = boardNewStageOrderKey({ stages: ordered });
+    return key;
+  };
+  if (after === undefined) return fallback();
+  if (typeof after !== "string") {
+    warnings.push(`${where}.after: expected a stage id; placed before CI.`);
+    return fallback();
+  }
+  const anchorIndex = ordered.findIndex((stage) => stage.stageId === after);
+  if (anchorIndex < 0) {
+    warnings.push(`${where}.after: "${after}" is not a stage; placed before CI.`);
+    return fallback();
+  }
+  const ciIndex = ordered.findIndex((stage) => stage.stageId === BOARD_SEED_STAGE_IDS.ci);
+  const anchor = ordered[anchorIndex]!;
+  const anchorRole = effectiveBoardStageRole(anchor);
+  if ((ciIndex >= 0 && anchorIndex >= ciIndex) || anchorRole === "merge" || anchorRole === "done") {
+    warnings.push(`${where}.after: nothing can come after ${anchor.label} here; placed before CI.`);
+    return fallback();
+  }
+  const build = ordered.findIndex((stage) => effectiveBoardStageRole(stage) === "build");
+  if (anchorIndex === build - 1) {
     warnings.push(
-      `stages.settings.ci.steps: at most ${BOARD_CI_MAX_STEPS} steps; the rest are ignored.`,
+      `${where}.after: ${anchor.label} is where cards wait to build, so nothing can follow it; placed before CI.`,
     );
-    ciPatch = { ...ciPatch, steps: ciPatch.steps.slice(0, BOARD_CI_MAX_STEPS) };
-    overrides[BOARD_SEED_STAGE_IDS.ci] = ciPatch;
+    return fallback();
   }
-  const ciSteps = ciPatch?.steps ?? [];
-  const ci = ciSteps.length === 0 ? null : { steps: ciSteps, active: ciPatch?.enabled !== false };
-  if (ciPatch !== undefined && ciSteps.length === 0 && ciPatch.enabled === true) {
-    warnings.push(`stages.settings.ci: "enabled" needs at least one step to turn CI on; ignored.`);
+  return boardOrderKeyBetween(anchor.orderKey, ordered[anchorIndex + 1]?.orderKey ?? null);
+}
+
+/**
+ * A project's delta as a v2 `t3o.json` (T3O-49 export). Stages it switches
+ * on that are off by default are written as `stages.add` entries, so the file
+ * recreates them on another board.
+ */
+export function buildT3oProjectFile(input: {
+  readonly board: BoardState;
+  readonly config: Pick<BoardProjectStageConfig, "stageSwitches" | "overrides" | "ci">;
+}): Record<string, unknown> {
+  const ordered = boardStagesInOrder(input.board);
+  const remove: string[] = [];
+  const enable: string[] = [];
+  const add: Array<Record<string, unknown>> = [];
+  const addedIds = new Set<string>();
+  for (const [index, stage] of ordered.entries()) {
+    if (stage.stageId === BOARD_SEED_STAGE_IDS.ci) continue;
+    const on = input.config.stageSwitches[stage.stageId];
+    if (on === undefined) continue;
+    if (!on) {
+      remove.push(stage.stageId);
+      continue;
+    }
+    if (boardStageDefaultForProjects(stage)) {
+      enable.push(stage.stageId);
+      continue;
+    }
+    const before = ordered[index - 1];
+    add.push({
+      id: stage.stageId,
+      label: stage.label,
+      ...(before === undefined ? {} : { after: before.stageId }),
+    });
+    addedIds.add(stage.stageId);
   }
-  // Placed, but after a stage this pipeline skips: it sits where that stage
-  // would be, which is easy to misread, so say so.
-  for (const add of pending) {
-    if (!placed.has(add.fileId)) continue;
-    const anchor = globalById.get(add.after);
-    if (anchor === undefined) continue;
-    const skipped =
-      removedStageIds.includes(anchor.stageId) ||
-      (anchor.stageId === BOARD_SEED_STAGE_IDS.ci && ci?.active !== true);
-    if (skipped) {
-      warnings.push(
-        `stages.add: "${add.fileId}" is after "${add.after}", which this project doesn't use; it sits where ${anchor.label} would be.`,
-      );
+  const settings: Record<string, unknown> = {};
+  for (const stage of ordered) {
+    const patch = input.config.overrides[stage.stageId];
+    if (patch === undefined || Object.keys(patch).length === 0) continue;
+    if (addedIds.has(stage.stageId)) {
+      const entry = add.find((candidate) => candidate.id === stage.stageId)!;
+      Object.assign(entry, patch);
+    } else {
+      settings[stage.stageId] = patch;
     }
   }
-  return {
-    config: { removedStageIds, addedStageIds, overrides, warnings, source: input.source, ci },
-    stages: [...placed.values()].sort(compareBoardStages),
-  };
+  const ciOn = input.config.stageSwitches[BOARD_SEED_STAGE_IDS.ci];
+  const stages: Record<string, unknown> = {};
+  if (enable.length > 0) stages.enable = enable;
+  if (remove.length > 0) stages.remove = remove;
+  if (add.length > 0) stages.add = add;
+  if (Object.keys(settings).length > 0) stages.settings = settings;
+  const file: Record<string, unknown> = { version: T3O_PROJECT_FILE_VERSION };
+  if (Object.keys(stages).length > 0) file.stages = stages;
+  if (input.config.ci.steps.length > 0 || ciOn !== undefined) {
+    file.ci = {
+      ...(ciOn === undefined ? {} : { enabled: ciOn }),
+      steps: input.config.ci.steps,
+    };
+  }
+  return file;
 }
 
 /** Parse a `t3o.json` body to JSON, or say why it could not be; the warning

@@ -21,6 +21,7 @@ import {
   isBoardCiActive,
   isBoardCiStageExecution,
   resolveBoardStageExecution,
+  withBoardProjectConfigVersion,
   type BoardCard,
   type BoardStageId,
   type BoardState,
@@ -39,7 +40,14 @@ const STEPS = [
 ];
 
 const resolveFile = (raw: unknown, projectId = withCi) =>
-  resolveT3oProjectFile({ raw, board: EMPTY_BOARD_STATE, projectId, source: null, now: NOW });
+  resolveT3oProjectFile({ raw, board: EMPTY_BOARD_STATE, projectId, now: NOW });
+
+const configFrom = (raw: unknown) =>
+  withBoardProjectConfigVersion({
+    ...resolveFile(raw).delta,
+    dismissedImportSha: null,
+    lastChangedBy: null,
+  });
 
 const boardWith = (
   raw: unknown,
@@ -51,7 +59,7 @@ const boardWith = (
     id: BoardCardId.make(`card-${index}`),
     archivedAt: null,
   })) as unknown as ReadonlyArray<BoardCard>,
-  projectStageConfigs: { [withCi]: resolveFile(raw).config },
+  projectStageConfigs: { [withCi]: configFrom(raw) },
 });
 
 const ciFile = { stages: { settings: { ci: { steps: STEPS } } } };
@@ -89,18 +97,34 @@ describe("CI seed stage", () => {
 });
 
 describe("CI activeness", () => {
-  it("is on only for a project whose t3o.json lists at least one step", () => {
+  it("is on only for a project switched on with at least one step", () => {
     const board = boardWith(ciFile);
     expect(isBoardCiActive(board, withCi)).toBe(true);
     expect(isBoardCiActive(board, withoutCi)).toBe(false);
     expect(isBoardCiActive(board, null)).toBe(false);
-    expect(resolveFile(ciFile).config.ci).toEqual({
-      steps: [
-        { name: "Lint", command: "vp lint", timeoutMinutes: 30 },
-        { name: "Test", command: "vp test run", timeoutMinutes: 10 },
-      ],
-      active: true,
-    });
+    expect(configFrom(ciFile).stageSwitches).toEqual({ ci: true });
+    expect(configFrom(ciFile).ci.steps).toEqual([
+      { kind: "script", id: "legacy-0", name: "Lint", parallel: false, command: "vp lint", timeoutMinutes: 30 },
+      { kind: "script", id: "legacy-1", name: "Test", parallel: false, command: "vp test run", timeoutMinutes: 10 },
+    ]);
+  });
+
+  it("stays out of the pipeline when switched on with no steps", () => {
+    const board: BoardState = {
+      ...EMPTY_BOARD_STATE,
+      projectStageConfigs: {
+        [withCi]: withBoardProjectConfigVersion({
+          stageSwitches: { ci: true },
+          overrides: {},
+          ci: { steps: [] },
+          dismissedImportSha: null,
+          warnings: [],
+          lastChangedBy: null,
+        }),
+      },
+    };
+    expect(isBoardCiActive(board, withCi)).toBe(false);
+    expect(pipeline(board, withCi)).not.toContain("ci");
   });
 
   it("puts CI in the pipeline only while active", () => {
@@ -116,15 +140,15 @@ describe("CI activeness", () => {
   });
 
   it("is paused by enabled: false, and needs steps to be on", () => {
-    const paused = resolveFile({ stages: { settings: { ci: { steps: STEPS, enabled: false } } } });
-    expect(paused.config.ci?.active).toBe(false);
-    const board = boardWith({ stages: { settings: { ci: { steps: STEPS, enabled: false } } } });
+    const pausedFile = { stages: { settings: { ci: { steps: STEPS, enabled: false } } } };
+    expect(configFrom(pausedFile).stageSwitches.ci).toBe(false);
+    const board = boardWith(pausedFile);
     expect(pipeline(board, withCi)).not.toContain("ci");
     expect(isBoardCiActive(board, withCi)).toBe(false);
 
     const empty = resolveFile({ stages: { settings: { ci: { enabled: true } } } });
-    expect(empty.config.ci).toBeNull();
-    expect(empty.config.warnings.join("\n")).toContain("needs at least one step");
+    expect(empty.delta.ci.steps).toEqual([]);
+    expect(empty.delta.warnings.join("\n")).toContain("has no steps");
   });
 
   it("keeps an inactive CI column while a card of the project still sits in it", () => {
@@ -136,16 +160,16 @@ describe("CI activeness", () => {
 
   it("can't be removed, and caps the step list", () => {
     const removed = resolveFile({ stages: { remove: ["ci"] } });
-    expect(removed.config.removedStageIds).toEqual([]);
-    expect(removed.config.warnings.join("\n")).toContain("can't be removed");
+    expect(removed.delta.stageSwitches).toEqual({});
+    expect(removed.delta.warnings.join("\n")).toContain("ci.enabled");
 
     const many = Array.from({ length: 20 }, (_, index) => ({
       name: `Step ${index}`,
       command: "true",
     }));
     const capped = resolveFile({ stages: { settings: { ci: { steps: many } } } });
-    expect(capped.config.ci?.steps).toHaveLength(12);
-    expect(capped.config.warnings.join("\n")).toContain("at most 12 steps");
+    expect(capped.delta.ci.steps).toHaveLength(12);
+    expect(capped.delta.warnings.join("\n")).toContain("at most 12 steps");
   });
 });
 
@@ -155,9 +179,8 @@ describe("CI member resolution", () => {
     expect(isBoardCiStageExecution(exec)).toBe(true);
     if (!isBoardCiStageExecution(exec)) return;
     expect(exec).toMatchObject({
-      steps: [],
-      enabled: true,
       maxFixAttempts: 2,
+      maxRoundTrips: 3,
       prompt: DEFAULT_BOARD_CI_FIX_PROMPT,
       mode: "build",
       humanInLoop: false,
@@ -167,7 +190,7 @@ describe("CI member resolution", () => {
   });
 
   it("takes every field from the project's stages.settings.ci, but never its invariants", () => {
-    const resolved = resolveFile({
+    const resolved = configFrom({
       stages: {
         settings: {
           ci: {
@@ -181,9 +204,9 @@ describe("CI member resolution", () => {
         },
       },
     });
-    const exec = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, ci, resolved.config);
+    const exec = resolveBoardStageExecution(DEFAULT_BOARD_SETTINGS, ci, resolved);
     if (!isBoardCiStageExecution(exec)) throw new Error("expected the CI member");
-    expect(exec.steps.map((step) => step.name)).toEqual(["Lint", "Test"]);
+    expect(resolved.ci.steps.map((step) => step.name)).toEqual(["Lint", "Test"]);
     expect(exec.maxFixAttempts).toBe(0);
     expect(exec.prompt).toBe("Fix it.");
     expect(exec.autoAdvance).toBe(true);
@@ -195,9 +218,9 @@ describe("CI member resolution", () => {
     const resolved = resolveFile({
       stages: { settings: { ci: { steps: [{ name: "", command: "x" }], maxFixAttempts: 1 } } },
     });
-    expect(resolved.config.warnings.join("\n")).toContain("stages.settings.ci.steps");
-    expect(resolved.config.ci).toBeNull();
-    expect(resolved.config.overrides.ci?.maxFixAttempts).toBe(1);
+    expect(resolved.delta.warnings.join("\n")).toContain("stages.settings.ci.steps");
+    expect(resolved.delta.ci.steps).toEqual([]);
+    expect(resolved.delta.overrides.ci?.maxFixAttempts).toBe(1);
   });
 });
 
@@ -239,7 +262,7 @@ describe("CI move refusals", () => {
 
   it("changes nothing for a project without CI", () => {
     expect(refuse(review, merge, withoutCi)).toBeNull();
-    expect(refuse(review, ci, withoutCi)).toContain("doesn't use");
+    expect(refuse(review, ci, withoutCi)).toContain("is off for");
   });
 });
 

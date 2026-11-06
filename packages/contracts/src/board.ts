@@ -31,12 +31,14 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Rpc from "effect/rpc/Rpc";
 
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   EnvironmentAuthorizationError,
 } from "./auth.ts";
 import { ProviderOptionSelections } from "./model.ts";
@@ -346,10 +348,15 @@ export const BoardStageDefinition = Schema.Struct({
   orderKey: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
-  /** The project whose committed `t3o.json` added this stage (T3O-43), or
-      null for a global stage. A project-owned stage is used by that project's
-      cards only, and its id is namespaced `<projectId>:<fileId>`. */
+  /** The project this stage was made for (T3O-43/49), or null. A label only
+      since T3O-49: which projects use a stage is `defaultForProjects` plus
+      each project's switches. Rows made by a T3O-43 `t3o.json` keep their
+      `<projectId>:<fileId>` ids. */
   projectId: Schema.NullOr(ProjectId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Whether a project with no switch of its own uses this stage (T3O-49).
+      Absent on rows and payloads written before it: read it through
+      `boardStageDefaultForProjects`. */
+  defaultForProjects: Schema.optionalKey(Schema.Boolean),
 });
 export type BoardStageDefinition = typeof BoardStageDefinition.Type;
 
@@ -448,6 +455,7 @@ export function boardStagesAreSeedOnly(stages: ReadonlyArray<BoardStageDefinitio
         (stage.stageId === BOARD_SEED_STAGE_IDS.planning && stage.role === null) ||
         (stage.stageId === BOARD_SEED_STAGE_IDS.merge && stage.role === null)) &&
       stage.orderKey === seed.orderKey &&
+      stage.defaultForProjects === seed.defaultForProjects &&
       stage.createdAt === seed.createdAt &&
       stage.updatedAt === seed.updatedAt
     );
@@ -1493,6 +1501,171 @@ export const BoardCiStepDefinition = Schema.Struct({
   ),
 });
 export type BoardCiStepDefinition = typeof BoardCiStepDefinition.Type;
+
+// ── CI steps v2 (T3O-49) ───────────────────────────────────────────────
+// A project's CI is an ordered list of typed steps, stored in the board's own
+// state (never read from a file at run time). Script steps run a command;
+// agent steps run a prompt in a card step thread; forge-check steps watch the
+// pull request's checks. Only a script that follows a script may run in
+// parallel with it.
+
+/** The biggest script command, and the biggest agent prompt, a step stores. */
+export const BOARD_CI_COMMAND_MAX = 4_096;
+export const BOARD_CI_PROMPT_MAX = 16_384;
+export const DEFAULT_BOARD_CI_STEP_TIMEOUT_MINUTES = 30;
+export const DEFAULT_BOARD_CI_FORGE_TIMEOUT_MINUTES = 60;
+export const DEFAULT_BOARD_CI_FORGE_APPEAR_TIMEOUT_MINUTES = 10;
+const BOARD_CI_MAX_APPEAR_TIMEOUT_MINUTES = 120;
+
+export const BoardCiStepId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
+export type BoardCiStepId = typeof BoardCiStepId.Type;
+
+const BoardCiStepTimeout = (fallback: number) =>
+  PositiveInt.check(Schema.isLessThanOrEqualTo(BOARD_CI_MAX_TIMEOUT_MINUTES)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(fallback)),
+  );
+
+export const BoardCiScriptStep = Schema.Struct({
+  kind: Schema.Literal("script"),
+  id: BoardCiStepId,
+  name: TrimmedNonEmptyString,
+  /** Runs alongside the script before it, in one group. */
+  parallel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  command: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_CI_COMMAND_MAX)),
+  timeoutMinutes: BoardCiStepTimeout(DEFAULT_BOARD_CI_STEP_TIMEOUT_MINUTES),
+});
+export type BoardCiScriptStep = typeof BoardCiScriptStep.Type;
+
+export const BoardCiAgentStep = Schema.Struct({
+  kind: Schema.Literal("agent"),
+  id: BoardCiStepId,
+  name: TrimmedNonEmptyString,
+  parallel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(BOARD_CI_PROMPT_MAX)),
+  model: Schema.NullOr(BoardModelSelection).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  timeoutMinutes: BoardCiStepTimeout(DEFAULT_BOARD_CI_STEP_TIMEOUT_MINUTES),
+});
+export type BoardCiAgentStep = typeof BoardCiAgentStep.Type;
+
+export const BoardCiForgeChecksStep = Schema.Struct({
+  kind: Schema.Literal("forge-checks"),
+  id: BoardCiStepId,
+  name: TrimmedNonEmptyString,
+  parallel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Check names (globs) to wait for; empty watches every check. */
+  only: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  appearTimeoutMinutes: PositiveInt.check(
+    Schema.isLessThanOrEqualTo(BOARD_CI_MAX_APPEAR_TIMEOUT_MINUTES),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_CI_FORGE_APPEAR_TIMEOUT_MINUTES))),
+  whenNoChecks: Schema.Literals(["pass", "fail"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("pass" as const)),
+  ),
+  timeoutMinutes: BoardCiStepTimeout(DEFAULT_BOARD_CI_FORGE_TIMEOUT_MINUTES),
+});
+export type BoardCiForgeChecksStep = typeof BoardCiForgeChecksStep.Type;
+
+export const BoardCiStep = Schema.Union([
+  BoardCiScriptStep,
+  BoardCiAgentStep,
+  BoardCiForgeChecksStep,
+]);
+export type BoardCiStep = typeof BoardCiStep.Type;
+export type BoardCiStepKind = BoardCiStep["kind"];
+
+/** The id a T3O-44 step (no id of its own) gets when it is read back. */
+export function boardLegacyCiStepId(index: number): string {
+  return `legacy-${index}`;
+}
+
+/** A T3O-44 step list as a v2 one: each becomes a script with a stable id. */
+export function boardCiStepsFromLegacy(
+  steps: ReadonlyArray<BoardCiStepDefinition>,
+): ReadonlyArray<BoardCiScriptStep> {
+  return steps.map((step, index) => ({
+    kind: "script" as const,
+    id: boardLegacyCiStepId(index),
+    name: step.name,
+    parallel: false,
+    command: step.command,
+    timeoutMinutes: step.timeoutMinutes,
+  }));
+}
+
+/**
+ * A stored CI step list. Payloads written before T3O-49 hold
+ * `BoardCiStepDefinition`s with no `kind` or `id`; they decode to script steps
+ * with `legacy-<index>` ids, so replay and rehydration agree.
+ */
+export const BoardCiStepList = Schema.Union([
+  Schema.Array(BoardCiStep),
+  Schema.Array(BoardCiStepDefinition),
+]).pipe(
+  Schema.decodeTo(
+    Schema.Array(Schema.toType(BoardCiStep)),
+    SchemaTransformation.transform<
+      ReadonlyArray<BoardCiStep>,
+      ReadonlyArray<BoardCiStep> | ReadonlyArray<BoardCiStepDefinition>
+    >({
+      decode: (steps) =>
+        steps.every((step) => "kind" in step)
+          ? (steps as ReadonlyArray<BoardCiStep>)
+          : boardCiStepsFromLegacy(steps as ReadonlyArray<BoardCiStepDefinition>),
+      encode: (steps) => steps,
+    }),
+  ),
+);
+
+/** A step's own wire shape for the T3O-44 runner: script steps only. */
+export function boardCiScriptDefinitions(
+  steps: ReadonlyArray<BoardCiStep>,
+): ReadonlyArray<BoardCiStepDefinition> {
+  return steps.flatMap((step) =>
+    step.kind === "script"
+      ? [{ name: step.name, command: step.command, timeoutMinutes: step.timeoutMinutes }]
+      : [],
+  );
+}
+
+/**
+ * Why a CI step list can't be saved, or null. At most `BOARD_CI_MAX_STEPS`,
+ * unique ids, and `parallel` only on a script that follows a script.
+ * `scriptOnly` refuses the step types this board can't run yet.
+ */
+export function boardCiStepsRefusal(
+  steps: ReadonlyArray<BoardCiStep>,
+  options: { readonly scriptOnly?: boolean } = {},
+): string | null {
+  if (steps.length > BOARD_CI_MAX_STEPS) return `CI has at most ${BOARD_CI_MAX_STEPS} steps.`;
+  const ids = new Set<string>();
+  for (const [index, step] of steps.entries()) {
+    if (ids.has(step.id)) return `Two CI steps share the id '${step.id}'.`;
+    ids.add(step.id);
+    if (options.scriptOnly === true && step.kind !== "script") {
+      return `'${step.name}' is a ${step.kind} step; only script steps can run here.`;
+    }
+    if (step.parallel) {
+      const previous = index > 0 ? steps[index - 1] : undefined;
+      if (step.kind !== "script" || previous?.kind !== "script") {
+        return `'${step.name}' can't run in parallel: only a script that follows a script can.`;
+      }
+    }
+  }
+  return null;
+}
+
+/** The steps grouped as they run: consecutive parallel scripts share a group,
+    and every other step is a group of its own. */
+export function boardCiStepGroups<S extends Pick<BoardCiStep, "kind" | "parallel">>(
+  steps: ReadonlyArray<S>,
+): ReadonlyArray<ReadonlyArray<S>> {
+  const groups: S[][] = [];
+  for (const step of steps) {
+    const last = groups.at(-1);
+    if (step.parallel && step.kind === "script" && last !== undefined) last.push(step);
+    else groups.push([step]);
+  }
+  return groups;
+}
 
 const BOARD_CI_STEP_STATUSES = [
   "pending",
@@ -2765,8 +2938,8 @@ export type BoardCardActivityEntry = typeof BoardCardActivityEntry.Type;
  * tests included — decode and compile unchanged.
  */
 /**
- * Where a project's stage config was read from (T3O-43): the `t3o.json` path
- * in the central server's checkout, and that checkout's HEAD when it was read.
+ * Where a T3O-43 project config was read from. Only legacy payloads carry it;
+ * a T3O-49 delta keeps no source.
  */
 export const BoardProjectStageConfigSource = Schema.Struct({
   path: TrimmedNonEmptyString,
@@ -2774,48 +2947,232 @@ export const BoardProjectStageConfigSource = Schema.Struct({
 });
 export type BoardProjectStageConfigSource = typeof BoardProjectStageConfigSource.Type;
 
+const BoardStageExecutionPatchRef = Schema.suspend(
+  (): Schema.Codec<BoardStageExecutionPatch, typeof BoardStageExecutionPatch.Encoded> =>
+    BoardStageExecutionPatch,
+);
+
+/** Who last changed a project's config, and when (T3O-49). */
+export const BoardProjectConfigChange = Schema.Struct({
+  actor: BoardActivityActor,
+  at: IsoDateTime,
+});
+export type BoardProjectConfigChange = typeof BoardProjectConfigChange.Type;
+
 /**
- * One project's resolved stage config from its committed `t3o.json`
- * (T3O-43, D8): the decider and reactor branch on it, so it lives in the read
- * model. Never the raw file — only what the board acts on.
+ * One project's differences from the global pipeline (T3O-49, D8). The board
+ * owns it and Settings edits it; `t3o.json` is only an import/export format.
+ * A project stores its differences, never a snapshot, so a stage added to the
+ * board later reaches every project unless that project switched it off.
  *
- * - `removedStageIds`: global role-less stages this project does not use.
- * - `addedStageIds`: the project-owned stage rows the file currently declares,
- *   in file order. A project-owned row missing from it is retired.
- * - `overrides`: the decoded execution partials, keyed by the stage id they
- *   apply to (namespaced for an added stage).
- * - `warnings`: every entry the board ignored, and why.
+ * - `stageSwitches`: a stage this project turns on or off against the stage's
+ *   `defaultForProjects`. Role stages are always on. CI's entry is the
+ *   project's "Run CI" switch.
+ * - `overrides`: execution partials keyed by stage id.
+ * - `ci.steps`: the project's CI steps, in order.
+ * - `dismissedImportSha`: the committed `t3o.json` blob "No thanks" answered.
+ * - `warnings`: what an import ignored, and why.
+ * - `version`: a hash of `stageSwitches`, `overrides` and `ci`, checked by
+ *   every edit so two people never overwrite each other.
  */
-export const BoardProjectStageConfig = Schema.Struct({
+const BoardProjectStageConfigV2 = Schema.Struct({
+  stageSwitches: Schema.Record(Schema.String, Schema.Boolean),
+  overrides: Schema.Record(Schema.String, BoardStageExecutionPatchRef),
+  ci: Schema.Struct({ steps: BoardCiStepList }),
+  dismissedImportSha: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  warnings: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  version: Schema.String,
+  lastChangedBy: Schema.NullOr(BoardProjectConfigChange).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+});
+
+/** The T3O-43/44 shape: a config resolved from a committed `t3o.json`. */
+const LegacyBoardProjectStageConfig = Schema.Struct({
   removedStageIds: Schema.Array(BoardStageId),
   addedStageIds: Schema.Array(BoardStageId),
-  overrides: Schema.Record(
-    Schema.String,
-    Schema.suspend(
-      (): Schema.Codec<BoardStageExecutionPatch, typeof BoardStageExecutionPatch.Encoded> =>
-        BoardStageExecutionPatch,
-    ),
-  ),
+  overrides: Schema.Record(Schema.String, BoardStageExecutionPatchRef),
   warnings: Schema.Array(Schema.String),
   source: Schema.NullOr(BoardProjectStageConfigSource),
-  /** The project's CI steps from `stages.settings.ci` (T3O-44), or null when
-      it defines none. `active` is false when `enabled: false` pauses CI; an
-      inactive CI stage is not in the project's pipeline. */
   ci: Schema.NullOr(
     Schema.Struct({ steps: Schema.Array(BoardCiStepDefinition), active: Schema.Boolean }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
-export type BoardProjectStageConfig = typeof BoardProjectStageConfig.Type;
+type LegacyBoardProjectStageConfig = typeof LegacyBoardProjectStageConfig.Type;
 
-/** A project with no `t3o.json`: it follows the global pipeline exactly. */
-export const EMPTY_BOARD_PROJECT_STAGE_CONFIG: BoardProjectStageConfig = {
-  removedStageIds: [],
-  addedStageIds: [],
-  overrides: {},
-  warnings: [],
-  source: null,
-  ci: null,
+/** A T3O-43/44 config as a T3O-49 delta (read-time upcast): removed stages
+    are switched off, added ones on, an active CI is switched on and its steps
+    become scripts. */
+export function boardProjectStageConfigFromLegacy(
+  legacy: LegacyBoardProjectStageConfig,
+): BoardProjectStageConfig {
+  const stageSwitches: Record<string, boolean> = {};
+  for (const stageId of legacy.removedStageIds) stageSwitches[stageId] = false;
+  for (const stageId of legacy.addedStageIds) stageSwitches[stageId] = true;
+  if (legacy.ci !== null) stageSwitches[BOARD_SEED_STAGE_IDS.ci] = legacy.ci.active;
+  return withBoardProjectConfigVersion({
+    stageSwitches,
+    overrides: legacy.overrides,
+    ci: { steps: boardCiStepsFromLegacy(legacy.ci?.steps ?? []) },
+    dismissedImportSha: null,
+    warnings: legacy.warnings,
+    lastChangedBy: null,
+  });
+}
+
+export const BoardProjectStageConfig = Schema.Union([
+  BoardProjectStageConfigV2,
+  LegacyBoardProjectStageConfig,
+]).pipe(
+  Schema.decodeTo(
+    Schema.toType(BoardProjectStageConfigV2),
+    SchemaTransformation.transform<
+      typeof BoardProjectStageConfigV2.Type,
+      typeof BoardProjectStageConfigV2.Type | LegacyBoardProjectStageConfig
+    >({
+      decode: (config) =>
+        "stageSwitches" in config ? config : boardProjectStageConfigFromLegacy(config),
+      encode: (config) => config,
+    }),
+  ),
+);
+export type BoardProjectStageConfig = typeof BoardProjectStageConfigV2.Type;
+
+/** The parts of a delta its version hashes. */
+export type BoardProjectStageDelta = Pick<
+  BoardProjectStageConfig,
+  "stageSwitches" | "overrides" | "ci"
+>;
+
+/** A short, stable hash of a delta (FNV-1a over canonical JSON, two lanes).
+    Runs on every client, so no `crypto`. */
+export function boardProjectConfigVersion(delta: BoardProjectStageDelta): string {
+  const text = canonicalJson({
+    stageSwitches: delta.stageSwitches,
+    overrides: delta.overrides,
+    ci: delta.ci,
+  });
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ text.length;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    a = Math.imul(a ^ code, 0x01000193) >>> 0;
+    b = Math.imul(b ^ code, 0x5bd1e995) >>> 0;
+  }
+  return `${a.toString(16).padStart(8, "0")}${b.toString(16).padStart(8, "0")}`;
+}
+
+export function withBoardProjectConfigVersion(
+  config: Omit<BoardProjectStageConfig, "version">,
+): BoardProjectStageConfig {
+  return { ...config, version: boardProjectConfigVersion(config) };
+}
+
+/** A project with no differences: it follows the global pipeline exactly. */
+export const EMPTY_BOARD_PROJECT_STAGE_CONFIG: BoardProjectStageConfig =
+  withBoardProjectConfigVersion({
+    stageSwitches: {},
+    overrides: {},
+    ci: { steps: [] },
+    dismissedImportSha: null,
+    warnings: [],
+    lastChangedBy: null,
+  });
+
+/** How many differences from global a delta holds (the project page header). */
+export function boardProjectConfigDifferenceCount(delta: BoardProjectStageDelta): number {
+  return (
+    Object.keys(delta.stageSwitches).length +
+    Object.keys(delta.overrides).length +
+    (delta.ci.steps.length > 0 ? 1 : 0)
+  );
+}
+
+const BOARD_PATCH_PROMPT_KEYS = new Set(["prompt"]);
+
+/** A patch without its prompt text, for the card shell. */
+function boardPatchWithoutPrompts(patch: BoardStageExecutionPatch): BoardStageExecutionPatch {
+  const strip = <T extends object>(value: T): T =>
+    Object.fromEntries(
+      Object.entries(value).filter(([key]) => !BOARD_PATCH_PROMPT_KEYS.has(key)),
+    ) as T;
+  const out: Record<string, unknown> = strip(patch);
+  if (patch.phases !== undefined) {
+    out.phases = Object.fromEntries(
+      Object.entries(patch.phases).map(([phase, value]) => [phase, strip(value as object)]),
+    );
+  }
+  if (patch.submit !== undefined) out.submit = strip(patch.submit);
+  if (patch.planReview !== undefined) out.planReview = strip(patch.planReview);
+  return out as BoardStageExecutionPatch;
+}
+
+/** A CI step's shape on the board shell: no command, prompt or filter. */
+export const BoardCiStepShape = Schema.Struct({
+  id: BoardCiStepId,
+  name: TrimmedNonEmptyString,
+  kind: Schema.Literals(["script", "agent", "forge-checks"]),
+  parallel: Schema.Boolean,
+});
+export type BoardCiStepShape = typeof BoardCiStepShape.Type;
+
+/**
+ * A project's delta as the board shell carries it (T3O-49): switches,
+ * overrides less prompt text, the CI step shape, warnings and version.
+ * Prompts, step bodies, import status and `lastChangedBy` come from
+ * `board.projectConfig.get`.
+ */
+export const BoardProjectStageConfigShell = Schema.Struct({
+  stageSwitches: Schema.Record(Schema.String, Schema.Boolean),
+  overrides: Schema.Record(Schema.String, BoardStageExecutionPatchRef),
+  ciSteps: Schema.Array(BoardCiStepShape),
+  warnings: Schema.Array(Schema.String),
+  version: Schema.String,
+});
+export type BoardProjectStageConfigShell = typeof BoardProjectStageConfigShell.Type;
+
+export function boardProjectStageConfigShell(
+  config: BoardProjectStageConfig,
+): BoardProjectStageConfigShell {
+  return {
+    stageSwitches: config.stageSwitches,
+    overrides: Object.fromEntries(
+      Object.entries(config.overrides).map(([stageId, patch]) => [
+        stageId,
+        boardPatchWithoutPrompts(patch),
+      ]),
+    ),
+    ciSteps: config.ci.steps.map((step) => ({
+      id: step.id,
+      name: step.name,
+      kind: step.kind,
+      parallel: step.parallel,
+    })),
+    warnings: config.warnings,
+    version: config.version,
+  };
+}
+
+/** What the stage helpers read of a project's config: the server holds the
+    full delta, a client the shell. */
+export type BoardProjectStageConfigView = Pick<
+  BoardProjectStageConfigShell,
+  "stageSwitches" | "overrides"
+> & {
+  readonly ciStepCount: number;
 };
+
+export function boardProjectStageConfigView(
+  config: BoardProjectStageConfig | BoardProjectStageConfigShell,
+): BoardProjectStageConfigView {
+  return {
+    stageSwitches: config.stageSwitches,
+    overrides: config.overrides,
+    ciStepCount: "ci" in config ? config.ci.steps.length : config.ciSteps.length,
+  };
+}
 
 export const BoardState = Schema.Struct({
   cards: Schema.Array(BoardCard),
@@ -3137,35 +3494,31 @@ export function boardLabelCatalogue(board: BoardState): ReadonlyArray<BoardLabel
 
 // ── Stage read-model helpers (D2/D3, t3o-15) ───────────────────────────
 
-/** Every stage row the board holds: the global list plus every project-owned
-    row (T3O-43). Only the per-project and by-id readers want this. */
+/** Every stage row the board holds. Since T3O-49 there is one global list:
+    a stage "made for a project" is a global stage switched off by default. */
 export function boardAllStages(
   board: Pick<BoardState, "stages">,
 ): ReadonlyArray<BoardStageDefinition> {
   return board.stages ?? BOARD_SEED_STAGES;
 }
 
-/** A board's GLOBAL stage list: its `stages` less project-owned rows, or the
-    compiled seeds when absent (a board that has never touched a stage). The
-    single reader every global decider/projector/UI path goes through, so
-    "absent" and "the eight seeds" are always the same list. */
+/** A board's stage list, or the compiled seeds when absent (a board that has
+    never touched a stage). The single reader every decider/projector/UI path
+    goes through, so "absent" and "the seeds" are always the same list. */
 export function boardStages(
   board: Pick<BoardState, "stages">,
 ): ReadonlyArray<BoardStageDefinition> {
-  const all = boardAllStages(board);
-  return all.some((stage) => stage.projectId !== null)
-    ? all.filter((stage) => stage.projectId === null)
-    : all;
+  return boardAllStages(board);
 }
 
-/** The global stage list in canonical (orderKey, stageId) order. */
+/** The stage list in canonical (orderKey, stageId) order. */
 export function boardStagesInOrder(
   board: Pick<BoardState, "stages">,
 ): ReadonlyArray<BoardStageDefinition> {
   return [...boardStages(board)].sort(compareBoardStages);
 }
 
-/** The stage with the given id, global or project-owned, or null. */
+/** The stage with the given id, or null. */
 export function boardStageById(
   board: Pick<BoardState, "stages">,
   stageId: BoardStageId,
@@ -3173,27 +3526,14 @@ export function boardStageById(
   return boardAllStages(board).find((stage) => stage.stageId === stageId) ?? null;
 }
 
-/** A stage's position in global board order, or -1 when the id is unknown (a
-    since-deleted stage named by a legacy event). A project-owned stage sits
-    half a step after the global stage before it, so ordering comparisons
-    (before build, at or after review, …) hold for it too. */
-export function boardStageIndex(board: BoardState, stageId: BoardStageId): number {
-  const ordered = boardStagesInOrder(board);
-  const index = ordered.findIndex((stage) => stage.stageId === stageId);
-  if (index >= 0) return index;
-  const owned = boardAllStages(board).find(
-    (stage) => stage.stageId === stageId && stage.projectId !== null,
-  );
-  if (owned === undefined) return -1;
-  let before = -1;
-  ordered.forEach((stage, position) => {
-    if (compareBoardStages(stage, owned) < 0) before = position;
-  });
-  return before + 0.5;
+/** A stage's position in board order, or -1 when the id is unknown (a
+    since-deleted stage named by a legacy event). */
+export function boardStageIndex(board: Pick<BoardState, "stages">, stageId: BoardStageId): number {
+  return boardStagesInOrder(board).findIndex((stage) => stage.stageId === stageId);
 }
 
-/** A project's stage config (T3O-43), or null when its project has no
-    `t3o.json` and follows the global pipeline. */
+/** A project's delta (T3O-49), or null when it has none and follows the
+    global pipeline. */
 export function boardProjectStageConfig(
   board: Pick<BoardState, "projectStageConfigs">,
   projectId: ProjectId,
@@ -3206,34 +3546,98 @@ export function boardProjectStageConfig(
     nothing new enters it and nothing advances into it. */
 export type BoardProjectStage = BoardStageDefinition & { readonly retired: boolean };
 
-/** What the per-project stage helpers read (T3O-43): the stage rows, the
-    project configs and where each live card sits. A `BoardState` is one; a
-    client passes its shells. An absent `archivedAt` reads as live. */
+/** What the per-project stage helpers read: the stage rows, each project's
+    delta (the full one on the server, the shell on a client) and where each
+    live card sits. An absent `archivedAt` reads as live. */
 export interface BoardStageView {
-  readonly stages?: BoardState["stages"];
-  readonly projectStageConfigs?: BoardState["projectStageConfigs"];
+  readonly stages?: BoardState["stages"] | undefined;
+  readonly projectStageConfigs?:
+    | Readonly<Record<string, BoardProjectStageConfig | BoardProjectStageConfigShell>>
+    | undefined;
   readonly cards: ReadonlyArray<
     Pick<BoardCard, "stage" | "projectId"> & { readonly archivedAt?: string | null }
   >;
 }
 
+/** Whether a stage is on for a project with no switch of its own. Absent on
+    a row written before T3O-49: on for a global stage, off for CI and for a
+    stage a project's `t3o.json` added. */
+export function boardStageDefaultForProjects(
+  stage: Pick<BoardStageDefinition, "stageId" | "projectId" | "defaultForProjects">,
+): boolean {
+  return (
+    stage.defaultForProjects ??
+    (stage.projectId === null && stage.stageId !== BOARD_SEED_STAGE_IDS.ci)
+  );
+}
+
+/** Whether a stage can be switched per project: never a role stage, and
+    never the stage before Building, where approved work waits for
+    Auto-build and split children land. */
+export function isBoardStageSwitchable(
+  board: Pick<BoardState, "stages">,
+  stage: Pick<BoardStageDefinition, "stageId" | "role">,
+): boolean {
+  if (effectiveBoardStageRole(stage) !== null) return false;
+  return boardStageBeforeBuild(board as BoardState)?.stageId !== stage.stageId;
+}
+
+function boardProjectConfigFromView(
+  view: Pick<BoardStageView, "projectStageConfigs">,
+  projectId: ProjectId | null,
+): BoardProjectStageConfigView | null {
+  if (projectId === null) return null;
+  const config = view.projectStageConfigs?.[projectId];
+  return config === undefined ? null : boardProjectStageConfigView(config);
+}
+
 /**
- * One project's pipeline, in board order (T3O-43): the global stages less the
- * ones its `t3o.json` removes, plus its own project-owned stages. A removed
- * (or no longer declared) stage stays, flagged `retired`, while a live card of
- * the project sits in it. A null project is the global list.
+ * Whether a project uses a stage (T3O-49): its own switch, else the stage's
+ * default. Role stages and the stage before Building are always on. CI is on
+ * only when switched on AND the project has at least one CI step. A null
+ * project reads the defaults alone.
+ */
+export function boardProjectUsesStage(
+  view: Pick<BoardStageView, "stages" | "projectStageConfigs">,
+  projectId: ProjectId | null,
+  stage: BoardStageDefinition,
+): boolean {
+  if (!isBoardStageSwitchable(view, stage)) return true;
+  const config = boardProjectConfigFromView(view, projectId);
+  const switched = config?.stageSwitches[stage.stageId];
+  if (stage.stageId === BOARD_SEED_STAGE_IDS.ci) {
+    return switched === true && (config?.ciStepCount ?? 0) > 0;
+  }
+  return switched ?? boardStageDefaultForProjects(stage);
+}
+
+/** Whether a project has CI on: switched on, with at least one step. */
+export function isBoardCiActive(
+  view: Pick<BoardStageView, "stages" | "projectStageConfigs">,
+  projectId: ProjectId | null,
+): boolean {
+  const ci = boardStageById(view, BOARD_SEED_STAGE_IDS.ci);
+  return ci !== null && boardProjectUsesStage(view, projectId, ci);
+}
+
+/** Whether a project's "Run CI" switch is on, steps or not. */
+export function isBoardCiSwitchedOn(
+  view: Pick<BoardStageView, "projectStageConfigs">,
+  projectId: ProjectId | null,
+): boolean {
+  if (projectId === null) return false;
+  return view.projectStageConfigs?.[projectId]?.stageSwitches[BOARD_SEED_STAGE_IDS.ci] === true;
+}
+
+/**
+ * One project's pipeline, in board order: every stage it uses. A stage it
+ * does not use stays, flagged `retired`, while a live card of the project
+ * sits in it. A null project is the default pipeline.
  */
 export function boardProjectStagesInOrder(
   board: BoardStageView,
   projectId: ProjectId | null,
 ): ReadonlyArray<BoardProjectStage> {
-  const config = projectId === null ? null : boardProjectStageConfig(board, projectId);
-  const all = boardAllStages(board);
-  const removed = new Set<string>(config?.removedStageIds ?? []);
-  // CI (T3O-44) is in a pipeline only while the project's CI is active; an
-  // inactive CI stage behaves exactly like a removed one.
-  if (config?.ci?.active !== true) removed.add(BOARD_SEED_STAGE_IDS.ci);
-  const added = new Set<string>(config?.addedStageIds ?? []);
   const occupied = new Set<string>();
   for (const card of board.cards) {
     if (card.projectId === projectId && (card.archivedAt ?? null) === null) {
@@ -3241,17 +3645,35 @@ export function boardProjectStagesInOrder(
     }
   }
   const out: BoardProjectStage[] = [];
-  for (const stage of all) {
-    if (stage.projectId !== null && stage.projectId !== projectId) continue;
-    const used = stage.projectId === null ? !removed.has(stage.stageId) : added.has(stage.stageId);
-    if (used) out.push({ ...stage, retired: false });
+  for (const stage of boardAllStages(board)) {
+    if (boardProjectUsesStage(board, projectId, stage)) out.push({ ...stage, retired: false });
     else if (occupied.has(stage.stageId)) out.push({ ...stage, retired: true });
   }
   return out.sort(compareBoardStages);
 }
 
-/** The first stage a project's new card lands in (T3O-43): its pipeline's
-    first live stage, so a project that removed Backlog starts cards after it. */
+/** Which projects use a stage, for the partial-stage icon and the Pipeline
+    page's "applies to" chips. */
+export interface BoardStageProjectCoverage {
+  readonly included: ReadonlyArray<ProjectId>;
+  readonly excluded: ReadonlyArray<ProjectId>;
+}
+
+export function boardStageProjectCoverage(
+  view: Pick<BoardStageView, "stages" | "projectStageConfigs">,
+  stage: BoardStageDefinition,
+  projectIds: ReadonlyArray<ProjectId>,
+): BoardStageProjectCoverage {
+  const included: ProjectId[] = [];
+  const excluded: ProjectId[] = [];
+  for (const projectId of projectIds) {
+    (boardProjectUsesStage(view, projectId, stage) ? included : excluded).push(projectId);
+  }
+  return { included, excluded };
+}
+
+/** The first stage a project's new card lands in: its pipeline's first live
+    stage, so a project that switched Backlog off starts cards after it. */
 export function boardProjectFirstStageId(
   board: BoardStageView,
   projectId: ProjectId | null,
@@ -3262,8 +3684,8 @@ export function boardProjectFirstStageId(
   );
 }
 
-/** Whether two stages are neighbours in a project's pipeline (T3O-43; a null
-    project walks the global list). Retired stages are skipped, except the one
+/** Whether two stages are neighbours in a project's pipeline (a null
+    project walks the defaults). Retired stages are skipped, except the one
     being left. Unknown ids are never adjacent. */
 export function areBoardStagesAdjacent(
   board: BoardStageView,
@@ -3292,8 +3714,8 @@ export function boardStageWithRole(
 
 /** The stage after `stageId` in the project's pipeline, or null when it is
     last or unknown (D8: auto-advance moves to the next stage in order). It
-    never lands on a retired stage (T3O-43); a null project walks the global
-    list. */
+    never lands on a retired stage, so a stage the project switched off is
+    skipped; a null project walks the defaults. */
 export function boardNextStageId(
   board: BoardStageView,
   stageId: BoardStageId,
@@ -3307,10 +3729,10 @@ export function boardNextStageId(
 
 /**
  * Why a card may not move to `toStage`, as a sentence for a human, or null
- * when it may (T3O-43). The decider refuses with it and the board's drag
- * layer shows it as the tooltip on a refused drop, so the two never drift.
- * A stage the card's project does not use, or has retired, is refused even
- * with `override`; a non-adjacent move needs `override`.
+ * when it may. The decider refuses with it and the board's drag layer shows
+ * it as the tooltip on a refused drop, so the two never drift. A stage the
+ * card's project does not use is refused even with `override`; a
+ * non-adjacent move needs `override`.
  */
 export function boardCardMoveRefusal(
   board: BoardStageView,
@@ -3321,6 +3743,8 @@ export function boardCardMoveRefusal(
     /** The board's own pipeline move (T3O-44): CI's rules hold back people,
         not the pipeline that runs CI. */
     readonly pipeline?: boolean;
+    /** The project's name, for the refusal text. */
+    readonly projectName?: string;
   },
 ): string | null {
   if (isBoardDeferredStage(toStage)) return null;
@@ -3330,29 +3754,18 @@ export function boardCardMoveRefusal(
   }
   const target = boardStageById(board, toStage);
   if (target === null) return `Stage '${toStage}' does not exist.`;
+  const project = options.projectName ?? "this card's project";
   const entry = boardProjectStagesInOrder(board, card.projectId).find(
     (stage) => stage.stageId === toStage,
   );
-  if (entry === undefined) {
-    return target.projectId === null
-      ? `This card's project doesn't use the ${target.label} stage.`
-      : `${target.label} belongs to another project's pipeline.`;
+  if (entry === undefined) return `${target.label} is off for ${project}.`;
+  if (entry.retired) {
+    return `${target.label} is switched off for ${project}. Move the card on; the column goes once it's empty.`;
   }
-  if (entry.retired) return `This card's project no longer uses the ${target.label} stage.`;
   if (!options.override && !areBoardStagesAdjacent(board, card.stage, toStage, card.projectId)) {
     return `Stage move '${card.stage}' -> '${toStage}' is not adjacent; a drag sends override to force it.`;
   }
   return null;
-}
-
-/** Whether a project's CI is on (T3O-44): it defines at least one step and
-    has not paused it with `enabled: false`. A null project never has CI. */
-export function isBoardCiActive(
-  board: Pick<BoardStageView, "projectStageConfigs">,
-  projectId: ProjectId | null,
-): boolean {
-  if (projectId === null) return false;
-  return board.projectStageConfigs?.[projectId]?.ci?.active === true;
 }
 
 /**
@@ -3385,26 +3798,9 @@ function boardCiMoveRefusal(
   return null;
 }
 
-/** A project-owned stage id (T3O-43): namespaced by project, so two projects
-    adding a `security` stage never collide with each other or a global id. */
-export function boardProjectStageId(projectId: ProjectId, fileId: string): BoardStageId {
-  return BoardStageId.make(`${projectId}:${fileId}`);
-}
-
-function boardProjectStageConfigsEqual(
-  left: BoardProjectStageConfig,
-  right: BoardProjectStageConfig,
-): boolean {
-  // The commit sha is provenance only: the checkout moving on with the file
-  // unchanged is not a config change.
-  const strip = (config: BoardProjectStageConfig) =>
-    canonicalJson({ ...config, source: config.source === null ? null : config.source.path });
-  return strip(left) === strip(right);
-}
-
-/** JSON with object keys sorted: the reconciler builds partials in file key
-    order but the projector decodes them into schema order. */
-function canonicalJson(value: unknown): string {
+/** JSON with object keys sorted, so two equal deltas hash and compare equal
+    whatever order their keys were built in. */
+export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (typeof value === "object" && value !== null) {
     return `{${Object.keys(value)
@@ -3418,50 +3814,52 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-/** What applying a project's resolved stage config would change (T3O-43):
-    shared by the reconciler (which emits nothing when it is empty) and the
-    decider (which records exactly it). */
-export interface BoardProjectStageConfigPlan {
-  readonly configChanged: boolean;
-  /** Project-owned rows to write: new ones, and ones whose label or order moved. */
-  readonly upserts: ReadonlyArray<BoardStageDefinition>;
-  /** Project-owned rows the file no longer declares and no card holds. */
-  readonly deletedStageIds: ReadonlyArray<BoardStageId>;
-}
-
-export function planBoardProjectStageConfig(input: {
-  readonly board: BoardState;
-  readonly projectId: ProjectId;
-  readonly config: BoardProjectStageConfig;
-  /** The rows the file declares, as resolved; timestamps are `now`. */
-  readonly stages: ReadonlyArray<BoardStageDefinition>;
-}): BoardProjectStageConfigPlan {
-  const current = boardProjectStageConfig(input.board, input.projectId);
-  const configChanged = !boardProjectStageConfigsEqual(
-    current ?? EMPTY_BOARD_PROJECT_STAGE_CONFIG,
-    input.config,
-  );
-  const existing = boardAllStages(input.board).filter(
-    (stage) => stage.projectId === input.projectId,
-  );
-  const upserts: BoardStageDefinition[] = [];
-  for (const stage of input.stages) {
-    const prior = existing.find((candidate) => candidate.stageId === stage.stageId);
-    if (prior === undefined) upserts.push(stage);
-    else if (prior.label !== stage.label || prior.orderKey !== stage.orderKey) {
-      upserts.push({ ...stage, createdAt: prior.createdAt });
+/**
+ * Why a stage order is invalid, or null (D3, T3O-49): Build before Code
+ * review, Done last, and no role-less stage between CI and the merge stage
+ * (a stage there could change code after CI passed).
+ */
+export function boardStageOrderViolation(
+  stages: ReadonlyArray<BoardStageDefinition>,
+): string | null {
+  const ordered = [...stages].sort(compareBoardStages);
+  const roleIndex = (role: BoardStageRole) =>
+    ordered.findIndex((stage) => effectiveBoardStageRole(stage) === role);
+  const buildIndex = roleIndex("build");
+  const reviewIndex = roleIndex("review");
+  const doneIndex = roleIndex("done");
+  const mergeIndex = roleIndex("merge");
+  if (buildIndex >= 0 && reviewIndex >= 0 && buildIndex >= reviewIndex) {
+    return "the Build stage must come before the Code review stage";
+  }
+  if (doneIndex >= 0 && doneIndex !== ordered.length - 1) {
+    return "the Done stage must be last";
+  }
+  const ciIndex = ordered.findIndex((stage) => stage.stageId === BOARD_SEED_STAGE_IDS.ci);
+  if (ciIndex >= 0 && mergeIndex > ciIndex) {
+    const between = ordered
+      .slice(ciIndex + 1, mergeIndex)
+      .find((stage) => effectiveBoardStageRole(stage) === null);
+    if (between !== undefined) {
+      return `${between.label} can't sit between Continuous integration and ${ordered[mergeIndex]!.label}`;
     }
   }
-  const declared = new Set<string>(input.stages.map((stage) => stage.stageId));
-  const held = new Set<string>(input.board.cards.map((card) => card.stage));
-  const deletedStageIds = existing
-    .filter((stage) => !declared.has(stage.stageId) && !held.has(stage.stageId))
-    .map((stage) => stage.stageId);
-  return { configChanged, upserts, deletedStageIds };
+  return null;
 }
 
-export function isBoardProjectStageConfigPlanEmpty(plan: BoardProjectStageConfigPlan): boolean {
-  return !plan.configChanged && plan.upserts.length === 0 && plan.deletedStageIds.length === 0;
+/** The order key that places a new stage just before CI (T3O-49), or before
+    the merge stage on a board without CI; null when there is no room. */
+export function boardNewStageOrderKey(board: Pick<BoardState, "stages">): string | null {
+  const ordered = boardStagesInOrder(board);
+  const anchorIndex = ordered.findIndex(
+    (stage) => stage.stageId === BOARD_SEED_STAGE_IDS.ci,
+  );
+  const index =
+    anchorIndex >= 0
+      ? anchorIndex
+      : ordered.findIndex((stage) => effectiveBoardStageRole(stage) === "merge");
+  if (index < 0) return null;
+  return boardOrderKeyBetween(ordered[index - 1]?.orderKey ?? "", ordered[index]!.orderKey);
 }
 
 /** Whether a stage sits at or after the `build` role in board order (D11):
@@ -3899,10 +4297,7 @@ export function isBoardStageAtOrAfterSubBoardFloor(
 export type BoardCardProjectLock =
   | { readonly kind: "child"; readonly parentCardId: BoardCardId }
   | { readonly kind: "parent"; readonly childCount: number }
-  | { readonly kind: "built" }
-  /** The card sits in a stage its project's `t3o.json` added (T3O-43): no other
-      project's pipeline holds it, so the card would be in no stage at all. */
-  | { readonly kind: "project-stage"; readonly stageLabel: string };
+  | { readonly kind: "built" };
 
 export function boardCardProjectLock(input: {
   readonly board: BoardState;
@@ -3926,10 +4321,6 @@ export function boardCardProjectLock(input: {
     card.pullRequestHistory.length > 0
   ) {
     return { kind: "built" };
-  }
-  const stage = boardStageById(input.board, card.stage);
-  if (stage !== null && stage.projectId !== null) {
-    return { kind: "project-stage", stageLabel: stage.label };
   }
   return null;
 }
@@ -5424,6 +5815,10 @@ export const BoardStageCreateCommand = Schema.Struct({
   /** Optional role for the new stage — always null in practice (the three
       role-holders are seeded and undeletable); present for completeness. */
   role: Schema.optional(Schema.NullOr(BoardStageRole)),
+  /** Make the stage for one project (T3O-49): off by default, switched on
+      for that project. Absent makes a stage every project uses. */
+  forProjectId: Schema.optional(ProjectId),
+  actor: Schema.optional(BoardActivityActor),
   createdAt: IsoDateTime,
 });
 export type BoardStageCreateCommand = typeof BoardStageCreateCommand.Type;
@@ -5434,6 +5829,7 @@ export const BoardStageRenameCommand = Schema.Struct({
   commandId: CommandId,
   stageId: BoardStageId,
   label: TrimmedNonEmptyString,
+  actor: Schema.optional(BoardActivityActor),
   createdAt: IsoDateTime,
 });
 export type BoardStageRenameCommand = typeof BoardStageRenameCommand.Type;
@@ -5445,6 +5841,7 @@ export const BoardStageReorderCommand = Schema.Struct({
   commandId: CommandId,
   stageId: BoardStageId,
   orderKey: TrimmedNonEmptyString,
+  actor: Schema.optional(BoardActivityActor),
   createdAt: IsoDateTime,
 });
 export type BoardStageReorderCommand = typeof BoardStageReorderCommand.Type;
@@ -5455,25 +5852,146 @@ export const BoardStageDeleteCommand = Schema.Struct({
   type: Schema.Literal("board.stage.delete"),
   commandId: CommandId,
   stageId: BoardStageId,
+  actor: Schema.optional(BoardActivityActor),
   createdAt: IsoDateTime,
 });
 export type BoardStageDeleteCommand = typeof BoardStageDeleteCommand.Type;
 
-/**
- * Record a project's resolved `t3o.json` stage config (T3O-43). Internal: the
- * server's `BoardProjectConfig` reconciler dispatches it only when the
- * resolved result changed. `stages` are the project-owned rows the file
- * declares; the decider works out which old rows to retire or drop.
- */
-export const BoardProjectSetStageConfigCommand = Schema.Struct({
-  type: Schema.Literal("board.project.set-stage-config"),
+// ── Settings commands (T3O-49) ─────────────────────────────────────────
+// Stage and per-project config commands define what every project runs,
+// including shell commands, so they ride their own RPC at the settings-write
+// tier, never `board.dispatchCommand` (which only needs operate). Each
+// carries `actor`, which the server always overwrites, and those with no card
+// record it as the project's `lastChangedBy`.
+
+const BoardSettingsActor = BoardActivityActor.pipe(
+  Schema.withDecodingDefault(Effect.succeed(BOARD_SYSTEM_ACTOR)),
+);
+
+/** A project config edit names the version it was made against; a mismatch
+    is refused ("Changed elsewhere, reload") so no edit overwrites another. */
+const BoardExpectedConfigVersion = Schema.optional(Schema.String);
+
+export const BoardStageSetDefaultForProjectsCommand = Schema.Struct({
+  type: Schema.Literal("board.stage.set-default-for-projects"),
   commandId: CommandId,
-  projectId: ProjectId,
-  config: BoardProjectStageConfig,
-  stages: Schema.Array(BoardStageDefinition),
+  stageId: BoardStageId,
+  on: Schema.Boolean,
+  actor: BoardSettingsActor,
   createdAt: IsoDateTime,
 });
-export type BoardProjectSetStageConfigCommand = typeof BoardProjectSetStageConfigCommand.Type;
+export type BoardStageSetDefaultForProjectsCommand =
+  typeof BoardStageSetDefaultForProjectsCommand.Type;
+
+/** Switch a stage on or off for one project; null follows the default. */
+export const BoardProjectSetStageSwitchCommand = Schema.Struct({
+  type: Schema.Literal("board.project.set-stage-switch"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  stageId: BoardStageId,
+  on: Schema.NullOr(Schema.Boolean),
+  expectedConfigVersion: BoardExpectedConfigVersion,
+  actor: BoardSettingsActor,
+  createdAt: IsoDateTime,
+});
+export type BoardProjectSetStageSwitchCommand = typeof BoardProjectSetStageSwitchCommand.Type;
+
+/** Replace one stage's override for a project; null removes it. The server
+    normalizes it against global settings before dispatch. */
+export const BoardProjectSetStageOverrideCommand = Schema.Struct({
+  type: Schema.Literal("board.project.set-stage-override"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  stageId: BoardStageId,
+  patch: Schema.NullOr(
+    Schema.suspend(
+      (): Schema.Codec<BoardStageExecutionPatch, typeof BoardStageExecutionPatch.Encoded> =>
+        BoardStageExecutionPatch,
+    ),
+  ),
+  expectedConfigVersion: BoardExpectedConfigVersion,
+  actor: BoardSettingsActor,
+  createdAt: IsoDateTime,
+});
+export type BoardProjectSetStageOverrideCommand = typeof BoardProjectSetStageOverrideCommand.Type;
+
+export const BoardProjectSetCiStepsCommand = Schema.Struct({
+  type: Schema.Literal("board.project.set-ci-steps"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  steps: Schema.Array(BoardCiStep),
+  expectedConfigVersion: BoardExpectedConfigVersion,
+  actor: BoardSettingsActor,
+  createdAt: IsoDateTime,
+});
+export type BoardProjectSetCiStepsCommand = typeof BoardProjectSetCiStepsCommand.Type;
+
+/** The explicit "Run CI for this project" switch. Turning it off moves the
+    project's cards in CI on, with auto-merge disarmed. */
+export const BoardProjectSetCiEnabledCommand = Schema.Struct({
+  type: Schema.Literal("board.project.set-ci-enabled"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  on: Schema.Boolean,
+  expectedConfigVersion: BoardExpectedConfigVersion,
+  actor: BoardSettingsActor,
+  createdAt: IsoDateTime,
+});
+export type BoardProjectSetCiEnabledCommand = typeof BoardProjectSetCiEnabledCommand.Type;
+
+/** Drop every difference: the project follows the global pipeline again. */
+export const BoardProjectResetCommand = Schema.Struct({
+  type: Schema.Literal("board.project.reset"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  expectedConfigVersion: BoardExpectedConfigVersion,
+  actor: BoardSettingsActor,
+  createdAt: IsoDateTime,
+});
+export type BoardProjectResetCommand = typeof BoardProjectResetCommand.Type;
+
+/** What importing a `t3o.json` replaces a project's delta with. */
+export const BoardProjectImportDelta = Schema.Struct({
+  stageSwitches: Schema.Record(Schema.String, Schema.Boolean),
+  overrides: Schema.Record(
+    Schema.String,
+    Schema.suspend(
+      (): Schema.Codec<BoardStageExecutionPatch, typeof BoardStageExecutionPatch.Encoded> =>
+        BoardStageExecutionPatch,
+    ),
+  ),
+  ci: Schema.Struct({ steps: Schema.Array(BoardCiStep) }),
+  warnings: Schema.Array(Schema.String),
+});
+export type BoardProjectImportDelta = typeof BoardProjectImportDelta.Type;
+
+/** Replace a project's delta with a committed `t3o.json`, creating the global
+    stages it adds (default off, on for this project). The server resolves
+    the file; a client sends only the blob sha it confirmed. */
+export const BoardProjectImportFileCommand = Schema.Struct({
+  type: Schema.Literal("board.project.import-file"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  blobSha: TrimmedNonEmptyString,
+  delta: BoardProjectImportDelta,
+  createStages: Schema.Array(BoardStageDefinition),
+  expectedConfigVersion: BoardExpectedConfigVersion,
+  actor: BoardSettingsActor,
+  createdAt: IsoDateTime,
+});
+export type BoardProjectImportFileCommand = typeof BoardProjectImportFileCommand.Type;
+
+/** "No thanks" to a committed `t3o.json`: its notice stays away until the
+    file changes. Also recorded by Export, for the file it wrote. */
+export const BoardProjectDismissImportCommand = Schema.Struct({
+  type: Schema.Literal("board.project.dismiss-import"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  blobSha: TrimmedNonEmptyString,
+  actor: BoardSettingsActor,
+  createdAt: IsoDateTime,
+});
+export type BoardProjectDismissImportCommand = typeof BoardProjectDismissImportCommand.Type;
 
 /**
  * Start a thread for the card's CURRENT stage on demand (D7), the on-demand
@@ -6912,13 +7430,30 @@ export const BoardCardWorkerRemovalPayload = Schema.Struct({
 });
 export type BoardCardWorkerRemovalPayload = typeof BoardCardWorkerRemovalPayload.Type;
 
-/** A project's `t3o.json` stage config recorded (T3O-43): the whole resolved
-    config, the project-owned stage rows written, and the rows dropped. */
+/** A project's stage config recorded: since T3O-49 its whole new delta. A
+    T3O-43 payload also wrote and dropped the stage rows its file declared;
+    later payloads leave both lists empty (stage rows have their own events). */
 export const BoardProjectStageConfigSetPayload = Schema.Struct({
   projectId: ProjectId,
   config: BoardProjectStageConfig,
-  upserts: Schema.Array(BoardStageDefinition),
-  deletedStageIds: Schema.Array(BoardStageId),
+  upserts: Schema.Array(BoardStageDefinition).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  deletedStageIds: Schema.Array(BoardStageId).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Why it changed, for the activity rail and the CI-off reactor. */
+  cause: Schema.optionalKey(
+    Schema.Literals([
+      "switch",
+      "override",
+      "ci-steps",
+      "ci-enabled",
+      "reset",
+      "import",
+      "dismiss-import",
+      "stage-deleted",
+      "stage-created",
+    ]),
+  ),
 });
 export type BoardProjectStageConfigSetPayload = typeof BoardProjectStageConfigSetPayload.Type;
 // Worktree lifecycle payloads (t3o-09). Each carries the whole post-change
@@ -8466,13 +9001,13 @@ export const BoardStageRemovedShellEvent = Schema.Struct({
 });
 export type BoardStageRemovedShellEvent = typeof BoardStageRemovedShellEvent.Type;
 
-/** A project's `t3o.json` stage config changed (T3O-43): its resolved config,
-    plus the project-owned stage rows written and dropped with it. */
+/** A project's stage config changed (T3O-43/49): its delta as the shell
+    carries it, plus any stage rows a T3O-43 payload wrote and dropped. */
 export const BoardProjectStageConfigShellEvent = Schema.Struct({
   kind: Schema.Literal("project-stage-config"),
   sequence: NonNegativeInt,
   projectId: ProjectId,
-  config: BoardProjectStageConfig,
+  config: BoardProjectStageConfigShell,
   upserts: Schema.Array(BoardStageDefinition),
   deletedStageIds: Schema.Array(BoardStageId),
 });
@@ -8541,10 +9076,6 @@ export const BOARD_CLIENT_COMMANDS = [
   BoardLabelUpdateCommand,
   BoardLabelDeleteCommand,
   BoardLabelUndeleteCommand,
-  BoardStageCreateCommand,
-  BoardStageRenameCommand,
-  BoardStageReorderCommand,
-  BoardStageDeleteCommand,
   BoardCardStartStageThreadCommand,
   BoardCardCompleteStepCommand,
   BoardCardReopenStepCommand,
@@ -8609,19 +9140,50 @@ export const BOARD_INTERNAL_COMMANDS = [
   // move step lands after the git work behind it.
   BoardCardPlaceCommand,
   BoardCardMoveWorkerCommand,
-  // T3O-43: a project's committed t3o.json, reconciled by the server.
-  BoardProjectSetStageConfigCommand,
   // T3O-44: CI passes, and the board's own stage moves.
   BoardCardRecordCiCommand,
   BoardCardPipelineMoveCommand,
 ] as const;
 
 /**
+ * Stage and project config commands (T3O-49): `board.dispatchSettingsCommand`
+ * at the settings-write tier, never `board.dispatchCommand`.
+ */
+export const BOARD_SETTINGS_COMMANDS = [
+  BoardStageCreateCommand,
+  BoardStageRenameCommand,
+  BoardStageReorderCommand,
+  BoardStageDeleteCommand,
+  BoardStageSetDefaultForProjectsCommand,
+  BoardProjectSetStageSwitchCommand,
+  BoardProjectSetStageOverrideCommand,
+  BoardProjectSetCiStepsCommand,
+  BoardProjectSetCiEnabledCommand,
+  BoardProjectResetCommand,
+  BoardProjectImportFileCommand,
+  BoardProjectDismissImportCommand,
+] as const;
+
+/** The settings commands a client may send. Import is not one: the server
+    resolves the file itself (`board.projectConfig.import`). */
+export const BoardSettingsClientCommand = Schema.Union(
+  BOARD_SETTINGS_COMMANDS.filter(
+    (command): command is Exclude<typeof command, typeof BoardProjectImportFileCommand> =>
+      command !== BoardProjectImportFileCommand,
+  ),
+);
+export type BoardSettingsClientCommand = typeof BoardSettingsClientCommand.Type;
+
+/**
  * Every board command, as the board's own engine decodes and decides them
  * (T3O-56). Board commands are not orchestration commands: the client sends
  * its share through `board.dispatchCommand` (T3O-57).
  */
-export const BoardCommand = Schema.Union([...BOARD_CLIENT_COMMANDS, ...BOARD_INTERNAL_COMMANDS]);
+export const BoardCommand = Schema.Union([
+  ...BOARD_CLIENT_COMMANDS,
+  ...BOARD_INTERNAL_COMMANDS,
+  ...BOARD_SETTINGS_COMMANDS,
+]);
 export type BoardCommand = typeof BoardCommand.Type;
 
 /** The board commands a client may send (`board.dispatchCommand`). */
@@ -8649,6 +9211,8 @@ export const BOARD_EVENT_TYPES = [
   "board.stage-renamed",
   "board.stage-reordered",
   "board.stage-deleted",
+  // T3O-49: a stage's default for projects changed.
+  "board.stage-updated",
   "board.card-stage-thread-requested",
   "board.card-step-completed",
   "board.plans-proposed",
@@ -8691,7 +9255,7 @@ export const BOARD_EVENT_TYPES = [
   "board.card-worker-move-recorded",
   // T3O-66: a card's worker removed, or added back.
   "board.card-worker-removal",
-  // T3O-43: a project's t3o.json stage config.
+  // T3O-43/49: a project's stage config (its delta since T3O-49).
   "board.project-stage-config-set",
   // T3O-44: a CI pass's progress, outcome, fix or skip.
   "board.card-ci-recorded",
@@ -8743,9 +9307,9 @@ export const BoardShellSnapshot = Schema.Struct({
   /** Workers (T3O-62, D19). Absent on a local-only board, which is then
       exactly today's board. */
   workers: Schema.optionalKey(BoardWorkersState),
-  /** Per-project `t3o.json` stage configs (T3O-43). Absent when no project
-      has one, which is then exactly the global pipeline. */
-  projectStageConfigs: Schema.optionalKey(Schema.Record(ProjectId, BoardProjectStageConfig)),
+  /** Per-project deltas (T3O-49), shell-sized. Absent when no project has
+      one, which is then exactly the global pipeline. */
+  projectStageConfigs: Schema.optionalKey(Schema.Record(ProjectId, BoardProjectStageConfigShell)),
 });
 export type BoardShellSnapshot = typeof BoardShellSnapshot.Type;
 
@@ -8873,6 +9437,11 @@ export function makeBoardOrchestrationEvents<const Base extends Schema.Struct.Fi
     Schema.Struct({
       ...base,
       type: Schema.Literal("board.stage-renamed"),
+      payload: BoardStageRenamedPayload,
+    }),
+    Schema.Struct({
+      ...base,
+      type: Schema.Literal("board.stage-updated"),
       payload: BoardStageRenamedPayload,
     }),
     Schema.Struct({
@@ -9158,7 +9727,111 @@ export const BOARD_WS_METHODS = {
       human waiting on an answer: the forge has to confirm the pull request
       exists, and a refusal (not found, another repository) is read inline. */
   linkCardPullRequest: "board.linkCardPullRequest",
+  // T3O-49: stage and project config, at the settings-write tier.
+  dispatchSettingsCommand: "board.dispatchSettingsCommand",
+  getProjectConfig: "board.projectConfig.get",
+  projectImportCandidates: "board.projectConfig.importCandidates",
+  importProjectFile: "board.projectConfig.import",
+  exportProjectFile: "board.projectConfig.export",
 } as const;
+
+// ── Project config RPCs (T3O-49) ───────────────────────────────────────
+
+export const BoardProjectConfigInput = Schema.Struct({ projectId: ProjectId });
+export type BoardProjectConfigInput = typeof BoardProjectConfigInput.Type;
+
+/** A project's full delta, with the prompts and step bodies the shell omits. */
+export const BoardProjectConfigDetail = Schema.Struct({
+  projectId: ProjectId,
+  config: BoardProjectStageConfig,
+});
+export type BoardProjectConfigDetail = typeof BoardProjectConfigDetail.Type;
+
+/** One new or changed command or prompt an import would install, shown in
+    full before a human confirms it. */
+export const BoardProjectImportText = Schema.Struct({
+  where: TrimmedNonEmptyString,
+  kind: Schema.Literals(["command", "prompt"]),
+  text: Schema.String,
+});
+export type BoardProjectImportText = typeof BoardProjectImportText.Type;
+
+/**
+ * A project's committed `t3o.json` against its delta. `none`: no file.
+ * `matches`: importing changes nothing. `differs`: it would; `dismissed` says
+ * whether "No thanks" answered this blob. `unavailable`: no checkout to read.
+ */
+export const BoardProjectImportCandidate = Schema.Struct({
+  projectId: ProjectId,
+  status: Schema.Literals(["none", "matches", "differs", "unavailable"]),
+  blobSha: Schema.NullOr(TrimmedNonEmptyString),
+  /** Read from the local base branch because the fetch failed. */
+  asOfLastFetch: Schema.Boolean,
+  dismissed: Schema.Boolean,
+  reason: Schema.NullOr(Schema.String),
+  /** Present when `differs`. */
+  preview: Schema.NullOr(
+    Schema.Struct({
+      delta: BoardProjectImportDelta,
+      createStages: Schema.Array(Schema.Struct({ stageId: BoardStageId, label: Schema.String })),
+      texts: Schema.Array(BoardProjectImportText),
+    }),
+  ),
+});
+export type BoardProjectImportCandidate = typeof BoardProjectImportCandidate.Type;
+
+export const BoardProjectImportCandidatesInput = Schema.Struct({
+  projectIds: Schema.Array(ProjectId),
+  /** "Check again": skip the five-minute memo. */
+  refresh: Schema.optional(Schema.Boolean),
+});
+export type BoardProjectImportCandidatesInput = typeof BoardProjectImportCandidatesInput.Type;
+
+export const BoardProjectImportInput = Schema.Struct({
+  projectId: ProjectId,
+  blobSha: TrimmedNonEmptyString,
+  expectedConfigVersion: Schema.String,
+});
+export type BoardProjectImportInput = typeof BoardProjectImportInput.Type;
+
+export const BoardProjectImportResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("imported"), sequence: NonNegativeInt }),
+  /** The committed file is no longer the blob the human confirmed. */
+  Schema.Struct({ outcome: Schema.Literal("file-changed") }),
+  Schema.Struct({ outcome: Schema.Literal("version-mismatch") }),
+  Schema.Struct({ outcome: Schema.Literal("unavailable"), reason: Schema.String }),
+]);
+export type BoardProjectImportResult = typeof BoardProjectImportResult.Type;
+
+export const BoardProjectExportResult = Schema.Union([
+  /** Written to the checkout, not committed. */
+  Schema.Struct({
+    outcome: Schema.Literal("written"),
+    path: Schema.String,
+    content: Schema.String,
+  }),
+  /** No usable checkout: the client offers the content as a download. */
+  Schema.Struct({
+    outcome: Schema.Literal("download"),
+    content: Schema.String,
+    reason: Schema.String,
+  }),
+]);
+export type BoardProjectExportResult = typeof BoardProjectExportResult.Type;
+
+/** A settings command was refused or could not be stored. `code` lets the
+    client keep unsaved input and say "Changed elsewhere, reload". */
+export class BoardSettingsCommandError extends Schema.TaggedError<BoardSettingsCommandError>()(
+  "BoardSettingsCommandError",
+  {
+    code: Schema.Literals(["version-mismatch", "refused", "internal"]),
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+/** The message a stale config edit is refused with. */
+export const BOARD_CONFIG_VERSION_MISMATCH = "Changed elsewhere, reload.";
 
 /**
  * The streaming subset of `BOARD_WS_METHODS`, spread as one member into
@@ -9846,6 +10519,31 @@ export const BOARD_RPCS = [
     success: BoardLinkCardPullRequestResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
+  Rpc.make(BOARD_WS_METHODS.dispatchSettingsCommand, {
+    payload: BoardSettingsClientCommand,
+    success: Schema.Struct({ sequence: NonNegativeInt }),
+    error: Schema.Union([BoardSettingsCommandError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WS_METHODS.getProjectConfig, {
+    payload: BoardProjectConfigInput,
+    success: BoardProjectConfigDetail,
+    error: Schema.Union([BoardSnapshotError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WS_METHODS.projectImportCandidates, {
+    payload: BoardProjectImportCandidatesInput,
+    success: Schema.Array(BoardProjectImportCandidate),
+    error: Schema.Union([BoardSnapshotError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WS_METHODS.importProjectFile, {
+    payload: BoardProjectImportInput,
+    success: BoardProjectImportResult,
+    error: Schema.Union([BoardSettingsCommandError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(BOARD_WS_METHODS.exportProjectFile, {
+    payload: BoardProjectConfigInput,
+    success: BoardProjectExportResult,
+    error: Schema.Union([BoardSettingsCommandError, EnvironmentAuthorizationError]),
+  }),
   // T3O-62: the central server's `board.workers.*`, and the worker side's
   // `boardWorker.*` the central server calls over its own session.
   ...BOARD_WORKERS_RPCS,
@@ -9892,6 +10590,13 @@ export const BOARD_RPC_SCOPES = {
   [BOARD_WS_METHODS.detachCardFile]: AuthOrchestrationOperateScope,
   // A board write like any other: it changes the card's pull request.
   [BOARD_WS_METHODS.linkCardPullRequest]: AuthOrchestrationOperateScope,
+  // T3O-49: stage and project config define the commands every card runs,
+  // so they sit at the settings tier; reading a config is a board read.
+  [BOARD_WS_METHODS.dispatchSettingsCommand]: AuthSettingsWriteScope,
+  [BOARD_WS_METHODS.getProjectConfig]: AuthOrchestrationReadScope,
+  [BOARD_WS_METHODS.projectImportCandidates]: AuthSettingsWriteScope,
+  [BOARD_WS_METHODS.importProjectFile]: AuthSettingsWriteScope,
+  [BOARD_WS_METHODS.exportProjectFile]: AuthSettingsWriteScope,
   // T3O-62: worker management and the worker side's handshake (D19).
   ...BOARD_WORKER_RPC_SCOPES,
   ...BOARD_WORKER_GATEWAY_RPC_SCOPES,
@@ -11401,20 +12106,26 @@ export const DEFAULT_BOARD_CI_FIX_PROMPT =
 /** The fix attempts one CI entry allows before the card goes back to review. */
 export const DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS = 2;
 
+/** CI failure round trips allowed before the card stops for a human (T3O-49). */
+export const DEFAULT_BOARD_CI_MAX_ROUND_TRIPS = 3;
+export const BoardCiMaxRoundTrips = NonNegativeInt.check(Schema.isLessThanOrEqualTo(10));
+
 /**
- * The Continuous integration stage's member (T3O-44). The board runs `steps`
- * itself; an agent runs only when one fails. `prompt`, `model` and
- * `runtimeMode` configure that fix agent. `steps` are defined per project in
- * `t3o.json` (`stages.settings.ci`); the global list is always empty, so a
- * board with no project file never has CI. Build mode, unattended and
- * auto-advance are forced by `resolveBoardStageExecution`.
+ * The Continuous integration stage's member (T3O-44/49). The board runs each
+ * project's CI steps (its delta's `ci.steps`); a fix agent runs only when one
+ * fails. `prompt`, `model` and `runtimeMode` configure that fix agent. Build
+ * mode, unattended and auto-advance are forced by
+ * `resolveBoardStageExecution`.
  */
 export const BoardStageExecutionCi = Schema.Struct({
   kind: Schema.Literal("ci"),
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  steps: Schema.Array(BoardCiStepDefinition).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   maxFixAttempts: NonNegativeInt.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_CI_MAX_FIX_ATTEMPTS)),
+  ),
+  /** CI failure round trips (send-backs to review, returns from merge for
+      conflicts or failing checks) before the card stops for a human (T3O-49). */
+  maxRoundTrips: BoardCiMaxRoundTrips.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_BOARD_CI_MAX_ROUND_TRIPS)),
   ),
   autoExecute: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   prompt: Schema.String.pipe(
@@ -11795,9 +12506,8 @@ export const BoardStageExecutionPatch = Schema.Struct({
   autoMerge: Schema.optionalKey(Schema.Boolean),
   deleteBranchOnDone: Schema.optionalKey(Schema.Boolean),
   submit: Schema.optionalKey(BoardStepExecutionPatch),
-  enabled: Schema.optionalKey(Schema.Boolean),
-  steps: Schema.optionalKey(Schema.Array(BoardCiStepDefinition)),
   maxFixAttempts: Schema.optionalKey(NonNegativeInt),
+  maxRoundTrips: Schema.optionalKey(BoardCiMaxRoundTrips),
 });
 export type BoardStageExecutionPatch = typeof BoardStageExecutionPatch.Type;
 
@@ -11828,7 +12538,7 @@ export const BOARD_STAGE_EXECUTION_PATCH_KEYS: Readonly<
   review: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "rounds", "draftPullRequests", "phases"],
   merge: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "strategy", "autoMerge", "deleteBranchOnDone"],
   build: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "submit"],
-  ci: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "enabled", "steps", "maxFixAttempts"],
+  ci: [...BOARD_STAGE_EXECUTION_PATCH_BASE_KEYS, "maxFixAttempts", "maxRoundTrips"],
 };
 
 /** The member a stage id resolves to in `resolveBoardStageExecution`: the
@@ -11987,8 +12697,8 @@ export function resolveBoardStageExecution(
     };
   }
   if (stageId === BOARD_SEED_STAGE_IDS.ci) {
-    // CI (T3O-44): the steps come from the project file; the fix agent always
-    // runs in build mode, unattended, and a pass always moves the card on.
+    // CI (T3O-44/49): the steps live in the project's delta; the fix agent
+    // always runs in build mode, unattended, and a pass always moves on.
     const base = applyBoardStageExecutionPatch(
       configured !== undefined && isBoardCiStageExecution(configured)
         ? configured

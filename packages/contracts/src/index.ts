@@ -57,6 +57,7 @@ export * from "./boardEnvelope.ts";
 export * from "./boardStopSignal.ts";
 export * from "./boardRetrySchedule.ts";
 export * from "./t3oProjectFile.ts";
+export * from "./boardProjectConfig.ts";
 export * from "./commandOrigin.ts";
 export * from "./t3ProjectFile.ts";
 export * from "./editor.ts";
