@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 /** JS form of the T3o Android workflow grep (`[[:space:]]` → `\s`). */
 const APPLICATION_ID = /applicationId\s+['"]com\.brentkelly\.t3o['"]/;
