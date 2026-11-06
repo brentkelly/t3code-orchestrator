@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   boardMoveLeavesPlanningUnwritten,
+  boardMoveNeedsOverride,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
   isBoardStageManuallySelectable,
@@ -387,5 +388,19 @@ describe("boardMoveLeavesPlanningUnwritten", () => {
 
   it("does not ask for a sub-board child, which its parent planned", () => {
     expect(asks(ids.planning, ids.ready, 0, "card-parent")).toBe(false);
+  });
+});
+
+describe("boardMoveNeedsOverride", () => {
+  const ids = BOARD_SEED_STAGE_IDS;
+
+  it("does not override an adjacent move", () => {
+    expect(boardMoveNeedsOverride(stages, ids.backlog, ids.sprint)).toBe(false);
+    expect(boardMoveNeedsOverride(stages, ids.ready, ids.planning)).toBe(false);
+  });
+
+  it("overrides a jump that skips a stage", () => {
+    expect(boardMoveNeedsOverride(stages, ids.backlog, ids.ready)).toBe(true);
+    expect(boardMoveNeedsOverride(stages, ids.sprint, ids.ready)).toBe(true);
   });
 });

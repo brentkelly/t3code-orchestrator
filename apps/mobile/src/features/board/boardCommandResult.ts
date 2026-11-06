@@ -3,6 +3,14 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  boardStageWithRole,
+  boardSubBoardFloorStage,
+  isBoardStageAtOrAfterBuild,
+  type BoardStageDefinition,
+  type BoardStageId,
+  type BoardState,
+} from "@t3tools/contracts";
 
 const APPLIED_OUTCOMES = new Set([
   "merged",
@@ -105,16 +113,28 @@ export function boardCommandDidApply(result: AtomCommandResult<unknown, unknown>
   return true;
 }
 
+function stageState(stages: ReadonlyArray<BoardStageDefinition>): BoardState {
+  return { cards: [], stages, nextCardNumberByProject: {} };
+}
+
 export function boardCanShowApprovePlans(input: {
   readonly planCount: number;
   readonly children: ReadonlyArray<{ readonly archivedAt: string | null }>;
   readonly parentCardId: string | null;
   readonly archivedAt: string | null;
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+  readonly stage: BoardStageId;
 }): boolean {
+  const board = stageState(input.stages);
+  const buildStage = boardStageWithRole(board, "build");
+  const floorStage = boardSubBoardFloorStage(board);
   return (
     input.planCount >= 2 &&
     input.children.every((child) => child.archivedAt !== null) &&
     input.parentCardId === null &&
-    input.archivedAt === null
+    input.archivedAt === null &&
+    floorStage !== null &&
+    buildStage !== null &&
+    (!isBoardStageAtOrAfterBuild(board, input.stage) || input.stage === buildStage.stageId)
   );
 }

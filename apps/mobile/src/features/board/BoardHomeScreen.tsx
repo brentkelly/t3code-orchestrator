@@ -13,6 +13,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   FlatList,
   Pressable,
   ScrollView,
@@ -32,7 +33,11 @@ import { boardEnvironment } from "../../state/board";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { boardCardStatus } from "./boardCardStatus";
 import { BoardCreateSheet } from "./BoardCreateSheet";
-import { boardProjectIdsForHomeScope } from "./boardHomeProjectScope";
+import {
+  boardCreateProjectForHomeScope,
+  boardProjectIdsForHomeScope,
+  encodeBoardArchiveProjectIds,
+} from "./boardHomeProjectScope";
 import { boardStageLiveCounts, cardsInStage, liveTopLevelBoardCards } from "./boardStageColumns";
 
 export function BoardHomeScreen(props: {
@@ -82,19 +87,32 @@ export function BoardHomeScreen(props: {
       : defaultBoardStageId({ stages, cards: liveCards });
   const { width } = useWindowDimensions();
   const pagerRef = useRef<FlatList<BoardStageDefinition>>(null);
-  const createProject = props.projects.find(
-    (project) =>
-      project.environmentId === props.environmentId &&
-      (projectIds === null || projectIds.includes(project.id)),
+  const createProject = useMemo(
+    () =>
+      boardCreateProjectForHomeScope({
+        scopes,
+        selectedProjectKey: props.selectedProjectKey,
+        environmentId: props.environmentId,
+        projects: props.projects,
+      }),
+    [props.environmentId, props.projects, props.selectedProjectKey, scopes],
   );
   const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
-    if (props.createRequested) {
+    if (!props.createRequested) return;
+    props.onCreateHandled();
+    if (createProject) {
       setCreateOpen(true);
-      props.onCreateHandled();
+      return;
     }
-  }, [props.createRequested, props.onCreateHandled]);
+    Alert.alert(
+      "Could not create",
+      props.selectedProjectKey === null
+        ? "This environment has no project to put a card in."
+        : "No project matches the Home filter.",
+    );
+  }, [createProject, props.createRequested, props.onCreateHandled, props.selectedProjectKey]);
 
   useEffect(() => {
     if (resolvedStageId === null) return;
@@ -188,12 +206,13 @@ export function BoardHomeScreen(props: {
           );
         })}
         <Pressable
-          onPress={() =>
+          onPress={() => {
+            const archiveProjectIds = encodeBoardArchiveProjectIds(projectIds);
             navigation.navigate("BoardArchived", {
               environmentId: String(props.environmentId),
-              ...(projectIds === null ? {} : { projectIds: projectIds.join(",") }),
-            })
-          }
+              ...(archiveProjectIds === undefined ? {} : { projectIds: archiveProjectIds }),
+            });
+          }}
           className="rounded-full bg-grouped-card px-3 py-1.5"
         >
           <Text className="text-xs font-t3-medium text-foreground-muted">Archive</Text>

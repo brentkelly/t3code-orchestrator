@@ -3,7 +3,12 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildHomeProjectScopes } from "../home/homeThreadList";
-import { boardProjectIdsForHomeScope } from "./boardHomeProjectScope";
+import {
+  boardCreateProjectForHomeScope,
+  boardProjectIdsForHomeScope,
+  encodeBoardArchiveProjectIds,
+  parseBoardArchiveProjectIds,
+} from "./boardHomeProjectScope";
 
 const envA = EnvironmentId.make("environment-a");
 const envB = EnvironmentId.make("environment-b");
@@ -91,5 +96,76 @@ describe("boardProjectIdsForHomeScope", () => {
         environmentId: envA,
       }),
     ).toEqual([]);
+  });
+});
+
+describe("encodeBoardArchiveProjectIds / parseBoardArchiveProjectIds", () => {
+  it("omits the param when Home is unscoped", () => {
+    expect(encodeBoardArchiveProjectIds(null)).toBeUndefined();
+    expect(parseBoardArchiveProjectIds(undefined)).toBeNull();
+  });
+
+  it("keeps an empty Home scope empty instead of treating it as every project", () => {
+    expect(encodeBoardArchiveProjectIds([])).toBe("");
+    expect(parseBoardArchiveProjectIds("")).toEqual([]);
+    expect(parseBoardArchiveProjectIds("")).not.toBeNull();
+  });
+
+  it("round-trips a list of project ids", () => {
+    const encoded = encodeBoardArchiveProjectIds([projectLocal, projectRemote]);
+    expect(encoded).toBe(`${projectLocal},${projectRemote}`);
+    expect(parseBoardArchiveProjectIds(encoded)).toEqual([projectLocal, projectRemote]);
+  });
+});
+
+describe("boardCreateProjectForHomeScope", () => {
+  it("uses Home's scope representative, not the first matching props.projects entry", () => {
+    const checkoutA = project(envA, projectLocal, "checkout-a", {
+      canonicalKey: "github.com/pingdotgg/t3code",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "git@github.com:pingdotgg/t3code.git",
+      },
+    });
+    const checkoutB = project(envA, projectRemote, "checkout-b", {
+      canonicalKey: "github.com/pingdotgg/t3code",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "git@github.com:pingdotgg/t3code.git",
+      },
+    });
+    const scopes = [
+      {
+        key: "github.com/pingdotgg/t3code",
+        title: "t3code",
+        representative: checkoutB,
+        projects: [checkoutB, checkoutA],
+        projectRefs: [
+          { environmentId: envA, projectId: projectRemote },
+          { environmentId: envA, projectId: projectLocal },
+        ],
+      },
+    ];
+    expect(
+      boardCreateProjectForHomeScope({
+        scopes,
+        selectedProjectKey: scopes[0]!.key,
+        environmentId: envA,
+        projects: [checkoutA, checkoutB],
+      })?.id,
+    ).toBe(projectRemote);
+  });
+
+  it("returns null when the selected key matches no scope", () => {
+    expect(
+      boardCreateProjectForHomeScope({
+        scopes: [],
+        selectedProjectKey: "missing-scope",
+        environmentId: envA,
+        projects: [project(envA, projectLocal, "t3code")],
+      }),
+    ).toBeNull();
   });
 });

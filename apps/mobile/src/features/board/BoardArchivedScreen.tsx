@@ -1,11 +1,12 @@
 import { boardArchivedCardsInScope } from "@t3tools/client-runtime/board";
-import { EnvironmentId, ProjectId, type BoardCardShell } from "@t3tools/contracts";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import { EnvironmentId, type BoardCardShell } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
-import { View } from "react-native";
+import { Alert, View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/AppActivityIndicator";
 import { AppText as Text } from "../../components/AppText";
@@ -18,6 +19,8 @@ import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { boardEnvironment } from "../../state/board";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { boardCommandDidApply, describeBoardCommandResult } from "./boardCommandResult";
+import { parseBoardArchiveProjectIds } from "./boardHomeProjectScope";
 
 function archivedCardsAtom(environmentId: EnvironmentId) {
   return boardEnvironment.archivedCardsAtom({ environmentId, input: {} });
@@ -45,9 +48,21 @@ export function BoardArchivedScreen({ route }: BoardArchivedScreenProps) {
 
   const snapshot = Option.getOrNull(AsyncResult.value(result));
   const scopeProjectId = useMemo(
-    () => parseArchiveProjectIds(route.params.projectIds),
+    () => parseBoardArchiveProjectIds(route.params.projectIds),
     [route.params.projectIds],
   );
+
+  const run = (work: () => Promise<AtomCommandResult<unknown, unknown>>) => {
+    void work().then((commandResult) => {
+      const feedback = describeBoardCommandResult(commandResult);
+      if (feedback !== null) {
+        Alert.alert("Could not complete", feedback);
+      }
+      if (boardCommandDidApply(commandResult)) {
+        appAtomRegistry.refresh(archivedCardsAtom(environmentId));
+      }
+    });
+  };
   const cards = useMemo(() => {
     const archived = snapshot?.cards ?? [];
     if (scopeProjectId === null) return boardArchivedCardsInScope(archived, null);
@@ -118,9 +133,7 @@ export function BoardArchivedScreen({ route }: BoardArchivedScreenProps) {
                 })
               }
               onRestore={() =>
-                void unarchiveCard({ environmentId: parsed, input: { cardId: card.cardId } }).then(
-                  () => appAtomRegistry.refresh(archivedCardsAtom(parsed)),
-                )
+                run(() => unarchiveCard({ environmentId: parsed, input: { cardId: card.cardId } }))
               }
               onDelete={() =>
                 showConfirmDialog({
@@ -129,10 +142,12 @@ export function BoardArchivedScreen({ route }: BoardArchivedScreenProps) {
                   confirmText: "Delete",
                   destructive: true,
                   onConfirm: () =>
-                    void deleteCard({
-                      environmentId: parsed,
-                      input: { cardId: card.cardId },
-                    }).then(() => appAtomRegistry.refresh(archivedCardsAtom(parsed))),
+                    run(() =>
+                      deleteCard({
+                        environmentId: parsed,
+                        input: { cardId: card.cardId },
+                      }),
+                    ),
                 })
               }
             />
@@ -167,20 +182,6 @@ function ArchivedRow(props: {
       </View>
     </View>
   );
-}
-
-function parseArchiveProjectIds(value: string | undefined): ReadonlyArray<ProjectId> | null {
-  if (value === undefined || value.length === 0) return null;
-  const ids: ProjectId[] = [];
-  for (const part of value.split(",")) {
-    if (part.length === 0) continue;
-    try {
-      ids.push(ProjectId.make(part));
-    } catch {
-      return [];
-    }
-  }
-  return ids;
 }
 
 function parseEnvironmentId(value: string | undefined): EnvironmentId | null {

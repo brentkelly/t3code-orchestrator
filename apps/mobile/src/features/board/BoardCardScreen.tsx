@@ -1,5 +1,6 @@
 import {
   boardMoveLeavesPlanningUnwritten,
+  boardMoveNeedsOverride,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
   boardThreadOpen,
@@ -134,7 +135,11 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
       run(() =>
         moveCard({
           environmentId,
-          input: { cardId: card.id, toStage },
+          input: {
+            cardId: card.id,
+            toStage,
+            ...(boardMoveNeedsOverride(stages, card.stage, toStage) ? { override: true } : {}),
+          },
         }),
       );
     if (
@@ -258,6 +263,8 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
               children: detail.children,
               parentCardId: card.parentCardId,
               archivedAt: card.archivedAt,
+              stages,
+              stage: card.stage,
             }) ? (
               <MaterialButton
                 label="Approve plans"
