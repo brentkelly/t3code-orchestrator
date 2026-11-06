@@ -5,6 +5,7 @@ export {
   boardCiAwareNextStageId,
   boardMoveLeavesPlanningUnwritten,
   boardMoveNeedsOverride,
+  boardSkipCiAction,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
   isBoardStageManuallySelectable,
@@ -21,6 +22,7 @@ export {
 } from "./boardThreadOpen.ts";
 export { boardArchivedCardsInScope } from "./boardArchivedCards.ts";
 export {
+  boardCardDisplayStages,
   boardCardPipelineStages,
   boardCardStageGoneNotes,
   boardPipelineColumns,

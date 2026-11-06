@@ -1,7 +1,9 @@
 import {
+  boardCardDisplayStages,
   boardCardPipelineStages,
   boardMoveLeavesPlanningUnwritten,
   boardMoveNeedsOverride,
+  boardSkipCiAction,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
   boardThreadOpenForCard,
@@ -77,6 +79,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
   const moveCard = useAtomCommand(boardEnvironment.moveCard);
   const mergeCard = useAtomCommand(boardEnvironment.mergeCardPullRequest);
   const submitCard = useAtomCommand(boardEnvironment.submitCardForMerge);
+  const skipCi = useAtomCommand(boardEnvironment.skipCi);
   const archiveCard = useAtomCommand(boardEnvironment.archiveCard);
   const unarchiveCard = useAtomCommand(boardEnvironment.unarchiveCard);
   const deleteCard = useAtomCommand(boardEnvironment.deleteCard);
@@ -123,6 +126,10 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
     hasBranch: card.worktree !== null,
     blocked: shell?.blocked === true,
     stepHeld: shell?.held === true,
+  });
+  const skipCiAction = boardSkipCiAction(stages, {
+    stageId: card.stage,
+    ciEntryLive: card.ci != null,
   });
   const pullRequest = boardCardDisplayPullRequest(card);
   const threadOpen = boardThreadOpenForCard({
@@ -184,6 +191,16 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
     go();
   };
 
+  const requestSkipCi = () => {
+    if (skipCiAction === null) return;
+    confirm({
+      title: `Skip CI for ${card.key}?`,
+      message: `Moves the card to ${skipCiAction.toLabel} without a passing CI run. The skip is recorded on the card under your name.`,
+      confirmText: skipCiAction.confirmLabel,
+      onConfirm: () => run(() => skipCi({ environmentId, input: { cardId: card.id } })),
+    });
+  };
+
   return (
     <>
       <ScreenHeader
@@ -194,6 +211,15 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
             title: "Card actions",
             icon: "ellipsis",
             items: [
+              ...(skipCiAction === null
+                ? []
+                : [
+                    {
+                      id: "skip-ci",
+                      title: skipCiAction.label,
+                      onPress: requestSkipCi,
+                    },
+                  ]),
               ...selectableStages
                 .filter((stage) => stage.stageId !== card.stage)
                 .map((stage) => ({
@@ -295,8 +321,17 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
           <Section title="Children">
             {liveChildren.map((child) => {
               const childShell = board?.cards.find((entry) => entry.cardId === child.cardId);
+              const childStages = boardCardDisplayStages(
+                { stages: catalogue, projectStageConfigs },
+                {
+                  stage: child.stage,
+                  projectId: childShell?.projectId ?? card.projectId,
+                },
+              );
               const tone =
-                childShell === undefined ? null : boardCardStatus({ card: childShell, stages });
+                childShell === undefined
+                  ? null
+                  : boardCardStatus({ card: childShell, stages: childStages });
               return (
                 <RowPressable
                   key={child.cardId}
@@ -318,7 +353,7 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
                       <Text className="mt-0.5 text-sm text-foreground-muted">
                         {child.key}
                         {" · "}
-                        {stages.find((stage) => stage.stageId === child.stage)?.label ??
+                        {childStages.find((stage) => stage.stageId === child.stage)?.label ??
                           child.stage}
                       </Text>
                     </View>
@@ -378,6 +413,13 @@ export function BoardCardScreen({ route }: BoardCardScreenProps) {
               <Text className="text-sm text-foreground-muted">{primary.disabledReason}</Text>
             ) : null}
           </View>
+        ) : skipCiAction !== null ? (
+          <Button
+            label={skipCiAction.label}
+            tone="primary"
+            disabled={busy}
+            onPress={requestSkipCi}
+          />
         ) : currentStage !== undefined &&
           effectiveBoardStageRole(currentStage) === "done" &&
           card.archivedAt === null ? (

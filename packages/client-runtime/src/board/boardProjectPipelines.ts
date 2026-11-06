@@ -222,3 +222,15 @@ export function boardCardPipelineStages(
     .filter((stage) => !stage.retired || stage.stageId === card.stage)
     .map(({ retired: _retired, ...stage }) => ({ ...stage, projectId: null }));
 }
+
+/** A card row's stages: its project pipeline, plus its own stage if that is another project's. */
+export function boardCardDisplayStages(
+  view: Pick<BoardStageView, "stages" | "projectStageConfigs">,
+  card: { readonly stage: string; readonly projectId: ProjectId },
+): ReadonlyArray<BoardStageDefinition> {
+  const pipeline = boardCardPipelineStages(view, card);
+  if (pipeline.some((stage) => stage.stageId === card.stage)) return pipeline;
+  const extra = (view.stages ?? []).find((stage) => stage.stageId === card.stage);
+  if (extra === undefined) return pipeline;
+  return [...pipeline, extra].sort(compareBoardStages);
+}

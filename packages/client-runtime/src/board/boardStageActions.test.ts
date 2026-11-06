@@ -12,6 +12,7 @@ import {
   boardCiAwareNextStageId,
   boardMoveLeavesPlanningUnwritten,
   boardMoveNeedsOverride,
+  boardSkipCiAction,
   boardStagePrimaryAction,
   boardStageSecondaryActions,
   isBoardStageManuallySelectable,
@@ -86,6 +87,36 @@ describe("boardStagePrimaryAction", () => {
       kind: "move",
       toStage: BOARD_SEED_STAGE_IDS.merge,
     });
+  });
+
+  it("offers Skip CI while a live CI entry has no forward move", () => {
+    const withCi = BOARD_SEED_STAGES;
+    expect(
+      boardStagePrimaryAction(withCi, BOARD_SEED_STAGE_IDS.ci, { ciEntryLive: true }),
+    ).toBeNull();
+    expect(
+      boardSkipCiAction(withCi, {
+        stageId: BOARD_SEED_STAGE_IDS.ci,
+        ciEntryLive: true,
+      }),
+    ).toEqual({
+      label: "Skip CI",
+      confirmLabel: "Skip CI and move to Ready for merge",
+      toStage: BOARD_SEED_STAGE_IDS.merge,
+      toLabel: "Ready for merge",
+    });
+    expect(
+      boardSkipCiAction(withCi, {
+        stageId: BOARD_SEED_STAGE_IDS.ci,
+        ciEntryLive: false,
+      }),
+    ).toBeNull();
+    expect(
+      boardSkipCiAction(withCi, {
+        stageId: BOARD_SEED_STAGE_IDS.review,
+        ciEntryLive: true,
+      }),
+    ).toBeNull();
   });
 
   it("walks CI as the next stage, never past a live entry (boardCiAwareNextStageId)", () => {

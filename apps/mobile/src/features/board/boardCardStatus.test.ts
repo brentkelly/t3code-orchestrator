@@ -283,6 +283,15 @@ describe("boardCardStatus", () => {
     ).toBe("Running");
   });
 
+  it("keeps Needs a human for a held card in a stage the parent pipeline dropped", () => {
+    const parentPipeline = BOARD_SEED_STAGES.filter((stage) => stage.stageId !== ids.ci);
+    const heldInCi = card({ stage: ids.ci, held: true });
+    expect(boardCardStatus({ card: heldInCi, stages: parentPipeline })).toBeNull();
+    expect(boardCardStatus({ card: heldInCi, stages: BOARD_SEED_STAGES })?.label).toBe(
+      "Needs a human",
+    );
+  });
+
   it("inherits a child's Input needed onto an idle split parent", () => {
     const parent = card({
       stage: ids.planning,
