@@ -5,7 +5,7 @@
  * server's checkout (`git show <remote>/<base>:t3o.json`), after a fetch of
  * the primary remote, keyed by its blob sha; with no fetch it falls back to
  * the local base, flagged "as of last fetch". Writes the working-tree file
- * uncommitted. Never fails: a project with no checkout here is
+ * uncommitted, and refuses to overwrite one with uncommitted edits. Never fails: a project with no checkout here is
  * `unavailable`, with the reason.
  *
  * A checkout that lives only on a worker is not read yet (it needs worker
@@ -95,8 +95,25 @@ const make = Effect.gen(function* () {
     const remote = yield* git
       .resolvePrimaryRemoteName(root)
       .pipe(Effect.catchCause(() => Effect.succeed(null)));
-    const localBranch = (yield* run(root, ["symbolic-ref", "--short", "HEAD"])) ?? "HEAD";
-    let ref = localBranch;
+    const exists = (candidate: string) =>
+      run(root, ["rev-parse", "--verify", "--quiet", `${candidate}^{commit}`]).pipe(
+        Effect.map((sha) => sha !== null),
+      );
+    // The default branch, never the checkout's current one: the remote's
+    // HEAD, else main or master, and the current branch only as a last resort.
+    const firstExisting = Effect.fn("BoardProjectFile.firstExisting")(function* (
+      candidates: ReadonlyArray<string | null>,
+    ) {
+      for (const candidate of candidates) {
+        if (candidate !== null && (yield* exists(candidate))) return candidate;
+      }
+      return null;
+    });
+    const localDefault =
+      (yield* firstExisting(["main", "master"])) ??
+      (yield* run(root, ["symbolic-ref", "--short", "HEAD"])) ??
+      "HEAD";
+    let ref = localDefault;
     let asOfLastFetch = true;
     if (remote !== null) {
       const fetched = (yield* run(root, ["fetch", "--quiet", remote], 30_000)) !== null;
@@ -105,10 +122,15 @@ const make = Effect.gen(function* () {
         "--short",
         `refs/remotes/${remote}/HEAD`,
       ]);
-      const candidate = remoteHead ?? `${remote}/${localBranch}`;
-      if (fetched && (yield* run(root, ["rev-parse", "--verify", "--quiet", candidate])) !== null) {
+      const candidate = yield* firstExisting([
+        remoteHead,
+        `${remote}/main`,
+        `${remote}/master`,
+        `${remote}/${localDefault}`,
+      ]);
+      if (candidate !== null) {
         ref = candidate;
-        asOfLastFetch = false;
+        asOfLastFetch = !fetched;
       }
     }
     const blobSha = yield* run(root, [
@@ -165,6 +187,13 @@ const make = Effect.gen(function* () {
       const root = yield* checkout(projectId);
       if (root === null) return { kind: "unavailable", reason: NO_CHECKOUT } as const;
       const filePath = path.join(root, T3O_PROJECT_FILE_NAME);
+      const uncommitted = yield* run(root, ["status", "--porcelain", "--", T3O_PROJECT_FILE_NAME]);
+      if (uncommitted !== null && uncommitted.length > 0) {
+        return {
+          kind: "unavailable",
+          reason: `${filePath} has uncommitted changes. Commit or discard them, then export again.`,
+        } as const;
+      }
       const written = yield* fileSystem.writeFileString(filePath, content).pipe(
         Effect.as(true),
         Effect.catchCause(() => Effect.succeed(false)),
