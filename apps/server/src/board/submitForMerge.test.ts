@@ -19,6 +19,9 @@ import {
   BoardCardId,
   BoardStageId,
   EMPTY_BOARD_STATE,
+  EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+  boardCiStepsFromLegacy,
+  withBoardProjectConfigVersion,
   ProviderInstanceId,
   ThreadId,
   boardCardStepState,
@@ -526,4 +529,31 @@ it.effect(
           assert.match(String(payload?.detail), /no longer has a stage with the "merge" role/);
         }),
     ),
+);
+
+it.effect("T3O-49: a project with CI on lands a submitted card in CI, still skipping review", () =>
+  withGovernor(
+    {
+      board: {
+        ...heldBoard(),
+        projectStageConfigs: {
+          [heldBuildCard().projectId]: withBoardProjectConfigVersion({
+            ...EMPTY_BOARD_PROJECT_STAGE_CONFIG,
+            stageSwitches: { ci: true },
+            ci: {
+              steps: boardCiStepsFromLegacy([{ name: "Test", command: "true", timeoutMinutes: 5 }]),
+            },
+          }),
+        },
+      },
+      settings: settingsWith({ building: [codexStep], globalMaxConcurrent: 3 }),
+    },
+    ({ reactor, board, pumpDomain }) =>
+      Effect.gen(function* () {
+        yield* reactor.submitForMerge(cardId);
+        yield* reactor.drain;
+        yield* pumpDomain(stepCompleted(cardId, "succeeded", 10, BOARD_SUBMIT_STEP_ID));
+        assert.strictEqual(cardStage(yield* board, cardId), "ci");
+      }),
+  ),
 );
