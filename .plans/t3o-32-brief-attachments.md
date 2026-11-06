@@ -34,7 +34,7 @@ are durable, owned by t3o, listed on the card, and reachable by any linked threa
 
 ### Out
 
-- Mobile (D17; the board has no mobile UI).
+- Mobile attachment manage UI (D17; T3O-18 ships monitor-and-act only — attachments are a follow-up).
 - Any worktree mirror or copy of attachments into a repo (see K1).
 - Attachments on review, sync, recovery-respawn or human follow-up turns (they pull).
 - Agents adding attachments over MCP.

@@ -33,4 +33,18 @@ describe("ExecutionEnvironmentDescriptor", () => {
       ).toBeUndefined();
     }
   });
+
+  // T3o: capabilities.board is optional under version skew.
+  it("treats a missing board capability as unsupported under version skew", () => {
+    expect(decodeDescriptor(descriptor).capabilities.board).toBeUndefined();
+  });
+
+  it("preserves an advertised board capability", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, board: true },
+      }).capabilities.board,
+    ).toBe(true);
+  });
 });

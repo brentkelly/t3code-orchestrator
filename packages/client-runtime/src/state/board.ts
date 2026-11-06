@@ -1,6 +1,6 @@
 /**
- * T3o board client state (D17: lives in client-runtime so a future mobile
- * board is a UI project, not a rewrite).
+ * T3o board client state (D17: lives in client-runtime so the mobile board
+ * is a UI project, not a rewrite).
  *
  * Three concerns share this module:
  *
