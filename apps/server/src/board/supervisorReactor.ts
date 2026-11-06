@@ -3332,6 +3332,47 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * CI was switched off for the card's project while it sat in CI (T3O-49):
+   * stop its pass and move it on with auto-merge disarmed, so nothing merges
+   * that never passed CI. The confirmation in Settings said so.
+   */
+  const leaveCiSwitchedOff = Effect.fn("board-supervisor-leaveCiSwitchedOff")(function* (
+    card: BoardCard,
+  ) {
+    yield* ciPasses.cancel(card.id);
+    yield* dispatchOptional({
+      type: "board.card.set-automation",
+      commandId: yield* commandId("ci-off-disarm"),
+      cardId: card.id,
+      autoMerge: false,
+      createdAt: yield* nowIso,
+    });
+    yield* dispatch({
+      type: "board.card.record-note",
+      commandId: yield* commandId("ci-off"),
+      cardId: card.id,
+      kind: "card-ci-held",
+      detail: "CI was switched off for this project, so the card moved on with auto-merge off.",
+      createdAt: yield* nowIso,
+    });
+    yield* advanceFromCi(card);
+  });
+
+  /** A project's config changed (T3O-49): with CI now off, its cards in CI
+      move on. Cards in CI with no steps left wait (`startCiPass` holds them). */
+  const handleProjectConfigSet = Effect.fn("board-supervisor-handleProjectConfigSet")(function* (
+    projectId: ProjectId,
+  ) {
+    const board = yield* readBoard;
+    if (isBoardCiSwitchedOn(board, projectId)) return;
+    for (const card of board.cards) {
+      if (card.archivedAt !== null || card.projectId !== projectId) continue;
+      if (card.stage !== BOARD_SEED_STAGE_IDS.ci) continue;
+      yield* leaveCiSwitchedOff(card);
+    }
+  });
+
   /** Hold a card in CI with a reason on its rail: a human can Skip CI. */
   const holdInCi = Effect.fn("board-supervisor-holdInCi")(function* (
     card: BoardCard,
@@ -3363,7 +3404,7 @@ const make = Effect.gen(function* () {
     if (!isBoardCiSwitchedOn(board, card.projectId) || projectConfig === null) {
       // CI was switched off for this project while the card sat in it: there
       // is nothing to run, so it moves on like a card in a switched-off stage.
-      yield* advanceFromCi(card);
+      yield* leaveCiSwitchedOff(card);
       return;
     }
     const steps = projectConfig.ci.steps;
@@ -10491,6 +10532,8 @@ const make = Effect.gen(function* () {
           ),
           Effect.andThen(endAutoPlanIfUndriven(event.payload.cardId)),
         );
+      case "board.project-stage-config-set":
+        return handleProjectConfigSet(event.payload.projectId);
       case "board.card-archived":
         return handleArchived(event);
       case "board.card-deleted":
@@ -10904,6 +10947,9 @@ const make = Effect.gen(function* () {
           // resume it.
           event.type !== "board.worker-removed" &&
           event.type !== "board.card-worker-removal" &&
+          // T3O-49: a project's CI switched off moves its cards on from CI.
+          // Settings edits, so rare.
+          event.type !== "board.project-stage-config-set" &&
           // T3O-39: a human turned a running plan review off, or turned one
           // on after the plan was posted; T3O-50: changed its rounds.
           event.type !== "board.plan-review-stopped" &&

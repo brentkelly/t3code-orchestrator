@@ -602,3 +602,42 @@ it.effect("deleting a card in CI stops its pass and frees the slot", () =>
     ).pipe(Effect.provideService(BoardCiRunner, runner));
   }),
 );
+
+it.effect("switching CI off moves the project's cards on from CI, auto-merge disarmed", () =>
+  Effect.gen(function* () {
+    const { runner } = yield* scriptedRunner(["hang"]);
+    const subject = card("off", review);
+    yield* withGovernor({ board: boardWith([subject]), settings }, (h) =>
+      Effect.gen(function* () {
+        yield* enterCi(h, subject, 1);
+        assert.strictEqual(cardStage(yield* h.board, subject.id), ci);
+        const off = withBoardProjectConfigVersion({ ...ciConfig(), stageSwitches: {} });
+        yield* Ref.update(h.model, (model) => ({
+          ...model,
+          board: { ...model.board!, projectStageConfigs: { [projectId]: off } },
+        }));
+        yield* h.pumpDomain({
+          type: "board.project-stage-config-set",
+          sequence: 2,
+          payload: {
+            projectId,
+            config: off,
+            upserts: [],
+            deletedStageIds: [],
+            cause: "ci-enabled",
+          },
+        } as unknown as HarnessEvent);
+        assert.strictEqual(cardStage(yield* h.board, subject.id), merge);
+        const disarm = (yield* h.commands).find(
+          (command) => command.type === "board.card.set-automation",
+        );
+        assert.deepStrictEqual(
+          disarm === undefined
+            ? null
+            : { autoMerge: (disarm as { autoMerge?: boolean }).autoMerge },
+          { autoMerge: false },
+        );
+      }),
+    ).pipe(Effect.provideService(BoardCiRunner, runner));
+  }),
+);
