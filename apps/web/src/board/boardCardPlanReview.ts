@@ -87,8 +87,8 @@ export function boardCardPlanReviewView(input: {
     note: inProgress
       ? `The planning agent is reviewing the plan, up to ${roundsWord(rounds)}. Changing the rounds tells it the new total. The final plan comes to you for sign-off.`
       : enabled
-      ? `When the plan is posted, the planning agent runs up to ${roundsWord(rounds)} of review. The number and focus of reviewing subagents launched each round is outlined in the plan review prompt. The final plan comes to you for sign-off.`
-      : "The plan comes straight to you for sign-off.",
+        ? `When the plan is posted, the planning agent runs up to ${roundsWord(rounds)} of review. The number and focus of reviewing subagents launched each round is outlined in the plan review prompt. The final plan comes to you for sign-off.`
+        : "The plan comes straight to you for sign-off.",
     canDecrease: rounds > BOARD_PLAN_REVIEW_ROUNDS_MIN,
     canIncrease: rounds < BOARD_PLAN_REVIEW_ROUNDS_MAX,
   };
