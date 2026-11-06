@@ -62,7 +62,7 @@ export class BoardProjectFile extends Context.Reference<BoardProjectFileShape>(
 
 const MEMO_MS = 5 * 60_000;
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const git = yield* GitVcsDriver.GitVcsDriver;

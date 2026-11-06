@@ -71,7 +71,7 @@ function coverageOf(
 }
 
 /** "N of M projects · only X" (or "not X" when fewer are missing). */
-export function boardPartialStageTitle(coverage: BoardStageCoverage): string {
+function boardPartialStageTitle(coverage: BoardStageCoverage): string {
   const total = coverage.included.length + coverage.excluded.length;
   const included = coverage.included.map((entry) => entry.project);
   const excluded = coverage.excluded.map((entry) => entry.project);

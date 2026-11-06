@@ -32,7 +32,7 @@ import {
 // T3o: since T3O-49 a `t3o.json` is only an import/export format for a
 // project's delta, never read at run time.
 export const T3O_PROJECT_FILE_NAME = "t3o.json";
-export const T3O_PROJECT_FILE_VERSION = 2;
+const T3O_PROJECT_FILE_VERSION = 2;
 
 /** What a `t3o.json` would make a project's delta, before normalization. */
 export interface ResolvedT3oProjectFile {

@@ -69,7 +69,7 @@ export function removeBoardCiStep(steps: ReadonlyArray<BoardCiStep>, index: numb
 }
 
 /** A fresh id no step in the list uses. */
-export function nextBoardCiStepId(steps: ReadonlyArray<Pick<BoardCiStep, "id">>): string {
+function nextBoardCiStepId(steps: ReadonlyArray<Pick<BoardCiStep, "id">>): string {
   const used = new Set(steps.map((step) => step.id));
   for (let n = steps.length + 1; ; n++) {
     const id = `step-${n}`;

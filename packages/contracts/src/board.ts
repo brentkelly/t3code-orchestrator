@@ -1637,7 +1637,7 @@ export function boardCiScriptDefinitions(
 }
 
 /** The most failures a step's result keeps. */
-export const BOARD_CI_MAX_FAILURES = 50;
+const BOARD_CI_MAX_FAILURES = 50;
 
 /** One failure a script reported in its result file, or an agent step in its
     payload (T3O-49): a title, and where it is when known. */
@@ -1723,7 +1723,7 @@ export function boardCheckNameMatches(pattern: string, name: string): boolean {
 }
 
 /** The marker a script prints to report progress (T3O-49). */
-export const BOARD_CI_PROGRESS_MARKER = "::t3o-progress::";
+const BOARD_CI_PROGRESS_MARKER = "::t3o-progress::";
 
 /** Parse one `::t3o-progress::<json>` output line, or null when the line is
     not one (or its JSON is unreadable: then it's only log output). */
@@ -3222,7 +3222,7 @@ type LegacyBoardProjectStageConfig = typeof LegacyBoardProjectStageConfig.Type;
 /** A T3O-43/44 config as a T3O-49 delta (read-time upcast): removed stages
     are switched off, added ones on, an active CI is switched on and its steps
     become scripts. */
-export function boardProjectStageConfigFromLegacy(
+function boardProjectStageConfigFromLegacy(
   legacy: LegacyBoardProjectStageConfig,
 ): BoardProjectStageConfig {
   const stageSwitches: Record<string, boolean> = {};
@@ -3381,7 +3381,7 @@ export type BoardProjectStageConfigView = Pick<
   readonly ciStepCount: number;
 };
 
-export function boardProjectStageConfigView(
+function boardProjectStageConfigView(
   config: BoardProjectStageConfig | BoardProjectStageConfigShell,
 ): BoardProjectStageConfigView {
   return {
@@ -9396,7 +9396,7 @@ export const BOARD_INTERNAL_COMMANDS = [
  * Stage and project config commands (T3O-49): `board.dispatchSettingsCommand`
  * at the settings-write tier, never `board.dispatchCommand`.
  */
-export const BOARD_SETTINGS_COMMANDS = [
+const BOARD_SETTINGS_COMMANDS = [
   BoardStageCreateCommand,
   BoardStageRenameCommand,
   BoardStageReorderCommand,

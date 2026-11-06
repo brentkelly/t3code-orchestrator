@@ -44,7 +44,7 @@ const refuse = (command: BoardCommand, detail: string) =>
   new BoardCommandInvariantError({ commandType: command.type, detail });
 
 /** The event recording a project's new delta. */
-export const projectConfigEvent = Effect.fn("projectConfigEvent")(function* (input: {
+const projectConfigEvent = Effect.fn("projectConfigEvent")(function* (input: {
   readonly command: Pick<BoardCommand, "commandId" | "createdAt">;
   readonly projectId: ProjectId;
   readonly config: BoardProjectStageConfig;

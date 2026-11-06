@@ -727,7 +727,7 @@ export function boardActorStamp(deps: {
  * Read from this server's checkout when it has one, else from `cardId`'s
  * worker; with neither, the fallback.
  */
-export function boardProjectActorName(deps: {
+function boardProjectActorName(deps: {
   readonly threads: Pick<ThreadGatewayShape, "project">;
   readonly workspaces: Pick<BoardWorkspacesShape, "localProject" | "forCard">;
 }): (projectId: ProjectId, cardId?: BoardCardId) => Effect.Effect<string> {
