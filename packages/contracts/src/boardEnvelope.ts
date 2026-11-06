@@ -639,7 +639,8 @@ export function composeBoardCiAgentStepPrompt(input: {
     "",
     input.prompt,
     "",
-    `When you're done, complete the step with a payload shaped ${BOARD_CI_AGENT_PAYLOAD_SHAPE}: "passed" when the check holds, "failed" with the failures you found (file and line where you can). If you change code, commit and push it; the board then runs CI again from the top.`,
+    "This step checks the branch; it does not change it. Leave the code as it is: if you find problems, report them, and the board hands them to a fix agent.",
+    `When you're done, complete the step with outcome "succeeded" and a payload shaped ${BOARD_CI_AGENT_PAYLOAD_SHAPE}, whatever your verdict: "passed" when the check holds, "failed" with the failures you found (file and line where you can). Use outcome "failed" only when you could not do the check at all.`,
   ].join("\n");
 }
 

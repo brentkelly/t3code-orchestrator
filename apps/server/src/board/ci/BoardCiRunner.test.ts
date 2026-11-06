@@ -381,5 +381,11 @@ it.live("fails a group that leaves tracked changes in the worktree", () =>
     );
     assert.deepStrictEqual(result, { result: "failed", failedIndex: 0 });
     assert.include(events.at(-1)!.step.tail, "left tracked changes");
+    // An edit that was there before the group ran is not the group's.
+    const again = yield* runBoardCiPass(
+      request(cwd, [{ name: "Reads", command: "cat tracked.txt", timeoutMinutes: 1 }]),
+      () => Effect.void,
+    );
+    assert.deepStrictEqual(again, { result: "passed", failedIndex: null });
   }),
 );

@@ -310,6 +310,9 @@ const readStepResult = (resultPath: string, tail: BoardCiTail): BoardCiStepResul
   return parsed.result;
 };
 
+const changedLines = (status: string | null): ReadonlyArray<string> =>
+  status === null ? [] : status.split("\n").filter((line) => line.trim().length > 0);
+
 /** Tracked files the group changed (`git status`, untracked ignored), or
     null when git can't say. A CI step must not edit the branch it checks. */
 const trackedChanges = (cwd: string): Effect.Effect<string | null> =>
@@ -346,6 +349,8 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
       parallel: definition.parallel === true,
     }));
     for (const group of boardCiStepGroups(indexed)) {
+      // What was already changed is not this group's doing.
+      const before = new Set(changedLines(yield* trackedChanges(request.cwd)));
       const settled = yield* Effect.forEach(
         group,
         ({ definition, index }) =>
@@ -386,14 +391,15 @@ export const runBoardCiPass: BoardCiRunnerShape["run"] = Effect.fn("BoardCiRunne
       );
       // A group that edited tracked files fails as a whole: CI checks the
       // branch, it never changes it.
-      const dirty = yield* trackedChanges(request.cwd);
+      const after = yield* trackedChanges(request.cwd);
+      const dirty = changedLines(after)
+        .filter((line) => !before.has(line))
+        .join("\n");
       const finishedAt = yield* nowIso;
       let failedIndex: number | null = null;
       for (const step of settled) {
         const status =
-          step.exit.status === "passed" && dirty !== null && dirty.length > 0
-            ? "failed"
-            : step.exit.status;
+          step.exit.status === "passed" && dirty.length > 0 ? "failed" : step.exit.status;
         if (status === "failed" && step.exit.status === "passed") {
           step.tail.push(
             `\n[board] The step group left tracked changes in the worktree:\n${dirty}\n`,
