@@ -38,9 +38,10 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
       <MaterialFabScrollContext value={onScroll}>{props.children}</MaterialFabScrollContext>
       {!props.disabled && state.hasConnections && layoutWidth !== null ? (
         <MaterialNewThreadButton
-          key={`${appearance.baseFontSize}:${fontScale}:${layoutWidth}`}
+          key={`${appearance.baseFontSize}:${fontScale}:${layoutWidth}:${props.composeLabel ?? ""}`}
           extended
           expanded={expanded}
+          label={props.composeLabel}
           onPress={props.onStartNewTask}
           className="absolute right-5"
           style={{

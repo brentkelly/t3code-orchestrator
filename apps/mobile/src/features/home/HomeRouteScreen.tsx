@@ -2,23 +2,28 @@ import { use } from "react";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, useWindowDimensions } from "react-native";
 
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { useProjects } from "../../state/entities";
+import { useProjects, useServerConfigs } from "../../state/entities";
 import { environmentThreadShells } from "../../state/threads";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { WorkspaceEmptyDetail } from "../layout/WorkspaceEmptyDetail";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { EmptyState } from "../../components/EmptyState";
 import { checkForAppUpdateOnLaunch, startAppUpdateForegroundRecheck } from "../updates/app-updates";
 import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
@@ -31,6 +36,14 @@ import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { BoardHomeScreen } from "../board/BoardHomeScreen";
+import { HomeModeBar } from "../board/HomeModeBar";
+import {
+  boardCapableEnvironmentIds,
+  pickBoardEnvironmentId,
+  resolveHomeMode,
+  type HomeMode,
+} from "../board/boardHomeMode";
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
 
@@ -54,6 +67,10 @@ export function HomeRouteScreen() {
   const navigation = useNavigation();
   const workspace = useWorkspaceTabs();
   const [localSearchQuery, setLocalSearchQuery] = useState("");
+  const [createRequested, setCreateRequested] = useState(false);
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const serverConfigs = useServerConfigs();
   const searchQuery =
     Platform.OS === "android"
       ? primarySidebarSearchQuery
@@ -154,6 +171,43 @@ export function HomeRouteScreen() {
   )
     ? resolvedProjectKey
     : null;
+  const boardCapableIds = useMemo(
+    () =>
+      boardCapableEnvironmentIds(
+        [...serverConfigs.entries()].map(([environmentId, config]) => ({
+          environmentId,
+          environment: config.environment,
+        })),
+      ),
+    [serverConfigs],
+  );
+  const boardAvailable = boardCapableIds.size > 0;
+  const savedHomeMode = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.homeMode
+    : undefined;
+  const homeMode = resolveHomeMode({ saved: savedHomeMode, boardAvailable });
+  const setHomeMode = useCallback(
+    (mode: HomeMode) => {
+      savePreferences({ homeMode: mode });
+    },
+    [savePreferences],
+  );
+  const boardEnvironments = useMemo(
+    () => environments.filter((environment) => boardCapableIds.has(environment.environmentId)),
+    [boardCapableIds, environments],
+  );
+  const boardEnvironmentId = pickBoardEnvironmentId({
+    selectedEnvironmentId,
+    environments: boardEnvironments,
+    boardCapableIds,
+  });
+  const onCompose = useCallback(() => {
+    if (homeMode === "board") {
+      setCreateRequested(true);
+      return;
+    }
+    navigation.navigate("NewTaskSheet", { screen: "NewTask" });
+  }, [homeMode, navigation]);
 
   // In split layouts the persistent sidebar IS the thread list — Home becomes
   // an empty detail pane so selecting a thread never transitions layouts.
@@ -208,7 +262,8 @@ export function HomeRouteScreen() {
   return (
     <AndroidHomeFabLayout
       disabled={workspace !== null && Platform.OS !== "android"}
-      onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+      composeLabel={homeMode === "board" ? "New card" : undefined}
+      onStartNewTask={onCompose}
     >
       <>
         {/* Restore the header after leaving split view; screen options are
@@ -254,9 +309,39 @@ export function HomeRouteScreen() {
             })
           }
           onSearchQueryChange={setSearchQuery}
-          onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
+          onStartNewTask={onCompose}
+          composeAccessibilityLabel={homeMode === "board" ? "New card" : "New task"}
         />
 
+        {boardAvailable ? <HomeModeBar mode={homeMode} onChange={setHomeMode} /> : null}
+
+        {homeMode === "board" ? (
+          boardEnvironmentId === null ? (
+            <EmptyState
+              variant="plain"
+              title="No board on this server"
+              detail="Pair a T3o server to see the Board."
+            />
+          ) : (
+            <BoardHomeScreen
+              environmentId={boardEnvironmentId}
+              environmentLabel={
+                boardEnvironments.find(
+                  (environment) => environment.environmentId === boardEnvironmentId,
+                )?.label ?? boardEnvironmentId
+              }
+              environments={boardEnvironments}
+              onEnvironmentChange={(environmentId: EnvironmentId) =>
+                setSelectedEnvironmentId(environmentId)
+              }
+              projects={projects}
+              selectedProjectKey={selectedProjectKey}
+              onProjectChange={setSelectedProjectKey}
+              createRequested={createRequested}
+              onCreateHandled={() => setCreateRequested(false)}
+            />
+          )
+        ) : (
         <HomeScreen
           catalogState={catalogState}
           environments={environments}
@@ -312,6 +397,7 @@ export function HomeRouteScreen() {
           selectedProjectKey={selectedProjectKey}
           threads={threads}
         />
+        )}
       </>
     </AndroidHomeFabLayout>
   );

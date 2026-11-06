@@ -95,6 +95,8 @@ export interface Preferences {
   /** Home list filters, restored on the next launch. */
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
+  /** Last Home surface: threads list or the T3o Board (T3O-18). */
+  readonly homeMode?: "threads" | "board";
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -163,6 +165,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListWorkingShelfExpanded?: boolean;
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
+    homeMode?: "threads" | "board";
   } = {};
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
@@ -282,6 +285,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isPullRequestListPreferences(parsed.pullRequestListFilters)) {
     preferences.pullRequestListFilters = parsed.pullRequestListFilters;
+  }
+  if (parsed.homeMode === "threads" || parsed.homeMode === "board") {
+    preferences.homeMode = parsed.homeMode;
   }
   return preferences;
 }

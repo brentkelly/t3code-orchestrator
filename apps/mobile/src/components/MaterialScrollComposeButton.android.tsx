@@ -19,7 +19,9 @@ export function MaterialScrollComposeButton(props: {
   readonly onPress: () => void;
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
+  readonly label?: string;
 }) {
+  const label = props.label ?? "New thread";
   const { appearance, themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const typography = resolveScaledTextRole("footnote", appearance.baseFontSize);
   const { iconSize, fabSize } = useAndroidControlSizing();
@@ -78,7 +80,7 @@ export function MaterialScrollComposeButton(props: {
                     fontWeight: "500",
                   }}
                 >
-                  New thread
+                  {label}
                 </Text>
               </ExtendedFloatingActionButton.Text>
             </ExtendedFloatingActionButton>
@@ -89,7 +91,7 @@ export function MaterialScrollComposeButton(props: {
       <Pressable
         onPress={props.onPress}
         accessibilityRole="button"
-        accessibilityLabel="New thread"
+        accessibilityLabel={label}
         android_ripple={{ foreground: true }}
         style={{
           position: "absolute",

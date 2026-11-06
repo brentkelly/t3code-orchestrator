@@ -45,6 +45,9 @@ import {
   type RenderFailureProps,
 } from "./components/RenderErrorBoundary";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
+import { BoardLandingScreen } from "./features/board/BoardLandingScreen";
+import { BoardCardScreen } from "./features/board/BoardCardScreen";
+import { BoardArchivedScreen } from "./features/board/BoardArchivedScreen";
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
@@ -995,6 +998,24 @@ const RootStackConfig = createWorkspaceStackNavigator({
         sheetAllowedDetents: [0.55, 0.7],
         sheetGrabberVisible: true,
       },
+    }),
+    Board: createNativeStackScreen({
+      screen: BoardLandingScreen,
+      linking: "board",
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        headerShown: false,
+      },
+    }),
+    BoardArchived: createNativeStackScreen({
+      screen: BoardArchivedScreen,
+      linking: "board/archive",
+      options: GLASS_HEADER_OPTIONS,
+    }),
+    BoardCard: createNativeStackScreen({
+      screen: BoardCardScreen,
+      linking: "board/:environmentId/:cardId",
+      options: GLASS_HEADER_OPTIONS,
     }),
     NewTaskSheet: createNativeStackScreen({
       screen: NewTaskSheetStack,

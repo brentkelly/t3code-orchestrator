@@ -82,7 +82,7 @@ export function HomeHeader(props: HomeHeaderProps) {
                   ...(showsCompactCompose
                     ? [
                         withNativeGlassHeaderItem({
-                          accessibilityLabel: "New task",
+                          accessibilityLabel: props.composeAccessibilityLabel ?? "New task",
                           axisBehavior: "horizontalOnly",
                           icon: { name: "square.and.pencil", type: "sfSymbol" } as const,
                           identifier: "home-new-task",

@@ -99,6 +99,7 @@ export function HardwareKeyboardCommandProvider({
   const enabledCommands = useMemo(() => {
     const commands = new Set<HardwareKeyboardCommand>(getRegisteredHardwareKeyboardCommands());
     commands.add("newTask");
+    commands.add("board");
     commands.add("commandPalette");
     if (pathname !== "/" && !pathname.startsWith("/threads/")) {
       for (const command of commands) {
@@ -149,6 +150,10 @@ export function HardwareKeyboardCommandProvider({
 
       if (command === "newTask") {
         navigation.navigate("NewTaskSheet", { screen: "NewTask" });
+        return;
+      }
+      if (command === "board") {
+        navigation.navigate("Board");
         return;
       }
       if (command === "back") {
