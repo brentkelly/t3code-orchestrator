@@ -193,7 +193,7 @@ describe("boardCardStatus", () => {
         card: card({ stage: ids.planning, planCount: 2 }),
         stages: BOARD_SEED_STAGES,
       })?.label,
-    ).toBe("Needs approval");
+    ).toBe("Input needed");
     expect(
       boardCardStatus({
         card: card({ stage: ids.planning, planCount: 2, planTotal: 2, planDone: 0 }),
@@ -240,7 +240,7 @@ describe("boardCardStatus", () => {
       "approval",
     );
     const tone = boardCardStatus({ card: pending, stages: BOARD_SEED_STAGES });
-    expect(tone?.label).toBe("Needs approval");
+    expect(tone?.label).toBe("Input needed");
     expect(tone?.label).not.toBe("Running");
   });
 
