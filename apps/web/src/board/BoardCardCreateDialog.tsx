@@ -37,6 +37,7 @@ import {
 import { boardCardPipelineStages } from "./boardProjectPipelines";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
+import { LayersIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -54,6 +55,7 @@ import {
 import { Textarea } from "../components/ui/textarea";
 import { cn, randomUUID } from "../lib/utils";
 import { boardEnvironment, environmentBoard } from "../state/board";
+import { BoardHint } from "./BoardHint";
 import { useEnvironment } from "../state/environments";
 import { environmentShell } from "../state/shell";
 import { setBoardProjectSetting } from "../components/settings/BoardSettingsPanel.logic";
@@ -156,6 +158,14 @@ export function BoardCardCreateDialog({
   const snapshot = useMemo(() => Option.getOrNull(shellState.snapshot), [shellState.snapshot]);
   const board = useAtomValue(environmentBoard.snapshotValueAtom(environmentId));
   const allCards = board?.cards ?? EMPTY_CARDS;
+  const isChild = subBoardParentId !== null;
+  const parentShell = useMemo(
+    () =>
+      subBoardParentId === null
+        ? null
+        : (allCards.find((card) => card.cardId === subBoardParentId) ?? null),
+    [allCards, subBoardParentId],
+  );
 
   // Brief attachments (t3o-32, K6): staged as pending uploads while the user
   // types, claimed onto the card right after `board.card.create` returns.
@@ -264,6 +274,8 @@ export function BoardCardCreateDialog({
   // rather than querying refs of nothing.
   const workspaceRoot =
     snapshot?.projects.find((project) => project.id === projectId)?.workspaceRoot ?? null;
+
+  const selectedProject = projects.find((project) => project.id === projectId);
 
   const stageOptions = useMemo(() => {
     const stageState = stageStateOf(stages);
@@ -478,7 +490,7 @@ export function BoardCardCreateDialog({
     const { prefix, assigned } = assignBoardKeyPrefix({
       board: boardSettings,
       projectId,
-      projectTitle: projects.find((project) => project.id === projectId)?.title ?? "",
+      projectTitle: selectedProject?.title ?? "",
     });
     if (assigned) {
       updateSettings({
@@ -590,7 +602,25 @@ export function BoardCardCreateDialog({
         {/* Identity row — the card modal's, with the stage the card will land
             in standing where the open card shows the stage it is in. */}
         <div className="flex shrink-0 items-center gap-[9px] px-4 pt-4 pr-11">
-          <DialogTitle className="text-[17px]/[1.25] tracking-[-0.01em]">New card</DialogTitle>
+          <DialogTitle className="shrink-0 text-[17px]/[1.25] tracking-[-0.01em]">
+            {isChild ? "New child card" : "New card"}
+          </DialogTitle>
+          {parentShell === null ? null : (
+            // The card modal's "Part of" chip, inert here: the dialog sits on
+            // the parent's sub-board already.
+            <BoardHint label={`Created on ${parentShell.key}'s sub-board`}>
+              <span
+                // Focusable so the hint is reachable by keyboard, not hover only.
+                tabIndex={0}
+                className="inline-flex h-[18px] min-w-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground"
+              >
+                <LayersIcon className="size-2.5 shrink-0" />
+                <span className="shrink-0">{parentShell.key}</span>
+                <span className="shrink-0 text-muted-foreground">·</span>
+                <span className="max-w-[220px] truncate">{parentShell.title}</span>
+              </span>
+            </BoardHint>
+          )}
           <Select
             items={stageOptions.map((definition) => ({
               value: definition.stageId as string,
@@ -648,68 +678,86 @@ export function BoardCardCreateDialog({
 
           {/* Project and Base branch share a row (T3O-5, D13): the base is a
               property of the project's checkout, so the two read as one
-              decision. A sub-board child never gets here — the drill-in's
-              create dialog presets a parent, and a child inherits that
-              parent's integration branch (D4). */}
+              decision. A sub-board child shows both read-only: it lives in
+              its parent's project and inherits the parent's integration
+              branch (D4), which depends on the group's merge target. */}
           <div className="flex min-w-0 items-start gap-3">
             <div className="min-w-0 flex-1">
               <BoardSectionHeading className="mb-[7px]">Project</BoardSectionHeading>
-              <Select
-                items={projects.map((project) => ({
-                  value: project.id as string,
-                  label: project.title,
-                }))}
-                modal={false}
-                onValueChange={(value: string | null) => {
-                  if (value === null || value === projectId) return;
-                  setProjectId(value as ProjectId);
-                  // Chosen dependencies are KEPT (T3O-33, D3): a cross-project
-                  // edge is legal, so switching project no longer silently
-                  // discards work the user has already done in this dialog.
-                  //
-                  // The base branch still resets (T3O-5, D13): a branch named in
-                  // the old project's checkout says nothing about the new one,
-                  // so it goes back to that project's default.
-                  setBaseBranch(null);
-                  // So does the worker pin (T3O-65): a worker chosen for the
-                  // old project may have no checkout of the new one.
-                  setPinnedWorkerId(null);
-                }}
-                value={projectId ?? ""}
-              >
-                <SelectTrigger aria-label="Project" size="sm">
+              {isChild ? (
+                <div className="flex h-8 min-w-0 items-center gap-1.5 text-[13px] text-foreground">
                   {projectId === null ? null : (
                     <span
                       className={cn(
                         "size-2 shrink-0 rounded-full",
-                        projectAccent(
-                          projectId,
-                          projectIconColorOf(projects.find((project) => project.id === projectId)),
-                        ).dot,
+                        projectAccent(projectId, projectIconColorOf(selectedProject)).dot,
                       )}
                     />
                   )}
-                  <SelectValue placeholder="Project" />
-                </SelectTrigger>
-                <SelectPopup>
-                  {projects.map((project) => (
-                    <SelectItem key={project.id} value={project.id}>
-                      <span className="inline-flex items-center gap-1.5">
-                        <span
-                          className={cn(
-                            "size-2 rounded-full",
-                            projectAccent(project.id, projectIconColorOf(project)).dot,
-                          )}
-                        />
-                        {project.title}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
+                  <span className="truncate">{selectedProject?.title ?? "Project"}</span>
+                </div>
+              ) : (
+                <Select
+                  items={projects.map((project) => ({
+                    value: project.id as string,
+                    label: project.title,
+                  }))}
+                  modal={false}
+                  onValueChange={(value: string | null) => {
+                    if (value === null || value === projectId) return;
+                    setProjectId(value as ProjectId);
+                    // Chosen dependencies are KEPT (T3O-33, D3): a cross-project
+                    // edge is legal, so switching project no longer silently
+                    // discards work the user has already done in this dialog.
+                    //
+                    // The base branch still resets (T3O-5, D13): a branch named in
+                    // the old project's checkout says nothing about the new one,
+                    // so it goes back to that project's default.
+                    setBaseBranch(null);
+                    // So does the worker pin (T3O-65): a worker chosen for the
+                    // old project may have no checkout of the new one.
+                    setPinnedWorkerId(null);
+                  }}
+                  value={projectId ?? ""}
+                >
+                  <SelectTrigger aria-label="Project" size="sm">
+                    {projectId === null ? null : (
+                      <span
+                        className={cn(
+                          "size-2 shrink-0 rounded-full",
+                          projectAccent(projectId, projectIconColorOf(selectedProject)).dot,
+                        )}
+                      />
+                    )}
+                    <SelectValue placeholder="Project" />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {projects.map((project) => (
+                      <SelectItem key={project.id} value={project.id}>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span
+                            className={cn(
+                              "size-2 rounded-full",
+                              projectAccent(project.id, projectIconColorOf(project)).dot,
+                            )}
+                          />
+                          {project.title}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              )}
             </div>
 
-            {subBoardParentId === null ? (
+            {isChild ? (
+              <div className="min-w-0 flex-1">
+                <BoardSectionHeading className="mb-[7px]">Base branch</BoardSectionHeading>
+                <p className="flex h-8 items-center text-[13px] text-muted-foreground">
+                  {parentShell === null ? "From its parent" : `From ${parentShell.key}`}
+                </p>
+              </div>
+            ) : (
               <div className="min-w-0 flex-1">
                 <BoardSectionHeading className="mb-[7px]">
                   Base branch{" "}
@@ -725,7 +773,7 @@ export function BoardCardCreateDialog({
                   workspaceRoot={workspaceRoot}
                 />
               </div>
-            ) : null}
+            )}
 
             {workerField.shown ? (
               // Where the card runs (T3O-65, prototype 4.1). Only once a second
