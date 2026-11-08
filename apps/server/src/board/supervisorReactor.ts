@@ -312,6 +312,8 @@ export type BoardRequestReviewRoundResult =
   | { readonly outcome: "step-running" }
   | { readonly outcome: "no-branch" }
   | { readonly outcome: "unknown-card" }
+  | { readonly outcome: "not-stuck" }
+  | { readonly outcome: "stuck" }
   | { readonly outcome: "failed" };
 
 /** What "Remove worktree" did (T3O-52, D5), for the RPC to turn into a

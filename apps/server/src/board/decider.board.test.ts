@@ -2618,6 +2618,14 @@ it.layer(NodeServices.layer)("board decider", (it) => {
         // The card starts with no hold, so recording one is a real change and
         // clears the decider's no-op guard. It writes one card field and can
         // emit no move.
+        // T3O-51: the review loop's server-only carry fields.
+        "board.card.set-review-carry": {
+          type: "board.card.set-review-carry",
+          commandId: CommandId.make("cmd-set-review-carry"),
+          cardId: BoardCardId.make("card-reopen"),
+          runThroughRound: 2,
+          createdAt: NOW,
+        },
         "board.card.record-auto-merge-hold": {
           type: "board.card.record-auto-merge-hold",
           commandId: CommandId.make("cmd-record-auto-merge-hold"),
