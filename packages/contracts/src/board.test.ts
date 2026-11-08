@@ -1976,6 +1976,24 @@ describe("cards that need a human (boardCardAttention)", () => {
     ).toBeNull();
   });
 
+  it("T3O-51: a stuck loop asks a human only while the card is in Code review", () => {
+    const stuck = attention({
+      stage: BOARD_SEED_STAGE_IDS.review,
+      reviewOutcome: "stuck",
+      reviewHeldOutcome: "round-cap",
+      reviewRoundComplete: true,
+      roundCurrent: 3,
+    });
+    expect(stuck?.reason).toBe("review-stuck");
+    expect(stuck?.tone).toBe("attention");
+    expect(stuck?.detail).toBe("Review is stuck on round 3 — needs your call");
+    expect(attention({ stage: BOARD_SEED_STAGE_IDS.merge, reviewOutcome: "stuck" })).toBeNull();
+    // Advanced is neither a pass nor a call for a human, in any stage.
+    for (const stage of [BOARD_SEED_STAGE_IDS.review, BOARD_SEED_STAGE_IDS.merge]) {
+      expect(attention({ stage, reviewOutcome: "advanced", reviewRoundComplete: true })).toBeNull();
+    }
+  });
+
   it("rolls the WORST child up to the parent, with a count", () => {
     const parent = card({ cardId: BoardCardId.make("card-parent") });
     const children = [

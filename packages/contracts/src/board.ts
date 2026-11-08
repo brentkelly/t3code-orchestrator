@@ -11398,12 +11398,7 @@ export const DEFAULT_BOARD_REVIEW_ROUNDS = 5;
     adjudication verdict into one word. A disposition the adjudicator struck
     down (`fix-incomplete`, `fix-absent`, `rejection-unjustified`) reads
     `disputed` — the claim did not hold. */
-export type BoardReviewFindingResolution =
-  | "open"
-  | "fixed"
-  | "rejected"
-  | "disputed"
-  | "escalated";
+export type BoardReviewFindingResolution = "open" | "fixed" | "rejected" | "disputed" | "escalated";
 
 /** Pass the LATEST disposition and verdict (re-triage and re-adjudicate over
     the first pass, T3O-51). An escalation reads `escalated` whatever was
@@ -11816,7 +11811,11 @@ export function boardReviewDismissals(
 ): ReadonlyArray<BoardReviewCarriedFinding & { readonly round: number }> {
   const latest = new Map<
     string,
-    { readonly ruling: BoardReviewCarryRuling; readonly entry: BoardReviewCarriedFinding; readonly round: number }
+    {
+      readonly ruling: BoardReviewCarryRuling;
+      readonly entry: BoardReviewCarriedFinding;
+      readonly round: number;
+    }
   >();
   const rounds = Object.keys(carriedFindings)
     .map(Number)
@@ -11867,7 +11866,9 @@ export function boardReviewRoundResolution(input: {
   const { round, done } = input;
   const reviewStep = done.get(reviewStepId("review", round));
   if (reviewStep === undefined) return { kind: "run", phase: "review", findings: [] };
-  const reviewPayload = decodeBoardReviewPayloadOption(parseBoardStepPayloadJson(reviewStep.payload));
+  const reviewPayload = decodeBoardReviewPayloadOption(
+    parseBoardStepPayloadJson(reviewStep.payload),
+  );
   if (Option.isNone(reviewPayload)) return { kind: "unreadable", stepId: reviewStep.stepId };
 
   const carried = boardReviewCarriedFixFindings(input.carriedFindings, round).map(
@@ -11929,10 +11930,7 @@ export function boardReviewRoundResolution(input: {
   );
   // An adjudication written before T3O-51, or a round the loop already moved
   // past, keeps the old rule: blocking findings mean another round.
-  if (
-    adjudication.anotherRound === undefined ||
-    done.has(reviewStepId("review", round + 1))
-  ) {
+  if (adjudication.anotherRound === undefined || done.has(reviewStepId("review", round + 1))) {
     return { kind: "continue" };
   }
   const verdicts = new Map(adjudication.verdicts.map((v) => [v.findingId, v]));
@@ -12090,14 +12088,16 @@ export function boardReviewFixItFloor(input: {
     if (triage !== undefined) {
       const decoded = decodeBoardTriagePayloadOption(parseBoardStepPayloadJson(triage.payload));
       if (Option.isSome(decoded)) {
-        for (const d of decoded.value.dispositions) if (d.action === "fixed") fixedIds.add(d.findingId);
+        for (const d of decoded.value.dispositions)
+          if (d.action === "fixed") fixedIds.add(d.findingId);
       }
     }
     const retriage = succeeded.get(reviewStepId("retriage", round));
     if (retriage !== undefined) {
       const decoded = decodeBoardRetriagePayloadOption(parseBoardStepPayloadJson(retriage.payload));
       if (Option.isSome(decoded)) {
-        for (const d of decoded.value.dispositions) if (d.action === "fixed") fixedIds.add(d.findingId);
+        for (const d of decoded.value.dispositions)
+          if (d.action === "fixed") fixedIds.add(d.findingId);
       }
     }
     if ([...carried].some((id) => fixedIds.has(id))) floor = Math.max(floor, round + 1);
@@ -12211,7 +12211,10 @@ export function boardReviewLoopWalk(input: {
         continue;
       case "converge":
       case "stuck": {
-        if (resolution.kind === "stuck" && !isBoardReviewStuckRoundWaived(input.stuckWaivedThrough, round)) {
+        if (
+          resolution.kind === "stuck" &&
+          !isBoardReviewStuckRoundWaived(input.stuckWaivedThrough, round)
+        ) {
           return {
             next: null,
             status: "stuck",
@@ -12227,7 +12230,12 @@ export function boardReviewLoopWalk(input: {
         const sync = done.get(reviewStepId("sync", round));
         if (sync !== undefined) {
           if (boardStepPayloadDefect({ stepId: sync.stepId, payload: sync.payload }) !== null) {
-            return { next: null, status: "unreadable", currentRound: round, unreadableStepId: sync.stepId };
+            return {
+              next: null,
+              status: "unreadable",
+              currentRound: round,
+              unreadableStepId: sync.stepId,
+            };
           }
           continue;
         }
@@ -12360,7 +12368,11 @@ export function deriveBoardCardReviewSummary(input: {
   // was either carried or left behind.
   const resolved = new Map<
     string,
-    { readonly severity: BoardReviewSeverity; readonly round: number; readonly resolution: BoardReviewFindingResolution }
+    {
+      readonly severity: BoardReviewSeverity;
+      readonly round: number;
+      readonly resolution: BoardReviewFindingResolution;
+    }
   >();
   for (let round = 1; round <= highestRecorded; round++) {
     const review = succeeded.get(reviewStepId("review", round));
@@ -12396,7 +12408,8 @@ export function deriveBoardCardReviewSummary(input: {
     ];
     for (const finding of roundFindings) {
       const origin = boardReviewCarriedOrigin(finding.id);
-      const key = origin === null ? `r${round}:${finding.id}` : `r${origin.round}:${origin.findingId}`;
+      const key =
+        origin === null ? `r${round}:${finding.id}` : `r${origin.round}:${origin.findingId}`;
       resolved.set(key, {
         severity: finding.severity,
         round,
@@ -12530,12 +12543,7 @@ export function effectiveBoardReviewRounds(input: {
   // be inert. A card converged at 2 of 5 that asks for round 3 simply re-enters
   // the loop it was already in; one converged at 5 of 5 gets round 6 and then
   // holds, because nothing raised the ceiling past it.
-  const floor = Math.max(
-    1,
-    input.roundsStarted,
-    input.overrides?.runThroughRound ?? 0,
-    fixItFloor,
-  );
+  const floor = Math.max(1, input.roundsStarted, input.overrides?.runThroughRound ?? 0, fixItFloor);
   return Math.max(floor, requested);
 }
 
