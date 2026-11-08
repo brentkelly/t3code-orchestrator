@@ -43,6 +43,9 @@ import {
   boardCardArchiveNeedsConfirmation,
   boardCardShellFromCard,
   BoardCardShell,
+  BoardStageExecutionReview,
+  DEFAULT_BOARD_REVIEW_PHASE_PROMPT,
+  LEGACY_BOARD_REVIEW_PHASE_PROMPT,
   BoardLabelId,
   BoardLabelName,
   boardAppendOrderKey,
@@ -3116,5 +3119,17 @@ describe("boardCardAutoArchiveDue (T3O-77)", () => {
     expect(due(parent, { cards: [parent, { ...child, stage: BOARD_SEED_STAGE_IDS.done }] })).toBe(
       true,
     );
+  });
+});
+
+describe("review phase prompt saved before T3O-51", () => {
+  const decodeReview = Schema.decodeUnknownSync(BoardStageExecutionReview);
+  const reviewPrompt = (prompt: string) =>
+    decodeReview({ kind: "review", phases: { review: { prompt } } }).phases.review.prompt;
+
+  it("upgrades the old default verbatim and keeps an edited prompt", () => {
+    expect(reviewPrompt(LEGACY_BOARD_REVIEW_PHASE_PROMPT)).toBe(DEFAULT_BOARD_REVIEW_PHASE_PROMPT);
+    const edited = `${LEGACY_BOARD_REVIEW_PHASE_PROMPT} Also check the docs.`;
+    expect(reviewPrompt(edited)).toBe(edited);
   });
 });

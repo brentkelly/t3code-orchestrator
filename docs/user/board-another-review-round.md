@@ -88,6 +88,6 @@ settled and no blocking fix landed, it can rule that no further round is needed,
 so.
 
 Each review round now reads the code with fresh eyes: the reviewer does not see earlier rounds, only
-your unresolved pull request comments and the findings you ruled not issues. If you saved your own
-review prompt before this change, it is kept as it is, so edit it if it still asks the reviewer to
-read earlier rounds.
+your unresolved pull request comments and the findings you ruled not issues. A review prompt still
+set to the old default switches to the new one by itself. One you edited is kept as it is, so edit it
+again if it still asks the reviewer to read earlier rounds.
