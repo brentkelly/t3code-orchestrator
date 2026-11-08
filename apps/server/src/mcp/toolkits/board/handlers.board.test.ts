@@ -971,11 +971,48 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
         verdicts: [{ findingId: "f1", verdict: "fix-upheld", note: "ok" }],
         anotherRound: true,
       });
+      // A triage attempt that never recorded a completion is still a
+      // review-loop thread, named only by its link role.
+      const engine = yield* boardStackEngine;
+      const triageThread = ThreadId.make("thread-fresh-eyes-triage");
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-fresh-eyes-triage"),
+        threadId: triageThread,
+        projectId: own.ownProject,
+        title: "Triage",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: t0,
+      });
+      yield* engine.dispatch({
+        type: "board.card.link-thread",
+        commandId: CommandId.make("cmd-link-fresh-eyes-triage"),
+        cardId: own.ownCard,
+        threadId: triageThread,
+        role: "triage@1",
+        createdAt: t0,
+      });
       yield* startStep({ ...own, suffix: "review-2", stepId: "review@2" });
       const reviewer = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
       assert.deepStrictEqual(
         reviewer.steps.map((step) => step.stepId),
         [],
+      );
+      assert.notInclude(
+        reviewer.card.threadLinks.map((link) => link.threadId),
+        triageThread,
+      );
+      assert.notInclude(
+        reviewer.threads.map((entry) => entry.threadId),
+        triageThread,
+      );
+      assert.include(
+        reviewer.card.threadLinks.map((link) => link.threadId),
+        own.ownThread,
       );
       yield* boardHandlers
         .board_complete_step({
@@ -988,6 +1025,10 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       yield* settleStep({ ...own, suffix: "review-2", stepId: "review@2" });
       // Any other caller still reads the whole history.
       const after = yield* boardHandlers.board_get_card_context().pipe(withScope(own.ownThread));
+      assert.include(
+        after.card.threadLinks.map((link) => link.threadId),
+        triageThread,
+      );
       assert.includeMembers(
         after.steps.map((step) => step.stepId),
         ["triage@1", "adjudicate@1"],

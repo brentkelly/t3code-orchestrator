@@ -1000,15 +1000,20 @@ export const boardHandlers = {
         !isBoardTerminalStepStatus(liveStep.status) &&
         liveStep.threadId === deps.scope.thread.threadId &&
         parseReviewStepId(liveStep.stepId)?.phase === "review";
-      const reviewLoopThreadIds = new Set(
-        boardCardStepCompletions(board, card.id)
-          .filter(
-            (completion) =>
-              parseReviewStepId(completion.stepId) !== null &&
-              completion.threadId !== null &&
-              completion.threadId !== deps.scope.thread.threadId,
-          )
-          .map((completion) => completion.threadId),
+      // Link roles name every review-loop thread, including attempts that
+      // never recorded a completion; completions cover links since dropped.
+      const reviewLoopThreadIds = new Set<string>(
+        [
+          ...card.threadLinks
+            .filter((link) => parseReviewStepId(link.role) !== null)
+            .map((link) => link.threadId),
+          ...boardCardStepCompletions(board, card.id)
+            .filter((completion) => parseReviewStepId(completion.stepId) !== null)
+            .map((completion) => completion.threadId),
+        ].filter(
+          (threadId): threadId is NonNullable<typeof threadId> =>
+            threadId !== null && threadId !== deps.scope.thread.threadId,
+        ),
       );
       // A running plan review's instructions (T3O-39), so a re-orienting agent
       // picks the review up where it was.
@@ -1040,7 +1045,14 @@ export const boardHandlers = {
         );
       }
       return {
-        card,
+        card: reviewCaller
+          ? {
+              ...card,
+              threadLinks: card.threadLinks.filter(
+                (link) => !reviewLoopThreadIds.has(link.threadId),
+              ),
+            }
+          : card,
         brief: detail?.brief ?? null,
         briefVersion: boardBriefVersion(detail?.brief ?? null),
         // Pull, not push (K3): every linked thread lists the brief's files

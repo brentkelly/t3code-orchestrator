@@ -12104,11 +12104,13 @@ export function boardReviewRoundResolution(input: {
         boardReviewShaMatches(latestFixedSha(finding.id), reviewedSha)
       );
     });
-    const shaUnchanged =
+    // With fixes in play the SHA check is left to `settled`, which pins each
+    // blocking fix to the reviewed SHA; with none, triage's SHA must not move.
+    const shaCheckPasses =
       fixedFindings.length > 0 ||
       (boardReviewShaMatches(triage.fixedSha, reviewedSha) &&
         (retriage === null || boardReviewShaMatches(retriage.fixedSha, reviewedSha)));
-    if (settled && shaUnchanged) return { kind: "converge", by: "adjudicator" };
+    if (settled && shaCheckPasses) return { kind: "converge", by: "adjudicator" };
   }
   return { kind: "continue" };
 }
