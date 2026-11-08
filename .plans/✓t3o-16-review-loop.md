@@ -91,6 +91,12 @@ and neither is expressible with one model per stage.
 
 ### D3 — The loop shape, and review owns convergence
 
+> **Superseded in part by T3O-51.** An adjudicator ruling against triage no longer waits for the next
+> round: it binds inside the round, through one re-triage and one re-adjudicate pass, and a dispute
+> that survives them stops the loop `stuck` for a human. The adjudicator can also end a loop that only
+> re-raises settled points (`anotherRound: false`). Review still decides convergence otherwise. See
+> the T3O-51 card's plan and decision log.
+
 ```
 round N:
   review      -> no blocking findings?  -> COMPLETE, stage succeeds
