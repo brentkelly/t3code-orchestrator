@@ -275,6 +275,8 @@ export function BoardCardCreateDialog({
   const workspaceRoot =
     snapshot?.projects.find((project) => project.id === projectId)?.workspaceRoot ?? null;
 
+  const selectedProject = projects.find((project) => project.id === projectId);
+
   const stageOptions = useMemo(() => {
     const stageState = stageStateOf(stages);
     const ordered = boardStagesInOrder(stageState);
@@ -488,7 +490,7 @@ export function BoardCardCreateDialog({
     const { prefix, assigned } = assignBoardKeyPrefix({
       board: boardSettings,
       projectId,
-      projectTitle: projects.find((project) => project.id === projectId)?.title ?? "",
+      projectTitle: selectedProject?.title ?? "",
     });
     if (assigned) {
       updateSettings({
@@ -607,7 +609,11 @@ export function BoardCardCreateDialog({
             // The card modal's "Part of" chip, inert here: the dialog sits on
             // the parent's sub-board already.
             <BoardHint label={`Created on ${parentShell.key}'s sub-board`}>
-              <span className="inline-flex h-[18px] min-w-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground">
+              <span
+                // Focusable so the hint is reachable by keyboard, not hover only.
+                tabIndex={0}
+                className="inline-flex h-[18px] min-w-0 items-center gap-1 rounded-md bg-muted-foreground/14 px-[7px] text-[11px] font-medium text-foreground"
+              >
                 <LayersIcon className="size-2.5 shrink-0" />
                 <span className="shrink-0">{parentShell.key}</span>
                 <span className="shrink-0 text-muted-foreground">·</span>
@@ -684,16 +690,11 @@ export function BoardCardCreateDialog({
                     <span
                       className={cn(
                         "size-2 shrink-0 rounded-full",
-                        projectAccent(
-                          projectId,
-                          projectIconColorOf(projects.find((project) => project.id === projectId)),
-                        ).dot,
+                        projectAccent(projectId, projectIconColorOf(selectedProject)).dot,
                       )}
                     />
                   )}
-                  <span className="truncate">
-                    {projects.find((project) => project.id === projectId)?.title ?? "Project"}
-                  </span>
+                  <span className="truncate">{selectedProject?.title ?? "Project"}</span>
                 </div>
               ) : (
                 <Select
@@ -724,12 +725,7 @@ export function BoardCardCreateDialog({
                       <span
                         className={cn(
                           "size-2 shrink-0 rounded-full",
-                          projectAccent(
-                            projectId,
-                            projectIconColorOf(
-                              projects.find((project) => project.id === projectId),
-                            ),
-                          ).dot,
+                          projectAccent(projectId, projectIconColorOf(selectedProject)).dot,
                         )}
                       />
                     )}
