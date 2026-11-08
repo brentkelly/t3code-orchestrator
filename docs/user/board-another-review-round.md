@@ -91,4 +91,3 @@ Each review round now reads the code with fresh eyes: the reviewer does not see 
 your unresolved pull request comments and the findings you ruled not issues. If you saved your own
 review prompt before this change, it is kept as it is, so edit it if it still asks the reviewer to
 read earlier rounds.
-
