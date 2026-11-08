@@ -360,6 +360,8 @@ describe("deriveBoardCardWorkSummary", () => {
             stopAfterRound: 1,
             roundModels: {},
             runThroughRound: null,
+            carriedFindings: {},
+            stuckWaivedThrough: null,
           },
         },
         {
@@ -412,6 +414,8 @@ describe("deriveBoardCardWorkSummary", () => {
             stopAfterRound: 1,
             roundModels: {},
             runThroughRound: null,
+            carriedFindings: {},
+            stuckWaivedThrough: null,
           },
         },
         {
@@ -481,6 +485,8 @@ describe("deriveBoardCardWorkSummary", () => {
       stopAfterRound: 1,
       roundModels: {},
       runThroughRound: null,
+      carriedFindings: {},
+      stuckWaivedThrough: null,
     };
 
     it("shows Merged over No convergence", () => {

@@ -173,6 +173,10 @@ export function describeBoardReviewRoundOutcome(
       return "This card has no branch to review.";
     case "unknown-card":
       return "This card no longer exists.";
+    case "stuck":
+      return "The review is stuck. Rule on the stuck findings — Fix it or Reviewer is wrong — or advance the card.";
+    case "not-stuck":
+      return "The review is no longer stuck, so there is nothing to rule on.";
     case "failed":
       return "The review round could not be started. See the server log for details.";
   }

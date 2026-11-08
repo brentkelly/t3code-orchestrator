@@ -45,7 +45,7 @@ describe("boardCardProgressBlock (D8)", () => {
     const parentInReview = summary([
       { kind: "plans", done: 3, total: 3, statuses: "ddd" },
       { kind: "round", current: 1, max: 3, outcome: undefined },
-      { kind: "issues", fixed: 0, rejected: 0, open: 3, disputed: 0 },
+      { kind: "issues", fixed: 0, rejected: 0, open: 3, disputed: 0, escalated: 0 },
     ]);
     const parentBlock = boardCardProgressBlock(parentInReview, todo("t1"));
     expect(parentBlock.kind).toBe("review");

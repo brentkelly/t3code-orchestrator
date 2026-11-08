@@ -50,6 +50,7 @@ export interface BoardCardWorkSummaryReview {
     readonly rejected: number;
     readonly open: number;
     readonly disputed: number;
+    readonly escalated: number;
   };
   readonly outstanding: ReadonlyArray<BoardCardWorkSummaryOutstandingFinding>;
 }
@@ -107,7 +108,7 @@ const EMPTY_REVIEW: BoardCardWorkSummaryReview = {
   empty: true,
   currentRound: 0,
   maxRounds: DEFAULT_BOARD_REVIEW_ROUNDS,
-  counts: { raised: 0, fixed: 0, rejected: 0, open: 0, disputed: 0 },
+  counts: { raised: 0, fixed: 0, rejected: 0, open: 0, disputed: 0, escalated: 0 },
   outstanding: [],
 };
 
@@ -187,7 +188,16 @@ function deriveVerdict(input: {
   // must not paint a landed card amber (docs/t3o/status-colours.md). Merged /
   // Done win; Blocked, pushed above, still outranks them.
   if (input.role !== "done") {
-    if (input.loopStatus === "unreadable") {
+    if (input.loopStatus === "stuck") {
+      // Violet, and only in Code review (T3O-51): the one way out of that
+      // stage is a human's call.
+      if (input.role === "review") {
+        candidates.push({ label: boardReviewHeldLabel("stuck"), tone: "attention" });
+      }
+    } else if (input.loopStatus === "advanced") {
+      // A human advanced past a stuck round: neither a pass nor a call.
+      candidates.push({ label: "Review advanced", tone: "muted" });
+    } else if (input.loopStatus === "unreadable") {
       candidates.push({ label: boardReviewHeldLabel("unreadable"), tone: "warning" });
     } else if (input.loopStatus === "round-cap") {
       candidates.push({ label: boardReviewHeldLabel("round-cap"), tone: "warning" });
@@ -230,6 +240,7 @@ function deriveReview(
   maxRounds: number,
   stopAfterRound: number | null,
   runThroughRound: number | null,
+  carry: Parameters<typeof deriveBoardReviewLoop>[4],
 ): {
   readonly recap: BoardCardWorkSummaryReview;
   readonly status: ReturnType<typeof deriveBoardReviewLoop>["status"] | null;
@@ -237,7 +248,13 @@ function deriveReview(
   if (!hasBoardReviewSteps(completions)) {
     return { recap: EMPTY_REVIEW, status: null };
   }
-  const loop = deriveBoardReviewLoop(completions, maxRounds, stopAfterRound, runThroughRound);
+  const loop = deriveBoardReviewLoop(
+    completions,
+    maxRounds,
+    stopAfterRound,
+    runThroughRound,
+    carry,
+  );
   const current =
     loop.rounds.find((round) => round.round === loop.currentRound) ?? loop.rounds.at(-1) ?? null;
   // The walk points currentRound at the next review as soon as that phase is
@@ -252,7 +269,12 @@ function deriveReview(
     outstandingSource === null
       ? []
       : outstandingSource.findings
-          .filter((entry) => entry.resolution === "open" || entry.resolution === "disputed")
+          .filter(
+            (entry) =>
+              entry.resolution === "open" ||
+              entry.resolution === "disputed" ||
+              entry.resolution === "escalated",
+          )
           .map((entry) => ({ id: entry.finding.id, title: entry.finding.title }));
   return {
     status: loop.status,
@@ -376,6 +398,10 @@ export function deriveBoardCardWorkSummary(input: {
     maxRounds,
     card.reviewOverrides?.stopAfterRound ?? null,
     card.reviewOverrides?.runThroughRound ?? null,
+    {
+      carriedFindings: card.reviewOverrides?.carriedFindings ?? {},
+      stuckWaivedThrough: card.reviewOverrides?.stuckWaivedThrough ?? null,
+    },
   );
   // The Review pane's walk treats an empty ledger as round 1 running. Summary
   // only does that ON the review role — feeding it off-stage would label a

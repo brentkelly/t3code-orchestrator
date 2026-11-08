@@ -233,6 +233,8 @@ const ATTENTION_ICON: Record<BoardCardAttentionReason, ReactNode> = {
   stalled: <TriangleAlertIcon className="size-3" />,
   approval: <LayersIcon className="size-3" />,
   "review-held": <TriangleAlertIcon className="size-3" />,
+  // T3O-51: a stuck review waits on the human's ruling.
+  "review-stuck": <TriangleAlertIcon className="size-3" />,
   // T3O-49: CI stopped for a human — the same mark as a held step.
   "ci-stopped": <PauseIcon className="size-3" />,
   held: <PauseIcon className="size-3" />,
@@ -514,7 +516,10 @@ export function BoardCardContent({
       item.kind === "round" && item.outcome !== undefined && isBoardReviewLoopHeld(item.outcome),
   );
   const chip =
-    flag === null || (own !== null && own.reason === "review-held" && roundRowExplainsIt)
+    flag === null ||
+    (own !== null &&
+      (own.reason === "review-held" || own.reason === "review-stuck") &&
+      roundRowExplainsIt)
       ? null
       : {
           reason: flag.reason,
