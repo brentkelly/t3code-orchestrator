@@ -551,7 +551,7 @@ describe("boardReviewRoundsStarted / effectiveBoardReviewRounds", () => {
     assert.strictEqual(
       effectiveBoardReviewRounds({
         configured: 5,
-        overrides: { rounds: 1, stopAfterRound: null, roundModels: {}, runThroughRound: null },
+        overrides: { rounds: 1, stopAfterRound: null, roundModels: {}, runThroughRound: null, carriedFindings: {}, stuckWaivedThrough: null },
         roundsStarted: 3,
       }),
       3,
@@ -564,7 +564,7 @@ describe("boardReviewRoundsStarted / effectiveBoardReviewRounds", () => {
     assert.strictEqual(
       effectiveBoardReviewRounds({
         configured: 5,
-        overrides: { rounds: 99, stopAfterRound: null, roundModels: {}, runThroughRound: null },
+        overrides: { rounds: 99, stopAfterRound: null, roundModels: {}, runThroughRound: null, carriedFindings: {}, stuckWaivedThrough: null },
         roundsStarted: 0,
       }),
       99,
