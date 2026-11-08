@@ -6862,6 +6862,26 @@ export type BoardCardRecordNoteCommand = typeof BoardCardRecordNoteCommand.Type;
  * `hold: null` is the clear, and every D10 trigger that is not already a card
  * update goes through it.
  */
+/**
+ * Write a card's server-only review carry fields (T3O-51): the waiver past a
+ * stuck round, the human's ruling carried into the next round, and the round
+ * request that opens it. Every part is optional. Internal: only the server's
+ * `openReviewRound` dispatches it, because commands carry no provenance and
+ * the decider could not tell a human's Fix it from any other client.
+ */
+export const BoardCardSetReviewCarryCommand = Schema.Struct({
+  type: Schema.Literal("board.card.set-review-carry"),
+  commandId: CommandId,
+  cardId: BoardCardId,
+  runThroughRound: Schema.optional(PositiveInt),
+  /** Clears a pending stop, as asking for a round always has. */
+  clearStopAfterRound: Schema.optional(Schema.Literal(true)),
+  stuckWaivedThrough: Schema.optional(PositiveInt),
+  carry: Schema.optional(Schema.Struct({ round: PositiveInt, entry: BoardReviewCarry })),
+  createdAt: IsoDateTime,
+});
+export type BoardCardSetReviewCarryCommand = typeof BoardCardSetReviewCarryCommand.Type;
+
 export const BoardCardRecordAutoMergeHoldCommand = Schema.Struct({
   type: Schema.Literal("board.card.record-auto-merge-hold"),
   commandId: CommandId,
@@ -7351,6 +7371,9 @@ export const BoardCardMovedPayload = Schema.Struct({
       Auto-plan, so a card pulled back never relaunches under the person
       parking it. Absent when it turned off nothing. */
   automationChanged: Schema.optional(BoardAutomationChanged),
+  /** The review summary after a human advanced a stuck loop (T3O-51), which
+      writes the waiver in this same event. Absent on every other move. */
+  reviewSummary: Schema.optionalKey(BoardCardReviewSummary),
 });
 export type BoardCardMovedPayload = typeof BoardCardMovedPayload.Type;
 
@@ -9454,6 +9477,8 @@ export const BOARD_INTERNAL_COMMANDS = [
   BoardCardRetireThreadCommand,
   // T3O-38: the auto-merge hold and its retry ladder.
   BoardCardRecordAutoMergeHoldCommand,
+  // T3O-51: the review loop's server-only carry fields.
+  BoardCardSetReviewCarryCommand,
   // T3O-32: the decision log and auto-planning.
   BoardCardRecordDecisionsCommand,
   BoardCardMarkAutoPlanCommand,
@@ -10362,11 +10387,34 @@ export const BoardRequestReviewRoundResult = Schema.Union([
   /** No worktree branch, so there is nothing to review. */
   Schema.Struct({ outcome: Schema.Literal("no-branch") }),
   Schema.Struct({ outcome: Schema.Literal("unknown-card") }),
+  /** A carry (Fix it, Reviewer is wrong) on a loop that is not stuck — a
+      stale client (T3O-51). */
+  Schema.Struct({ outcome: Schema.Literal("not-stuck") }),
+  /** A plain request on a stuck loop: the human must rule on the stuck
+      findings with a carry action, or Advance (T3O-51). */
+  Schema.Struct({ outcome: Schema.Literal("stuck") }),
   /** The attempt itself broke — a read-model hiccup, not a refusal with a
       cause the user can act on. */
   Schema.Struct({ outcome: Schema.Literal("failed") }),
 ]);
 export type BoardRequestReviewRoundResult = typeof BoardRequestReviewRoundResult.Type;
+
+/**
+ * Ask a card's review loop for another round (T3O-39), optionally ruling on a
+ * stuck loop's findings as it goes (T3O-51). `carry.ruling` is `fix` for "Fix
+ * it and run another round" (side with the adjudicator) and `dismiss` for
+ * "Reviewer is wrong" (side with triage); both apply to every stuck finding.
+ */
+export const BoardRequestReviewRoundInput = Schema.Struct({
+  cardId: BoardCardId,
+  carry: Schema.optionalKey(
+    Schema.Struct({
+      ruling: BoardReviewCarryRuling,
+      note: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2000))),
+    }),
+  ),
+});
+export type BoardRequestReviewRoundInput = typeof BoardRequestReviewRoundInput.Type;
 
 /** What "Skip CI" did (T3O-44). */
 export const BoardSkipCiResult = Schema.Union([
@@ -10838,7 +10886,7 @@ export const BOARD_RPCS = [
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(BOARD_WS_METHODS.requestReviewRound, {
-    payload: BoardCardPullRequestActionInput,
+    payload: BoardRequestReviewRoundInput,
     success: BoardRequestReviewRoundResult,
     error: Schema.Union([BoardSubscribeCardError, EnvironmentAuthorizationError]),
   }),
@@ -12065,6 +12113,119 @@ export function boardReviewRoundResolution(input: {
   return { kind: "continue" };
 }
 
+/**
+ * Why a NEW review-loop completion breaks the round's rules, or null (T3O-51).
+ *
+ * Asked by the completion handler alone, after `boardStepPayloadDefect`
+ * passed — never by the decider's repair or Reopen paths, which judge records
+ * written before these rules. Each refusal is something the agent can put
+ * right in the same turn.
+ */
+export function boardReviewCompletionDefect(input: {
+  readonly stepId: string;
+  readonly payload: string | null;
+  /** The card's recorded completions. */
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
+  readonly carriedFindings: Readonly<Record<string, BoardReviewCarry>>;
+}): string | null {
+  const parsed = parseReviewStepId(input.stepId);
+  if (parsed === null || parsed.phase === "sync") return null;
+  const { phase, round } = parsed;
+  const value = parseBoardStepPayloadJson(input.payload);
+  if (phase === "review") {
+    const review = Option.getOrNull(decodeBoardReviewPayloadOption(value));
+    if (review === null) return null;
+    const ids = review.findings.map((finding) => finding.id);
+    if (ids.some((id) => id.startsWith(BOARD_REVIEW_CARRIED_ID_PREFIX))) {
+      return `Finding ids may not start with '${BOARD_REVIEW_CARRIED_ID_PREFIX}': the board reserves that prefix. Rename those findings and complete the step again.`;
+    }
+    const duplicate = ids.find((id, index) => ids.indexOf(id) !== index);
+    return duplicate === undefined
+      ? null
+      : `Finding id '${duplicate}' is used more than once. Give every finding its own id and complete the step again.`;
+  }
+  const done = new Map<string, BoardStepCompletion>();
+  for (const completion of input.completions) {
+    if (completion.outcome !== "succeeded") continue;
+    if (parseReviewStepId(completion.stepId) === null) continue;
+    done.set(completion.stepId, completion);
+  }
+  // A round the loop has moved past keeps the rules it was written under.
+  if (done.has(reviewStepId("review", round + 1))) return null;
+  const carriedIds = new Set(
+    boardReviewCarriedFixFindings(input.carriedFindings, round).map((f) => f.findingId),
+  );
+  const missing = (required: Iterable<string>, given: ReadonlySet<string>) =>
+    [...required].filter((id) => !given.has(id));
+  const listIds = (ids: ReadonlyArray<string>) => ids.map((id) => `'${id}'`).join(", ");
+
+  if (phase === "triage" || phase === "retriage") {
+    const dispositions =
+      phase === "triage"
+        ? (Option.getOrNull(decodeBoardTriagePayloadOption(value))?.dispositions ?? [])
+        : (Option.getOrNull(decodeBoardRetriagePayloadOption(value))?.dispositions ?? []);
+    const given = new Set(dispositions.map((d) => d.findingId));
+    let required: ReadonlyArray<string> = [...carriedIds];
+    if (phase === "retriage") {
+      done.delete(reviewStepId("retriage", round));
+      done.delete(reviewStepId("readjudicate", round));
+      const resolution = boardReviewRoundResolution({
+        round,
+        done,
+        carriedFindings: input.carriedFindings,
+      });
+      if (resolution.kind !== "run" || resolution.phase !== "retriage") {
+        return `Round ${round} has no findings waiting on re-triage. Complete with outcome failed if you were asked to run it.`;
+      }
+      required = resolution.findings.map((f) => f.finding.id);
+    }
+    const absent = missing(required, given);
+    if (absent.length > 0) {
+      return `Give a disposition for every listed finding; missing: ${listIds(absent)}. Complete the step again with all of them.`;
+    }
+    const rejected = dispositions.filter(
+      (d) => carriedIds.has(d.findingId) && d.action === "rejected",
+    );
+    if (rejected.length > 0) {
+      return `A human ordered ${listIds(rejected.map((d) => d.findingId))} fixed, so they cannot be rejected: fix them${phase === "retriage" ? " or escalate them" : ""}, then complete the step again.`;
+    }
+    return null;
+  }
+
+  const adjudication = Option.getOrNull(decodeBoardAdjudicatePayloadOption(value));
+  if (adjudication === null) return null;
+  if (adjudication.anotherRound === undefined) {
+    return "The payload must say `anotherRound`: true for another review round, false only if this round raised nothing new beyond points already settled. Complete the step again with it.";
+  }
+  const given = new Set(adjudication.verdicts.map((v) => v.findingId));
+  let required: ReadonlyArray<string> = [...carriedIds];
+  if (phase === "readjudicate") {
+    done.delete(reviewStepId("readjudicate", round));
+    const resolution = boardReviewRoundResolution({
+      round,
+      done,
+      carriedFindings: input.carriedFindings,
+    });
+    if (resolution.kind !== "run" || resolution.phase !== "readjudicate") {
+      return `Round ${round} has no findings waiting on re-adjudication. Complete with outcome failed if you were asked to run it.`;
+    }
+    required = resolution.findings.map((f) => f.finding.id);
+  }
+  const absent = missing(required, given);
+  if (absent.length > 0) {
+    return `Give a verdict for every listed finding; missing: ${listIds(absent)}. Complete the step again with all of them.`;
+  }
+  const rejectionRuled = adjudication.verdicts.filter(
+    (v) =>
+      carriedIds.has(v.findingId) &&
+      (v.verdict === "rejection-justified" || v.verdict === "rejection-unjustified"),
+  );
+  if (rejectionRuled.length > 0) {
+    return `A human ordered ${listIds(rejectionRuled.map((v) => v.findingId))} fixed, so only fix-upheld, fix-incomplete or fix-absent apply to them. Complete the step again.`;
+  }
+  return null;
+}
+
 /** The lowest budget a human's Fix it leaves the loop (T3O-51): a round that
     carried "fix" findings and landed a fix owes one more round, so the fix is
     always reviewed, even past the budget. */
@@ -12259,6 +12420,67 @@ export function boardReviewLoopWalk(input: {
       }
     }
   }
+}
+
+/** The stuck round a card's loop has stopped on and its findings (T3O-51), or
+    null when it is not stuck. Walks past the ledger like the summary does, so
+    no budget is needed: a stuck verdict is always on a recorded round. */
+export function boardReviewStuckState(input: {
+  readonly completions: ReadonlyArray<BoardStepCompletion>;
+  readonly overrides: BoardCardReviewOverrides | null;
+}): {
+  readonly round: number;
+  readonly findings: ReadonlyArray<BoardReviewStuckFinding>;
+  readonly unreviewedFixes: number;
+} | null {
+  let highest = 0;
+  for (const completion of input.completions) {
+    const parsed = parseReviewStepId(completion.stepId);
+    if (parsed !== null) highest = Math.max(highest, parsed.round);
+  }
+  if (highest === 0) return null;
+  const walk = boardReviewLoopWalk({
+    completions: input.completions,
+    maxRounds: highest + 1,
+    stopAfterRound: null,
+    runThroughRound: input.overrides?.runThroughRound ?? null,
+    carriedFindings: input.overrides?.carriedFindings ?? {},
+    stuckWaivedThrough: input.overrides?.stuckWaivedThrough ?? null,
+  });
+  if (walk.status !== "stuck") return null;
+  return {
+    round: walk.currentRound,
+    findings: walk.stuckFindings ?? [],
+    unreviewedFixes: walk.unreviewedFixes ?? 0,
+  };
+}
+
+const clipText = (text: string, max: number): string =>
+  text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+
+/** The carry entry a human's ruling writes for a stuck round's findings
+    (T3O-51), with every text field cut to the schema's caps. */
+export function boardReviewCarryFromStuck(input: {
+  readonly round: number;
+  readonly findings: ReadonlyArray<BoardReviewStuckFinding>;
+  readonly ruling: BoardReviewCarryRuling;
+  readonly note: string | null;
+}): BoardReviewCarry {
+  const note = input.note === null ? null : input.note.trim();
+  return {
+    ruling: input.ruling,
+    note: note === null || note.length === 0 ? null : clipText(note, 2000),
+    findings: input.findings.map((finding) => ({
+      findingId: clipText(boardReviewCarriedFindingId(input.round, finding.findingId), 300),
+      origRound: finding.carriedFrom ?? finding.round,
+      severity: finding.severity,
+      title: clipText(finding.title, 500),
+      file: finding.file === null ? null : clipText(finding.file, 500),
+      line: finding.line,
+      detail: clipText(finding.detail, 4000),
+      rulingNote: clipText(finding.rulingNote, 4000),
+    })),
+  };
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   BoardCardAttachmentId,
   BoardCardId,
   BoardStageId,
+  type BoardCardSetReviewCarryCommand,
   BoardLabelId,
   boardPlanId,
   CommandId,
@@ -696,7 +697,14 @@ it.layer(NodeServices.layer)("board decider", (it) => {
       type: "board.card.update",
       commandId: CommandId.make("cmd-rounds"),
       cardId: BoardCardId.make("card-a"),
-      reviewOverrides: { rounds, stopAfterRound: null, roundModels: {}, runThroughRound: null },
+      reviewOverrides: {
+        rounds,
+        stopAfterRound: null,
+        roundModels: {},
+        runThroughRound: null,
+        carriedFindings: {},
+        stuckWaivedThrough: null,
+      },
       createdAt: NOW,
     }) satisfies BoardCommand;
 
@@ -740,12 +748,262 @@ it.layer(NodeServices.layer)("board decider", (it) => {
     }),
   );
 
+  // ── T3O-51: the server-only carry fields and the Advance waiver ──────
+
+  const stuckStep = (stepId: string, payload: unknown) => ({
+    cardId: BoardCardId.make("card-a"),
+    stepId,
+    outcome: "succeeded" as const,
+    summary: stepId,
+    payload: JSON.stringify(payload),
+    threadId: null,
+    completedAt: NOW,
+  });
+  const stuckLedger = [
+    stuckStep("review@1", {
+      reviewedSha: "s",
+      findings: [{ id: "f1", severity: "critical", title: "Broken" }],
+    }),
+    stuckStep("triage@1", {
+      fixedSha: "s",
+      dispositions: [{ findingId: "f1", action: "rejected", note: "no" }],
+    }),
+    stuckStep("adjudicate@1", {
+      verdicts: [{ findingId: "f1", verdict: "rejection-unjustified", note: "yes" }],
+      anotherRound: true,
+    }),
+    stuckStep("retriage@1", {
+      fixedSha: "s",
+      dispositions: [{ findingId: "f1", action: "escalated", note: "human please" }],
+    }),
+  ];
+  const stuckCardBoard = (
+    input: {
+      readonly overrides?: BoardCard["reviewOverrides"];
+      readonly stage?: string;
+    } = {},
+  ): BoardOrchestrationReadModel =>
+    makeReadModel({
+      board: {
+        cards: [
+          {
+            ...makeCard({ id: "card-a" }),
+            stage: BoardStageId.make(input.stage ?? BOARD_SEED_STAGE_IDS.review),
+            reviewOverrides: input.overrides ?? null,
+          },
+        ],
+        nextCardNumberByProject: {},
+        stepCompletions: stuckLedger,
+      } as BoardState,
+    });
+  const carryEntry = {
+    ruling: "fix" as const,
+    note: null,
+    findings: [
+      {
+        findingId: "carried:r1:f1",
+        origRound: 1,
+        severity: "critical" as const,
+        title: "Broken",
+        file: null,
+        line: null,
+        detail: "",
+        rulingNote: "yes",
+      },
+    ],
+  };
+  const setCarry = (patch: Partial<BoardCardSetReviewCarryCommand>) =>
+    ({
+      type: "board.card.set-review-carry",
+      commandId: CommandId.make("cmd-carry"),
+      cardId: BoardCardId.make("card-a"),
+      createdAt: NOW,
+      ...patch,
+    }) satisfies BoardCommand;
+
+  it.effect(
+    "T3O-51: set-review-carry waives, carries and opens the round in one card-updated",
+    () =>
+      Effect.gen(function* () {
+        const event = yield* decide(
+          setCarry({
+            runThroughRound: 2,
+            clearStopAfterRound: true,
+            stuckWaivedThrough: 1,
+            carry: { round: 2, entry: carryEntry },
+          }),
+          stuckCardBoard({
+            overrides: {
+              rounds: null,
+              stopAfterRound: 1,
+              roundModels: {},
+              runThroughRound: null,
+              carriedFindings: {},
+              stuckWaivedThrough: null,
+            },
+          }),
+        );
+        assert.strictEqual(event.type, "board.card-updated");
+        if (event.type !== "board.card-updated") return;
+        const overrides = event.payload.card.reviewOverrides;
+        assert.strictEqual(overrides?.stuckWaivedThrough, 1);
+        assert.strictEqual(overrides?.runThroughRound, 2);
+        assert.strictEqual(overrides?.stopAfterRound, null);
+        assert.deepStrictEqual(overrides?.carriedFindings["2"], carryEntry);
+        // The summary rides the event so the card face leaves Stuck at once.
+        assert.strictEqual(event.payload.reviewSummary?.outcome, "running");
+      }),
+  );
+
+  it.effect("T3O-51: set-review-carry leaves a stop alone unless told to clear it", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(
+        setCarry({ stuckWaivedThrough: 1 }),
+        stuckCardBoard({
+          overrides: {
+            rounds: null,
+            stopAfterRound: 1,
+            roundModels: {},
+            runThroughRound: null,
+            carriedFindings: {},
+            stuckWaivedThrough: null,
+          },
+        }),
+      );
+      if (event.type !== "board.card-updated") throw new Error("expected card-updated");
+      assert.strictEqual(event.payload.card.reviewOverrides?.stopAfterRound, 1);
+    }),
+  );
+
+  it.effect(
+    "T3O-51: set-review-carry clamps, keeps the carry write-once and the waiver monotone",
+    () =>
+      Effect.gen(function* () {
+        assert.include(
+          String(yield* decideFail(setCarry({ runThroughRound: 3 }), stuckCardBoard())),
+          "only round 2 can be requested next",
+        );
+        assert.include(
+          String(yield* decideFail(setCarry({ stuckWaivedThrough: 2 }), stuckCardBoard())),
+          "only 1 round(s) have started",
+        );
+        assert.include(
+          String(
+            yield* decideFail(
+              setCarry({ carry: { round: 1, entry: carryEntry } }),
+              stuckCardBoard(),
+            ),
+          ),
+          "it has already started",
+        );
+        const carried = {
+          rounds: null,
+          stopAfterRound: null,
+          roundModels: {},
+          runThroughRound: 2,
+          carriedFindings: { "2": carryEntry },
+          stuckWaivedThrough: 1,
+        };
+        assert.include(
+          String(
+            yield* decideFail(
+              setCarry({ carry: { round: 2, entry: { ...carryEntry, ruling: "dismiss" } } }),
+              stuckCardBoard({ overrides: carried }),
+            ),
+          ),
+          "already carries a ruling",
+        );
+        // A lower waiver never lowers the stored one.
+        const event = yield* decide(
+          setCarry({ stuckWaivedThrough: 1 }),
+          stuckCardBoard({ overrides: { ...carried, stuckWaivedThrough: 1 } }),
+        );
+        if (event.type !== "board.card-updated") throw new Error("expected card-updated");
+        assert.strictEqual(event.payload.card.reviewOverrides?.stuckWaivedThrough, 1);
+      }),
+  );
+
+  it.effect("T3O-51: a client update never changes the carry fields, even clearing overrides", () =>
+    Effect.gen(function* () {
+      const stored = {
+        rounds: 4,
+        stopAfterRound: null,
+        roundModels: {},
+        runThroughRound: 2,
+        carriedFindings: { "2": carryEntry },
+        stuckWaivedThrough: 1,
+      };
+      for (const reviewOverrides of [
+        null,
+        { ...stored, rounds: 5, carriedFindings: {}, stuckWaivedThrough: null },
+      ]) {
+        const event = yield* decide(
+          {
+            type: "board.card.update",
+            commandId: CommandId.make("cmd-client"),
+            cardId: BoardCardId.make("card-a"),
+            reviewOverrides,
+            createdAt: NOW,
+          },
+          stuckCardBoard({ overrides: stored }),
+        );
+        if (event.type !== "board.card-updated") throw new Error("expected card-updated");
+        assert.deepStrictEqual(event.payload.card.reviewOverrides?.carriedFindings, {
+          "2": carryEntry,
+        });
+        assert.strictEqual(event.payload.card.reviewOverrides?.stuckWaivedThrough, 1);
+      }
+    }),
+  );
+
+  const moveTo = (toStage: string, cause?: "human" | "auto-build") =>
+    ({
+      type: "board.card.move",
+      commandId: CommandId.make("cmd-move"),
+      cardId: BoardCardId.make("card-a"),
+      toStage: BoardStageId.make(toStage),
+      override: true,
+      ...(cause === undefined ? {} : { cause }),
+      createdAt: NOW,
+    }) satisfies BoardCommand;
+
+  it.effect("T3O-51: a human Advance writes the waiver in the move itself", () =>
+    Effect.gen(function* () {
+      const event = yield* decide(moveTo(BOARD_SEED_STAGE_IDS.merge, "human"), stuckCardBoard());
+      assert.strictEqual(event.type, "board.card-moved");
+      if (event.type !== "board.card-moved") return;
+      assert.strictEqual(event.payload.card.reviewOverrides?.stuckWaivedThrough, 1);
+      assert.strictEqual(event.payload.reviewSummary?.outcome, "advanced");
+      assert.strictEqual(event.payload.reviewSummary?.advancedRound, 1);
+    }),
+  );
+
+  it.effect("T3O-51: any other forward mover of a stuck card is refused; backward is free", () =>
+    Effect.gen(function* () {
+      assert.include(
+        String(yield* decideFail(moveTo(BOARD_SEED_STAGE_IDS.merge), stuckCardBoard())),
+        "Review is stuck",
+      );
+      const back = yield* decide(moveTo(BOARD_SEED_STAGE_IDS.building), stuckCardBoard());
+      if (back.type !== "board.card-moved") throw new Error("expected card-moved");
+      assert.strictEqual(back.payload.card.reviewOverrides, null);
+      assert.strictEqual(back.payload.reviewSummary, undefined);
+    }),
+  );
+
   const requestRound = (runThroughRound: number | null) =>
     ({
       type: "board.card.update",
       commandId: CommandId.make("cmd-request-round"),
       cardId: BoardCardId.make("card-a"),
-      reviewOverrides: { rounds: null, stopAfterRound: null, roundModels: {}, runThroughRound },
+      reviewOverrides: {
+        rounds: null,
+        stopAfterRound: null,
+        roundModels: {},
+        runThroughRound,
+        carriedFindings: {},
+        stuckWaivedThrough: null,
+      },
       createdAt: NOW,
     }) satisfies BoardCommand;
 
@@ -794,6 +1052,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             stopAfterRound: 2,
             roundModels: {},
             runThroughRound: 3,
+            carriedFindings: {},
+            stuckWaivedThrough: null,
           },
           createdAt: NOW,
         },
@@ -804,6 +1064,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             stopAfterRound: 2,
             roundModels: {},
             runThroughRound: null,
+            carriedFindings: {},
+            stuckWaivedThrough: null,
           },
         }),
       );
@@ -824,11 +1086,25 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           type: "board.card.update",
           commandId: CommandId.make("cmd-extend"),
           cardId: BoardCardId.make("card-a"),
-          reviewOverrides: { rounds: 3, stopAfterRound: 2, roundModels: {}, runThroughRound: null },
+          reviewOverrides: {
+            rounds: 3,
+            stopAfterRound: 2,
+            roundModels: {},
+            runThroughRound: null,
+            carriedFindings: {},
+            stuckWaivedThrough: null,
+          },
           createdAt: NOW,
         },
         reviewCardBoard({
-          overrides: { rounds: 2, stopAfterRound: 2, roundModels: {}, runThroughRound: null },
+          overrides: {
+            rounds: 2,
+            stopAfterRound: 2,
+            roundModels: {},
+            runThroughRound: null,
+            carriedFindings: {},
+            stuckWaivedThrough: null,
+          },
         }),
       );
       assert.strictEqual(event.type, "board.card-updated");
@@ -907,11 +1183,25 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           type: "board.card.update",
           commandId: CommandId.make("cmd-resume"),
           cardId: BoardCardId.make("card-a"),
-          reviewOverrides: { rounds: 3, stopAfterRound: 2, roundModels: {}, runThroughRound: null },
+          reviewOverrides: {
+            rounds: 3,
+            stopAfterRound: 2,
+            roundModels: {},
+            runThroughRound: null,
+            carriedFindings: {},
+            stuckWaivedThrough: null,
+          },
           createdAt: NOW,
         },
         reviewCardBoard({
-          overrides: { rounds: 8, stopAfterRound: 2, roundModels: {}, runThroughRound: null },
+          overrides: {
+            rounds: 8,
+            stopAfterRound: 2,
+            roundModels: {},
+            runThroughRound: null,
+            carriedFindings: {},
+            stuckWaivedThrough: null,
+          },
           completedRounds: 2,
         }),
       );
@@ -934,6 +1224,8 @@ it.layer(NodeServices.layer)("board decider", (it) => {
             stopAfterRound: 2,
             roundModels: {},
             runThroughRound: null,
+            carriedFindings: {},
+            stuckWaivedThrough: null,
           },
           createdAt: NOW,
         },
@@ -957,7 +1249,14 @@ it.layer(NodeServices.layer)("board decider", (it) => {
           setRounds(3),
           reviewCardBoard({
             completedRounds: 2,
-            overrides: { rounds: 5, stopAfterRound: null, roundModels: {}, runThroughRound: null },
+            overrides: {
+              rounds: 5,
+              stopAfterRound: null,
+              roundModels: {},
+              runThroughRound: null,
+              carriedFindings: {},
+              stuckWaivedThrough: null,
+            },
           }),
         );
         assert.strictEqual(event.type, "board.card-updated");

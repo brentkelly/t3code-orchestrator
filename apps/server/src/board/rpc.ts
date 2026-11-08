@@ -33,6 +33,7 @@ import {
   type BoardCardDetailStreamItem,
   type BoardCardId,
   type BoardCardPullRequestActionInput,
+  type BoardRequestReviewRoundInput,
   type BoardCardWorkerMoveAnswer,
   type BoardCardWorkerMoveRequest,
   // T3o: the refresh's own payload (T3O-48).
@@ -385,10 +386,10 @@ function makeBoardRpcHandlers(
      * the `runThroughRound` override must be written before the card moves,
      * or the executor re-plans a converged loop and bounces it straight back.
      */
-    [BOARD_WS_METHODS.requestReviewRound]: (input: BoardCardPullRequestActionInput) =>
+    [BOARD_WS_METHODS.requestReviewRound]: (input: BoardRequestReviewRoundInput) =>
       authorized(
         BOARD_WS_METHODS.requestReviewRound,
-        deps.boardSupervisor.requestReviewRound(input.cardId),
+        deps.boardSupervisor.requestReviewRound(input.cardId, input.carry),
       ),
 
     /** Skip CI (T3O-44): a human's override, so what it records carries the
