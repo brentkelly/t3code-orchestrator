@@ -1438,7 +1438,12 @@ describe("T3O-51: a ruling binds inside its round", () => {
       assert.strictEqual(result.status, "stuck");
       assert.isNull(result.next);
       assert.deepStrictEqual(
-        result.stuckFindings?.map((f) => [f.findingId, f.triageAction, f.rulingVerdict, f.rulingNote]),
+        result.stuckFindings?.map((f) => [
+          f.findingId,
+          f.triageAction,
+          f.rulingVerdict,
+          f.rulingNote,
+        ]),
         [["f1", "rejected", "escalated", "ruled escalated"]],
       );
     });
@@ -1591,7 +1596,9 @@ describe("T3O-51: a ruling binds inside its round", () => {
       });
 
       it("holds an escalation to a reason, a blocking finding, and no human order", () => {
-        assert.isNull(defect("adjudicate@1", verdicts({ f1: ["escalated", "scope call"] }), firstPass));
+        assert.isNull(
+          defect("adjudicate@1", verdicts({ f1: ["escalated", "scope call"] }), firstPass),
+        );
         assert.include(
           defect("adjudicate@1", verdicts({ f1: ["escalated", ""] }), firstPass),
           "needs a note",
@@ -1614,11 +1621,10 @@ describe("T3O-51: a ruling binds inside its round", () => {
           "'carried:r0:f1'",
         );
         assert.isNull(
-          defect(
-            "readjudicate@1",
-            verdicts({ f1: ["escalated", "owner's risk"] }),
-            [...disputedRound(1), retriage(1, { f1: "rejected" })],
-          ),
+          defect("readjudicate@1", verdicts({ f1: ["escalated", "owner's risk"] }), [
+            ...disputedRound(1),
+            retriage(1, { f1: "rejected" }),
+          ]),
         );
       });
 
