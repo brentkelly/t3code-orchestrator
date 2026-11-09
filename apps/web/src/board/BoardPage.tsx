@@ -74,6 +74,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { BoardArchivedCardsSheet, refreshBoardArchivedCards } from "./BoardArchivedCardsSheet";
 import { BoardCardCreateDialog } from "./BoardCardCreateDialog";
 import { BoardPlanningExitConfirmDialog } from "./BoardPlanningExitConfirmDialog";
+import { boardPlanningExitConfirmCopyForMove } from "./boardCardAutomationForward";
 import { boardMoveLeavesPlanningUnwritten } from "./boardStageActions";
 import { boardStageLabel } from "./boardStages";
 import { countBoardColumnCards, filterBoardColumnsByQuery } from "./boardCardFilter";
@@ -1124,6 +1125,31 @@ function EnvironmentBoard({
     },
     [groupShells, buildStageId, orderedStages, performDrop],
   );
+  const unplannedDropAutoBuild =
+    unplannedDrop === null
+      ? null
+      : resolveBoardShellAutomation({
+          shells: allCards,
+          stages: stageState,
+          card: boardShellAutomationNode(unplannedDrop.source.card),
+          boardWideAutoMerge: false,
+        }).autoBuild;
+  const unplannedDropCopy =
+    unplannedDrop === null || unplannedDropAutoBuild === null
+      ? { title: "", confirmLabel: "", extra: null }
+      : boardPlanningExitConfirmCopyForMove({
+          cardKey: unplannedDrop.source.card.key,
+          toStageLabel: boardStageLabel(orderedStages, unplannedDrop.targetStage),
+          stages: orderedStages,
+          fromStage: unplannedDrop.source.stage,
+          toStage: unplannedDrop.targetStage,
+          autoBuild: {
+            value: unplannedDropAutoBuild.value,
+            waitingForGroupStart: unplannedDropAutoBuild.waitingForGroupStart,
+          },
+          unmetCount: unplannedDrop.source.card.dependencyCount,
+          isGroup: false,
+        });
 
   // Turns a target stage + raw insertion index into the settled card order.
   // The index is measured against the RENDERED cards — `visibleColumns`, which
@@ -1946,12 +1972,9 @@ function EnvironmentBoard({
           onOpenChange={(open) => {
             if (!open) setUnplannedDrop(null);
           }}
-          cardKey={unplannedDrop?.source.card.key ?? ""}
+          copy={unplannedDropCopy}
           fromStageLabel={
             unplannedDrop === null ? "" : boardStageLabel(orderedStages, unplannedDrop.source.stage)
-          }
-          toStageLabel={
-            unplannedDrop === null ? "" : boardStageLabel(orderedStages, unplannedDrop.targetStage)
           }
           onConfirm={() => {
             if (unplannedDrop === null) return;

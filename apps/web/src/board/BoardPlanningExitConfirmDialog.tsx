@@ -21,17 +21,19 @@ import {
 import { boardStageLabelMidSentence } from "./boardCardThreadMenu";
 
 export function BoardPlanningExitConfirmDialog({
-  cardKey,
+  copy,
   fromStageLabel,
-  toStageLabel,
   onConfirm,
   onOpenChange,
   open,
 }: {
-  readonly cardKey: string;
+  readonly copy: {
+    readonly title: string;
+    readonly confirmLabel: string;
+    readonly extra: string | null;
+  };
   /** The plan-role stage the card is leaving. */
   readonly fromStageLabel: string;
-  readonly toStageLabel: string;
   readonly onConfirm: () => void;
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
@@ -40,11 +42,10 @@ export function BoardPlanningExitConfirmDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>
-            Move {cardKey} to {toStageLabel} without a plan?
-          </AlertDialogTitle>
+          <AlertDialogTitle>{copy.title}</AlertDialogTitle>
           <AlertDialogDescription>
             <span className="block">No plan has been written for this card yet.</span>
+            {copy.extra !== null ? <span className="mt-1.5 block">{copy.extra}</span> : null}
             <span className="mt-1.5 block">
               Its {boardStageLabelMidSentence(fromStageLabel)} thread stays on the card, so moving
               the card back to {fromStageLabel} picks the conversation up where it left off.
@@ -59,7 +60,7 @@ export function BoardPlanningExitConfirmDialog({
               onConfirm();
             }}
           >
-            Move to {toStageLabel}
+            {copy.confirmLabel}
           </Button>
           <AlertDialogClose autoFocus render={<Button variant="default" />}>
             Cancel
