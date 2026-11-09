@@ -41,6 +41,8 @@ import {
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
+// T3o: the fork's identity, icons and Linux packages (T3O-1).
+import { applyT3oBuildConfig, T3O_ICON_PATHS } from "./lib/t3o-desktop-build.ts";
 import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
@@ -969,6 +971,8 @@ interface StagePackageJson {
   readonly homepage: string;
   readonly author: string;
   readonly main: string;
+  /** T3o: Squirrel.Mac refuses to self-update an unsigned app. */
+  readonly t3oCodeSigned?: boolean;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
   readonly devDependencies: {
@@ -2730,11 +2734,8 @@ export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIcon
     };
   }
 
-  return {
-    macIconPng: BRAND_ASSET_PATHS.productionMacIconPng,
-    linuxIconPng: BRAND_ASSET_PATHS.productionLinuxIconPng,
-    windowsIconIco: BRAND_ASSET_PATHS.productionWindowsIconIco,
-  };
+  // T3o: packaged builds carry the derived T3o icon.
+  return T3O_ICON_PATHS;
 }
 
 export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefined): string {
@@ -2974,6 +2975,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.win = winConfig;
   }
 
+  // T3o: the fork's identity over upstream's config (scripts/lib/t3o-desktop-build.ts).
+  applyT3oBuildConfig(buildConfig, target, version);
   return buildConfig;
 });
 
@@ -3883,6 +3886,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     homepage: T3O_DESKTOP_IDENTITY.homepage,
     author: T3O_DESKTOP_IDENTITY.maintainer,
     main: "apps/desktop/dist-electron/boot.cjs",
+    // T3o: Squirrel.Mac refuses to self-update an unsigned app.
+    t3oCodeSigned: options.signed,
     build: yield* createBuildConfig(
       options.platform,
       options.target,

@@ -3,14 +3,22 @@ import * as Schema from "effect/Schema";
 
 import { compareSemverVersions } from "./semver.ts";
 
-const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
+// T3o: runtimes, `t3 update` and SSH installs download the fork's releases, which carry the board.
+const CLI_RELEASE_REPOSITORY = "brentkelly/t3code-orchestrator";
 export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 
-// Keep archive keys aligned with the Linux matrix, Windows ARM64 build, and cli_archive rows in release.yml.
-// Node single-executables do not support darwin-x64 and segfault at startup.
-const CLI_ARCHIVE_PLATFORM_KEYS = [
+/**
+ * The archives a release attaches. Kept in step with the build_linux_cli
+ * matrix, build_windows_arm64_cli, the `cli_archive` rows in
+ * .github/workflows/release.yml, and the checksum step in
+ * .github/workflows/t3o-release.yml: a key here without a build there produces
+ * download URLs that 404, and a build there without a key here is
+ * unreachable from every installer.
+ */
+// T3o: no darwin-x64; Node single-executables are unsupported on x64 macOS.
+export const CLI_ARCHIVE_PLATFORM_KEYS = [
   "darwin-arm64",
   "linux-arm64",
   "linux-x64",

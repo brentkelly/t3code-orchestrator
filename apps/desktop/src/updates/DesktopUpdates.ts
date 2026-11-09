@@ -34,6 +34,8 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+// T3o: unsigned macOS and deb/rpm installs update through the release page.
+import * as T3oUpdateInstallGate from "../t3o/updateInstallGate.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -352,6 +354,8 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  // T3o: which installs may replace themselves (t3o/updateInstallGate.ts).
+  const t3oInstallGate = yield* T3oUpdateInstallGate.makeInstallGate;
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
@@ -441,7 +445,8 @@ export const make = Effect.gen(function* () {
         isDevelopment: environment.isDevelopment,
         isPackaged: environment.isPackaged,
         platform: environment.platform,
-        appImage: Option.getOrUndefined(config.appImagePath),
+        // T3o: a deb/rpm install checks for updates too; it is sent to the release page.
+        appImage: Option.getOrUndefined(config.appImagePath) ?? t3oInstallGate.linuxPackageSource,
         isDebPackage,
         disabledByEnv: config.disableAutoUpdate,
         hasUpdateFeedConfig: hasFeedConfig,
@@ -552,6 +557,26 @@ export const make = Effect.gen(function* () {
     const state = yield* Ref.get(updateStateRef);
     if (!(yield* Ref.get(updaterConfiguredRef)) || state.status !== "available") {
       return { accepted: false, completed: false };
+    }
+    // T3o: an install that cannot replace itself opens the release page instead.
+    if (t3oInstallGate.mode === "release-page") {
+      const opened = yield* t3oInstallGate.redirectDownload(state.availableVersion);
+      if (!opened) {
+        yield* updateState((current) =>
+          reduceDesktopUpdateStateOnDownloadFailure(
+            current,
+            T3oUpdateInstallGate.t3oReleasePageOpenFailureMessage(state.availableVersion),
+          ),
+        );
+      } else {
+        yield* updateState((current) => ({
+          ...current,
+          message: null,
+          errorContext: null,
+          canRetry: false,
+        }));
+      }
+      return { accepted: true, completed: false };
     }
 
     if (!(yield* tryStartUpdateAction("download"))) {

@@ -19,9 +19,28 @@ This repository is **T3o**, a fork of [`pingdotgg/t3code`](https://github.com/pi
 Planning → Ready → Building → Code review → Ready for merge → Done), and the app spawns, supervises and
 restarts the agent threads that do the work.
 
-T3o is not published to any registry. `npx t3@latest`, the desktop installers and the package-manager
-recipes under [Installation](#installation) all give you **upstream**, without the board. To run T3o you
-build it from this checkout.
+### Download
+
+The T3o desktop app is on this repository's
+[Releases page](https://github.com/brentkelly/t3code-orchestrator/releases/latest). It bundles the T3o
+server, board included, and installs beside upstream T3 Code rather than replacing it. Pick the file for your
+system:
+
+| System                 | File                                                     |
+| ---------------------- | -------------------------------------------------------- |
+| macOS, Apple Silicon   | `T3o-<version>-arm64.dmg`                                |
+| macOS, Intel           | `T3o-<version>-x64.dmg`                                  |
+| Windows                | `T3o-<version>-x64.exe` (ARM: `-arm64.exe`)              |
+| Debian, Ubuntu         | `T3o-<version>-amd64.deb` (ARM: `-arm64.deb`)            |
+| Fedora, RHEL, openSUSE | `T3o-<version>-x86_64.rpm` (ARM: `-aarch64.rpm`)         |
+| Any other Linux        | `T3o-<version>-x86_64.AppImage` (ARM: `-arm64.AppImage`) |
+
+The builds are not code-signed yet, so macOS and Windows warn on first launch. How to get past that, where
+the app keeps its data, and how it updates: [docs/t3o/install.md](./docs/t3o/install.md).
+
+`npx t3@latest`, upstream's desktop installers and the package-manager recipes under
+[Installation](#installation) all give you **upstream**, without the board. To run T3o as a headless server,
+build it from this checkout as below.
 
 ### Requirements
 
@@ -74,8 +93,8 @@ The pairing URL is printed once at startup, and you need it to reach the web app
 journalctl -u t3o.service -n 200 --no-pager | grep -i 'Pairing URL'
 ```
 
-Do **not** use upstream's `t3 service install` here. It runs `npm install t3@<version>` against the public
-registry, and would serve upstream's build against this fork's data — no board, and no error to say so.
+Do **not** use upstream's `t3 service install` here. It downloads the release archive for the running
+version, and a build from this checkout has no published release behind its version.
 
 Flags, redeploying after a pull, running without systemd, and troubleshooting:
 [docs/t3o/install.md](./docs/t3o/install.md).

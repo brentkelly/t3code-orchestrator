@@ -33,6 +33,9 @@ export const T3O_DESKTOP_IDENTITY = {
   registersUrlScheme: false,
 } as const;
 
+/** The fork's GitHub Releases page, where installers are downloaded by hand. */
+export const T3O_RELEASES_URL = `${T3O_DESKTOP_IDENTITY.homepage}/releases`;
+
 export const resolveT3oAppId = (isDevelopment: boolean): string =>
   isDevelopment ? T3O_DESKTOP_IDENTITY.devAppId : T3O_DESKTOP_IDENTITY.appId;
 

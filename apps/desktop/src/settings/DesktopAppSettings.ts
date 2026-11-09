@@ -224,7 +224,11 @@ function normalizeDesktopSettingsDocument(
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
     tailscaleServePort: normalizeTailscaleServePort(parsed.tailscaleServePort),
     updateChannel: updateChannelConfiguredByUser
-      ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
+      ? // T3o: no nightly track on the fork, so a persisted nightly choice is ignored.
+        Option.getOrElse(
+          Option.filter(parsedUpdateChannel, isT3oUpdateChannel),
+          () => defaultSettings.updateChannel,
+        )
       : defaultSettings.updateChannel,
     updateChannelConfiguredByUser,
     wslBackendEnabled,
