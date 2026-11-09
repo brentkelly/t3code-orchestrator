@@ -128,6 +128,8 @@ export interface Preferences {
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
   readonly workspaceSelections?: WorkspaceSelections;
+  /** Last Home surface: threads list or the T3o Board (T3O-18). */
+  readonly homeMode?: "threads" | "board";
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -205,6 +207,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
+    homeMode?: "threads" | "board";
   } = {};
 
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
@@ -358,6 +361,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isWorkspaceSelections(parsed.workspaceSelections)) {
     preferences.workspaceSelections = parsed.workspaceSelections;
+  }
+  if (parsed.homeMode === "threads" || parsed.homeMode === "board") {
+    preferences.homeMode = parsed.homeMode;
   }
   return preferences;
 }

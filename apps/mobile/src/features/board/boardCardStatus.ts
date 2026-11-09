@@ -1,0 +1,121 @@
+/**
+ * One status word for a mobile board row (T3O-18), coloured per
+ * `docs/t3o/status-colours.md`.
+ */
+import {
+  boardCardAttention,
+  boardCardChildAttentionLabel,
+  effectiveBoardStageRole,
+  isBoardCardWorking,
+  type BoardCardAttention,
+  type BoardCardChildAttention,
+  type BoardCardShell,
+  type BoardStageDefinition,
+} from "@t3tools/contracts";
+import type { StatusTone } from "../../components/StatusPill";
+import { boardMergeHold } from "./boardMergeHold";
+
+/** Reasons `boardCardAttention` returns before it looks at the working dot. */
+const ATTENTION_AHEAD_OF_WORKING = new Set<BoardCardAttention["reason"]>([
+  "paused",
+  "stalled",
+  "approval",
+  "review-held",
+]);
+
+export type BoardCardStatusKind = "success" | "info" | "attention" | "warning" | "neutral";
+
+export const BOARD_CARD_STATUS_TONES: Record<BoardCardStatusKind, Omit<StatusTone, "label">> = {
+  success: {
+    pillClassName: "bg-adaptive-emerald-500-a12-a16",
+    textClassName: "text-adaptive-emerald-700-300",
+  },
+  info: {
+    pillClassName: "bg-update",
+    textClassName: "text-update-foreground",
+  },
+  attention: {
+    pillClassName: "bg-adaptive-violet-500-a12-a16",
+    textClassName: "text-adaptive-violet-700-300",
+  },
+  warning: {
+    pillClassName: "bg-warning",
+    textClassName: "text-warning-foreground",
+  },
+  neutral: {
+    pillClassName: "bg-subtle",
+    textClassName: "text-foreground-secondary",
+  },
+};
+
+export type BoardCardStatusCard = Parameters<typeof boardCardAttention>[0]["card"] &
+  Pick<BoardCardShell, "blocked" | "queued"> &
+  Partial<Pick<BoardCardShell, "stepConflictFix" | "stepChecksFix">>;
+
+export function boardCardStatus(input: {
+  readonly card: BoardCardStatusCard;
+  readonly stages: ReadonlyArray<BoardStageDefinition>;
+  readonly now?: number;
+  /** Worst child attention from `deriveBoardCardChildAttention`, when the parent is quiet. */
+  readonly childAttention?: BoardCardChildAttention;
+  /** Count from `deriveBoardCardChildRunning` — lights Running on an idle split parent. */
+  readonly childRunning?: number;
+}): StatusTone | null {
+  const { card, stages } = input;
+  if (card.archivedAt !== null) {
+    return status("success", "Archived");
+  }
+  const stage = stages.find((entry) => entry.stageId === card.stage);
+  if (stage !== undefined && effectiveBoardStageRole(stage) === "done") {
+    return status("success", "Done");
+  }
+  const attention = boardCardAttention({ card, stages, now: input.now });
+  // A pending question or permission prompt is answerable in one tap, the same
+  // carve-out `boardCardNotice` and `docs/t3o/status-colours.md` give it over
+  // Conflicts, Running, and the dependency gate. This row has one pill.
+  if (attention !== null && (attention.reason === "input" || attention.reason === "permission")) {
+    return fromAttention(attention);
+  }
+  // A held merge is amber even while the fix is running or queued — the claim
+  // is that the MERGE is held (`docs/t3o/status-colours.md`), not motion.
+  const hold = boardMergeHold(card);
+  if (hold !== null) {
+    return status("warning", hold.label);
+  }
+  // Pause, stall, pending split, and a held review loop all outrank the working
+  // dot in `boardCardAttention`. `held` and `stopped` stay below Running; they
+  // are already suppressed while the card is working.
+  if (attention !== null && ATTENTION_AHEAD_OF_WORKING.has(attention.reason)) {
+    return fromAttention(attention);
+  }
+  if (isBoardCardWorking(card)) {
+    return status("info", "Running");
+  }
+  if (input.childAttention !== undefined) {
+    return fromAttention({
+      ...input.childAttention,
+      label: boardCardChildAttentionLabel(input.childAttention),
+    });
+  }
+  if ((input.childRunning ?? 0) > 0) {
+    return status("info", "Running");
+  }
+  if (card.queued) {
+    return status("neutral", "Queued");
+  }
+  if (card.blocked) {
+    return status("warning", "Blocked");
+  }
+  if (attention === null) return null;
+  return fromAttention(attention);
+}
+
+function fromAttention(attention: Pick<BoardCardAttention, "tone" | "label">): StatusTone {
+  if (attention.tone === "attention") return status("attention", attention.label);
+  if (attention.tone === "warning") return status("warning", attention.label);
+  return status("neutral", attention.label);
+}
+
+function status(kind: BoardCardStatusKind, label: string): StatusTone {
+  return { label, ...BOARD_CARD_STATUS_TONES[kind] };
+}

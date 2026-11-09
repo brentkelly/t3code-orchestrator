@@ -8,6 +8,7 @@ export type HardwareKeyboardCommand =
   | "palettePrevious"
   | "paletteDismiss"
   | "newTask"
+  | "board"
   | "focusSearch"
   | "back"
   | "files"

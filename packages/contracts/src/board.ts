@@ -8697,13 +8697,21 @@ export function deriveBoardCardThreadState(
   return { threadState: failed ? "failed" : "stopped", awaitingInput, waitingOnBackground };
 }
 
+/** The card's active thread link: the most recently linked live link, by the
+    same canonical (linkedAt, threadId) order the aggregate uses. */
+export function activeBoardCardThreadLink(
+  links: ReadonlyArray<BoardCardThreadLink>,
+): BoardCardThreadLink | null {
+  const live = sortBoardCardThreadLinks(links.filter(isLiveBoardCardThreadLink));
+  return live.at(-1) ?? null;
+}
+
 /** The card's active thread: the most recently linked live link, by the
     same canonical (linkedAt, threadId) order the aggregate uses. */
 export function activeBoardCardThreadId(
   links: ReadonlyArray<BoardCardThreadLink>,
 ): ThreadId | null {
-  const live = sortBoardCardThreadLinks(links.filter(isLiveBoardCardThreadLink));
-  return live.at(-1)?.threadId ?? null;
+  return activeBoardCardThreadLink(links)?.threadId ?? null;
 }
 
 /**

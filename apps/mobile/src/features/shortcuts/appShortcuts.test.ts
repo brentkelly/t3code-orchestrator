@@ -4,7 +4,10 @@ import type { NavigationState } from "@react-navigation/native";
 import type { RecentThreadShortcut } from "../../persistence/imperative";
 import {
   activeThreadRef,
+  BOARD_SHORTCUT_HREF,
+  BOARD_SHORTCUT_ID,
   buildShortcutActions,
+  NEW_TASK_SHORTCUT_ID,
   shortcutHref,
   withRecentThreadShortcut,
 } from "./appShortcuts";
@@ -31,18 +34,33 @@ describe("withRecentThreadShortcut", () => {
 });
 
 describe("buildShortcutActions", () => {
+  it("leads with the static new-task and board actions", () => {
+    const actions = buildShortcutActions([thread("a")]);
+    expect(actions[0]?.id).toBe(NEW_TASK_SHORTCUT_ID);
+    expect(actions[0]?.params?.href).toBe("/new");
+    expect(actions[1]?.id).toBe(BOARD_SHORTCUT_ID);
+    expect(actions[1]?.params?.href).toBe(BOARD_SHORTCUT_HREF);
+    expect(actions).toHaveLength(3);
+  });
+
   it("deep-links threads with encoded route params", () => {
     const actions = buildShortcutActions([
       { environmentId: "env 1", threadId: "thread/2", title: "Spaced out" },
     ]);
-    expect(actions[1]?.params?.href).toBe("/threads/env%201/thread%2F2");
-    expect(actions[1]?.title).toBe("Spaced out");
+    expect(actions[2]?.params?.href).toBe("/threads/env%201/thread%2F2");
+    expect(actions[2]?.title).toBe("Spaced out");
+  });
+
+  it("falls back to a generic label for missing titles", () => {
+    const actions = buildShortcutActions([thread("a", "  ")]);
+    expect(actions[2]?.title).toBe("Thread");
   });
 });
 
 describe("shortcutHref", () => {
   it("accepts exactly the destinations shortcuts can produce", () => {
     expect(shortcutHref({ id: "x", title: "x", params: { href: "/new" } })).toBe("/new");
+    expect(shortcutHref({ id: "x", title: "x", params: { href: "/board" } })).toBe("/board");
     expect(shortcutHref({ id: "x", title: "x", params: { href: "/threads/env-1/thread-2" } })).toBe(
       "/threads/env-1/thread-2",
     );
@@ -93,6 +111,6 @@ describe("launcher shortcut ids", () => {
   it("cannot collide across different env/thread pairs", () => {
     const a = buildShortcutActions([{ environmentId: "a-b", threadId: "c", title: "x" }]);
     const b = buildShortcutActions([{ environmentId: "a", threadId: "b-c", title: "x" }]);
-    expect(a[1]?.id).not.toBe(b[1]?.id);
+    expect(a[2]?.id).not.toBe(b[2]?.id);
   });
 });

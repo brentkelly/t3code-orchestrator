@@ -15,6 +15,7 @@
  */
 import {
   BOARD_SEED_STAGE_IDS,
+  areBoardStagesAdjacent,
   effectiveBoardStageRole,
   boardStageById,
   boardStageIndex,
@@ -85,6 +86,10 @@ export type BoardStagePrimaryAction =
 export interface BoardStagePrimaryActionContext {
   /** The card has a CI entry (T3O-44): only passing or Skip CI moves it on. */
   readonly ciEntryLive?: boolean;
+  /** The project's CI is on (T3O-44). A card already in the CI stage with no
+      entry yet (`holdInCi` before a pass starts) still cannot move forward;
+      Skip CI is the way out. A paused CI keeps the ordinary forward move. */
+  readonly ciActive?: boolean;
   /** The card's pull request state, or null when it has none. Only `open` puts
       a Merge button on the card: a merged or closed PR has nothing left to
       merge, and the card falls back to the ordinary forward move so it is
@@ -201,6 +206,47 @@ export function boardCiAwareNextStageId(
   return fromIndex < ciIndex && nextIndex > ciIndex ? ci : next;
 }
 
+/** CI blocks a human forward move (T3O-44): a live pass, or the card sits in
+    CI with the project's CI still on before a pass exists (`holdInCi`). A
+    paused CI with no entry still moves on like any held card. */
+function boardCiBlocksHumanForward(input: {
+  readonly stageId: BoardStageId;
+  readonly ciEntryLive?: boolean | undefined;
+  readonly ciActive?: boolean | undefined;
+}): boolean {
+  if (input.stageId !== BOARD_SEED_STAGE_IDS.ci) return false;
+  return input.ciEntryLive === true || input.ciActive === true;
+}
+
+/** Skip CI while a human cannot move the card forward out of CI (T3O-44). The
+    phone has no CI pane. */
+export function boardSkipCiAction(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  input: {
+    readonly stageId: BoardStageId;
+    readonly ciEntryLive: boolean;
+    readonly ciActive?: boolean;
+  },
+): {
+  readonly label: string;
+  readonly confirmLabel: string;
+  readonly toStage: BoardStageId | null;
+  readonly toLabel: string;
+} | null {
+  if (!boardCiBlocksHumanForward(input)) return null;
+  const toStage = boardCiAwareNextStageId(stages, BOARD_SEED_STAGE_IDS.ci, false);
+  const toLabel =
+    toStage === null
+      ? "the next stage"
+      : (stages.find((stage) => stage.stageId === toStage)?.label ?? toStage);
+  return {
+    label: "Skip CI",
+    confirmLabel: `Skip CI and move to ${toLabel}`,
+    toStage,
+    toLabel,
+  };
+}
+
 export function boardStagePrimaryAction(
   stages: ReadonlyArray<BoardStageDefinition>,
   stageId: BoardStageId,
@@ -232,7 +278,15 @@ export function boardStagePrimaryAction(
     };
   }
   // The stage list is already the card's own project's pipeline (T3O-43).
-  const next = boardCiAwareNextStageId(stages, stageId, context?.ciEntryLive === true);
+  const next = boardCiAwareNextStageId(
+    stages,
+    stageId,
+    boardCiBlocksHumanForward({
+      stageId,
+      ciEntryLive: context?.ciEntryLive,
+      ciActive: context?.ciActive,
+    }),
+  );
   if (next === null) return null;
   const nextStage = stages.find((stage) => stage.stageId === next);
   if (nextStage === undefined) return null;
@@ -265,4 +319,16 @@ export function boardMoveLeavesPlanningUnwritten(input: {
   const from = boardStageById(board, card.stage);
   if (from === null || effectiveBoardStageRole(from) !== "plan") return false;
   return boardStageIndex(board, toStage) > boardStageIndex(board, card.stage);
+}
+
+/**
+ * Non-adjacent stage jumps need `override: true` on `board.card.move`. Adjacent
+ * moves (the primary forward button) do not. Matches the web detail pane.
+ */
+export function boardMoveNeedsOverride(
+  stages: ReadonlyArray<BoardStageDefinition>,
+  from: BoardStageId,
+  to: BoardStageId,
+): boolean {
+  return !areBoardStagesAdjacent(stateOf(stages), from, to);
 }

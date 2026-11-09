@@ -6,6 +6,7 @@ export function AndroidHomeFabLayout(props: {
   readonly sidebar?: boolean;
   readonly disabled?: boolean;
   readonly paneWidth?: number;
+  readonly composeLabel?: string;
 }) {
   return <>{props.children}</>;
 }
