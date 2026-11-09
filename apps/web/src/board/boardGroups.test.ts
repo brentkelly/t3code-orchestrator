@@ -245,10 +245,10 @@ describe("boardDropRefusal", () => {
     ).toBeNull();
   });
 
-  it("keeps an own-branch group's cards from Ready onward", () => {
+  it("lets an own-branch group's card move back before Ready (T3O-53)", () => {
     const own = shell("g-1", "building", { group: group({ target: "own" }) });
     const card = child("c-1", "ready", "g-1");
-    expect(refusal([own, card], card, "planning")).toContain("live from Ready onward");
+    expect(refusal([own, card], card, "planning")).toBeNull();
     expect(refusal([own, card], card, "deferred")).toBeNull();
   });
 });

@@ -148,7 +148,7 @@ describe("BoardNewPhaseDialog", () => {
     );
   };
 
-  it("names the floor stage when the parent group has its own branch", async () => {
+  it("names the first stage even when the parent group has its own branch", async () => {
     commands.setup();
     const ownGroup = {
       target: "own" as const,
@@ -179,10 +179,10 @@ describe("BoardNewPhaseDialog", () => {
         stages={STAGES}
       />,
     );
-    await expect.element(page.getByText(/in the Ready of P-1\./)).toBeInTheDocument();
+    await expect.element(page.getByText(/in the Backlog of P-1\./)).toBeInTheDocument();
     await press(page.getByRole("button", { name: "Create phase with 1" }));
     await vi.waitFor(() => expect(commands.calls.length).toBeGreaterThan(0));
-    expect(commands.calls[0]!.input).toMatchObject({ heading: true, stage: "ready" });
+    expect(commands.calls[0]!.input).toMatchObject({ heading: true, stage: "backlog" });
   });
 
   it("pre-fills `‹Group›: Phase 2` and ticks every deferred card", async () => {
