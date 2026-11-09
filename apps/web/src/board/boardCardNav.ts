@@ -31,8 +31,8 @@ const NO_NEIGHBOURS: BoardCardNeighbours = { stage: null, prev: null, next: null
  *
  * `stageOrder` is the ordered list of stages the board is RENDERING, which is
  * what makes the step follow the columns left to right: a `BoardStageColumns`
- * is keyed by stage id with no order of its own, and a sub-board renders only
- * the stages from its materialisation floor onward. A stage missing from
+ * is keyed by stage id with no order of its own, and a board need not render
+ * every stage. A stage missing from
  * `stageOrder`, or holding no cards, is simply not stepped through.
  *
  * A card that is not in `columns` at all — a deep link, or a card the search

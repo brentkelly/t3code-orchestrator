@@ -14,8 +14,8 @@ import {
   BOARD_SEED_STAGES,
   areBoardStagesAdjacent,
   isBoardDeferredStage,
+  boardCreateDefaultStage,
   boardStageBeforeBuild,
-  boardStageIndex,
   boardStageWithRole,
   boardCardWorktreeIsCancelledWork,
   boardCardWorktreeKept,
@@ -635,21 +635,11 @@ function EnvironmentBoard({
     [groupVmByCard],
   );
   const parentGroup = parentShell === null ? null : boardShellGroup(groupShells, parentShell);
-  // The first stage a card may be created in here: under an own-branch group,
-  // the floor its children live from.
-  const floorStageId = boardStageBeforeBuild(stageState)?.stageId ?? null;
+  // Where a new card lands by default: Planning inside a started group (T3O-53).
   const firstStageId =
-    parentGroup?.target === "own" && floorStageId !== null
-      ? floorStageId
+    parentGroup?.started === true
+      ? boardCreateDefaultStage(stageState, true, parentShell?.projectId ?? null)
       : (orderedStages[0]?.stageId ?? null);
-  const canCreateIn = useCallback(
-    (stageId: BoardStageId) =>
-      !isBoardDeferredStage(stageId) &&
-      (parentGroup?.target !== "own" ||
-        floorStageId === null ||
-        boardStageIndex(stageState, stageId) >= boardStageIndex(stageState, floorStageId)),
-    [floorStageId, parentGroup?.target, stageState],
-  );
   // Ancestors of this sub-board's group, root first: the breadcrumb, and
   // where Back goes (one level up).
   const ancestors = useMemo(
@@ -1793,7 +1783,7 @@ function EnvironmentBoard({
                   attentionFor={attentionFor}
                   childAttentionFor={childAttentionFor}
                   childRunningFor={childRunningFor}
-                  addProjects={canCreateIn(stage.stageId) ? addProjects : []}
+                  addProjects={isBoardDeferredStage(stage.stageId) ? [] : addProjects}
                   cards={visibleColumns[stage.stageId] ?? EMPTY_CARDS}
                   labelsById={labelsById}
                   collapsed={collapsed}

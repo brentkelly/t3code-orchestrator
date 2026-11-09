@@ -17,8 +17,6 @@ import { Switch } from "../components/ui/switch";
 import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
 import { BoardHint } from "./BoardHint";
 import {
-  boardSplitGateOwnAllowed,
-  boardSplitGateRecommended,
   boardSplitGateView,
   type BoardSplitGateSettings,
 } from "./boardSplitGate";
@@ -34,8 +32,7 @@ export function BoardSplitGate(props: {
   readonly onApprove: (settings: BoardSplitGateSettings) => void;
   readonly onAskForChanges: () => void;
 }) {
-  const recommended = boardSplitGateRecommended(props);
-  const ownAllowed = boardSplitGateOwnAllowed(props.plans);
+  const recommended = props.recommendation;
   const [settings, setSettings] = useState<BoardSplitGateSettings>(recommended);
   const view = boardSplitGateView({ ...props, recommendation: recommended, settings });
   return (
@@ -130,7 +127,7 @@ export function BoardSplitGate(props: {
             value={[settings.mergeTarget]}
           >
             <Toggle value="inherit">Inherit</Toggle>
-            <Toggle disabled={!ownAllowed} value="own">
+            <Toggle value="own">
               Own branch
             </Toggle>
           </ToggleGroup>

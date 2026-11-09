@@ -22,7 +22,6 @@ import {
   BoardLabelId,
   assignBoardKeyPrefix,
   boardStagesInOrder,
-  isBoardStageAtOrAfterSubBoardFloor,
   resolveBoardStageExecution,
   type BoardCardShell,
   type BoardStageDefinition,
@@ -133,8 +132,7 @@ export function BoardCardCreateDialog({
   readonly defaultProjectId: ProjectId | null;
   readonly defaultStage: BoardStageId;
   /** Create a child of this parent (t3o-25): the sub-board's dialog presets
-      it, which narrows the stage picker to the floor-onward stages a child
-      may occupy and the dependency picker to siblings. Null creates an
+      it, which narrows the dependency picker to siblings. Null creates an
       ordinary top-level card. */
   readonly subBoardParentId?: BoardCardId | null;
 }) {
@@ -266,9 +264,6 @@ export function BoardCardCreateDialog({
     };
   });
 
-  // The stages a card may be created into: every stage (D10) for a top-level
-  // card, the materialisation floor onward for a sub-board child (t3o-25) —
-  // the same subset the decider lets a child occupy.
   // The chosen project's checkout — where the base branch's refs live (D11).
   // Null when the project is not on this server, which disables the picker
   // rather than querying refs of nothing.
@@ -277,15 +272,8 @@ export function BoardCardCreateDialog({
 
   const selectedProject = projects.find((project) => project.id === projectId);
 
-  const stageOptions = useMemo(() => {
-    const stageState = stageStateOf(stages);
-    const ordered = boardStagesInOrder(stageState);
-    return subBoardParentId === null
-      ? ordered
-      : ordered.filter((definition) =>
-          isBoardStageAtOrAfterSubBoardFloor(stageState, definition.stageId),
-        );
-  }, [stages, subBoardParentId]);
+  // Every stage, top-level or sub-board (D10, T3O-53).
+  const stageOptions = useMemo(() => boardStagesInOrder(stageStateOf(stages)), [stages]);
 
   // ── Draft persistence (T3O-26) ──────────────────────────────────────
   // One draft per board scope, autosaved while the dialog is open and offered

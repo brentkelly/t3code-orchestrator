@@ -15,7 +15,6 @@ import {
   areBoardStagesAdjacent,
   boardNewPhaseBrief,
   boardNextPhaseTitle,
-  boardNewPhaseHeadingStage,
   boardStageWithRole,
   boardProjectFirstStageId,
   isBoardStageAtOrAfterBuild,
@@ -148,11 +147,7 @@ export function BoardNewPhaseDialog({
   );
   const chosen = deferred.filter((card) => picked.has(String(card.cardId)));
   const parent = boardShellAncestors(shells, group)[0];
-  const headingStage = boardNewPhaseHeadingStage(
-    stages,
-    parent !== undefined && boardShellGroup(shells, parent)?.target === "own",
-    group.projectId,
-  );
+  const headingStage = boardProjectFirstStageId(stages, group.projectId);
   const headingPlace = `the ${boardStageLabel(stages.stages ?? [], headingStage)} of ${parent?.key ?? "the board"}`;
   const confirm = () => {
     const trimmed = title.trim();
@@ -367,7 +362,6 @@ export function BoardStartedParentDialog({
           title: title.trim(),
           heading: true,
           ...(started.parentCardId === undefined ? {} : { parentCardId: started.parentCardId }),
-          // The decider lands it on an own-branch parent's floor.
           adoptCardIds: [started.cardId, ...movingIds],
           keyPrefix,
         },

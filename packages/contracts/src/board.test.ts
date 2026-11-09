@@ -87,7 +87,6 @@ import {
   deriveBoardCardPlanProgress,
   deriveBoardCardThreadState,
   EMPTY_BOARD_STATE,
-  isBoardStageAtOrAfterSubBoardFloor,
   liveBoardCardDependents,
   makeBoardCardShell,
   unmetBoardCardDependencies,
@@ -1202,22 +1201,6 @@ describe("sub-boards (t3o-23)", () => {
       ),
     };
     expect(boardSubBoardFloorStage(buildFirst)).toBe(null);
-    // With no floor the restriction falls back to build-onward.
-    expect(isBoardStageAtOrAfterSubBoardFloor(buildFirst, BOARD_SEED_STAGE_IDS.building)).toBe(
-      true,
-    );
-  });
-
-  it("opens the floor and everything after it to plan cards, and nothing before", () => {
-    expect(isBoardStageAtOrAfterSubBoardFloor(EMPTY_BOARD_STATE, BOARD_SEED_STAGE_IDS.ready)).toBe(
-      true,
-    );
-    expect(isBoardStageAtOrAfterSubBoardFloor(EMPTY_BOARD_STATE, BOARD_SEED_STAGE_IDS.done)).toBe(
-      true,
-    );
-    expect(
-      isBoardStageAtOrAfterSubBoardFloor(EMPTY_BOARD_STATE, BOARD_SEED_STAGE_IDS.planning),
-    ).toBe(false);
   });
 
   it("counts an archived child as finished, a done child as finished, and nothing else", () => {
