@@ -16,10 +16,7 @@ import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { Toggle, ToggleGroup } from "../components/ui/toggle-group";
 import { BoardHint } from "./BoardHint";
-import {
-  boardSplitGateView,
-  type BoardSplitGateSettings,
-} from "./boardSplitGate";
+import { boardSplitGateView, type BoardSplitGateSettings } from "./boardSplitGate";
 
 export function BoardSplitGate(props: {
   readonly plans: ReadonlyArray<Pick<BoardPlan, "planId" | "title" | "dependsOn" | "planned">>;
@@ -127,9 +124,7 @@ export function BoardSplitGate(props: {
             value={[settings.mergeTarget]}
           >
             <Toggle value="inherit">Inherit</Toggle>
-            <Toggle value="own">
-              Own branch
-            </Toggle>
+            <Toggle value="own">Own branch</Toggle>
           </ToggleGroup>
         </div>
       </div>

@@ -1601,19 +1601,17 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       const started = yield* groupWith("Started", true);
       const idle = yield* groupWith("Idle", false);
       const stageOf = (parentCardId: string) =>
-        boardHandlers
-          .board_create_card({ projectId, title: "Follow-up", parentCardId })
-          .pipe(
-            withScope(orphanThread),
-            Effect.flatMap((created) =>
-              boardHandlers.board_list_cards({}).pipe(
-                withScope(orphanThread),
-                Effect.map(
-                  (listed) => listed.cards.find((card) => card.cardId === created.cardId)?.stage,
-                ),
+        boardHandlers.board_create_card({ projectId, title: "Follow-up", parentCardId }).pipe(
+          withScope(orphanThread),
+          Effect.flatMap((created) =>
+            boardHandlers.board_list_cards({}).pipe(
+              withScope(orphanThread),
+              Effect.map(
+                (listed) => listed.cards.find((card) => card.cardId === created.cardId)?.stage,
               ),
             ),
-          );
+          ),
+        );
       assert.strictEqual(yield* stageOf(started.key), "planning");
       assert.strictEqual(yield* stageOf(idle.key), "backlog");
     }),

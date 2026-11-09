@@ -1798,8 +1798,7 @@ const decideBoardCommandCore = Effect.fn("decideBoardCommandCore")(function* ({
           ? boardProjectFirstStageId(board, command.projectId)
           : boardCreateDefaultStage(
               board,
-              createParent !== undefined &&
-                boardCardGroupOf(board, createParent)?.started === true,
+              createParent !== undefined && boardCardGroupOf(board, createParent)?.started === true,
               command.projectId,
             ));
       // Deferred (T3O-27) is a system stage outside the stage list, open only

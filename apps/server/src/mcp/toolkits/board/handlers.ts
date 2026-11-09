@@ -61,7 +61,6 @@ import {
   type BoardPlansProposeCommand,
   type BoardPlanWriteCommand,
   BOARD_SEED_STAGE_IDS,
-  boardProjectFirstStageId,
   type BoardSettings,
   type BoardState,
   unmetBoardCardDependencies,
