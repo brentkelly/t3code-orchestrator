@@ -221,6 +221,67 @@ it.layer(makeBoardStackTestLayer("t3o-board-engine-"))("BoardEngine", (it) => {
     }),
   );
 
+  // T3o: commandId dedup compares the command, not only its aggregate.
+  it.effect("replays the same command idempotently, even with a fresh createdAt", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      yield* engine.dispatch(createProject("fpsame"));
+      const first = yield* engine.dispatch(createCard("fpsame-1"));
+      const replay = yield* engine.dispatch({
+        ...createCard("fpsame-1"),
+        createdAt: "2026-01-02T00:00:00.000Z",
+      });
+      assert.strictEqual(replay.sequence, first.sequence);
+      assert.strictEqual(yield* engine.boardEngine.latestSequence, first.sequence);
+    }),
+  );
+
+  it.effect("rejects a different command type reusing the id on the same aggregate", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      yield* engine.dispatch(createProject("fptype"));
+      const first = yield* engine.dispatch(createCard("fptype-1"));
+      const error = yield* engine
+        .dispatch({
+          ...moveCard("fptype-1", 1, "sprint"),
+          commandId: CommandId.make("cmd-create-fptype-1"),
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "BoardCommandIdConflictError");
+      assert.include(error.message, "board.card.create (payload");
+      assert.include(error.message, "board.card.move (payload");
+      assert.strictEqual(yield* engine.boardEngine.latestSequence, first.sequence);
+    }),
+  );
+
+  it.effect("rejects the same command type with a different payload", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      yield* engine.dispatch(createProject("fppayload"));
+      const first = yield* engine.dispatch(createCard("fppayload-1"));
+      const error = yield* engine
+        .dispatch({ ...createCard("fppayload-1"), title: "Different" })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "BoardCommandIdConflictError");
+      assert.strictEqual(yield* engine.boardEngine.latestSequence, first.sequence);
+    }),
+  );
+
+  it.effect("keeps the legacy replay for receipts that predate fingerprints", () =>
+    Effect.gen(function* () {
+      const engine = yield* boardStackEngine;
+      const sql = yield* SqlClient.SqlClient;
+      yield* engine.dispatch(createProject("fplegacy"));
+      const first = yield* engine.dispatch(createCard("fplegacy-1"));
+      yield* sql`DELETE FROM boards.board_command_fingerprints WHERE command_id = ${CommandId.make("cmd-create-fplegacy-1")}`;
+      const replay = yield* engine.dispatch({
+        ...moveCard("fplegacy-1", 1, "sprint"),
+        commandId: CommandId.make("cmd-create-fplegacy-1"),
+      });
+      assert.strictEqual(replay.sequence, first.sequence);
+    }),
+  );
+
   it.effect(
     "streams the log after a cursor and then the live tail, each event once, in order",
     () =>

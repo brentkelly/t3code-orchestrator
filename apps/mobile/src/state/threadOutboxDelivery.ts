@@ -30,6 +30,8 @@ import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn"
 import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
 import { randomHex } from "../lib/uuid";
+// T3o: settings-sync commandIds are keyed on the setting value.
+import { settingValueKey } from "../lib/settingsCommandIdKey";
 import {
   describeUnavailableModelSelection,
   isModelSelectionUnavailable,
@@ -184,8 +186,13 @@ function findCreationProject(
   );
 }
 
-function settingsCommandId(message: QueuedThreadMessage, setting: string): CommandId {
-  return CommandId.make(`${message.commandId}:${setting}`);
+function settingsCommandId(
+  message: QueuedThreadMessage,
+  setting: string,
+  // T3o: key the id on the value so an edited setting is a new command.
+  value: unknown,
+): CommandId {
+  return CommandId.make(`${message.commandId}:${setting}:${settingValueKey(value)}`);
 }
 
 export async function prepareQueuedMessageAttachments(queuedMessage: QueuedThreadMessage): Promise<
@@ -788,7 +795,7 @@ export function createThreadOutboxDelivery(): {
       const runtimeResult = await runDeliveryCommand(threadEnvironment.setRuntimeMode, {
         environmentId: queuedMessage.environmentId,
         input: {
-          commandId: settingsCommandId(queuedMessage, "runtime-mode"),
+          commandId: settingsCommandId(queuedMessage, "runtime-mode", settings.runtimeMode),
           threadId: queuedMessage.threadId,
           runtimeMode: settings.runtimeMode,
           createdAt: queuedMessage.createdAt,
@@ -805,7 +812,11 @@ export function createThreadOutboxDelivery(): {
       const interactionResult = await runDeliveryCommand(threadEnvironment.setInteractionMode, {
         environmentId: queuedMessage.environmentId,
         input: {
-          commandId: settingsCommandId(queuedMessage, "interaction-mode"),
+          commandId: settingsCommandId(
+            queuedMessage,
+            "interaction-mode",
+            settings.interactionMode,
+          ),
           threadId: queuedMessage.threadId,
           interactionMode: settings.interactionMode,
           createdAt: queuedMessage.createdAt,

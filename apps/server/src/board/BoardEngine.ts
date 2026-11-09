@@ -39,6 +39,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../persistence/Errors.ts";
 import { BoardQueries } from "./BoardQueries.ts";
 import { makeBoardEventStore } from "./boardEventStore.ts";
+// T3o: commandId dedup compares the command itself, not just its aggregate.
+import { makeCommandFingerprints } from "./commandFingerprints.ts";
 import {
   boardCommandAggregateRef,
   boardCommandNeedsBrief,
@@ -140,6 +142,8 @@ export const makeBoardEngine = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const store = makeBoardEventStore(sql);
   const projector = makeBoardSqlProjector(sql);
+  // T3o: fingerprints of accepted commands.
+  const commandFingerprints = makeCommandFingerprints(sql);
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
   // Catch the tables up with any logged event they have not folded in. The
@@ -209,6 +213,8 @@ export const makeBoardEngine = Effect.gen(function* () {
             commandAggregateId: aggregate.aggregateId,
           });
         }
+        // T3o: refuse to replay a receipt for a different command reusing its id.
+        yield* commandFingerprints.assertReplayMatches(command, receipt);
         if (receipt.status === "accepted") return { sequence: receipt.resultSequence };
         return yield* new BoardCommandPreviouslyRejectedError({
           commandId: command.commandId,
@@ -266,6 +272,8 @@ export const makeBoardEngine = Effect.gen(function* () {
               status: "accepted",
               error: null,
             });
+            // T3o: fingerprint the accepted command beside its receipt.
+            yield* commandFingerprints.record(command);
             yield* store.setWatermark(BOARD_EVENTS_PROJECTOR, last.sequence, last.occurredAt);
             return { events, next } as const;
           }),
