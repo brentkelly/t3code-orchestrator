@@ -7,25 +7,18 @@
  * walks the row's flex items and their Tailwind shrink classes and assigns
  * used widths the way the sheet's row does.
  */
-import {
-  BOARD_SEED_STAGE_IDS,
-  BOARD_SEED_STAGES,
-  DEFAULT_SERVER_SETTINGS,
-  EMPTY_BOARD_WORKERS_STATE,
-  BoardCardId,
-  BoardLabelId,
-  ProjectId,
-  ThreadId,
-  boardPlanId,
-  type BoardCard,
-  type BoardCardDetail,
-  type BoardLabel,
-} from "@t3tools/contracts";
+import { BOARD_SEED_STAGE_IDS, ThreadId, boardPlanId, type BoardCardDetail } from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { boardThreadWorker } from "./workers/threadWorker";
+import {
+  NOW,
+  baseProps as fixtureBaseProps,
+  cardId,
+  detail,
+  localWorker,
+} from "./boardCardDetailFixtures";
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, ...props }: { readonly children?: React.ReactNode }) => (
@@ -74,76 +67,6 @@ vi.mock("../hooks/useMediaQuery", async () => {
 
 const { BoardCardDetailPanel } = await import("./BoardCardDetailView");
 
-const NOW = "2026-01-01T00:00:00.000Z";
-const environmentId = "env-1" as never;
-const cardId = BoardCardId.make("card-1");
-const noop = () => {};
-const localWorker = boardThreadWorker({
-  workerId: undefined,
-  workers: EMPTY_BOARD_WORKERS_STATE,
-  boardEnvironmentId: environmentId,
-});
-
-function card(overrides?: Partial<BoardCard>): BoardCard {
-  return {
-    id: cardId,
-    key: "T3-7",
-    cardNumber: 7,
-    projectId: ProjectId.make("project-gone"),
-    labels: [],
-    pullRequest: null,
-    pullRequestHistory: [],
-    pullRequestFloor: null,
-    stage: BOARD_SEED_STAGE_IDS.planning,
-    orderKey: "m",
-    title: "Wire the widget",
-    briefRef: null,
-    dependsOn: [],
-    parentCardId: null,
-    sourcePlanId: null,
-    threadLinks: [],
-    attachments: [],
-    externalRef: null,
-    humanInLoop: null,
-    reviewOverrides: null,
-    modelOverrides: null,
-    splitRationale: null,
-    baseBranch: null,
-    scheduledStartAt: null,
-    autoStart: false,
-    autoMerge: false,
-    autoMergeHold: null,
-    pinnedWorkerId: null,
-    placedWorkerId: null,
-    workerMove: null,
-    placementOrphaned: null,
-    worktree: null,
-    blocked: false,
-    archivedAt: null,
-    createdAt: NOW,
-    updatedAt: NOW,
-    ...overrides,
-  };
-}
-
-function detail(overrides?: Partial<BoardCard>, extra?: Partial<BoardCardDetail>): BoardCardDetail {
-  const next = card(overrides);
-  return {
-    card: next,
-    brief: null,
-    hasPlan: false,
-    plans: [],
-    children: [],
-    dependencies: [],
-    dependents: [],
-    activity: [],
-    parentModelOverrides: null,
-    stepError: null,
-    stepCompletions: [],
-    ...extra,
-  };
-}
-
 const samplePlan = {
   planId: boardPlanId(cardId, "1"),
   cardId,
@@ -169,72 +92,10 @@ const threadLink = {
 };
 
 const baseProps = {
-  environmentId,
-  baseBranch: {
-    effective: "main",
-    retargeted: false,
-    inheritedFrom: null,
-    workspaceRoot: "/tmp/project",
-  },
-  project: {
-    lock: null,
-    options: [],
-    accent: null,
-    names: new Map<string, string>(),
-    stopsAgent: false,
-    restartsStage: false,
-  },
-  onMergePullRequest: noop,
-  onOpenPullRequest: noop,
-  conflictFix: null,
-  stepFailure: null,
-  stepPaused: null,
-  merging: false,
-  catalogue: [] as ReadonlyArray<BoardLabel>,
-  stages: BOARD_SEED_STAGES,
-  humanInLoop: null,
-  onSetHumanInLoop: noop,
-  labelsById: new Map<BoardLabelId, BoardLabel>(),
-  branch: null,
-  dependencies: [],
-  dependencyOptions: [],
-  threadLinks: [threadLink],
-  attachments: [],
-  adoptableThreads: [],
-  stageRestart: null,
-  onRestartStage: noop,
-  onCreateBlankThread: () => Promise.resolve(null),
-  feedback: null,
+  ...fixtureBaseProps,
   maximised: true,
-  onToggleMaximised: noop,
-  paneChoice: null,
-  onSelectPane: noop,
-  onClose: noop,
-  onSetLabels: noop,
-  onCreateLabel: noop,
-  onRecolourLabel: noop,
-  onDeleteLabel: noop,
-  onUndeleteLabel: noop,
-  onSaveBrief: noop,
-  attachmentLimits: { known: false, enabled: false, maxFileBytes: null },
-  onAttachFile: () => Promise.resolve(null),
-  onDetachFile: noop,
-  onSaveTitle: noop,
-  onAddDependency: noop,
-  onRemoveDependency: noop,
-  onMoveStage: noop,
-  onArchiveToggle: noop,
-  onDelete: noop,
-  canApproveSplit: false,
-  approveSplitTargetLabel: null,
-  onApproveSplit: noop,
-  onLinkThread: noop,
-  onUnlinkThread: noop,
-  boardSettings: DEFAULT_SERVER_SETTINGS.board,
-  onSetModelOverrides: noop,
-  scheduleKind: "before-build" as const,
-  onSetScheduledStartAt: noop,
   projectName: "P",
+  threadLinks: [threadLink],
   detail: detail({
     stage: BOARD_SEED_STAGE_IDS.planning,
     threadLinks: [
@@ -246,7 +107,7 @@ const baseProps = {
       },
     ],
   }),
-} as const;
+};
 
 const SHEET_WIDTH = 320;
 const ROW_PADDING_X = 32; // identity row `px-4`
@@ -542,7 +403,23 @@ describe("BoardCardDetailPanel compact identity-row layout", () => {
     expect(cluster.contains(chevron)).toBe(true);
     expect(clusterBox!.width).toBeGreaterThanOrEqual(TITLE_FLOOR);
     expect(triggerBox!.width).toBeGreaterThanOrEqual(TRIGGER_FLOOR);
-    expect(exitBox!.paintEnd).toBeLessThanOrEqual(closeBox!.start + 0.5);
+    // HEAD (T3O-80) wraps kebab + Exit + Close in a shrink-0 actions cluster;
+    // walk that inner flex so Exit and Close are separate items, as they were
+    // on the pre-wrap identity row this assertion was written against.
+    const actions = [...row.children].find(
+      (node): node is HTMLElement =>
+        node instanceof HTMLElement &&
+        node.contains(exit) &&
+        node.contains(close) &&
+        node !== row,
+    );
+    const pinnedBoxes =
+      actions === undefined ? boxes : layoutRow(actions, ROW_CONTENT_WIDTH);
+    const pinnedExit = pinnedBoxes.find((box) => box.el === exit || box.el.contains(exit));
+    const pinnedClose = pinnedBoxes.find((box) => box.el === close || box.el.contains(close));
+    expect(pinnedExit).toBeDefined();
+    expect(pinnedClose).toBeDefined();
+    expect(pinnedExit!.paintEnd).toBeLessThanOrEqual(pinnedClose!.start + 0.5);
     expect(closeBox!.start + closeBox!.width).toBeLessThanOrEqual(ROW_CONTENT_WIDTH + GAP);
 
     const inner = layoutRow(scroller, clusterBox!.width);
@@ -580,8 +457,8 @@ describe("BoardCardDetailPanel compact identity-row layout", () => {
 
   it("shows Show more when a plan tab appears without a resize", async () => {
     mockClusterOverflow(() =>
-      [...container.querySelectorAll("button")].some((button) =>
-        button.textContent?.includes("Plan"),
+      [...container.querySelectorAll("button")].some(
+        (button) => paneTabLabel(button as HTMLElement) === "Plan",
       ),
     );
 
@@ -589,8 +466,8 @@ describe("BoardCardDetailPanel compact identity-row layout", () => {
     await act(() => Promise.resolve());
     expect(container.querySelector('[aria-label="Show more"]')).toBeNull();
     expect(
-      [...container.querySelectorAll("button")].some((button) =>
-        button.textContent?.includes("Plan"),
+      [...container.querySelectorAll("button")].some(
+        (button) => paneTabLabel(button as HTMLElement) === "Plan",
       ),
     ).toBe(false);
 
@@ -605,8 +482,8 @@ describe("BoardCardDetailPanel compact identity-row layout", () => {
     await act(() => Promise.resolve());
 
     expect(
-      [...container.querySelectorAll("button")].some((button) =>
-        button.textContent?.includes("Plan"),
+      [...container.querySelectorAll("button")].some(
+        (button) => paneTabLabel(button as HTMLElement) === "Plan",
       ),
     ).toBe(true);
     expect(container.querySelector('[aria-label="Show more"]')).not.toBeNull();
