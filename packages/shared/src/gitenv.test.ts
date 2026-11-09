@@ -162,6 +162,38 @@ describe("gitenv", () => {
     expect(gitenvTokenEnv(fixture.worktreeDir)?.GH_TOKEN).toBe(TOKEN);
   });
 
+  it("expands a ~/ key against $HOME", () => {
+    const fixture = makeFixture();
+    const savedHome = process.env.HOME;
+    try {
+      process.env.HOME = NodePath.dirname(fixture.projectRoot);
+      writeGitenv(fixture, `~/project=${TOKEN}\n`);
+      expect(gitenvTokenEnv(fixture.nestedDir)?.GH_TOKEN).toBe(TOKEN);
+    } finally {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+    }
+  });
+
+  it("expands a bare ~ key to the home directory", () => {
+    const fixture = makeFixture();
+    const savedHome = process.env.HOME;
+    try {
+      process.env.HOME = fixture.projectRoot;
+      writeGitenv(fixture, `~=${TOKEN}\n`);
+      expect(gitenvTokenEnv(fixture.nestedDir)?.GH_TOKEN).toBe(TOKEN);
+    } finally {
+      if (savedHome === undefined) delete process.env.HOME;
+      else process.env.HOME = savedHome;
+    }
+  });
+
+  it("does not expand ~otheruser and skips the entry", () => {
+    const fixture = makeFixture();
+    writeGitenv(fixture, `~someone/project=${TOKEN}\n`);
+    expect(gitenvTokenEnv(fixture.nestedDir)).toBeUndefined();
+  });
+
   it("does not remember a worktree path that did not exist yet", () => {
     const fixture = makeFixture();
     writeGitenv(fixture, `${fixture.projectRoot}=${TOKEN}\n`);
