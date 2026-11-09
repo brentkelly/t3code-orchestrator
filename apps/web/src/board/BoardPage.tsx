@@ -636,10 +636,11 @@ function EnvironmentBoard({
   );
   const parentGroup = parentShell === null ? null : boardShellGroup(groupShells, parentShell);
   // Where a new card lands by default: Planning inside a started group (T3O-53).
-  const firstStageId =
-    parentGroup?.started === true
-      ? boardCreateDefaultStage(stageState, true, parentShell?.projectId ?? null)
-      : (orderedStages[0]?.stageId ?? null);
+  const defaultCreateStageId = boardCreateDefaultStage(
+    stageState,
+    parentGroup?.started === true,
+    parentShell?.projectId ?? scopeProjectId,
+  );
   // Ancestors of this sub-board's group, root first: the breadcrumb, and
   // where Back goes (one level up).
   const ancestors = useMemo(
@@ -1574,7 +1575,7 @@ function EnvironmentBoard({
     }));
   }, [projects, scope.kind, scopeProjectId, parentShell?.projectId]);
 
-  const canCreate = addProjects.length > 0 && firstStageId !== null;
+  const canCreate = addProjects.length > 0;
 
   return (
     <BoardWorkersContext.Provider value={cardWorkersState}>
@@ -1589,7 +1590,7 @@ function EnvironmentBoard({
           />
           <BoardCardFilterField onQueryChange={setQuery} query={query} />
           {canCreate ? (
-            <Button onClick={() => openCreate(firstStageId)} size="xs">
+            <Button onClick={() => openCreate(defaultCreateStageId)} size="xs">
               <PlusIcon />
               {/* Same treatment as the mode tabs: on a phone the icon carries it. */}
               <span className="max-sm:sr-only">New card</span>
@@ -1970,7 +1971,7 @@ function EnvironmentBoard({
           defaultProjectId={
             scope.kind === "sub-board" ? (parentShell?.projectId ?? null) : scopeProjectId
           }
-          defaultStage={createStage ?? firstStageId ?? BOARD_SEED_STAGES[0]!.stageId}
+          defaultStage={createStage ?? defaultCreateStageId}
           environmentId={environmentId}
           onOpenChange={(open) => {
             if (!open) setCreateStage(null);
