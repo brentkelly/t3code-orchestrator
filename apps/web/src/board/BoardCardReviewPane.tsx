@@ -244,9 +244,14 @@ function phaseNote(
     const held = ruled.filter(
       (f) => f.reverdict === "fix-upheld" || f.reverdict === "rejection-justified",
     ).length;
-    return held === ruled.length
-      ? "Every re-triaged response held up."
-      : `${ruled.length - held} still disputed — the loop holds for your call.`;
+    const escalated = ruled.filter((f) => f.reverdict === "escalated").length;
+    const disputed = ruled.length - held - escalated;
+    if (disputed === 0 && escalated === 0) return "Every re-triaged response held up.";
+    const parts = [
+      ...(disputed > 0 ? [`${disputed} still disputed`] : []),
+      ...(escalated > 0 ? [`${escalated} escalated to you`] : []),
+    ];
+    return `${parts.join(", ")} — the loop holds for your call.`;
   }
   if (status === "skipped") return "Only runs when a finding blocks the round.";
   if (status === "running") return "An independent adjudicator is checking the fixes.";

@@ -297,12 +297,14 @@ export function boardRecoveryNudge(input: {
   // agent's last message is the newest thing it said while the turn is still
   // open. "You asked a question" is true on both paths; "your turn ended with a
   // question" is not.
-  // Always for triage and adjudication: the nudge is recomposed at retry time
-  // from the last message, which a structured question may not end with.
-  if (input.endedWithQuestion || decides) {
-    nudgeLines.unshift(
-      `You asked a question, but this run is unattended and nobody will answer it: decide it yourself with your best judgement, record the decision, and continue.`,
-    );
+  // Triage and adjudication always get a conditional form: the nudge is
+  // recomposed at retry time from the last message, which a structured question
+  // may not end with, so it cannot claim a question was asked.
+  const decideYourself = `nobody will answer it: decide it yourself with your best judgement, record the decision, and continue.`;
+  if (input.endedWithQuestion) {
+    nudgeLines.unshift(`You asked a question, but this run is unattended and ${decideYourself}`);
+  } else if (decides) {
+    nudgeLines.unshift(`If you have a question, this run is unattended and ${decideYourself}`);
   }
   return nudgeLines.join(" ");
 }
