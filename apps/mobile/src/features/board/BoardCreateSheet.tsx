@@ -11,10 +11,10 @@ import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
 import { Alert, TextInput, View } from "react-native";
 
-import { AppSheet } from "../../components/AppSheet";
-import { AppText as Text } from "../../components/AppText";
-import { MaterialButton } from "../../components/MaterialButton";
-import { ScreenScrollView } from "../../components/ScreenScrollView";
+import { Sheet } from "../../components/ui/Sheet";
+import { AppText as Text } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
+import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { boardEnvironment } from "../../state/board";
@@ -41,7 +41,7 @@ export function BoardCreateSheet(props: {
   const canSubmit = title.trim().length > 0 && !submitting && stage !== undefined;
 
   return (
-    <AppSheet title="New card" onClose={props.onClose}>
+    <Sheet title="New card" onClose={props.onClose}>
       <ScreenScrollView
         className="flex-1"
         contentContainerClassName="gap-4 p-5"
@@ -61,7 +61,7 @@ export function BoardCreateSheet(props: {
           placeholder="Optional write-up"
           multiline
         />
-        <MaterialButton
+        <Button>
           label="Create card"
           tone="primary"
           disabled={!canSubmit}
@@ -122,7 +122,7 @@ export function BoardCreateSheet(props: {
           }}
         />
       </ScreenScrollView>
-    </AppSheet>
+    </Sheet>
   );
 }
 
