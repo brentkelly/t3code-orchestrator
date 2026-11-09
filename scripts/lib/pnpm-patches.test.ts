@@ -94,6 +94,43 @@ describe("applyPnpmPatches", () => {
     expect(fixture.log[0]).toContain("@scope/fixture@1.0.0: patches/fixture.patch changed");
   });
 
+  it("reinstalls several stale packages with a single reinstall", () => {
+    using fixture = setup(OLD_PATCHED);
+    const secondDir = NodePath.join(fixture.modulesDir, "second");
+    const writeSecond = (contents: string) => {
+      NodeFS.mkdirSync(NodePath.join(secondDir, "lib"), { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(secondDir, "package.json"),
+        JSON.stringify({ name: "second", version: "2.0.0" }),
+      );
+      NodeFS.writeFileSync(NodePath.join(secondDir, "lib", "index.js"), contents);
+    };
+    writeSecond(OLD_PATCHED);
+    let reinstalls = 0;
+    applyPnpmPatches({
+      ...fixture,
+      patches: new Map([...fixture.patches, ["second@2.0.0", "patches/fixture.patch"]]),
+      reinstall: () => {
+        reinstalls++;
+        fixture.writePackage(PRISTINE);
+        writeSecond(PRISTINE);
+      },
+      log: (line) => fixture.log.push(line),
+    });
+    expect(reinstalls).toBe(1);
+    expect(fixture.read()).toBe(NEW_PATCHED);
+    expect(NodeFS.readFileSync(NodePath.join(secondDir, "lib", "index.js"), "utf8")).toBe(
+      NEW_PATCHED,
+    );
+  });
+
+  it("names the package when reinstalling does not restore it", () => {
+    using fixture = setup(OLD_PATCHED);
+    expect(() => applyPnpmPatches({ ...fixture, reinstall: () => {}, log: () => {} })).toThrow(
+      "reinstalling did not restore @scope/fixture",
+    );
+  });
+
   it("stops when the patch still will not apply after reinstalling", () => {
     using fixture = setup(OLD_PATCHED);
     expect(() =>

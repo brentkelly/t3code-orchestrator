@@ -88,6 +88,15 @@ export function applyPnpmPatches({
     // would not notice the deleted directories and reinstall nothing.
     NodeFS.rmSync(NodePath.join(modulesDir, ".package-lock.json"), { force: true });
     reinstall();
+    const missing = stale.filter(
+      (name) => readVersion(NodePath.join(modulesDir, name)) === undefined,
+    );
+    if (missing.length > 0) {
+      throw new Error(
+        `reinstalling did not restore ${missing.join(", ")} in ${modulesDir}.\n` +
+          `Delete the install and let it rebuild: rm -rf ${modulesDir}`,
+      );
+    }
   }
 
   for (const { name, patch } of toPatch) {
