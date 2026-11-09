@@ -19,7 +19,10 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  boardReviewBlockedOutcomeRefusal,
+  boardReviewCompletionDefect,
   boardReviewFindingResolution,
+  boardReviewQuestionAnswer,
   boardReviewHeldLabel,
   boardReviewLoopWalk,
   boardStepPayloadDefect,
@@ -618,6 +621,13 @@ describe("boardReviewFindingResolution", () => {
     assert.strictEqual(
       boardReviewFindingResolution({ action: "rejected" }, { verdict: "rejection-justified" }),
       "rejected",
+    );
+  });
+
+  it("T3O-55: reads the adjudicator's escalation as escalated", () => {
+    assert.strictEqual(
+      boardReviewFindingResolution({ action: "rejected" }, { verdict: "escalated" }),
+      "escalated",
     );
   });
 });
@@ -1414,6 +1424,230 @@ describe("T3O-51: a ruling binds inside its round", () => {
         }),
       }),
     );
+  });
+
+  describe("T3O-55: only the adjudicator escalates", () => {
+    const escalatedRound = (round: number) => [
+      review(round, [finding("critical", "f1")]),
+      triage(round, { f1: "rejected" }),
+      adjudicate(round, { f1: "escalated" }),
+    ];
+
+    it("a first-pass escalation is stuck straight away, with no re-triage", () => {
+      const result = walkWith(escalatedRound(1));
+      assert.strictEqual(result.status, "stuck");
+      assert.isNull(result.next);
+      assert.deepStrictEqual(
+        result.stuckFindings?.map((f) => [
+          f.findingId,
+          f.triageAction,
+          f.rulingVerdict,
+          f.rulingNote,
+        ]),
+        [["f1", "rejected", "escalated", "ruled escalated"]],
+      );
+    });
+
+    it("stuck wins whatever anotherRound says", () => {
+      const result = walkWith([
+        review(1, [finding("critical", "f1")]),
+        triage(1, { f1: "rejected" }, "sha-1"),
+        adjudicate(1, { f1: "escalated" }, false),
+      ]);
+      assert.strictEqual(result.status, "stuck");
+    });
+
+    it("an overruled finding beside an escalation still gets its second pass first", () => {
+      const completions = [
+        review(1, [finding("critical", "f1"), finding("critical", "f2")]),
+        triage(1, { f1: "rejected", f2: "rejected" }),
+        adjudicate(1, { f1: "escalated", f2: "rejection-unjustified" }),
+      ];
+      assert.deepStrictEqual(walkWith(completions).next, { phase: "retriage", round: 1 });
+      const disputed = walkWith([
+        ...completions,
+        retriage(1, { f2: "rejected" }),
+        readjudicate(1, { f2: "rejection-unjustified" }),
+      ]);
+      assert.strictEqual(disputed.status, "stuck");
+      assert.deepStrictEqual(
+        disputed.stuckFindings?.map((f) => f.findingId),
+        ["f1", "f2"],
+      );
+      const settled = walkWith([
+        ...completions,
+        retriage(1, { f2: "fixed" }),
+        readjudicate(1, { f2: "fix-upheld" }),
+      ]);
+      assert.deepStrictEqual(
+        settled.stuckFindings?.map((f) => f.findingId),
+        ["f1"],
+      );
+    });
+
+    it("a re-adjudicator's escalation is stuck", () => {
+      const result = walkWith([
+        ...disputedRound(1),
+        retriage(1, { f1: "rejected" }),
+        readjudicate(1, { f1: "escalated" }),
+      ]);
+      assert.strictEqual(result.status, "stuck");
+      assert.strictEqual(result.stuckFindings?.[0]?.rulingVerdict, "escalated");
+    });
+
+    it("a carried finding triage cannot fix ends stuck once the adjudicator rules it absent", () => {
+      const ruled = [
+        review(1, []),
+        triage(1, { "carried:r0:f1": "rejected" }),
+        adjudicate(1, { "carried:r0:f1": "fix-absent" }),
+      ];
+      const carriedFindings = carriedFix(1, 0);
+      assert.deepStrictEqual(walkWith(ruled, { carriedFindings }).next, {
+        phase: "retriage",
+        round: 1,
+      });
+      const result = walkWith(
+        [
+          ...ruled,
+          retriage(1, { "carried:r0:f1": "rejected" }),
+          readjudicate(1, { "carried:r0:f1": "fix-absent" }),
+        ],
+        { carriedFindings },
+      );
+      assert.strictEqual(result.status, "stuck");
+    });
+
+    it("the summary counts an adjudicator's escalation", () => {
+      const summary = deriveBoardCardReviewSummary({
+        completions: escalatedRound(1),
+        maxRounds: null,
+        stopAfterRound: null,
+        runThroughRound: null,
+      });
+      assert.strictEqual(summary?.outcome, "stuck");
+      assert.strictEqual(summary?.issuesEscalated, 1);
+      assert.strictEqual(summary?.issuesDisputed, 0);
+    });
+
+    describe("new completions", () => {
+      const defect = (
+        stepId: string,
+        payload: unknown,
+        completions: ReadonlyArray<BoardStepCompletion>,
+        carriedFindings: Carry = {},
+      ) =>
+        boardReviewCompletionDefect({
+          stepId,
+          payload: JSON.stringify(payload),
+          completions,
+          carriedFindings: carriedFindings ?? {},
+        });
+      const verdicts = (entries: Record<string, [string, string]>) => ({
+        verdicts: Object.entries(entries).map(([findingId, [verdict, note]]) => ({
+          findingId,
+          verdict,
+          note,
+        })),
+        anotherRound: true,
+      });
+      const dispositions = (entries: Record<string, [string, string]>) => ({
+        fixedSha: "sha-1",
+        dispositions: Object.entries(entries).map(([findingId, [action, note]]) => ({
+          findingId,
+          action,
+          note,
+        })),
+      });
+      const firstPass = [
+        review(1, [finding("critical", "f1"), finding("nitpick", "n1")]),
+        triage(1, { f1: "rejected", n1: "rejected" }),
+      ];
+      const carryRound = [review(1, [])];
+      const carried = carriedFix(1, 0);
+
+      it("refuses a re-triage escalation", () => {
+        assert.include(
+          defect("retriage@1", dispositions({ f1: ["escalated", "I disagree"] }), disputedRound(1)),
+          "cannot escalate",
+        );
+        assert.isNull(
+          defect("retriage@1", dispositions({ f1: ["rejected", "still wrong"] }), disputedRound(1)),
+        );
+      });
+
+      it("lets triage reject a carried finding only with a reason", () => {
+        assert.isNull(
+          defect(
+            "triage@1",
+            dispositions({ "carried:r0:f1": ["rejected", "the API does not exist"] }),
+            carryRound,
+            carried,
+          ),
+        );
+        assert.include(
+          defect(
+            "triage@1",
+            dispositions({ "carried:r0:f1": ["rejected", " "] }),
+            carryRound,
+            carried,
+          ),
+          "genuinely cannot be done",
+        );
+      });
+
+      it("holds an escalation to a reason, a blocking finding, and no human order", () => {
+        assert.isNull(
+          defect("adjudicate@1", verdicts({ f1: ["escalated", "scope call"] }), firstPass),
+        );
+        assert.include(
+          defect("adjudicate@1", verdicts({ f1: ["escalated", ""] }), firstPass),
+          "needs a note",
+        );
+        assert.include(
+          defect(
+            "adjudicate@1",
+            verdicts({ f1: ["rejection-justified", "ok"], n1: ["escalated", "why"] }),
+            firstPass,
+          ),
+          "'n1'",
+        );
+        assert.include(
+          defect(
+            "adjudicate@1",
+            verdicts({ "carried:r0:f1": ["escalated", "why"] }),
+            [...carryRound, triage(1, { "carried:r0:f1": "rejected" })],
+            carried,
+          ),
+          "'carried:r0:f1'",
+        );
+        assert.include(
+          defect(
+            "adjudicate@1",
+            verdicts({ "carried:r0:f1": ["escalated", "why"] }),
+            [completion("review@1", "not json"), triage(1, { "carried:r0:f1": "rejected" })],
+            carried,
+          ),
+          "'carried:r0:f1'",
+        );
+        assert.isNull(
+          defect("readjudicate@1", verdicts({ f1: ["escalated", "owner's risk"] }), [
+            ...disputedRound(1),
+            retriage(1, { f1: "rejected" }),
+          ]),
+        );
+      });
+
+      it("refuses blocked on triage and adjudication only, and answers their questions", () => {
+        for (const stepId of ["triage@1", "retriage@2", "adjudicate@1", "readjudicate@1"]) {
+          assert.isNotNull(boardReviewBlockedOutcomeRefusal(stepId), stepId);
+          assert.isNotNull(boardReviewQuestionAnswer(stepId), stepId);
+        }
+        for (const stepId of ["review@1", "sync@1", "building", "planning"]) {
+          assert.isNull(boardReviewBlockedOutcomeRefusal(stepId), stepId);
+          assert.isNull(boardReviewQuestionAnswer(stepId), stepId);
+        }
+      });
+    });
   });
 
   it("halts on an unreadable follow-up record", () => {

@@ -16,7 +16,10 @@ import {
   boardAutoPlanInstruction,
   BOARD_ENVELOPE_PLAN_DELIVERABLE,
   BOARD_ENVELOPE_REGROUP_GUARD,
+  boardStepPostamble,
+  composeBoardReviewPhasePrompt,
   ComposerContextRecord,
+  DEFAULT_BOARD_TRIAGE_PHASE_PROMPT,
   DeviceOperationError,
   DeviceSummary,
   OrchestratorMcpTaskRole,
@@ -281,6 +284,19 @@ const CASE_TEXT: Record<string, string> = {
   BOARD_AUTO_PLAN_APPROVED_INSTRUCTION: boardAutoPlanInstruction(true),
   BOARD_ENVELOPE_PLAN_DELIVERABLE,
   BOARD_ENVELOPE_REGROUP_GUARD,
+  BOARD_TRIAGE_FIRST_ROUND_PROMPT: [
+    composeBoardReviewPhasePrompt({
+      phase: "triage",
+      round: 1,
+      rounds: 5,
+      prompt: DEFAULT_BOARD_TRIAGE_PHASE_PROMPT,
+    }),
+    boardStepPostamble({
+      humanInLoop: false,
+      role: null,
+      step: { stepId: "triage@1", stepLabel: "Triage · round 1" },
+    }),
+  ].join("\n\n"),
 };
 
 const expandText = (text: string): string =>

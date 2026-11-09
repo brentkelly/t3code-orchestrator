@@ -1,4 +1,5 @@
 import {
+  BOARD_ENVELOPE_QUESTION_MECHANISM,
   BOARD_SEED_STAGE_IDS,
   BoardCardId,
   BoardStageId,
@@ -708,6 +709,25 @@ describe("background-wait check-ins (T3O-20)", () => {
     ]) {
       assert.notInclude(text, "todo list");
       assert.notInclude(text, "task/plan tool");
+    }
+  });
+
+  it("T3O-55: a triage or adjudication nudge says to decide, never to ask", () => {
+    for (const stepId of ["triage@1", "retriage@1", "adjudicate@2", "readjudicate@1"]) {
+      const text = boardRecoveryNudge({ stallCount: 1, endedWithQuestion: false, stepId });
+      assert.include(text, "nobody will answer it: decide it yourself");
+      assert.notInclude(text, "You asked a question");
+      assert.include(text, "never raise a user-input request");
+      assert.include(
+        boardRecoveryNudge({ stallCount: 1, endedWithQuestion: true, stepId }),
+        "You asked a question",
+      );
+      assert.notInclude(text, BOARD_ENVELOPE_QUESTION_MECHANISM);
+    }
+    for (const stepId of ["review@1", "building"]) {
+      const text = boardRecoveryNudge({ stallCount: 1, endedWithQuestion: false, stepId });
+      assert.include(text, BOARD_ENVELOPE_QUESTION_MECHANISM);
+      assert.notInclude(text, "nobody will answer it");
     }
   });
 });

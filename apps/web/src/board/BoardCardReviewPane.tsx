@@ -106,6 +106,7 @@ const VERDICT_WORDS: Record<NonNullable<BoardReviewLoopFinding["verdict"]>, stri
   "fix-absent": "fix absent",
   "rejection-justified": "rejection justified",
   "rejection-unjustified": "rejection unjustified",
+  escalated: "escalated to you",
 };
 
 /** A finding's row: severity chip, title and file, then where it stands. The
@@ -230,12 +231,12 @@ function phaseNote(
   }
   if (phase === "retriage") {
     const answered = findings.filter((f) => f.retriage !== null);
-    if (status === "running")
-      return "Answering the overruled findings: fix it, argue again, or escalate.";
+    if (status === "running") return "Answering the overruled findings: fix it or argue again.";
     const fixed = answered.filter((f) => f.retriage === "fixed").length;
     const argued = answered.filter((f) => f.retriage === "rejected").length;
+    // Only a record from before T3O-55 can hold a re-triage escalation.
     const escalated = answered.filter((f) => f.retriage === "escalated").length;
-    return `${fixed} fixed, ${argued} argued again, ${escalated} escalated to you.`;
+    return `${fixed} fixed, ${argued} argued again${escalated > 0 ? `, ${escalated} escalated to you` : ""}.`;
   }
   if (phase === "readjudicate") {
     if (status === "running") return "The final ruling on what re-triage fixed or argued again.";
@@ -243,9 +244,14 @@ function phaseNote(
     const held = ruled.filter(
       (f) => f.reverdict === "fix-upheld" || f.reverdict === "rejection-justified",
     ).length;
-    return held === ruled.length
-      ? "Every re-triaged response held up."
-      : `${ruled.length - held} still disputed — the loop holds for your call.`;
+    const escalated = ruled.filter((f) => f.reverdict === "escalated").length;
+    const disputed = ruled.length - held - escalated;
+    if (disputed === 0 && escalated === 0) return "Every re-triaged response held up.";
+    const parts = [
+      ...(disputed > 0 ? [`${disputed} still disputed`] : []),
+      ...(escalated > 0 ? [`${escalated} escalated to you`] : []),
+    ];
+    return `${parts.join(", ")} — the loop holds for your call.`;
   }
   if (status === "skipped") return "Only runs when a finding blocks the round.";
   if (status === "running") return "An independent adjudicator is checking the fixes.";
@@ -256,11 +262,15 @@ function phaseNote(
         f.verdict === "fix-absent" ||
         f.verdict === "rejection-unjustified",
     ).length;
+    const escalated = findings.filter((f) => f.verdict === "escalated").length;
+    const escalatedNote = escalated > 0 ? ` ${escalated} escalated to you.` : "";
     return overruled > 0
-      ? `${overruled} ${overruled === 1 ? "response" : "responses"} overruled — re-triage takes ${overruled === 1 ? "it" : "them"} in this round.`
-      : counts.disputed > 0
-        ? `${counts.disputed} ${counts.disputed === 1 ? "response" : "responses"} disputed.`
-        : "Every response held up.";
+      ? `${overruled} ${overruled === 1 ? "response" : "responses"} overruled — re-triage takes ${overruled === 1 ? "it" : "them"} in this round.${escalatedNote}`
+      : escalated > 0
+        ? escalatedNote.trim()
+        : counts.disputed > 0
+          ? `${counts.disputed} ${counts.disputed === 1 ? "response" : "responses"} disputed.`
+          : "Every response held up.";
   }
   return "Not started.";
 }
@@ -733,9 +743,9 @@ function StuckBlock({
                   </span>
                 )}
               </div>
-              {finding.triageAction === "escalated" ? (
+              {finding.triageAction === "escalated" || finding.rulingVerdict === "escalated" ? (
                 <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border bg-attention/12 px-[7px] text-[10.5px] font-medium text-attention-foreground">
-                  escalated
+                  {finding.rulingVerdict === "escalated" ? "adjudicator escalated" : "escalated"}
                 </span>
               ) : finding.carriedFrom !== null ? (
                 <span className="inline-flex h-[18px] shrink-0 items-center rounded-md border border-border bg-muted px-[7px] text-[10.5px] font-medium text-muted-foreground">
@@ -774,7 +784,7 @@ function StuckBlock({
       <div className="flex flex-wrap items-center gap-2">
         {onRuling === undefined ? null : (
           <>
-            <BoardHint label={`Side with the adjudicator: round ${next} must fix these`}>
+            <BoardHint label={`Round ${next} must fix these`}>
               <button
                 className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary bg-primary px-3 text-[12.5px] font-medium text-primary-foreground shadow-xs hover:bg-primary/90"
                 onClick={() => setForm(form === "fix" ? null : "fix")}
@@ -783,7 +793,7 @@ function StuckBlock({
                 Fix it and run round {next}
               </button>
             </BoardHint>
-            <BoardHint label="Side with triage: these are settled as not issues">
+            <BoardHint label="Settle these as not issues">
               <button
                 className="inline-flex h-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg border border-input bg-popover px-3 text-[12.5px] font-medium text-foreground shadow-xs hover:bg-accent"
                 onClick={() => setForm(form === "dismiss" ? null : "dismiss")}

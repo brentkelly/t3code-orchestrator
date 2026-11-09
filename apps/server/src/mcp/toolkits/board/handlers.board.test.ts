@@ -955,6 +955,42 @@ it.layer(makeLayer("t3o-board-mcp-test-"))("board mcp toolkit", (it) => {
       }),
   );
 
+  it.effect("T3O-55: triage and adjudication cannot complete blocked; a reviewer can", () =>
+    Effect.gen(function* () {
+      yield* seed();
+      const own = yield* seedOwnCard("triage-blocked");
+      yield* recordPhase(own, "review@1", {
+        reviewedSha: "abc",
+        findings: [{ id: "f1", severity: "critical", title: "x" }],
+      });
+      for (const stepId of ["triage@1", "adjudicate@1"]) {
+        yield* startStep({ ...own, suffix: `blocked-${stepId}`, stepId });
+        const failure = yield* Effect.flip(
+          boardHandlers
+            .board_complete_step({ stepId, outcome: "blocked", summary: "Needs a human" })
+            .pipe(withScope(own.ownThread)),
+        );
+        assert.strictEqual(failure.code, "invalid-input");
+        assert.include(failure.message, stepId === "triage@1" ? "reject it" : "`escalated`");
+        const context = yield* boardHandlers
+          .board_get_card_context()
+          .pipe(withScope(own.ownThread));
+        assert.strictEqual(context.currentStep?.stepId, stepId);
+        assert.notInclude(
+          context.steps.map((step) => step.stepId),
+          stepId,
+        );
+        yield* settleStep({ ...own, suffix: `blocked-${stepId}`, stepId });
+      }
+      const reviewer = yield* seedOwnCard("review-blocked");
+      yield* startStep({ ...reviewer, suffix: "review-blocked", stepId: "review@1" });
+      const recorded = yield* boardHandlers
+        .board_complete_step({ stepId: "review@1", outcome: "blocked", summary: "No access" })
+        .pipe(withScope(reviewer.ownThread));
+      assert.strictEqual(recorded.outcome, "blocked");
+    }),
+  );
+
   it.effect("T3O-51: a review caller reads no earlier review-loop steps", () =>
     Effect.gen(function* () {
       yield* seed();

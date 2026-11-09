@@ -1008,7 +1008,8 @@ export const BoardCardReviewSummary = Schema.Struct({
   issuesRejected: NonNegativeInt,
   issuesOpen: NonNegativeInt,
   issuesDisputed: NonNegativeInt,
-  /** Findings re-triage escalated to a human in the latest round (T3O-51). */
+  /** Findings escalated to a human in the latest round: by the adjudicator
+      (T3O-55), or by re-triage in a legacy record (T3O-51). */
   issuesEscalated: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   /** For an `advanced` loop (T3O-51): the stuck round a human advanced past,
       and how many of that round's fixes no review has read. */
@@ -8571,7 +8572,7 @@ export const BoardCardShell = Schema.Struct({
   issuesRejected: Schema.optionalKey(NonNegativeInt),
   issuesOpen: Schema.optionalKey(NonNegativeInt),
   issuesDisputed: Schema.optionalKey(NonNegativeInt),
-  /** T3O-51: findings escalated to a human in the latest round. */
+  /** Findings escalated to a human in the latest round (T3O-51, T3O-55). */
   issuesEscalated: Schema.optionalKey(NonNegativeInt),
   /** T3O-51: the stuck round a human advanced past, and its unreviewed fixes.
       Present only on an `advanced` loop. */
@@ -11302,13 +11303,17 @@ export const BoardTriagePayload = Schema.Struct({
 });
 export type BoardTriagePayload = typeof BoardTriagePayload.Type;
 
-/** An adjudication verdict (D4), the `pullrequest-rereview` vocabulary verbatim. */
+/** An adjudication verdict (D4), the `pullrequest-rereview` vocabulary, plus
+    `escalated` (T3O-55): the adjudicator hands a rejected blocking finding to
+    a human. Triage never escalates; the adjudicator is the only way a finding
+    reaches a human, and the round stops stuck without a re-triage pass. */
 export const BOARD_REVIEW_VERDICTS = [
   "fix-upheld",
   "fix-incomplete",
   "fix-absent",
   "rejection-justified",
   "rejection-unjustified",
+  "escalated",
 ] as const;
 export const BoardReviewVerdict = Schema.Literals(BOARD_REVIEW_VERDICTS);
 export type BoardReviewVerdict = typeof BoardReviewVerdict.Type;
@@ -11331,9 +11336,9 @@ export const BoardAdjudicatePayload = Schema.Struct({
 });
 export type BoardAdjudicatePayload = typeof BoardAdjudicatePayload.Type;
 
-/** A re-triage disposition (T3O-51): first-pass triage's two answers, plus
-    `escalated` — the author still flatly disagrees with the adjudicator and a
-    human should decide. Only the re-triage pass may escalate. */
+/** A re-triage disposition (T3O-51): first-pass triage's two answers.
+    `escalated` is legacy: re-triage could hand a finding to a human before
+    T3O-55; stored records still decode, new completions are refused. */
 export const BOARD_REVIEW_RETRIAGE_ACTIONS = ["fixed", "rejected", "escalated"] as const;
 export const BoardReviewRetriageAction = Schema.Literals(BOARD_REVIEW_RETRIAGE_ACTIONS);
 export type BoardReviewRetriageAction = typeof BoardReviewRetriageAction.Type;
@@ -11433,8 +11438,8 @@ export const DEFAULT_BOARD_REVIEW_ROUNDS = 5;
 export type BoardReviewFindingResolution = "open" | "fixed" | "rejected" | "disputed" | "escalated";
 
 /** Pass the LATEST disposition and verdict (re-triage and re-adjudicate over
-    the first pass, T3O-51). An escalation reads `escalated` whatever was
-    ruled before it. */
+    the first pass, T3O-51). An escalation — the adjudicator's verdict, or a
+    legacy re-triage action — reads `escalated`. */
 export function boardReviewFindingResolution(
   disposition: { readonly action: BoardReviewRetriageAction } | undefined,
   verdict: { readonly verdict: BoardReviewVerdict } | undefined,
@@ -11442,6 +11447,7 @@ export function boardReviewFindingResolution(
   if (disposition === undefined) return "open";
   if (disposition.action === "escalated") return "escalated";
   if (verdict !== undefined) {
+    if (verdict.verdict === "escalated") return "escalated";
     if (verdict.verdict === "fix-upheld") return "fixed";
     if (verdict.verdict === "rejection-justified") return "rejected";
     return "disputed";
@@ -11598,8 +11604,7 @@ const BOARD_REVIEW_STEP_PAYLOAD_CONTRACTS: Record<
     decode: decodeBoardAdjudicatePayloadOption,
   },
   retriage: {
-    shape:
-      '{ fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected" | "escalated", note }] }',
+    shape: '{ fixedSha, dispositions: [{ findingId, action: "fixed" | "rejected", note }] }',
     decode: decodeBoardRetriagePayloadOption,
   },
   readjudicate: {
@@ -11882,8 +11887,9 @@ function carriedAsRoundFinding(entry: BoardReviewCarriedFinding): BoardReviewRou
  * The phases in order: review; triage when the round has any finding; adjudicate
  * when any is blocking (a carried finding always is). When the adjudicator
  * overrules triage on a blocking finding, the ruling BINDS inside the round:
- * one re-triage pass (fix, re-argue, or escalate) and one re-adjudicate pass.
- * A dispute that survives both, or an escalation, makes the round stuck.
+ * one re-triage pass (fix or re-argue) and one re-adjudicate pass. A dispute
+ * that survives both, or the adjudicator's `escalated` verdict (T3O-55, which
+ * skips the second pass), makes the round stuck.
  *
  * Rounds whose adjudication predates T3O-51 (no `anotherRound`) and rounds
  * the loop already moved past (`review@N+1` recorded) never get a second pass,
@@ -12046,6 +12052,7 @@ export function boardReviewRoundResolution(input: {
       else if (!reverdicts.has(finding.id)) isStuck = true;
       else if (verdict !== "fix-upheld" && verdict !== "rejection-justified") isStuck = true;
     }
+    if (verdict === "escalated") isStuck = true;
     // A human ordered a carried finding fixed: anything short of an upheld fix
     // is still the same dispute.
     if (finding.carried && !(action === "fixed" && verdict === "fix-upheld")) isStuck = true;
@@ -12169,11 +12176,15 @@ export function boardReviewCompletionDefect(input: {
     if (absent.length > 0) {
       return `Give a disposition for every listed finding; missing: ${listIds(absent)}. Complete the step again with all of them.`;
     }
-    const rejected = dispositions.filter(
-      (d) => carriedIds.has(d.findingId) && d.action === "rejected",
+    const escalated = dispositions.filter((d) => d.action === "escalated");
+    if (escalated.length > 0) {
+      return `Re-triage cannot escalate ${listIds(escalated.map((d) => d.findingId))}: fix each finding, or reject it with your reason. The adjudicator decides whether a human is needed. Complete the step again.`;
+    }
+    const unexplained = dispositions.filter(
+      (d) => carriedIds.has(d.findingId) && d.action === "rejected" && d.note.trim() === "",
     );
-    if (rejected.length > 0) {
-      return `A human ordered ${listIds(rejected.map((d) => d.findingId))} fixed, so they cannot be rejected: fix them${phase === "retriage" ? " or escalate them" : ""}, then complete the step again.`;
+    if (unexplained.length > 0) {
+      return `A human ordered ${listIds(unexplained.map((d) => d.findingId))} fixed: fix them, or reject one only if it genuinely cannot be done, with a note saying why. Complete the step again.`;
     }
     return null;
   }
@@ -12209,7 +12220,76 @@ export function boardReviewCompletionDefect(input: {
   if (rejectionRuled.length > 0) {
     return `A human ordered ${listIds(rejectionRuled.map((v) => v.findingId))} fixed, so only fix-upheld, fix-incomplete or fix-absent apply to them. Complete the step again.`;
   }
+  const escalations = adjudication.verdicts.filter((v) => v.verdict === "escalated");
+  const unexplained = escalations.filter((v) => v.note.trim() === "");
+  if (unexplained.length > 0) {
+    return `An escalated verdict needs a note saying why a human must decide; missing on ${listIds(unexplained.map((v) => v.findingId))}. Complete the step again.`;
+  }
+  // Escalation is for a blocking finding: resolution ignores any other.
+  if (escalations.length > 0) {
+    let blockingIds: ReadonlySet<string> | null = null;
+    if (phase === "readjudicate") {
+      // `required` is the re-adjudicated (always blocking) findings.
+      blockingIds = new Set(required);
+    } else {
+      const review = done.get(reviewStepId("review", round));
+      const decoded =
+        review === undefined
+          ? null
+          : Option.getOrNull(
+              decodeBoardReviewPayloadOption(parseBoardStepPayloadJson(review.payload)),
+            );
+      if (decoded !== null) {
+        blockingIds = new Set(
+          decoded.findings
+            .filter((finding) => isBoardReviewBlockingSeverity(finding.severity))
+            .map((finding) => finding.id),
+        );
+      }
+    }
+    const notBlocking = escalations.filter(
+      (v) => carriedIds.has(v.findingId) || (blockingIds !== null && !blockingIds.has(v.findingId)),
+    );
+    if (notBlocking.length > 0) {
+      return `Only a rejected blocking finding can be escalated, and never one a human already ordered fixed; ${listIds(notBlocking.map((v) => v.findingId))} cannot be. Rule on them yourself and complete the step again.`;
+    }
+  }
   return null;
+}
+
+/**
+ * Why a `blocked` completion of this step is refused, or null (T3O-55).
+ *
+ * Triage and adjudication never stop for a human: triage fixes or rejects each
+ * finding, and the adjudicator alone escalates one, through its `escalated`
+ * verdict. The returned string is agent-facing.
+ */
+export function boardReviewBlockedOutcomeRefusal(stepId: string): string | null {
+  switch (parseReviewStepId(stepId)?.phase) {
+    case "triage":
+    case "retriage":
+      return "Triage never stops for a human. Fix each finding, or reject it with your reasoning — including 'outside this card's brief' or 'needs a product decision'; the adjudicator decides whether a human is needed. Complete failed only if your tooling is broken; failed re-runs the step.";
+    case "adjudicate":
+    case "readjudicate":
+      return "Rule on every finding. If one genuinely needs a human, give it the `escalated` verdict with your reason; never block the step. Complete failed only if your tooling is broken; failed re-runs the step.";
+    default:
+      return null;
+  }
+}
+
+/** The board's answer to a question a triage or adjudication step raised
+    (T3O-55), or null for any other step, whose questions go to a human. */
+export function boardReviewQuestionAnswer(stepId: string): string | null {
+  switch (parseReviewStepId(stepId)?.phase) {
+    case "triage":
+    case "retriage":
+      return "No human is available to answer this, and triage never waits for one. Decide it yourself: fix the finding, or reject it with your reasoning (including 'outside this card's brief' or 'needs a product decision'). The adjudicator decides whether a human is needed.";
+    case "adjudicate":
+    case "readjudicate":
+      return "No human is available to answer this. Decide it yourself: rule on the finding, and use the `escalated` verdict with your reason only if it genuinely needs a human.";
+    default:
+      return null;
+  }
 }
 
 /** The lowest budget a human's Fix it leaves the loop (T3O-51): a round that

@@ -19,6 +19,8 @@
  */
 import {
   BOARD_ENVELOPE_QUESTION_MECHANISM,
+  boardBlockedInstruction,
+  boardReviewQuestionAnswer,
   BOARD_LOCAL_WORKER_ID,
   clampBoardInstanceCap,
   resolveBoardWorkerConcurrency,
@@ -167,7 +169,7 @@ export function recoveryDecision(input: {
   readonly stepState: Pick<
     BoardCardStepState,
     "attempt" | "stallCount" | "maxAttempts" | "stepLabel" | "stageLabel"
-  >;
+  > & { readonly stepId?: string };
   /** Resolved by the reactor (t3o-17 D2, re-pointed by t3o-18 D16): the step
       thread's TODO LIST advanced — a `turn.plan.updated` whose done count rose or
       whose in-progress item changed — or a new commit landed on the card's
@@ -244,6 +246,7 @@ export function recoveryDecision(input: {
     nudge: boardRecoveryNudge({
       stallCount: nextStallCount,
       endedWithQuestion: input.endedWithQuestion,
+      ...(input.stepState.stepId === undefined ? {} : { stepId: input.stepState.stepId }),
     }),
   };
 }
@@ -266,10 +269,16 @@ export function boardRecoveryNudge(input: {
       outstanding-work reminder appears from the third onward. */
   readonly stallCount: number;
   readonly endedWithQuestion: boolean;
+  /** The step being nudged. Triage and adjudication never ask a human
+      (T3O-55), so theirs says to decide instead. */
+  readonly stepId?: string;
 }): string {
+  const decides = input.stepId !== undefined && boardReviewQuestionAnswer(input.stepId) !== null;
   const nudgeLines = [
     `Your previous turn ended without calling board_complete_step, so your work is not finished.`,
-    `Continue where you left off and call board_complete_step when done; if you are blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}.`,
+    decides
+      ? `Continue where you left off and call board_complete_step when done. ${boardBlockedInstruction(input.stepId!)}`
+      : `Continue where you left off and call board_complete_step when done; if you are blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}.`,
   ];
   if (input.stallCount >= 3) {
     nudgeLines.splice(
@@ -288,10 +297,14 @@ export function boardRecoveryNudge(input: {
   // agent's last message is the newest thing it said while the turn is still
   // open. "You asked a question" is true on both paths; "your turn ended with a
   // question" is not.
+  // Triage and adjudication always get a conditional form: the nudge is
+  // recomposed at retry time from the last message, which a structured question
+  // may not end with, so it cannot claim a question was asked.
+  const decideYourself = `nobody will answer it: decide it yourself with your best judgement, record the decision, and continue.`;
   if (input.endedWithQuestion) {
-    nudgeLines.unshift(
-      `You asked a question, but this run is unattended and nobody will answer it: decide it yourself with your best judgement, record the decision, and continue.`,
-    );
+    nudgeLines.unshift(`You asked a question, but this run is unattended and ${decideYourself}`);
+  } else if (decides) {
+    nudgeLines.unshift(`If you have a question, this run is unattended and ${decideYourself}`);
   }
   return nudgeLines.join(" ");
 }

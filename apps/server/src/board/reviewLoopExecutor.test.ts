@@ -239,6 +239,12 @@ const t3o51Scenarios = [
     stopAfterRound: null,
   },
   {
+    name: "T3O-55: the adjudicator escalates, no re-triage",
+    completions: [...z5291Round(1).slice(0, 2), t3o51.adjudicate(1, { f1: "escalated" })],
+    rounds: 5,
+    stopAfterRound: null,
+  },
+  {
     name: "T3O-51: a waived stuck round ends advanced",
     completions: z5291Round(1),
     rounds: 5,

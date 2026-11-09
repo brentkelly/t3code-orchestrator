@@ -90,6 +90,8 @@ import {
   resolveBoardCardEffectiveBase,
   CommandId,
   BOARD_ENVELOPE_QUESTION_MECHANISM,
+  boardBlockedInstruction,
+  boardReviewQuestionAnswer,
   boardTextEndsWithQuestion,
   applyBoardRetryJitter,
   boardCardAutoMergeArmed,
@@ -615,6 +617,10 @@ function settledReviewPhase(
   return stage !== null && effectiveBoardStageRole(stage) === "review";
 }
 
+/** Triage and adjudication steps, which never wait on a human (T3O-55). */
+const isReviewDecidingStep = (state: Pick<BoardCardStepState, "stepId">): boolean =>
+  boardReviewQuestionAnswer(state.stepId) !== null;
+
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const boardEngine = yield* BoardEngine;
@@ -898,6 +904,16 @@ const make = Effect.gen(function* () {
   const steeredThreads = new Map<string, string>();
   /** Thread → an auto-plan instruction held until its usage limit lifts. */
   const deferredSteers = new Map<string, string>();
+  /** Thread → the run the board interrupted to recover a review step that
+      asked a question (T3O-55). Its Stop and question are the board's own; the
+      next turn end clears it. */
+  const boardInterruptedRuns = new Set<string>();
+  /** Card → the `stepId attempt` whose question the board already answered
+      (T3O-55): a second question in the same attempt is recovered instead.
+      Keyed by card so a later step or attempt replaces it. */
+  const answeredReviewQuestions = new Map<string, string>();
+  const answeredReviewQuestion = (state: BoardCardStepState) =>
+    answeredReviewQuestions.get(state.cardId) === `${state.stepId} ${state.attempt}`;
   /** The live thread is still running the run auto-plan interrupted. */
   const stillOnSteeredRun = (threadId: ThreadId) =>
     Effect.gen(function* () {
@@ -2161,6 +2177,7 @@ const make = Effect.gen(function* () {
             ? boardRecoveryNudge({
                 stallCount: state.stallCount,
                 endedWithQuestion: yield* endedWithQuestion(state),
+                stepId: state.stepId,
               })
             : BOARD_STEP_RESUME_NUDGE;
       yield* sendTurn({
@@ -5389,6 +5406,7 @@ const make = Effect.gen(function* () {
     if (
       orphanedThreads.has(String(threadId)) ||
       abandonedThreads.has(String(threadId)) ||
+      boardInterruptedRuns.has(String(threadId)) ||
       (yield* stillOnSteeredRun(threadId))
     ) {
       return;
@@ -7890,6 +7908,15 @@ const make = Effect.gen(function* () {
       return;
     }
     if (shell !== undefined && shell.awaitingUserInput) {
+      // Triage and adjudication never wait on a human (T3O-55). An attempt
+      // already answered is resuming: the projection may still show the
+      // question.
+      if (found.state.status === "running" && isReviewDecidingStep(found.state)) {
+        if (!answeredReviewQuestion(found.state)) {
+          yield* handleReviewStepQuestion(found.card, found.state);
+        }
+        return;
+      }
       // A proper structured question — "Input needed", not a failure, no retry
       // consumed (D13). Move (or keep) the step on the human gate. A no-op when
       // it is already awaiting-input.
@@ -8037,6 +8064,7 @@ const make = Effect.gen(function* () {
     // may have been stale, and the steer turn's own end must be read.
     const steeredRun = steeredThreads.get(String(threadId));
     steeredThreads.delete(String(threadId));
+    boardInterruptedRuns.delete(String(threadId));
     if (steeredRun === undefined || completedTurnId !== steeredRun) {
       yield* handleTurnCompleted(board, threadId, completedTurnId);
     }
@@ -8895,11 +8923,57 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
   ) {
     if (yield* stillOnSteeredRun(threadId)) return;
+    if (boardInterruptedRuns.has(String(threadId))) return;
     const board = yield* readBoard;
     const watched = stepThreadCard(board, threadId);
     if (watched === null || watched.state.status !== "running") return;
+    if (isReviewDecidingStep(watched.state)) {
+      yield* handleReviewStepQuestion(watched.card, watched.state);
+      return;
+    }
     yield* parkStepForInput({ card: watched.card, state: watched.state, reason: "question" });
   });
+
+  /**
+   * A triage or adjudication step asked a question (T3O-55). Nobody answers
+   * those: the board replies "decide it yourself" once per attempt. When that
+   * reply cannot land, or the agent asks again, the board interrupts the turn
+   * and recovers the step, whose nudge says the same and charges the stall
+   * ladder — so an agent that keeps asking ends `stalled`, never parked.
+   */
+  const handleReviewStepQuestion = Effect.fn("board-supervisor-handleReviewStepQuestion")(
+    function* (card: BoardCard, state: BoardCardStepState) {
+      const threadId = state.threadId;
+      const answer = boardReviewQuestionAnswer(state.stepId);
+      if (threadId === null || answer === null) return;
+      if (!answeredReviewQuestion(state)) {
+        answeredReviewQuestions.set(state.cardId, `${state.stepId} ${state.attempt}`);
+        const answered = yield* threads
+          .answerPendingInput({
+            commandId: yield* commandId("review-answer"),
+            threadId,
+            text: answer,
+          })
+          .pipe(
+            Effect.tapError((error) =>
+              Effect.logWarning("board supervisor: answerPendingInput failed", error),
+            ),
+            Effect.orElseSucceed(() => false),
+          );
+        if (answered) return;
+      }
+      const shell = yield* liveThread(threadId);
+      if (shell?.activeTurnRef != null) {
+        boardInterruptedRuns.add(String(threadId));
+        const interrupted = yield* optional(
+          "thread.interrupt",
+          threads.interrupt({ commandId: yield* commandId("review-interrupt"), threadId }),
+        );
+        if (!interrupted) boardInterruptedRuns.delete(String(threadId));
+      }
+      yield* recoverStep({ card, state });
+    },
+  );
 
   /**
    * Clear a card's scheduled start (T3O-19, D4).
@@ -9473,7 +9547,9 @@ const make = Effect.gen(function* () {
     if (state.threadId !== null && state.status !== "paused") {
       const text = desired
         ? `Switching to human-in-the-loop: ask me anything you need directly, and it is fine to end a turn waiting on my answer. Call board_complete_step when the work is done.`
-        : `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}, and never end a turn with an unanswered question in prose.`;
+        : isReviewDecidingStep(state)
+          ? `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished. ${boardBlockedInstruction(state.stepId)}`
+          : `Switching to unattended: do not stop to ask permission — make every reasonable decision yourself and proceed. Call board_complete_step when the step is finished; if you are truly blocked, ${BOARD_ENVELOPE_QUESTION_MECHANISM}, and never end a turn with an unanswered question in prose.`;
       yield* sendTurn({ threadId: state.threadId, text, runtimeMode: state.runtimeMode });
     }
     yield* dispatch({
@@ -10718,7 +10794,12 @@ const make = Effect.gen(function* () {
         break;
       case "resume-watch":
         // Still running with a live thread — the slot was restored above; let
-        // the live turn-completion path catch its settlement.
+        // the live turn-completion path catch its settlement. A triage or
+        // adjudication question pending across the restart has nobody to
+        // answer it but the board (T3O-55).
+        if (state.status === "running" && shell?.awaitingUserInput === true) {
+          if (isReviewDecidingStep(state)) yield* handleReviewStepQuestion(card, state);
+        }
         break;
     }
     return decision.kind;
